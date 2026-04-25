@@ -62,7 +62,7 @@ def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:
 
         aliases: list[str] = []
         if entity and entity.aliases:
-            aliases = list(entity.aliases)
+            aliases = [str(a) for a in entity.aliases]
 
         exposed_entities.append(
             {
