@@ -110,7 +110,7 @@ def _convert_to_template(
             if isinstance(value, str) and (
                 key in template_keys or set(parents).intersection(template_keys)
             ):
-                settings[key] = Template(value, hass)
+                settings[key] = Template(value, hass) if hass is not None else Template(value)
             if isinstance(value, dict):
                 parents.append(key)
                 _convert_to_template(value, template_keys, hass, parents)
