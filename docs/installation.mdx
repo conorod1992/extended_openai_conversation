@@ -1,6 +1,6 @@
 ---
 title: "Installation"
-description: "Install Extended OpenAI Conversation via HACS or manually"
+description: "Install Extended OpenAI Conversation (Responses) via HACS or manually"
 ---
 
 ## Prerequisites
@@ -14,18 +14,16 @@ description: "Install Extended OpenAI Conversation via HACS or manually"
   <Tab title="HACS (Recommended)">
     ### Install via HACS
 
-    <a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=jekalmin&repository=extended_openai_conversation&category=integration" target="_blank">
+    <a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=conorod1992&repository=extended_openai_conversation&category=integration" target="_blank">
       <img src="https://my.home-assistant.io/badges/hacs_repository.svg" alt="Open in HACS" />
     </a>
 
     <Steps>
       <Step title="Install integration">
-        1. Click the button above or open HACS in Home Assistant
-        2. Go to "Integrations"
-        3. Click "+ Explore & Download Repositories"
-        4. Search for "Extended OpenAI Conversation"
-        5. Click "Download"
-        6. Restart Home Assistant
+        1. Click the button above, or open HACS and add `https://github.com/conorod1992/extended_openai_conversation` as a custom **Integration** repository
+        2. Open the repository in HACS
+        3. Click "Download"
+        4. Restart Home Assistant
       </Step>
     </Steps>
   </Tab>
@@ -35,7 +33,7 @@ description: "Install Extended OpenAI Conversation via HACS or manually"
 
     <Steps>
       <Step title="Download files">
-        Download the `extended_openai_conversation` folder from the [repository](https://github.com/jekalmin/extended_openai_conversation)
+        Download the `extended_openai_conversation_responses` folder from the [repository](https://github.com/conorod1992/extended_openai_conversation)
       </Step>
 
       <Step title="Copy to custom_components">
@@ -45,7 +43,7 @@ description: "Install Extended OpenAI Conversation via HACS or manually"
         ```
         <config>/
         └── custom_components/
-            └── extended_openai_conversation/
+            └── extended_openai_conversation_responses/
                 ├── __init__.py
                 ├── manifest.json
                 └── ...
@@ -61,7 +59,7 @@ description: "Install Extended OpenAI Conversation via HACS or manually"
 
 ## Setup
 
-<a href="https://my.home-assistant.io/redirect/config_flow_start/?domain=extended_openai_conversation" target="_blank">
+<a href="https://my.home-assistant.io/redirect/config_flow_start/?domain=extended_openai_conversation_responses" target="_blank">
   <img src="https://my.home-assistant.io/badges/config_flow_start.svg" alt="Add Integration to Home Assistant" />
 </a>
 
@@ -69,7 +67,7 @@ description: "Install Extended OpenAI Conversation via HACS or manually"
   <Step title="Add integration">
     1. Click the button above or go to **Settings** > **Devices & Services**
     2. Click **Add Integration** button (bottom right)
-    3. Search for "Extended OpenAI Conversation"
+    3. Search for "Extended OpenAI Conversation (Responses)"
     4. Follow the setup wizard
   </Step>
 
@@ -82,13 +80,17 @@ description: "Install Extended OpenAI Conversation via HACS or manually"
   <Step title="Configure voice assistant">
     1. Go to **Settings** > [Voice Assistants](https://my.home-assistant.io/redirect/voice_assistants/)
     2. Click to edit your Assistant (named "Home Assistant" by default)
-    3. Select **Extended OpenAI Conversation** from the "Conversation agent" dropdown
+    3. Select **Extended OpenAI Conversation (Responses)** from the "Conversation agent" dropdown
 
     <Frame>
       <img width="500" alt="Voice Assistant Configuration" src="https://github.com/jekalmin/extended_openai_conversation/assets/2917984/0849d241-0b82-47f6-9956-fdb82d678aca" />
     </Frame>
   </Step>
 </Steps>
+
+<Note>
+  This fork uses the separate `extended_openai_conversation_responses` domain. You can keep the original integration installed and configure this fork independently. Screenshots inherited from upstream may show the original name.
+</Note>
 
 ## Provider Setup
 
@@ -205,7 +207,7 @@ description: "Install Extended OpenAI Conversation via HACS or manually"
         curl http://<HOST>:11434/v1/models
         ```
 
-        **`qwen2.5:14b` model for function calling** ([issue](https://github.com/jekalmin/extended_openai_conversation/issues/326#issuecomment-3765190068))
+        **`qwen2.5:14b` model for function calling** ([upstream issue](https://github.com/jekalmin/extended_openai_conversation/issues/326#issuecomment-3765190068))
 
         Many older or smaller models do not reliably emit structured tool calls. If the assistant verbally acknowledges your request but nothing actually happens, add this to your system prompt:
 

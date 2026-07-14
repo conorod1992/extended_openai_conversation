@@ -1,9 +1,9 @@
 ---
 title: "Services"
-description: "Home Assistant services provided by Extended OpenAI Conversation for runtime configuration, vision queries, and skills management"
+description: "Home Assistant services provided by Extended OpenAI Conversation (Responses) for runtime configuration, vision queries, and skills management"
 ---
 
-Extended OpenAI Conversation registers four Home Assistant services you can call from automations, scripts, or **Developer Tools → Services**.
+Extended OpenAI Conversation (Responses) registers four Home Assistant services you can call from automations, scripts, or **Developer Tools → Services**.
 
 ---
 
@@ -15,7 +15,7 @@ Dynamically update the integration's connection settings — API key, Base URL, 
 
 | Parameter | Required | Description |
 |---|---|---|
-| `config_entry` | ✅ | The Extended OpenAI Conversation config entry to update |
+| `config_entry` | ✅ | The Extended OpenAI Conversation (Responses) config entry to update |
 | `api_key` | | New API key |
 | `base_url` | | New Base URL (e.g. `http://localhost:11434/v1`) |
 | `api_version` | | Azure API version (e.g. `2024-12-01-preview`) |
@@ -36,7 +36,7 @@ If `api_provider` is set to `azure`, a custom `base_url` is required. The servic
 <CodeGroup>
 
 ```yaml Switch to Ollama
-service: extended_openai_conversation.change_config
+service: extended_openai_conversation_responses.change_config
 data:
   config_entry: YOUR_ENTRY_ID
   base_url: "http://192.168.1.100:11434/v1"
@@ -45,7 +45,7 @@ data:
 ```
 
 ```yaml Switch back to OpenAI
-service: extended_openai_conversation.change_config
+service: extended_openai_conversation_responses.change_config
 data:
   config_entry: YOUR_ENTRY_ID
   base_url: "https://api.openai.com/v1"
@@ -54,7 +54,7 @@ data:
 ```
 
 ```yaml Switch to Azure OpenAI
-service: extended_openai_conversation.change_config
+service: extended_openai_conversation_responses.change_config
 data:
   config_entry: YOUR_ENTRY_ID
   api_provider: azure
@@ -64,7 +64,7 @@ data:
 ```
 
 ```yaml Change API key only
-service: extended_openai_conversation.change_config
+service: extended_openai_conversation_responses.change_config
 data:
   config_entry: YOUR_ENTRY_ID
   api_key: "sk-new-key..."
@@ -75,13 +75,13 @@ data:
 ### How to find config_entry
 
 1. Go to **Settings** → **Devices & Services**
-2. Click **Extended OpenAI Conversation**
-3. The entry ID is in the browser URL: `.../config/integrations/integration/extended_openai_conversation#ENTRY_ID`
+2. Click **Extended OpenAI Conversation (Responses)**
+3. The entry ID is in the browser URL: `.../config/integrations/integration/extended_openai_conversation_responses#ENTRY_ID`
 
 Alternatively, use the **Developer Tools → Template** panel:
 
 ```jinja
-{{ integration_entities('extended_openai_conversation') }}
+{{ integration_entities('extended_openai_conversation_responses') }}
 ```
 
 Or call the service from **Developer Tools → Services** and use the config entry picker — no manual ID needed.
@@ -113,7 +113,7 @@ Send an image (local file or public URL) to a vision-capable model and get a tex
 <CodeGroup>
 
 ```yaml Public URL
-service: extended_openai_conversation.query_image
+service: extended_openai_conversation_responses.query_image
 data:
   config_entry: YOUR_ENTRY_ID
   model: gpt-4o-mini
@@ -123,7 +123,7 @@ data:
 ```
 
 ```yaml Local file
-service: extended_openai_conversation.query_image
+service: extended_openai_conversation_responses.query_image
 data:
   config_entry: YOUR_ENTRY_ID
   model: gpt-4o-mini
@@ -133,7 +133,7 @@ data:
 ```
 
 ```yaml In a script with response variable
-service: extended_openai_conversation.query_image
+service: extended_openai_conversation_responses.query_image
 data:
   config_entry: YOUR_ENTRY_ID
   prompt: "Is there a person in this image? Reply yes or no."
@@ -187,7 +187,7 @@ None.
 ### Example
 
 ```yaml
-service: extended_openai_conversation.reload_skills
+service: extended_openai_conversation_responses.reload_skills
 ```
 
 ### Return value
@@ -217,7 +217,7 @@ Download a skill from the official GitHub repository and install it to your skil
 ### Example
 
 ```yaml
-service: extended_openai_conversation.download_skill
+service: extended_openai_conversation_responses.download_skill
 data:
   skill_name: crypto
 ```
@@ -228,7 +228,7 @@ data:
 {
   "skill_name": "crypto",
   "downloaded_files": ["skills/crypto/SKILL.md", "skills/crypto/crypto.py"],
-  "target_directory": "/config/extended_openai_conversation/skills/crypto"
+  "target_directory": "/config/extended_openai_conversation_responses/skills/crypto"
 }
 ```
 

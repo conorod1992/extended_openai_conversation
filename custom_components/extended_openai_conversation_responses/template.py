@@ -1,4 +1,4 @@
-"""Template functions for Extended OpenAI Conversation."""
+"""Template functions for Extended OpenAI Conversation (Responses)."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ TEMPLATE_SKILL_DIR = "skill_dir"
 
 
 async def async_setup_templates(hass: HomeAssistant) -> bool:
-    """Set up template functions for Extended OpenAI Conversation."""
+    """Set up template functions for Extended OpenAI Conversation (Responses)."""
     hass.data.setdefault(DOMAIN, {})
     if hass.data[DOMAIN].get(DATA_TEMPLATE_MANAGER):
         return True
@@ -39,7 +39,7 @@ async def async_setup_templates(hass: HomeAssistant) -> bool:
 
 
 async def async_unload_templates(hass: HomeAssistant) -> bool:
-    """Unload template functions for Extended OpenAI Conversation."""
+    """Unload template functions for Extended OpenAI Conversation (Responses)."""
     if len(hass.config_entries.async_entries(DOMAIN)) == 1:
         manager = hass.data.get(DOMAIN, {}).get(DATA_TEMPLATE_MANAGER)
         if manager:
@@ -93,7 +93,9 @@ class ExtendedOpenAITemplateManager:
 
     async def async_setup(self) -> None:
         """Set up the template functions."""
-        _LOGGER.debug("Setting up Extended OpenAI Conversation template functions")
+        _LOGGER.debug(
+            "Setting up Extended OpenAI Conversation (Responses) template functions"
+        )
 
         # Register in existing environments
         if "template.environment" in self.hass.data:
@@ -122,7 +124,9 @@ class ExtendedOpenAITemplateManager:
 
     async def async_on_unload(self) -> None:
         """Tear down the template functions."""
-        _LOGGER.debug("Tearing down Extended OpenAI Conversation template functions")
+        _LOGGER.debug(
+            "Tearing down Extended OpenAI Conversation (Responses) template functions"
+        )
 
         if self._original_init:
             TemplateEnvironment.__init__ = self._original_init  # type: ignore[unreachable]

@@ -4,7 +4,7 @@
 
 ## Notice
 
-Before adding automation, I highly recommend set notification on `automation_registered_via_extended_openai_conversation` event and create separate "Extended OpenAI Assistant" and "Assistant"
+Before adding automation, I highly recommend set notification on `automation_registered_via_extended_openai_conversation_responses` event and create separate "Extended OpenAI Assistant" and "Assistant"
 
 (Automation can be added even if conversation fails because of failure to get response message, not automation)
 

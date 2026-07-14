@@ -1,9 +1,12 @@
-# Extended OpenAI Conversation
-This is custom component of Home Assistant.
+# Extended OpenAI Conversation (Responses)
+
+This repository is an experimental fork of [Extended OpenAI Conversation](https://github.com/jekalmin/extended_openai_conversation) for Home Assistant. It adds OpenAI Responses API support while keeping the original integration's features and Chat Completions compatibility.
+
+The fork uses the separate domain `extended_openai_conversation_responses`, so you can install it alongside the original integration for testing. Home Assistant stores its config entries, services, events, entities, and workspace separately.
 
 Derived from [OpenAI Conversation](https://www.home-assistant.io/integrations/openai_conversation/) with some new features such as call-service.
 
-📚 **[Documentation](https://extended-openai-conversation.mintlify.app)**
+📚 **[Fork documentation](https://github.com/conorod1992/extended_openai_conversation#readme)**
 
 ## Additional Features
 - Chat Completions and Responses API support with automatic model routing
@@ -14,12 +17,12 @@ Derived from [OpenAI Conversation](https://www.home-assistant.io/integrations/op
 - Option to pass the current user's name to OpenAI via the user message context
 
 ## How it works
-Extended OpenAI Conversation uses OpenAI API [function calling](https://developers.openai.com/api/docs/guides/function-calling) to call Home Assistant services. It supports both `/v1/chat/completions` and `/v1/responses` while keeping the same Home Assistant function execution and conversation history.
+Extended OpenAI Conversation (Responses) uses OpenAI API [function calling](https://developers.openai.com/api/docs/guides/function-calling) to call Home Assistant services. It supports both `/v1/chat/completions` and `/v1/responses` while keeping the same Home Assistant function execution and conversation history.
 
-Since OpenAI models already know how to call service of Home Assistant in general, you just have to let model know what devices you have by [exposing entities](https://github.com/jekalmin/extended_openai_conversation#preparation)
+Since OpenAI models already know how to call service of Home Assistant in general, you just have to let model know what devices you have by [exposing entities](https://github.com/conorod1992/extended_openai_conversation#preparation)
 
 ## Installation
-1. Install via registering as a custom repository of HACS or by copying `extended_openai_conversation` folder into `<config directory>/custom_components`
+1. In HACS, add `https://github.com/conorod1992/extended_openai_conversation` as a custom **Integration** repository, then download it. Alternatively, copy the `extended_openai_conversation_responses` folder into `<config directory>/custom_components`.
 2. Restart Home Assistant
 3. Go to Settings > Devices & Services.
 4. In the bottom right corner, select the Add Integration button.
@@ -28,13 +31,15 @@ Since OpenAI models already know how to call service of Home Assistant in genera
     - Specify "Base Url" if using OpenAI compatible servers like Azure OpenAI (also with APIM), LocalAI, otherwise leave as it is.
 6. Go to Settings > [Voice Assistants](https://my.home-assistant.io/redirect/voice_assistants/).
 7. Click to edit Assistant (named "Home Assistant" by default).
-8. Select "Extended OpenAI Conversation" from "Conversation agent" tab.
+8. Select "Extended OpenAI Conversation (Responses)" from "Conversation agent" tab.
     <details>
 
     <summary>guide image</summary>
     <img width="500" alt="스크린샷 2023-10-07 오후 6 15 29" src="https://github.com/jekalmin/extended_openai_conversation/assets/2917984/0849d241-0b82-47f6-9956-fdb82d678aca">
 
     </details>
+
+The screenshots in this fork are inherited from the upstream project and may show the original integration name. In this fork, select **Extended OpenAI Conversation (Responses)**.
 
 ## Preparation
 After installed, you need to expose entities from "http://{your-home-assistant}/config/voice-assistants/expose".
@@ -75,11 +80,13 @@ Options include [OpenAI Conversation](https://www.home-assistant.io/integrations
   - `spec`: Function which would be passed to [functions](https://platform.openai.com/docs/api-reference/chat/create#chat-create-functions) of [chat API](https://platform.openai.com/docs/api-reference/chat/create).
   - `function`: function that will be called.
 
-### Upgrading existing agents
+### Side-by-side installation and migration
 
-No manual migration is required. Existing agents default to `Auto`. Auto keeps models older than GPT-5.6 on Chat Completions, so existing behavior is unchanged for those models. GPT-5.6 and later GPT-5 models automatically use Responses, which permits function tools together with reasoning. You can force either endpoint at any time with `API mode`.
+Home Assistant treats this fork as a new integration. It does not reuse or migrate config entries from `extended_openai_conversation`; add **Extended OpenAI Conversation (Responses)** and configure its agents separately. If needed, copy skills or other files from `/config/extended_openai_conversation/` to `/config/extended_openai_conversation_responses/`. Update only the automations and scripts that you want to target this fork to use the `extended_openai_conversation_responses` service and event namespaces.
 
-The `extended_openai_conversation.query_image` service also accepts `api_mode`. Its default is `auto`.
+Within this fork, agents without an API mode setting default to `Auto`. Auto keeps models older than GPT-5.6 on Chat Completions, while GPT-5.6 and later GPT-5 models use Responses. You can force either endpoint at any time with `API mode`.
+
+The `extended_openai_conversation_responses.query_image` service also accepts `api_mode`. Its default is `auto`.
 
 
 | Edit Assist                                                                                                                                  | Options                                                                                                                                                                       |
@@ -90,7 +97,7 @@ The `extended_openai_conversation.query_image` service also accepts `api_mode`. 
 ### Functions
 
 #### Supported function types
-- `native`: built-in function provided by "extended_openai_conversation".
+- `native`: built-in function provided by "extended_openai_conversation_responses".
   - Currently supported native functions and parameters are:
     - `execute_service`
       - `domain`(string): domain to be passed to `hass.services.async_call`
@@ -156,7 +163,7 @@ Below is a default configuration of functions.
 Specification is a [function schema](https://platform.openai.com/docs/guides/function-calling#defining-functions) defined by openai which will be passed to LLM as a tool.
 
 Reserved Parameters:
-- `delay`: If specified, function will be executed in background after a delay. See [example](https://github.com/jekalmin/extended_openai_conversation/tree/main/examples/function/timer).
+- `delay`: If specified, function will be executed in background after a delay. See [example](https://github.com/conorod1992/extended_openai_conversation/tree/main/examples/function/timer).
   - ```yaml
     delay:
       type: object
@@ -176,12 +183,12 @@ Reserved Parameters:
 ### Skills
 Skills are reusable AI capabilities that can be enabled per conversation. Each skill provides specialized knowledge and instructions to the AI agent.
 
-Skills are loaded from `<config directory>/extended_openai_conversation/skills/` directory. You can download skills from the repository or create your own.
+Skills are loaded from `<config directory>/extended_openai_conversation_responses/skills/` directory. You can download skills from the repository or create your own.
 
 #### Using Skills
 1. Download a skill using the service:
    ```yaml
-   service: extended_openai_conversation.download_skill
+   service: extended_openai_conversation_responses.download_skill
    data:
      skill_name: crypto
    ```
@@ -190,7 +197,7 @@ Skills are loaded from `<config directory>/extended_openai_conversation/skills/`
    - Go to Settings > Voice Assistants > Edit Assistant > Options
    - Select skills to enable from the list
 
-For detailed information about creating and managing skills, see [Skills Documentation](https://github.com/jekalmin/extended_openai_conversation/tree/develop/examples/skills).
+For detailed information about creating and managing skills, see [Skills Documentation](https://github.com/conorod1992/extended_openai_conversation/tree/develop/examples/skills).
 
 ## Function Usage
 This is an example of configuration of functions.
@@ -201,7 +208,7 @@ Then you will be able to let OpenAI call your function.
 ### 1. template
 #### 1-1. Get current weather
 
-For real world example, see [weather](https://github.com/jekalmin/extended_openai_conversation/tree/main/examples/function/weather).<br/>
+For real world example, see [weather](https://github.com/conorod1992/extended_openai_conversation/tree/main/examples/function/weather).<br/>
 This is just an example from [OpenAI documentation](https://platform.openai.com/docs/guides/function-calling/common-use-cases)
 
 ```yaml
@@ -254,7 +261,7 @@ This is just an example from [OpenAI documentation](https://platform.openai.com/
 
 #### 2-2. Send messages to another messenger
 
-In order to accomplish "send it to Line" like [example3](https://github.com/jekalmin/extended_openai_conversation#3-hook-with-custom-notify-function), register a notify function like below.
+In order to accomplish "send it to Line" like [example3](https://github.com/conorod1992/extended_openai_conversation#3-hook-with-custom-notify-function), register a notify function like below.
 
 ```yaml
 - spec:
@@ -383,7 +390,7 @@ In order to pass result of calling service to OpenAI, set response variable to `
 
 #### 3-1. Add automation
 
-Before adding automation, I highly recommend set notification on `automation_registered_via_extended_openai_conversation` event and create separate "Extended OpenAI Assistant" and "Assistant"
+Before adding automation, I highly recommend set notification on `automation_registered_via_extended_openai_conversation_responses` event and create separate "Extended OpenAI Assistant" and "Assistant"
 
 (Automation can be added even if conversation fails because of failure to get response message, not automation)
 
@@ -668,9 +675,9 @@ Get last changed date time of state | Get state at specific time
 ```
 
 ## Practical Usage
-See more practical [examples](https://github.com/jekalmin/extended_openai_conversation/tree/main/examples).
+See more practical [examples](https://github.com/conorod1992/extended_openai_conversation/tree/main/examples).
 
-For comprehensive documentation, visit [https://extended-openai-conversation.mintlify.app](https://extended-openai-conversation.mintlify.app).
+For comprehensive documentation, see the [`docs`](https://github.com/conorod1992/extended_openai_conversation/tree/develop/docs) directory.
 
 ## Logging
 In order to monitor logs of API requests and responses, add following config to `configuration.yaml` file
@@ -678,5 +685,5 @@ In order to monitor logs of API requests and responses, add following config to 
 ```yaml
 logger:
   logs:
-    custom_components.extended_openai_conversation: info
+    custom_components.extended_openai_conversation_responses: info
 ```

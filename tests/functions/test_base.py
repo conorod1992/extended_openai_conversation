@@ -6,13 +6,13 @@ import pytest
 import voluptuous as vol
 
 # Import Tools
-from custom_components.extended_openai_conversation.exceptions import (
+from custom_components.extended_openai_conversation_responses.exceptions import (
     EntityNotExposed,
     EntityNotFound,
     FunctionNotFound,
     InvalidFunction,
 )
-from custom_components.extended_openai_conversation.functions import (
+from custom_components.extended_openai_conversation_responses.functions import (
     NativeFunction,
     ScriptFunction,
     TemplateFunction,

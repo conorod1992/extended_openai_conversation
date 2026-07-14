@@ -154,7 +154,7 @@
         },
         "download_skill": {
             "name": "Download skill",
-            "description": "Download a skill from the GitHub repository to your skills directory. Available skills: https://github.com/jekalmin/extended_openai_conversation/tree/develop/examples/skills",
+            "description": "Download a skill from the GitHub repository to your skills directory. Available skills: https://github.com/conorod1992/extended_openai_conversation/tree/develop/examples/skills",
             "fields": {
                 "skill_name": {
                     "name": "Skill name",

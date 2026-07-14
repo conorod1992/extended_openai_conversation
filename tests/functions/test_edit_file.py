@@ -2,7 +2,7 @@
 
 import pytest
 
-from custom_components.extended_openai_conversation.functions import (
+from custom_components.extended_openai_conversation_responses.functions import (
     EditFileFunction,
     get_function,
 )
@@ -21,7 +21,7 @@ class TestEditFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test editing a file successfully from yaml definition."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         test_file = workdir / "edit_test.txt"
         test_file.write_text("Hello World\nThis is a test.")
 
@@ -51,7 +51,7 @@ class TestEditFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test editing multiple lines from yaml."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         test_file = workdir / "multiline.txt"
         test_file.write_text("Line 1\nLine 2\nLine 3\nLine 4")
 
@@ -97,7 +97,7 @@ class TestEditFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test editing when old_text doesn't exist in file."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         test_file = workdir / "test.txt"
         test_file.write_text("Some content without the searched text")
 
@@ -121,7 +121,7 @@ class TestEditFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test that multiple occurrences are rejected."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         test_file = workdir / "duplicate.txt"
         test_file.write_text("Hello\nHello\nGoodbye")
 
@@ -146,7 +146,7 @@ class TestEditFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test editing a directory instead of file."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         test_dir = workdir / "testdir"
         test_dir.mkdir()
 
@@ -231,7 +231,7 @@ class TestEditFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test editing file with templated path."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         test_file = workdir / "templated.txt"
         test_file.write_text("Template test")
 
@@ -255,7 +255,7 @@ class TestEditFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test editing file with unicode content from yaml."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         test_file = workdir / "unicode.txt"
         test_file.write_text("Hello 世界", encoding="utf-8")
 
@@ -279,7 +279,7 @@ class TestEditFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test that edit preserves content before and after replacement."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         test_file = workdir / "preserve.txt"
         test_file.write_text("Start\nMiddle line to replace\nEnd")
 

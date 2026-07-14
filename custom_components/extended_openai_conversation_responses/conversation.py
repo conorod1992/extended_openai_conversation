@@ -1,4 +1,4 @@
-"""Extended OpenAI Conversation agent entity."""
+"""Extended OpenAI Conversation (Responses) agent entity."""
 
 from __future__ import annotations
 

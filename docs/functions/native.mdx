@@ -1,9 +1,9 @@
 ---
 title: "Native Functions"
-description: "Built-in functions provided by Extended OpenAI Conversation"
+description: "Built-in functions provided by Extended OpenAI Conversation (Responses)"
 ---
 
-Native functions are built-in capabilities provided directly by the Extended OpenAI Conversation component. These functions are implemented in Python and offer core functionality.
+Native functions are built-in capabilities provided directly by the Extended OpenAI Conversation (Responses) component. These functions are implemented in Python and offer core functionality.
 
 ## Available Native Functions
 
@@ -71,7 +71,7 @@ Call any Home Assistant service with specified parameters.
 Create Home Assistant automations dynamically through conversation.
 
 <Warning>
-Before using this function, set up notifications for the `automation_registered_via_extended_openai_conversation` event. Automations can be created even if the conversation fails to get a response.
+Before using this function, set up notifications for the `automation_registered_via_extended_openai_conversation_responses` event. Automations can be created even if the conversation fails to get a response.
 </Warning>
 
 <ParamField path="automation_config" type="string" required>

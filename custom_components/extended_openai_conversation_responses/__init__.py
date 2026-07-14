@@ -1,4 +1,4 @@
-"""The OpenAI Conversation integration."""
+"""The Extended OpenAI Conversation (Responses) integration."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ type ExtendedOpenAIConfigEntry = ConfigEntry[AsyncClient]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up OpenAI Conversation."""
+    """Set up Extended OpenAI Conversation (Responses)."""
     await async_migrate_integration(hass)
     await async_setup_services(hass, config)
     return True
@@ -46,7 +46,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(
     hass: HomeAssistant, entry: ExtendedOpenAIConfigEntry
 ) -> bool:
-    """Set up OpenAI Conversation from a config entry."""
+    """Set up Extended OpenAI Conversation (Responses) from a config entry."""
 
     try:
         client = await get_authenticated_client(
@@ -99,7 +99,7 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
 
     for entry in entries:
         _LOGGER.warning(
-            "Migrating Extended OpenAI Conversation config entry %s from version %s to version 2",
+            "Migrating Extended OpenAI Conversation (Responses) config entry %s from version %s to version 2",
             entry.entry_id,
             entry.version,
         )

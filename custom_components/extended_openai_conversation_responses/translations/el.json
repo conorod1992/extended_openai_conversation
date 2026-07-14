@@ -1,19 +1,19 @@
 {
     "config": {
         "error": {
-            "cannot_connect": "Connessione non riuscita",
-            "invalid_auth": "Autenticazione non valida",
-            "unknown": "Errore imprevisto"
+            "cannot_connect": "Αποτυχία σύνδεσης",
+            "invalid_auth": "Μη έγκυρος έλεγχος ταυτότητας",
+            "unknown": "Απροσδόκητο σφάλμα"
         },
         "step": {
             "user": {
                 "data": {
-                    "name": "Nome",
-                    "api_key": "Chiave API",
-                    "base_url": "URL di base",
-                    "api_version": "Versione API",
-                    "organization": "Organizzazione",
-                    "skip_authentication": "Ignora autenticazione",
+                    "name": "Όνομα",
+                    "api_key": "Κλειδί API",
+                    "base_url": "Βασική Διεύθυνση",
+                    "api_version": "Έκδοση API",
+                    "organization": "Οργανισμός",
+                    "skip_authentication": "Παράλειψη Ελέγχου Ταυτότητας",
                     "api_provider": "Api Provider"
                 }
             }
@@ -29,15 +29,15 @@
             "step": {
                 "init": {
                     "data": {
-                        "max_tokens": "Numero massimo token da restituire nella risposta",
-                        "model": "Modello di completamento",
-                        "prompt": "Modello di prompt",
-                        "max_function_calls_per_conversation": "Numero massimo di chiamate di funzioni per conversazione",
+                        "max_tokens": "Μέγιστα tokens προς επιστροφή στην απάντηση",
+                        "model": "Μοντέλο Ολοκλήρωσης",
+                        "prompt": "Πρότυπο Προτροπής",
+                        "max_function_calls_per_conversation": "Μέγιστες κλήσεις συναρτήσεων ανά συνομιλία",
                         "skills": "Skills",
-                        "functions": "Funzioni",
-                        "attach_username": "Allega nome utente al messaggio",
-                        "context_threshold": "Soglia di contesto",
-                        "context_truncate_strategy": "Strategia di troncamento del contesto quando superata la soglia",
+                        "functions": "Συναρτήσεις",
+                        "attach_username": "Επισύναψη Ονόματος Χρήστη στο Μήνυμα",
+                        "context_threshold": "Όριο Περιεχομένου",
+                        "context_truncate_strategy": "Στρατηγική περικοπής περιεχομένου όταν ξεπεραστεί το όριο",
                         "advanced_options": "Advanced Options"
                     },
                     "data_description": {}
@@ -45,7 +45,7 @@
                 "advanced": {
                     "title": "Advanced Options",
                     "data": {
-                        "temperature": "Temperatura",
+                        "temperature": "Θερμοκρασία",
                         "top_p": "Top P",
                         "reasoning_effort": "Reasoning effort",
                         "service_tier": "Service tier",
@@ -90,30 +90,30 @@
     },
     "services": {
         "query_image": {
-            "name": "Interrogazione immagine",
-            "description": "Prendi le immagini e rispondi alle domande su di esse",
+            "name": "Ερώτημα εικόνας",
+            "description": "Λάβετε εικόνες και απαντήστε ερωτήσεις για αυτές",
             "fields": {
                 "config_entry": {
-                    "name": "Voce di configurazione",
-                    "description": "La voce di configurazione da utilizzare per questo servizio"
+                    "name": "Καταχώρηση Διαμόρφωσης",
+                    "description": "Η καταχώρηση διαμόρφωσης που θα χρησιμοποιηθεί για αυτή την υπηρεσία"
                 },
                 "model": {
-                    "name": "Modello",
-                    "description": "Il modello",
+                    "name": "Μοντέλο",
+                    "description": "Το μοντέλο",
                     "example": "gpt-4.1-mini"
                 },
                 "prompt": {
-                    "name": "Prompt",
-                    "description": "Il testo da chiedere riguardo all'immagine",
-                    "example": "Cosa c'è in questa immagine?"
+                    "name": "Προτροπή",
+                    "description": "Το κείμενο για να ρωτήσετε σχετικά με την εικόνα",
+                    "example": "Τι υπάρχει σε αυτή την εικόνα;"
                 },
                 "images": {
-                    "name": "Immagini",
-                    "description": "Un elenco delle immagini richieste"
+                    "name": "Εικόνες",
+                    "description": "Μια λίστα εικόνων που θα ερωτηθούν"
                 },
                 "max_tokens": {
-                    "name": "Max Token",
-                    "description": "I token massimi",
+                    "name": "Μέγιστα Tokens",
+                    "description": "Τα μέγιστα tokens",
                     "example": "300"
                 }
             }
@@ -127,23 +127,23 @@
                     "description": "The config entry to update."
                 },
                 "api_key": {
-                    "name": "Chiave API",
+                    "name": "Κλειδί API",
                     "description": "The API key."
                 },
                 "base_url": {
-                    "name": "URL di base",
+                    "name": "Βασική Διεύθυνση",
                     "description": "The base URL."
                 },
                 "api_version": {
-                    "name": "Versione API",
+                    "name": "Έκδοση API",
                     "description": "The API version."
                 },
                 "organization": {
-                    "name": "Organization",
+                    "name": "Οργανισμός",
                     "description": "The organization."
                 },
                 "skip_authentication": {
-                    "name": "Ignora autenticazione",
+                    "name": "Παράλειψη Ελέγχου Ταυτότητας",
                     "description": "Skip authentication."
                 },
                 "api_provider": {
@@ -154,7 +154,7 @@
         },
         "download_skill": {
             "name": "Download skill",
-            "description": "Download a skill from the GitHub repository to your skills directory. Available skills: https://github.com/jekalmin/extended_openai_conversation/tree/develop/examples/skills",
+            "description": "Download a skill from the GitHub repository to your skills directory. Available skills: https://github.com/conorod1992/extended_openai_conversation/tree/develop/examples/skills",
             "fields": {
                 "skill_name": {
                     "name": "Skill name",

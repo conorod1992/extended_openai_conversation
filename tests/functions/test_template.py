@@ -3,7 +3,9 @@
 import pytest
 
 # Import Tools and test helpers
-from custom_components.extended_openai_conversation.functions import TemplateFunction
+from custom_components.extended_openai_conversation_responses.functions import (
+    TemplateFunction,
+)
 from homeassistant.core import State
 from tests.helpers import prepare_function_tool_from_yaml
 

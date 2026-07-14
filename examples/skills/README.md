@@ -1,6 +1,6 @@
 # Skills
 
-This directory contains example skills for Extended OpenAI Conversation. Skills provide reusable AI capabilities that can be enabled per conversation.
+This directory contains example skills for Extended OpenAI Conversation (Responses). Skills provide reusable AI capabilities that can be enabled per conversation.
 
 ## Installing Skills
 
@@ -9,14 +9,14 @@ This directory contains example skills for Extended OpenAI Conversation. Skills 
 Use the `download_skill` service to automatically download and install skills:
 
 ```yaml
-service: extended_openai_conversation.download_skill
+service: extended_openai_conversation_responses.download_skill
 data:
   skill_name: crypto
 ```
 
 This service:
 - Downloads the skill from the GitHub repository
-- Saves it to `<config>/extended_openai_conversation/skills/`
+- Saves it to `<config>/extended_openai_conversation_responses/skills/`
 - Automatically reloads all skills
 - Returns the list of downloaded files
 
@@ -24,17 +24,17 @@ This service:
 
 1. **Copy the skill directory** to your Home Assistant config:
    ```bash
-   cp -r crypto /config/extended_openai_conversation/skills/
+   cp -r crypto /config/extended_openai_conversation_responses/skills/
    ```
 
 2. **Make scripts executable** (if applicable):
    ```bash
-   chmod +x /config/extended_openai_conversation/skills/crypto/scripts/crypto.py
+   chmod +x /config/extended_openai_conversation_responses/skills/crypto/scripts/crypto.py
    ```
 
 3. **Reload skills** via service call:
    ```yaml
-   service: extended_openai_conversation.reload_skills
+   service: extended_openai_conversation_responses.reload_skills
    ```
 
    This service returns the number of loaded skills.
@@ -44,7 +44,7 @@ This service:
 After installation, enable skills for your conversation:
 
 1. Go to Settings > Voice Assistants
-2. Edit your Extended OpenAI Conversation assistant
+2. Edit your Extended OpenAI Conversation (Responses) assistant
 3. Click "Options"
 4. Select the skills you want to enable from the list
 
@@ -134,7 +134,7 @@ To enable bash command execution in the workspace, configure the `bash` function
 
 This allows skills to run shell commands, execute scripts, call external programs, and process data using command-line tools.
 
-**Security Note:** Bash execution is restricted to the workspace directory (by default `<config directory>/extended_openai_conversation/`) and has deny patterns for destructive commands.
+**Security Note:** Bash execution is restricted to the workspace directory (by default `<config directory>/extended_openai_conversation_responses/`) and has deny patterns for destructive commands.
 
 ## Managing Skills
 
@@ -143,7 +143,7 @@ This allows skills to run shell commands, execute scripts, call external program
 After manually creating or modifying skills, reload them to apply changes:
 
 ```yaml
-service: extended_openai_conversation.reload_skills
+service: extended_openai_conversation_responses.reload_skills
 ```
 
 This service:
@@ -162,10 +162,10 @@ This service:
 
 ### Skill Directory Structure
 
-Each skill is a directory under `<config>/extended_openai_conversation/skills/` with a `SKILL.md` file:
+Each skill is a directory under `<config>/extended_openai_conversation_responses/skills/` with a `SKILL.md` file:
 
 ```
-<config>/extended_openai_conversation/skills/
+<config>/extended_openai_conversation_responses/skills/
 └── your_skill_name/
     ├── SKILL.md           # Required: skill definition
     ├── scripts/           # Optional: scripts, tools, etc.

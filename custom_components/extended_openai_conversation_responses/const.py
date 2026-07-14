@@ -1,9 +1,9 @@
-"""Constants for the Extended OpenAI Conversation integration."""
+"""Constants for the Extended OpenAI Conversation (Responses) integration."""
 
-DOMAIN = "extended_openai_conversation"
-DEFAULT_NAME = "Extended OpenAI Conversation"
-DEFAULT_CONVERSATION_NAME = "Extended OpenAI Conversation"
-DEFAULT_AI_TASK_NAME = "Extended OpenAI AI Task"
+DOMAIN = "extended_openai_conversation_responses"
+DEFAULT_NAME = "Extended OpenAI Conversation (Responses)"
+DEFAULT_CONVERSATION_NAME = "Extended OpenAI Conversation (Responses)"
+DEFAULT_AI_TASK_NAME = "Extended OpenAI AI Task (Responses)"
 
 CONF_ORGANIZATION = "organization"
 CONF_BASE_URL = "base_url"
@@ -18,8 +18,12 @@ API_PROVIDERS = [
 ]
 DEFAULT_API_PROVIDER = API_PROVIDERS[0]["key"]
 
-EVENT_AUTOMATION_REGISTERED = "automation_registered_via_extended_openai_conversation"
-EVENT_CONVERSATION_FINISHED = "extended_openai_conversation.conversation.finished"
+EVENT_AUTOMATION_REGISTERED = (
+    "automation_registered_via_extended_openai_conversation_responses"
+)
+EVENT_CONVERSATION_FINISHED = (
+    "extended_openai_conversation_responses.conversation.finished"
+)
 
 CONF_PROMPT = "prompt"
 DEFAULT_PROMPT = """You are a helpful AI voice assistant of Home Assistant that controls a real home.
@@ -312,15 +316,13 @@ SERVICE_RELOAD_SKILLS = "reload_skills"
 SERVICE_DOWNLOAD_SKILL = "download_skill"
 
 # GitHub repository for downloadable skills
-GITHUB_REPO_OWNER = "jekalmin"
+GITHUB_REPO_OWNER = "conorod1992"
 GITHUB_REPO_NAME = "extended_openai_conversation"
 GITHUB_SKILLS_BRANCH = "develop"
 GITHUB_SKILLS_PATH = "examples/skills"
 
 # Working Directory
-DEFAULT_WORKING_DIRECTORY = (
-    "extended_openai_conversation/"  # /config/extended_openai_conversation/
-)
+DEFAULT_WORKING_DIRECTORY = "extended_openai_conversation_responses/"  # /config/extended_openai_conversation_responses/
 
 # File system and shell security settings
 SHELL_TIMEOUT = 300  # seconds
@@ -345,5 +347,5 @@ FILE_READ_SIZE_LIMIT = 1024 * 1024  # 1 MB
 
 # Default allowed directories for file operations
 DEFAULT_ALLOWED_DIRS = [
-    DEFAULT_WORKING_DIRECTORY,  # /config/extended_openai_conversation/
+    DEFAULT_WORKING_DIRECTORY,  # /config/extended_openai_conversation_responses/
 ]

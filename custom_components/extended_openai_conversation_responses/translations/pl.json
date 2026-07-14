@@ -1,19 +1,19 @@
 {
     "config": {
         "error": {
-            "cannot_connect": "Não é possível ligar",
-            "invalid_auth": "Autenticação inválida",
-            "unknown": "Erro desconhecido"
+            "cannot_connect": "Nie udało się połączyć",
+            "invalid_auth": "Błąd authentykacji",
+            "unknown": "Nieznany błąd"
         },
         "step": {
             "user": {
                 "data": {
-                    "name": "Nome",
-                    "api_key": "Chave API",
-                    "base_url": "Base Url",
-                    "api_version": "Versão da API",
-                    "organization": "Organização",
-                    "skip_authentication": "Saltar autenticação",
+                    "name": "Imię",
+                    "api_key": "Klucz API",
+                    "base_url": "Bazowy URL",
+                    "api_version": "Wersja API",
+                    "organization": "Organizacja",
+                    "skip_authentication": "Pomiń authentykację",
                     "api_provider": "Api Provider"
                 }
             }
@@ -29,15 +29,15 @@
             "step": {
                 "init": {
                     "data": {
-                        "max_tokens": "Número máximo de tokens da resposta",
-                        "model": "Modelo da Conclusão",
-                        "prompt": "Template do Prompt",
-                        "max_function_calls_per_conversation": "Quantidade máxima de chamadas por conversação",
+                        "max_tokens": "Maksymalna liczba tokenów w odpowiedzi",
+                        "model": "Model",
+                        "prompt": "Prompt",
+                        "max_function_calls_per_conversation": "Maksymalna liczba wywołań funkcji na rozmowę",
                         "skills": "Skills",
-                        "functions": "Funções",
-                        "attach_username": "Anexar nome do usuário na mensagem",
-                        "context_threshold": "Limite do contexto",
-                        "context_truncate_strategy": "Estratégia de limite de contexto quando o limite é excedido",
+                        "functions": "Funkcje",
+                        "attach_username": "Dodaj nazwę użytkownika do wiadomości",
+                        "context_threshold": "Limit kontekstu",
+                        "context_truncate_strategy": "Co zrobić z kontekstem, gdy przekroczony limit",
                         "advanced_options": "Advanced Options"
                     },
                     "data_description": {}
@@ -90,30 +90,30 @@
     },
     "services": {
         "query_image": {
-            "name": "Consultar imagem",
-            "description": "Receber imagens e responda perguntas sobre elas",
+            "name": "Query image",
+            "description": "Take in images and answer questions about them",
             "fields": {
                 "config_entry": {
-                    "name": "Registro de configuração",
-                    "description": "O registo de configuração para utilizar neste serviço"
+                    "name": "Config Entry",
+                    "description": "The config entry to use for this service"
                 },
                 "model": {
-                    "name": "Modelo",
-                    "description": "Especificar modelo",
+                    "name": "Model",
+                    "description": "The model",
                     "example": "gpt-4.1-mini"
                 },
                 "prompt": {
                     "name": "Prompt",
-                    "description": "O texto para fazer a pergunta sobre a imagem",
-                    "example": "O que tem nesta imagem?"
+                    "description": "The text to ask about image",
+                    "example": "What’s in this image?"
                 },
                 "images": {
-                    "name": "Imagens",
-                    "description": "Uma lista de imagens que serão analisadas"
+                    "name": "Images",
+                    "description": "A list of images that would be asked"
                 },
                 "max_tokens": {
                     "name": "Max Tokens",
-                    "description": "Quantidade máxima de tokens",
+                    "description": "The maximum tokens",
                     "example": "300"
                 }
             }
@@ -127,23 +127,23 @@
                     "description": "The config entry to update."
                 },
                 "api_key": {
-                    "name": "Chave API",
+                    "name": "Klucz API",
                     "description": "The API key."
                 },
                 "base_url": {
-                    "name": "Base Url",
+                    "name": "Bazowy URL",
                     "description": "The base URL."
                 },
                 "api_version": {
-                    "name": "Versão da API",
+                    "name": "Wersja API",
                     "description": "The API version."
                 },
                 "organization": {
-                    "name": "Organização",
+                    "name": "Organizacja",
                     "description": "The organization."
                 },
                 "skip_authentication": {
-                    "name": "Saltar autenticação",
+                    "name": "Pomiń authentykację",
                     "description": "Skip authentication."
                 },
                 "api_provider": {
@@ -154,7 +154,7 @@
         },
         "download_skill": {
             "name": "Download skill",
-            "description": "Download a skill from the GitHub repository to your skills directory. Available skills: https://github.com/jekalmin/extended_openai_conversation/tree/develop/examples/skills",
+            "description": "Download a skill from the GitHub repository to your skills directory. Available skills: https://github.com/conorod1992/extended_openai_conversation/tree/develop/examples/skills",
             "fields": {
                 "skill_name": {
                     "name": "Skill name",

@@ -1,4 +1,4 @@
-"""Base entity for Extended OpenAI Conversation."""
+"""Base entity for Extended OpenAI Conversation (Responses)."""
 
 from __future__ import annotations
 

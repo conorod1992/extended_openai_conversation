@@ -1,4 +1,4 @@
-"""Helper functions for Extended OpenAI Conversation component."""
+"""Helper functions for Extended OpenAI Conversation (Responses) component."""
 
 from __future__ import annotations
 

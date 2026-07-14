@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Extended OpenAI Conversation",
+  "name": "Extended OpenAI Conversation (Responses)",
   "colors": {
     "primary": "#10A37F",
     "light": "#10A37F",
@@ -60,7 +60,7 @@
       "anchors": [
         {
           "anchor": "GitHub",
-          "href": "https://github.com/jekalmin/extended_openai_conversation",
+          "href": "https://github.com/conorod1992/extended_openai_conversation",
           "icon": "github"
         },
         {
@@ -79,7 +79,7 @@
     "links": [
       {
         "label": "GitHub",
-        "href": "https://github.com/jekalmin/extended_openai_conversation"
+        "href": "https://github.com/conorod1992/extended_openai_conversation"
       }
     ]
   },
@@ -97,7 +97,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/jekalmin/extended_openai_conversation"
+      "github": "https://github.com/conorod1992/extended_openai_conversation"
     }
   }
 }

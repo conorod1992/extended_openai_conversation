@@ -10,7 +10,7 @@ Create custom skills to add specialized capabilities to your AI assistant. This 
 ### Directory Layout
 
 ```
-<config>/extended_openai_conversation/skills/
+<config>/extended_openai_conversation_responses/skills/
 └── your_skill_name/
     ├── SKILL.md           # Required: skill definition
     ├── scripts/           # Optional: executable scripts
@@ -335,13 +335,13 @@ if __name__ == "__main__":
 
 Test your script:
 ```bash
-cd /config/extended_openai_conversation/skills/your_skill
+cd /config/extended_openai_conversation_responses/skills/your_skill
 python3 scripts/tool.py test_input
 ```
 
 Reload skills:
 ```yaml
-service: extended_openai_conversation.reload_skills
+service: extended_openai_conversation_responses.reload_skills
 ```
 
 ## Common Patterns
@@ -423,7 +423,7 @@ To share your skill with the community:
   </Step>
 
   <Step title="Submit pull request">
-    Submit to `examples/skills/` in the [repository](https://github.com/jekalmin/extended_openai_conversation)
+    Submit to `examples/skills/` in the [repository](https://github.com/conorod1992/extended_openai_conversation)
   </Step>
 </Steps>
 
@@ -434,7 +434,7 @@ Enable debug logging:
 ```yaml
 logger:
   logs:
-    custom_components.extended_openai_conversation: debug
+    custom_components.extended_openai_conversation_responses: debug
 ```
 
 Check logs for:
@@ -448,7 +448,7 @@ Check logs for:
 <Warning>
 **Bash Execution Safety**
 
-- Scripts run in the workspace directory (`<config>/extended_openai_conversation/`)
+- Scripts run in the workspace directory (`<config>/extended_openai_conversation_responses/`)
 - Destructive commands are blocked (rm -rf, etc.)
 - Scripts cannot access system directories
 - Review scripts before enabling bash function
@@ -481,7 +481,7 @@ Check logs for:
   <Card
     title="GitHub Repository"
     icon="github"
-    href="https://github.com/jekalmin/extended_openai_conversation"
+    href="https://github.com/conorod1992/extended_openai_conversation"
   >
     View source code
   </Card>

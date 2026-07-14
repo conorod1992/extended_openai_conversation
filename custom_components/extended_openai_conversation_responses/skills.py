@@ -1,4 +1,4 @@
-"""Skill management for the Extended OpenAI Conversation component."""
+"""Skill management for the Extended OpenAI Conversation (Responses) component."""
 
 from __future__ import annotations
 
@@ -121,7 +121,7 @@ class SkillMdParser:
 
 
 class SkillManager:
-    """Manages skills for the Extended OpenAI Conversation component.
+    """Manages skills for the Extended OpenAI Conversation (Responses) component.
 
     Skills are loaded from the user skills directory.
     Only metadata (name, description) is loaded initially for system prompt.

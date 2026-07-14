@@ -31,7 +31,7 @@ function:
 </ParamField>
 
 <ParamField path="cwd" type="template">
-  Working directory for command execution. Defaults to `config/extended_openai_conversation/`.
+  Working directory for command execution. Defaults to `config/extended_openai_conversation_responses/`.
 </ParamField>
 
 <ParamField path="restrict_to_workspace" type="boolean" default="true">
@@ -380,7 +380,7 @@ If the command times out:
 
 <AccordionGroup>
   <Accordion title="Can bash functions modify system files?">
-    Yes, if `restrict_to_workspace: false`. By default, modifications are limited to the workspace directory (`config/extended_openai_conversation/`).
+    Yes, if `restrict_to_workspace: false`. By default, modifications are limited to the workspace directory (`config/extended_openai_conversation_responses/`).
   </Accordion>
 
   <Accordion title="Are environment variables available?">
@@ -397,7 +397,7 @@ If the command times out:
     ```yaml
     logger:
       logs:
-        custom_components.extended_openai_conversation: debug
+        custom_components.extended_openai_conversation_responses: debug
     ```
 
     This will log all executed commands and their output.

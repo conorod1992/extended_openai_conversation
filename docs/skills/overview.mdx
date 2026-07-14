@@ -17,7 +17,7 @@ Skills extend your AI assistant with:
 
 <Steps>
   <Step title="Skills are loaded">
-    Skills are read from `<config>/extended_openai_conversation/skills/` directory
+    Skills are read from `<config>/extended_openai_conversation_responses/skills/` directory
   </Step>
 
   <Step title="Enable per conversation">
@@ -42,7 +42,7 @@ Skills extend your AI assistant with:
   </Step>
 
   <Step title="Edit your assistant">
-    Click on your Extended OpenAI Conversation assistant
+    Click on your Extended OpenAI Conversation (Responses) assistant
   </Step>
 
   <Step title="Open Options">
@@ -145,7 +145,7 @@ Add this function to enable skills to execute commands:
 ```
 
 <Warning>
-**Security Note**: Bash execution is restricted to the workspace directory (`<config>/extended_openai_conversation/`) and has deny patterns for destructive commands.
+**Security Note**: Bash execution is restricted to the workspace directory (`<config>/extended_openai_conversation_responses/`) and has deny patterns for destructive commands.
 </Warning>
 
 
@@ -154,7 +154,7 @@ Add this function to enable skills to execute commands:
 Each skill is a directory with a `SKILL.md` file:
 
 ```
-<config>/extended_openai_conversation/skills/
+<config>/extended_openai_conversation_responses/skills/
 └── your_skill_name/
     ├── SKILL.md           # Required: skill definition
     ├── scripts/           # Optional: executable scripts

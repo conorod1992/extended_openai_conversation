@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 # Import Tools and test helpers
-from custom_components.extended_openai_conversation.functions import ScrapeFunction
+from custom_components.extended_openai_conversation_responses.functions import (
+    ScrapeFunction,
+)
 from tests.helpers import prepare_function_tool_from_yaml
 
 
@@ -27,10 +29,10 @@ class TestScrapeFunctionYaml:
 
         with (
             patch(
-                "custom_components.extended_openai_conversation.functions.web.rest.create_rest_data_from_config"
+                "custom_components.extended_openai_conversation_responses.functions.web.rest.create_rest_data_from_config"
             ) as mock_rest,
             patch(
-                "custom_components.extended_openai_conversation.functions.web.scrape.coordinator.ScrapeCoordinator"
+                "custom_components.extended_openai_conversation_responses.functions.web.scrape.coordinator.ScrapeCoordinator"
             ) as mock_coordinator_class,
         ):
             from bs4 import BeautifulSoup
