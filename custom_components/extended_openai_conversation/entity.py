@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+import base64
+from collections.abc import AsyncGenerator, Iterable
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+import mimetypes
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 from openai import AsyncClient, AsyncStream
 from openai.types.chat import (
@@ -16,15 +19,18 @@ from openai.types.chat import (
 )
 import orjson
 import voluptuous as vol
-from voluptuous_openapi import convert
+from voluptuous_openapi import convert  # type: ignore[import-untyped]
 
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigSubentry
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, llm
 from homeassistant.helpers.entity import Entity
 from homeassistant.util import slugify
 
 from .const import (
+    API_MODE_RESPONSES,
+    CONF_API_MODE,
     CONF_CHAT_MODEL,
     CONF_CONTEXT_THRESHOLD,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
@@ -35,6 +41,7 @@ from .const import (
     CONF_SHORTEN_TOOL_CALL_ID,
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    DEFAULT_API_MODE,
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONTEXT_THRESHOLD,
     DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
@@ -49,7 +56,7 @@ from .const import (
 )
 from .exceptions import FunctionNotFound, ParseArgumentsFailed, TokenLengthExceededError
 from .functions import get_function
-from .helpers import get_model_config
+from .helpers import get_api_mode, get_model_config
 
 if TYPE_CHECKING:
     from . import ExtendedOpenAIConfigEntry
@@ -157,6 +164,90 @@ def _convert_content_to_param(
     return messages
 
 
+def _serialize_response_item(item: Any) -> dict[str, Any]:
+    """Serialize an SDK Responses item for use as a subsequent input item."""
+    if hasattr(item, "model_dump"):
+        serialized = cast(dict[str, Any], item.model_dump(exclude_none=True))
+    elif hasattr(item, "to_dict"):
+        serialized = cast(dict[str, Any], item.to_dict())
+    elif isinstance(item, dict):
+        serialized = dict(item)
+    else:
+        raise TypeError(f"Unsupported Responses item type: {type(item)!r}")
+
+    if serialized.get("type") == "reasoning":
+        return {
+            key: value
+            for key in ("type", "id", "summary", "encrypted_content")
+            if (value := serialized.get(key)) is not None
+        }
+    return serialized
+
+
+def _convert_content_to_responses_param(
+    chat_content: Iterable[conversation.Content],
+) -> list[dict[str, Any]]:
+    """Convert Home Assistant chat content to Responses API input items."""
+    items: list[dict[str, Any]] = []
+
+    for content in chat_content:
+        if isinstance(content, conversation.ToolResultContent):
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": content.tool_call_id,
+                    "output": orjson.dumps(content.tool_result).decode(),
+                }
+            )
+            continue
+
+        if content.content:
+            items.append(
+                {
+                    "type": "message",
+                    "role": content.role,
+                    "content": content.content,
+                }
+            )
+
+        if isinstance(content, conversation.AssistantContent):
+            native = content.native
+            if native is not None and getattr(native, "type", None) == "reasoning":
+                items.append(_serialize_response_item(native))
+
+            for tool_call in content.tool_calls or []:
+                items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": tool_call.id,
+                        "name": tool_call.tool_name,
+                        "arguments": json.dumps(tool_call.tool_args),
+                    }
+                )
+
+    return items
+
+
+def _format_tools(
+    function_tools: list[dict[str, Any]], api_mode: str
+) -> list[dict[str, Any]]:
+    """Format function definitions for the selected OpenAI API."""
+    if api_mode == API_MODE_RESPONSES:
+        return [
+            {"type": "function", **func_spec["spec"]} for func_spec in function_tools
+        ]
+
+    return [
+        dict(
+            ChatCompletionToolParam(
+                type="function",
+                function=func_spec["spec"],
+            )
+        )
+        for func_spec in function_tools
+    ]
+
+
 class ExtendedOpenAIBaseLLMEntity(Entity):
     """Extended OpenAI base entity."""
 
@@ -195,6 +286,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         """Generate an answer for the chat log with streaming support."""
         options = self.subentry.data
         model = options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+        api_mode = get_api_mode(
+            options.get(CONF_API_MODE, DEFAULT_API_MODE),
+            model,
+        )
         max_function_calls = options.get(
             CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
             DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
@@ -204,93 +299,120 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             DEFAULT_SHORTEN_TOOL_CALL_ID,
         )
 
-        # Get model-specific configuration
         model_config = get_model_config(model)
+        messages: Any
+        if api_mode == API_MODE_RESPONSES:
+            messages = _convert_content_to_responses_param(chat_log.content)
+        else:
+            messages = _convert_content_to_param(chat_log.content, shorten_tool_call_id)
 
-        messages = _convert_content_to_param(chat_log.content, shorten_tool_call_id)
+        await self._async_add_attachments(chat_log, messages, api_mode)
 
-        # Build functions list from custom functions
-        tools: list[ChatCompletionToolParam] = [
-            ChatCompletionToolParam(
-                type="function",
-                function=func_spec["spec"],
-            )
-            for func_spec in function_tools
-        ]
-
-        # Build API parameters based on model configuration
+        tools = _format_tools(function_tools, api_mode)
         api_kwargs: dict[str, Any] = {
             "model": model,
             "stream": True,
-            "stream_options": {"include_usage": True},
         }
 
-        # Add token limit parameter based on model support
         max_tokens = options.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
-        if model_config["supports_max_completion_tokens"]:
-            api_kwargs["max_completion_tokens"] = max_tokens
-        elif model_config["supports_max_tokens"]:
-            api_kwargs["max_tokens"] = max_tokens
+        if api_mode == API_MODE_RESPONSES:
+            api_kwargs["max_output_tokens"] = max_tokens
+            # Responses are kept stateless, matching the integration's existing
+            # ChatLog-owned conversation history. Encrypted reasoning items let
+            # reasoning models continue across chained tool calls.
+            api_kwargs["store"] = False
+        else:
+            api_kwargs["stream_options"] = {"include_usage": True}
+            if model_config["supports_max_completion_tokens"]:
+                api_kwargs["max_completion_tokens"] = max_tokens
+            elif model_config["supports_max_tokens"]:
+                api_kwargs["max_tokens"] = max_tokens
 
-        # Add top_p if supported
         if model_config["supports_top_p"]:
             api_kwargs["top_p"] = options.get(CONF_TOP_P, DEFAULT_TOP_P)
 
-        # Add temperature if supported
         if model_config["supports_temperature"]:
             api_kwargs["temperature"] = options.get(
                 CONF_TEMPERATURE, DEFAULT_TEMPERATURE
             )
 
-        # Add reasoning_effort if supported (o1, o3, o4, gpt-5 models)
         if model_config.get("supports_reasoning_effort"):
-            api_kwargs["reasoning_effort"] = options.get(
+            reasoning_effort = options.get(
                 CONF_REASONING_EFFORT, DEFAULT_REASONING_EFFORT
             )
+            if api_mode == API_MODE_RESPONSES:
+                api_kwargs["reasoning"] = {"effort": reasoning_effort}
+                api_kwargs["include"] = ["reasoning.encrypted_content"]
+            else:
+                api_kwargs["reasoning_effort"] = reasoning_effort
 
-        # Add service_tier if supported (o3, o4, gpt-5 models)
         if model_config.get("supports_service_tier"):
             api_kwargs["service_tier"] = options.get(
                 CONF_SERVICE_TIER, DEFAULT_SERVICE_TIER
             )
 
-        # Add structured output format if provided
         if structure is not None:
-            api_kwargs["response_format"] = {
+            output_format = {
                 "type": "json_schema",
-                "json_schema": {
-                    "name": slugify(structure_name),
-                    "strict": True,
-                    "schema": _format_structured_output(structure, chat_log.llm_api),
-                },
+                "name": slugify(structure_name),
+                "strict": True,
+                "schema": _format_structured_output(structure, chat_log.llm_api),
             }
+            if api_mode == API_MODE_RESPONSES:
+                api_kwargs["text"] = {"format": output_format}
+            else:
+                api_kwargs["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": slugify(structure_name),
+                        "strict": True,
+                        "schema": _format_structured_output(
+                            structure, chat_log.llm_api
+                        ),
+                    },
+                }
 
-        # Add tools if available
         tool_kwargs: dict[str, Any] = {}
         if tools:
             tool_kwargs["tools"] = tools
             tool_kwargs["tool_choice"] = "auto"
 
-        # To prevent infinite loops, we limit the number of iterations
         for n_requests in range(MAX_TOOL_ITERATIONS):
-            # Update tool_choice based on function call count
-            # -1 means unlimited function calls
             if tools and 0 <= max_function_calls <= n_requests:
                 tool_kwargs["tool_choice"] = "none"
 
-            _LOGGER.info("Prompt for %s: %s", model, json.dumps(messages))
-
-            stream = await self._client.chat.completions.create(
-                messages=messages,
-                **api_kwargs,
-                **tool_kwargs,
+            _LOGGER.info(
+                "Prompt for %s using %s: %s", model, api_mode, json.dumps(messages)
             )
 
-            # Process stream and collect tool calls
+            if api_mode == API_MODE_RESPONSES:
+                responses_stream = cast(
+                    AsyncStream[Any],
+                    await self._client.responses.create(
+                        input=messages,
+                        **api_kwargs,
+                        **tool_kwargs,
+                    ),
+                )
+                transformed_stream = self._transform_responses_stream(
+                    chat_log, responses_stream
+                )
+            else:
+                chat_stream = cast(
+                    AsyncStream[ChatCompletionChunk],
+                    await self._client.chat.completions.create(
+                        messages=messages,
+                        **api_kwargs,
+                        **tool_kwargs,
+                    ),
+                )
+                transformed_stream = self._transform_chat_stream(chat_log, chat_stream)
+
+            existing_content_ids = {id(content) for content in chat_log.content}
             pending_tool_calls: list[llm.ToolInput] = []
 
             async for content in chat_log.async_add_delta_content_stream(
-                self.entity_id, self._transform_stream(chat_log, stream)
+                self.entity_id, transformed_stream
             ):
                 if (
                     isinstance(content, conversation.AssistantContent)
@@ -301,7 +423,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             if pending_tool_calls:
                 _LOGGER.info("Response Tool Calls %s", pending_tool_calls)
 
-            # Execute custom functions
             for tool_input in pending_tool_calls:
                 function_tool = next(
                     (
@@ -324,14 +445,97 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
                 chat_log.async_add_assistant_content_without_tools(tool_result_content)
 
-            # Update messages for next iteration
-            messages = _convert_content_to_param(chat_log.content, shorten_tool_call_id)
+            if api_mode == API_MODE_RESPONSES:
+                messages.extend(
+                    _convert_content_to_responses_param(
+                        content
+                        for content in chat_log.content
+                        if id(content) not in existing_content_ids
+                    )
+                )
+            else:
+                messages = _convert_content_to_param(
+                    chat_log.content, shorten_tool_call_id
+                )
 
-            # Check if we need to continue (if there are pending tool results)
             if not chat_log.unresponded_tool_results:
                 break
 
-    async def _transform_stream(
+    async def _async_add_attachments(
+        self,
+        chat_log: conversation.ChatLog,
+        messages: list[Any],
+        api_mode: str,
+    ) -> None:
+        """Attach images and PDFs from the latest user content to the request."""
+        last_content = chat_log.content[-1]
+        if not isinstance(last_content, conversation.UserContent) or not getattr(
+            last_content, "attachments", None
+        ):
+            return
+
+        def prepare_attachments() -> list[dict[str, Any]]:
+            prepared: list[dict[str, Any]] = []
+            for attachment in last_content.attachments or []:
+                path = Path(attachment.path)
+                if not path.exists():
+                    raise HomeAssistantError(f"`{path}` does not exist")
+
+                mime_type = attachment.mime_type or mimetypes.guess_type(path)[0]
+                if not mime_type:
+                    raise HomeAssistantError(
+                        f"Unable to determine attachment type for `{path}`"
+                    )
+
+                encoded = base64.b64encode(path.read_bytes()).decode()
+                data_url = f"data:{mime_type};base64,{encoded}"
+                if mime_type.startswith("image/"):
+                    if api_mode == API_MODE_RESPONSES:
+                        prepared.append(
+                            {
+                                "type": "input_image",
+                                "image_url": data_url,
+                                "detail": "auto",
+                            }
+                        )
+                    else:
+                        prepared.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": data_url},
+                            }
+                        )
+                elif mime_type == "application/pdf" and api_mode == API_MODE_RESPONSES:
+                    prepared.append(
+                        {
+                            "type": "input_file",
+                            "filename": path.name,
+                            "file_data": data_url,
+                        }
+                    )
+                else:
+                    raise HomeAssistantError(
+                        "Chat Completions supports image attachments; Responses "
+                        "supports image and PDF attachments. "
+                        f"Unsupported attachment `{path}` ({mime_type})."
+                    )
+            return prepared
+
+        attachments = await self.hass.async_add_executor_job(prepare_attachments)
+        last_message = messages[-1]
+        text_content = last_message["content"]
+        if api_mode == API_MODE_RESPONSES:
+            last_message["content"] = [
+                {"type": "input_text", "text": text_content},
+                *attachments,
+            ]
+        else:
+            last_message["content"] = [
+                {"type": "text", "text": text_content},
+                *attachments,
+            ]
+
+    async def _transform_chat_stream(
         self,
         chat_log: conversation.ChatLog,
         result: AsyncStream[ChatCompletionChunk],
@@ -430,6 +634,94 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             if choice.finish_reason == "stop":
                 break
+
+    async def _transform_responses_stream(
+        self,
+        chat_log: conversation.ChatLog,
+        result: AsyncStream[Any],
+    ) -> AsyncGenerator[
+        conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
+    ]:
+        """Transform a Responses API event stream to Home Assistant format."""
+        async for event in result:
+            _LOGGER.debug("Received Responses event: %s", event)
+            event_type = getattr(event, "type", "")
+
+            if event_type == "response.output_item.added":
+                item_type = getattr(event.item, "type", "")
+                if item_type in {"message", "function_call"}:
+                    yield {"role": "assistant"}
+                continue
+
+            if event_type == "response.output_text.delta":
+                if event.delta:
+                    yield {"content": event.delta}
+                continue
+
+            if event_type == "response.output_item.done":
+                item = event.item
+                item_type = getattr(item, "type", "")
+                if item_type == "reasoning":
+                    # Preserve encrypted reasoning so stateless chained tool calls
+                    # can continue without losing the model's reasoning context.
+                    yield {"native": item}
+                elif item_type == "function_call":
+                    try:
+                        arguments = json.loads(item.arguments)
+                    except json.JSONDecodeError as err:
+                        raise ParseArgumentsFailed(item.arguments) from err
+                    yield {
+                        "tool_calls": [
+                            llm.ToolInput(
+                                id=item.call_id,
+                                tool_name=item.name,
+                                tool_args=arguments,
+                                external=True,
+                            )
+                        ]
+                    }
+                continue
+
+            if event_type in {"response.completed", "response.incomplete"}:
+                response = event.response
+                if response.usage is not None:
+                    input_tokens = response.usage.input_tokens
+                    output_tokens = response.usage.output_tokens
+                    chat_log.async_trace(
+                        {
+                            "stats": {
+                                "input_tokens": input_tokens,
+                                "output_tokens": output_tokens,
+                            }
+                        }
+                    )
+                    if input_tokens + output_tokens > self.subentry.data.get(
+                        CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD
+                    ):
+                        await self._truncate_message_history(chat_log)
+
+                if event_type == "response.incomplete":
+                    details = response.incomplete_details
+                    reason = (
+                        details.reason
+                        if details and details.reason
+                        else "unknown reason"
+                    )
+                    if reason == "max_output_tokens":
+                        raise TokenLengthExceededError(
+                            self.subentry.data.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
+                        )
+                    raise HomeAssistantError(f"OpenAI response incomplete: {reason}")
+                continue
+
+            if event_type == "response.failed":
+                error = getattr(event.response, "error", None)
+                reason = getattr(error, "message", None) or "unknown reason"
+                raise HomeAssistantError(f"OpenAI response failed: {reason}")
+
+            if event_type in {"error", "response.error"}:
+                reason = getattr(event, "message", None) or "unknown reason"
+                raise HomeAssistantError(f"OpenAI response error: {reason}")
 
     async def _execute_function_tool(
         self,

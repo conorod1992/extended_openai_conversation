@@ -33,8 +33,10 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    API_MODE_OPTIONS,
     API_PROVIDERS,
     CONF_ADVANCED_OPTIONS,
+    CONF_API_MODE,
     CONF_API_PROVIDER,
     CONF_API_VERSION,
     CONF_BASE_URL,
@@ -57,6 +59,7 @@ from .const import (
     DEFAULT_ADVANCED_OPTIONS,
     DEFAULT_AI_TASK_NAME,
     DEFAULT_AI_TASK_OPTIONS,
+    DEFAULT_API_MODE,
     DEFAULT_API_PROVIDER,
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONF_BASE_URL,
@@ -115,6 +118,7 @@ DEFAULT_OPTIONS = types.MappingProxyType(
     {
         CONF_PROMPT: DEFAULT_PROMPT,
         CONF_CHAT_MODEL: DEFAULT_CHAT_MODEL,
+        CONF_API_MODE: DEFAULT_API_MODE,
         CONF_MAX_TOKENS: DEFAULT_MAX_TOKENS,
         CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
         CONF_TOP_P: DEFAULT_TOP_P,
@@ -421,6 +425,18 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
                 default=DEFAULT_CHAT_MODEL,
             ): str,
             vol.Optional(
+                CONF_API_MODE,
+                default=DEFAULT_API_MODE,
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(value=mode["key"], label=mode["label"])
+                        for mode in API_MODE_OPTIONS
+                    ],
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
                 CONF_MAX_TOKENS,
                 default=DEFAULT_MAX_TOKENS,
             ): int,
@@ -544,6 +560,18 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     CONF_CHAT_MODEL,
                     default=DEFAULT_CHAT_MODEL,
                 ): str,
+                vol.Optional(
+                    CONF_API_MODE,
+                    default=DEFAULT_API_MODE,
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(value=mode["key"], label=mode["label"])
+                            for mode in API_MODE_OPTIONS
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
                 vol.Optional(
                     CONF_MAX_TOKENS,
                     default=DEFAULT_MAX_TOKENS,

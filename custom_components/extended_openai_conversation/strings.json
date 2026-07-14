@@ -31,6 +31,7 @@
           "data": {
             "max_tokens": "Maximum tokens to return in response",
             "model": "Completion Model",
+            "api_mode": "API mode",
             "prompt": "Prompt Template",
             "max_function_calls_per_conversation": "Maximum function calls per conversation",
             "skills": "Skills",
@@ -68,6 +69,7 @@
           "data": {
             "name": "[%key:common::config_flow::data::name%]",
             "chat_model": "Model",
+            "api_mode": "API mode",
             "max_tokens": "Maximum tokens to return in response",
             "advanced_options": "Advanced options"
           }
@@ -101,6 +103,10 @@
           "name": "Model",
           "description": "The model",
           "example": "gpt-4.1-mini"
+        },
+        "api_mode": {
+          "name": "API mode",
+          "description": "Select Auto, Chat Completions, or Responses"
         },
         "prompt": {
           "name": "Prompt",

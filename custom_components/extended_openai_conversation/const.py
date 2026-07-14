@@ -80,6 +80,18 @@ When a skill file references a relative path, resolve it against the skill's loc
 CONF_CHAT_MODEL = "chat_model"
 DEFAULT_CHAT_MODEL = "gpt-5-mini"
 
+# OpenAI API mode
+CONF_API_MODE = "api_mode"
+API_MODE_AUTO = "auto"
+API_MODE_CHAT_COMPLETIONS = "chat_completions"
+API_MODE_RESPONSES = "responses"
+DEFAULT_API_MODE = API_MODE_AUTO
+API_MODE_OPTIONS = [
+    {"key": API_MODE_AUTO, "label": "Auto"},
+    {"key": API_MODE_CHAT_COMPLETIONS, "label": "Chat Completions"},
+    {"key": API_MODE_RESPONSES, "label": "Responses"},
+]
+
 MODEL_TOKEN_PARAMETER_SUPPORT = (
     {
         "pattern": r"(^|-)(gpt-4o|gpt-5|o1|o3|o4)",
@@ -285,6 +297,7 @@ MODEL_CONFIG_PATTERNS = [
 # AI Task default options (simpler than conversation - no prompt, just model/token settings)
 DEFAULT_AI_TASK_OPTIONS = {
     CONF_CHAT_MODEL: DEFAULT_CHAT_MODEL,
+    CONF_API_MODE: DEFAULT_API_MODE,
     CONF_MAX_TOKENS: DEFAULT_MAX_TOKENS,
     CONF_ADVANCED_OPTIONS: DEFAULT_ADVANCED_OPTIONS,
 }
