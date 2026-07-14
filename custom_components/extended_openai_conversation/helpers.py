@@ -17,6 +17,9 @@ from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.template import Template
 
 from .const import (
+    API_MODE_AUTO,
+    API_MODE_CHAT_COMPLETIONS,
+    API_MODE_RESPONSES,
     DEFAULT_MODEL_CONFIG,
     DEFAULT_TOKEN_PARAM,
     MODEL_CONFIG_PATTERNS,
@@ -27,6 +30,24 @@ _LOGGER = logging.getLogger(__name__)
 
 
 AZURE_DOMAIN_PATTERN = r"\.(openai\.azure\.com|azure-api\.net|services\.ai\.azure\.com)"
+
+
+def get_api_mode(configured_mode: str, model: str) -> str:
+    """Resolve the configured API mode for a model.
+
+    Auto deliberately has a conservative boundary so existing models and
+    OpenAI-compatible providers keep using Chat Completions. GPT-5.6 and later
+    GPT-5 minor versions use Responses, where reasoning and function tools can
+    be used together.
+    """
+    if configured_mode != API_MODE_AUTO:
+        return configured_mode
+
+    match = re.match(r"^gpt-5\.(\d+)(?:[-.]|$)", model, re.IGNORECASE)
+    if match and int(match.group(1)) >= 6:
+        return API_MODE_RESPONSES
+
+    return API_MODE_CHAT_COMPLETIONS
 
 
 def get_model_config(model: str) -> dict[str, bool]:

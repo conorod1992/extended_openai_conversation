@@ -6,6 +6,7 @@ Derived from [OpenAI Conversation](https://www.home-assistant.io/integrations/op
 📚 **[Documentation](https://extended-openai-conversation.mintlify.app)**
 
 ## Additional Features
+- Chat Completions and Responses API support with automatic model routing
 - Ability to call service of Home Assistant
 - Ability to create automation
 - Ability to get data from external API or web page
@@ -13,7 +14,7 @@ Derived from [OpenAI Conversation](https://www.home-assistant.io/integrations/op
 - Option to pass the current user's name to OpenAI via the user message context
 
 ## How it works
-Extended OpenAI Conversation uses OpenAI API's feature of [function calling](https://platform.openai.com/docs/guides/function-calling) to call service of Home Assistant.
+Extended OpenAI Conversation uses OpenAI API [function calling](https://developers.openai.com/api/docs/guides/function-calling) to call Home Assistant services. It supports both `/v1/chat/completions` and `/v1/responses` while keeping the same Home Assistant function execution and conversation history.
 
 Since OpenAI models already know how to call service of Home Assistant in general, you just have to let model know what devices you have by [exposing entities](https://github.com/jekalmin/extended_openai_conversation#preparation)
 
@@ -59,6 +60,13 @@ https://github.com/jekalmin/extended_openai_conversation/assets/2917984/64ba656e
 By clicking a button from Edit Assist, Options can be customized.<br/>
 Options include [OpenAI Conversation](https://www.home-assistant.io/integrations/openai_conversation/) options and two new options. 
 
+- `API mode`: Select the OpenAI endpoint.
+  - `Auto` (default): Uses Responses for GPT-5.6 and later GPT-5 models. Older models, including GPT-5.4 Mini, continue using Chat Completions.
+  - `Chat Completions`: Always uses `/v1/chat/completions`.
+  - `Responses`: Always uses `/v1/responses`.
+
+  Responses mode supports streaming, Home Assistant functions, sequential function calls, conversation memory, image and PDF inputs, structured outputs, token limits, service tier, and `reasoning_effort`. Custom OpenAI-compatible providers must implement `/v1/responses` before you select Responses mode.
+
 - `Attach Username`: Pass the active user's name (if applicable) to OpenAI via the message payload. Currently, this only applies to conversations through the UI or REST API.
 
 - `Maximum Function Calls Per Conversation`: limit the number of function calls in a single conversation.
@@ -66,6 +74,12 @@ Options include [OpenAI Conversation](https://www.home-assistant.io/integrations
 - `Functions`: A list of mappings of function spec to function.
   - `spec`: Function which would be passed to [functions](https://platform.openai.com/docs/api-reference/chat/create#chat-create-functions) of [chat API](https://platform.openai.com/docs/api-reference/chat/create).
   - `function`: function that will be called.
+
+### Upgrading existing agents
+
+No manual migration is required. Existing agents default to `Auto`. Auto keeps models older than GPT-5.6 on Chat Completions, so existing behavior is unchanged for those models. GPT-5.6 and later GPT-5 models automatically use Responses, which permits function tools together with reasoning. You can force either endpoint at any time with `API mode`.
+
+The `extended_openai_conversation.query_image` service also accepts `api_mode`. Its default is `auto`.
 
 
 | Edit Assist                                                                                                                                  | Options                                                                                                                                                                       |

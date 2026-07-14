@@ -9,6 +9,17 @@ query_image:
       example: gpt-4.1-mini
       selector:
         text:
+    api_mode:
+      default: auto
+      selector:
+        select:
+          options:
+            - label: Auto
+              value: auto
+            - label: Chat Completions
+              value: chat_completions
+            - label: Responses
+              value: responses
     prompt:
       example: "What’s in this image?"
       required: true

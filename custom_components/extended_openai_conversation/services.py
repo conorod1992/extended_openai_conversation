@@ -22,11 +22,15 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
+    API_MODE_OPTIONS,
+    API_MODE_RESPONSES,
+    CONF_API_MODE,
     CONF_API_PROVIDER,
     CONF_API_VERSION,
     CONF_BASE_URL,
     CONF_ORGANIZATION,
     CONF_SKIP_AUTHENTICATION,
+    DEFAULT_API_MODE,
     DEFAULT_CONF_BASE_URL,
     DOMAIN,
     GITHUB_REPO_NAME,
@@ -37,7 +41,7 @@ from .const import (
     SERVICE_QUERY_IMAGE,
     SERVICE_RELOAD_SKILLS,
 )
-from .helpers import get_authenticated_client, get_token_param_for_model
+from .helpers import get_api_mode, get_authenticated_client, get_token_param_for_model
 
 QUERY_IMAGE_SCHEMA = vol.Schema(
     {
@@ -47,6 +51,9 @@ QUERY_IMAGE_SCHEMA = vol.Schema(
             }
         ),
         vol.Required("model", default="gpt-4.1-mini"): cv.string,
+        vol.Optional(CONF_API_MODE, default=DEFAULT_API_MODE): vol.In(
+            [mode["key"] for mode in API_MODE_OPTIONS]
+        ),
         vol.Required("prompt"): cv.string,
         vol.Required("images"): vol.All(cv.ensure_list, [{"url": cv.string}]),
         vol.Optional("max_tokens", default=300): cv.positive_int,
@@ -87,18 +94,10 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         """Query an image."""
         try:
             model = call.data["model"]
-            images = [
-                {"type": "image_url", "image_url": to_image_param(hass, image)}
-                for image in call.data["images"]
+            api_mode = get_api_mode(call.data[CONF_API_MODE], model)
+            image_params = [
+                to_image_param(hass, image) for image in call.data["images"]
             ]
-
-            messages = [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": call.data["prompt"]}, *images],
-                }
-            ]
-            _LOGGER.info("Prompt for %s: %s", model, messages)
 
             entry = hass.config_entries.async_get_entry(call.data["config_entry"])
             if entry is None:
@@ -106,14 +105,51 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
             client = entry.runtime_data
 
-            token_param = get_token_param_for_model(model)
-            token_kwargs = {token_param: call.data["max_tokens"]}
-
-            response = await client.chat.completions.create(
-                model=model,
-                messages=messages,
-                **token_kwargs,
-            )
+            if api_mode == API_MODE_RESPONSES:
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": call.data["prompt"]},
+                            *[
+                                {
+                                    "type": "input_image",
+                                    "image_url": image["url"],
+                                    "detail": "auto",
+                                }
+                                for image in image_params
+                            ],
+                        ],
+                    }
+                ]
+                _LOGGER.info("Prompt for %s using %s: %s", model, api_mode, messages)
+                response = await client.responses.create(
+                    model=model,
+                    input=messages,
+                    max_output_tokens=call.data["max_tokens"],
+                    store=False,
+                )
+            else:
+                images = [
+                    {"type": "image_url", "image_url": image} for image in image_params
+                ]
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": call.data["prompt"]},
+                            *images,
+                        ],
+                    }
+                ]
+                _LOGGER.info("Prompt for %s using %s: %s", model, api_mode, messages)
+                token_param = get_token_param_for_model(model)
+                token_kwargs = {token_param: call.data["max_tokens"]}
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    **token_kwargs,
+                )
             response_dict: dict = response.model_dump()
             _LOGGER.info("Response %s", response_dict)
         except OpenAIError as err:

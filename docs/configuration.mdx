@@ -87,6 +87,22 @@ Configure Extended OpenAI Conversation through the Options menu in your Voice As
     - Custom models from compatible providers
   </Accordion>
 
+  <Accordion title="API mode">
+    **Type**: Select
+
+    **Default**: `Auto`
+
+    Choose the OpenAI endpoint used for this agent:
+
+    - `Auto`: Use the Responses API for GPT-5.6 and later GPT-5 models. Use Chat Completions for older models.
+    - `Chat Completions`: Always use `/v1/chat/completions`.
+    - `Responses`: Always use `/v1/responses`.
+
+    <Note>
+    Use `Responses` when a custom model or compatible provider supports the Responses API but its model name does not match the automatic GPT-5.6 detection. Use `Chat Completions` if a compatible provider does not implement `/v1/responses`.
+    </Note>
+  </Accordion>
+
   <Accordion title="Max Tokens">
     **Type**: Integer
 
@@ -95,7 +111,7 @@ Configure Extended OpenAI Conversation through the Options menu in your Voice As
     Maximum number of tokens in the AI response. Controls response length and API costs.
 
     <Note>
-    For o1/o3/o4/gpt-5 models, this becomes `max_completion_tokens`.
+    Chat Completions uses `max_tokens` or `max_completion_tokens`, depending on the model. Responses uses `max_output_tokens`.
     </Note>
   </Accordion>
 
@@ -161,6 +177,32 @@ Configure Extended OpenAI Conversation through the Options menu in your Voice As
     - `clear`: Remove all previous messages and start fresh
   </Accordion>
 </AccordionGroup>
+
+## API compatibility
+
+Both API modes use the same Home Assistant conversation and function execution layer. Changing the API mode does not change function definitions, function results, conversation IDs, or Home Assistant service behavior.
+
+Responses mode maps:
+
+- System, user, and assistant history to Responses input messages
+- Home Assistant function calls to `function_call` items
+- Function results to `function_call_output` items
+- Structured outputs to `text.format`
+- Reasoning effort to `reasoning.effort`
+- Maximum tokens to `max_output_tokens`
+- Image attachments to `input_image` and PDF attachments to `input_file`
+
+Streaming remains enabled in both modes. Responses mode also carries encrypted reasoning items between tool rounds. This allows reasoning models to make one or more sequential Home Assistant function calls without losing reasoning context.
+
+## Migration notes
+
+No configuration migration is required. Existing agents without an API mode setting behave as `Auto`.
+
+- Models older than GPT-5.6 continue using Chat Completions in Auto mode.
+- GPT-5.4 Mini continues using Chat Completions in Auto mode.
+- GPT-5.6 and later GPT-5 models use Responses in Auto mode.
+- Select Chat Completions to preserve the old endpoint for any model.
+- Select Responses to opt a supported custom model or provider into the new endpoint.
 
 <Info>
 **Working Directory**: All file operations and bash commands use `/config/extended_openai_conversation/` as the default working directory. See [File Functions](/functions/read_file) and [Bash Functions](/functions/bash) for details.
