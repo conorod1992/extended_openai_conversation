@@ -2,7 +2,9 @@
 
 import pytest
 
-from custom_components.extended_openai_conversation.functions import ReadFileFunction
+from custom_components.extended_openai_conversation_responses.functions import (
+    ReadFileFunction,
+)
 from tests.helpers import prepare_function_tool_from_yaml
 
 
@@ -18,7 +20,7 @@ class TestReadFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test reading a file successfully from yaml definition."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         test_file = workdir / "test.txt"
         test_content = "Hello, World!\nThis is a test file."
         test_file.write_text(test_content)
@@ -41,7 +43,7 @@ class TestReadFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test reading file with absolute path from yaml."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         test_file = workdir / "absolute_test.txt"
         test_content = "Absolute path test"
         test_file.write_text(test_content)
@@ -78,7 +80,7 @@ class TestReadFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test reading a directory instead of file."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         test_dir = workdir / "testdir"
         test_dir.mkdir()
 
@@ -98,7 +100,7 @@ class TestReadFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test reading a file that exceeds size limit."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         workdir.mkdir(parents=True, exist_ok=True)
         test_file = workdir / "large.txt"
 
@@ -203,7 +205,7 @@ class TestReadFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test reading file with templated path."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         test_file = workdir / "templated.txt"
         test_content = "Hello, World!\nThis is a test file."
         test_file.write_text(test_content)
@@ -224,7 +226,7 @@ class TestReadFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test reading file with unicode content from yaml."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "extended_openai_conversation_responses"
         test_file = workdir / "unicode.txt"
         test_content = "Hello 世界 🌍 مرحبا"
         test_file.write_text(test_content, encoding="utf-8")

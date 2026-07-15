@@ -32,9 +32,9 @@ class ScriptFunction(Function):
         script = Script(
             hass,
             function_config["sequence"],
-            "extended_openai_conversation",
             DOMAIN,
-            running_description="[extended_openai_conversation] function",
+            DOMAIN,
+            running_description=f"[{DOMAIN}] function",
             logger=_LOGGER,
         )
 

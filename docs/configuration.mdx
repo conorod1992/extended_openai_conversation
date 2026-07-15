@@ -1,9 +1,9 @@
 ---
 title: "Configuration"
-description: "Configure Extended OpenAI Conversation options and customize behavior"
+description: "Configure Extended OpenAI Conversation (Responses) options and customize behavior"
 ---
 
-Configure Extended OpenAI Conversation through the Options menu in your Voice Assistant settings.
+Configure Extended OpenAI Conversation (Responses) through the Options menu in your Voice Assistant settings.
 
 ## Access Configuration
 
@@ -12,7 +12,7 @@ Configure Extended OpenAI Conversation through the Options menu in your Voice As
     Go to **Settings** > **Voice Assistants**
   </Step>
   <Step title="Edit Assistant">
-    Click on your Extended OpenAI Conversation assistant
+    Click on your Extended OpenAI Conversation (Responses) assistant
   </Step>
   <Step title="Open Options">
     Click the **Options** button to access configuration
@@ -135,7 +135,7 @@ Configure Extended OpenAI Conversation through the Options menu in your Voice As
     Select which skills to enable for this assistant. Skills provide reusable AI capabilities and instructions.
 
     <Info>
-    Skills are loaded from `/config/extended_openai_conversation/skills/`. Use the `download_skill` service to add new skills.
+    Skills are loaded from `/config/extended_openai_conversation_responses/skills/`. Use the `download_skill` service to add new skills.
     </Info>
 
     See [Skills Overview](/skills/overview) for detailed information.
@@ -196,7 +196,7 @@ Streaming remains enabled in both modes. Responses mode also carries encrypted r
 
 ## Migration notes
 
-No configuration migration is required. Existing agents without an API mode setting behave as `Auto`.
+Agents already configured in this renamed fork do not need an API mode migration; a missing API mode behaves as `Auto`. Config entries from the original `extended_openai_conversation` integration are intentionally separate and must be configured again if you want equivalent agents in this fork.
 
 - Models older than GPT-5.6 continue using Chat Completions in Auto mode.
 - GPT-5.4 Mini continues using Chat Completions in Auto mode.
@@ -205,7 +205,7 @@ No configuration migration is required. Existing agents without an API mode sett
 - Select Responses to opt a supported custom model or provider into the new endpoint.
 
 <Info>
-**Working Directory**: All file operations and bash commands use `/config/extended_openai_conversation/` as the default working directory. See [File Functions](/functions/read_file) and [Bash Functions](/functions/bash) for details.
+**Working Directory**: All file operations and bash commands use `/config/extended_openai_conversation_responses/` as the default working directory. See [File Functions](/functions/read_file) and [Bash Functions](/functions/bash) for details.
 </Info>
 
 ### Advanced Options
@@ -354,7 +354,7 @@ Monitor API requests and responses by adding this to your `configuration.yaml`:
 ```yaml
 logger:
   logs:
-    custom_components.extended_openai_conversation: info
+    custom_components.extended_openai_conversation_responses: info
 ```
 
 This logs:

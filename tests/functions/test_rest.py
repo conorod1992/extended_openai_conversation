@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # Import Tools and test helpers
-from custom_components.extended_openai_conversation.functions import RestFunction
+from custom_components.extended_openai_conversation_responses.functions import (
+    RestFunction,
+)
 from tests.helpers import prepare_function_tool_from_yaml
 
 
@@ -26,7 +28,7 @@ class TestRestFunctionYaml:
         function_config = function_tool["function"]
 
         with patch(
-            "custom_components.extended_openai_conversation.functions.web.rest.create_rest_data_from_config"
+            "custom_components.extended_openai_conversation_responses.functions.web.rest.create_rest_data_from_config"
         ) as mock_create_rest:
             mock_rest_data = AsyncMock()
             mock_rest_data.async_update = AsyncMock()

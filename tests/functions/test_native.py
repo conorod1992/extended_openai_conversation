@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 # Import Tools and test helpers
-from custom_components.extended_openai_conversation.functions import (
+from custom_components.extended_openai_conversation_responses.functions import (
     NativeFunction,
     get_function,
 )
@@ -231,11 +231,11 @@ class TestNativeGetHistory:
 
         with (
             patch(
-                "custom_components.extended_openai_conversation.functions.native.recorder.get_instance",
+                "custom_components.extended_openai_conversation_responses.functions.native.recorder.get_instance",
                 return_value=mock_recorder_instance,
             ),
             patch(
-                "custom_components.extended_openai_conversation.functions.native.recorder.util.session_scope"
+                "custom_components.extended_openai_conversation_responses.functions.native.recorder.util.session_scope"
             ),
         ):
             result = await function.execute(
@@ -277,7 +277,7 @@ class TestNativeGetStatistics:
         )
 
         with patch(
-            "custom_components.extended_openai_conversation.functions.native.recorder.get_instance",
+            "custom_components.extended_openai_conversation_responses.functions.native.recorder.get_instance",
             return_value=mock_recorder_instance,
         ):
             result = await function.execute(
@@ -311,7 +311,7 @@ class TestNativeGetStatistics:
         )
 
         with patch(
-            "custom_components.extended_openai_conversation.functions.native.recorder.get_instance",
+            "custom_components.extended_openai_conversation_responses.functions.native.recorder.get_instance",
             return_value=mock_recorder_instance,
         ):
             result = await function.execute(

@@ -16,7 +16,7 @@ function:
 ```
 
 <ParamField path="path" type="template" required>
-  Path to the file to edit. Can be absolute or relative to the working directory (`config/extended_openai_conversation/`).
+  Path to the file to edit. Can be absolute or relative to the working directory (`config/extended_openai_conversation_responses/`).
 </ParamField>
 
 <ParamField path="old_text" type="template" required>
@@ -33,12 +33,12 @@ function:
 
 ## Working Directory
 
-The default working directory is `config/extended_openai_conversation/`.
+The default working directory is `config/extended_openai_conversation_responses/`.
 
 <Tabs>
   <Tab title="Relative Path">
     ```yaml
-    # Edits /config/extended_openai_conversation/notes.txt
+    # Edits /config/extended_openai_conversation_responses/notes.txt
     function:
       type: edit_file
       path: "notes.txt"
@@ -49,7 +49,7 @@ The default working directory is `config/extended_openai_conversation/`.
 
   <Tab title="Subdirectory">
     ```yaml
-    # Edits /config/extended_openai_conversation/data/config.json
+    # Edits /config/extended_openai_conversation_responses/data/config.json
     function:
       type: edit_file
       path: "data/config.json"
@@ -172,7 +172,7 @@ On success:
 ```json
 {
   "success": true,
-  "path": "/config/extended_openai_conversation/config.yaml",
+  "path": "/config/extended_openai_conversation_responses/config.yaml",
   "replacements": 1
 }
 ```
@@ -579,7 +579,7 @@ To delete a line, include the newline character (`\n`) in `old_text` so the empt
   <Accordion title="Path Restriction">
     Files must be within allowed directories. By default:
 
-    - `/config/extended_openai_conversation/` (working directory)
+    - `/config/extended_openai_conversation_responses/` (working directory)
 
     Additional directories can be added via `allow_dir`.
   </Accordion>

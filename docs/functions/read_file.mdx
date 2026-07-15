@@ -14,7 +14,7 @@ function:
 ```
 
 <ParamField path="path" type="template" required>
-  Path to the file to read. Can be absolute or relative to the working directory (`config/extended_openai_conversation/`).
+  Path to the file to read. Can be absolute or relative to the working directory (`config/extended_openai_conversation_responses/`).
 </ParamField>
 
 <ParamField path="allow_dir" type="array">
@@ -23,12 +23,12 @@ function:
 
 ## Working Directory
 
-The default working directory is `config/extended_openai_conversation/`.
+The default working directory is `config/extended_openai_conversation_responses/`.
 
 <Tabs>
   <Tab title="Relative Path">
     ```yaml
-    # Reads from /config/extended_openai_conversation/notes.txt
+    # Reads from /config/extended_openai_conversation_responses/notes.txt
     function:
       type: read_file
       path: "notes.txt"
@@ -37,7 +37,7 @@ The default working directory is `config/extended_openai_conversation/`.
 
   <Tab title="Subdirectory">
     ```yaml
-    # Reads from /config/extended_openai_conversation/data/config.json
+    # Reads from /config/extended_openai_conversation_responses/data/config.json
     function:
       type: read_file
       path: "data/{{ filename }}"
@@ -161,7 +161,7 @@ command: "head -n 100 {{ large_file }}"
   <Accordion title="Path Restriction">
     Files must be within allowed directories. By default:
 
-    - `/config/extended_openai_conversation/` (working directory)
+    - `/config/extended_openai_conversation_responses/` (working directory)
 
     Additional directories can be added via `allow_dir`.
   </Accordion>
@@ -402,7 +402,7 @@ To read multiple files, use a composite function that loops through each file, o
 <AccordionGroup>
   <Accordion title="Access denied: path not in allowed directories">
     The file is outside allowed directories. Either:
-    - Move the file to the workspace (`/config/extended_openai_conversation/`)
+    - Move the file to the workspace (`/config/extended_openai_conversation_responses/`)
     - Add the file's directory to `allow_dir`
     - Use an absolute path to `/config/` if appropriate
   </Accordion>

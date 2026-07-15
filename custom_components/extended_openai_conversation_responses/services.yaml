@@ -4,7 +4,7 @@ query_image:
       required: true
       selector:
         config_entry:
-          integration: extended_openai_conversation
+          integration: extended_openai_conversation_responses
     model:
       example: gpt-4.1-mini
       selector:
@@ -45,7 +45,7 @@ change_config:
       required: true
       selector:
         config_entry:
-          integration: extended_openai_conversation
+          integration: extended_openai_conversation_responses
     api_key:
       selector:
         text:
@@ -73,7 +73,7 @@ change_config:
           mode: dropdown
 download_skill:
   name: Download skill
-  description: Download a skill from the GitHub repository and install it to the user skills directory. Available skills can be found at https://github.com/jekalmin/extended_openai_conversation/tree/develop/examples/skills
+  description: Download a skill from the GitHub repository and install it to the user skills directory. Available skills can be found at https://github.com/conorod1992/extended_openai_conversation/tree/develop/examples/skills
   fields:
     skill_name:
       required: true

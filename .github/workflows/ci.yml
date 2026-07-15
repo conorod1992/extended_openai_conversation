@@ -128,7 +128,7 @@ jobs:
           pip install mypy
 
       - name: Run MyPy
-        run: mypy custom_components/extended_openai_conversation
+        run: mypy custom_components/extended_openai_conversation_responses
 
   test:
     name: Test (HA ${{ matrix.home-assistant }})
@@ -181,6 +181,6 @@ jobs:
             -v \
             --asyncio-mode=auto \
             --timeout=30 \
-            --cov=custom_components/extended_openai_conversation \
+            --cov=custom_components/extended_openai_conversation_responses \
             --cov-report=xml \
             --cov-report=term-missing

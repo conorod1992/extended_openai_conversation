@@ -1,4 +1,4 @@
-"""Tools for Extended OpenAI Conversation."""
+"""Tools for Extended OpenAI Conversation (Responses)."""
 
 from __future__ import annotations
 

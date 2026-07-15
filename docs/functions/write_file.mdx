@@ -21,7 +21,7 @@ function:
 ```
 
 <ParamField path="path" type="template" required>
-  Path to the file to write. Can be absolute or relative to the working directory (`config/extended_openai_conversation/`).
+  Path to the file to write. Can be absolute or relative to the working directory (`config/extended_openai_conversation_responses/`).
 </ParamField>
 
 <ParamField path="content" type="template" required>
@@ -34,12 +34,12 @@ function:
 
 ## Working Directory
 
-The default working directory is `config/extended_openai_conversation/`.
+The default working directory is `config/extended_openai_conversation_responses/`.
 
 <Tabs>
   <Tab title="Relative Path">
     ```yaml
-    # Writes to /config/extended_openai_conversation/notes.txt
+    # Writes to /config/extended_openai_conversation_responses/notes.txt
     function:
       type: write_file
       path: "notes.txt"
@@ -49,7 +49,7 @@ The default working directory is `config/extended_openai_conversation/`.
 
   <Tab title="Subdirectory">
     ```yaml
-    # Writes to /config/extended_openai_conversation/data/config.json
+    # Writes to /config/extended_openai_conversation_responses/data/config.json
     # Note: Parent directory must already exist
     function:
       type: write_file
@@ -141,7 +141,7 @@ On success:
 ```json
 {
   "success": true,
-  "path": "/config/extended_openai_conversation/notes.txt",
+  "path": "/config/extended_openai_conversation_responses/notes.txt",
   "bytes_written": 1234
 }
 ```
@@ -375,7 +375,7 @@ Write File functions support Jinja2 templates in the `content` field:
   <Accordion title="Path Restriction">
     Files must be within allowed directories. By default:
 
-    - `/config/extended_openai_conversation/` (working directory)
+    - `/config/extended_openai_conversation_responses/` (working directory)
 
     Additional directories can be added via `allow_dir`.
   </Accordion>
@@ -458,7 +458,7 @@ Write File functions support Jinja2 templates in the `content` field:
 <AccordionGroup>
   <Accordion title="Access denied: path not in allowed directories">
     The target path is outside allowed directories. Either:
-    - Write to the workspace (`/config/extended_openai_conversation/`)
+    - Write to the workspace (`/config/extended_openai_conversation_responses/`)
     - Add the target directory to `allow_dir`
   </Accordion>
 

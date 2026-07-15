@@ -13,7 +13,7 @@ Only install skills from trusted sources—ideally ones you created yourself or 
   <Card
     title="Browse Skills"
     icon="github"
-    href="https://github.com/jekalmin/extended_openai_conversation/tree/develop/examples/skills"
+    href="https://github.com/conorod1992/extended_openai_conversation/tree/develop/examples/skills"
   >
     Browse skills in the GitHub repository
   </Card>
@@ -33,7 +33,7 @@ Only install skills from trusted sources—ideally ones you created yourself or 
     Use the service to automatically download skills:
 
     ```yaml
-    service: extended_openai_conversation.download_skill
+    service: extended_openai_conversation_responses.download_skill
     data:
       skill_name: crypto
     ```
@@ -41,7 +41,7 @@ Only install skills from trusted sources—ideally ones you created yourself or 
     <AccordionGroup>
       <Accordion title="What this does">
         - Downloads the skill from GitHub repository
-        - Saves to `<config>/extended_openai_conversation/skills/`
+        - Saves to `<config>/extended_openai_conversation_responses/skills/`
         - Automatically reloads all skills
         - Returns list of downloaded files
       </Accordion>
@@ -52,19 +52,19 @@ Only install skills from trusted sources—ideally ones you created yourself or 
     <Steps>
       <Step title="Copy skill directory">
         ```bash
-        cp -r skill_name /config/extended_openai_conversation/skills/
+        cp -r skill_name /config/extended_openai_conversation_responses/skills/
         ```
       </Step>
 
       <Step title="Make scripts executable (if needed)">
         ```bash
-        chmod +x /config/extended_openai_conversation/skills/*/scripts/*.py
+        chmod +x /config/extended_openai_conversation_responses/skills/*/scripts/*.py
         ```
       </Step>
 
       <Step title="Reload skills">
         ```yaml
-        service: extended_openai_conversation.reload_skills
+        service: extended_openai_conversation_responses.reload_skills
         ```
       </Step>
     </Steps>
@@ -78,7 +78,7 @@ Only install skills from trusted sources—ideally ones you created yourself or 
 After manually creating or modifying skills:
 
 ```yaml
-service: extended_openai_conversation.reload_skills
+service: extended_openai_conversation_responses.reload_skills
 ```
 
 **When to reload:**

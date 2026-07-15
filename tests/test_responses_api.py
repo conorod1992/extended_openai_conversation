@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.extended_openai_conversation.const import (
+from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_AUTO,
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
@@ -17,12 +17,14 @@ from custom_components.extended_openai_conversation.const import (
     CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
 )
-from custom_components.extended_openai_conversation.entity import (
+from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
     _convert_content_to_responses_param,
     _format_tools,
 )
-from custom_components.extended_openai_conversation.helpers import get_api_mode
+from custom_components.extended_openai_conversation_responses.helpers import (
+    get_api_mode,
+)
 from homeassistant.components import conversation
 
 

@@ -3,7 +3,9 @@ description: "A Home Assistant custom component that extends OpenAI Conversation
 title: "Introduction"
 ---
 
-Extended OpenAI Conversation is a custom component for Home Assistant that enhances the official OpenAI Conversation integration with powerful new features.
+Extended OpenAI Conversation (Responses) is a custom component for Home Assistant that enhances the official OpenAI Conversation integration with powerful new features.
+
+This experimental fork adds OpenAI Responses API support. Its separate `extended_openai_conversation_responses` domain allows it to run alongside the original Extended OpenAI Conversation integration.
 
 ## Key Features
 
@@ -30,7 +32,7 @@ Extended OpenAI Conversation is a custom component for Home Assistant that enhan
 
 ## How It Works
 
-Extended OpenAI Conversation leverages OpenAI's [function calling](https://platform.openai.com/docs/guides/function-calling) feature to enable the AI to interact with Home Assistant services.
+Extended OpenAI Conversation (Responses) leverages OpenAI's [function calling](https://platform.openai.com/docs/guides/function-calling) feature to enable the AI to interact with Home Assistant services.
 
 Since OpenAI models already understand how to control smart home devices, you simply need to expose your entities through the [Voice Assistants](https://my.home-assistant.io/redirect/voice_assistants/) interface.
 

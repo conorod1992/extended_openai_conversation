@@ -2,7 +2,7 @@
 
 import pytest
 
-from custom_components.extended_openai_conversation.functions import (
+from custom_components.extended_openai_conversation_responses.functions import (
     BashFunction,
     get_function,
 )

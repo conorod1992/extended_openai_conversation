@@ -1,4 +1,4 @@
-"""Config flow for OpenAI Conversation integration."""
+"""Config flow for Extended OpenAI Conversation (Responses)."""
 
 from __future__ import annotations
 
