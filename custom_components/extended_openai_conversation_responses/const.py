@@ -122,6 +122,12 @@ API_MODE_OPTIONS = [
     {"key": API_MODE_RESPONSES, "label": "Responses"},
 ]
 
+CONF_WEB_SEARCH = "web_search"
+DEFAULT_WEB_SEARCH = False
+CONF_WEB_SEARCH_CONTEXT = "web_search_context"
+WEB_SEARCH_CONTEXT_OPTIONS = ["low", "medium", "high"]
+DEFAULT_WEB_SEARCH_CONTEXT = WEB_SEARCH_CONTEXT_OPTIONS[0]
+
 MODEL_TOKEN_PARAMETER_SUPPORT = (
     {
         "pattern": r"(^|-)(gpt-4o|gpt-5|o1|o3|o4)",

@@ -72,6 +72,11 @@ Options include [OpenAI Conversation](https://www.home-assistant.io/integrations
 
   Responses mode supports streaming, Home Assistant functions, sequential function calls, conversation memory, image and PDF inputs, structured outputs, token limits, service tier, and `reasoning_effort`. Custom OpenAI-compatible providers must implement `/v1/responses` before you select Responses mode.
 
+- `Web search`: Optionally expose OpenAI's native hosted Web Search tool to the model. It is off by default and is supported only with the direct OpenAI Responses API, not Chat Completions, Azure, or custom base URLs. In `Auto` mode, select `Responses` explicitly if the configured model would otherwise route to Chat Completions. The model chooses whether a request needs a search; enabling the option does not search on every prompt.
+  - `Web search context`: Choose `Low` (default), `Medium`, or `High` retrieval breadth. This is not an exact result or token limit. Broader search can increase latency and usage.
+
+  OpenAI charges separately for Web Search calls and retrieved search-content tokens; see the current [OpenAI API pricing](https://developers.openai.com/api/docs/pricing#tools). The integration preserves native search-call items and citation annotations while a Responses tool chain is running. Home Assistant's conversation response currently has no structured citation field, so voice output remains ordinary spoken text and clients do not receive guaranteed clickable source annotations. Conditional continuation still uses its separate internal finalizer after any search or Home Assistant action; the finalizer carries plain response text and therefore cannot retain OpenAI's structured citation annotations.
+
 - `Continue conversation`: Control whether an Assist voice device listens for an immediate follow-up after speaking a successful response.
   - `HA Default`: Preserve Home Assistant's normal behavior. Home Assistant currently continues when the final assistant text ends in a recognized question mark.
   - `Always`: Explicitly request another utterance after every successful response. Errors still end the interaction.
@@ -91,7 +96,7 @@ Options include [OpenAI Conversation](https://www.home-assistant.io/integrations
 
 Home Assistant treats this fork as a new integration. It does not reuse or migrate config entries from `extended_openai_conversation`; add **Extended OpenAI Conversation (Responses)** and configure its agents separately. If needed, copy skills or other files from `/config/extended_openai_conversation/` to `/config/extended_openai_conversation_responses/`. Update only the automations and scripts that you want to target this fork to use the `extended_openai_conversation_responses` service and event namespaces.
 
-Within this fork, agents without an API mode setting default to `Auto`, and agents without a continue-conversation setting default to `HA Default`. Auto keeps models older than GPT-5.6 on Chat Completions, while GPT-5.6 and later GPT-5 models use Responses. You can force either endpoint at any time with `API mode`.
+Within this fork, agents without an API mode setting default to `Auto`, agents without a continue-conversation setting default to `HA Default`, and agents without a Web Search setting keep it off. Auto keeps models older than GPT-5.6 on Chat Completions, while GPT-5.6 and later GPT-5 models use Responses. You can force either endpoint at any time with `API mode`.
 
 The `extended_openai_conversation_responses.query_image` service also accepts `api_mode`. Its default is `auto`.
 

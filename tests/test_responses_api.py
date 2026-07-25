@@ -15,8 +15,12 @@ from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     CONF_API_MODE,
+    CONF_API_PROVIDER,
+    CONF_BASE_URL,
     CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
+    CONF_WEB_SEARCH,
+    CONF_WEB_SEARCH_CONTEXT,
     CONTINUE_CONVERSATION_ALWAYS,
     CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_CONTINUE_CONVERSATION,
@@ -28,6 +32,7 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 from custom_components.extended_openai_conversation_responses.entity import (
     CONTINUE_CONVERSATION_TOOL_NAME,
     ExtendedOpenAIBaseLLMEntity,
+    _build_web_search_tool,
     _convert_content_to_responses_param,
     _format_tools,
 )
@@ -65,6 +70,59 @@ class FakeReasoningItem:
             "summary": [],
             "encrypted_content": "encrypted",
             "status": "completed",
+        }
+
+
+class FakeWebSearchItem:
+    """Minimal serializable hosted Web Search response item."""
+
+    type = "web_search_call"
+
+    def __init__(self) -> None:
+        self.id = "ws_1"
+        self.status = "completed"
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        """Return a Responses input-compatible hosted-tool item."""
+        return {
+            "type": self.type,
+            "id": self.id,
+            "status": self.status,
+            "action": {"type": "search", "query": "weather in Dublin"},
+        }
+
+
+class FakeCitedMessageItem:
+    """Minimal serializable message containing a URL citation annotation."""
+
+    type = "message"
+
+    def __init__(self) -> None:
+        self.id = "msg_1"
+        self.content = [SimpleNamespace(type="output_text")]
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        """Return the message and its structured citation annotation."""
+        return {
+            "type": self.type,
+            "id": self.id,
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": "It is mild today.",
+                    "annotations": [
+                        {
+                            "type": "url_citation",
+                            "start_index": 0,
+                            "end_index": 18,
+                            "title": "Forecast",
+                            "url": "https://example.com/forecast",
+                        }
+                    ],
+                }
+            ],
         }
 
 
@@ -163,6 +221,75 @@ def test_responses_history_and_tools_mapping() -> None:
         _format_tools(function_tools, API_MODE_CHAT_COMPLETIONS)[0]["function"]
         == function_tools[0]["spec"]
     )
+
+
+def test_web_search_defaults_off() -> None:
+    """Existing agents do not expose the hosted tool without the new option."""
+    assert _build_web_search_tool({}, API_MODE_RESPONSES, {}) is None
+
+
+@pytest.mark.parametrize("context_size", ["low", "medium", "high"])
+def test_web_search_tool_schema(context_size: str) -> None:
+    """Responses receives the native hosted-tool schema and selected context."""
+    assert _build_web_search_tool(
+        {
+            CONF_WEB_SEARCH: True,
+            CONF_WEB_SEARCH_CONTEXT: context_size,
+        },
+        API_MODE_RESPONSES,
+        {
+            CONF_API_PROVIDER: "openai",
+            CONF_BASE_URL: "https://api.openai.com/v1",
+        },
+    ) == {
+        "type": "web_search",
+        "search_context_size": context_size,
+    }
+
+
+@pytest.mark.parametrize(
+    ("api_mode", "entry_data", "message"),
+    [
+        (API_MODE_CHAT_COMPLETIONS, {}, "requires the Responses API"),
+        (
+            API_MODE_RESPONSES,
+            {CONF_API_PROVIDER: "azure"},
+            "direct OpenAI Responses API",
+        ),
+        (
+            API_MODE_RESPONSES,
+            {CONF_BASE_URL: "https://example.com/v1"},
+            "direct OpenAI Responses API",
+        ),
+    ],
+)
+def test_web_search_rejects_unsupported_api_configuration(
+    api_mode: str, entry_data: dict[str, Any], message: str
+) -> None:
+    """Hosted Web Search is never sent to unsupported API endpoints."""
+    with pytest.raises(HomeAssistantError, match=message):
+        _build_web_search_tool({CONF_WEB_SEARCH: True}, api_mode, entry_data)
+
+
+def test_responses_native_search_and_citations_are_replayed() -> None:
+    """Hosted search state and citation annotations survive stateless rounds."""
+    search_item = FakeWebSearchItem()
+    message_item = FakeCitedMessageItem()
+    history = [
+        conversation.AssistantContent(agent_id="agent.test", native=search_item),
+        conversation.AssistantContent(
+            agent_id="agent.test",
+            content="It is mild today.",
+            native=message_item,
+        ),
+    ]
+
+    result = _convert_content_to_responses_param(history)
+
+    assert result[0] == search_item.model_dump()
+    assert result[1] == message_item.model_dump()
+    assert result[1]["content"][0]["annotations"][0]["type"] == "url_citation"
+    assert len(result) == 2
 
 
 @pytest.mark.parametrize("reasoning_effort", ["low", "medium", "high"])
@@ -288,6 +415,131 @@ async def test_responses_stream_supports_multiple_tool_calls() -> None:
 
     assert [tool_call.id for tool_call in tool_calls] == ["call_1", "call_2"]
     assert all(tool_call.external for tool_call in tool_calls)
+
+
+async def test_responses_stream_preserves_web_search_and_citations() -> None:
+    """Hosted-tool progress is silent while completed native items are retained."""
+    search_item = FakeWebSearchItem()
+    message_item = FakeCitedMessageItem()
+    stream = FakeStream(
+        [
+            _event("response.web_search_call.in_progress", item_id="ws_1"),
+            _event("response.web_search_call.searching", item_id="ws_1"),
+            _event("response.output_item.added", item=search_item),
+            _event("response.output_item.done", item=search_item),
+            _event("response.output_item.added", item=message_item),
+            _event("response.output_text.delta", delta="It is mild today."),
+            _event("response.output_item.done", item=message_item),
+        ]
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+
+    deltas = [
+        delta
+        async for delta in entity._transform_responses_stream(SimpleNamespace(), stream)
+    ]
+
+    assert [delta["native"] for delta in deltas if "native" in delta] == [
+        search_item,
+        message_item,
+    ]
+    assert [delta.get("content") for delta in deltas if "content" in delta] == [
+        "It is mild today."
+    ]
+    assert not any(delta.get("tool_calls") for delta in deltas)
+
+
+async def test_web_search_coexists_with_ha_tool_and_conditional_finalizer(hass) -> None:
+    """Search output is replayed before an HA action and final structured answer."""
+    search_item = FakeWebSearchItem()
+    action_call = _function_call(
+        "turn_on", '{"entity_id":"light.kitchen"}', "action_call"
+    )
+    finalizer = _function_call(
+        CONTINUE_CONVERSATION_TOOL_NAME,
+        '{"response":"The kitchen light is on.","continue_conversation":false}',
+        "final_call",
+    )
+    client = SimpleNamespace(
+        responses=SimpleNamespace(
+            create=AsyncMock(
+                side_effect=[
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=search_item),
+                            _event("response.output_item.done", item=search_item),
+                            _event("response.output_item.added", item=action_call),
+                            _event("response.output_item.done", item=action_call),
+                            _completed_event(),
+                        ]
+                    ),
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=finalizer),
+                            _event("response.output_item.done", item=finalizer),
+                            _completed_event(),
+                        ]
+                    ),
+                ]
+            )
+        )
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(runtime_data=client, data={})
+    entity.subentry = SimpleNamespace(
+        data={
+            CONF_CHAT_MODEL: "gpt-5.6-luna",
+            CONF_API_MODE: API_MODE_RESPONSES,
+            CONF_WEB_SEARCH: True,
+            CONF_WEB_SEARCH_CONTEXT: "medium",
+        }
+    )
+    entity.hass = hass
+    entity.entity_id = "conversation.test"
+    entity._execute_function_tool = AsyncMock(
+        return_value=conversation.ToolResultContent(
+            agent_id=entity.entity_id,
+            tool_call_id="action_call",
+            tool_name="turn_on",
+            tool_result={"result": "done"},
+        )
+    )
+    function_tools = [
+        {
+            "spec": {
+                "name": "turn_on",
+                "description": "Turn on an entity",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": {"type": "native", "name": "unused-in-test"},
+        }
+    ]
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+    chat_log.async_add_user_content(
+        conversation.UserContent(content="Check the weather, then turn on the light")
+    )
+
+    result = await entity._async_handle_chat_log(
+        chat_log, function_tools, [], conditional_continue=True
+    )
+
+    assert result is False
+    assert client.responses.create.await_count == 2
+    first_request = client.responses.create.await_args_list[0].kwargs
+    assert first_request["tool_choice"] == "required"
+    assert first_request["tools"][0] == {
+        "type": "web_search",
+        "search_context_size": "medium",
+    }
+    assert {tool["name"] for tool in first_request["tools"][1:]} == {
+        "turn_on",
+        CONTINUE_CONVERSATION_TOOL_NAME,
+    }
+    second_input = client.responses.create.await_args_list[1].kwargs["input"]
+    assert any(item["type"] == "web_search_call" for item in second_input)
+    assert any(item["type"] == "function_call" for item in second_input)
+    assert any(item["type"] == "function_call_output" for item in second_input)
+    assert chat_log.content[-1].content == "The kitchen light is on."
 
 
 @pytest.mark.parametrize("decision", [False, True])
