@@ -26,6 +26,32 @@ EVENT_CONVERSATION_FINISHED = (
 )
 
 CONF_PROMPT = "prompt"
+CONF_CONTINUE_CONVERSATION = "continue_conversation"
+CONTINUE_CONVERSATION_DEFAULT = "ha_default"
+CONTINUE_CONVERSATION_ALWAYS = "always"
+CONTINUE_CONVERSATION_CONDITIONAL = "conditional"
+DEFAULT_CONTINUE_CONVERSATION = CONTINUE_CONVERSATION_DEFAULT
+CONTINUE_CONVERSATION_OPTIONS = [
+    CONTINUE_CONVERSATION_DEFAULT,
+    CONTINUE_CONVERSATION_ALWAYS,
+    CONTINUE_CONVERSATION_CONDITIONAL,
+]
+
+CONDITIONAL_CONTINUATION_PROMPT = """
+## Continue conversation
+When you are ready to give the final answer, call set_continue_conversation instead
+of returning ordinary text. Put the complete user-facing answer in response and set
+continue_conversation independently for this answer.
+
+Set continue_conversation to true when you directly ask a question, need
+clarification, offer choices that require a selection, intentionally expect another
+turn, or cannot safely continue without more information. Set it to false when a
+command completed, the answer is final, you are only reporting status, or there is
+no natural reason for an immediate reply.
+
+Do not call set_continue_conversation while another tool is still needed. Never
+mention this control mechanism in the response.
+"""
 DEFAULT_PROMPT = """You are a helpful AI voice assistant of Home Assistant that controls a real home.
 Your goal is to proactively improve the user's comfort.
 
