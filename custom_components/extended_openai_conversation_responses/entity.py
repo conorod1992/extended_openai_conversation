@@ -337,6 +337,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
         await self._async_add_attachments(chat_log, messages, api_mode)
 
+        if conditional_continue and any(
+            function_tool["spec"]["name"] == CONTINUE_CONVERSATION_TOOL_NAME
+            for function_tool in function_tools
+        ):
+            raise HomeAssistantError(
+                f"Function tool name `{CONTINUE_CONVERSATION_TOOL_NAME}` is reserved "
+                "for Conditional continue conversation mode"
+            )
+
         tools = _format_tools(
             [
                 *function_tools,
@@ -411,9 +420,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         tool_kwargs: dict[str, Any] = {}
         if tools:
             tool_kwargs["tools"] = tools
-            tool_kwargs["tool_choice"] = (
-                "required" if conditional_continue and not function_tools else "auto"
-            )
+            tool_kwargs["tool_choice"] = "required" if conditional_continue else "auto"
+
+        finalization_retry_attempted = False
+        draft_content_ids: set[int] = set()
 
         for n_requests in range(MAX_TOOL_ITERATIONS):
             if tools and 0 <= max_function_calls <= n_requests:
@@ -495,6 +505,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
                 if is_final:
                     continuation_decision = decision
+                    if draft_content_ids:
+                        chat_log.content[:] = [
+                            content
+                            for content in chat_log.content
+                            if id(content) not in draft_content_ids
+                        ]
 
             for tool_input in pending_tool_calls:
                 function_tool = next(
@@ -530,6 +546,44 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 messages = _convert_content_to_param(
                     chat_log.content, shorten_tool_call_id
                 )
+
+            if (
+                conditional_continue
+                and continuation_decision is None
+                and not pending_tool_calls
+                and not control_calls
+            ):
+                if not finalization_retry_attempted:
+                    draft_content_ids.update(
+                        id(content)
+                        for content in chat_log.content
+                        if id(content) not in existing_content_ids
+                        and isinstance(content, conversation.AssistantContent)
+                        and not content.tool_calls
+                    )
+                    finalization_retry_attempted = True
+                    tool_kwargs["tools"] = _format_tools(
+                        [CONTINUE_CONVERSATION_TOOL], api_mode
+                    )
+                    tool_kwargs["tool_choice"] = "required"
+                    _LOGGER.warning(
+                        "Conditional response omitted %s; retrying once with only "
+                        "the finalizer available",
+                        CONTINUE_CONVERSATION_TOOL_NAME,
+                    )
+                    continue
+
+                _LOGGER.error(
+                    "Conditional response omitted %s after the finalization retry; "
+                    "using the assistant text with continuation disabled",
+                    CONTINUE_CONVERSATION_TOOL_NAME,
+                )
+                if draft_content_ids:
+                    chat_log.content[:] = [
+                        content
+                        for content in chat_log.content
+                        if id(content) not in draft_content_ids
+                    ]
 
             if not chat_log.unresponded_tool_results:
                 break

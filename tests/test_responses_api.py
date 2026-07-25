@@ -35,6 +35,7 @@ from custom_components.extended_openai_conversation_responses.helpers import (
     get_api_mode,
 )
 from homeassistant.components import conversation
+from homeassistant.exceptions import HomeAssistantError
 
 
 class FakeStream:
@@ -410,6 +411,349 @@ async def test_conditional_continue_after_home_assistant_tool(hass) -> None:
     assert client.responses.create.await_count == 2
     assert entity._execute_function_tool.await_count == 1
     assert chat_log.content[-1].content == "The kitchen light is on."
+    for request in client.responses.create.await_args_list:
+        assert request.kwargs["tool_choice"] == "required"
+        assert {tool["name"] for tool in request.kwargs["tools"]} == {
+            "turn_on",
+            CONTINUE_CONVERSATION_TOOL_NAME,
+        }
+
+
+async def test_conditional_continue_allows_multiple_tools_before_finalizer(
+    hass,
+) -> None:
+    """Conditional mode keeps action tools available until work is complete."""
+    first_action = _function_call(
+        "turn_on", '{"entity_id":"light.kitchen"}', "first_action"
+    )
+    second_action = _function_call(
+        "get_state", '{"entity_id":"lock.back_door"}', "second_action"
+    )
+    finalizer = _function_call(
+        CONTINUE_CONVERSATION_TOOL_NAME,
+        '{"response":"The light is on and the back door is locked.",'
+        '"continue_conversation":false}',
+        "final_call",
+    )
+    client = SimpleNamespace(
+        responses=SimpleNamespace(
+            create=AsyncMock(
+                side_effect=[
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=first_action),
+                            _event("response.output_item.done", item=first_action),
+                            _completed_event(),
+                        ]
+                    ),
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=second_action),
+                            _event("response.output_item.done", item=second_action),
+                            _completed_event(),
+                        ]
+                    ),
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=finalizer),
+                            _event("response.output_item.done", item=finalizer),
+                            _completed_event(),
+                        ]
+                    ),
+                ]
+            )
+        )
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(runtime_data=client)
+    entity.subentry = SimpleNamespace(
+        data={CONF_CHAT_MODEL: "gpt-5.6-luna", CONF_API_MODE: API_MODE_RESPONSES}
+    )
+    entity.hass = hass
+    entity.entity_id = "conversation.test"
+    entity._execute_function_tool = AsyncMock(
+        side_effect=[
+            conversation.ToolResultContent(
+                agent_id=entity.entity_id,
+                tool_call_id="first_action",
+                tool_name="turn_on",
+                tool_result={"result": "done"},
+            ),
+            conversation.ToolResultContent(
+                agent_id=entity.entity_id,
+                tool_call_id="second_action",
+                tool_name="get_state",
+                tool_result={"result": "locked"},
+            ),
+        ]
+    )
+    function_tools = [
+        {
+            "spec": {
+                "name": name,
+                "description": f"Run {name}",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": {"type": "native", "name": "unused-in-test"},
+        }
+        for name in ("turn_on", "get_state")
+    ]
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+    chat_log.async_add_user_content(
+        conversation.UserContent(
+            content="Turn on the kitchen light and check the back door"
+        )
+    )
+
+    result = await entity._async_handle_chat_log(
+        chat_log, function_tools, [], conditional_continue=True
+    )
+
+    assert result is False
+    assert client.responses.create.await_count == 3
+    assert entity._execute_function_tool.await_count == 2
+    assert all(
+        request.kwargs["tool_choice"] == "required"
+        for request in client.responses.create.await_args_list
+    )
+    assert chat_log.content[-1].content == (
+        "The light is on and the back door is locked."
+    )
+
+
+async def test_conditional_continue_retries_ordinary_text_with_finalizer(hass) -> None:
+    """Unexpected ordinary text gets one finalizer-only continuation request."""
+    message_item = SimpleNamespace(type="message")
+    finalizer = _function_call(
+        CONTINUE_CONVERSATION_TOOL_NAME,
+        '{"response":"Which room did you mean?","continue_conversation":true}',
+        "final_call",
+    )
+    client = SimpleNamespace(
+        responses=SimpleNamespace(
+            create=AsyncMock(
+                side_effect=[
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=message_item),
+                            _event(
+                                "response.output_text.delta",
+                                delta="Draft answer without a finalizer.",
+                            ),
+                            _event("response.output_item.done", item=message_item),
+                            _completed_event(),
+                        ]
+                    ),
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=finalizer),
+                            _event("response.output_item.done", item=finalizer),
+                            _completed_event(),
+                        ]
+                    ),
+                ]
+            )
+        )
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(runtime_data=client)
+    entity.subentry = SimpleNamespace(
+        data={CONF_CHAT_MODEL: "gpt-5.6-luna", CONF_API_MODE: API_MODE_RESPONSES}
+    )
+    entity.hass = hass
+    entity.entity_id = "conversation.test"
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+    chat_log.async_add_user_content(conversation.UserContent(content="Help me"))
+
+    result = await entity._async_handle_chat_log(
+        chat_log, [], [], conditional_continue=True
+    )
+
+    assert result is True
+    assert client.responses.create.await_count == 2
+    retry = client.responses.create.await_args_list[1].kwargs
+    assert retry["tool_choice"] == "required"
+    assert [tool["name"] for tool in retry["tools"]] == [
+        CONTINUE_CONVERSATION_TOOL_NAME
+    ]
+    assert any(
+        item.get("content") == "Draft answer without a finalizer."
+        for item in retry["input"]
+    )
+    assert all(
+        content.content != "Draft answer without a finalizer."
+        for content in chat_log.content
+    )
+    assert chat_log.content[-1].content == "Which room did you mean?"
+
+
+async def test_conditional_continue_finalization_retry_is_bounded(hass) -> None:
+    """A provider that ignores required tool choice gets only one retry."""
+    first_message = SimpleNamespace(type="message")
+    second_message = SimpleNamespace(type="message")
+    client = SimpleNamespace(
+        responses=SimpleNamespace(
+            create=AsyncMock(
+                side_effect=[
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=first_message),
+                            _event(
+                                "response.output_text.delta",
+                                delta="First unstructured draft.",
+                            ),
+                            _event("response.output_item.done", item=first_message),
+                            _completed_event(),
+                        ]
+                    ),
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=second_message),
+                            _event(
+                                "response.output_text.delta",
+                                delta="Usable fallback response.",
+                            ),
+                            _event("response.output_item.done", item=second_message),
+                            _completed_event(),
+                        ]
+                    ),
+                ]
+            )
+        )
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(runtime_data=client)
+    entity.subentry = SimpleNamespace(
+        data={CONF_CHAT_MODEL: "gpt-5.6-luna", CONF_API_MODE: API_MODE_RESPONSES}
+    )
+    entity.hass = hass
+    entity.entity_id = "conversation.test"
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+    chat_log.async_add_user_content(conversation.UserContent(content="Help me"))
+
+    result = await entity._async_handle_chat_log(
+        chat_log, [], [], conditional_continue=True
+    )
+
+    assert result is None
+    assert client.responses.create.await_count == 2
+    assert all(
+        getattr(content, "content", None) != "First unstructured draft."
+        for content in chat_log.content
+    )
+    assert chat_log.content[-1].content == "Usable fallback response."
+
+
+async def test_conditional_continue_discards_premature_finalizer(hass) -> None:
+    """A finalizer beside an action does not end the tool workflow."""
+    action = _function_call("turn_on", '{"entity_id":"light.kitchen"}', "action_call")
+    premature = _function_call(
+        CONTINUE_CONVERSATION_TOOL_NAME,
+        '{"response":"I will turn it on.","continue_conversation":false}',
+        "premature_call",
+    )
+    finalizer = _function_call(
+        CONTINUE_CONVERSATION_TOOL_NAME,
+        '{"response":"The kitchen light is on.","continue_conversation":false}',
+        "final_call",
+    )
+    client = SimpleNamespace(
+        responses=SimpleNamespace(
+            create=AsyncMock(
+                side_effect=[
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=action),
+                            _event("response.output_item.done", item=action),
+                            _event("response.output_item.added", item=premature),
+                            _event("response.output_item.done", item=premature),
+                            _completed_event(),
+                        ]
+                    ),
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=finalizer),
+                            _event("response.output_item.done", item=finalizer),
+                            _completed_event(),
+                        ]
+                    ),
+                ]
+            )
+        )
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(runtime_data=client)
+    entity.subentry = SimpleNamespace(
+        data={CONF_CHAT_MODEL: "gpt-5.6-luna", CONF_API_MODE: API_MODE_RESPONSES}
+    )
+    entity.hass = hass
+    entity.entity_id = "conversation.test"
+    entity._execute_function_tool = AsyncMock(
+        return_value=conversation.ToolResultContent(
+            agent_id=entity.entity_id,
+            tool_call_id="action_call",
+            tool_name="turn_on",
+            tool_result={"result": "done"},
+        )
+    )
+    function_tools = [
+        {
+            "spec": {
+                "name": "turn_on",
+                "description": "Turn on an entity",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": {"type": "native", "name": "unused-in-test"},
+        }
+    ]
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+    chat_log.async_add_user_content(
+        conversation.UserContent(content="Turn on the kitchen light")
+    )
+
+    result = await entity._async_handle_chat_log(
+        chat_log, function_tools, [], conditional_continue=True
+    )
+
+    assert result is False
+    assert client.responses.create.await_count == 2
+    assert entity._execute_function_tool.await_count == 1
+    assert all(
+        getattr(content, "content", None) != "I will turn it on."
+        for content in chat_log.content
+    )
+    assert chat_log.content[-1].content == "The kitchen light is on."
+
+
+async def test_conditional_continue_rejects_tool_name_collision(hass) -> None:
+    """A user tool cannot collide with the internal finalizer name."""
+    client = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock()))
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(runtime_data=client)
+    entity.subentry = SimpleNamespace(
+        data={CONF_CHAT_MODEL: "gpt-5.6-luna", CONF_API_MODE: API_MODE_RESPONSES}
+    )
+    entity.hass = hass
+    entity.entity_id = "conversation.test"
+    function_tools = [
+        {
+            "spec": {
+                "name": CONTINUE_CONVERSATION_TOOL_NAME,
+                "description": "Conflicting user tool",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": {"type": "native", "name": "unused-in-test"},
+        }
+    ]
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+    chat_log.async_add_user_content(conversation.UserContent(content="Help me"))
+
+    with pytest.raises(HomeAssistantError, match="reserved"):
+        await entity._async_handle_chat_log(
+            chat_log, function_tools, [], conditional_continue=True
+        )
+
+    client.responses.create.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
