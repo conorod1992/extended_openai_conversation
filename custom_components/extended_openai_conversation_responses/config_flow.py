@@ -56,6 +56,8 @@ from .const import (
     CONF_SKIP_AUTHENTICATION,
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    CONF_WEB_SEARCH,
+    CONF_WEB_SEARCH_CONTEXT,
     CONTEXT_TRUNCATE_STRATEGIES,
     CONTINUE_CONVERSATION_OPTIONS,
     DEFAULT_ADVANCED_OPTIONS,
@@ -80,9 +82,12 @@ from .const import (
     DEFAULT_SKIP_AUTHENTICATION,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
+    DEFAULT_WEB_SEARCH,
+    DEFAULT_WEB_SEARCH_CONTEXT,
     DOMAIN,
     REASONING_EFFORT_OPTIONS,
     SERVICE_TIER_OPTIONS,
+    WEB_SEARCH_CONTEXT_OPTIONS,
 )
 from .helpers import get_authenticated_client, get_model_config
 from .skills import SkillManager
@@ -130,6 +135,8 @@ DEFAULT_OPTIONS = types.MappingProxyType(
         CONF_CONTEXT_THRESHOLD: DEFAULT_CONTEXT_THRESHOLD,
         CONF_CONTEXT_TRUNCATE_STRATEGY: DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
         CONF_CONTINUE_CONVERSATION: DEFAULT_CONTINUE_CONVERSATION,
+        CONF_WEB_SEARCH: DEFAULT_WEB_SEARCH,
+        CONF_WEB_SEARCH_CONTEXT: DEFAULT_WEB_SEARCH_CONTEXT,
         CONF_SHORTEN_TOOL_CALL_ID: DEFAULT_SHORTEN_TOOL_CALL_ID,
         CONF_ADVANCED_OPTIONS: DEFAULT_ADVANCED_OPTIONS,
     }
@@ -448,6 +455,20 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
                     options=CONTINUE_CONVERSATION_OPTIONS,
                     mode=SelectSelectorMode.DROPDOWN,
                     translation_key=CONF_CONTINUE_CONVERSATION,
+                )
+            ),
+            vol.Optional(
+                CONF_WEB_SEARCH,
+                default=DEFAULT_WEB_SEARCH,
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_WEB_SEARCH_CONTEXT,
+                default=DEFAULT_WEB_SEARCH_CONTEXT,
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=WEB_SEARCH_CONTEXT_OPTIONS,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    translation_key=CONF_WEB_SEARCH_CONTEXT,
                 )
             ),
             vol.Optional(

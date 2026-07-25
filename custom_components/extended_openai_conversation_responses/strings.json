@@ -32,6 +32,8 @@
             "max_tokens": "Maximum tokens to return in response",
             "model": "Completion Model",
             "api_mode": "API mode",
+            "web_search": "Web search",
+            "web_search_context": "Web search context",
             "continue_conversation": "Continue conversation",
             "prompt": "Prompt Template",
             "max_function_calls_per_conversation": "Maximum function calls per conversation",
@@ -43,6 +45,8 @@
             "advanced_options": "Advanced Options"
           },
           "data_description": {
+            "web_search": "Allow the model to use OpenAI's native Web Search tool for current or external information. Requires the direct OpenAI Responses API.",
+            "web_search_context": "Controls retrieval breadth only when Web Search is enabled. Low is recommended for concise voice-agent answers.",
             "continue_conversation": "HA Default uses Home Assistant's normal punctuation-based behavior. Always listens again after successful responses. Conditional lets the language model decide when an immediate follow-up is expected."
           }
         },
@@ -94,6 +98,13 @@
     }
   },
   "selector": {
+    "web_search_context": {
+      "options": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High"
+      }
+    },
     "continue_conversation": {
       "options": {
         "ha_default": "HA Default",

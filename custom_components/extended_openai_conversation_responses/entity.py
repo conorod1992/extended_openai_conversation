@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator, Iterable, Mapping
 from dataclasses import replace
 import json
 import logging
@@ -32,6 +32,8 @@ from homeassistant.util import slugify
 from .const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
+    CONF_API_PROVIDER,
+    CONF_BASE_URL,
     CONF_CHAT_MODEL,
     CONF_CONTEXT_THRESHOLD,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
@@ -42,6 +44,8 @@ from .const import (
     CONF_SHORTEN_TOOL_CALL_ID,
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    CONF_WEB_SEARCH,
+    CONF_WEB_SEARCH_CONTEXT,
     DEFAULT_API_MODE,
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONTEXT_THRESHOLD,
@@ -53,11 +57,13 @@ from .const import (
     DEFAULT_SHORTEN_TOOL_CALL_ID,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
+    DEFAULT_WEB_SEARCH,
+    DEFAULT_WEB_SEARCH_CONTEXT,
     DOMAIN,
 )
 from .exceptions import FunctionNotFound, ParseArgumentsFailed, TokenLengthExceededError
 from .functions import get_function
-from .helpers import get_api_mode, get_model_config
+from .helpers import get_api_mode, get_model_config, supports_openai_hosted_tools
 
 if TYPE_CHECKING:
     from . import ExtendedOpenAIConfigEntry
@@ -229,7 +235,14 @@ def _convert_content_to_responses_param(
             )
             continue
 
-        if content.content:
+        native_type = ""
+        if isinstance(content, conversation.AssistantContent):
+            native = content.native
+            native_type = getattr(native, "type", "") if native is not None else ""
+            if native_type in {"reasoning", "web_search_call", "message"}:
+                items.append(_serialize_response_item(native))
+
+        if content.content and native_type != "message":
             items.append(
                 {
                     "type": "message",
@@ -239,10 +252,6 @@ def _convert_content_to_responses_param(
             )
 
         if isinstance(content, conversation.AssistantContent):
-            native = content.native
-            if native is not None and getattr(native, "type", None) == "reasoning":
-                items.append(_serialize_response_item(native))
-
             for tool_call in content.tool_calls or []:
                 items.append(
                     {
@@ -274,6 +283,34 @@ def _format_tools(
         )
         for func_spec in function_tools
     ]
+
+
+def _build_web_search_tool(
+    options: Mapping[str, Any],
+    api_mode: str,
+    entry_data: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Build the native OpenAI Responses Web Search tool when enabled."""
+    if not options.get(CONF_WEB_SEARCH, DEFAULT_WEB_SEARCH):
+        return None
+    if api_mode != API_MODE_RESPONSES:
+        raise HomeAssistantError(
+            "Web Search requires the Responses API. Select Responses API mode or "
+            "use a model for which Auto resolves to Responses."
+        )
+    if not supports_openai_hosted_tools(
+        entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+    ):
+        raise HomeAssistantError(
+            "Web Search is available only with the direct OpenAI Responses API; "
+            "Azure and custom base URLs are not supported."
+        )
+    return {
+        "type": "web_search",
+        "search_context_size": options.get(
+            CONF_WEB_SEARCH_CONTEXT, DEFAULT_WEB_SEARCH_CONTEXT
+        ),
+    }
 
 
 class ExtendedOpenAIBaseLLMEntity(Entity):
@@ -346,13 +383,17 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 "for Conditional continue conversation mode"
             )
 
-        tools = _format_tools(
+        function_api_tools = _format_tools(
             [
                 *function_tools,
                 *([CONTINUE_CONVERSATION_TOOL] if conditional_continue else []),
             ],
             api_mode,
         )
+        web_search_tool = _build_web_search_tool(
+            options, api_mode, getattr(self.entry, "data", {})
+        )
+        tools = [*([web_search_tool] if web_search_tool else []), *function_api_tools]
         continuation_decision: bool | None = None
         api_kwargs: dict[str, Any] = {
             "model": model,
@@ -559,6 +600,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         for content in chat_log.content
                         if id(content) not in existing_content_ids
                         and isinstance(content, conversation.AssistantContent)
+                        and bool(content.content)
                         and not content.tool_calls
                     )
                     finalization_retry_attempted = True
@@ -830,9 +872,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             if event_type == "response.output_item.done":
                 item = event.item
                 item_type = getattr(item, "type", "")
-                if item_type == "reasoning":
-                    # Preserve encrypted reasoning so stateless chained tool calls
-                    # can continue without losing the model's reasoning context.
+                if item_type in {"reasoning", "web_search_call"}:
+                    # Preserve native hosted-tool and reasoning output so stateless
+                    # chained function calls retain the complete Responses context.
+                    yield {"native": item}
+                elif (
+                    item_type == "message"
+                    and getattr(item, "content", None) is not None
+                ):
+                    # Keep URL citation annotations internally. Home Assistant's
+                    # spoken ConversationResult still uses only the streamed text.
                     yield {"native": item}
                 elif item_type == "function_call":
                     try:

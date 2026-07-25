@@ -20,6 +20,8 @@ from .const import (
     API_MODE_AUTO,
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
+    DEFAULT_API_PROVIDER,
+    DEFAULT_CONF_BASE_URL,
     DEFAULT_MODEL_CONFIG,
     DEFAULT_TOKEN_PARAM,
     MODEL_CONFIG_PATTERNS,
@@ -99,6 +101,15 @@ def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:
 def is_azure_url(base_url: str | None) -> bool:
     """Check if the base URL is an Azure OpenAI URL."""
     return bool(base_url and re.search(AZURE_DOMAIN_PATTERN, base_url))
+
+
+def supports_openai_hosted_tools(
+    api_provider: str | None, base_url: str | None
+) -> bool:
+    """Return whether the entry uses OpenAI's native hosted tools endpoint."""
+    if api_provider not in {None, DEFAULT_API_PROVIDER}:
+        return False
+    return not base_url or base_url.rstrip("/") == DEFAULT_CONF_BASE_URL.rstrip("/")
 
 
 def get_token_param_for_model(model: str) -> str:
