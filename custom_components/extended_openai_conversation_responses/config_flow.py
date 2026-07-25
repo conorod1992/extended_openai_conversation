@@ -43,6 +43,7 @@ from .const import (
     CONF_CHAT_MODEL,
     CONF_CONTEXT_THRESHOLD,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
+    CONF_CONTINUE_CONVERSATION,
     CONF_FUNCTION_TOOLS,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MAX_TOKENS,
@@ -56,6 +57,7 @@ from .const import (
     CONF_TEMPERATURE,
     CONF_TOP_P,
     CONTEXT_TRUNCATE_STRATEGIES,
+    CONTINUE_CONVERSATION_OPTIONS,
     DEFAULT_ADVANCED_OPTIONS,
     DEFAULT_AI_TASK_NAME,
     DEFAULT_AI_TASK_OPTIONS,
@@ -66,6 +68,7 @@ from .const import (
     DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_CONTEXT_THRESHOLD,
     DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
+    DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MAX_TOKENS,
@@ -126,6 +129,7 @@ DEFAULT_OPTIONS = types.MappingProxyType(
         CONF_FUNCTION_TOOLS: DEFAULT_CONF_FUNCTION_TOOLS_STR,
         CONF_CONTEXT_THRESHOLD: DEFAULT_CONTEXT_THRESHOLD,
         CONF_CONTEXT_TRUNCATE_STRATEGY: DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
+        CONF_CONTINUE_CONVERSATION: DEFAULT_CONTINUE_CONVERSATION,
         CONF_SHORTEN_TOOL_CALL_ID: DEFAULT_SHORTEN_TOOL_CALL_ID,
         CONF_ADVANCED_OPTIONS: DEFAULT_ADVANCED_OPTIONS,
     }
@@ -434,6 +438,16 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
                         for mode in API_MODE_OPTIONS
                     ],
                     mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_CONTINUE_CONVERSATION,
+                default=DEFAULT_CONTINUE_CONVERSATION,
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=CONTINUE_CONVERSATION_OPTIONS,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    translation_key=CONF_CONTINUE_CONVERSATION,
                 )
             ),
             vol.Optional(

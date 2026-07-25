@@ -72,6 +72,13 @@ Options include [OpenAI Conversation](https://www.home-assistant.io/integrations
 
   Responses mode supports streaming, Home Assistant functions, sequential function calls, conversation memory, image and PDF inputs, structured outputs, token limits, service tier, and `reasoning_effort`. Custom OpenAI-compatible providers must implement `/v1/responses` before you select Responses mode.
 
+- `Continue conversation`: Control whether an Assist voice device listens for an immediate follow-up after speaking a successful response.
+  - `HA Default`: Preserve Home Assistant's normal behavior. Home Assistant currently continues when the final assistant text ends in a recognized question mark.
+  - `Always`: Explicitly request another utterance after every successful response. Errors still end the interaction.
+  - `Conditional`: Let the model decide for each final response. The integration supplies an internal structured tool containing the spoken response and a boolean decision. It does not make a second model request or add control syntax to the speech.
+
+  Home Assistant represents this request as the boolean `ConversationResult.continue_conversation`. The Assist pipeline forwards it to the voice client and routes the follow-up back to the requesting conversation agent. Current ESPHome Assist satellites consume the flag and restart the microphone after TTS without requiring the wake word. Text clients can ignore it harmlessly; older or custom satellites must implement the flag, and device timeouts, firmware, VAD, or a user stop can still end listening.
+
 - `Attach Username`: Pass the active user's name (if applicable) to OpenAI via the message payload. Currently, this only applies to conversations through the UI or REST API.
 
 - `Maximum Function Calls Per Conversation`: limit the number of function calls in a single conversation.
@@ -84,7 +91,7 @@ Options include [OpenAI Conversation](https://www.home-assistant.io/integrations
 
 Home Assistant treats this fork as a new integration. It does not reuse or migrate config entries from `extended_openai_conversation`; add **Extended OpenAI Conversation (Responses)** and configure its agents separately. If needed, copy skills or other files from `/config/extended_openai_conversation/` to `/config/extended_openai_conversation_responses/`. Update only the automations and scripts that you want to target this fork to use the `extended_openai_conversation_responses` service and event namespaces.
 
-Within this fork, agents without an API mode setting default to `Auto`. Auto keeps models older than GPT-5.6 on Chat Completions, while GPT-5.6 and later GPT-5 models use Responses. You can force either endpoint at any time with `API mode`.
+Within this fork, agents without an API mode setting default to `Auto`, and agents without a continue-conversation setting default to `HA Default`. Auto keeps models older than GPT-5.6 on Chat Completions, while GPT-5.6 and later GPT-5 models use Responses. You can force either endpoint at any time with `API mode`.
 
 The `extended_openai_conversation_responses.query_image` service also accepts `api_mode`. Its default is `auto`.
 

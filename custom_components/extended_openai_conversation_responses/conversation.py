@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import logging
 from pathlib import Path
 from typing import Any, Literal
@@ -27,10 +28,15 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import ExtendedOpenAIConfigEntry
 from .const import (
+    CONDITIONAL_CONTINUATION_PROMPT,
+    CONF_CONTINUE_CONVERSATION,
     CONF_FUNCTION_TOOLS,
     CONF_PROMPT,
     CONF_SKILLS,
+    CONTINUE_CONVERSATION_ALWAYS,
+    CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_CONF_FUNCTION_TOOLS,
+    DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_PROMPT,
     DEFAULT_WORKING_DIRECTORY,
     DOMAIN,
@@ -137,11 +143,15 @@ class ExtendedOpenAIAgentEntity(
         # Call the LLM
 
         try:
-            await self._async_handle_chat_log(
+            continue_mode = _get_continue_conversation_mode(self.subentry.data)
+            conditional_decision = await self._async_handle_chat_log(
                 chat_log,
                 function_tools=function_tools,
                 exposed_entities=exposed_entities,
                 llm_context=llm_context,
+                conditional_continue=(
+                    continue_mode == CONTINUE_CONVERSATION_CONDITIONAL
+                ),
             )
         except OpenAIError as err:
             _LOGGER.error(err)
@@ -187,7 +197,11 @@ class ExtendedOpenAIAgentEntity(
         return ConversationResult(
             response=intent_response,
             conversation_id=chat_log.conversation_id,
-            continue_conversation=chat_log.continue_conversation,
+            continue_conversation=_resolve_continue_conversation(
+                continue_mode,
+                chat_log.continue_conversation,
+                conditional_decision,
+            ),
         )
 
     def _build_system_prompt(
@@ -210,7 +224,13 @@ class ExtendedOpenAIAgentEntity(
             parse_result=False,
         )
 
-        return str(result)
+        rendered_prompt = str(result)
+        if (
+            _get_continue_conversation_mode(self.subentry.data)
+            == CONTINUE_CONVERSATION_CONDITIONAL
+        ):
+            return f"{rendered_prompt.rstrip()}\n{CONDITIONAL_CONTINUATION_PROMPT}"
+        return rendered_prompt
 
     def _get_enabled_skills(self) -> list[Skill]:
         """Get enabled skills as list for template rendering."""
@@ -249,3 +269,21 @@ class ExtendedOpenAIAgentEntity(
             raise e
         except Exception as e:
             raise FunctionLoadFailed() from e
+
+
+def _resolve_continue_conversation(
+    mode: str,
+    ha_default: bool,
+    conditional_decision: bool | None,
+) -> bool:
+    """Resolve the configured continuation behavior for a successful response."""
+    if mode == CONTINUE_CONVERSATION_ALWAYS:
+        return True
+    if mode == CONTINUE_CONVERSATION_CONDITIONAL:
+        return conditional_decision is True
+    return ha_default
+
+
+def _get_continue_conversation_mode(options: Mapping[str, Any]) -> str:
+    """Return the mode, preserving HA Default for existing config entries."""
+    return str(options.get(CONF_CONTINUE_CONVERSATION, DEFAULT_CONTINUE_CONVERSATION))

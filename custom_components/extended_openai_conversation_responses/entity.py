@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import AsyncGenerator, Iterable
+from dataclasses import replace
 import json
 import logging
 import mimetypes
@@ -65,6 +66,33 @@ _LOGGER = logging.getLogger(__name__)
 
 # Max number of back and forth with the LLM to generate a response
 MAX_TOOL_ITERATIONS = 20
+
+CONTINUE_CONVERSATION_TOOL_NAME = "set_continue_conversation"
+CONTINUE_CONVERSATION_TOOL = {
+    "spec": {
+        "name": CONTINUE_CONVERSATION_TOOL_NAME,
+        "description": (
+            "Return the final spoken response and whether the user is expected to "
+            "reply immediately. Use this only when the final answer is ready."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "response": {
+                    "type": "string",
+                    "description": "The complete plain-text response spoken to the user.",
+                },
+                "continue_conversation": {
+                    "type": "boolean",
+                    "description": "Whether to listen for an immediate follow-up.",
+                },
+            },
+            "required": ["response", "continue_conversation"],
+            "additionalProperties": False,
+        },
+    }
+}
 
 
 def _shorten_tool_call_id(tool_call_id: str) -> str:
@@ -282,7 +310,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         llm_context: llm.LLMContext | None = None,
         structure_name: str | None = None,
         structure: vol.Schema | None = None,
-    ) -> None:
+        conditional_continue: bool = False,
+    ) -> bool | None:
         """Generate an answer for the chat log with streaming support."""
         options = self.subentry.data
         model = options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
@@ -308,7 +337,23 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
         await self._async_add_attachments(chat_log, messages, api_mode)
 
-        tools = _format_tools(function_tools, api_mode)
+        if conditional_continue and any(
+            function_tool["spec"]["name"] == CONTINUE_CONVERSATION_TOOL_NAME
+            for function_tool in function_tools
+        ):
+            raise HomeAssistantError(
+                f"Function tool name `{CONTINUE_CONVERSATION_TOOL_NAME}` is reserved "
+                "for Conditional continue conversation mode"
+            )
+
+        tools = _format_tools(
+            [
+                *function_tools,
+                *([CONTINUE_CONVERSATION_TOOL] if conditional_continue else []),
+            ],
+            api_mode,
+        )
+        continuation_decision: bool | None = None
         api_kwargs: dict[str, Any] = {
             "model": model,
             "stream": True,
@@ -375,11 +420,20 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         tool_kwargs: dict[str, Any] = {}
         if tools:
             tool_kwargs["tools"] = tools
-            tool_kwargs["tool_choice"] = "auto"
+            tool_kwargs["tool_choice"] = "required" if conditional_continue else "auto"
+
+        finalization_retry_attempted = False
+        draft_content_ids: set[int] = set()
 
         for n_requests in range(MAX_TOOL_ITERATIONS):
             if tools and 0 <= max_function_calls <= n_requests:
-                tool_kwargs["tool_choice"] = "none"
+                if conditional_continue:
+                    tool_kwargs["tools"] = _format_tools(
+                        [CONTINUE_CONVERSATION_TOOL], api_mode
+                    )
+                    tool_kwargs["tool_choice"] = "required"
+                else:
+                    tool_kwargs["tool_choice"] = "none"
 
             _LOGGER.info(
                 "Prompt for %s using %s: %s", model, api_mode, json.dumps(messages)
@@ -423,6 +477,41 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             if pending_tool_calls:
                 _LOGGER.info("Response Tool Calls %s", pending_tool_calls)
 
+            control_calls = [
+                tool_input
+                for tool_input in pending_tool_calls
+                if tool_input.tool_name == CONTINUE_CONVERSATION_TOOL_NAME
+            ]
+            pending_tool_calls = [
+                tool_input
+                for tool_input in pending_tool_calls
+                if tool_input.tool_name != CONTINUE_CONVERSATION_TOOL_NAME
+            ]
+
+            if control_calls:
+                control_call = control_calls[-1]
+                response_text = control_call.tool_args.get("response")
+                decision = control_call.tool_args.get("continue_conversation")
+                if not isinstance(response_text, str) or not isinstance(decision, bool):
+                    raise ParseArgumentsFailed(json.dumps(control_call.tool_args))
+
+                # A finalizer emitted beside an action tool is premature. Remove it
+                # from history and wait for the post-tool response to decide.
+                is_final = not pending_tool_calls
+                self._consume_continue_conversation_tool(
+                    chat_log,
+                    existing_content_ids,
+                    response_text if is_final else None,
+                )
+                if is_final:
+                    continuation_decision = decision
+                    if draft_content_ids:
+                        chat_log.content[:] = [
+                            content
+                            for content in chat_log.content
+                            if id(content) not in draft_content_ids
+                        ]
+
             for tool_input in pending_tool_calls:
                 function_tool = next(
                     (
@@ -458,8 +547,88 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     chat_log.content, shorten_tool_call_id
                 )
 
+            if (
+                conditional_continue
+                and continuation_decision is None
+                and not pending_tool_calls
+                and not control_calls
+            ):
+                if not finalization_retry_attempted:
+                    draft_content_ids.update(
+                        id(content)
+                        for content in chat_log.content
+                        if id(content) not in existing_content_ids
+                        and isinstance(content, conversation.AssistantContent)
+                        and not content.tool_calls
+                    )
+                    finalization_retry_attempted = True
+                    tool_kwargs["tools"] = _format_tools(
+                        [CONTINUE_CONVERSATION_TOOL], api_mode
+                    )
+                    tool_kwargs["tool_choice"] = "required"
+                    _LOGGER.warning(
+                        "Conditional response omitted %s; retrying once with only "
+                        "the finalizer available",
+                        CONTINUE_CONVERSATION_TOOL_NAME,
+                    )
+                    continue
+
+                _LOGGER.error(
+                    "Conditional response omitted %s after the finalization retry; "
+                    "using the assistant text with continuation disabled",
+                    CONTINUE_CONVERSATION_TOOL_NAME,
+                )
+                if draft_content_ids:
+                    chat_log.content[:] = [
+                        content
+                        for content in chat_log.content
+                        if id(content) not in draft_content_ids
+                    ]
+
             if not chat_log.unresponded_tool_results:
                 break
+
+        return continuation_decision
+
+    @staticmethod
+    def _consume_continue_conversation_tool(
+        chat_log: conversation.ChatLog,
+        existing_content_ids: set[int],
+        response_text: str | None,
+    ) -> None:
+        """Convert the internal finalizer tool call into normal assistant content."""
+        updated_content: list[conversation.Content] = []
+        for content in chat_log.content:
+            if (
+                id(content) in existing_content_ids
+                or not isinstance(content, conversation.AssistantContent)
+                or not content.tool_calls
+                or not any(
+                    tool_call.tool_name == CONTINUE_CONVERSATION_TOOL_NAME
+                    for tool_call in content.tool_calls
+                )
+            ):
+                updated_content.append(content)
+                continue
+
+            remaining_calls = [
+                tool_call
+                for tool_call in content.tool_calls
+                if tool_call.tool_name != CONTINUE_CONVERSATION_TOOL_NAME
+            ]
+            replacement_content = (
+                response_text if not remaining_calls else content.content
+            )
+            if replacement_content or remaining_calls or content.native:
+                updated_content.append(
+                    replace(
+                        content,
+                        content=replacement_content,
+                        tool_calls=remaining_calls or None,
+                    )
+                )
+
+        chat_log.content[:] = updated_content
 
     async def _async_add_attachments(
         self,

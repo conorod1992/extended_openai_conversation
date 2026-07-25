@@ -32,6 +32,7 @@
             "max_tokens": "Maximum tokens to return in response",
             "model": "Completion Model",
             "api_mode": "API mode",
+            "continue_conversation": "Continue conversation",
             "prompt": "Prompt Template",
             "max_function_calls_per_conversation": "Maximum function calls per conversation",
             "skills": "Skills",
@@ -41,7 +42,9 @@
             "context_truncate_strategy": "Context truncation strategy when exceeded threshold",
             "advanced_options": "Advanced Options"
           },
-          "data_description": {}
+          "data_description": {
+            "continue_conversation": "HA Default uses Home Assistant's normal punctuation-based behavior. Always listens again after successful responses. Conditional lets the language model decide when an immediate follow-up is expected."
+          }
         },
         "advanced": {
           "title": "Advanced Options",
@@ -87,6 +90,15 @@
             "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers."
           }
         }
+      }
+    }
+  },
+  "selector": {
+    "continue_conversation": {
+      "options": {
+        "ha_default": "HA Default",
+        "always": "Always",
+        "conditional": "Conditional"
       }
     }
   },
