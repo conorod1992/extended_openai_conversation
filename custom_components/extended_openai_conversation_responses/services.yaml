@@ -84,3 +84,81 @@ download_skill:
 reload_skills:
   name: Reload skills
   description: Reload all skills from the user skills directory to pick up changes or newly added skills
+memory_list:
+  name: List memories
+  description: List or search persistent memories for the calling Home Assistant user.
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: extended_openai_conversation_responses
+    agent_id:
+      required: true
+      description: Conversation agent subentry ID.
+      selector:
+        text:
+    query:
+      description: Optional search query. Leave empty to browse memories.
+      selector:
+        text:
+    category:
+      description: Optional category filter.
+      selector:
+        text:
+    limit:
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 100
+          mode: box
+    offset:
+      default: 0
+      selector:
+        number:
+          min: 0
+          mode: box
+memory_delete:
+  name: Delete memories
+  description: Permanently delete selected persistent memories for the calling Home Assistant user.
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: extended_openai_conversation_responses
+    agent_id:
+      required: true
+      description: Conversation agent subentry ID.
+      selector:
+        text:
+    memory_ids:
+      required: true
+      description: One or more memory IDs returned by memory_list.
+      selector:
+        object:
+memory_clear:
+  name: Clear memories
+  description: Permanently clear all memories, or one category, for the calling Home Assistant user.
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: extended_openai_conversation_responses
+    agent_id:
+      required: true
+      description: Conversation agent subentry ID.
+      selector:
+        text:
+    category:
+      description: Optional category to clear. Leave empty to clear all memories in your user scope.
+      selector:
+        text:
+    confirm:
+      required: true
+      default: false
+      description: Must be enabled to confirm this destructive action.
+      selector:
+        boolean:

@@ -4,6 +4,7 @@ import base64
 import logging
 import mimetypes
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlparse
 
 from openai._exceptions import OpenAIError
@@ -38,10 +39,14 @@ from .const import (
     GITHUB_SKILLS_BRANCH,
     GITHUB_SKILLS_PATH,
     SERVICE_DOWNLOAD_SKILL,
+    SERVICE_MEMORY_CLEAR,
+    SERVICE_MEMORY_DELETE,
+    SERVICE_MEMORY_LIST,
     SERVICE_QUERY_IMAGE,
     SERVICE_RELOAD_SKILLS,
 )
 from .helpers import get_api_mode, get_authenticated_client, get_token_param_for_model
+from .memory import async_get_memory, memory_as_dict, memory_user_id
 
 QUERY_IMAGE_SCHEMA = vol.Schema(
     {
@@ -81,6 +86,38 @@ RELOAD_SKILLS_SCHEMA = vol.Schema({})
 DOWNLOAD_SKILL_SCHEMA = vol.Schema(
     {
         vol.Required("skill_name"): cv.string,
+    }
+)
+
+MEMORY_AGENT_FIELDS: dict[Any, Any] = {
+    vol.Required("config_entry"): selector.ConfigEntrySelector({"integration": DOMAIN}),
+    vol.Required("agent_id"): cv.string,
+}
+
+MEMORY_LIST_SCHEMA = vol.Schema(
+    {
+        **MEMORY_AGENT_FIELDS,
+        vol.Optional("query"): cv.string,
+        vol.Optional("category"): cv.string,
+        vol.Optional("limit", default=50): vol.All(cv.positive_int, vol.Range(max=100)),
+        vol.Optional("offset", default=0): vol.All(vol.Coerce(int), vol.Range(min=0)),
+    }
+)
+
+MEMORY_DELETE_SCHEMA = vol.Schema(
+    {
+        **MEMORY_AGENT_FIELDS,
+        vol.Required("memory_ids"): vol.All(
+            cv.ensure_list, vol.Length(min=1, max=50), [cv.string]
+        ),
+    }
+)
+
+MEMORY_CLEAR_SCHEMA = vol.Schema(
+    {
+        **MEMORY_AGENT_FIELDS,
+        vol.Optional("category"): cv.string,
+        vol.Required("confirm", default=False): cv.boolean,
     }
 )
 
@@ -304,6 +341,58 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             "target_directory": str(target_dir),
         }
 
+    async def _memory_for_call(call: ServiceCall):
+        entry_id = call.data["config_entry"]
+        subentry_id = call.data["agent_id"]
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None or entry.domain != DOMAIN:
+            raise HomeAssistantError("Config entry not found")
+        subentry = entry.subentries.get(subentry_id)
+        if subentry is None or subentry.subentry_type != "conversation":
+            raise HomeAssistantError("Conversation agent not found")
+        return await async_get_memory(hass, entry_id, subentry_id)
+
+    async def memory_list(call: ServiceCall) -> ServiceResponse:
+        """Inspect memories in the caller's own user scope."""
+        memory = await _memory_for_call(call)
+        user_id = memory_user_id(call)
+        if query := call.data.get("query"):
+            records = await memory.async_search(
+                user_id,
+                query,
+                call.data.get("category"),
+                call.data["limit"],
+            )
+        else:
+            records = await memory.async_list(
+                user_id,
+                call.data.get("category"),
+                call.data["limit"],
+                call.data["offset"],
+            )
+        return cast(
+            ServiceResponse,
+            {"memories": [memory_as_dict(record) for record in records]},
+        )
+
+    async def memory_delete(call: ServiceCall) -> ServiceResponse:
+        """Delete selected memories in the caller's own user scope."""
+        memory = await _memory_for_call(call)
+        deleted = await memory.async_delete(
+            memory_user_id(call), call.data["memory_ids"]
+        )
+        return {"deleted": deleted}
+
+    async def memory_clear(call: ServiceCall) -> ServiceResponse:
+        """Clear memories only after explicit confirmation."""
+        if call.data["confirm"] is not True:
+            raise HomeAssistantError("Set confirm to true to clear memories")
+        memory = await _memory_for_call(call)
+        deleted = await memory.async_clear(
+            memory_user_id(call), call.data.get("category")
+        )
+        return {"deleted": deleted}
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_QUERY_IMAGE,
@@ -332,6 +421,30 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         SERVICE_DOWNLOAD_SKILL,
         download_skill,
         schema=DOWNLOAD_SKILL_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_MEMORY_LIST,
+        memory_list,
+        schema=MEMORY_LIST_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_MEMORY_DELETE,
+        memory_delete,
+        schema=MEMORY_DELETE_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_MEMORY_CLEAR,
+        memory_clear,
+        schema=MEMORY_CLEAR_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
 

@@ -25,6 +25,7 @@ from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
+    NumberSelectorMode,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
@@ -47,6 +48,9 @@ from .const import (
     CONF_FUNCTION_TOOLS,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MAX_TOKENS,
+    CONF_MEMORY_AUTO_CREATE,
+    CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
+    CONF_MEMORY_ENABLED,
     CONF_ORGANIZATION,
     CONF_PROMPT,
     CONF_REASONING_EFFORT,
@@ -74,6 +78,9 @@ from .const import (
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MAX_TOKENS,
+    DEFAULT_MEMORY_AUTO_CREATE,
+    DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
+    DEFAULT_MEMORY_ENABLED,
     DEFAULT_NAME,
     DEFAULT_PROMPT,
     DEFAULT_REASONING_EFFORT,
@@ -85,6 +92,7 @@ from .const import (
     DEFAULT_WEB_SEARCH,
     DEFAULT_WEB_SEARCH_CONTEXT,
     DOMAIN,
+    MAX_MEMORY_AUTO_RETRIEVE_LIMIT,
     REASONING_EFFORT_OPTIONS,
     SERVICE_TIER_OPTIONS,
     WEB_SEARCH_CONTEXT_OPTIONS,
@@ -137,6 +145,9 @@ DEFAULT_OPTIONS = types.MappingProxyType(
         CONF_CONTINUE_CONVERSATION: DEFAULT_CONTINUE_CONVERSATION,
         CONF_WEB_SEARCH: DEFAULT_WEB_SEARCH,
         CONF_WEB_SEARCH_CONTEXT: DEFAULT_WEB_SEARCH_CONTEXT,
+        CONF_MEMORY_ENABLED: DEFAULT_MEMORY_ENABLED,
+        CONF_MEMORY_AUTO_CREATE: DEFAULT_MEMORY_AUTO_CREATE,
+        CONF_MEMORY_AUTO_RETRIEVE_LIMIT: DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
         CONF_SHORTEN_TOOL_CALL_ID: DEFAULT_SHORTEN_TOOL_CALL_ID,
         CONF_ADVANCED_OPTIONS: DEFAULT_ADVANCED_OPTIONS,
     }
@@ -469,6 +480,25 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
                     options=WEB_SEARCH_CONTEXT_OPTIONS,
                     mode=SelectSelectorMode.DROPDOWN,
                     translation_key=CONF_WEB_SEARCH_CONTEXT,
+                )
+            ),
+            vol.Optional(
+                CONF_MEMORY_ENABLED,
+                default=DEFAULT_MEMORY_ENABLED,
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_MEMORY_AUTO_CREATE,
+                default=DEFAULT_MEMORY_AUTO_CREATE,
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
+                default=DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0,
+                    max=MAX_MEMORY_AUTO_RETRIEVE_LIMIT,
+                    step=1,
+                    mode=NumberSelectorMode.BOX,
                 )
             ),
             vol.Optional(

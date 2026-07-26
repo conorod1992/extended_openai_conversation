@@ -128,6 +128,38 @@ CONF_WEB_SEARCH_CONTEXT = "web_search_context"
 WEB_SEARCH_CONTEXT_OPTIONS = ["low", "medium", "high"]
 DEFAULT_WEB_SEARCH_CONTEXT = WEB_SEARCH_CONTEXT_OPTIONS[0]
 
+# Persistent memory (opt-in per conversation agent)
+CONF_MEMORY_ENABLED = "memory_enabled"
+DEFAULT_MEMORY_ENABLED = False
+CONF_MEMORY_AUTO_CREATE = "memory_auto_create"
+DEFAULT_MEMORY_AUTO_CREATE = False
+CONF_MEMORY_AUTO_RETRIEVE_LIMIT = "memory_auto_retrieve_limit"
+DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT = 3
+MAX_MEMORY_AUTO_RETRIEVE_LIMIT = 10
+
+MEMORY_PROMPT = """
+## Persistent memory
+Persistent memory is enabled and scoped to this conversation agent and the current
+Home Assistant user. Memories are concise durable facts, not conversation transcripts.
+
+- When the user explicitly asks you to remember a safe fact, call memory_add with
+  source set to explicit.
+- You may store a stable fact proactively with source set to implicit only when
+  remembering it would materially improve future conversations. Do not store
+  transient, low-value, or ordinary conversational details.
+- Never store passwords, authentication tokens, API keys, security codes, financial
+  account details, or other secrets. Sensitive personal information must not be
+  stored automatically.
+- Search before adding when a related memory may exist. Avoid duplicates. When a
+  fact changes, update the existing memory instead of adding a contradiction.
+- Keep memory content concise, self-contained, and meaningful months later.
+- Use memory_search when prior personal, household, device, routine, or project
+  context would materially improve the answer. Use memory_list only when browsing
+  remembered facts is useful.
+- When the user asks to forget something, search for the relevant memory IDs and
+  delete them. Confirm before broad deletion.
+"""
+
 MODEL_TOKEN_PARAMETER_SUPPORT = (
     {
         "pattern": r"(^|-)(gpt-4o|gpt-5|o1|o3|o4)",
@@ -346,6 +378,9 @@ SKILL_FILE_NAME = "SKILL.md"
 # Skill Services
 SERVICE_RELOAD_SKILLS = "reload_skills"
 SERVICE_DOWNLOAD_SKILL = "download_skill"
+SERVICE_MEMORY_LIST = "memory_list"
+SERVICE_MEMORY_DELETE = "memory_delete"
+SERVICE_MEMORY_CLEAR = "memory_clear"
 
 # GitHub repository for downloadable skills
 GITHUB_REPO_OWNER = "conorod1992"
