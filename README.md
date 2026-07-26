@@ -1,20 +1,18 @@
 # Extended OpenAI Conversation (Responses)
 
-This repository is an experimental fork of [Extended OpenAI Conversation](https://github.com/jekalmin/extended_openai_conversation) for Home Assistant. It adds OpenAI Responses API support while keeping the original integration's features and Chat Completions compatibility.
+This is a fork of [Extended OpenAI Conversation](https://github.com/jekalmin/extended_openai_conversation) for Home Assistant. It keeps the original integration's tools and Chat Completions support while adding newer OpenAI features.
 
-The fork uses the separate domain `extended_openai_conversation_responses`, so you can install it alongside the original integration for testing. Home Assistant stores its config entries, services, events, entities, and workspace separately.
+## What is different from the original project?
 
-Derived from [OpenAI Conversation](https://www.home-assistant.io/integrations/openai_conversation/) with some new features such as call-service.
+- **Separate integration:** Uses the domain `extended_openai_conversation_responses`, so it can be installed alongside the original without sharing agents, services, events, or workspace files.
+- **Responses API:** Supports both Chat Completions and the newer Responses API, with automatic model routing or a manual endpoint choice.
+- **OpenAI Web Search:** Lets compatible Responses models search the web when current information is needed.
+- **Voice follow-ups:** Can always continue listening, use Home Assistant's default behavior, or let the model decide when a follow-up is expected.
+- **Persistent memory:** Can remember selected facts across separate conversations, with opt-in automatic saving and retrieval controls.
 
-📚 **[Fork documentation](https://github.com/conorod1992/extended_openai_conversation#readme)**
+The original project's main capabilities are still included: controlling Home Assistant devices, creating automations, reading entity history, using external APIs and web pages, loading skills, and defining custom functions.
 
-## Additional Features
-- Chat Completions and Responses API support with automatic model routing
-- Ability to call service of Home Assistant
-- Ability to create automation
-- Ability to get data from external API or web page
-- Ability to retrieve state history of entities
-- Option to pass the current user's name to OpenAI via the user message context
+**[Read the fork documentation](https://github.com/conorod1992/extended_openai_conversation#readme)**
 
 ## How it works
 Extended OpenAI Conversation (Responses) uses OpenAI API [function calling](https://developers.openai.com/api/docs/guides/function-calling) to call Home Assistant services. It supports both `/v1/chat/completions` and `/v1/responses` while keeping the same Home Assistant function execution and conversation history.
@@ -62,41 +60,71 @@ https://github.com/jekalmin/extended_openai_conversation/assets/2917984/64ba656e
 
 ## Configuration
 ### Options
-By clicking a button from Edit Assist, Options can be customized.<br/>
-Options include [OpenAI Conversation](https://www.home-assistant.io/integrations/openai_conversation/) options and two new options. 
+Open the assistant under **Settings > Voice Assistants**, select its conversation agent, and choose **Options**.
 
-- `API mode`: Select the OpenAI endpoint.
-  - `Auto` (default): Uses Responses for GPT-5.6 and later GPT-5 models. Older models, including GPT-5.4 Mini, continue using Chat Completions.
-  - `Chat Completions`: Always uses `/v1/chat/completions`.
-  - `Responses`: Always uses `/v1/responses`.
+| Option | Default | What it does |
+| --- | --- | --- |
+| `Prompt Template` | Included assistant prompt | Sets the assistant's instructions and the Home Assistant context sent to the model. It supports Home Assistant templates. |
+| `Completion Model` | `gpt-5-mini` | Selects the model name sent to the configured provider. |
+| `API mode` | `Auto` | Chooses between Chat Completions and Responses. See [API mode](#api-mode). |
+| `Continue conversation` | `HA Default` | Controls whether a voice device listens for an immediate follow-up. See [voice follow-ups](#voice-follow-ups). |
+| `Web search` | Off | Allows the model to use OpenAI's hosted Web Search tool. See [Web Search](#web-search). |
+| `Web search context` | `Low` | Chooses low, medium, or high search breadth. It is used only when Web Search is enabled. |
+| `Persistent memory` | Off | Allows this agent to retain local, user-scoped facts across separate conversations. See [persistent memory](#persistent-memory). |
+| `Automatic memory creation` | Off | Lets the model save useful, stable facts without being explicitly asked. Explicit “remember this” requests still work when it is off. |
+| `Automatically retrieved memories` | `3` | Adds up to this many relevant memories to each request. Set it to `0` for retrieval only when the model calls a memory tool. |
+| `Maximum tokens to return in response` | `500` | Limits the number of tokens the model may generate in its answer. |
+| `Maximum function calls per conversation` | `10` | Stops repeated tool calls from continuing indefinitely in one conversation. |
+| `Skills` | All available skills for a new agent | Chooses which installed skill instructions the agent may load. This option is hidden when no skills are installed. |
+| `Functions` | Included Home Assistant tools | Defines the tools the model can call and maps each tool specification to its implementation. See [Functions](#functions). |
+| `Context Threshold` | `40000` | Sets the approximate conversation size at which the selected truncation strategy is applied. |
+| `Context truncation strategy when exceeded threshold` | `Clear All Messages` | Chooses how old conversation context is reduced after the threshold is reached. |
+| `Advanced Options` | Off | Shows model-specific tuning and compatibility settings. See [advanced options](#advanced-options). |
 
-  Responses mode supports streaming, Home Assistant functions, sequential function calls, conversation memory, image and PDF inputs, structured outputs, token limits, service tier, and `reasoning_effort`. Custom OpenAI-compatible providers must implement `/v1/responses` before you select Responses mode.
+#### API mode
 
-- `Web search`: Optionally expose OpenAI's native hosted Web Search tool to the model. It is off by default and is supported only with the direct OpenAI Responses API, not Chat Completions, Azure, or custom base URLs. In `Auto` mode, select `Responses` explicitly if the configured model would otherwise route to Chat Completions. The model chooses whether a request needs a search; enabling the option does not search on every prompt.
-  - `Web search context`: Choose `Low` (default), `Medium`, or `High` retrieval breadth. This is not an exact result or token limit. Broader search can increase latency and usage.
+- `Auto`: Uses Responses for GPT-5.6 and later GPT-5 models. Older models, including GPT-5.4 Mini, use Chat Completions.
+- `Chat Completions`: Always uses `/v1/chat/completions`.
+- `Responses`: Always uses `/v1/responses`.
 
-  OpenAI charges separately for Web Search calls and retrieved search-content tokens; see the current [OpenAI API pricing](https://developers.openai.com/api/docs/pricing#tools). The integration preserves native search-call items and citation annotations while a Responses tool chain is running. Home Assistant's conversation response currently has no structured citation field, so voice output remains ordinary spoken text and clients do not receive guaranteed clickable source annotations. Conditional continuation still uses its separate internal finalizer after any search or Home Assistant action; the finalizer carries plain response text and therefore cannot retain OpenAI's structured citation annotations.
+Responses mode supports streaming, Home Assistant functions, sequential tool calls, image and PDF inputs, structured outputs, service tiers, and reasoning effort. A custom OpenAI-compatible provider must implement `/v1/responses` before you select it.
 
-- `Continue conversation`: Control whether an Assist voice device listens for an immediate follow-up after speaking a successful response.
-  - `HA Default`: Preserve Home Assistant's normal behavior. Home Assistant currently continues when the final assistant text ends in a recognized question mark.
-  - `Always`: Explicitly request another utterance after every successful response. Errors still end the interaction.
-  - `Conditional`: Let the model decide for each final response. The integration supplies an internal structured tool containing the spoken response and a boolean decision. It does not make a second model request or add control syntax to the speech.
+#### Web Search
 
-  Home Assistant represents this request as the boolean `ConversationResult.continue_conversation`. The Assist pipeline forwards it to the voice client and routes the follow-up back to the requesting conversation agent. Current ESPHome Assist satellites consume the flag and restart the microphone after TTS without requiring the wake word. Text clients can ignore it harmlessly; older or custom satellites must implement the flag, and device timeouts, firmware, VAD, or a user stop can still end listening.
+Web Search is available only with the direct OpenAI Responses API. It is not supported by Chat Completions, Azure OpenAI, or custom base URLs. The model decides when a request needs a search, so enabling it does not search on every prompt.
 
-- `Attach Username`: Pass the active user's name (if applicable) to OpenAI via the message payload. Currently, this only applies to conversations through the UI or REST API.
+`Web search context` controls retrieval breadth, not an exact result or token count. Higher settings may increase latency and cost. OpenAI charges separately for Web Search; see [OpenAI API pricing](https://developers.openai.com/api/docs/pricing#tools). Home Assistant voice responses do not currently expose OpenAI's structured citation data as clickable sources.
 
-- `Maximum Function Calls Per Conversation`: limit the number of function calls in a single conversation.
-(Sometimes function is called over and over again, possibly running into infinite loop) 
-- `Functions`: A list of mappings of function spec to function.
-  - `spec`: Function which would be passed to [functions](https://platform.openai.com/docs/api-reference/chat/create#chat-create-functions) of [chat API](https://platform.openai.com/docs/api-reference/chat/create).
-  - `function`: function that will be called.
+#### Voice follow-ups
+
+- `HA Default`: Keeps Home Assistant's normal behavior, which can continue when the answer ends with a recognized question mark.
+- `Always`: Requests another utterance after every successful response.
+- `Conditional`: Lets the model decide when its answer expects an immediate reply, without making a second model request.
+
+The voice client must support Home Assistant's `continue_conversation` signal. Current ESPHome Assist satellites do; older or custom clients may ignore it.
+
+#### Persistent memory
+
+Persistent memory is disabled by default. When enabled, it stores concise facts in Home Assistant's local `.storage` area, separately for each conversation agent and, when available, each Home Assistant user. It does not store full conversation transcripts.
+
+Keep `Automatic memory creation` off if you want facts saved only after an explicit request. Use `Automatically retrieved memories` to limit how many relevant facts are included automatically. The model can add, search, list, update, and delete memories. You can also manage them with the Home Assistant actions `memory_list`, `memory_delete`, and the confirmation-protected `memory_clear`. See the [persistent memory guide](docs/persistent-memory.mdx) for privacy details and examples.
+
+#### Advanced options
+
+Only settings supported by the selected model are shown:
+
+- `Temperature` and `Top P` control response variation for compatible models.
+- `Reasoning effort` chooses `Low`, `Medium`, or `High` for supported reasoning models.
+- `Service tier` chooses `Auto`, `Default`, `Flex`, or `Priority` where supported. Availability and pricing depend on the provider and account.
+- `Shorten tool call IDs` creates 9-character tool call IDs for providers such as Mistral AI. Leave it off for OpenAI and most other providers.
+
+AI Task agents have a smaller options screen containing the model, API mode, maximum output tokens, and supported advanced model settings. Conversation-only features such as voice follow-ups, Web Search, memory, skills, and functions are not shown there.
 
 ### Side-by-side installation and migration
 
 Home Assistant treats this fork as a new integration. It does not reuse or migrate config entries from `extended_openai_conversation`; add **Extended OpenAI Conversation (Responses)** and configure its agents separately. If needed, copy skills or other files from `/config/extended_openai_conversation/` to `/config/extended_openai_conversation_responses/`. Update only the automations and scripts that you want to target this fork to use the `extended_openai_conversation_responses` service and event namespaces.
 
-Within this fork, agents without an API mode setting default to `Auto`, agents without a continue-conversation setting default to `HA Default`, and agents without a Web Search setting keep it off. Auto keeps models older than GPT-5.6 on Chat Completions, while GPT-5.6 and later GPT-5 models use Responses. You can force either endpoint at any time with `API mode`.
+Within this fork, existing agents receive safe defaults for newly added settings: `Auto` API mode, `HA Default` continuation, and Web Search and persistent memory both off. You can change these at any time in the agent's options.
 
 The `extended_openai_conversation_responses.query_image` service also accepts `api_mode`. Its default is `auto`.
 
@@ -690,12 +718,6 @@ Get last changed date time of state | Get state at specific time
 See more practical [examples](https://github.com/conorod1992/extended_openai_conversation/tree/main/examples).
 
 For comprehensive documentation, see the [`docs`](https://github.com/conorod1992/extended_openai_conversation/tree/develop/docs) directory.
-
-### Persistent memory
-
-Persistent memory is an opt-in, local-first feature for retaining selected facts across separate conversations. It stores concise memories in Home Assistant's versioned `.storage` area rather than Recorder, so it is independent of the configured Recorder database. Memories are isolated by conversation agent and by Home Assistant user when a user ID is available.
-
-Enable it in the conversation agent settings. You can keep automatic creation disabled for explicit-only use, set a small automatic retrieval limit, ask the agent what it remembers, or manage records with the `memory_list`, `memory_delete`, and confirmed `memory_clear` actions. See the [persistent memory documentation](docs/persistent-memory.mdx) for privacy behavior, limitations, and examples.
 
 ## Logging
 In order to monitor logs of API requests and responses, add following config to `configuration.yaml` file
