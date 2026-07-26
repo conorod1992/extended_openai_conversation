@@ -292,6 +292,43 @@ def test_responses_native_search_and_citations_are_replayed() -> None:
     assert len(result) == 2
 
 
+async def test_responses_stream_separates_native_output_items(hass) -> None:
+    """Each native Responses output item gets its own HA content entry."""
+    reasoning_item = FakeReasoningItem()
+    search_item = FakeWebSearchItem()
+    message_item = FakeCitedMessageItem()
+    stream = FakeStream(
+        [
+            _event("response.output_item.added", item=reasoning_item),
+            _event("response.output_item.done", item=reasoning_item),
+            _event("response.output_item.added", item=search_item),
+            _event("response.output_item.done", item=search_item),
+            _event("response.output_item.added", item=message_item),
+            _event("response.output_text.delta", delta="It is mild today."),
+            _event("response.output_item.done", item=message_item),
+            _completed_event(),
+        ]
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.subentry = SimpleNamespace(data={})
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+
+    contents = [
+        content
+        async for content in chat_log.async_add_delta_content_stream(
+            "conversation.test",
+            entity._transform_responses_stream(chat_log, stream),
+        )
+    ]
+
+    assert [content.native.type for content in contents] == [
+        "reasoning",
+        "web_search_call",
+        "message",
+    ]
+    assert contents[-1].content == "It is mild today."
+
+
 @pytest.mark.parametrize("reasoning_effort", ["low", "medium", "high"])
 async def test_responses_tool_chain_preserves_reasoning(
     hass, reasoning_effort: str

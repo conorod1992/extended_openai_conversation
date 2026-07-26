@@ -860,7 +860,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             if event_type == "response.output_item.added":
                 item_type = getattr(event.item, "type", "")
-                if item_type in {"message", "function_call"}:
+                if item_type in {
+                    "message",
+                    "function_call",
+                    "reasoning",
+                    "web_search_call",
+                }:
                     yield {"role": "assistant"}
                 continue
 
