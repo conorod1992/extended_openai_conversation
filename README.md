@@ -691,6 +691,12 @@ See more practical [examples](https://github.com/conorod1992/extended_openai_con
 
 For comprehensive documentation, see the [`docs`](https://github.com/conorod1992/extended_openai_conversation/tree/develop/docs) directory.
 
+### Persistent memory
+
+Persistent memory is an opt-in, local-first feature for retaining selected facts across separate conversations. It stores concise memories in Home Assistant's versioned `.storage` area rather than Recorder, so it is independent of the configured Recorder database. Memories are isolated by conversation agent and by Home Assistant user when a user ID is available.
+
+Enable it in the conversation agent settings. You can keep automatic creation disabled for explicit-only use, set a small automatic retrieval limit, ask the agent what it remembers, or manage records with the `memory_list`, `memory_delete`, and confirmed `memory_clear` actions. See the [persistent memory documentation](docs/persistent-memory.mdx) for privacy behavior, limitations, and examples.
+
 ## Logging
 In order to monitor logs of API requests and responses, add following config to `configuration.yaml` file
 

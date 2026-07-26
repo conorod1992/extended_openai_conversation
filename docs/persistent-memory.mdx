@@ -1,0 +1,83 @@
+---
+title: "Persistent memory"
+description: "Keep selected facts available across conversations"
+---
+
+Persistent memory lets a conversation agent retain concise facts after chat history ends. It is different from chat history: the integration stores selected facts, not transcripts, and retrieves only a small relevant set for a new request.
+
+<Warning>
+Persistent memory is off by default. Enable it separately for each conversation agent.
+</Warning>
+
+## Configure memory
+
+Open the conversation agent configuration and set:
+
+- **Persistent memory**: Enable local long-term memory and its management tools.
+- **Automatic memory creation**: Let the model save useful stable facts without an explicit request. Leave this off for explicit-only memory.
+- **Automatically retrieved memories**: Set how many locally ranked memories, from 0 to 10, can be added to a request. Set it to 0 for tool-only retrieval.
+
+The model can add, search, list, update, and delete memories. Categories are flexible text labels rather than a fixed list.
+
+## Use memory
+
+Ask explicitly when you want a fact stored:
+
+> Remember that I prefer temperatures in Celsius.
+
+In a later conversation, ask:
+
+> What temperature units do I normally use?
+
+To remove it, ask:
+
+> Forget my preference about temperature units.
+
+The agent searches for the relevant memory ID before deleting it. Ask the agent to list what it remembers when you want to inspect your memories.
+
+You can also use the Home Assistant actions `memory_list`, `memory_delete`, and `memory_clear`. Select the integration entry and conversation entity in the action UI. Existing YAML that supplies the conversation-agent subentry ID remains supported. These actions operate only on the calling Home Assistant user's scope. `memory_clear` requires its **Confirm** field and can optionally clear one category.
+
+## What gets remembered
+
+An explicit safe request to remember something should normally be stored. When automatic creation is enabled, the agent may also store stable preferences, household or device context, recurring routines, and long-lived project constraints.
+
+The agent is instructed not to save transient details, one-off events, ordinary conversation, duplicates, or full transcript excerpts. Stored facts should be concise and self-contained. It should search for a related memory and update a changed fact instead of leaving contradictory facts.
+
+The storage layer rejects equal normalized content and records with very high token overlap. Semantic paraphrases can still pass this check. For example, `User's dog is called Oscar` and `My dog's name is Oscar` may depend on the model searching and recognizing that they mean the same thing. Detecting changed or contradictory facts is also primarily model-driven in this version.
+
+Secrets such as passwords, access tokens, API keys, PINs, and security codes are rejected. Usable payment-card numbers, CVV/CVC values, labeled bank account numbers, routing/sort codes, and valid IBANs are also rejected even when the user explicitly requests storage. Harmless financial preferences and provider facts remain allowed. Sensitive personal categories are rejected for automatic creation and require an explicit request. Persistent memory is not a secrets manager.
+
+## Storage architecture
+
+Memory uses Home Assistant's supported, versioned [`.storage` `Store` API](https://developers.home-assistant.io/blog/2022/07/08/generic-store/). Each conversation-agent subentry has a private store. Records inside that store are scoped by the authenticated Home Assistant user ID available through the [LLM request context](https://developers.home-assistant.io/docs/core/llm/). Requests without a user ID use a documented anonymous scope, so all such anonymous requests to that same agent share that scope.
+
+The integration does not read or write Recorder tables. Changing Recorder from SQLite to MariaDB, MySQL, PostgreSQL, or another supported backend has no effect on memory. Memory survives Home Assistant restarts, integration reloads, and separate conversation IDs without retaining an OpenAI response or thread.
+
+The store schema contains a memory ID, category, concise content, source type, and created and updated timestamps. Storage is versioned for migrations. An asynchronous lock serializes mutations, and Home Assistant performs file I/O outside the event loop. Store corruption follows Home Assistant's standard recovery behavior.
+
+## Retrieval and OpenAI
+
+The backend builds a local token index. A request looks up candidates by query terms, ranks them, and returns a bounded result set. The full memory database is never inserted into a model request.
+
+Retrieval is hybrid:
+
+1. The configured number of top local results can be included automatically.
+2. The model can call `memory_search` for more context.
+3. Add, update, list, and delete operations happen through structured tools. The model never receives SQL or arbitrary storage access.
+
+Memory records remain local until a retrieved record is included in an OpenAI request or returned by a memory tool during a conversation. At that point, the selected content is sent to the configured model provider as conversation context.
+
+## Isolation and limitations
+
+- Different config entries and different conversation-agent subentries do not share memories.
+- Authenticated Home Assistant users have separate memory scopes.
+- Home Assistant does not guarantee a user ID for every conversation source. Anonymous sources share one anonymous scope per agent.
+- Shared household memories are not available in this first version.
+- Keyword ranking does not understand every paraphrase. The model can list or search with alternate terms.
+- The `.storage` backend is designed for thousands of small records, with a limit of 10,000 per agent. It rewrites the versioned JSON payload for mutations, so a database backend may be preferable at substantially larger scale.
+
+## Future extensions
+
+Conversation logic depends on a storage interface and a stable `async_search` contract. Keyword retrieval currently lives in the memory manager rather than behind its own retriever interface. A later version can extract that boundary and add an indexed database, embeddings, or another semantic search provider without changing tool behavior. The schema can also grow to support shared household scopes, retention rules, importance, or decay through versioned migrations.
+
+Diagnostics expose only whether memory is enabled, record and user-scope counts, the backend name, and storage version. They do not include memory content.
