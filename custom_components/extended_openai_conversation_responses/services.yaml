@@ -95,9 +95,12 @@ memory_list:
           integration: extended_openai_conversation_responses
     agent_id:
       required: true
-      description: Conversation agent subentry ID.
+      description: Conversation agent. Legacy action calls may also use its subentry ID.
       selector:
-        text:
+        entity:
+          filter:
+            integration: extended_openai_conversation_responses
+            domain: conversation
     query:
       description: Optional search query. Leave empty to browse memories.
       selector:
@@ -130,9 +133,12 @@ memory_delete:
           integration: extended_openai_conversation_responses
     agent_id:
       required: true
-      description: Conversation agent subentry ID.
+      description: Conversation agent. Legacy action calls may also use its subentry ID.
       selector:
-        text:
+        entity:
+          filter:
+            integration: extended_openai_conversation_responses
+            domain: conversation
     memory_ids:
       required: true
       description: One or more memory IDs returned by memory_list.
@@ -149,9 +155,12 @@ memory_clear:
           integration: extended_openai_conversation_responses
     agent_id:
       required: true
-      description: Conversation agent subentry ID.
+      description: Conversation agent. Legacy action calls may also use its subentry ID.
       selector:
-        text:
+        entity:
+          filter:
+            integration: extended_openai_conversation_responses
+            domain: conversation
     category:
       description: Optional category to clear. Leave empty to clear all memories in your user scope.
       selector:

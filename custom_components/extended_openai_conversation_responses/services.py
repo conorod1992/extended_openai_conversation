@@ -18,7 +18,11 @@ from homeassistant.core import (
     SupportsResponse,
 )
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import config_validation as cv, selector
+from homeassistant.helpers import (
+    config_validation as cv,
+    entity_registry as er,
+    selector,
+)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
@@ -122,6 +126,33 @@ MEMORY_CLEAR_SCHEMA = vol.Schema(
 )
 
 _LOGGER = logging.getLogger(__package__)
+
+
+def resolve_memory_agent(
+    hass: HomeAssistant, entry_id: str, agent_reference: str
+) -> tuple[str, str]:
+    """Resolve a readable conversation entity or legacy subentry ID."""
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is None or entry.domain != DOMAIN:
+        raise HomeAssistantError("Config entry not found")
+
+    registry_entry = er.async_get(hass).async_get(agent_reference)
+    if registry_entry is not None:
+        if registry_entry.config_entry_id != entry_id:
+            raise HomeAssistantError(
+                "Conversation agent does not belong to the selected config entry"
+            )
+        subentry_id = registry_entry.config_subentry_id
+        if subentry_id is None:
+            raise HomeAssistantError("Conversation agent is not linked to a subentry")
+    else:
+        # Preserve compatibility with existing actions that pass the raw subentry ID.
+        subentry_id = agent_reference
+
+    subentry = entry.subentries.get(subentry_id)
+    if subentry is None or subentry.subentry_type != "conversation":
+        raise HomeAssistantError("Conversation agent not found")
+    return entry_id, subentry_id
 
 
 async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
@@ -342,14 +373,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         }
 
     async def _memory_for_call(call: ServiceCall):
-        entry_id = call.data["config_entry"]
-        subentry_id = call.data["agent_id"]
-        entry = hass.config_entries.async_get_entry(entry_id)
-        if entry is None or entry.domain != DOMAIN:
-            raise HomeAssistantError("Config entry not found")
-        subentry = entry.subentries.get(subentry_id)
-        if subentry is None or subentry.subentry_type != "conversation":
-            raise HomeAssistantError("Conversation agent not found")
+        entry_id, subentry_id = resolve_memory_agent(
+            hass, call.data["config_entry"], call.data["agent_id"]
+        )
         return await async_get_memory(hass, entry_id, subentry_id)
 
     async def memory_list(call: ServiceCall) -> ServiceResponse:

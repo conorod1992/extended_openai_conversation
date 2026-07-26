@@ -43,9 +43,25 @@ _SECRET_PATTERN = re.compile(
     r"\bsk-[A-Za-z0-9_-]{12,}\b",
     re.IGNORECASE,
 )
+_PAYMENT_CARD_CANDIDATE_PATTERN = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
+_PAYMENT_CARD_CONTEXT_PATTERN = re.compile(
+    r"\b(?:card(?:\s+number)?|credit\s+card|debit\s+card|visa|mastercard|amex)\b",
+    re.IGNORECASE,
+)
+_FINANCIAL_CREDENTIAL_PATTERN = re.compile(
+    r"\b(?:cvv2?|cvc2?|card\s+security\s+code)\s*(?:is\s*)?(?::|=)?\s*\d{3,4}\b|"
+    r"\b(?:bank\s+)?account\s+(?:number|no\.?)\s*(?:is\s*)?(?::|=)?\s*"
+    r"(?:\d[ -]?){5,19}\d\b|"
+    r"\b(?:routing\s+number|sort\s+code)\s*(?:is\s*)?(?::|=)?\s*"
+    r"(?:\d[ -]?){5,8}\d\b",
+    re.IGNORECASE,
+)
+_IBAN_CANDIDATE_PATTERN = re.compile(
+    r"\b[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]){11,30}\b", re.IGNORECASE
+)
 _SENSITIVE_IMPLICIT_PATTERN = re.compile(
-    r"\b(?:bank account|credit card|medical diagnosis|health condition|"
-    r"religion|religious belief|political affiliation|sexual orientation)\b",
+    r"\b(?:medical diagnosis|health condition|religion|religious belief|"
+    r"political affiliation|sexual orientation)\b",
     re.IGNORECASE,
 )
 _STOP_WORDS = {
@@ -560,5 +576,54 @@ def _clean_category(value: str) -> str:
 def _validate_privacy(content: str, source: str) -> None:
     if _SECRET_PATTERN.search(content):
         raise ValueError("memory rejected because it appears to contain a secret")
+    if _contains_financial_credential(content):
+        raise ValueError(
+            "memory rejected because it appears to contain a financial credential"
+        )
     if source == "implicit" and _SENSITIVE_IMPLICIT_PATTERN.search(content):
         raise ValueError("sensitive memories require an explicit user request")
+
+
+def _contains_financial_credential(content: str) -> bool:
+    """Conservatively detect usable payment or bank credentials."""
+    if _FINANCIAL_CREDENTIAL_PATTERN.search(content):
+        return True
+
+    has_card_context = _PAYMENT_CARD_CONTEXT_PATTERN.search(content) is not None
+    for match in _PAYMENT_CARD_CANDIDATE_PATTERN.finditer(content):
+        digits = re.sub(r"\D", "", match.group())
+        if has_card_context or _passes_luhn_checksum(digits):
+            return True
+
+    return any(
+        _is_valid_iban(re.sub(r"[ -]", "", match.group()))
+        for match in _IBAN_CANDIDATE_PATTERN.finditer(content)
+    )
+
+
+def _passes_luhn_checksum(value: str) -> bool:
+    """Return whether a payment-card candidate has a valid Luhn checksum."""
+    if not 13 <= len(value) <= 19 or not value.isdigit():
+        return False
+    total = 0
+    for index, character in enumerate(reversed(value)):
+        digit = int(character)
+        if index % 2:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        total += digit
+    return total % 10 == 0
+
+
+def _is_valid_iban(value: str) -> bool:
+    """Return whether a compact IBAN candidate has a valid checksum."""
+    value = value.upper()
+    if not 15 <= len(value) <= 34 or not re.fullmatch(r"[A-Z]{2}\d{2}[A-Z0-9]+", value):
+        return False
+    rearranged = value[4:] + value[:4]
+    numeric = "".join(
+        character if character.isdigit() else str(ord(character) - 55)
+        for character in rearranged
+    )
+    return int(numeric) % 97 == 1

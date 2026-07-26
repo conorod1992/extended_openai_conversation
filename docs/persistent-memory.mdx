@@ -35,15 +35,17 @@ To remove it, ask:
 
 The agent searches for the relevant memory ID before deleting it. Ask the agent to list what it remembers when you want to inspect your memories.
 
-You can also use the Home Assistant actions `memory_list`, `memory_delete`, and `memory_clear`. These actions operate only on the calling Home Assistant user's scope. `memory_clear` requires its **Confirm** field and can optionally clear one category.
+You can also use the Home Assistant actions `memory_list`, `memory_delete`, and `memory_clear`. Select the integration entry and conversation entity in the action UI. Existing YAML that supplies the conversation-agent subentry ID remains supported. These actions operate only on the calling Home Assistant user's scope. `memory_clear` requires its **Confirm** field and can optionally clear one category.
 
 ## What gets remembered
 
 An explicit safe request to remember something should normally be stored. When automatic creation is enabled, the agent may also store stable preferences, household or device context, recurring routines, and long-lived project constraints.
 
-The agent is instructed not to save transient details, one-off events, ordinary conversation, duplicates, or full transcript excerpts. Stored facts should be concise and self-contained. It should update a changed fact instead of leaving contradictory facts. Exact and highly similar duplicates are also rejected by the storage layer.
+The agent is instructed not to save transient details, one-off events, ordinary conversation, duplicates, or full transcript excerpts. Stored facts should be concise and self-contained. It should search for a related memory and update a changed fact instead of leaving contradictory facts.
 
-Secrets such as passwords, access tokens, API keys, PINs, and security codes are rejected. Sensitive personal categories are rejected for automatic creation and require an explicit request. Persistent memory is not a secrets manager.
+The storage layer rejects equal normalized content and records with very high token overlap. Semantic paraphrases can still pass this check. For example, `User's dog is called Oscar` and `My dog's name is Oscar` may depend on the model searching and recognizing that they mean the same thing. Detecting changed or contradictory facts is also primarily model-driven in this version.
+
+Secrets such as passwords, access tokens, API keys, PINs, and security codes are rejected. Usable payment-card numbers, CVV/CVC values, labeled bank account numbers, routing/sort codes, and valid IBANs are also rejected even when the user explicitly requests storage. Harmless financial preferences and provider facts remain allowed. Sensitive personal categories are rejected for automatic creation and require an explicit request. Persistent memory is not a secrets manager.
 
 ## Storage architecture
 
@@ -76,6 +78,6 @@ Memory records remain local until a retrieved record is included in an OpenAI re
 
 ## Future extensions
 
-Conversation logic depends on a small storage and retrieval interface. A later version can add an indexed database, embeddings or another semantic search provider without changing the tool behavior. The schema can also grow to support shared household scopes, retention rules, importance, or decay through versioned migrations.
+Conversation logic depends on a storage interface and a stable `async_search` contract. Keyword retrieval currently lives in the memory manager rather than behind its own retriever interface. A later version can extract that boundary and add an indexed database, embeddings, or another semantic search provider without changing tool behavior. The schema can also grow to support shared household scopes, retention rules, importance, or decay through versioned migrations.
 
 Diagnostics expose only whether memory is enabled, record and user-scope counts, the backend name, and storage version. They do not include memory content.
