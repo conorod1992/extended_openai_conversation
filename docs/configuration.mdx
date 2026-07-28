@@ -135,12 +135,14 @@ Configure Extended OpenAI Conversation (Responses) through the Options menu in y
     </Note>
   </Accordion>
 
-  <Accordion title="Persistent memory">
+  <Accordion title="Memory mode">
     **Default**: Off
 
-    Store selected, concise facts locally across conversations. You can separately enable automatic creation and choose how many relevant memories are retrieved automatically. Existing agents remain unchanged until you opt in.
+    - `Off`: Disable persistent memory.
+    - `Manual`: Store memories only after an explicit remember request. Relevant memories can still be retrieved automatically.
+    - `Automatic`: Allow proactive storage of stable, useful facts under the existing memory safety rules.
 
-    See [Persistent memory](/persistent-memory) for storage, privacy, user isolation, management actions, and examples.
+    The retrieval limit is an advanced memory setting. Use the **OpenAI memories** sidebar panel to inspect, add, edit, delete, or clear your own memories. See [Persistent memory](/persistent-memory) for storage, privacy, user isolation, and examples.
   </Accordion>
 
   <Accordion title="Maximum Function Calls Per Conversation">
@@ -186,23 +188,27 @@ Configure Extended OpenAI Conversation (Responses) through the Options menu in y
 
     **Default**: `40000`
 
-    Maximum number of tokens in conversation history before context truncation is triggered.
+    Maximum provider-reported input tokens before context truncation is triggered.
 
     <Note>
-    When exceeded, messages are cleared according to the Context Truncate Strategy.
+    The integration uses usage returned by the configured provider. It does not treat Python character length as a token count. A provider that omits usage metadata cannot trigger token-threshold truncation reliably.
     </Note>
   </Accordion>
 
   <Accordion title="Context Truncate Strategy">
     **Type**: Select
 
-    **Default**: `clear`
+    **Default for new agents**: `keep_recent`
 
-    **Options**: `clear`
+    **Options**: `keep_recent`, `clear`, `summarize`
 
     Strategy for handling context when the threshold is exceeded.
 
-    - `clear`: Remove all previous messages and start fresh
+    - `keep_recent`: Remove the oldest complete user turns until recent context fits. The system prompt and valid function-call/result relationships remain intact.
+    - `clear`: Preserve the existing behavior by retaining only the system prompt and latest user turn.
+    - `summarize`: Make one bounded model request to summarize older complete turns, then retain that summary and recent raw turns. If summarization fails, the integration falls back to `keep_recent`.
+
+    Summarization never runs recursively. Its provider-reported usage is included in the agent's usage statistics.
   </Accordion>
 </AccordionGroup>
 
@@ -226,6 +232,16 @@ Streaming remains enabled in both modes. Responses mode also carries encrypted r
 
 Agents already configured in this renamed fork do not need a migration. A missing API mode behaves as `Auto`, and a missing continue-conversation setting behaves as `HA Default`. Config entries from the original `extended_openai_conversation` integration are intentionally separate and must be configured again if you want equivalent agents in this fork.
 
+Existing memory settings map to the new selector without deleting stored memories: disabled becomes **Off**, enabled with automatic creation disabled becomes **Manual**, and enabled with automatic creation enabled becomes **Automatic**. Existing agents keep their stored context strategy, including the legacy `clear` fallback when no strategy was saved. New agents default to `keep_recent`.
+
+## Usage statistics
+
+Each conversation agent provides one disabled-by-default diagnostic **Usage** sensor. It reports cumulative provider-supplied token usage and separate conversation, API request, success, and failure counts. Multi-round tool conversations aggregate every model request. See [Usage statistics](/usage-statistics).
+
+## Test an agent
+
+Open the integration entry under **Settings** > **Devices & services**, select **Configure**, then choose **Test agent**. The test validates local configuration, resolved API mode, Web Search compatibility, memory storage, exposed entity count, and enabled skill count. It makes at most one minimal model request with a no-op function schema and never executes a Home Assistant action.
+
 - Models older than GPT-5.6 continue using Chat Completions in Auto mode.
 - GPT-5.4 Mini continues using Chat Completions in Auto mode.
 - GPT-5.6 and later GPT-5 models use Responses in Auto mode.
@@ -241,6 +257,14 @@ Agents already configured in this renamed fork do not need a migration. A missin
 Enable **Advanced Options** in the configuration to access these model-specific parameters. The available options depend on the selected model.
 
 <AccordionGroup>
+  <Accordion title="Automatically retrieved memories">
+    **Type**: Integer from 0 to 10
+
+    **Default**: `3`
+
+    Maximum relevant user-scoped memories inserted automatically into each request when memory mode is **Manual** or **Automatic**. Set it to `0` for tool-only retrieval.
+  </Accordion>
+
   <Accordion title="Top P">
     **Type**: Number (0-1, step 0.05)
 

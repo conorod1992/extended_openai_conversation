@@ -16,6 +16,7 @@ from homeassistant.config_entries import (
     ConfigFlow,
     ConfigFlowResult,
     ConfigSubentryFlow,
+    OptionsFlow,
     SubentryFlowResult,
 )
 from homeassistant.const import CONF_API_KEY, CONF_NAME
@@ -31,8 +32,11 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
     TemplateSelector,
+    TextSelector,
+    TextSelectorConfig,
 )
 
+from .agent_test import async_test_agent
 from .const import (
     API_MODE_OPTIONS,
     API_PROVIDERS,
@@ -51,6 +55,7 @@ from .const import (
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_MEMORY_ENABLED,
+    CONF_MEMORY_MODE,
     CONF_ORGANIZATION,
     CONF_PROMPT,
     CONF_REASONING_EFFORT,
@@ -78,9 +83,8 @@ from .const import (
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MAX_TOKENS,
-    DEFAULT_MEMORY_AUTO_CREATE,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
-    DEFAULT_MEMORY_ENABLED,
+    DEFAULT_MEMORY_MODE,
     DEFAULT_NAME,
     DEFAULT_PROMPT,
     DEFAULT_REASONING_EFFORT,
@@ -92,12 +96,15 @@ from .const import (
     DEFAULT_WEB_SEARCH,
     DEFAULT_WEB_SEARCH_CONTEXT,
     DOMAIN,
+    LEGACY_CONTEXT_TRUNCATE_STRATEGY,
     MAX_MEMORY_AUTO_RETRIEVE_LIMIT,
+    MEMORY_MODES,
     REASONING_EFFORT_OPTIONS,
     SERVICE_TIER_OPTIONS,
     WEB_SEARCH_CONTEXT_OPTIONS,
 )
 from .helpers import get_authenticated_client, get_model_config
+from .memory import get_memory_mode
 from .skills import SkillManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -126,6 +133,86 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     }
 )
 
+
+class ExtendedOpenAIOptionsFlow(OptionsFlow):
+    """Native integration UI for agent testing and memory-panel discovery."""
+
+    _test_report: str = ""
+
+    def _agent_options(self) -> list[SelectOptionDict]:
+        return [
+            SelectOptionDict(value=subentry.subentry_id, label=subentry.title)
+            for subentry in self.config_entry.subentries.values()
+            if subentry.subentry_type == "conversation"
+        ]
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show integration-owned management actions."""
+        return self.async_show_menu(
+            step_id="init", menu_options=["test_agent", "manage_memory"]
+        )
+
+    async def async_step_manage_memory(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Point users to the authenticated memory management panel."""
+        if user_input is not None:
+            return await self.async_step_init()
+        return self.async_show_form(
+            step_id="manage_memory",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        "panel_path", default="/extended-openai-memory"
+                    ): TextSelector(TextSelectorConfig(read_only=True))
+                }
+            ),
+        )
+
+    async def async_step_test_agent(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select and safely test a configured conversation agent."""
+        if user_input is not None:
+            subentry = self.config_entry.subentries[user_input["agent_id"]]
+            self._test_report = (
+                await async_test_agent(self.hass, self.config_entry, subentry)
+            ).as_text()
+            return await self.async_step_test_result()
+        return self.async_show_form(
+            step_id="test_agent",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("agent_id"): SelectSelector(
+                        SelectSelectorConfig(
+                            options=self._agent_options(),
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                }
+            ),
+        )
+
+    async def async_step_test_result(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Display the structured test result without changing configuration."""
+        if user_input is not None:
+            return await self.async_step_init()
+        return self.async_show_form(
+            step_id="test_result",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional("report", default=self._test_report): TextSelector(
+                        TextSelectorConfig(multiline=True, read_only=True)
+                    )
+                }
+            ),
+        )
+
+
 DEFAULT_CONF_FUNCTION_TOOLS_STR = yaml.dump(
     DEFAULT_CONF_FUNCTION_TOOLS, sort_keys=False
 )
@@ -145,8 +232,9 @@ DEFAULT_OPTIONS = types.MappingProxyType(
         CONF_CONTINUE_CONVERSATION: DEFAULT_CONTINUE_CONVERSATION,
         CONF_WEB_SEARCH: DEFAULT_WEB_SEARCH,
         CONF_WEB_SEARCH_CONTEXT: DEFAULT_WEB_SEARCH_CONTEXT,
-        CONF_MEMORY_ENABLED: DEFAULT_MEMORY_ENABLED,
-        CONF_MEMORY_AUTO_CREATE: DEFAULT_MEMORY_AUTO_CREATE,
+        CONF_MEMORY_MODE: DEFAULT_MEMORY_MODE,
+        CONF_MEMORY_ENABLED: False,
+        CONF_MEMORY_AUTO_CREATE: False,
         CONF_MEMORY_AUTO_RETRIEVE_LIMIT: DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
         CONF_SHORTEN_TOOL_CALL_ID: DEFAULT_SHORTEN_TOOL_CALL_ID,
         CONF_ADVANCED_OPTIONS: DEFAULT_ADVANCED_OPTIONS,
@@ -188,7 +276,13 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
 class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for OpenAI Conversation."""
 
-    VERSION = 2
+    VERSION = 3
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Return the integration management flow."""
+        return ExtendedOpenAIOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -270,6 +364,10 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
     ) -> SubentryFlowResult:
         """Handle reconfiguration of a subentry."""
         self.options = dict(self._get_reconfigure_subentry().data)
+        self.options.setdefault(CONF_MEMORY_MODE, get_memory_mode(self.options))
+        self.options.setdefault(
+            CONF_CONTEXT_TRUNCATE_STRATEGY, LEGACY_CONTEXT_TRUNCATE_STRATEGY
+        )
         return await self.async_step_init()
 
     async def async_step_init(
@@ -291,19 +389,19 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
                 self._temp_data = user_input
                 return await self.async_step_advanced()
 
+            final_data = self._normalized_options({**self.options, **user_input})
             # No advanced options, save directly
             if self._is_new:
-                title = user_input.get(CONF_NAME, DEFAULT_NAME)
-                if CONF_NAME in user_input:
-                    del user_input[CONF_NAME]
+                title = final_data.get(CONF_NAME, DEFAULT_NAME)
+                final_data.pop(CONF_NAME, None)
                 return self.async_create_entry(
                     title=title,
-                    data=user_input,
+                    data=final_data,
                 )
             return self.async_update_and_abort(
                 self._get_entry(),
                 self._get_reconfigure_subentry(),
-                data=user_input,
+                data=final_data,
             )
 
         schema = self.openai_config_option_schema(self.options, self._available_skills)
@@ -327,7 +425,9 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
         """Handle advanced options step."""
         if user_input is not None:
             # Merge advanced options with temp data
-            final_data = {**(self._temp_data or {}), **user_input}
+            final_data = self._normalized_options(
+                {**self.options, **(self._temp_data or {}), **user_input}
+            )
 
             if self._is_new:
                 title = final_data.get(CONF_NAME, DEFAULT_NAME)
@@ -408,6 +508,20 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
             )
         ] = BooleanSelector()
 
+        schema[
+            vol.Optional(
+                CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
+                default=DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
+            )
+        ] = NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=MAX_MEMORY_AUTO_RETRIEVE_LIMIT,
+                step=1,
+                mode=NumberSelectorMode.BOX,
+            )
+        )
+
         return self.async_show_form(
             step_id="advanced",
             data_schema=self.add_suggested_values_to_schema(
@@ -425,6 +539,15 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
             }
             for skill in skill_manager.get_all_skills()
         ]
+
+    @staticmethod
+    def _normalized_options(options: dict[str, Any]) -> dict[str, Any]:
+        """Store the mode abstraction while retaining legacy compatibility fields."""
+        mode = get_memory_mode(options)
+        options[CONF_MEMORY_MODE] = mode
+        options[CONF_MEMORY_ENABLED] = mode != "off"
+        options[CONF_MEMORY_AUTO_CREATE] = mode == "automatic"
+        return options
 
     def openai_config_option_schema(
         self, options: dict[str, Any], skills: list[dict[str, Any]] | None = None
@@ -483,22 +606,13 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
                 )
             ),
             vol.Optional(
-                CONF_MEMORY_ENABLED,
-                default=DEFAULT_MEMORY_ENABLED,
-            ): BooleanSelector(),
-            vol.Optional(
-                CONF_MEMORY_AUTO_CREATE,
-                default=DEFAULT_MEMORY_AUTO_CREATE,
-            ): BooleanSelector(),
-            vol.Optional(
-                CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
-                default=DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=0,
-                    max=MAX_MEMORY_AUTO_RETRIEVE_LIMIT,
-                    step=1,
-                    mode=NumberSelectorMode.BOX,
+                CONF_MEMORY_MODE,
+                default=DEFAULT_MEMORY_MODE,
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=MEMORY_MODES,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    translation_key=CONF_MEMORY_MODE,
                 )
             ),
             vol.Optional(

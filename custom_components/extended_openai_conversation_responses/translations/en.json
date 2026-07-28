@@ -34,9 +34,7 @@
                         "api_mode": "API mode",
                         "web_search": "Web search",
                         "web_search_context": "Web search context",
-                        "memory_enabled": "Persistent memory",
-                        "memory_auto_create": "Automatic memory creation",
-                        "memory_auto_retrieve_limit": "Automatically retrieved memories",
+                        "memory_mode": "Memory mode",
                         "continue_conversation": "Continue conversation",
                         "prompt": "Prompt Template",
                         "max_function_calls_per_conversation": "Maximum function calls per conversation",
@@ -50,10 +48,10 @@
                     "data_description": {
                         "web_search": "Allow the model to use OpenAI's native Web Search tool for current or external information. Requires the direct OpenAI Responses API.",
                         "web_search_context": "Controls retrieval breadth only when Web Search is enabled. Low is recommended for concise voice-agent answers.",
-                        "memory_enabled": "Allow this agent to retain local, user-scoped facts across conversations. Disabled by default.",
-                        "memory_auto_create": "Allow the model to save useful stable facts without an explicit remember request. Explicit requests still work when this is disabled.",
-                        "memory_auto_retrieve_limit": "Maximum relevant memories added automatically to each request. Set to 0 for tool-only retrieval.",
-                        "continue_conversation": "HA Default uses Home Assistant's normal punctuation-based behavior. Always listens again after successful responses. Conditional lets the language model decide when an immediate follow-up is expected."
+                        "memory_mode": "Off disables persistent memory. Manual saves only explicit remember requests. Automatic may proactively save stable, useful facts under the existing safety rules.",
+                        "continue_conversation": "HA Default uses Home Assistant's normal punctuation-based behavior. Always listens again after successful responses. Conditional lets the language model decide when an immediate follow-up is expected.",
+                        "context_threshold": "Provider-reported input-token count that triggers context management.",
+                        "context_truncate_strategy": "Keep recent messages is recommended. Clear all preserves legacy behavior. Summarize makes one bounded model request and falls back to keeping recent messages if it fails."
                     }
                 },
                 "advanced": {
@@ -63,10 +61,12 @@
                         "top_p": "Top P",
                         "reasoning_effort": "Reasoning effort",
                         "service_tier": "Service tier",
-                        "shorten_tool_call_id": "Shorten tool call IDs"
+                        "shorten_tool_call_id": "Shorten tool call IDs",
+                        "memory_auto_retrieve_limit": "Automatically retrieved memories"
                     },
                     "data_description": {
-                        "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers."
+                        "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers.",
+                        "memory_auto_retrieve_limit": "Maximum relevant memories added automatically to each request. Set to 0 for tool-only retrieval."
                     }
                 }
             }
@@ -103,6 +103,26 @@
             }
         }
     },
+    "options": {
+        "step": {
+            "init": {
+                "menu_options": {
+                    "test_agent": "Test agent",
+                    "manage_memory": "Manage memories"
+                },
+                "menu_option_descriptions": {
+                    "test_agent": "Run safe local checks and one minimal model request.",
+                    "manage_memory": "Open the user-scoped memory management panel."
+                }
+            },
+            "test_agent": {"data": {"agent_id": "Conversation agent"}},
+            "test_result": {"data": {"report": "Test result"}},
+            "manage_memory": {
+                "description": "Open this path from the Home Assistant sidebar or browser to manage memories.",
+                "data": {"panel_path": "Memory panel path"}
+            }
+        }
+    },
     "selector": {
         "web_search_context": {
             "options": {
@@ -117,6 +137,18 @@
                 "always": "Always",
                 "conditional": "Conditional"
             }
+        },
+        "memory_mode": {
+            "options": {
+                "off": "Off",
+                "manual": "Manual",
+                "automatic": "Automatic"
+            }
+        }
+    },
+    "entity": {
+        "sensor": {
+            "usage": {"name": "Usage"}
         }
     },
     "services": {

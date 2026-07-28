@@ -1,0 +1,166 @@
+"""Tests for the safe Test agent action."""
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from openai import AuthenticationError
+
+from custom_components.extended_openai_conversation_responses.agent_test import (
+    async_test_agent,
+)
+from custom_components.extended_openai_conversation_responses.const import (
+    API_MODE_CHAT_COMPLETIONS,
+    CONF_API_MODE,
+    CONF_CHAT_MODEL,
+    CONF_FUNCTION_TOOLS,
+    CONF_MEMORY_MODE,
+    CONF_WEB_SEARCH,
+    MEMORY_MODE_MANUAL,
+    MEMORY_MODE_OFF,
+)
+
+
+def _objects(options: dict | None = None):
+    subentry = SimpleNamespace(
+        subentry_id="agent-1",
+        subentry_type="conversation",
+        title="Assistant",
+        data={
+            CONF_CHAT_MODEL: "gpt-4.1-mini",
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_FUNCTION_TOOLS: "[]",
+            CONF_MEMORY_MODE: MEMORY_MODE_OFF,
+            **(options or {}),
+        },
+    )
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="OK"))],
+        usage=SimpleNamespace(prompt_tokens=4, completion_tokens=1, total_tokens=5),
+    )
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=AsyncMock(return_value=response))
+        )
+    )
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        data={},
+        runtime_data=client,
+    )
+    hass = MagicMock()
+    usage = SimpleNamespace(async_record_request=AsyncMock())
+    return hass, entry, subentry, client, usage
+
+
+async def _run(options: dict | None = None, *, exposed: int = 1):
+    hass, entry, subentry, client, usage = _objects(options)
+    entities = [SimpleNamespace()] * exposed
+    with (
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.get_exposed_entities",
+            return_value=entities,
+        ),
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.async_get_usage",
+            AsyncMock(return_value=usage),
+        ),
+    ):
+        result = await async_test_agent(hass, entry, subentry)
+    return result, client, usage
+
+
+async def test_successful_agent_test() -> None:
+    result, client, usage = await _run()
+
+    assert result.status == "Passed"
+    assert {check.name for check in result.checks} >= {
+        "Authentication",
+        "Model access",
+        "API mode",
+        "Function calling",
+        "Web Search",
+        "Persistent memory",
+        "Exposed entities",
+        "Skills",
+        "Configuration",
+    }
+    client.chat.completions.create.assert_awaited_once()
+    usage.async_record_request.assert_awaited_once()
+
+
+async def test_invalid_authentication() -> None:
+    hass, entry, subentry, client, usage = _objects()
+    request = MagicMock()
+    response = MagicMock(status_code=401, request=request)
+    client.chat.completions.create.side_effect = AuthenticationError(
+        "invalid key", response=response, body=None
+    )
+    with (
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.get_exposed_entities",
+            return_value=[SimpleNamespace()],
+        ),
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.async_get_usage",
+            AsyncMock(return_value=usage),
+        ),
+    ):
+        result = await async_test_agent(hass, entry, subentry)
+
+    assert result.status == "Failed"
+    assert any(
+        check.name == "Authentication" and check.status == "Failed"
+        for check in result.checks
+    )
+
+
+async def test_unsupported_api_mode_stops_before_probe() -> None:
+    hass, entry, subentry, client, _ = _objects({CONF_API_MODE: "unknown"})
+    result = await async_test_agent(hass, entry, subentry)
+
+    assert result.status == "Failed"
+    assert result.checks[-1].name == "API mode"
+    client.chat.completions.create.assert_not_awaited()
+
+
+async def test_web_search_incompatibility_is_specific_failure() -> None:
+    result, _, _ = await _run({CONF_WEB_SEARCH: True})
+
+    assert result.status == "Failed"
+    web = next(check for check in result.checks if check.name == "Web Search")
+    assert web.status == "Failed"
+    assert "does not support" in web.message
+
+
+async def test_memory_unavailable_is_reported() -> None:
+    hass, entry, subentry, _, usage = _objects({CONF_MEMORY_MODE: MEMORY_MODE_MANUAL})
+    with (
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.get_exposed_entities",
+            return_value=[SimpleNamespace()],
+        ),
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.async_get_usage",
+            AsyncMock(return_value=usage),
+        ),
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.async_get_memory",
+            AsyncMock(side_effect=RuntimeError("storage unavailable")),
+        ),
+    ):
+        result = await async_test_agent(hass, entry, subentry)
+
+    memory = next(check for check in result.checks if check.name == "Persistent memory")
+    assert result.status == "Failed"
+    assert memory.status == "Failed"
+
+
+async def test_no_exposed_entities_produces_partial_warning() -> None:
+    result, _, _ = await _run(exposed=0)
+
+    assert result.status == "Warning"
+    entities = next(
+        check for check in result.checks if check.name == "Exposed entities"
+    )
+    assert entities.status == "Warning"
+    assert entities.message == "0"

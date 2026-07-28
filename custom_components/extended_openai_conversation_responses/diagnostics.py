@@ -15,7 +15,8 @@ from .const import (
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_MEMORY_ENABLED,
 )
-from .memory import async_get_memory
+from .memory import async_get_memory, get_memory_mode
+from .usage import async_get_usage
 
 
 async def async_get_config_entry_diagnostics(
@@ -28,6 +29,7 @@ async def async_get_config_entry_diagnostics(
             continue
         diagnostics: dict[str, Any] = {
             "subentry_id": subentry.subentry_id,
+            "memory_mode": get_memory_mode(subentry.data),
             "memory_enabled": subentry.data.get(
                 CONF_MEMORY_ENABLED, DEFAULT_MEMORY_ENABLED
             ),
@@ -44,5 +46,10 @@ async def async_get_config_entry_diagnostics(
             diagnostics.update(memory.stats())
         except Exception as err:
             diagnostics["storage_error"] = type(err).__name__
+        try:
+            usage = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
+            diagnostics["usage"] = usage.as_dict()
+        except Exception as err:
+            diagnostics["usage_storage_error"] = type(err).__name__
         agents.append(diagnostics)
     return {"conversation_agents": agents}

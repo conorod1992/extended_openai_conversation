@@ -8,7 +8,9 @@ This is a fork of [Extended OpenAI Conversation](https://github.com/jekalmin/ext
 - **Responses API:** Supports both Chat Completions and the newer Responses API, with automatic model routing or a manual endpoint choice.
 - **OpenAI Web Search:** Lets compatible Responses models search the web when current information is needed.
 - **Voice follow-ups:** Can always continue listening, use Home Assistant's default behavior, or let the model decide when a follow-up is expected.
-- **Persistent memory:** Can remember selected facts across separate conversations, with opt-in automatic saving and retrieval controls.
+- **Persistent memory:** Can remember selected facts across separate conversations, with clear Off, Manual, and Automatic modes.
+- **Usage diagnostics:** Persists real provider-reported token and API request counts per conversation agent without estimating cost.
+- **Built-in checks:** Tests an agent's model, API mode, tools, Web Search, memory, entities, and skills from the integration UI.
 
 The original project's main capabilities are still included: controlling Home Assistant devices, creating automations, reading entity history, using external APIs and web pages, loading skills, and defining custom functions.
 
@@ -70,15 +72,14 @@ Open the assistant under **Settings > Voice Assistants**, select its conversatio
 | `Continue conversation` | `HA Default` | Controls whether a voice device listens for an immediate follow-up. See [voice follow-ups](#voice-follow-ups). |
 | `Web search` | Off | Allows the model to use OpenAI's hosted Web Search tool. See [Web Search](#web-search). |
 | `Web search context` | `Low` | Chooses low, medium, or high search breadth. It is used only when Web Search is enabled. |
-| `Persistent memory` | Off | Allows this agent to retain local, user-scoped facts across separate conversations. See [persistent memory](#persistent-memory). |
-| `Automatic memory creation` | Off | Lets the model save useful, stable facts without being explicitly asked. Explicit “remember this” requests still work when it is off. |
-| `Automatically retrieved memories` | `3` | Adds up to this many relevant memories to each request. Set it to `0` for retrieval only when the model calls a memory tool. |
+| `Memory mode` | `Off` | Chooses Off, Manual explicit-only storage, or Automatic proactive storage. See [persistent memory](#persistent-memory). |
+| `Automatically retrieved memories` | `3` | Advanced setting. Adds up to this many relevant memories to each request. Set it to `0` for tool-only retrieval. |
 | `Maximum tokens to return in response` | `500` | Limits the number of tokens the model may generate in its answer. |
 | `Maximum function calls per conversation` | `10` | Stops repeated tool calls from continuing indefinitely in one conversation. |
 | `Skills` | All available skills for a new agent | Chooses which installed skill instructions the agent may load. This option is hidden when no skills are installed. |
 | `Functions` | Included Home Assistant tools | Defines the tools the model can call and maps each tool specification to its implementation. See [Functions](#functions). |
 | `Context Threshold` | `40000` | Sets the approximate conversation size at which the selected truncation strategy is applied. |
-| `Context truncation strategy when exceeded threshold` | `Clear All Messages` | Chooses how old conversation context is reduced after the threshold is reached. |
+| `Context truncation strategy when exceeded threshold` | `Keep recent messages` | Keeps recent complete turns, clears history, or summarizes older turns after the threshold is reached. |
 | `Advanced Options` | Off | Shows model-specific tuning and compatibility settings. See [advanced options](#advanced-options). |
 
 #### API mode
@@ -105,9 +106,21 @@ The voice client must support Home Assistant's `continue_conversation` signal. C
 
 #### Persistent memory
 
-Persistent memory is disabled by default. When enabled, it stores concise facts in Home Assistant's local `.storage` area, separately for each conversation agent and, when available, each Home Assistant user. It does not store full conversation transcripts.
+Persistent memory is **Off** by default. **Manual** mode stores only explicit remember requests, while **Automatic** mode can proactively save stable, useful facts. Records live in Home Assistant's local `.storage` area, separately for each conversation agent and each Home Assistant user. It does not store full conversation transcripts.
 
-Keep `Automatic memory creation` off if you want facts saved only after an explicit request. Use `Automatically retrieved memories` to limit how many relevant facts are included automatically. The model can add, search, list, update, and delete memories. You can also manage them with the Home Assistant actions `memory_list`, `memory_delete`, and the confirmation-protected `memory_clear`. See the [persistent memory guide](docs/persistent-memory.mdx) for privacy details and examples.
+Use the **OpenAI memories** sidebar panel to view content and categories, add or edit individual records, delete records, clear a category, or clear all. Broad clears require confirmation and the backend always uses the signed-in Home Assistant user's scope. Existing actions remain available for compatibility. See the [persistent memory guide](docs/persistent-memory.mdx) for privacy details and examples.
+
+#### Context management
+
+New agents default to **Keep recent messages**, which removes oldest complete user turns without separating function calls from results or corrupting Responses native items. **Clear all messages** preserves the legacy behavior. **Summarize older messages** makes one bounded model request, keeps recent raw turns, and falls back to keeping recent messages if summarization fails.
+
+The threshold uses input-token usage reported by the configured provider. Summary-request usage is included in the usage sensor.
+
+#### Usage statistics and agent test
+
+Each conversation-agent device has one disabled-by-default diagnostic **Usage** sensor. Its state is cumulative total tokens and its attributes separate conversations, API requests, successes, failures, input tokens, output tokens, cached input tokens, and reasoning tokens when reported. The integration never estimates monetary cost. See the [usage guide](docs/usage-statistics.mdx).
+
+Under **Settings > Devices & services**, open the integration and choose **Configure > Test agent**. The structured result uses local checks plus at most one minimal model request. It does not execute device or service actions.
 
 #### Advanced options
 
@@ -124,7 +137,7 @@ AI Task agents have a smaller options screen containing the model, API mode, max
 
 Home Assistant treats this fork as a new integration. It does not reuse or migrate config entries from `extended_openai_conversation`; add **Extended OpenAI Conversation (Responses)** and configure its agents separately. If needed, copy skills or other files from `/config/extended_openai_conversation/` to `/config/extended_openai_conversation_responses/`. Update only the automations and scripts that you want to target this fork to use the `extended_openai_conversation_responses` service and event namespaces.
 
-Within this fork, existing agents receive safe defaults for newly added settings: `Auto` API mode, `HA Default` continuation, and Web Search and persistent memory both off. You can change these at any time in the agent's options.
+Within this fork, legacy memory settings migrate to **Off**, **Manual**, or **Automatic** without deleting memories. Existing agents retain the legacy clear-history fallback when no context strategy was stored; new agents use **Keep recent messages**. You can change these at any time in the agent's options.
 
 The `extended_openai_conversation_responses.query_image` service also accepts `api_mode`. Its default is `auto`.
 

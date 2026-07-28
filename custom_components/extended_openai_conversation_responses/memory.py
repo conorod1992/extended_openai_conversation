@@ -15,7 +15,18 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import (
+    CONF_MEMORY_AUTO_CREATE,
+    CONF_MEMORY_ENABLED,
+    CONF_MEMORY_MODE,
+    DEFAULT_MEMORY_AUTO_CREATE,
+    DEFAULT_MEMORY_ENABLED,
+    DOMAIN,
+    MEMORY_MODE_AUTOMATIC,
+    MEMORY_MODE_MANUAL,
+    MEMORY_MODE_OFF,
+    MEMORY_MODES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -394,6 +405,28 @@ class PersistentMemory:
 
 
 _MEMORY_MANAGERS = f"{DOMAIN}.memory_managers"
+
+
+def get_memory_mode(options: dict[str, Any] | Any) -> str:
+    """Return the memory mode, interpreting legacy settings when necessary."""
+    configured = options.get(CONF_MEMORY_MODE)
+    if configured in MEMORY_MODES:
+        return str(configured)
+    if not options.get(CONF_MEMORY_ENABLED, DEFAULT_MEMORY_ENABLED):
+        return MEMORY_MODE_OFF
+    if options.get(CONF_MEMORY_AUTO_CREATE, DEFAULT_MEMORY_AUTO_CREATE):
+        return MEMORY_MODE_AUTOMATIC
+    return MEMORY_MODE_MANUAL
+
+
+def memory_enabled(options: dict[str, Any] | Any) -> bool:
+    """Return whether persistent memory is enabled for an agent."""
+    return get_memory_mode(options) != MEMORY_MODE_OFF
+
+
+def automatic_memory_enabled(options: dict[str, Any] | Any) -> bool:
+    """Return whether the model may create memories proactively."""
+    return get_memory_mode(options) == MEMORY_MODE_AUTOMATIC
 
 
 async def async_get_memory(

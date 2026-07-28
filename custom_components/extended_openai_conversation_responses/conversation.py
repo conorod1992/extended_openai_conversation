@@ -32,18 +32,14 @@ from .const import (
     CONDITIONAL_CONTINUATION_PROMPT,
     CONF_CONTINUE_CONVERSATION,
     CONF_FUNCTION_TOOLS,
-    CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
-    CONF_MEMORY_ENABLED,
     CONF_PROMPT,
     CONF_SKILLS,
     CONTINUE_CONVERSATION_ALWAYS,
     CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_CONTINUE_CONVERSATION,
-    DEFAULT_MEMORY_AUTO_CREATE,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
-    DEFAULT_MEMORY_ENABLED,
     DEFAULT_PROMPT,
     DEFAULT_WORKING_DIRECTORY,
     DOMAIN,
@@ -59,11 +55,14 @@ from .memory import (
     MemoryRecord,
     PersistentMemory,
     async_get_memory,
+    automatic_memory_enabled,
     memory_as_dict,
+    memory_enabled,
     memory_tools,
     memory_user_id,
 )
 from .skills import Skill, SkillManager
+from .usage import async_get_usage
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -122,7 +121,11 @@ class ExtendedOpenAIAgentEntity(
             self.hass, user_skills_dir=str(skills_dir)
         )
 
-        if self.subentry.data.get(CONF_MEMORY_ENABLED, DEFAULT_MEMORY_ENABLED):
+        self._usage = await async_get_usage(
+            self.hass, self.entry.entry_id, self.subentry.subentry_id
+        )
+
+        if memory_enabled(self.subentry.data):
             try:
                 self._memory = await async_get_memory(
                     self.hass, self.entry.entry_id, self.subentry.subentry_id
@@ -256,11 +259,9 @@ class ExtendedOpenAIAgentEntity(
         )
 
         rendered_prompt = str(result)
-        if self.subentry.data.get(CONF_MEMORY_ENABLED, DEFAULT_MEMORY_ENABLED):
+        if memory_enabled(self.subentry.data):
             rendered_prompt = f"{rendered_prompt.rstrip()}\n{MEMORY_PROMPT}"
-            if not self.subentry.data.get(
-                CONF_MEMORY_AUTO_CREATE, DEFAULT_MEMORY_AUTO_CREATE
-            ):
+            if not automatic_memory_enabled(self.subentry.data):
                 rendered_prompt += (
                     "\nAutomatic memory creation is disabled. Only call memory_add "
                     "when the user explicitly asks you to remember something, and set "
@@ -356,7 +357,7 @@ class ExtendedOpenAIAgentEntity(
                             )
 
             result = function_tools or []
-            if self.subentry.data.get(CONF_MEMORY_ENABLED, DEFAULT_MEMORY_ENABLED):
+            if memory_enabled(self.subentry.data):
                 configured_names = {
                     tool.get("spec", {}).get("name")
                     for tool in result
@@ -431,8 +432,8 @@ class ExtendedOpenAIAgentEntity(
                 or not isinstance(source, str)
             ):
                 raise ValueError("content, category, and source must be strings")
-            if source == "implicit" and not self.subentry.data.get(
-                CONF_MEMORY_AUTO_CREATE, DEFAULT_MEMORY_AUTO_CREATE
+            if source == "implicit" and not automatic_memory_enabled(
+                self.subentry.data
             ):
                 raise ValueError("automatic memory creation is disabled")
             return await self._memory.async_add(
