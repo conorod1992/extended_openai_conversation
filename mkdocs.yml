@@ -1,0 +1,59 @@
+site_name: Extended OpenAI Conversation (Responses)
+site_description: Documentation for Extended OpenAI Conversation (Responses), a Home Assistant conversation integration with OpenAI Responses API support and advanced assistant features.
+site_url: https://conorod1992.github.io/extended_openai_conversation/
+repo_url: https://github.com/conorod1992/extended_openai_conversation
+repo_name: conorod1992/extended_openai_conversation
+edit_uri: edit/develop/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.tabs.link
+    - search.suggest
+    - search.highlight
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - First setup: getting-started/setup.md
+  - Configuration: configuration.md
+  - Features:
+      - Responses API: features/responses-api.md
+      - Web Search: features/web-search.md
+      - Persistent memory: features/persistent-memory.md
+      - Voice follow-ups: features/voice-followups.md
+      - Context management: features/context-management.md
+      - Skills: features/skills.md
+      - Usage statistics: features/usage-statistics.md
+      - AI Task: features/ai-task.md
+  - Custom functions:
+      - Overview: functions/index.md
+      - Function types and examples: functions/function-types.md
+  - Reference:
+      - Compatibility: reference/compatibility.md
+      - Logging: reference/logging.md
+  - Migration: migration.md
+  - Troubleshooting: troubleshooting.md
