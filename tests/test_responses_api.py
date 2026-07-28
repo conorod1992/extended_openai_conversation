@@ -381,6 +381,10 @@ async def test_responses_tool_chain_preserves_reasoning(
     )
     entity.hass = hass
     entity.entity_id = "conversation.test"
+    entity._usage = SimpleNamespace(
+        async_record_conversation=AsyncMock(),
+        async_record_request=AsyncMock(),
+    )
     entity._execute_function_tool = AsyncMock(
         return_value=conversation.ToolResultContent(
             agent_id=entity.entity_id,
@@ -407,6 +411,12 @@ async def test_responses_tool_chain_preserves_reasoning(
     await entity._async_handle_chat_log(chat_log, function_tools, [])
 
     assert client.responses.create.await_count == 2
+    entity._usage.async_record_conversation.assert_awaited_once()
+    assert entity._usage.async_record_request.await_count == 2
+    assert all(
+        call.kwargs["successful"] is True and call.kwargs["usage"].total_tokens == 15
+        for call in entity._usage.async_record_request.await_args_list
+    )
     first_request = client.responses.create.await_args_list[0].kwargs
     assert first_request["reasoning"] == {"effort": reasoning_effort}
     assert first_request["store"] is False
@@ -1096,3 +1106,35 @@ async def test_responses_image_attachment(hass, tmp_path) -> None:
     }
     assert messages[-1]["content"][1]["type"] == "input_image"
     assert messages[-1]["content"][1]["image_url"].startswith("data:image/png;base64,")
+
+
+async def test_failed_api_request_is_forwarded_to_usage_statistics(hass) -> None:
+    """Request creation failures increment the per-agent failure counter."""
+    client = SimpleNamespace(
+        responses=SimpleNamespace(
+            create=AsyncMock(
+                side_effect=HomeAssistantError("provider rejected request")
+            )
+        )
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(runtime_data=client)
+    entity.subentry = SimpleNamespace(
+        data={CONF_CHAT_MODEL: "gpt-5.6-luna", CONF_API_MODE: API_MODE_RESPONSES}
+    )
+    entity.hass = hass
+    entity.entity_id = "conversation.test"
+    entity._usage = SimpleNamespace(
+        async_record_conversation=AsyncMock(),
+        async_record_request=AsyncMock(),
+    )
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+    chat_log.content[0] = conversation.SystemContent(content="Be helpful")
+    chat_log.async_add_user_content(conversation.UserContent(content="Hello"))
+
+    with pytest.raises(HomeAssistantError, match="provider rejected"):
+        await entity._async_handle_chat_log(chat_log, [], [])
+
+    entity._usage.async_record_conversation.assert_awaited_once()
+    entity._usage.async_record_request.assert_awaited_once()
+    assert entity._usage.async_record_request.await_args.kwargs["successful"] is False

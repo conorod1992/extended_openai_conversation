@@ -10,9 +10,12 @@
     "conversation",
     "energy",
     "history",
+    "http",
+    "panel_custom",
     "recorder",
     "rest",
-    "scrape"
+    "scrape",
+    "websocket_api"
   ],
   "documentation": "https://github.com/conorod1992/extended_openai_conversation",
   "integration_type": "service",
@@ -21,5 +24,5 @@
   "requirements": [
     "openai~=2.21.0"
   ],
-  "version": "3.1.0"
+  "version": "3.2.0"
 }

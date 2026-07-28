@@ -13,9 +13,10 @@ Persistent memory is off by default. Enable it separately for each conversation 
 
 Open the conversation agent configuration and set:
 
-- **Persistent memory**: Enable local long-term memory and its management tools.
-- **Automatic memory creation**: Let the model save useful stable facts without an explicit request. Leave this off for explicit-only memory.
-- **Automatically retrieved memories**: Set how many locally ranked memories, from 0 to 10, can be added to a request. Set it to 0 for tool-only retrieval.
+- **Memory mode — Off**: Disable persistent memory for this agent.
+- **Memory mode — Manual**: Save only when you explicitly ask the assistant to remember something. Relevant memories can still be retrieved automatically.
+- **Memory mode — Automatic**: Let the model proactively save stable, useful facts under the existing safety rules.
+- **Automatically retrieved memories**: In **Advanced options**, set how many locally ranked memories, from 0 to 10, can be added to a request. Set it to 0 for tool-only retrieval.
 
 The model can add, search, list, update, and delete memories. Categories are flexible text labels rather than a fixed list.
 
@@ -33,13 +34,26 @@ To remove it, ask:
 
 > Forget my preference about temperature units.
 
-The agent searches for the relevant memory ID before deleting it. Ask the agent to list what it remembers when you want to inspect your memories.
+The agent searches for the relevant memory ID before deleting it.
+
+## Manage memories in the UI
+
+Open **OpenAI memories** in the Home Assistant sidebar. Select a conversation agent to view only the memories for your signed-in Home Assistant user. From the panel, you can:
+
+- Read each memory and its category.
+- Add a memory manually.
+- Edit content or category.
+- Delete one memory.
+- Clear one category.
+- Clear all memories for your user and the selected agent.
+
+Category clears and full clears show a confirmation prompt. The backend also rejects unconfirmed clear requests. The panel never exposes another Home Assistant user's records. Turning memory **Off** does not delete existing records.
 
 You can also use the Home Assistant actions `memory_list`, `memory_delete`, and `memory_clear`. Select the integration entry and conversation entity in the action UI. Existing YAML that supplies the conversation-agent subentry ID remains supported. These actions operate only on the calling Home Assistant user's scope. `memory_clear` requires its **Confirm** field and can optionally clear one category.
 
 ## What gets remembered
 
-An explicit safe request to remember something should normally be stored. When automatic creation is enabled, the agent may also store stable preferences, household or device context, recurring routines, and long-lived project constraints.
+An explicit safe request to remember something should normally be stored in **Manual** or **Automatic** mode. In **Automatic** mode, the agent may also store stable preferences, household or device context, recurring routines, and long-lived project constraints.
 
 The agent is instructed not to save transient details, one-off events, ordinary conversation, duplicates, or full transcript excerpts. Stored facts should be concise and self-contained. It should search for a related memory and update a changed fact instead of leaving contradictory facts.
 
@@ -80,4 +94,4 @@ Memory records remain local until a retrieved record is included in an OpenAI re
 
 Conversation logic depends on a storage interface and a stable `async_search` contract. Keyword retrieval currently lives in the memory manager rather than behind its own retriever interface. A later version can extract that boundary and add an indexed database, embeddings, or another semantic search provider without changing tool behavior. The schema can also grow to support shared household scopes, retention rules, importance, or decay through versioned migrations.
 
-Diagnostics expose only whether memory is enabled, record and user-scope counts, the backend name, and storage version. They do not include memory content.
+Diagnostics expose the memory mode, legacy compatibility flags, record and user-scope counts, the backend name, and storage version. They do not include memory content.

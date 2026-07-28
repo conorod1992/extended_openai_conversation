@@ -1,0 +1,25 @@
+---
+title: "Usage statistics"
+description: "Inspect real provider-reported token and request usage"
+---
+
+Each conversation agent has one disabled-by-default diagnostic **Usage** sensor. Enable it from the agent's device page when you want cumulative statistics without creating many entities.
+
+The sensor state is total tokens. Its attributes distinguish:
+
+- Home Assistant conversation count.
+- API request count.
+- Successful and failed API requests.
+- Input, output, and total tokens.
+- Cached input tokens and reasoning tokens when the provider reports them.
+- Additional numeric input or output usage details exposed by the API response.
+
+One Home Assistant conversation can make several API requests when the model calls tools. The integration adds the usage from every request in that conversation. A context-summary request and the minimal request made by **Test agent** are also API requests and are included.
+
+The counters use only response metadata returned by the configured model provider. OpenAI-compatible providers can omit some or all usage fields. In that case, the integration still counts the request and its success or failure, while unavailable token fields remain unchanged.
+
+Usage is stored with Home Assistant's versioned `.storage` API separately for each conversation-agent subentry and survives restarts and integration reloads.
+
+<Warning>
+The integration does not estimate or expose monetary cost. Token counts are not a bill because provider pricing, service tiers, hosted tools, caching, and account terms vary.
+</Warning>
