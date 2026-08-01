@@ -79,7 +79,7 @@ See [Persistent memory](features/persistent-memory.md).
 
 ## Knowledge Library
 
-Turn on **Knowledge Library** to expose the built-in `knowledge_search` and `knowledge_get` tools when the agent has at least one source. Sources remain stored when the option is Off and can still be prepared in **Configure > Manage knowledge**. This option is independent of persistent-memory mode, and source contents are never injected wholesale into the normal system prompt.
+Turn on **Knowledge Library** to expose the built-in `knowledge_search`, `knowledge_list`, and `knowledge_get` tools when the agent has at least one source. Sources remain stored when the option is Off and can still be prepared in **Configure > Manage knowledge**. This option is independent of persistent-memory mode, and source contents are never injected wholesale into the normal system prompt.
 
 See [Knowledge Library](features/knowledge-library.md).
 
