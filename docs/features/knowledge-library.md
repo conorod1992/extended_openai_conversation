@@ -61,9 +61,10 @@ Safety glasses and ear defenders are in the PPE drawer.
 
 ## On-demand model tools
 
-When the feature is On and the selected agent has at least one source, the integration automatically supplies two built-in tools. They do not belong in custom-functions YAML.
+When the feature is On and the selected agent has at least one source, the integration automatically supplies three built-in tools. They do not belong in custom-functions YAML.
 
-- `knowledge_search` searches titles, descriptions, and indexed content chunks. It returns bounded excerpts and source IDs, never whole large documents.
+- `knowledge_search` searches titles, descriptions, and indexed content chunks. It returns bounded excerpts and source IDs, never whole large documents. Short subject keywords generally work better than full natural-language questions.
+- `knowledge_list` returns a bounded, pageable catalogue of source IDs, titles, descriptions, character counts, and update times. It never returns source content. The model can use it when a search fails or it does not know the terminology used by the library.
 - `knowledge_get` reads one source by exact ID. It returns at most 20,000 characters and includes pagination fields so the model can request another section.
 
 The tools work in both Responses and Chat Completions modes and use the existing maximum-function-call protection. No source catalogue or full source content is added to normal prompts. If the last source is deleted, the tools and Knowledge Library prompt instructions disappear on the next request.
@@ -79,6 +80,7 @@ Server-side limits are:
 - 500 characters per description;
 - 100,000 characters of content per source;
 - 10 search results per call;
+- 50 source summaries per `knowledge_list` call;
 - 20,000 retrieved characters per `knowledge_get` call.
 
 ## Search behaviour and limitations
@@ -93,7 +95,7 @@ If expected information is not found:
 - verify that **Knowledge Library** is On for the same agent selected in the panel;
 - refresh the management panel and confirm the source is present.
 
-The assistant is instructed to say that the Knowledge Library does not contain an answer when search finds nothing, rather than inventing a household-specific detail.
+The assistant is instructed to start with short keyword searches, broaden an empty search once, and then use `knowledge_list` to inspect source metadata before concluding that the library lacks an answer. An empty `source_ids` value is treated as no filter, so compatible providers that emit optional arrays as `[]` still search the entire library. If discovery still finds nothing relevant, the assistant should say so rather than inventing a household-specific detail.
 
 ## Trust and privacy
 

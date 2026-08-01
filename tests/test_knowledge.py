@@ -195,11 +195,39 @@ async def test_search_filter_limit_empty_update_and_delete() -> None:
         r.source_id
         for r in await library.async_search("tea towels", [second.source_id], 1)
     ] == [second.source_id]
+    assert {
+        result.source_id
+        for result in await library.async_search("tea towels", source_ids=[])
+    } == {first.source_id, second.source_id}
     await library.async_update(first.source_id, content="First aid kit above fridge")
     assert not await library.async_search("oven", [first.source_id])
     assert await library.async_search("first aid", [first.source_id])
     await library.async_delete(first.source_id)
     assert not await library.async_search("first aid")
+
+
+async def test_catalog_is_bounded_filterable_paginated_and_content_free() -> None:
+    library = await _library()
+    first = await library.async_create(
+        "Bosch dishwasher", "Model and maintenance procedures", "Secret full manual"
+    )
+    await library.async_create(
+        "Home tools", "Inventory of drills and fixings", "Secret inventory"
+    )
+
+    filtered = await library.async_catalog("dishwasher")
+    assert filtered["total"] == 1
+    assert filtered["sources"][0]["source_id"] == first.source_id
+    assert "content" not in filtered["sources"][0]
+
+    first_page = await library.async_catalog(limit=1)
+    assert first_page["returned"] == 1
+    assert first_page["has_more"] is True
+    assert first_page["next_offset"] == 1
+    second_page = await library.async_catalog(limit=1, offset=1)
+    assert second_page["returned"] == 1
+    assert second_page["has_more"] is False
+    assert second_page["next_offset"] is None
 
 
 async def test_get_pagination_and_hard_limit() -> None:
@@ -241,6 +269,7 @@ def test_tools_require_enabled_populated_library_and_format_for_both_apis() -> N
     tools = _entity(True, 1)._get_function_tools()
     assert {tool["spec"]["name"] for tool in tools} == {
         "knowledge_search",
+        "knowledge_list",
         "knowledge_get",
     }
     assert all(tool["type"] == "function" for tool in _format_tools(tools, "responses"))
@@ -260,6 +289,23 @@ async def test_tool_get_safe_error_and_pagination() -> None:
         await entity._async_execute_knowledge_tool("get", {"source_id": "bad"})
 
 
+async def test_tool_list_returns_metadata_without_content() -> None:
+    library = await _library()
+    await library.async_create(
+        "Dishwasher manual", "Bosch model and rinse aid settings", "Private content"
+    )
+    entity = _entity(True, 1)
+    entity._knowledge = library
+
+    result = await entity._async_execute_knowledge_tool(
+        "list", {"query": "dishwasher", "limit": 20, "offset": 0}
+    )
+
+    assert result["total"] == 1
+    assert result["sources"][0]["title"] == "Dishwasher manual"
+    assert "content" not in result["sources"][0]
+
+
 def test_prompt_instructions_only_when_enabled_and_populated(hass) -> None:
     entity = _entity(False, 1)
     entity.hass = hass
@@ -273,6 +319,9 @@ def test_prompt_instructions_only_when_enabled_and_populated(hass) -> None:
     prompt = entity._build_system_prompt([], context, user_input)
     assert "Knowledge Library" in prompt
     assert "knowledge_search" in prompt
+    assert "knowledge_list" in prompt
+    assert "short, discriminative keywords" in prompt
+    assert "available knowledge sections" in prompt
     assert "untrusted reference data" in prompt
     assert "Tea towels" not in prompt
 
@@ -350,5 +399,5 @@ async def test_management_api_rejects_invalid_entry_and_subentry() -> None:
 
 def test_knowledge_tool_schemas_are_read_only() -> None:
     names = {tool["spec"]["name"] for tool in knowledge_tools()}
-    assert names == {"knowledge_search", "knowledge_get"}
+    assert names == {"knowledge_search", "knowledge_list", "knowledge_get"}
     assert not names & {"knowledge_create", "knowledge_update", "knowledge_delete"}

@@ -26,13 +26,15 @@ MAX_TITLE_LENGTH = 120
 MAX_DESCRIPTION_LENGTH = 500
 MAX_CONTENT_LENGTH = 100_000
 MAX_SEARCH_LIMIT = 10
+MAX_CATALOG_LIMIT = 50
+DEFAULT_CATALOG_LIMIT = 20
 MAX_GET_CHARACTERS = 20_000
 DEFAULT_GET_CHARACTERS = 6_000
 CHUNK_SIZE = 2_000
 CHUNK_OVERLAP = 300
 MAX_EXCERPT_CHARACTERS = 2_000
 
-KNOWLEDGE_TOOL_NAMES = {"knowledge_search", "knowledge_get"}
+KNOWLEDGE_TOOL_NAMES = {"knowledge_search", "knowledge_list", "knowledge_get"}
 
 _TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
@@ -174,6 +176,50 @@ class KnowledgeLibrary:
         self._ensure_initialized()
         return self._source(source_id)
 
+    async def async_catalog(
+        self,
+        query: str | None = None,
+        limit: int = DEFAULT_CATALOG_LIMIT,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """List bounded source metadata without scanning or returning content."""
+        self._ensure_initialized()
+        if query is not None and not isinstance(query, str):
+            raise ValueError("query must be a string")
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("limit must be an integer")
+        if not isinstance(offset, int) or isinstance(offset, bool):
+            raise ValueError("offset must be an integer")
+        limit = max(1, min(limit, MAX_CATALOG_LIMIT))
+        offset = max(0, offset)
+        normalized_query = _normalize(query or "")
+        query_tokens = _tokens(query or "")
+
+        sources = list(self._sources.values())
+        if normalized_query:
+            sources = [
+                source
+                for source in sources
+                if normalized_query
+                in _normalize(f"{source.title} {source.description}")
+                or bool(query_tokens & _tokens(f"{source.title} {source.description}"))
+            ]
+        sources.sort(
+            key=lambda source: (source.updated_at, source.source_id), reverse=True
+        )
+        total = len(sources)
+        selected = sources[offset : offset + limit]
+        next_offset = offset + len(selected)
+        has_more = next_offset < total
+        return {
+            "sources": [source_summary(source) for source in selected],
+            "total": total,
+            "offset": offset,
+            "returned": len(selected),
+            "has_more": has_more,
+            "next_offset": next_offset if has_more else None,
+        }
+
     async def async_create(
         self, title: str, description: str, content: str
     ) -> KnowledgeSource:
@@ -255,7 +301,9 @@ class KnowledgeLibrary:
         normalized_query = _normalize(query)
         if not query_tokens or not normalized_query:
             return []
-        allowed = set(source_ids) if source_ids is not None else None
+        # Strict tool schemas can cause models to send an empty optional array.
+        # Treat it as no restriction rather than an allow-list containing no sources.
+        allowed = set(source_ids) if source_ids else None
 
         candidates: set[tuple[str, int]] = set()
         for token in query_tokens:
@@ -461,6 +509,7 @@ def knowledge_tools() -> list[dict[str, Any]]:
                         "source_ids": {
                             "type": "array",
                             "items": {"type": "string"},
+                            "minItems": 1,
                             "description": "Optional source IDs to restrict the search.",
                         },
                         "limit": {
@@ -475,6 +524,41 @@ def knowledge_tools() -> list[dict[str, Any]]:
                 },
             },
             "function": {"type": "knowledge", "operation": "search"},
+        },
+        {
+            "spec": {
+                "name": "knowledge_list",
+                "description": (
+                    "List bounded Knowledge source metadata when the right search "
+                    "terms or source ID are unknown. Returns titles and descriptions, "
+                    "never source content."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "Optional short filter applied only to source titles "
+                                "and descriptions. Omit it to browse available sources."
+                            ),
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": MAX_CATALOG_LIMIT,
+                            "default": DEFAULT_CATALOG_LIMIT,
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "default": 0,
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "function": {"type": "knowledge", "operation": "list"},
         },
         {
             "spec": {

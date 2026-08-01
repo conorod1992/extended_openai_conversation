@@ -487,6 +487,19 @@ class ExtendedOpenAIAgentEntity(
                 raise ValueError("query, source_ids, or limit has an invalid type")
             results = await self._knowledge.async_search(query, source_ids, limit)
             return {"results": [search_result_as_dict(result) for result in results]}
+        if operation == "list":
+            query = arguments.get("query")
+            limit = arguments.get("limit", 20)
+            offset = arguments.get("offset", 0)
+            if (
+                (query is not None and not isinstance(query, str))
+                or not isinstance(limit, int)
+                or isinstance(limit, bool)
+                or not isinstance(offset, int)
+                or isinstance(offset, bool)
+            ):
+                raise ValueError("query, limit, or offset has an invalid type")
+            return await self._knowledge.async_catalog(query, limit, offset)
         if operation == "get":
             source_id = arguments.get("source_id")
             start = arguments.get("start_character", 0)

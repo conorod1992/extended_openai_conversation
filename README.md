@@ -136,7 +136,7 @@ Persistent memory can retain concise facts beyond a single chat. **Manual** mode
 
 ### Knowledge Library
 
-The opt-in Knowledge Library stores longer maintained references such as a kitchen layout, tools inventory, appliance notes, or household procedures. The model uses built-in `knowledge_search` and `knowledge_get` tools only when needed; full sources are never placed in every prompt and the model cannot modify them.
+The opt-in Knowledge Library stores longer maintained references such as a kitchen layout, tools inventory, appliance notes, or household procedures. The model uses built-in `knowledge_search`, `knowledge_list`, and `knowledge_get` tools only when needed; full sources are never placed in every prompt and the model cannot modify them.
 
 [Read the Knowledge Library guide](docs/features/knowledge-library.md)
 
