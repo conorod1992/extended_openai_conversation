@@ -106,7 +106,7 @@ Persistent memory is separate from conversation history: a remembered fact can s
 
 Confirm that **Knowledge Library** is On for the same conversation agent selected in **Manage knowledge**, and that at least one source exists. The tools are intentionally absent when the feature is Off or the library is empty.
 
-Search is lexical. Add important alternative terms to the source title or description, use clear headings, and split unrelated material into focused sources. The assistant is prompted to use short keyword searches, retry once with broader terms, and browse metadata with `knowledge_list` when needed. A source is re-indexed immediately after editing; no Home Assistant restart is required. Knowledge is not learned automatically from conversations, and “remember this” continues to use persistent memory rather than the Knowledge Library.
+Search is lexical. Add important alternative terms to the source title or description, use clear headings, and split unrelated material into focused sources. The assistant is prompted to use short keyword searches, retry once with broader terms, and browse unfiltered metadata with `knowledge_list` when needed. It is also instructed never to invent source IDs. Blank or unknown IDs are ignored and an all-invalid filter falls back to searching the full agent library. A source is re-indexed immediately after editing; no Home Assistant restart is required. Knowledge is not learned automatically from conversations, and “remember this” continues to use persistent memory rather than the Knowledge Library.
 
 Do not put instructions or action authorization in a source. Source text is untrusted reference content and cannot override the assistant's higher-priority instructions.
 
