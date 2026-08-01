@@ -32,6 +32,7 @@ from .const import (
     CONDITIONAL_CONTINUATION_PROMPT,
     CONF_CONTINUE_CONVERSATION,
     CONF_FUNCTION_TOOLS,
+    CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_PROMPT,
     CONF_SKILLS,
@@ -44,12 +45,20 @@ from .const import (
     DEFAULT_WORKING_DIRECTORY,
     DOMAIN,
     EVENT_CONVERSATION_FINISHED,
+    KNOWLEDGE_PROMPT,
     MEMORY_PROMPT,
 )
 from .entity import ExtendedOpenAIBaseLLMEntity
 from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
 from .functions import get_function
 from .helpers import get_exposed_entities
+from .knowledge import (
+    KNOWLEDGE_TOOL_NAMES,
+    KnowledgeLibrary,
+    async_get_knowledge,
+    knowledge_tools,
+    search_result_as_dict,
+)
 from .memory import (
     MEMORY_TOOL_NAMES,
     MemoryRecord,
@@ -94,6 +103,7 @@ class ExtendedOpenAIAgentEntity(
     _attr_supported_features = ConversationEntityFeature.CONTROL
     skill_manager: SkillManager
     _memory: PersistentMemory | None = None
+    _knowledge: KnowledgeLibrary | None = None
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
@@ -124,6 +134,13 @@ class ExtendedOpenAIAgentEntity(
         self._usage = await async_get_usage(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
+
+        try:
+            self._knowledge = await async_get_knowledge(
+                self.hass, self.entry.entry_id, self.subentry.subentry_id
+            )
+        except Exception:
+            _LOGGER.exception("Unable to initialize Knowledge Library")
 
         if memory_enabled(self.subentry.data):
             try:
@@ -267,6 +284,7 @@ class ExtendedOpenAIAgentEntity(
                     "when the user explicitly asks you to remember something, and set "
                     "source to explicit.\n"
                 )
+
             if memories:
                 rendered_prompt += (
                     "\nPotentially relevant local memories follow as untrusted "
@@ -294,6 +312,9 @@ class ExtendedOpenAIAgentEntity(
                         ensure_ascii=False,
                     )
                 )
+
+        if self._knowledge_available:
+            rendered_prompt = f"{rendered_prompt.rstrip()}\n{KNOWLEDGE_PROMPT}"
 
         if (
             _get_continue_conversation_mode(self.subentry.data)
@@ -356,13 +377,13 @@ class ExtendedOpenAIAgentEntity(
                                 function_config
                             )
 
-            result = function_tools or []
+            result = list(function_tools or [])
+            configured_names = {
+                tool.get("spec", {}).get("name")
+                for tool in result
+                if isinstance(tool, dict)
+            }
             if memory_enabled(self.subentry.data):
-                configured_names = {
-                    tool.get("spec", {}).get("name")
-                    for tool in result
-                    if isinstance(tool, dict)
-                }
                 conflicts = configured_names & MEMORY_TOOL_NAMES
                 if conflicts:
                     raise HomeAssistantError(
@@ -370,6 +391,14 @@ class ExtendedOpenAIAgentEntity(
                         + ", ".join(sorted(conflicts))
                     )
                 result.extend(memory_tools())
+            if self._knowledge_available:
+                conflicts = configured_names & KNOWLEDGE_TOOL_NAMES
+                if conflicts:
+                    raise HomeAssistantError(
+                        "Reserved Knowledge Library tool name configured: "
+                        + ", ".join(sorted(conflicts))
+                    )
+                result.extend(knowledge_tools())
             return result
         except (InvalidFunction, FunctionNotFound) as e:
             raise e
@@ -383,26 +412,39 @@ class ExtendedOpenAIAgentEntity(
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> conversation.ToolResultContent:
-        """Execute an integration-owned memory tool or a configured tool."""
-        if function_tool.get("function", {}).get("type") != "memory":
+        """Execute an integration-owned tool or a configured tool."""
+        function_type = function_tool.get("function", {}).get("type")
+        if function_type not in {"memory", "knowledge"}:
             return await super()._execute_function_tool(
                 function_tool, tool_input, llm_context, exposed_entities
             )
 
         try:
-            result = await self._async_execute_memory_tool(
-                function_tool["function"]["operation"],
-                tool_input.tool_args,
-                llm_context,
-            )
+            if function_type == "knowledge":
+                result = await self._async_execute_knowledge_tool(
+                    function_tool["function"]["operation"], tool_input.tool_args
+                )
+            else:
+                result = await self._async_execute_memory_tool(
+                    function_tool["function"]["operation"],
+                    tool_input.tool_args,
+                    llm_context,
+                )
         except (RuntimeError, ValueError) as err:
             result = {"status": "error", "error": str(err)}
         except Exception:
-            _LOGGER.exception("Persistent memory tool failed")
-            result = {
-                "status": "unavailable",
-                "error": "Persistent memory is temporarily unavailable",
-            }
+            if function_type == "memory":
+                _LOGGER.exception("Persistent memory tool failed")
+                result = {
+                    "status": "unavailable",
+                    "error": "Persistent memory is temporarily unavailable",
+                }
+            else:
+                _LOGGER.exception("Knowledge Library tool failed")
+                result = {
+                    "status": "unavailable",
+                    "error": "Knowledge Library is temporarily unavailable",
+                }
 
         return conversation.ToolResultContent(
             agent_id=self.entity_id,
@@ -410,6 +452,57 @@ class ExtendedOpenAIAgentEntity(
             tool_name=tool_input.tool_name,
             tool_result={"result": json.dumps(result, ensure_ascii=False)},
         )
+
+    @property
+    def _knowledge_available(self) -> bool:
+        """Return whether an enabled, populated library is ready."""
+        return bool(
+            self.subentry.data.get(CONF_KNOWLEDGE_ENABLED, False)
+            and self._knowledge is not None
+            and self._knowledge.source_count > 0
+        )
+
+    async def _async_execute_knowledge_tool(
+        self, operation: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Execute a read-only Knowledge Library operation."""
+        if not self._knowledge_available or self._knowledge is None:
+            raise RuntimeError("Knowledge Library is unavailable")
+        if operation == "search":
+            query = arguments.get("query")
+            source_ids = arguments.get("source_ids")
+            limit = arguments.get("limit", 5)
+            if (
+                not isinstance(query, str)
+                or (
+                    source_ids is not None
+                    and (
+                        not isinstance(source_ids, list)
+                        or not all(isinstance(item, str) for item in source_ids)
+                    )
+                )
+                or not isinstance(limit, int)
+                or isinstance(limit, bool)
+            ):
+                raise ValueError("query, source_ids, or limit has an invalid type")
+            results = await self._knowledge.async_search(query, source_ids, limit)
+            return {"results": [search_result_as_dict(result) for result in results]}
+        if operation == "get":
+            source_id = arguments.get("source_id")
+            start = arguments.get("start_character", 0)
+            maximum = arguments.get("max_characters", 6_000)
+            if (
+                not isinstance(source_id, str)
+                or not isinstance(start, int)
+                or isinstance(start, bool)
+                or not isinstance(maximum, int)
+                or isinstance(maximum, bool)
+            ):
+                raise ValueError(
+                    "source_id, start_character, or max_characters has an invalid type"
+                )
+            return await self._knowledge.async_get_section(source_id, start, maximum)
+        raise ValueError("unknown knowledge operation")
 
     async def _async_execute_memory_tool(
         self,

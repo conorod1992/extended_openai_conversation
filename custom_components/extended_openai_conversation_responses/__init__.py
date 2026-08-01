@@ -32,6 +32,7 @@ from .const import (
     MEMORY_MODE_OFF,
 )
 from .helpers import get_authenticated_client
+from .knowledge_ui import async_setup_knowledge_ui
 from .memory import get_memory_mode
 from .memory_ui import async_setup_memory_ui
 from .services import async_setup_services
@@ -50,6 +51,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_migrate_integration(hass)
     await async_setup_services(hass, config)
     await async_setup_memory_ui(hass)
+    await async_setup_knowledge_ui(hass)
     return True
 
 

@@ -50,6 +50,7 @@ from .const import (
     CONF_CONTEXT_TRUNCATE_STRATEGY,
     CONF_CONTINUE_CONVERSATION,
     CONF_FUNCTION_TOOLS,
+    CONF_KNOWLEDGE_ENABLED,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MAX_TOKENS,
     CONF_MEMORY_AUTO_CREATE,
@@ -81,6 +82,7 @@ from .const import (
     DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_CONVERSATION_NAME,
+    DEFAULT_KNOWLEDGE_ENABLED,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
@@ -135,7 +137,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 
 
 class ExtendedOpenAIOptionsFlow(OptionsFlow):
-    """Native integration UI for agent testing and memory-panel discovery."""
+    """Native integration UI for agent testing and management-panel discovery."""
 
     _test_report: str = ""
 
@@ -151,7 +153,8 @@ class ExtendedOpenAIOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         """Show integration-owned management actions."""
         return self.async_show_menu(
-            step_id="init", menu_options=["test_agent", "manage_memory"]
+            step_id="init",
+            menu_options=["test_agent", "manage_memory", "manage_knowledge"],
         )
 
     async def async_step_manage_memory(
@@ -166,6 +169,23 @@ class ExtendedOpenAIOptionsFlow(OptionsFlow):
                 {
                     vol.Optional(
                         "panel_path", default="/extended-openai-memory"
+                    ): TextSelector(TextSelectorConfig(read_only=True))
+                }
+            ),
+        )
+
+    async def async_step_manage_knowledge(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Point users to the authenticated Knowledge Library panel."""
+        if user_input is not None:
+            return await self.async_step_init()
+        return self.async_show_form(
+            step_id="manage_knowledge",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        "panel_path", default="/extended-openai-knowledge"
                     ): TextSelector(TextSelectorConfig(read_only=True))
                 }
             ),
@@ -236,6 +256,7 @@ DEFAULT_OPTIONS = types.MappingProxyType(
         CONF_MEMORY_ENABLED: False,
         CONF_MEMORY_AUTO_CREATE: False,
         CONF_MEMORY_AUTO_RETRIEVE_LIMIT: DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
+        CONF_KNOWLEDGE_ENABLED: DEFAULT_KNOWLEDGE_ENABLED,
         CONF_SHORTEN_TOOL_CALL_ID: DEFAULT_SHORTEN_TOOL_CALL_ID,
         CONF_ADVANCED_OPTIONS: DEFAULT_ADVANCED_OPTIONS,
     }
@@ -615,6 +636,10 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
                     translation_key=CONF_MEMORY_MODE,
                 )
             ),
+            vol.Optional(
+                CONF_KNOWLEDGE_ENABLED,
+                default=DEFAULT_KNOWLEDGE_ENABLED,
+            ): BooleanSelector(),
             vol.Optional(
                 CONF_MAX_TOKENS,
                 default=DEFAULT_MAX_TOKENS,

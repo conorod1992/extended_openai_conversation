@@ -1,0 +1,607 @@
+"""On-demand local Knowledge Library for conversation agents."""
+
+from __future__ import annotations
+
+import asyncio
+from collections import defaultdict
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass
+import logging
+import re
+from typing import Any, Protocol
+from uuid import uuid4
+
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
+
+from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
+
+STORAGE_VERSION = 1
+STORAGE_KEY_PREFIX = f"{DOMAIN}.knowledge"
+MAX_SOURCES_PER_AGENT = 500
+MAX_TITLE_LENGTH = 120
+MAX_DESCRIPTION_LENGTH = 500
+MAX_CONTENT_LENGTH = 100_000
+MAX_SEARCH_LIMIT = 10
+MAX_GET_CHARACTERS = 20_000
+DEFAULT_GET_CHARACTERS = 6_000
+CHUNK_SIZE = 2_000
+CHUNK_OVERLAP = 300
+MAX_EXCERPT_CHARACTERS = 2_000
+
+KNOWLEDGE_TOOL_NAMES = {"knowledge_search", "knowledge_get"}
+
+_TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
+_SPACE_PATTERN = re.compile(r"\s+")
+_LINE_END_PATTERN = re.compile(r"[ \t]+$", re.MULTILINE)
+
+
+@dataclass(slots=True, frozen=True)
+class KnowledgeSource:
+    """One deliberately maintained reference source."""
+
+    source_id: str
+    title: str
+    description: str
+    content: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(slots=True, frozen=True)
+class SearchResult:
+    """A bounded relevant excerpt from one source."""
+
+    source_id: str
+    title: str
+    description: str
+    excerpt: str
+    score: float
+    updated_at: str
+
+
+@dataclass(slots=True, frozen=True)
+class _Chunk:
+    source_id: str
+    chunk_id: int
+    start: int
+    text: str
+    tokens: frozenset[str]
+
+
+class KnowledgeStorage(Protocol):
+    """Persistence boundary for future alternative knowledge backends."""
+
+    async def async_load(self) -> Mapping[str, Any] | Sequence[Any] | None:
+        """Load stored knowledge data."""
+
+    async def async_save(self, data: dict[str, Any]) -> None:
+        """Persist stored knowledge data."""
+
+
+class KnowledgeStore(Store[dict[str, Any]]):
+    """Versioned Home Assistant Store backend."""
+
+    async def _async_migrate_func(
+        self, old_major_version: int, old_minor_version: int, old_data: Any
+    ) -> dict[str, Any]:
+        """Migrate older knowledge payloads."""
+        if old_major_version == 0:
+            if isinstance(old_data, list):
+                return {"sources": old_data}
+            if isinstance(old_data, dict):
+                return {"sources": old_data.get("sources", [])}
+        raise NotImplementedError
+
+
+class HomeAssistantKnowledgeStorage:
+    """Private, atomic, per-agent Home Assistant storage adapter."""
+
+    def __init__(self, hass: HomeAssistant, entry_id: str, subentry_id: str) -> None:
+        key = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
+        self._store = KnowledgeStore(
+            hass,
+            STORAGE_VERSION,
+            key,
+            private=True,
+            atomic_writes=True,
+            serialize_in_event_loop=False,
+        )
+
+    async def async_load(self) -> dict[str, Any] | None:
+        return await self._store.async_load()
+
+    async def async_save(self, data: dict[str, Any]) -> None:
+        await self._store.async_save(data)
+
+
+class KnowledgeLibrary:
+    """Concurrency-safe source collection with an in-memory lexical index."""
+
+    def __init__(self, storage: KnowledgeStorage) -> None:
+        self._storage = storage
+        self._sources: dict[str, KnowledgeSource] = {}
+        self._chunks: dict[tuple[str, int], _Chunk] = {}
+        self._token_index: dict[str, set[tuple[str, int]]] = defaultdict(set)
+        self._lock = asyncio.Lock()
+        self._initialized = False
+
+    async def async_initialize(self) -> None:
+        """Load and index the library exactly once."""
+        async with self._lock:
+            if self._initialized:
+                return
+            data = await self._storage.async_load()
+            raw_sources = data.get("sources", []) if isinstance(data, Mapping) else []
+            if not isinstance(raw_sources, list):
+                raw_sources = []
+            for raw in raw_sources:
+                if len(self._sources) >= MAX_SOURCES_PER_AGENT:
+                    _LOGGER.warning(
+                        "Ignoring Knowledge Library records beyond the per-agent limit"
+                    )
+                    break
+                try:
+                    source = _source_from_stored(raw)
+                except KeyError, TypeError, ValueError:
+                    _LOGGER.warning("Ignoring malformed Knowledge Library record")
+                    continue
+                if source.source_id in self._sources:
+                    _LOGGER.warning("Ignoring duplicate Knowledge Library source ID")
+                    continue
+                self._sources[source.source_id] = source
+                self._index(source)
+            self._initialized = True
+
+    @property
+    def source_count(self) -> int:
+        self._ensure_initialized()
+        return len(self._sources)
+
+    async def async_list(self) -> list[dict[str, Any]]:
+        """List source metadata without returning source contents."""
+        self._ensure_initialized()
+        sources = sorted(
+            self._sources.values(), key=lambda source: source.updated_at, reverse=True
+        )
+        return [source_summary(source) for source in sources]
+
+    async def async_get(self, source_id: str) -> KnowledgeSource:
+        """Get one complete source for the management UI."""
+        self._ensure_initialized()
+        return self._source(source_id)
+
+    async def async_create(
+        self, title: str, description: str, content: str
+    ) -> KnowledgeSource:
+        """Create and persist a source."""
+        title, description, content = _validated_fields(title, description, content)
+        async with self._lock:
+            self._ensure_initialized()
+            if len(self._sources) >= MAX_SOURCES_PER_AGENT:
+                raise ValueError(
+                    "knowledge source limit reached; delete a source before adding more"
+                )
+            timestamp = dt_util.utcnow().isoformat()
+            source = KnowledgeSource(
+                source_id=uuid4().hex,
+                title=title,
+                description=description,
+                content=content,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            self._sources[source.source_id] = source
+            self._index(source)
+            await self._async_save_locked()
+            return source
+
+    async def async_update(
+        self,
+        source_id: str,
+        title: str | None = None,
+        description: str | None = None,
+        content: str | None = None,
+    ) -> KnowledgeSource:
+        """Update and immediately re-index one source."""
+        async with self._lock:
+            self._ensure_initialized()
+            current = self._source(source_id)
+            new_title, new_description, new_content = _validated_fields(
+                current.title if title is None else title,
+                current.description if description is None else description,
+                current.content if content is None else content,
+            )
+            self._unindex(source_id)
+            updated = KnowledgeSource(
+                source_id=current.source_id,
+                title=new_title,
+                description=new_description,
+                content=new_content,
+                created_at=current.created_at,
+                updated_at=dt_util.utcnow().isoformat(),
+            )
+            self._sources[source_id] = updated
+            self._index(updated)
+            await self._async_save_locked()
+            return updated
+
+    async def async_delete(self, source_id: str) -> bool:
+        """Delete one source."""
+        async with self._lock:
+            self._ensure_initialized()
+            if source_id not in self._sources:
+                return False
+            self._unindex(source_id)
+            del self._sources[source_id]
+            await self._async_save_locked()
+            return True
+
+    async def async_search(
+        self,
+        query: str,
+        source_ids: list[str] | None = None,
+        limit: int = 5,
+    ) -> list[SearchResult]:
+        """Search indexed chunks and return at most one excerpt per source."""
+        self._ensure_initialized()
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("limit must be an integer")
+        limit = max(1, min(limit, MAX_SEARCH_LIMIT))
+        query_tokens = _tokens(query)
+        normalized_query = _normalize(query)
+        if not query_tokens or not normalized_query:
+            return []
+        allowed = set(source_ids) if source_ids is not None else None
+
+        candidates: set[tuple[str, int]] = set()
+        for token in query_tokens:
+            candidates.update(self._token_index.get(token, set()))
+
+        best_by_source: dict[str, tuple[float, _Chunk]] = {}
+        for chunk_key in candidates:
+            chunk = self._chunks[chunk_key]
+            if allowed is not None and chunk.source_id not in allowed:
+                continue
+            source = self._sources[chunk.source_id]
+            title_tokens = _tokens(source.title)
+            description_tokens = _tokens(source.description)
+            overlap = len(query_tokens & chunk.tokens) / len(query_tokens)
+            title_overlap = len(query_tokens & title_tokens) / len(query_tokens)
+            description_overlap = len(query_tokens & description_tokens) / len(
+                query_tokens
+            )
+            score = overlap + title_overlap * 8 + description_overlap * 4
+            if normalized_query in _normalize(source.title):
+                score += 8
+            if normalized_query in _normalize(source.description):
+                score += 5
+            if normalized_query in _normalize(chunk.text):
+                score += 4
+            current = best_by_source.get(chunk.source_id)
+            if (
+                current is None
+                or score > current[0]
+                or (score == current[0] and chunk.start < current[1].start)
+            ):
+                best_by_source[chunk.source_id] = (score, chunk)
+
+        ranked = [
+            (score, self._sources[source_id].updated_at, source_id, chunk)
+            for source_id, (score, chunk) in best_by_source.items()
+            if score > 0
+        ]
+        ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        results: list[SearchResult] = []
+        for score, _, source_id, chunk in ranked[:limit]:
+            source = self._sources[source_id]
+            results.append(
+                SearchResult(
+                    source_id=source.source_id,
+                    title=source.title,
+                    description=source.description,
+                    excerpt=chunk.text[:MAX_EXCERPT_CHARACTERS],
+                    score=round(score, 4),
+                    updated_at=source.updated_at,
+                )
+            )
+        return results
+
+    async def async_get_section(
+        self,
+        source_id: str,
+        start_character: int = 0,
+        max_characters: int = DEFAULT_GET_CHARACTERS,
+    ) -> dict[str, Any]:
+        """Return a bounded, pageable source section for model use."""
+        self._ensure_initialized()
+        if not isinstance(start_character, int) or isinstance(start_character, bool):
+            raise ValueError("start_character must be an integer")
+        if not isinstance(max_characters, int) or isinstance(max_characters, bool):
+            raise ValueError("max_characters must be an integer")
+        if start_character < 0:
+            raise ValueError("start_character must be at least 0")
+        max_characters = max(500, min(max_characters, MAX_GET_CHARACTERS))
+        source = self._source(source_id)
+        total = len(source.content)
+        start = min(start_character, total)
+        content = source.content[start : start + max_characters]
+        next_start = start + len(content)
+        has_more = next_start < total
+        return {
+            "source_id": source.source_id,
+            "title": source.title,
+            "description": source.description,
+            "content": content,
+            "start_character": start,
+            "returned_characters": len(content),
+            "total_characters": total,
+            "has_more": has_more,
+            "next_start_character": next_start if has_more else None,
+            "updated_at": source.updated_at,
+        }
+
+    def stats(self) -> dict[str, Any]:
+        """Return non-sensitive diagnostics."""
+        self._ensure_initialized()
+        return {
+            "knowledge_backend": "home_assistant_store",
+            "knowledge_storage_version": STORAGE_VERSION,
+            "knowledge_source_count": len(self._sources),
+            "knowledge_total_character_count": sum(
+                len(source.content) for source in self._sources.values()
+            ),
+            "knowledge_indexed_chunk_count": len(self._chunks),
+        }
+
+    def _source(self, source_id: str) -> KnowledgeSource:
+        source = self._sources.get(source_id)
+        if source is None:
+            raise ValueError("knowledge source not found")
+        return source
+
+    def _index(self, source: KnowledgeSource) -> None:
+        title_description_tokens = _tokens(f"{source.title} {source.description}")
+        for chunk_id, (start, text) in enumerate(_split_chunks(source.content)):
+            chunk = _Chunk(
+                source_id=source.source_id,
+                chunk_id=chunk_id,
+                start=start,
+                text=text,
+                tokens=frozenset(_tokens(text) | title_description_tokens),
+            )
+            key = (source.source_id, chunk_id)
+            self._chunks[key] = chunk
+            for token in chunk.tokens:
+                self._token_index[token].add(key)
+
+    def _unindex(self, source_id: str) -> None:
+        keys = [key for key in self._chunks if key[0] == source_id]
+        for key in keys:
+            chunk = self._chunks.pop(key)
+            for token in chunk.tokens:
+                indexed = self._token_index.get(token)
+                if indexed is None:
+                    continue
+                indexed.discard(key)
+                if not indexed:
+                    del self._token_index[token]
+
+    async def _async_save_locked(self) -> None:
+        await self._storage.async_save(
+            {"sources": [asdict(source) for source in self._sources.values()]}
+        )
+
+    def _ensure_initialized(self) -> None:
+        if not self._initialized:
+            raise RuntimeError("Knowledge Library has not been initialized")
+
+
+_KNOWLEDGE_MANAGERS = f"{DOMAIN}.knowledge_managers"
+
+
+async def async_get_knowledge(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> KnowledgeLibrary:
+    """Get the shared in-process library for one conversation agent."""
+    managers: dict[tuple[str, str], KnowledgeLibrary] = hass.data.setdefault(
+        _KNOWLEDGE_MANAGERS, {}
+    )
+    key = (entry_id, subentry_id)
+    if key not in managers:
+        managers[key] = KnowledgeLibrary(
+            HomeAssistantKnowledgeStorage(hass, entry_id, subentry_id)
+        )
+    library = managers[key]
+    await library.async_initialize()
+    return library
+
+
+def knowledge_source_as_dict(source: KnowledgeSource) -> dict[str, str]:
+    """Serialize a complete source."""
+    return asdict(source)
+
+
+def source_summary(source: KnowledgeSource) -> dict[str, Any]:
+    """Serialize metadata safe for list views."""
+    return {
+        "source_id": source.source_id,
+        "title": source.title,
+        "description": source.description,
+        "created_at": source.created_at,
+        "updated_at": source.updated_at,
+        "character_count": len(source.content),
+    }
+
+
+def search_result_as_dict(result: SearchResult) -> dict[str, Any]:
+    return asdict(result)
+
+
+def knowledge_tools() -> list[dict[str, Any]]:
+    """Return read-only built-in model tool definitions."""
+    return [
+        {
+            "spec": {
+                "name": "knowledge_search",
+                "description": (
+                    "Search the agent's local Knowledge Library for relevant "
+                    "deliberately maintained reference information."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "What information to find in the local knowledge library.",
+                        },
+                        "source_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional source IDs to restrict the search.",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10,
+                            "default": 5,
+                        },
+                    },
+                    "required": ["query"],
+                    "additionalProperties": False,
+                },
+            },
+            "function": {"type": "knowledge", "operation": "search"},
+        },
+        {
+            "spec": {
+                "name": "knowledge_get",
+                "description": (
+                    "Retrieve one Knowledge source or a bounded section after "
+                    "identifying its exact source ID."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "source_id": {
+                            "type": "string",
+                            "description": "The exact knowledge-source ID to retrieve.",
+                        },
+                        "start_character": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "default": 0,
+                        },
+                        "max_characters": {
+                            "type": "integer",
+                            "minimum": 500,
+                            "maximum": MAX_GET_CHARACTERS,
+                            "default": DEFAULT_GET_CHARACTERS,
+                        },
+                    },
+                    "required": ["source_id"],
+                    "additionalProperties": False,
+                },
+            },
+            "function": {"type": "knowledge", "operation": "get"},
+        },
+    ]
+
+
+def _source_from_stored(raw: Any) -> KnowledgeSource:
+    if not isinstance(raw, Mapping):
+        raise ValueError("record must be an object")
+    source = KnowledgeSource(
+        source_id=raw["source_id"],
+        title=raw["title"],
+        description=raw["description"],
+        content=raw["content"],
+        created_at=raw["created_at"],
+        updated_at=raw["updated_at"],
+    )
+    if not all(
+        isinstance(value, str)
+        for value in (
+            source.source_id,
+            source.title,
+            source.description,
+            source.content,
+            source.created_at,
+            source.updated_at,
+        )
+    ):
+        raise ValueError("record fields must be strings")
+    _validated_fields(source.title, source.description, source.content)
+    if not source.source_id or len(source.source_id) > 128:
+        raise ValueError("invalid source ID")
+    return source
+
+
+def _validated_fields(
+    title: str, description: str, content: str
+) -> tuple[str, str, str]:
+    title = _clean_single_line("title", title, MAX_TITLE_LENGTH, required=True)
+    description = _clean_single_line(
+        "description", description, MAX_DESCRIPTION_LENGTH, required=False
+    )
+    content = _clean_content(content)
+    return title, description, content
+
+
+def _clean_single_line(name: str, value: str, limit: int, required: bool) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    value = _SPACE_PATTERN.sub(" ", value).strip()
+    minimum = 1 if required else 0
+    if len(value) < minimum or len(value) > limit:
+        raise ValueError(f"{name} must be {minimum} to {limit} characters")
+    return value
+
+
+def _clean_content(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("content must be a string")
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    value = _LINE_END_PATTERN.sub("", value).strip()
+    if not value or len(value) > MAX_CONTENT_LENGTH:
+        raise ValueError(f"content must be 1 to {MAX_CONTENT_LENGTH} characters")
+    return value
+
+
+def _tokens(value: str) -> set[str]:
+    return {
+        token for token in _TOKEN_PATTERN.findall(value.casefold()) if len(token) > 1
+    }
+
+
+def _normalize(value: str) -> str:
+    return " ".join(_TOKEN_PATTERN.findall(value.casefold()))
+
+
+def _split_chunks(content: str) -> list[tuple[int, str]]:
+    """Split content at nearby paragraph/line boundaries with overlap."""
+    chunks: list[tuple[int, str]] = []
+    start = 0
+    length = len(content)
+    while start < length:
+        target = min(start + CHUNK_SIZE, length)
+        end = target
+        if target < length:
+            lower = max(start + CHUNK_SIZE // 2, target - 350)
+            paragraph = content.rfind("\n\n", lower, target + 1)
+            line = content.rfind("\n", lower, target + 1)
+            boundary = paragraph if paragraph >= lower else line
+            if boundary >= lower:
+                end = boundary + (2 if boundary == paragraph else 1)
+        text = content[start:end].strip()
+        if text:
+            chunks.append((start, text))
+        if end >= length:
+            break
+        next_start = max(start + 1, end - CHUNK_OVERLAP)
+        line_after_overlap = content.find("\n", next_start, end)
+        start = line_after_overlap + 1 if line_after_overlap != -1 else next_start
+    return chunks

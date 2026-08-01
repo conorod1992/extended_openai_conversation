@@ -38,9 +38,12 @@
                         "attach_username": "Benutzernamen mitgeben",
                         "context_threshold": "Context Threshold",
                         "context_truncate_strategy": "Context truncation strategy when exceeded threshold",
-                        "advanced_options": "Advanced Options"
+                        "advanced_options": "Advanced Options",
+                        "knowledge_enabled": "Knowledge Library"
                     },
-                    "data_description": {}
+                    "data_description": {
+                        "knowledge_enabled": "Allow on-demand search and retrieval of this agent's locally stored Knowledge sources."
+                    }
                 },
                 "advanced": {
                     "title": "Advanced Options",
@@ -165,6 +168,24 @@
         "reload_skills": {
             "name": "Reload skills",
             "description": "Reload skills from the skills directory."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "menu_options": {
+                    "manage_knowledge": "Manage knowledge"
+                },
+                "menu_option_descriptions": {
+                    "manage_knowledge": "Open the per-agent Knowledge Library management panel."
+                }
+            },
+            "manage_knowledge": {
+                "description": "Open this path from the Home Assistant sidebar or browser to manage Knowledge sources.",
+                "data": {
+                    "panel_path": "Knowledge Library panel path"
+                }
+            }
         }
     }
 }
