@@ -102,6 +102,14 @@ If the conversation exceeded the threshold, older turns may have been removed, s
 
 Persistent memory is separate from conversation history: a remembered fact can survive context truncation, but ordinary chat history does not become persistent memory automatically unless Automatic memory chooses to store an appropriate fact.
 
+## The assistant does not use a Knowledge source
+
+Confirm that **Knowledge Library** is On for the same conversation agent selected in **Manage knowledge**, and that at least one source exists. The tools are intentionally absent when the feature is Off or the library is empty.
+
+Search is lexical. Add important alternative terms to the source title or description, use clear headings, and split unrelated material into focused sources. A source is re-indexed immediately after editing; no Home Assistant restart is required. Knowledge is not learned automatically from conversations, and “remember this” continues to use persistent memory rather than the Knowledge Library.
+
+Do not put instructions or action authorization in a source. Source text is untrusted reference content and cannot override the assistant's higher-priority instructions.
+
 ## Usage values look incomplete
 
 The Usage sensor relies on metadata returned by the provider.

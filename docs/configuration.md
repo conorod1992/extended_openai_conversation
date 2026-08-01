@@ -13,6 +13,7 @@ Conversation-agent options are available from the assistant/integration configur
 | **Web Search** | Off | Enables OpenAI hosted Web Search when supported. |
 | **Web search context** | Low | Controls Web Search retrieval breadth. |
 | **Memory mode** | Off | Enables Manual or Automatic persistent memory. |
+| **Knowledge Library** | Off | Enables on-demand model search and retrieval of maintained per-agent Knowledge sources. |
 | **Automatically retrieved memories** | 3 | Maximum locally ranked memories added automatically to a request. |
 | **Maximum tokens to return in response** | 500 | Limits model output tokens. |
 | **Maximum function calls per conversation** | 10 | Caps repeated tool calls within one conversation. |
@@ -76,6 +77,12 @@ See [Web Search](features/web-search.md).
 
 See [Persistent memory](features/persistent-memory.md).
 
+## Knowledge Library
+
+Turn on **Knowledge Library** to expose the built-in `knowledge_search` and `knowledge_get` tools when the agent has at least one source. Sources remain stored when the option is Off and can still be prepared in **Configure > Manage knowledge**. This option is independent of persistent-memory mode, and source contents are never injected wholesale into the normal system prompt.
+
+See [Knowledge Library](features/knowledge-library.md).
+
 ## Context management
 
 When a conversation becomes large enough to cross the configured threshold, choose one of the available strategies:
@@ -127,6 +134,6 @@ AI Task agents use a smaller configuration surface focused on:
 - maximum output tokens
 - supported advanced model settings
 
-Conversation-specific features such as voice follow-ups, Web Search, memory, skills, and custom Functions are not shown there.
+Conversation-specific features such as voice follow-ups, Web Search, memory, the Knowledge Library, skills, and custom Functions are not shown there.
 
 See [AI Task](features/ai-task.md).

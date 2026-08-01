@@ -35,6 +35,7 @@
                         "web_search": "Web search",
                         "web_search_context": "Web search context",
                         "memory_mode": "Memory mode",
+                        "knowledge_enabled": "Knowledge Library",
                         "continue_conversation": "Continue conversation",
                         "prompt": "Prompt Template",
                         "max_function_calls_per_conversation": "Maximum function calls per conversation",
@@ -49,6 +50,7 @@
                         "web_search": "Allow the model to use OpenAI's native Web Search tool for current or external information. Requires the direct OpenAI Responses API.",
                         "web_search_context": "Controls retrieval breadth only when Web Search is enabled. Low is recommended for concise voice-agent answers.",
                         "memory_mode": "Off disables persistent memory. Manual saves only explicit remember requests. Automatic may proactively save stable, useful facts under the existing safety rules.",
+                        "knowledge_enabled": "Allow on-demand search and retrieval of this agent's locally stored Knowledge sources.",
                         "continue_conversation": "HA Default uses Home Assistant's normal punctuation-based behavior. Always listens again after successful responses. Conditional lets the language model decide when an immediate follow-up is expected.",
                         "context_threshold": "Provider-reported input-token count that triggers context management.",
                         "context_truncate_strategy": "Keep recent messages is recommended. Clear all preserves legacy behavior. Summarize makes one bounded model request and falls back to keeping recent messages if it fails."
@@ -108,18 +110,36 @@
             "init": {
                 "menu_options": {
                     "test_agent": "Test agent",
-                    "manage_memory": "Manage memories"
+                    "manage_memory": "Manage memories",
+                    "manage_knowledge": "Manage knowledge"
                 },
                 "menu_option_descriptions": {
                     "test_agent": "Run safe local checks and one minimal model request.",
-                    "manage_memory": "Open the user-scoped memory management panel."
+                    "manage_memory": "Open the user-scoped memory management panel.",
+                    "manage_knowledge": "Open the per-agent Knowledge Library management panel."
                 }
             },
-            "test_agent": {"data": {"agent_id": "Conversation agent"}},
-            "test_result": {"data": {"report": "Test result"}},
+            "test_agent": {
+                "data": {
+                    "agent_id": "Conversation agent"
+                }
+            },
+            "test_result": {
+                "data": {
+                    "report": "Test result"
+                }
+            },
+            "manage_knowledge": {
+                "description": "Open this path from the Home Assistant sidebar or browser to manage Knowledge sources.",
+                "data": {
+                    "panel_path": "Knowledge Library panel path"
+                }
+            },
             "manage_memory": {
                 "description": "Open this path from the Home Assistant sidebar or browser to manage memories.",
-                "data": {"panel_path": "Memory panel path"}
+                "data": {
+                    "panel_path": "Memory panel path"
+                }
             }
         }
     },
@@ -148,7 +168,9 @@
     },
     "entity": {
         "sensor": {
-            "usage": {"name": "Usage"}
+            "usage": {
+                "name": "Usage"
+            }
         }
     },
     "services": {
