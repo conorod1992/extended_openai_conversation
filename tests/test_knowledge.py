@@ -219,6 +219,10 @@ async def test_catalog_is_bounded_filterable_paginated_and_content_free() -> Non
     assert filtered["total"] == 1
     assert filtered["sources"][0]["source_id"] == first.source_id
     assert "content" not in filtered["sources"][0]
+    assert [
+        result.source_id
+        for result in await library.async_search("dishwasher", source_ids=["household"])
+    ] == [first.source_id]
 
     first_page = await library.async_catalog(limit=1)
     assert first_page["returned"] == 1
@@ -306,6 +310,33 @@ async def test_tool_list_returns_metadata_without_content() -> None:
     assert "content" not in result["sources"][0]
 
 
+async def test_tool_search_ignores_invented_source_ids_and_reports_fallback() -> None:
+    library = await _library()
+    source = await library.async_create(
+        "Home Devices & Equipment Inventory",
+        "Household appliance models",
+        "The dishwasher is an Indesit DIE2B19UK.",
+    )
+    entity = _entity(True, 1)
+    entity._knowledge = library
+
+    for invented_id in ("", "household"):
+        result = await entity._async_execute_knowledge_tool(
+            "search",
+            {
+                "query": "dishwasher model",
+                "source_ids": [invented_id],
+                "limit": 5,
+            },
+        )
+        assert result["results"][0]["source_id"] == source.source_id
+        assert result["source_filter"] == {
+            "applied_source_ids": [],
+            "ignored_source_ids": [invented_id],
+            "fell_back_to_all_sources": True,
+        }
+
+
 def test_prompt_instructions_only_when_enabled_and_populated(hass) -> None:
     entity = _entity(False, 1)
     entity.hass = hass
@@ -322,6 +353,9 @@ def test_prompt_instructions_only_when_enabled_and_populated(hass) -> None:
     assert "knowledge_list" in prompt
     assert "short, discriminative keywords" in prompt
     assert "available knowledge sections" in prompt
+    assert "Never invent an ID" in prompt
+    assert 'descriptive word such as "household"' in prompt
+    assert "knowledge_list with\n  no query first" in prompt
     assert "untrusted reference data" in prompt
     assert "Tea towels" not in prompt
 

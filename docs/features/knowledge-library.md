@@ -95,7 +95,7 @@ If expected information is not found:
 - verify that **Knowledge Library** is On for the same agent selected in the panel;
 - refresh the management panel and confirm the source is present.
 
-The assistant is instructed to start with short keyword searches, broaden an empty search once, and then use `knowledge_list` to inspect source metadata before concluding that the library lacks an answer. An empty `source_ids` value is treated as no filter, so compatible providers that emit optional arrays as `[]` still search the entire library. If discovery still finds nothing relevant, the assistant should say so rather than inventing a household-specific detail.
+The assistant is instructed to start with short keyword searches, broaden an empty search once, and then use `knowledge_list` without a filter to inspect source metadata before concluding that the library lacks an answer. It must use only exact source IDs returned by Knowledge Library tools. Empty, blank, or unknown model-provided IDs are ignored; if none are valid, search falls back to the full agent library and reports that fallback in the tool result. If discovery still finds nothing relevant, the assistant should say so rather than inventing a household-specific detail.
 
 ## Trust and privacy
 

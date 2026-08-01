@@ -485,8 +485,20 @@ class ExtendedOpenAIAgentEntity(
                 or isinstance(limit, bool)
             ):
                 raise ValueError("query, source_ids, or limit has an invalid type")
-            results = await self._knowledge.async_search(query, source_ids, limit)
-            return {"results": [search_result_as_dict(result) for result in results]}
+            allowed_ids, ignored_ids = self._knowledge.resolve_source_filter(source_ids)
+            results = await self._knowledge.async_search(
+                query, sorted(allowed_ids) if allowed_ids else None, limit
+            )
+            filter_requested = bool(source_ids)
+            return {
+                "results": [search_result_as_dict(result) for result in results],
+                "source_filter": {
+                    "applied_source_ids": sorted(allowed_ids or []),
+                    "ignored_source_ids": ignored_ids,
+                    "fell_back_to_all_sources": filter_requested
+                    and allowed_ids is None,
+                },
+            }
         if operation == "list":
             query = arguments.get("query")
             limit = arguments.get("limit", 20)

@@ -301,9 +301,7 @@ class KnowledgeLibrary:
         normalized_query = _normalize(query)
         if not query_tokens or not normalized_query:
             return []
-        # Strict tool schemas can cause models to send an empty optional array.
-        # Treat it as no restriction rather than an allow-list containing no sources.
-        allowed = set(source_ids) if source_ids else None
+        allowed, _ = self.resolve_source_filter(source_ids)
 
         candidates: set[tuple[str, int]] = set()
         for token in query_tokens:
@@ -357,6 +355,24 @@ class KnowledgeLibrary:
                 )
             )
         return results
+
+    def resolve_source_filter(
+        self, source_ids: list[str] | None
+    ) -> tuple[set[str] | None, list[str]]:
+        """Resolve model-provided IDs, falling back safely when none are valid."""
+        self._ensure_initialized()
+        if not source_ids:
+            return None, []
+
+        valid: set[str] = set()
+        ignored: list[str] = []
+        for requested_id in source_ids:
+            normalized_id = requested_id.strip()
+            if normalized_id and normalized_id in self._sources:
+                valid.add(normalized_id)
+            else:
+                ignored.append(requested_id)
+        return (valid or None), ignored
 
     async def async_get_section(
         self,
@@ -509,8 +525,12 @@ def knowledge_tools() -> list[dict[str, Any]]:
                         "source_ids": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "minItems": 1,
-                            "description": "Optional source IDs to restrict the search.",
+                            "description": (
+                                "Optional exact source IDs returned by a previous "
+                                "Knowledge Library tool call. Omit this field when no "
+                                "exact returned IDs are available; never invent IDs or "
+                                "use titles or categories as IDs."
+                            ),
                         },
                         "limit": {
                             "type": "integer",

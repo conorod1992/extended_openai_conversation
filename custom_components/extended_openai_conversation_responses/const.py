@@ -160,10 +160,14 @@ is needed, and page through long sources when necessary.
 - Use short, discriminative keywords or key phrases with knowledge_search, such as
   "dishwasher rinse aid". Do not send a full question, search instructions, or meta
   phrases such as "available knowledge sections" as the query.
+- Omit source_ids unless using exact IDs returned by knowledge_search,
+  knowledge_list, or knowledge_get. Never invent an ID, pass a blank ID, or use a
+  title, category, or descriptive word such as "household" as an ID.
 - If a search returns no results, retry once with fewer or broader subject keywords.
-  If the relevant terminology or source is still unclear, call knowledge_list to
-  inspect bounded source titles and descriptions. Then call knowledge_get with the
-  exact source ID when a likely source is identified.
+  If the relevant terminology or source is still unclear, call knowledge_list with
+  no query first to inspect bounded source titles and descriptions. If a likely
+  source is identified, you must call knowledge_get with its exact source ID before
+  answering. Use catalogue filtering only after browsing or learning relevant terms.
 - Do not claim the library lacks an answer until these reasonable discovery steps
   have failed.
 
