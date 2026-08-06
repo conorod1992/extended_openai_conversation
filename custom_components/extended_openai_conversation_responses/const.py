@@ -1,6 +1,7 @@
 """Constants for the Extended OpenAI Conversation (Responses) integration."""
 
 DOMAIN = "extended_openai_conversation_responses"
+CONFIG_ENTRY_VERSION = 4
 DEFAULT_NAME = "Extended OpenAI Conversation (Responses)"
 DEFAULT_CONVERSATION_NAME = "Extended OpenAI Conversation (Responses)"
 DEFAULT_AI_TASK_NAME = "Extended OpenAI AI Task (Responses)"

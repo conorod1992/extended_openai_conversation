@@ -15,6 +15,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
+    CONFIG_ENTRY_VERSION,
     CONF_API_PROVIDER,
     CONF_API_VERSION,
     CONF_ARCHIVE_ENABLED,
@@ -125,16 +126,17 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
         hass.config_entries.async_entries(DOMAIN),
         key=lambda e: e.disabled_by is not None,
     )
-    if not any(entry.version < 4 for entry in entries):
+    if not any(entry.version < CONFIG_ENTRY_VERSION for entry in entries):
         return
 
     for entry in entries:
-        if entry.version >= 4:
+        if entry.version >= CONFIG_ENTRY_VERSION:
             continue
         _LOGGER.warning(
-            "Migrating Extended OpenAI Conversation (Responses) config entry %s from version %s to version 4",
+            "Migrating Extended OpenAI Conversation (Responses) config entry %s from version %s to version %s",
             entry.entry_id,
             entry.version,
+            CONFIG_ENTRY_VERSION,
         )
         if entry.version == 1:
             subentry = ConfigSubentry(
@@ -184,4 +186,4 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 DEFAULT_USAGE_RUN_RETENTION_DAYS,
             )
             hass.config_entries.async_update_subentry(entry, subentry, data=data)
-        hass.config_entries.async_update_entry(entry, version=4)
+        hass.config_entries.async_update_entry(entry, version=CONFIG_ENTRY_VERSION)
