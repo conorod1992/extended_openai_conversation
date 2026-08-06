@@ -9,9 +9,11 @@ from custom_components.extended_openai_conversation_responses import (
     async_migrate_integration,
 )
 from custom_components.extended_openai_conversation_responses.config_flow import (
+    ExtendedOpenAIConversationConfigFlow,
     ExtendedOpenAISubentryFlowHandler,
 )
 from custom_components.extended_openai_conversation_responses.const import (
+    CONFIG_ENTRY_VERSION,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_ENABLED,
@@ -52,6 +54,10 @@ def test_mode_normalization_preserves_legacy_runtime_fields() -> None:
     assert normalized[CONF_MEMORY_MODE] == MEMORY_MODE_AUTOMATIC
 
 
+def test_config_flow_declares_current_migration_version() -> None:
+    assert ExtendedOpenAIConversationConfigFlow.VERSION == CONFIG_ENTRY_VERSION
+
+
 async def test_version_two_migration_preserves_memories_and_legacy_behavior() -> None:
     """Migration changes only subentry settings, never integration-owned storage."""
     subentry = SimpleNamespace(
@@ -73,7 +79,9 @@ async def test_version_two_migration_preserves_memories_and_legacy_behavior() ->
     migrated = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
     assert migrated[CONF_MEMORY_MODE] == MEMORY_MODE_MANUAL
     assert migrated[CONF_CONTEXT_TRUNCATE_STRATEGY] == "clear"
-    hass.config_entries.async_update_entry.assert_called_with(entry, version=4)
+    hass.config_entries.async_update_entry.assert_called_with(
+        entry, version=CONFIG_ENTRY_VERSION
+    )
 
 
 def _hass_and_agent():

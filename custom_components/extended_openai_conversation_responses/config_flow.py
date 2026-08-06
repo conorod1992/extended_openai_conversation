@@ -42,6 +42,7 @@ from .const import (
     API_MODE_OPTIONS,
     API_PROVIDERS,
     ARCHIVE_RETENTION_OPTIONS,
+    CONFIG_ENTRY_VERSION,
     CONF_ADVANCED_OPTIONS,
     CONF_API_MODE,
     CONF_API_PROVIDER,
@@ -335,7 +336,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
 class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for OpenAI Conversation."""
 
-    VERSION = 3
+    VERSION = CONFIG_ENTRY_VERSION
 
     @staticmethod
     @callback
