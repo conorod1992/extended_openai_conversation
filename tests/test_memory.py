@@ -93,6 +93,25 @@ async def test_memory_crud_search_and_category_filter() -> None:
     assert await memory.async_list("user-1") == []
 
 
+async def test_legacy_anonymous_reassignment_is_selective_and_counted() -> None:
+    """Legacy records remain in place until an explicit targeted migration."""
+    memory = await _memory()
+    first = await memory.async_add(
+        "__anonymous__", "Kitchen uses Celsius.", "devices", "explicit"
+    )
+    second = await memory.async_add(
+        "__anonymous__", "Hallway light is dimmable.", "devices", "explicit"
+    )
+    result = await memory.async_reassign(
+        "__anonymous__", "user-1", [first["memory"]["memory_id"], "missing"]
+    )
+    assert result == {"requested": 2, "reassigned": 1, "unchanged": 1}
+    assert len(await memory.async_list("user-1")) == 1
+    assert [item.memory_id for item in await memory.async_list("__anonymous__")] == [
+        second["memory"]["memory_id"]
+    ]
+
+
 async def test_storage_survives_manager_reinitialization() -> None:
     """A new manager reads facts persisted by the old manager."""
     storage = FakeStorage()

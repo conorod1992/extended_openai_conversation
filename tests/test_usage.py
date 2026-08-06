@@ -181,3 +181,51 @@ async def test_chat_stream_consumes_usage_chunk_after_stop() -> None:
 
     assert any(delta.get("content") == "OK" for delta in deltas)
     assert request_usage.total_tokens == 11
+
+
+async def test_run_lifecycle_groups_multiple_requests_and_finalizes_once() -> None:
+    manager = await _manager()
+    async with manager.async_run(
+        home_assistant_conversation_id="conversation-1",
+        source_device_id="satellite-1",
+    ) as run:
+        await manager.async_record_request(
+            successful=True,
+            usage=RequestUsage(input_tokens=10, output_tokens=2, total_tokens=12),
+            provider="openai",
+            model="gpt-5-mini",
+            api_mode="responses",
+            request_stage="initial",
+            tool_calls_requested=1,
+        )
+        await manager.async_record_request(
+            successful=False,
+            provider="openai",
+            model="gpt-5-mini",
+            api_mode="responses",
+            request_stage="after_tool",
+            error_type="APIError",
+        )
+    assert manager.totals.conversation_count == 1
+    assert run.request_count == 2
+    assert run.tool_call_count == 1
+    assert run.successful is False
+    assert manager.today_summary()["run_count"] == 1
+    assert manager.today_summary()["total_tokens"] == 12
+    assert manager.breakdowns()["providers"] == {"openai": 12}
+    await manager.async_clear_details(confirm=True)
+    assert manager.breakdowns()["providers"] == {"openai": 12}
+    assert manager.today_summary()["total_tokens"] == 12
+
+
+async def test_exception_run_is_finalized_without_request_metadata() -> None:
+    manager = await _manager()
+    try:
+        async with manager.async_run() as run:
+            raise RuntimeError("boom")
+    except RuntimeError:
+        pass
+    assert run.completed_at is not None
+    assert run.error_type == "RuntimeError"
+    assert run.request_count == 0
+    assert manager.totals.conversation_count == 1

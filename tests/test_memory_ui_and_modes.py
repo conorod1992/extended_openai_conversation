@@ -73,7 +73,7 @@ async def test_version_two_migration_preserves_memories_and_legacy_behavior() ->
     migrated = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
     assert migrated[CONF_MEMORY_MODE] == MEMORY_MODE_MANUAL
     assert migrated[CONF_CONTEXT_TRUNCATE_STRATEGY] == "clear"
-    hass.config_entries.async_update_entry.assert_called_with(entry, version=3)
+    hass.config_entries.async_update_entry.assert_called_with(entry, version=4)
 
 
 def _hass_and_agent():

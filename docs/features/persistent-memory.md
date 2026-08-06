@@ -53,7 +53,7 @@ The assistant searches for the relevant stored record before deleting it.
 
 ## Manage memories in Home Assistant
 
-Open **OpenAI memories** in the Home Assistant sidebar.
+Open **Extended OpenAI → Memories** in the Home Assistant sidebar.
 
 After selecting a conversation agent, you can manage memories belonging to the signed-in Home Assistant user:
 
@@ -99,7 +99,9 @@ Memory uses Home Assistant's versioned `.storage` Store API.
 - Memories survive Home Assistant restarts and integration reloads.
 - The integration does not retain an OpenAI response/thread as the memory store.
 
-Requests without a Home Assistant user ID use an anonymous scope. Anonymous requests to the same agent share that anonymous scope.
+Requests without a Home Assistant user ID use the configured voice-scope policy. They may map to a selected user, a separate shared-household scope, or be unretained. The privacy-conscious default is unretained, which also disables memory writes.
+
+Existing `__anonymous__` memories are preserved in a clearly labelled legacy scope. Administrators can inspect, selectively reassign to a user or shared household, leave, or delete them; no automatic ownership assignment occurs.
 
 ## Retrieval and OpenAI
 

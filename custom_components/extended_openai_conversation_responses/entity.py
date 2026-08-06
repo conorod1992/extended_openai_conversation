@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from collections.abc import AsyncGenerator, Iterable, Mapping
 from dataclasses import replace
@@ -9,6 +10,7 @@ import json
 import logging
 import mimetypes
 from pathlib import Path
+import time
 from typing import TYPE_CHECKING, Any, cast
 
 from openai import AsyncClient, AsyncStream
@@ -50,6 +52,7 @@ from .const import (
     CONTEXT_TRUNCATE_KEEP_RECENT,
     CONTEXT_TRUNCATE_SUMMARIZE,
     DEFAULT_API_MODE,
+    DEFAULT_API_PROVIDER,
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONTEXT_THRESHOLD,
     DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
@@ -363,7 +366,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
     ) -> bool | None:
         """Generate an answer for the chat log with streaming support."""
         if self._usage is not None:
-            await self._usage.async_record_conversation()
+            current_run = getattr(self._usage, "current_run", None)
+            if current_run is None or current_run() is None:
+                # Direct callers from older integrations/tests do not establish
+                # the new run context. Preserve the lifetime counter without
+                # double-counting live conversation runs.
+                await self._usage.async_record_conversation()
         options = self.subentry.data
         model = options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
         api_mode = get_api_mode(
@@ -492,10 +500,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     tool_kwargs["tool_choice"] = "none"
 
             _LOGGER.info(
-                "Prompt for %s using %s: %s", model, api_mode, json.dumps(messages)
+                "Sending provider request for %s using %s with %d input items",
+                model,
+                api_mode,
+                len(messages),
             )
 
             request_usage = RequestUsage()
+            request_started = time.monotonic()
             try:
                 if api_mode == API_MODE_RESPONSES:
                     responses_stream = cast(
@@ -533,16 +545,41 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         and content.tool_calls
                     ):
                         pending_tool_calls.extend(content.tool_calls)
-            except Exception:
+            except BaseException as err:
                 if self._usage is not None:
                     await self._usage.async_record_request(
-                        successful=False, usage=request_usage
+                        successful=False,
+                        usage=request_usage,
+                        provider=getattr(self.entry, "data", {}).get(
+                            CONF_API_PROVIDER, DEFAULT_API_PROVIDER
+                        ),
+                        model=model,
+                        api_mode=api_mode,
+                        duration_ms=int((time.monotonic() - request_started) * 1000),
+                        request_stage="initial" if n_requests == 0 else "after_tool",
+                        error_type=type(err).__name__,
                     )
                 raise
             else:
                 if self._usage is not None:
                     await self._usage.async_record_request(
-                        successful=True, usage=request_usage
+                        successful=True,
+                        usage=request_usage,
+                        provider=getattr(self.entry, "data", {}).get(
+                            CONF_API_PROVIDER, DEFAULT_API_PROVIDER
+                        ),
+                        model=model,
+                        api_mode=api_mode,
+                        duration_ms=int((time.monotonic() - request_started) * 1000),
+                        request_stage="initial" if n_requests == 0 else "after_tool",
+                        tool_calls_requested=len(pending_tool_calls),
+                        web_search_used=any(
+                            getattr(content, "native", None) is not None
+                            and getattr(getattr(content, "native", None), "type", "")
+                            == "web_search_call"
+                            for content in chat_log.content
+                            if id(content) not in existing_content_ids
+                        ),
                     )
                 observed_input_tokens = max(
                     observed_input_tokens,
@@ -550,7 +587,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
 
             if pending_tool_calls:
-                _LOGGER.info("Response Tool Calls %s", pending_tool_calls)
+                _LOGGER.info(
+                    "Provider requested %d tool calls: %s",
+                    len(pending_tool_calls),
+                    ", ".join(call.tool_name for call in pending_tool_calls),
+                )
 
             control_calls = [
                 tool_input
@@ -1143,6 +1184,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             f"{transcript}"
         )
         request_usage = RequestUsage()
+        request_started = time.monotonic()
         try:
             if api_mode == API_MODE_RESPONSES:
                 response = await self._client.responses.create(
@@ -1170,12 +1212,34 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     else None
                 )
             request_usage = extract_usage(getattr(response, "usage", None))
-        except Exception:
+        except BaseException as err:
             if self._usage is not None:
-                await self._usage.async_record_request(successful=False)
+                await self._usage.async_record_request(
+                    successful=False,
+                    provider=getattr(self.entry, "data", {}).get(
+                        CONF_API_PROVIDER, DEFAULT_API_PROVIDER
+                    ),
+                    model=model,
+                    api_mode=api_mode,
+                    duration_ms=int((time.monotonic() - request_started) * 1000),
+                    request_stage="context_summary",
+                    error_type=type(err).__name__,
+                )
             _LOGGER.exception("Unable to summarize older conversation context")
+            if isinstance(err, asyncio.CancelledError):
+                raise
             return None
 
         if self._usage is not None:
-            await self._usage.async_record_request(successful=True, usage=request_usage)
+            await self._usage.async_record_request(
+                successful=True,
+                usage=request_usage,
+                provider=getattr(self.entry, "data", {}).get(
+                    CONF_API_PROVIDER, DEFAULT_API_PROVIDER
+                ),
+                model=model,
+                api_mode=api_mode,
+                duration_ms=int((time.monotonic() - request_started) * 1000),
+                request_stage="context_summary",
+            )
         return text.strip() if isinstance(text, str) and text.strip() else None

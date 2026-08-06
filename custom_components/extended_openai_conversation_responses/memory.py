@@ -27,12 +27,13 @@ from .const import (
     MEMORY_MODE_OFF,
     MEMORY_MODES,
 )
+from .scope import LEGACY_ANONYMOUS_SCOPE_ID
 
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 STORAGE_KEY_PREFIX = f"{DOMAIN}.memory"
-ANONYMOUS_USER_ID = "__anonymous__"
+ANONYMOUS_USER_ID = LEGACY_ANONYMOUS_SCOPE_ID
 MAX_MEMORIES_PER_AGENT = 10_000
 MAX_CONTENT_LENGTH = 1_000
 MAX_CATEGORY_LENGTH = 64
@@ -350,6 +351,47 @@ class PersistentMemory:
                 await self._async_save_locked()
             return len(targets)
 
+    async def async_reassign(
+        self, source_scope_id: str, target_scope_id: str, memory_ids: list[str]
+    ) -> dict[str, int]:
+        """Move selected memories between explicit scopes and report exact counts."""
+        if (
+            not source_scope_id
+            or not target_scope_id
+            or source_scope_id == target_scope_id
+        ):
+            raise ValueError("different source and target scopes are required")
+        if not memory_ids or len(memory_ids) > MAX_LIST_LIMIT:
+            raise ValueError(f"memory_ids must contain 1 to {MAX_LIST_LIMIT} IDs")
+        async with self._lock:
+            self._ensure_initialized()
+            requested = len(set(memory_ids))
+            moved = 0
+            for memory_id in set(memory_ids):
+                current = self._memories.get(memory_id)
+                if current is None or current.user_id != source_scope_id:
+                    continue
+                self._unindex(current)
+                updated = MemoryRecord(
+                    memory_id=current.memory_id,
+                    user_id=target_scope_id,
+                    content=current.content,
+                    category=current.category,
+                    source=current.source,
+                    created_at=current.created_at,
+                    updated_at=dt_util.utcnow().isoformat(),
+                )
+                self._memories[memory_id] = updated
+                self._index(updated)
+                moved += 1
+            if moved:
+                await self._async_save_locked()
+            return {
+                "requested": requested,
+                "reassigned": moved,
+                "unchanged": requested - moved,
+            }
+
     def stats(self) -> dict[str, Any]:
         """Return non-sensitive diagnostics."""
         self._ensure_initialized()
@@ -452,9 +494,11 @@ def memory_user_id(context: Any) -> str:
     return getattr(ha_context, "user_id", None) or ANONYMOUS_USER_ID
 
 
-def memory_as_dict(memory: MemoryRecord) -> dict[str, str]:
-    """Serialize a memory without exposing its internal user-scope key."""
-    return {
+def memory_as_dict(
+    memory: MemoryRecord, *, include_scope: bool = False
+) -> dict[str, str]:
+    """Serialize a memory, exposing its owner only to explicit admin callers."""
+    result = {
         "memory_id": memory.memory_id,
         "content": memory.content,
         "category": memory.category,
@@ -462,6 +506,9 @@ def memory_as_dict(memory: MemoryRecord) -> dict[str, str]:
         "created_at": memory.created_at,
         "updated_at": memory.updated_at,
     }
+    if include_scope:
+        result["scope_id"] = memory.user_id
+    return result
 
 
 def memory_tools() -> list[dict[str, Any]]:

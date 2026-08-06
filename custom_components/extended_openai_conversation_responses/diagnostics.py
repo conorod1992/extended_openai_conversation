@@ -8,15 +8,18 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    CONF_ARCHIVE_ENABLED,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_MEMORY_ENABLED,
+    DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_KNOWLEDGE_ENABLED,
     DEFAULT_MEMORY_AUTO_CREATE,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_MEMORY_ENABLED,
 )
+from .conversation_archive import async_get_archive
 from .knowledge import async_get_knowledge
 from .memory import async_get_memory, get_memory_mode
 from .usage import async_get_usage
@@ -46,6 +49,9 @@ async def async_get_config_entry_diagnostics(
             "knowledge_enabled": subentry.data.get(
                 CONF_KNOWLEDGE_ENABLED, DEFAULT_KNOWLEDGE_ENABLED
             ),
+            "archive_enabled": subentry.data.get(
+                CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED
+            ),
         }
         try:
             memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
@@ -59,6 +65,13 @@ async def async_get_config_entry_diagnostics(
             diagnostics.update(knowledge.stats())
         except Exception as err:
             diagnostics["knowledge_storage_error"] = type(err).__name__
+        try:
+            archive = await async_get_archive(
+                hass, entry.entry_id, subentry.subentry_id
+            )
+            diagnostics["archive"] = archive.stats()
+        except Exception as err:
+            diagnostics["archive_storage_error"] = type(err).__name__
         try:
             usage = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
             diagnostics["usage"] = usage.as_dict()

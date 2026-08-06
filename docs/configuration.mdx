@@ -142,7 +142,7 @@ Configure Extended OpenAI Conversation (Responses) through the Options menu in y
     - `Manual`: Store memories only after an explicit remember request. Relevant memories can still be retrieved automatically.
     - `Automatic`: Allow proactive storage of stable, useful facts under the existing memory safety rules.
 
-    The retrieval limit is an advanced memory setting. Use the **OpenAI memories** sidebar panel to inspect, add, edit, delete, or clear your own memories. See [Persistent memory](/persistent-memory) for storage, privacy, user isolation, and examples.
+    The retrieval limit is an advanced memory setting. Use **Extended OpenAI → Memories** to inspect, add, edit, delete, or clear permitted scopes. See [Persistent memory](/persistent-memory) for storage, privacy, user isolation, and examples.
   </Accordion>
 
   <Accordion title="Knowledge Library">
@@ -244,7 +244,7 @@ Existing memory settings map to the new selector without deleting stored memorie
 
 ## Usage statistics
 
-Each conversation agent provides one disabled-by-default diagnostic **Usage** sensor. It reports cumulative provider-supplied token usage and separate conversation, API request, success, and failure counts. Multi-round tool conversations aggregate every model request. See [Usage statistics](/usage-statistics).
+Each conversation agent provides disabled-by-default lifetime, today, current-month, and latest-response usage sensors. Provider requests and complete user-turn runs are counted separately, and multi-round tool runs aggregate every model request. Detailed records are content-free and retained separately from indefinite daily/lifetime aggregates. See [Usage statistics](/usage-statistics).
 
 ## Test an agent
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextvars import ContextVar
 import json
 import logging
 from pathlib import Path
@@ -30,23 +31,47 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import ExtendedOpenAIConfigEntry
 from .const import (
     CONDITIONAL_CONTINUATION_PROMPT,
+    CONF_ARCHIVE_ENABLED,
+    CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+    CONF_ARCHIVE_RETENTION_DAYS,
+    CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     CONF_CONTINUE_CONVERSATION,
     CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_PROMPT,
+    CONF_SHARED_ARCHIVE_ENABLED,
+    CONF_SHARED_MEMORY_MODE,
     CONF_SKILLS,
+    CONF_USAGE_REQUEST_RETENTION_DAYS,
+    CONF_USAGE_RUN_RETENTION_DAYS,
     CONTINUE_CONVERSATION_ALWAYS,
     CONTINUE_CONVERSATION_CONDITIONAL,
+    DEFAULT_ARCHIVE_ENABLED,
+    DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+    DEFAULT_ARCHIVE_RETENTION_DAYS,
+    DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_PROMPT,
+    DEFAULT_SHARED_ARCHIVE_ENABLED,
+    DEFAULT_SHARED_MEMORY_MODE,
+    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+    DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_WORKING_DIRECTORY,
     DOMAIN,
     EVENT_CONVERSATION_FINISHED,
     KNOWLEDGE_PROMPT,
     MEMORY_PROMPT,
+    SHARED_MEMORY_AUTOMATIC,
+    SHARED_MEMORY_DISABLED,
+)
+from .conversation_archive import (
+    ArchiveSession,
+    ConversationArchive,
+    archive_tools,
+    async_get_archive,
 )
 from .entity import ExtendedOpenAIBaseLLMEntity
 from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
@@ -70,10 +95,27 @@ from .memory import (
     memory_tools,
     memory_user_id,
 )
+from .scope import ResolvedDataScope, memory_scope_id, resolve_data_scope
 from .skills import Skill, SkillManager
 from .usage import async_get_usage
 
 _LOGGER = logging.getLogger(__name__)
+
+_ACTIVE_SCOPE: ContextVar[ResolvedDataScope | None] = ContextVar(
+    "extended_openai_active_scope", default=None
+)
+_ACTIVE_ARCHIVE: ContextVar[tuple[str, str] | None] = ContextVar(
+    "extended_openai_active_archive", default=None
+)
+
+ARCHIVE_PROMPT = """
+## Retained conversation archive
+The local archive is separate from persistent memory. Search it only when the user
+clearly refers to a previous discussion. Results may be outdated or situational;
+mention relevant dates. Never turn archive text into a persistent memory unless the
+user separately asks. Privacy and deletion tools are deterministic backend actions:
+use them when the user asks not to save, to resume saving, or to delete this session.
+"""
 
 
 async def async_setup_entry(
@@ -104,6 +146,7 @@ class ExtendedOpenAIAgentEntity(
     skill_manager: SkillManager
     _memory: PersistentMemory | None = None
     _knowledge: KnowledgeLibrary | None = None
+    _archive: ConversationArchive | None = None
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
@@ -134,6 +177,28 @@ class ExtendedOpenAIAgentEntity(
         self._usage = await async_get_usage(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
+        self._usage.request_retention_days = int(
+            self.subentry.data.get(
+                CONF_USAGE_REQUEST_RETENTION_DAYS,
+                DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+            )
+        )
+        self._usage.run_retention_days = int(
+            self.subentry.data.get(
+                CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
+            )
+        )
+        await self._usage.async_prune_details()
+        self._archive = await async_get_archive(
+            self.hass, self.entry.entry_id, self.subentry.subentry_id
+        )
+        await self._archive.async_prune(
+            int(
+                self.subentry.data.get(
+                    CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+                )
+            )
+        )
 
         try:
             self._knowledge = await async_get_knowledge(
@@ -157,11 +222,66 @@ class ExtendedOpenAIAgentEntity(
 
     async def async_process(self, user_input: ConversationInput) -> ConversationResult:
         """Process a sentence."""
+        llm_context = user_input.as_llm_context(DOMAIN)
+        scope = resolve_data_scope(llm_context, self.subentry.data)
+        context_id = getattr(getattr(llm_context, "context", None), "id", None)
+        session_key = (
+            f"conversation:{user_input.conversation_id}"
+            if user_input.conversation_id
+            else f"context:{context_id or scope.device_id or 'unidentified'}"
+        )
+        archive_session: ArchiveSession | None = None
+        if self._archive is not None:
+            archive_session = await self._archive.async_begin_session(
+                session_key,
+                scope,
+                user_input.conversation_id,
+                archive_enabled=self.subentry.data.get(
+                    CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED
+                ),
+                shared_archive_enabled=self.subentry.data.get(
+                    CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED
+                ),
+                inactivity_minutes=int(
+                    self.subentry.data.get(
+                        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+                        DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+                    )
+                ),
+            )
+        scope_token = _ACTIVE_SCOPE.set(scope)
+        archive_token = _ACTIVE_ARCHIVE.set(
+            (session_key, archive_session.session_id) if archive_session else None
+        )
         with (
             async_get_chat_session(self.hass, user_input.conversation_id) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
         ):
-            return await self._async_handle_message(user_input, chat_log)
+            try:
+                if self._usage is None:
+                    return await self._async_handle_message(user_input, chat_log)
+                async with self._usage.async_run(
+                    home_assistant_conversation_id=user_input.conversation_id,
+                    source_device_id=scope.device_id,
+                ) as run:
+                    result = await self._async_handle_message(user_input, chat_log)
+                    if self._archive is not None and archive_session is not None:
+                        assistant_text = ""
+                        if chat_log.content and isinstance(
+                            chat_log.content[-1], conversation.AssistantContent
+                        ):
+                            assistant_text = chat_log.content[-1].content or ""
+                        await self._archive.async_record_turn(
+                            archive_session.session_id,
+                            run_id=run.run_id,
+                            user_text=user_input.text,
+                            assistant_text=assistant_text,
+                            successful=run.successful,
+                        )
+                    return result
+            finally:
+                _ACTIVE_ARCHIVE.reset(archive_token)
+                _ACTIVE_SCOPE.reset(scope_token)
 
     async def _async_handle_message(
         self,
@@ -204,6 +324,8 @@ class ExtendedOpenAIAgentEntity(
                 ),
             )
         except OpenAIError as err:
+            if self._usage is not None:
+                self._usage.mark_current_run_failed(type(err).__name__)
             _LOGGER.error(err)
             intent_response = intent.IntentResponse(language=user_input.language)
             intent_response.async_set_error(
@@ -214,6 +336,8 @@ class ExtendedOpenAIAgentEntity(
                 response=intent_response, conversation_id=user_input.conversation_id
             )
         except HomeAssistantError as err:
+            if self._usage is not None:
+                self._usage.mark_current_run_failed(type(err).__name__)
             _LOGGER.error("Error during conversation: %s", err, exc_info=True)
             intent_response = intent.IntentResponse(language=user_input.language)
             intent_response.async_set_error(
@@ -316,6 +440,9 @@ class ExtendedOpenAIAgentEntity(
         if self._knowledge_available:
             rendered_prompt = f"{rendered_prompt.rstrip()}\n{KNOWLEDGE_PROMPT}"
 
+        if self.subentry.data.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED):
+            rendered_prompt = f"{rendered_prompt.rstrip()}\n{ARCHIVE_PROMPT}"
+
         if (
             _get_continue_conversation_mode(self.subentry.data)
             == CONTINUE_CONVERSATION_CONDITIONAL
@@ -329,6 +456,9 @@ class ExtendedOpenAIAgentEntity(
         """Retrieve bounded automatic context when memory is enabled."""
         if self._memory is None:
             return []
+        scope_id = self._current_memory_scope_id(llm_context)
+        if scope_id is None:
+            return []
         try:
             retrieve_limit = int(
                 self.subentry.data.get(
@@ -339,7 +469,7 @@ class ExtendedOpenAIAgentEntity(
             if retrieve_limit <= 0:
                 return []
             return await self._memory.async_search(
-                memory_user_id(llm_context), query, limit=retrieve_limit
+                scope_id, query, limit=retrieve_limit
             )
         except Exception:
             _LOGGER.exception("Automatic memory retrieval failed; continuing")
@@ -383,7 +513,10 @@ class ExtendedOpenAIAgentEntity(
                 for tool in result
                 if isinstance(tool, dict)
             }
-            if memory_enabled(self.subentry.data):
+            if (
+                memory_enabled(self.subentry.data)
+                and self._current_memory_scope_id() is not None
+            ):
                 conflicts = configured_names & MEMORY_TOOL_NAMES
                 if conflicts:
                     raise HomeAssistantError(
@@ -391,6 +524,18 @@ class ExtendedOpenAIAgentEntity(
                         + ", ".join(sorted(conflicts))
                     )
                 result.extend(memory_tools())
+            if self.subentry.data.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED):
+                configured_archive_tools = archive_tools()
+                if not self.subentry.data.get(
+                    CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+                    DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+                ):
+                    configured_archive_tools = [
+                        tool
+                        for tool in configured_archive_tools
+                        if tool["function"]["operation"] not in {"search", "get"}
+                    ]
+                result.extend(configured_archive_tools)
             if self._knowledge_available:
                 conflicts = configured_names & KNOWLEDGE_TOOL_NAMES
                 if conflicts:
@@ -414,13 +559,17 @@ class ExtendedOpenAIAgentEntity(
     ) -> conversation.ToolResultContent:
         """Execute an integration-owned tool or a configured tool."""
         function_type = function_tool.get("function", {}).get("type")
-        if function_type not in {"memory", "knowledge"}:
+        if function_type not in {"memory", "knowledge", "archive"}:
             return await super()._execute_function_tool(
                 function_tool, tool_input, llm_context, exposed_entities
             )
 
         try:
-            if function_type == "knowledge":
+            if function_type == "archive":
+                result = await self._async_execute_archive_tool(
+                    function_tool["function"]["operation"], tool_input.tool_args
+                )
+            elif function_type == "knowledge":
                 result = await self._async_execute_knowledge_tool(
                     function_tool["function"]["operation"], tool_input.tool_args
                 )
@@ -538,7 +687,9 @@ class ExtendedOpenAIAgentEntity(
         """Execute a scoped persistent-memory operation."""
         if self._memory is None:
             raise RuntimeError("persistent memory is unavailable")
-        user_id = memory_user_id(llm_context)
+        user_id = self._current_memory_scope_id(llm_context)
+        if user_id is None:
+            raise RuntimeError("persistent memory is disabled for this data scope")
 
         if operation == "add":
             source = arguments.get("source")
@@ -554,6 +705,17 @@ class ExtendedOpenAIAgentEntity(
                 self.subentry.data
             ):
                 raise ValueError("automatic memory creation is disabled")
+            scope = _ACTIVE_SCOPE.get()
+            if (
+                source == "implicit"
+                and scope is not None
+                and scope.scope_type == "shared"
+                and self.subentry.data.get(
+                    CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE
+                )
+                != SHARED_MEMORY_AUTOMATIC
+            ):
+                raise ValueError("automatic shared memory creation is disabled")
             return await self._memory.async_add(
                 user_id,
                 content,
@@ -624,6 +786,105 @@ class ExtendedOpenAIAgentEntity(
             deleted = await self._memory.async_delete(user_id, memory_ids)
             return {"status": "deleted", "deleted": deleted}
         raise ValueError("unknown memory operation")
+
+    def _current_memory_scope_id(
+        self, llm_context: llm.LLMContext | None = None
+    ) -> str | None:
+        """Use the session-stable resolver for all memory operations."""
+        scope = _ACTIVE_SCOPE.get()
+        if scope is None:
+            # Compatibility for direct service/test invocations outside the
+            # conversation lifecycle. Live conversations always set a resolved
+            # scope before tools are assembled.
+            return memory_user_id(llm_context)
+        if (
+            scope.scope_type == "shared"
+            and self.subentry.data.get(
+                CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE
+            )
+            == SHARED_MEMORY_DISABLED
+        ):
+            return None
+        return memory_scope_id(scope)
+
+    async def _async_execute_archive_tool(
+        self, operation: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Execute scoped archive, privacy, and exact-session deletion actions."""
+        if self._archive is None:
+            raise RuntimeError("conversation archive is unavailable")
+        scope = _ACTIVE_SCOPE.get()
+        active = _ACTIVE_ARCHIVE.get()
+        if scope is None or active is None:
+            raise RuntimeError("active conversation session is unavailable")
+        session_key, session_id = active
+        if operation == "search":
+            if not self.subentry.data.get(
+                CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+                DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+            ):
+                raise RuntimeError("model archive search is disabled")
+            query = arguments.get("query")
+            if not isinstance(query, str):
+                raise ValueError("query is required")
+            return await self._archive.async_search(
+                scope.scope_id,
+                query,
+                start_date=arguments.get("start_date"),
+                end_date=arguments.get("end_date"),
+                limit=int(arguments.get("limit", 5)),
+            )
+        if operation == "get":
+            requested = arguments.get("session_id")
+            if not isinstance(requested, str):
+                raise ValueError("session_id is required")
+            return await self._archive.async_get(
+                scope.scope_id,
+                requested,
+                int(arguments.get("start_turn", 0)),
+                int(arguments.get("limit", 6)),
+            )
+        if operation == "private":
+            return await self._archive.async_make_private(session_id)
+        if operation == "resume":
+            session = await self._archive.async_resume_saving(
+                session_key, session_id, scope
+            )
+            _ACTIVE_ARCHIVE.set((session_key, session.session_id))
+            return {
+                "private_mode_enabled": False,
+                "session_id": session.session_id,
+                "future_turns_retained": session.retention_state == "retained",
+                "private_content_restored": False,
+            }
+        if operation == "delete_current":
+            result = await self._archive.async_delete_session(
+                scope.scope_id, session_id
+            )
+            return {"session_id": session_id, **result}
+        if operation == "delete_selected":
+            session_ids = arguments.get("session_ids")
+            if not isinstance(session_ids, list) or not all(
+                isinstance(value, str) for value in session_ids
+            ):
+                raise ValueError("session_ids must be a list of strings")
+            return await self._archive.async_delete_selected(
+                scope.scope_id,
+                session_ids,
+                confirm=arguments.get("confirm") is True,
+            )
+        if operation == "delete_range":
+            start_date = arguments.get("start_date")
+            end_date = arguments.get("end_date")
+            if not isinstance(start_date, str) or not isinstance(end_date, str):
+                raise ValueError("start_date and end_date are required")
+            return await self._archive.async_delete_date_range(
+                scope.scope_id,
+                start_date,
+                end_date,
+                confirm=arguments.get("confirm") is True,
+            )
+        raise ValueError("unknown archive operation")
 
 
 def _resolve_continue_conversation(
