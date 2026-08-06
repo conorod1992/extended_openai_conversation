@@ -17,24 +17,44 @@ from homeassistant.helpers.typing import ConfigType
 from .const import (
     CONF_API_PROVIDER,
     CONF_API_VERSION,
+    CONF_ARCHIVE_ENABLED,
+    CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+    CONF_ARCHIVE_RETENTION_DAYS,
+    CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     CONF_BASE_URL,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_ENABLED,
     CONF_MEMORY_MODE,
     CONF_ORGANIZATION,
+    CONF_SHARED_ARCHIVE_ENABLED,
+    CONF_SHARED_MEMORY_MODE,
     CONF_SKIP_AUTHENTICATION,
+    CONF_USAGE_REQUEST_RETENTION_DAYS,
+    CONF_USAGE_RUN_RETENTION_DAYS,
+    CONF_VOICE_DEVICE_MAPPINGS,
+    CONF_VOICE_SCOPE_POLICY,
+    CONF_VOICE_UNMAPPED_POLICY,
     DEFAULT_API_PROVIDER,
+    DEFAULT_ARCHIVE_ENABLED,
+    DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+    DEFAULT_ARCHIVE_RETENTION_DAYS,
+    DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+    DEFAULT_SHARED_ARCHIVE_ENABLED,
+    DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_SKIP_AUTHENTICATION,
+    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+    DEFAULT_USAGE_RUN_RETENTION_DAYS,
+    DEFAULT_VOICE_SCOPE_POLICY,
+    DEFAULT_VOICE_UNMAPPED_POLICY,
     DOMAIN,
     LEGACY_CONTEXT_TRUNCATE_STRATEGY,
     MEMORY_MODE_AUTOMATIC,
     MEMORY_MODE_OFF,
 )
 from .helpers import get_authenticated_client
-from .knowledge_ui import async_setup_knowledge_ui
+from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
-from .memory_ui import async_setup_memory_ui
 from .services import async_setup_services
 from .template import async_setup_templates, async_unload_templates
 
@@ -50,8 +70,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Extended OpenAI Conversation (Responses)."""
     await async_migrate_integration(hass)
     await async_setup_services(hass, config)
-    await async_setup_memory_ui(hass)
-    await async_setup_knowledge_ui(hass)
+    await async_setup_management_ui(hass)
     return True
 
 
@@ -106,14 +125,14 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
         hass.config_entries.async_entries(DOMAIN),
         key=lambda e: e.disabled_by is not None,
     )
-    if not any(entry.version < 3 for entry in entries):
+    if not any(entry.version < 4 for entry in entries):
         return
 
     for entry in entries:
-        if entry.version >= 3:
+        if entry.version >= 4:
             continue
         _LOGGER.warning(
-            "Migrating Extended OpenAI Conversation (Responses) config entry %s from version %s to version 3",
+            "Migrating Extended OpenAI Conversation (Responses) config entry %s from version %s to version 4",
             entry.entry_id,
             entry.version,
         )
@@ -141,5 +160,28 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 CONF_CONTEXT_TRUNCATE_STRATEGY,
                 LEGACY_CONTEXT_TRUNCATE_STRATEGY,
             )
+            data.setdefault(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+            data.setdefault(CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS)
+            data.setdefault(
+                CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+                DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+            )
+            data.setdefault(CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED)
+            data.setdefault(
+                CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+                DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+            )
+            data.setdefault(CONF_VOICE_SCOPE_POLICY, DEFAULT_VOICE_SCOPE_POLICY)
+            data.setdefault(CONF_VOICE_UNMAPPED_POLICY, DEFAULT_VOICE_UNMAPPED_POLICY)
+            data.setdefault(CONF_VOICE_DEVICE_MAPPINGS, {})
+            data.setdefault(CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE)
+            data.setdefault(
+                CONF_USAGE_REQUEST_RETENTION_DAYS,
+                DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+            )
+            data.setdefault(
+                CONF_USAGE_RUN_RETENTION_DAYS,
+                DEFAULT_USAGE_RUN_RETENTION_DAYS,
+            )
             hass.config_entries.async_update_subentry(entry, subentry, data=data)
-        hass.config_entries.async_update_entry(entry, version=3)
+        hass.config_entries.async_update_entry(entry, version=4)

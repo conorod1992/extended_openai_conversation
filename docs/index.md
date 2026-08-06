@@ -56,6 +56,7 @@ For direct OpenAI usage, create an API key through the OpenAI platform and keep 
 - [Responses API](features/responses-api.md)
 - [Web Search](features/web-search.md)
 - [Persistent memory](features/persistent-memory.md)
+- [Conversation archive, privacy, and voice ownership](features/conversation-archive.md)
 - [Voice follow-ups](features/voice-followups.md)
 - [Custom functions](functions/index.md)
 - [Troubleshooting](troubleshooting.md)

@@ -27,6 +27,7 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    ObjectSelector,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
@@ -40,10 +41,15 @@ from .agent_test import async_test_agent
 from .const import (
     API_MODE_OPTIONS,
     API_PROVIDERS,
+    ARCHIVE_RETENTION_OPTIONS,
     CONF_ADVANCED_OPTIONS,
     CONF_API_MODE,
     CONF_API_PROVIDER,
     CONF_API_VERSION,
+    CONF_ARCHIVE_ENABLED,
+    CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+    CONF_ARCHIVE_RETENTION_DAYS,
+    CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     CONF_BASE_URL,
     CONF_CHAT_MODEL,
     CONF_CONTEXT_THRESHOLD,
@@ -61,11 +67,19 @@ from .const import (
     CONF_PROMPT,
     CONF_REASONING_EFFORT,
     CONF_SERVICE_TIER,
+    CONF_SHARED_ARCHIVE_ENABLED,
+    CONF_SHARED_MEMORY_MODE,
     CONF_SHORTEN_TOOL_CALL_ID,
     CONF_SKILLS,
     CONF_SKIP_AUTHENTICATION,
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    CONF_USAGE_REQUEST_RETENTION_DAYS,
+    CONF_USAGE_RUN_RETENTION_DAYS,
+    CONF_VOICE_DEFAULT_USER_ID,
+    CONF_VOICE_DEVICE_MAPPINGS,
+    CONF_VOICE_SCOPE_POLICY,
+    CONF_VOICE_UNMAPPED_POLICY,
     CONF_WEB_SEARCH,
     CONF_WEB_SEARCH_CONTEXT,
     CONTEXT_TRUNCATE_STRATEGIES,
@@ -75,6 +89,10 @@ from .const import (
     DEFAULT_AI_TASK_OPTIONS,
     DEFAULT_API_MODE,
     DEFAULT_API_PROVIDER,
+    DEFAULT_ARCHIVE_ENABLED,
+    DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+    DEFAULT_ARCHIVE_RETENTION_DAYS,
+    DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONF_BASE_URL,
     DEFAULT_CONF_FUNCTION_TOOLS,
@@ -91,10 +109,16 @@ from .const import (
     DEFAULT_PROMPT,
     DEFAULT_REASONING_EFFORT,
     DEFAULT_SERVICE_TIER,
+    DEFAULT_SHARED_ARCHIVE_ENABLED,
+    DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_SHORTEN_TOOL_CALL_ID,
     DEFAULT_SKIP_AUTHENTICATION,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
+    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+    DEFAULT_USAGE_RUN_RETENTION_DAYS,
+    DEFAULT_VOICE_SCOPE_POLICY,
+    DEFAULT_VOICE_UNMAPPED_POLICY,
     DEFAULT_WEB_SEARCH,
     DEFAULT_WEB_SEARCH_CONTEXT,
     DOMAIN,
@@ -103,6 +127,9 @@ from .const import (
     MEMORY_MODES,
     REASONING_EFFORT_OPTIONS,
     SERVICE_TIER_OPTIONS,
+    SHARED_MEMORY_MODES,
+    USAGE_RETENTION_OPTIONS,
+    VOICE_POLICIES,
     WEB_SEARCH_CONTEXT_OPTIONS,
 )
 from .helpers import get_authenticated_client, get_model_config
@@ -257,6 +284,17 @@ DEFAULT_OPTIONS = types.MappingProxyType(
         CONF_MEMORY_AUTO_CREATE: False,
         CONF_MEMORY_AUTO_RETRIEVE_LIMIT: DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
         CONF_KNOWLEDGE_ENABLED: DEFAULT_KNOWLEDGE_ENABLED,
+        CONF_ARCHIVE_ENABLED: DEFAULT_ARCHIVE_ENABLED,
+        CONF_ARCHIVE_RETENTION_DAYS: DEFAULT_ARCHIVE_RETENTION_DAYS,
+        CONF_ARCHIVE_MODEL_SEARCH_ENABLED: DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+        CONF_SHARED_ARCHIVE_ENABLED: DEFAULT_SHARED_ARCHIVE_ENABLED,
+        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES: DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+        CONF_VOICE_SCOPE_POLICY: DEFAULT_VOICE_SCOPE_POLICY,
+        CONF_VOICE_UNMAPPED_POLICY: DEFAULT_VOICE_UNMAPPED_POLICY,
+        CONF_VOICE_DEVICE_MAPPINGS: {},
+        CONF_SHARED_MEMORY_MODE: DEFAULT_SHARED_MEMORY_MODE,
+        CONF_USAGE_REQUEST_RETENTION_DAYS: DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+        CONF_USAGE_RUN_RETENTION_DAYS: DEFAULT_USAGE_RUN_RETENTION_DAYS,
         CONF_SHORTEN_TOOL_CALL_ID: DEFAULT_SHORTEN_TOOL_CALL_ID,
         CONF_ADVANCED_OPTIONS: DEFAULT_ADVANCED_OPTIONS,
     }
@@ -640,6 +678,62 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
                 CONF_KNOWLEDGE_ENABLED,
                 default=DEFAULT_KNOWLEDGE_ENABLED,
             ): BooleanSelector(),
+            vol.Optional(
+                CONF_ARCHIVE_ENABLED,
+                default=DEFAULT_ARCHIVE_ENABLED,
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_ARCHIVE_RETENTION_DAYS,
+                default=DEFAULT_ARCHIVE_RETENTION_DAYS,
+            ): vol.In(ARCHIVE_RETENTION_OPTIONS),
+            vol.Optional(
+                CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+                default=DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_SHARED_ARCHIVE_ENABLED,
+                default=DEFAULT_SHARED_ARCHIVE_ENABLED,
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+                default=DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+            ): NumberSelector(
+                NumberSelectorConfig(min=1, max=1440, mode=NumberSelectorMode.BOX)
+            ),
+            vol.Optional(
+                CONF_VOICE_SCOPE_POLICY,
+                default=DEFAULT_VOICE_SCOPE_POLICY,
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=VOICE_POLICIES, mode=SelectSelectorMode.DROPDOWN
+                )
+            ),
+            vol.Optional(
+                CONF_VOICE_UNMAPPED_POLICY,
+                default=DEFAULT_VOICE_UNMAPPED_POLICY,
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=VOICE_POLICIES, mode=SelectSelectorMode.DROPDOWN
+                )
+            ),
+            vol.Optional(CONF_VOICE_DEFAULT_USER_ID): TextSelector(),
+            vol.Optional(CONF_VOICE_DEVICE_MAPPINGS, default={}): ObjectSelector(),
+            vol.Optional(
+                CONF_SHARED_MEMORY_MODE,
+                default=DEFAULT_SHARED_MEMORY_MODE,
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=SHARED_MEMORY_MODES, mode=SelectSelectorMode.DROPDOWN
+                )
+            ),
+            vol.Optional(
+                CONF_USAGE_REQUEST_RETENTION_DAYS,
+                default=DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+            ): vol.In(USAGE_RETENTION_OPTIONS),
+            vol.Optional(
+                CONF_USAGE_RUN_RETENTION_DAYS,
+                default=DEFAULT_USAGE_RUN_RETENTION_DAYS,
+            ): vol.In(USAGE_RETENTION_OPTIONS),
             vol.Optional(
                 CONF_MAX_TOKENS,
                 default=DEFAULT_MAX_TOKENS,

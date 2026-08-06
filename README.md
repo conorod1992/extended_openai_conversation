@@ -31,6 +31,8 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 - **Skills** — load reusable instruction sets per conversation agent.
 - **Custom functions** — extend the assistant with native tools, Home Assistant scripts, templates, REST endpoints, scraping, composite functions, and SQLite queries.
 - **Usage diagnostics** — track provider-reported request and token usage without estimating cost.
+- **Optional conversation archive** — locally retain and lexically search discussions, with deterministic private-session and deletion controls.
+- **Explicit voice ownership** — map unidentified satellites to users, a separate shared household, or a no-retention policy.
 - **Agent testing** — validate the configured model, API mode, tools, Web Search, memory, entities, and skills from the integration UI.
 - **AI Task** — create dedicated AI Task agents with a streamlined set of model options.
 
@@ -106,6 +108,9 @@ Most users can start with the defaults and choose only a model. The main options
 | **Web Search** | Off | Allows compatible Responses models to search the web. |
 | **Memory mode** | Off | Enables Manual or Automatic persistent memory. |
 | **Knowledge Library** | Off | Enables read-only, on-demand search of maintained Knowledge sources. |
+| **Conversation archive** | Off | Locally retains user/final-assistant text for 30 days when enabled. |
+| **Model archive search** | Off | Lets the model search only the current resolved scope. |
+| **Unidentified voice** | Do not retain | Prevents transcript and memory writes until an owner policy is selected. |
 | **Maximum tokens** | 500 | Limits generated response tokens. |
 | **Maximum function calls** | 10 | Prevents unbounded tool-call loops. |
 | **Context strategy** | Keep recent messages | Controls long-conversation truncation. |
@@ -139,6 +144,14 @@ Persistent memory can retain concise facts beyond a single chat. **Manual** mode
 The opt-in Knowledge Library stores longer maintained references such as a kitchen layout, tools inventory, appliance notes, or household procedures. The model uses built-in `knowledge_search`, `knowledge_list`, and `knowledge_get` tools only when needed; full sources are never placed in every prompt and the model cannot modify them.
 
 [Read the Knowledge Library guide](docs/features/knowledge-library.md)
+
+### Conversation archive and privacy
+
+The archive is distinct from persistent memory and disabled by default. It stores only user text and the final assistant response in local monthly partitions; tool data, provider payloads, attachments, and hidden reasoning are excluded. Titles are derived locally from the first message, with no extra model call.
+
+Use **Extended OpenAI → Conversations** to search, inspect, and delete retained sessions. “Don't save this conversation” deletes retained turns for only the active session and blocks subsequent storage. “You can save conversations again” starts a new retained boundary and never restores private text. Bulk deletion requires confirmation and reports exact counts.
+
+[Read the conversation archive and voice ownership guide](docs/features/conversation-archive.md)
 
 ### Voice follow-ups
 
@@ -201,6 +214,7 @@ The README is intentionally a quick introduction. Detailed guides live in [`docs
 - [Skills](docs/features/skills.md)
 - [Custom functions](docs/functions/index.md)
 - [Usage statistics](docs/features/usage-statistics.md)
+- [Conversation archive, privacy, and voice ownership](docs/features/conversation-archive.md)
 - [Migration](docs/migration.md)
 - [Troubleshooting](docs/troubleshooting.md)
 

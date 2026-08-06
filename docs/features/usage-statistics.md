@@ -1,47 +1,37 @@
-# Usage statistics
+# Token-only usage statistics
 
-Each conversation agent can expose a disabled-by-default diagnostic **Usage** sensor with cumulative provider-reported request and token statistics.
+Extended OpenAI records provider-reported token usage. It does not contain a pricing catalogue, estimate cost, convert currencies, or project bills.
 
-## Enable the sensor
+## Provider requests and conversation runs
 
-Open the device page for the conversation agent and enable the diagnostic Usage entity.
+A **provider request** is one API call. A **conversation run** is one complete user turn, from the start of processing until the final response or error. Tool loops and context summarisation can cause one run to contain several provider requests. Every request made during a run shares its run ID.
 
-A single sensor is used rather than creating many usage entities.
+Missing provider metadata is handled safely: the request and run are still counted, while unavailable token fields remain zero. Failed, cancelled, interrupted-stream, and exception paths finalize their run once.
 
-## What it reports
+## Sensors
 
-The sensor state is cumulative total tokens. Attributes can include:
+Each conversation-agent device has four disabled-by-default diagnostic entities:
 
-- Home Assistant conversation count
-- API request count
-- successful API requests
-- failed API requests
-- input tokens
-- output tokens
-- total tokens
-- cached input tokens when reported
-- reasoning tokens when reported
-- additional numeric input/output usage fields returned by the provider
+- **Lifetime usage** keeps the existing lifetime-token unique ID and cumulative counters.
+- **Usage today** uses Home Assistant's local calendar day.
+- **Usage this month** is derived from daily aggregates.
+- **Last response usage** contains the latest run's bounded token, request, model, duration, and success details.
 
-## Conversations versus API requests
+No sensor is created per day, model, request, or transcript session. Updates are listener-driven and do not poll.
 
-One Home Assistant conversation can generate several API requests.
+## Management panel
 
-For example, the model may call a Home Assistant tool, receive the result, and then make another model request before producing the final answer. Each provider request contributes its own usage.
+Open **Extended OpenAI → Usage** to see daily token charts, input/output/cached/reasoning splits, run counts, recent runs, request details, and provider/model/API-mode breakdowns. There are no costs or prices.
 
-Context-summary requests and the minimal model request made by **Test agent** are also included.
+Detailed request and run records are content-free. They never contain prompts, replies, tool arguments, tool results, memories, knowledge text, attachments, provider payloads, web-search bodies, or hidden reasoning.
 
-## Provider limitations
+## Storage and retention
 
-Counters use usage metadata actually returned by the configured model provider.
+Compact lifetime totals, daily aggregates, and bounded recent details are stored separately with Home Assistant's versioned storage API.
 
-OpenAI-compatible providers may omit some or all token fields. When that happens, the integration can still count the request and whether it succeeded or failed, while unavailable token counters remain unchanged.
+- request details: 30 days by default
+- run details: 90 days by default
+- daily aggregates: indefinite
+- lifetime totals: indefinite
 
-## Persistence
-
-Usage counters are stored using Home Assistant's versioned `.storage` API separately for each conversation-agent subentry.
-
-They survive Home Assistant restarts and integration reloads.
-
-!!! warning "Token usage is not a bill"
-    The integration does not estimate monetary cost. Pricing can vary by provider, model, service tier, caching, hosted tools, and account terms. Use provider billing data for actual cost.
+Detailed retention can be disabled or set to 7, 30, 90, 180, or 365 days. Pruning or clearing recent detail records does not alter daily, monthly, or lifetime totals. Existing cumulative usage is loaded without losing its lifetime counters.

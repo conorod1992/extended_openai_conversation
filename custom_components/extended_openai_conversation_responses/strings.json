@@ -36,6 +36,18 @@
             "web_search_context": "Web search context",
             "memory_mode": "Memory mode",
             "knowledge_enabled": "Knowledge Library",
+            "archive_enabled": "Conversation archive",
+            "archive_retention_days": "Archive retention (days)",
+            "archive_model_search_enabled": "Allow model archive search",
+            "shared_archive_enabled": "Allow shared-household archive",
+            "archive_session_timeout_minutes": "Archive inactivity timeout (minutes)",
+            "voice_scope_policy": "Unidentified voice policy",
+            "voice_unmapped_policy": "Unmapped satellite fallback",
+            "voice_default_user_id": "Default voice owner",
+            "voice_device_mappings": "Satellite owner mappings",
+            "shared_memory_mode": "Shared-household memory behavior",
+            "usage_request_retention_days": "Request detail retention (days)",
+            "usage_run_retention_days": "Run detail retention (days)",
             "continue_conversation": "Continue conversation",
             "prompt": "Prompt Template",
             "max_function_calls_per_conversation": "Maximum function calls per conversation",
@@ -51,6 +63,10 @@
             "web_search_context": "Controls retrieval breadth only when Web Search is enabled. Low is recommended for concise voice-agent answers.",
             "memory_mode": "Off disables persistent memory. Manual saves only explicit remember requests. Automatic may proactively save stable, useful facts under the existing safety rules.",
             "knowledge_enabled": "Allow on-demand search and retrieval of this agent's locally stored Knowledge sources.",
+            "archive_enabled": "Store user messages and final assistant replies locally. Disabled by default.",
+            "archive_model_search_enabled": "Expose bounded, current-scope lexical archive search to the model. No extra model calls or embeddings are used.",
+            "voice_scope_policy": "How unidentified voice requests are scoped. Do not retain is the privacy-conscious default.",
+            "voice_device_mappings": "Map Home Assistant device IDs to user IDs, shared, or unretained.",
             "continue_conversation": "HA Default uses Home Assistant's normal punctuation-based behavior. Always listens again after successful responses. Conditional lets the language model decide when an immediate follow-up is expected.",
             "context_threshold": "Provider-reported input-token count that triggers context management.",
             "context_truncate_strategy": "Keep recent messages is recommended. Clear all preserves legacy behavior. Summarize makes one bounded model request and falls back to keeping recent messages if it fails."
@@ -152,11 +168,23 @@
         "manual": "Manual",
         "automatic": "Automatic"
       }
+    },
+    "voice_scope_policy": {
+      "options": {"unretained": "Do not retain", "shared": "Shared household", "default_user": "Selected user", "device_mapping": "Per satellite mapping"}
+    },
+    "voice_unmapped_policy": {
+      "options": {"unretained": "Do not retain", "shared": "Shared household", "default_user": "Selected user", "device_mapping": "Per satellite mapping"}
+    },
+    "shared_memory_mode": {
+      "options": {"disabled": "Disabled", "explicit": "Explicit only", "automatic": "Automatic"}
     }
   },
   "entity": {
     "sensor": {
-      "usage": {"name": "Usage"}
+      "usage": {"name": "Lifetime usage"},
+      "usage_today": {"name": "Usage today"},
+      "usage_month": {"name": "Usage this month"},
+      "last_response_usage": {"name": "Last response usage"}
     }
   },
   "services": {

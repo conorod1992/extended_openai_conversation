@@ -1,0 +1,749 @@
+"""Local, scoped and searchable conversation transcript archive."""
+
+from __future__ import annotations
+
+import asyncio
+from collections import defaultdict
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
+import logging
+import re
+from typing import Any, Protocol
+from uuid import uuid4
+
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
+
+from .const import DOMAIN
+from .scope import ResolvedDataScope
+
+_LOGGER = logging.getLogger(__name__)
+STORAGE_VERSION = 1
+STORAGE_KEY_PREFIX = f"{DOMAIN}.archive"
+MAX_SEARCH_LIMIT = 50
+MAX_GET_LIMIT = 50
+MAX_TEXT_LENGTH = 40_000
+MAX_TITLE_LENGTH = 80
+MAX_EXCERPT_LENGTH = 500
+_ARCHIVE_MANAGERS = f"{DOMAIN}.archive_managers"
+_TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
+_SPACE_PATTERN = re.compile(r"\s+")
+_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "for",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "the",
+    "to",
+}
+
+
+@dataclass(slots=True, frozen=True)
+class ArchiveSession:
+    """Content-free session metadata."""
+
+    session_id: str
+    home_assistant_conversation_id: str | None
+    agent_subentry_id: str
+    scope_id: str
+    scope_type: str
+    scope_source: str
+    source_device_id: str | None
+    started_at: str
+    last_message_at: str
+    title: str
+    turn_count: int
+    retention_state: str
+
+
+@dataclass(slots=True, frozen=True)
+class ArchiveTurn:
+    """Exactly one user message and final assistant response."""
+
+    turn_id: str
+    session_id: str
+    run_id: str | None
+    timestamp: str
+    user_text: str
+    assistant_text: str
+    successful: bool
+
+
+class ArchiveStorage(Protocol):
+    """Partitioned persistence boundary."""
+
+    async def async_load_metadata(self) -> dict[str, Any] | None: ...
+    async def async_save_metadata(self, data: dict[str, Any]) -> None: ...
+    async def async_load_partition(self, partition: str) -> dict[str, Any] | None: ...
+    async def async_save_partition(
+        self, partition: str, data: dict[str, Any]
+    ) -> None: ...
+
+
+class HomeAssistantArchiveStorage:
+    """Small metadata store plus independent monthly transcript stores."""
+
+    def __init__(self, hass: HomeAssistant, entry_id: str, subentry_id: str) -> None:
+        prefix = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
+        self._hass = hass
+        self._prefix = prefix
+        self._metadata = Store[dict[str, Any]](
+            hass,
+            STORAGE_VERSION,
+            f"{prefix}.metadata",
+            private=True,
+            atomic_writes=True,
+        )
+
+    def _partition_store(self, partition: str) -> Store[dict[str, Any]]:
+        return Store(
+            self._hass,
+            STORAGE_VERSION,
+            f"{self._prefix}.turns.{partition}",
+            private=True,
+            atomic_writes=True,
+            serialize_in_event_loop=False,
+        )
+
+    async def async_load_metadata(self) -> dict[str, Any] | None:
+        return await self._metadata.async_load()
+
+    async def async_save_metadata(self, data: dict[str, Any]) -> None:
+        await self._metadata.async_save(data)
+
+    async def async_load_partition(self, partition: str) -> dict[str, Any] | None:
+        return await self._partition_store(partition).async_load()
+
+    async def async_save_partition(self, partition: str, data: dict[str, Any]) -> None:
+        await self._partition_store(partition).async_save(data)
+
+
+class ConversationArchive:
+    """Concurrency-safe scoped archive with deterministic session privacy."""
+
+    def __init__(self, storage: ArchiveStorage, agent_subentry_id: str) -> None:
+        self._storage = storage
+        self._agent_subentry_id = agent_subentry_id
+        self._sessions: dict[str, ArchiveSession] = {}
+        self._turns: dict[str, list[ArchiveTurn]] = defaultdict(list)
+        self._active: dict[str, str] = {}
+        self._partitions: set[str] = set()
+        self._lock = asyncio.Lock()
+        self._initialized = False
+
+    async def async_initialize(self) -> None:
+        async with self._lock:
+            if self._initialized:
+                return
+            data = await self._storage.async_load_metadata() or {}
+            for raw in data.get("sessions", []):
+                try:
+                    session = ArchiveSession(**raw)
+                except TypeError, ValueError:
+                    _LOGGER.warning("Ignoring malformed conversation archive session")
+                    continue
+                self._sessions[session.session_id] = session
+            self._active = {
+                str(key): str(value)
+                for key, value in data.get("active", {}).items()
+                if value in self._sessions
+            }
+            self._partitions = {str(value) for value in data.get("partitions", [])}
+            for partition in sorted(self._partitions):
+                payload = await self._storage.async_load_partition(partition) or {}
+                for raw in payload.get("turns", []):
+                    try:
+                        turn = ArchiveTurn(**raw)
+                    except TypeError, ValueError:
+                        _LOGGER.warning("Ignoring malformed conversation archive turn")
+                        continue
+                    if turn.session_id in self._sessions:
+                        self._turns[turn.session_id].append(turn)
+            self._initialized = True
+
+    async def async_begin_session(
+        self,
+        session_key: str,
+        scope: ResolvedDataScope,
+        home_assistant_conversation_id: str | None,
+        *,
+        archive_enabled: bool,
+        shared_archive_enabled: bool,
+        inactivity_minutes: int,
+    ) -> ArchiveSession:
+        """Resolve the stable scope once and return the exact active session."""
+        async with self._lock:
+            self._ensure_initialized()
+            current = self._sessions.get(self._active.get(session_key, ""))
+            now = dt_util.utcnow()
+            may_retain = archive_enabled and scope.allows_retention
+            if scope.scope_type == "shared" and not shared_archive_enabled:
+                may_retain = False
+            if current is not None:
+                expired = (
+                    _parse_time(current.last_message_at)
+                    + timedelta(minutes=max(1, inactivity_minutes))
+                    < now
+                )
+                if (
+                    not expired
+                    and current.scope_id == scope.scope_id
+                    and current.home_assistant_conversation_id
+                    == home_assistant_conversation_id
+                    and current.retention_state != "closed"
+                ):
+                    return current
+
+            timestamp = now.isoformat()
+            session = ArchiveSession(
+                session_id=uuid4().hex,
+                home_assistant_conversation_id=home_assistant_conversation_id,
+                agent_subentry_id=self._agent_subentry_id,
+                scope_id=scope.scope_id,
+                scope_type=scope.scope_type,
+                scope_source=scope.source,
+                source_device_id=scope.device_id,
+                started_at=timestamp,
+                last_message_at=timestamp,
+                title="",
+                turn_count=0,
+                retention_state="retained" if may_retain else "unretained",
+            )
+            self._sessions[session.session_id] = session
+            self._active[session_key] = session.session_id
+            await self._async_save_metadata_locked()
+            return session
+
+    async def async_record_turn(
+        self,
+        session_id: str,
+        *,
+        run_id: str | None,
+        user_text: str,
+        assistant_text: str,
+        successful: bool,
+    ) -> ArchiveTurn | None:
+        """Retain only user text and the final assistant text for a retained session."""
+        user_text = _clean_text(user_text)
+        assistant_text = _clean_text(assistant_text)
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None or session.retention_state != "retained":
+                return None
+            timestamp = dt_util.utcnow().isoformat()
+            turn = ArchiveTurn(
+                turn_id=uuid4().hex,
+                session_id=session_id,
+                run_id=run_id,
+                timestamp=timestamp,
+                user_text=user_text,
+                assistant_text=assistant_text,
+                successful=successful,
+            )
+            self._turns[session_id].append(turn)
+            self._sessions[session_id] = ArchiveSession(
+                **{
+                    **asdict(session),
+                    "last_message_at": timestamp,
+                    "title": session.title or _title(user_text),
+                    "turn_count": session.turn_count + 1,
+                }
+            )
+            partition = timestamp[:7]
+            self._partitions.add(partition)
+            await self._async_save_partition_locked(partition)
+            await self._async_save_metadata_locked()
+            return turn
+
+    async def async_make_private(self, session_id: str) -> dict[str, Any]:
+        """Delete this session's retained turns and prevent future retention."""
+        async with self._lock:
+            session = self._require_session(session_id)
+            deleted = len(self._turns.pop(session_id, []))
+            self._sessions[session_id] = ArchiveSession(
+                **{**asdict(session), "turn_count": 0, "retention_state": "private"}
+            )
+            await self._async_save_all_partitions_locked()
+            await self._async_save_metadata_locked()
+            return {
+                "private_mode_enabled": True,
+                "session_id": session_id,
+                "deleted_turns": deleted,
+                "future_turns_retained": False,
+            }
+
+    async def async_resume_saving(
+        self, session_key: str, previous_session_id: str, scope: ResolvedDataScope
+    ) -> ArchiveSession:
+        """End a private boundary and create a fresh retained session."""
+        async with self._lock:
+            previous = self._require_session(previous_session_id)
+            timestamp = dt_util.utcnow().isoformat()
+            session = ArchiveSession(
+                session_id=uuid4().hex,
+                home_assistant_conversation_id=previous.home_assistant_conversation_id,
+                agent_subentry_id=self._agent_subentry_id,
+                scope_id=scope.scope_id,
+                scope_type=scope.scope_type,
+                scope_source=scope.source,
+                source_device_id=scope.device_id,
+                started_at=timestamp,
+                last_message_at=timestamp,
+                title="",
+                turn_count=0,
+                retention_state="retained" if scope.allows_retention else "unretained",
+            )
+            self._sessions[session.session_id] = session
+            self._active[session_key] = session.session_id
+            await self._async_save_metadata_locked()
+            return session
+
+    async def async_search(
+        self,
+        scope_id: str,
+        query: str,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        limit: int = 5,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Perform bounded phrase/token lexical search within one exact scope."""
+        limit = max(1, min(limit, MAX_SEARCH_LIMIT))
+        offset = max(0, offset)
+        query_tokens = _tokens(query)
+        normalized_query = _normalize(query)
+        ranked: list[tuple[float, str, ArchiveSession, ArchiveTurn]] = []
+        for session in self._sessions.values():
+            if session.scope_id != scope_id or session.retention_state != "retained":
+                continue
+            for turn in self._turns.get(session.session_id, []):
+                date = turn.timestamp[:10]
+                if start_date and date < start_date:
+                    continue
+                if end_date and date > end_date:
+                    continue
+                combined = f"{turn.user_text} {turn.assistant_text}"
+                tokens = _tokens(combined)
+                overlap = len(query_tokens & tokens)
+                if (
+                    query_tokens
+                    and not overlap
+                    and normalized_query not in _normalize(combined)
+                ):
+                    continue
+                score = overlap / max(1, len(query_tokens))
+                if normalized_query and normalized_query in _normalize(combined):
+                    score += 2
+                ranked.append((score, turn.timestamp, session, turn))
+        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        page = ranked[offset : offset + limit]
+        return {
+            "results": [
+                {
+                    "session_id": session.session_id,
+                    "turn_id": turn.turn_id,
+                    "date": turn.timestamp[:10],
+                    "timestamp": turn.timestamp,
+                    "title": session.title,
+                    "excerpt": _excerpt(
+                        f"{turn.user_text}\n{turn.assistant_text}", query
+                    ),
+                }
+                for _, _, session, turn in page
+            ],
+            "offset": offset,
+            "limit": limit,
+            "has_more": len(ranked) > offset + limit,
+        }
+
+    async def async_get(
+        self, scope_id: str, session_id: str, start_turn: int = 0, limit: int = 6
+    ) -> dict[str, Any]:
+        """Return bounded turns only after exact ownership validation."""
+        session = self._require_owned_session(scope_id, session_id)
+        start_turn = max(0, start_turn)
+        limit = max(1, min(limit, MAX_GET_LIMIT))
+        turns = self._turns.get(session_id, [])
+        page = turns[start_turn : start_turn + limit]
+        return {
+            "session": asdict(session),
+            "turns": [asdict(turn) for turn in page],
+            "start_turn": start_turn,
+            "limit": limit,
+            "has_more": len(turns) > start_turn + limit,
+        }
+
+    async def async_list_sessions(
+        self, scope_id: str, *, limit: int = 50, offset: int = 0
+    ) -> dict[str, Any]:
+        """List bounded content-free metadata for one scope."""
+        limit = max(1, min(limit, MAX_SEARCH_LIMIT))
+        sessions = [
+            session
+            for session in self._sessions.values()
+            if session.scope_id == scope_id and session.retention_state == "retained"
+        ]
+        sessions.sort(key=lambda item: item.last_message_at, reverse=True)
+        page = sessions[max(0, offset) : max(0, offset) + limit]
+        return {
+            "sessions": [asdict(session) for session in page],
+            "offset": max(0, offset),
+            "limit": limit,
+            "has_more": len(sessions) > max(0, offset) + limit,
+        }
+
+    async def async_delete_session(
+        self, scope_id: str, session_id: str
+    ) -> dict[str, int]:
+        """Delete one exact owned transcript without touching usage."""
+        async with self._lock:
+            self._require_owned_session(scope_id, session_id)
+            deleted_turns = len(self._turns.pop(session_id, []))
+            del self._sessions[session_id]
+            self._active = {
+                key: value for key, value in self._active.items() if value != session_id
+            }
+            await self._async_save_all_partitions_locked()
+            await self._async_save_metadata_locked()
+            return {"deleted_sessions": 1, "deleted_turns": deleted_turns}
+
+    async def async_clear_scope(
+        self, scope_id: str, *, confirm: bool
+    ) -> dict[str, int]:
+        """Clear an exact selected scope only after explicit confirmation."""
+        if not confirm:
+            raise ValueError("Explicit confirmation is required")
+        async with self._lock:
+            targets = [
+                s.session_id for s in self._sessions.values() if s.scope_id == scope_id
+            ]
+            deleted_turns = sum(
+                len(self._turns.pop(session_id, [])) for session_id in targets
+            )
+            for session_id in targets:
+                del self._sessions[session_id]
+            target_set = set(targets)
+            self._active = {
+                key: value
+                for key, value in self._active.items()
+                if value not in target_set
+            }
+            await self._async_save_all_partitions_locked()
+            await self._async_save_metadata_locked()
+            return {"deleted_sessions": len(targets), "deleted_turns": deleted_turns}
+
+    async def async_delete_selected(
+        self, scope_id: str, session_ids: list[str], *, confirm: bool
+    ) -> dict[str, int]:
+        """Delete explicitly selected owned sessions after confirmation."""
+        if not confirm:
+            raise ValueError("Explicit confirmation is required")
+        if not session_ids or len(session_ids) > MAX_SEARCH_LIMIT:
+            raise ValueError(f"session_ids must contain 1 to {MAX_SEARCH_LIMIT} IDs")
+        # Validate every supplied ID before deleting anything.
+        for session_id in set(session_ids):
+            self._require_owned_session(scope_id, session_id)
+        async with self._lock:
+            targets = set(session_ids)
+            deleted_turns = sum(
+                len(self._turns.pop(session_id, [])) for session_id in targets
+            )
+            for session_id in targets:
+                del self._sessions[session_id]
+            self._active = {
+                key: value
+                for key, value in self._active.items()
+                if value not in targets
+            }
+            await self._async_save_all_partitions_locked()
+            await self._async_save_metadata_locked()
+            return {"deleted_sessions": len(targets), "deleted_turns": deleted_turns}
+
+    async def async_delete_date_range(
+        self,
+        scope_id: str,
+        start_date: str,
+        end_date: str,
+        *,
+        confirm: bool,
+    ) -> dict[str, int]:
+        """Delete sessions whose last retained turn is inside an exact date range."""
+        if not confirm:
+            raise ValueError("Explicit confirmation is required")
+        if (
+            not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start_date)
+            or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", end_date)
+            or start_date > end_date
+        ):
+            raise ValueError("a valid start_date and end_date are required")
+        targets = [
+            session.session_id
+            for session in self._sessions.values()
+            if session.scope_id == scope_id
+            and session.retention_state == "retained"
+            and start_date <= session.last_message_at[:10] <= end_date
+        ]
+        if not targets:
+            return {"deleted_sessions": 0, "deleted_turns": 0}
+        return await self.async_delete_selected(scope_id, targets, confirm=True)
+
+    async def async_prune(self, retention_days: int) -> dict[str, int]:
+        """Delete expired transcript sessions while preserving unrelated usage."""
+        cutoff = dt_util.utcnow() - timedelta(days=max(1, retention_days))
+        async with self._lock:
+            targets = [
+                s.session_id
+                for s in self._sessions.values()
+                if _parse_time(s.last_message_at) < cutoff
+            ]
+            deleted_turns = sum(
+                len(self._turns.pop(session_id, [])) for session_id in targets
+            )
+            for session_id in targets:
+                del self._sessions[session_id]
+            await self._async_save_all_partitions_locked()
+            await self._async_save_metadata_locked()
+            return {"deleted_sessions": len(targets), "deleted_turns": deleted_turns}
+
+    def active_session(self, session_key: str) -> ArchiveSession | None:
+        return self._sessions.get(self._active.get(session_key, ""))
+
+    def stats(self) -> dict[str, Any]:
+        return {
+            "backend": "home_assistant_monthly_store",
+            "storage_version": STORAGE_VERSION,
+            "session_count": len(self._sessions),
+            "turn_count": sum(len(turns) for turns in self._turns.values()),
+            "partition_count": len(self._partitions),
+        }
+
+    def _require_session(self, session_id: str) -> ArchiveSession:
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise ValueError("conversation session not found")
+        return session
+
+    def _require_owned_session(self, scope_id: str, session_id: str) -> ArchiveSession:
+        session = self._require_session(session_id)
+        if session.scope_id != scope_id or session.retention_state != "retained":
+            raise ValueError("conversation session not found")
+        return session
+
+    async def _async_save_metadata_locked(self) -> None:
+        persisted_sessions = {
+            session.session_id: session
+            for session in self._sessions.values()
+            if session.retention_state != "unretained"
+        }
+        await self._storage.async_save_metadata(
+            {
+                "sessions": [
+                    asdict(session) for session in persisted_sessions.values()
+                ],
+                "active": {
+                    key: value
+                    for key, value in self._active.items()
+                    if value in persisted_sessions
+                },
+                "partitions": sorted(self._partitions),
+            }
+        )
+
+    async def _async_save_partition_locked(self, partition: str) -> None:
+        turns = [
+            asdict(turn)
+            for session_turns in self._turns.values()
+            for turn in session_turns
+            if turn.timestamp.startswith(partition)
+        ]
+        await self._storage.async_save_partition(partition, {"turns": turns})
+
+    async def _async_save_all_partitions_locked(self) -> None:
+        for partition in sorted(self._partitions):
+            await self._async_save_partition_locked(partition)
+
+    def _ensure_initialized(self) -> None:
+        if not self._initialized:
+            raise RuntimeError("conversation archive has not been initialized")
+
+
+async def async_get_archive(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> ConversationArchive:
+    """Return one shared archive manager per conversation agent."""
+    managers: dict[tuple[str, str], ConversationArchive] = hass.data.setdefault(
+        _ARCHIVE_MANAGERS, {}
+    )
+    key = (entry_id, subentry_id)
+    if key not in managers:
+        managers[key] = ConversationArchive(
+            HomeAssistantArchiveStorage(hass, entry_id, subentry_id), subentry_id
+        )
+    await managers[key].async_initialize()
+    return managers[key]
+
+
+def archive_tools() -> list[dict[str, Any]]:
+    """Return bounded model-facing archive and deterministic privacy tools."""
+    return [
+        _tool(
+            "conversation_search",
+            "Search prior retained discussions only when the user refers to them.",
+            {
+                "query": {"type": "string"},
+                "start_date": {"type": "string"},
+                "end_date": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+            },
+            ["query"],
+            "search",
+        ),
+        _tool(
+            "conversation_get",
+            "Read a bounded page from one search result.",
+            {
+                "session_id": {"type": "string"},
+                "start_turn": {"type": "integer", "minimum": 0},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+            },
+            ["session_id"],
+            "get",
+        ),
+        _tool(
+            "conversation_private",
+            "Make the exact active conversation private and delete its retained turns.",
+            {},
+            [],
+            "private",
+        ),
+        _tool(
+            "conversation_resume_saving",
+            "Start a new retained session after private mode.",
+            {},
+            [],
+            "resume",
+        ),
+        _tool(
+            "conversation_delete_current",
+            "Delete the exact active retained conversation.",
+            {},
+            [],
+            "delete_current",
+        ),
+        _tool(
+            "conversation_delete_selected",
+            "Delete only explicitly selected retained sessions after user confirmation.",
+            {
+                "session_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 50,
+                },
+                "confirm": {"type": "boolean"},
+            },
+            ["session_ids", "confirm"],
+            "delete_selected",
+        ),
+        _tool(
+            "conversation_delete_date_range",
+            "Bulk-delete retained sessions in an exact date range after user confirmation.",
+            {
+                "start_date": {"type": "string"},
+                "end_date": {"type": "string"},
+                "confirm": {"type": "boolean"},
+            },
+            ["start_date", "end_date", "confirm"],
+            "delete_range",
+        ),
+    ]
+
+
+def _tool(
+    name: str,
+    description: str,
+    properties: dict[str, Any],
+    required: list[str],
+    operation: str,
+) -> dict[str, Any]:
+    return {
+        "spec": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+                "additionalProperties": False,
+            },
+        },
+        "function": {"type": "archive", "operation": operation},
+    }
+
+
+def _clean_text(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("archive text must be a string")
+    value = value.strip()
+    if len(value) > MAX_TEXT_LENGTH:
+        value = value[:MAX_TEXT_LENGTH]
+    return value
+
+
+def _title(value: str) -> str:
+    return _SPACE_PATTERN.sub(" ", value).strip()[:MAX_TITLE_LENGTH]
+
+
+def _normalize(value: str) -> str:
+    return " ".join(_TOKEN_PATTERN.findall(value.casefold()))
+
+
+def _stem(token: str) -> str:
+    if len(token) > 4 and token.endswith("ies"):
+        return f"{token[:-3]}y"
+    if len(token) > 4 and token.endswith("ing"):
+        return token[:-3]
+    if len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+def _tokens(value: str) -> set[str]:
+    return {
+        _stem(token)
+        for token in _TOKEN_PATTERN.findall(value.casefold())
+        if len(token) > 1 and token not in _STOP_WORDS
+    }
+
+
+def _excerpt(value: str, query: str) -> str:
+    normalized = _SPACE_PATTERN.sub(" ", value).strip()
+    lower = normalized.casefold()
+    needle = _normalize(query)
+    index = lower.find(needle) if needle else 0
+    start = max(0, index - MAX_EXCERPT_LENGTH // 3) if index >= 0 else 0
+    excerpt = normalized[start : start + MAX_EXCERPT_LENGTH]
+    return (
+        ("…" if start else "")
+        + excerpt
+        + ("…" if start + MAX_EXCERPT_LENGTH < len(normalized) else "")
+    )
+
+
+def _parse_time(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return datetime.min.replace(tzinfo=dt_util.UTC)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt_util.UTC)
+    return parsed

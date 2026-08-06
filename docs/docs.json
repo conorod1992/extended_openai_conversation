@@ -20,6 +20,7 @@
               "installation",
               "configuration",
               "persistent-memory",
+              "features/conversation-archive",
               "features/knowledge-library",
               "usage-statistics",
               "services"
