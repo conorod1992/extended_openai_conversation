@@ -92,36 +92,35 @@ def _memory_scope(scope_id: str) -> str:
 
 
 async def _scope_catalog(
-    hass: HomeAssistant, user_id: str, is_admin: bool
+    hass: HomeAssistant,
+    user_id: str,
+    is_admin: bool,
+    memory_counts: dict[str, int] | None = None,
+    conversation_counts: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
+    memory_counts = memory_counts or {}
+    conversation_counts = conversation_counts or {}
+
+    def scope_item(scope_id: str, scope_type: str, display_name: str) -> dict[str, Any]:
+        owner = _memory_scope(scope_id)
+        return {
+            "scope_id": scope_id,
+            "scope_type": scope_type,
+            "display_name": display_name,
+            "is_current_user": scope_id == f"user:{user_id}",
+            "memory_count": memory_counts.get(owner, 0),
+            "conversation_count": conversation_counts.get(scope_id, 0),
+        }
+
     if not is_admin:
         user = await hass.auth.async_get_user(user_id)
-        return [
-            {
-                "scope_id": f"user:{user_id}",
-                "scope_type": "user",
-                "display_name": user.name if user else user_id,
-            }
-        ]
+        return [scope_item(f"user:{user_id}", "user", user.name if user else user_id)]
     users = await hass.auth.async_get_users()
-    scopes = [
-        {"scope_id": f"user:{user.id}", "scope_type": "user", "display_name": user.name}
-        for user in users
-    ]
-    scopes.extend(
-        [
-            {
-                "scope_id": SHARED_HOUSEHOLD_SCOPE_ID,
-                "scope_type": "shared",
-                "display_name": "Shared household",
-            },
-            {
-                "scope_id": ANONYMOUS_USER_ID,
-                "scope_type": "anonymous_legacy",
-                "display_name": "Legacy anonymous",
-            },
-        ]
-    )
+    scopes = [scope_item(f"user:{user.id}", "user", user.name) for user in users]
+    scopes.append(scope_item(SHARED_HOUSEHOLD_SCOPE_ID, "shared", "Shared household"))
+    legacy = scope_item(ANONYMOUS_USER_ID, "anonymous_legacy", "Legacy anonymous")
+    if legacy["memory_count"] or legacy["conversation_count"]:
+        scopes.append(legacy)
     return scopes
 
 
@@ -184,6 +183,19 @@ async def async_management_command(
     if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
         raise HomeAssistantError("entry_id and subentry_id are required")
     entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
+
+    if section == "scopes" and action == "catalog":
+        memory = await async_get_memory(hass, entry_id, subentry_id)
+        archive = await async_get_archive(hass, entry_id, subentry_id)
+        return {
+            "scopes": await _scope_catalog(
+                hass,
+                user_id,
+                is_admin,
+                memory.scope_counts(),
+                archive.scope_counts(),
+            )
+        }
 
     if section == "diagnostics" and action == "test_agent":
         return (await async_test_agent(hass, entry, subentry)).as_dict()

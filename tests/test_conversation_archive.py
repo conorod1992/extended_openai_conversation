@@ -65,6 +65,16 @@ async def test_scope_is_stable_and_different_sessions_are_not_joined() -> None:
     assert changed.scope_id == "user:bob"
 
 
+async def test_archive_scope_counts_include_only_retained_sessions() -> None:
+    archive = await _archive()
+    alice = user_scope("alice", source="authenticated_user")
+    await archive.async_begin_session("a", alice, "one", archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=30)
+    await archive.async_begin_session("b", alice, "two", archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=30)
+    await archive.async_begin_session("private", unretained_scope(), "three", archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=30)
+
+    assert archive.scope_counts() == {"user:alice": 2}
+
+
 async def test_private_mode_deletes_only_active_session_and_resume_is_new_boundary() -> None:
     archive = await _archive()
     scope = user_scope("alice", source="authenticated_user")
