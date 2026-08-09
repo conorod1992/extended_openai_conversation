@@ -526,6 +526,15 @@ class ConversationArchive:
             "partition_count": len(self._partitions),
         }
 
+    def scope_counts(self) -> dict[str, int]:
+        """Return retained session totals grouped by data scope."""
+        counts: dict[str, int] = {}
+        for session in self._sessions.values():
+            if session.retention_state == "unretained":
+                continue
+            counts[session.scope_id] = counts.get(session.scope_id, 0) + 1
+        return counts
+
     def _require_session(self, session_id: str) -> ArchiveSession:
         session = self._sessions.get(session_id)
         if session is None:

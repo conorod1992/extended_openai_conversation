@@ -402,6 +402,14 @@ class PersistentMemory:
             "user_scope_count": len({m.user_id for m in self._memories.values()}),
         }
 
+    def scope_counts(self) -> dict[str, int]:
+        """Return memory totals grouped by their exact storage owner."""
+        self._ensure_initialized()
+        counts: dict[str, int] = {}
+        for memory in self._memories.values():
+            counts[memory.user_id] = counts.get(memory.user_id, 0) + 1
+        return counts
+
     def _find_duplicate(self, user_id: str, content: str) -> MemoryRecord | None:
         normalized = _normalize(content)
         content_tokens = _tokens(content)

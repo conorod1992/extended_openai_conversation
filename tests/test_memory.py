@@ -93,6 +93,18 @@ async def test_memory_crud_search_and_category_filter() -> None:
     assert await memory.async_list("user-1") == []
 
 
+async def test_memory_scope_counts_are_calculated_in_one_pass() -> None:
+    """Management counts preserve exact personal, shared, and legacy owners."""
+    memory = await _memory()
+    await memory.async_add("alice", "Alice likes tea.", "preference", "explicit")
+    await memory.async_add("alice", "Alice cycles to work.", "routine", "explicit")
+    await memory.async_add(
+        "shared:household", "Bins go out Friday.", "home", "explicit"
+    )
+
+    assert memory.scope_counts() == {"alice": 2, "shared:household": 1}
+
+
 async def test_legacy_anonymous_reassignment_is_selective_and_counted() -> None:
     """Legacy records remain in place until an explicit targeted migration."""
     memory = await _memory()
