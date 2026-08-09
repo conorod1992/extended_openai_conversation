@@ -2,6 +2,7 @@
 
 import asyncio
 from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -32,6 +33,24 @@ from custom_components.extended_openai_conversation_responses.knowledge_ui impor
     async_manage_knowledge_command,
 )
 from homeassistant.exceptions import HomeAssistantError
+
+
+def test_management_panel_knowledge_limits_match_backend() -> None:
+    """Keep browser maxlength constraints aligned with backend validation."""
+    panel = (
+        Path(__file__).parents[1]
+        / "custom_components"
+        / "extended_openai_conversation_responses"
+        / "frontend"
+        / "management-panel.js"
+    ).read_text(encoding="utf-8")
+
+    assert f"const KNOWLEDGE_TITLE_LIMIT = {MAX_TITLE_LENGTH};" in panel
+    assert f"const KNOWLEDGE_DESCRIPTION_LIMIT = {MAX_DESCRIPTION_LENGTH};" in panel
+    assert f"const KNOWLEDGE_LIMIT = {MAX_CONTENT_LENGTH};" in panel
+    assert 'maxlength="${KNOWLEDGE_TITLE_LIMIT}"' in panel
+    assert 'maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}"' in panel
+    assert 'maxlength="${KNOWLEDGE_LIMIT}"' in panel
 
 
 class FakeStorage:

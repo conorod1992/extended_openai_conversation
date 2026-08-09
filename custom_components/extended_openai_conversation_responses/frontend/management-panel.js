@@ -1,5 +1,7 @@
 const WS_TYPE = "extended_openai_conversation_responses/management";
 const SECTIONS = ["overview", "usage", "conversations", "memories", "knowledge", "diagnostics"];
+const KNOWLEDGE_TITLE_LIMIT = 120;
+const KNOWLEDGE_DESCRIPTION_LIMIT = 500;
 const KNOWLEDGE_LIMIT = 100000;
 
 class ExtendedOpenAIManagementPanel extends HTMLElement {
@@ -10,7 +12,6 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._data = null;
     this._result = null;
     this._busy = false;
-    this._saving = false;
     this._query = "";
     this._showEmptyScopes = false;
     this._confirmResolver = null;
@@ -198,7 +199,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     const result = this._result || {};
     const settings = result.settings || {};
     return `<section class="notice ${settings.archive_enabled ? "on" : ""}"><div><strong>Archive ${settings.archive_enabled ? "enabled" : "disabled"}</strong><p>${settings.archive_retention_days || 30}-day retention · Model search ${settings.archive_model_search_enabled ? "on" : "off"}</p></div></section>
-      <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card clickable open-session" tabindex="0" role="button" data-id="${this._e(item.session_id)}"><div><h3>${this._e(item.title || "Untitled conversation")}</h3><p class="meta">${this._e(this._formatDate(item.last_message_at))} · ${this._e(String(item.turn_count))} turns · ${this._e(item.scope_source)}</p></div><div class="actions"><button type="button" class="secondary view-session" data-id="${this._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${this._e(item.session_id)}">Delete</button></div></article>`).join("") || this._empty("No retained conversations in this scope.")}</div></section>
+      <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-id="${this._e(item.session_id)}"><h3>${this._e(item.title || "Untitled conversation")}</h3><p class="meta">${this._e(this._formatDate(item.last_message_at))} · ${this._e(String(item.turn_count))} turns · ${this._e(item.scope_source)}</p></div><div class="actions"><button type="button" class="secondary view-session" data-id="${this._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${this._e(item.session_id)}">Delete</button></div></article>`).join("") || this._empty("No retained conversations in this scope.")}</div></section>
       ${this._data?.is_admin ? this._settings(settings) : ""}`;
   }
 
@@ -222,13 +223,13 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _memories() {
     const items = this._filtered(this._result?.memories || [], (item) => `${item.content} ${item.category} ${item.source}`);
-    return `<section class="content-card"><div class="section-heading"><div><h2>Memories</h2><p>Lightweight facts available to this conversation agent.</p></div><button type="button" id="add-memory">+ Add memory</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map((memory) => `<article class="list-card clickable edit-memory" tabindex="0" role="button" data-id="${this._e(memory.memory_id)}"><div><p class="primary-copy">${this._e(memory.content)}</p><p class="meta">${this._e(memory.category)} · ${this._e(memory.source)} · Updated ${this._e(this._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${this._e(memory.memory_id)}">Edit</button>${this._data?.is_admin && this._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${this._e(memory.memory_id)}">Reassign</button>` : ""}<button type="button" class="danger delete-memory" data-id="${this._e(memory.memory_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No memories match this filter." : "No memories in this scope.")}</div>${this._data?.is_admin && this._scopeId === "__anonymous__" ? `<p class="help">Legacy anonymous memories remain unassigned until an administrator explicitly reassigns or deletes them.</p>` : ""}</section>`;
+    return `<section class="content-card"><div class="section-heading"><div><h2>Memories</h2><p>Lightweight facts available to this conversation agent.</p></div><button type="button" id="add-memory">+ Add memory</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map((memory) => `<article class="list-card"><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${this._e(memory.memory_id)}"><p class="primary-copy">${this._e(memory.content)}</p><p class="meta">${this._e(memory.category)} · ${this._e(memory.source)} · Updated ${this._e(this._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${this._e(memory.memory_id)}">Edit</button>${this._data?.is_admin && this._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${this._e(memory.memory_id)}">Reassign</button>` : ""}<button type="button" class="danger delete-memory" data-id="${this._e(memory.memory_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No memories match this filter." : "No memories in this scope.")}</div>${this._data?.is_admin && this._scopeId === "__anonymous__" ? `<p class="help">Legacy anonymous memories remain unassigned until an administrator explicitly reassigns or deletes them.</p>` : ""}</section>`;
   }
 
   _knowledge() {
     const sources = this._result?.sources || [];
     const items = this._filtered(sources, (source) => `${source.title} ${source.description}`);
-    return `<section class="content-card"><div class="section-heading"><div><h2>Knowledge Library</h2><p>${sources.length} source${sources.length === 1 ? "" : "s"} stored locally for on-demand search.</p></div><button type="button" id="add-source">+ Add source</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${items.map((source) => `<article class="list-card clickable edit-source" tabindex="0" role="button" data-id="${this._e(source.source_id)}"><div><h3>${this._e(source.title)}</h3><p class="description">${this._e(source.description || "No description")}</p><p class="meta">${Number(source.character_count || 0).toLocaleString()} characters · Updated ${this._e(this._formatDate(source.updated_at))}</p></div><div class="actions"><button type="button" class="secondary source-edit-button" data-id="${this._e(source.source_id)}">Edit</button><button type="button" class="danger delete-source" data-id="${this._e(source.source_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No sources match this filter." : "No Knowledge sources yet. Add one to make reference information available on demand.")}</div></section>`;
+    return `<section class="content-card"><div class="section-heading"><div><h2>Knowledge Library</h2><p>${sources.length} source${sources.length === 1 ? "" : "s"} stored locally for on-demand search.</p></div><button type="button" id="add-source">+ Add source</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${items.map((source) => `<article class="list-card"><div class="card-main clickable edit-source" tabindex="0" role="button" data-id="${this._e(source.source_id)}"><h3>${this._e(source.title)}</h3><p class="description">${this._e(source.description || "No description")}</p><p class="meta">${Number(source.character_count || 0).toLocaleString()} characters · Updated ${this._e(this._formatDate(source.updated_at))}</p></div><div class="actions"><button type="button" class="secondary source-edit-button" data-id="${this._e(source.source_id)}">Edit</button><button type="button" class="danger delete-source" data-id="${this._e(source.source_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No sources match this filter." : "No Knowledge sources yet. Add one to make reference information available on demand.")}</div></section>`;
   }
 
   _diagnostics(agent) {
@@ -236,7 +237,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _dialogs() {
-    return `<dialog id="knowledge-dialog" class="editor-dialog wide" aria-labelledby="knowledge-dialog-title"><form id="knowledge-form"><div class="dialog-header"><h2 id="knowledge-dialog-title">Add Knowledge source</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Title<input id="knowledge-title" maxlength="200" required></label><label>Description<textarea id="knowledge-description" class="short-textarea" maxlength="1000" spellcheck="true"></textarea></label><label>Content<textarea id="knowledge-content" class="knowledge-editor" maxlength="${KNOWLEDGE_LIMIT}" required spellcheck="true"></textarea></label><div id="knowledge-counter" class="counter">0 / ${KNOWLEDGE_LIMIT.toLocaleString()} characters</div><div id="knowledge-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="knowledge-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="knowledge-save">Save</button></div></form></dialog>
+    return `<dialog id="knowledge-dialog" class="editor-dialog wide" aria-labelledby="knowledge-dialog-title"><form id="knowledge-form"><div class="dialog-header"><h2 id="knowledge-dialog-title">Add Knowledge source</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Title<input id="knowledge-title" maxlength="${KNOWLEDGE_TITLE_LIMIT}" required></label><label>Description<textarea id="knowledge-description" class="short-textarea" maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}" spellcheck="true"></textarea></label><label>Content<textarea id="knowledge-content" class="knowledge-editor" maxlength="${KNOWLEDGE_LIMIT}" required spellcheck="true"></textarea></label><div id="knowledge-counter" class="counter">0 / ${KNOWLEDGE_LIMIT.toLocaleString()} characters</div><div id="knowledge-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="knowledge-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="knowledge-save">Save</button></div></form></dialog>
       <dialog id="memory-dialog" class="editor-dialog" aria-labelledby="memory-dialog-title"><form id="memory-form"><div class="dialog-header"><h2 id="memory-dialog-title">Add memory</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Memory<textarea id="memory-content" required spellcheck="true" placeholder="What should the agent remember?"></textarea></label><label>Category<input id="memory-category" value="general" required></label><p id="memory-meta" class="meta"></p><div id="memory-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="memory-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="memory-save">Save</button></div></form></dialog>
       <dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>
       <dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Reassign legacy memory</h2></div><div class="dialog-body"><label>New owner<select id="reassign-scope">${this._scopeOptions("memories", true, true)}</select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Reassign</button></div></dialog>
@@ -292,32 +293,44 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _openKnowledge(sourceId = null) {
     const root = this.shadowRoot;
     const dialog = root.querySelector("#knowledge-dialog");
+    const loadToken = (this._knowledgeLoadToken || 0) + 1;
+    this._knowledgeLoadToken = loadToken;
     this._editingSource = null;
+    this._knowledgeMode = sourceId ? "edit-loading" : "create";
+    this._editorInitial = null;
     this._setDialogError("knowledge", "");
     root.querySelector("#knowledge-title").value = "";
     root.querySelector("#knowledge-description").value = "";
     root.querySelector("#knowledge-content").value = "";
     root.querySelector("#knowledge-delete").hidden = true;
     root.querySelector("#knowledge-dialog-title").textContent = sourceId ? "Loading source…" : "Add Knowledge source";
+    this._setKnowledgeEditorDisabled(Boolean(sourceId));
+    this._editorKind = "knowledge";
     dialog.showModal();
     if (sourceId) {
       try {
         const response = await this._call("knowledge", "get", { source_id: sourceId });
+        if (this._knowledgeLoadToken !== loadToken || !dialog.open) return;
         this._editingSource = response.source;
+        this._knowledgeMode = "edit";
         root.querySelector("#knowledge-title").value = response.source.title || "";
         root.querySelector("#knowledge-description").value = response.source.description || "";
         root.querySelector("#knowledge-content").value = response.source.content || "";
         root.querySelector("#knowledge-delete").hidden = false;
         root.querySelector("#knowledge-dialog-title").textContent = "Edit Knowledge source";
+        this._setKnowledgeEditorDisabled(false);
       } catch (err) {
-        this._setDialogError("knowledge", err.message || String(err));
+        if (this._knowledgeLoadToken !== loadToken || !dialog.open) return;
+        this._knowledgeMode = "edit-error";
+        this._setDialogError("knowledge", `Unable to load source: ${err.message || String(err)}`);
         root.querySelector("#knowledge-dialog-title").textContent = "Unable to load source";
       }
     }
-    this._editorKind = "knowledge";
-    this._editorInitial = this._knowledgeValues();
+    if (["create", "edit"].includes(this._knowledgeMode)) {
+      this._editorInitial = this._knowledgeValues();
+    }
     this._updateKnowledgeCounter();
-    requestAnimationFrame(() => root.querySelector("#knowledge-title").focus());
+    requestAnimationFrame(() => (this._knowledgeMode === "edit-error" ? root.querySelector(".close-editor") : root.querySelector("#knowledge-title")).focus());
   }
 
   async _openMemory(memoryId = null) {
@@ -341,11 +354,19 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     const dialog = this.shadowRoot.querySelector(`#${kind}-dialog`);
     if (!dialog?.open) return;
     const current = kind === "knowledge" ? this._knowledgeValues() : this._memoryValues();
-    if (JSON.stringify(current) !== JSON.stringify(this._editorInitial)) {
+    if (this._editorInitial !== null && JSON.stringify(current) !== JSON.stringify(this._editorInitial)) {
       const discard = await this._confirm("Discard unsaved changes?", "Your changes have not been saved.", "Discard");
       if (!discard) return;
     }
+    if (kind === "knowledge") this._knowledgeLoadToken = (this._knowledgeLoadToken || 0) + 1;
     dialog.close();
+  }
+
+  _setKnowledgeEditorDisabled(disabled) {
+    const root = this.shadowRoot;
+    ["#knowledge-title", "#knowledge-description", "#knowledge-content", "#knowledge-save"].forEach((selector) => {
+      root.querySelector(selector).disabled = disabled;
+    });
   }
 
   _knowledgeValues() {
@@ -359,24 +380,25 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _saveKnowledge() {
-    if (this._saving) return;
-    const values = this._knowledgeValues();
     const button = this.shadowRoot.querySelector("#knowledge-save");
+    if (button.disabled || !["create", "edit"].includes(this._knowledgeMode)) return;
+    const values = this._knowledgeValues();
+    const editing = this._knowledgeMode === "edit";
     this._setSaving(button, true);
     try {
-      await this._call("knowledge", this._editingSource ? "update" : "create", { ...(this._editingSource ? { source_id: this._editingSource.source_id } : {}), ...values });
+      await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id } : {}), ...values });
       this.shadowRoot.querySelector("#knowledge-dialog").close();
       await this._refreshAfterMutation();
-      this._toast(this._editingSource ? "Knowledge source updated" : "Knowledge source saved");
+      this._toast(editing ? "Knowledge source updated" : "Knowledge source saved");
     } catch (err) {
       this._setDialogError("knowledge", `Unable to save source: ${err.message || String(err)}`);
     } finally { this._setSaving(button, false); }
   }
 
   async _saveMemory() {
-    if (this._saving) return;
-    const values = this._memoryValues();
     const button = this.shadowRoot.querySelector("#memory-save");
+    if (button.disabled) return;
+    const values = this._memoryValues();
     this._setSaving(button, true);
     try {
       await this._call("memories", this._editingMemory ? "update" : "add", { scope_id: this._scopeId, ...(this._editingMemory ? { memory_id: this._editingMemory.memory_id } : {}), content: values.content.trim(), category: values.category.trim() || "general" });
@@ -491,13 +513,14 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _searchArchive() {
     const input = this.shadowRoot.querySelector("#archive-query");
     const button = this.shadowRoot.querySelector("#archive-search");
+    if (button.disabled) return;
     this._setSaving(button, true, "Searching…");
     try {
       const found = await this._call("conversations", "search", { scope_id: this._scopeId, query: input.value, limit: 20 });
       this._result.sessions = { sessions: found.results.map((item) => ({ ...item, last_message_at: item.timestamp, turn_count: "matching" })) };
       this._render();
     } catch (err) { this._toast(`Unable to search: ${err.message || String(err)}`, true); }
-    finally { this._saving = false; }
+    finally { this._setSaving(button, false); }
   }
 
   async _testAgent() {
@@ -530,7 +553,6 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _setSaving(button, saving, label = "Saving…") {
-    this._saving = saving;
     if (!button) return;
     if (saving) button.dataset.label = button.textContent;
     button.disabled = saving;
@@ -592,7 +614,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   _e(value) { return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]); }
 
   _styles() { return `
-    :host{display:block;min-height:100%;padding:28px;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);box-sizing:border-box;background:var(--primary-background-color)}*{box-sizing:border-box}.page-shell{max-width:1220px;margin:auto}header{display:flex;justify-content:space-between;gap:36px;align-items:end;margin-bottom:28px}.page-heading h1{margin:0;font-size:30px;font-weight:500}.page-heading p,.section-heading p,.notice p{margin:6px 0 0;color:var(--secondary-text-color);line-height:1.5}.agent-picker{width:min(390px,100%)}label{display:grid;gap:7px;font-size:13px;color:var(--secondary-text-color)}input,select,textarea,button{font:inherit}input,select,textarea{width:100%;min-height:42px;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:9px;padding:10px 12px}textarea{resize:vertical;line-height:1.55}button{min-height:42px;border:0;border-radius:9px;padding:9px 16px;cursor:pointer;background:var(--primary-color);color:var(--text-primary-color)}button.secondary{background:transparent;color:var(--primary-color);border:1px solid var(--primary-color)}button.danger{background:var(--error-color,#db4437);color:#fff}.secondary-danger{margin-left:auto}button.icon{min-width:42px;padding:4px;background:transparent;color:var(--secondary-text-color);font-size:25px}button:disabled{opacity:.6;cursor:wait}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible,summary:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}nav{display:flex;overflow:auto;border-bottom:1px solid var(--divider-color);margin-bottom:28px}nav button{background:transparent;color:var(--secondary-text-color);border-radius:0;padding:13px 18px;white-space:nowrap}nav button.active{color:var(--primary-color);border-bottom:3px solid var(--primary-color)}main{display:grid;gap:30px}.scope-bar,.content-card,.metric,.notice{background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:13px}.scope-bar{max-width:1220px;margin:0 auto 28px;padding:18px 22px;display:flex;align-items:end;gap:20px;flex-wrap:wrap}.scope-bar>label:first-child{min-width:min(420px,100%)}.scope-bar .show-empty{display:flex;grid-gap:8px;align-items:center;min-height:42px}.show-empty input{width:18px;min-height:18px}.scope-bar small{margin-left:auto}.content-card{padding:24px}.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:18px}.metric-grid.compact{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}.metric{padding:20px;display:grid;gap:7px}.metric span,.meta,small,.help,.counter{color:var(--secondary-text-color)}.metric strong{font-size:22px;font-weight:500}.section-heading{display:flex;align-items:start;justify-content:space-between;gap:24px;margin-bottom:20px}.section-heading h2,.content-card>h2{margin:0;font-size:20px}.search,.search-row{margin-bottom:20px}.search-row{display:flex;gap:12px}.search-row input{flex:1}.list{display:grid;gap:12px}.list-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:center;border:1px solid var(--divider-color);border-radius:11px;padding:17px}.list-card.clickable{cursor:pointer}.list-card.clickable:hover{border-color:var(--primary-color);background:var(--secondary-background-color)}.list-card h3,.primary-copy{margin:0;font-size:16px;line-height:1.45;overflow-wrap:anywhere}.list-card .description{margin:5px 0;line-height:1.45;overflow-wrap:anywhere}.meta{margin:6px 0 0;font-size:12px;line-height:1.45}.actions,.section-actions,.dialog-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.actions button{min-height:38px;padding:7px 12px}.notice{padding:20px 22px;border-left:4px solid var(--warning-color,#f9ab00)}.notice.on{border-left-color:var(--success-color,#0f9d58)}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 22px}fieldset{border:0;border-top:1px solid var(--divider-color);padding:26px 0 4px;margin:24px 0 0}legend{padding-right:14px;font-size:16px;font-weight:600}.toggle{display:flex;align-items:center;justify-content:space-between;min-height:42px}.toggle input{width:42px;height:24px;min-height:24px;accent-color:var(--primary-color)}details{border-top:1px solid var(--divider-color);margin-top:28px;padding-top:20px}summary{cursor:pointer;font-weight:600;padding:8px 0}.advanced-body{display:grid;gap:12px;padding-top:12px}.json-editor{min-height:230px;font-family:var(--code-font-family,ui-monospace,monospace)}.validation{font-size:12px}.validation.valid{color:var(--success-color,#0f9d58)}.validation.invalid,.inline-error{color:var(--error-color,#db4437)}.section-actions{margin-top:24px}.chart{height:170px;display:flex;align-items:end;gap:5px;border-bottom:1px solid var(--divider-color);padding-top:12px}.chart span{flex:1;min-width:4px;max-width:28px;background:var(--primary-color);border-radius:4px 4px 0 0}.table{overflow:auto}table{border-collapse:collapse;width:100%;margin-top:12px}th,td{text-align:left;border-bottom:1px solid var(--divider-color);padding:11px;white-space:nowrap}.empty{text-align:center;color:var(--secondary-text-color);padding:34px 18px}.error{background:var(--error-color,#db4437);color:#fff;padding:15px;border-radius:9px}.loading{display:flex;align-items:center;justify-content:center;gap:10px;min-height:130px;color:var(--secondary-text-color)}.spinner{width:20px;height:20px;border:2px solid var(--divider-color);border-top-color:var(--primary-color);border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}dialog{color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:14px;padding:0;width:min(620px,calc(100vw - 28px));max-height:calc(100vh - 28px);box-shadow:0 16px 50px rgba(0,0,0,.35)}dialog.wide{width:min(900px,calc(100vw - 28px))}dialog::backdrop{background:rgba(0,0,0,.5)}dialog form{margin:0}.dialog-header{padding:18px 22px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--divider-color)}.dialog-header h2{margin:0;font-size:20px}.dialog-body{padding:22px;display:grid;gap:18px;overflow:auto;max-height:calc(100vh - 155px)}.dialog-actions{justify-content:flex-end;padding:14px 22px 18px;border-top:1px solid var(--divider-color)}.dialog-actions>.danger:first-child{margin-right:auto}.short-textarea{min-height:80px}.knowledge-editor{height:52vh;min-height:320px;max-height:65vh;font-family:var(--code-font-family,ui-monospace,monospace)}#memory-content{min-height:150px}.counter{text-align:right;font-size:12px;margin-top:-12px}.inline-error:empty{display:none}.session-body{gap:16px}.turn{display:grid;gap:9px;border-bottom:1px solid var(--divider-color);padding-bottom:18px}.message{padding:13px 15px;border-radius:10px;background:var(--secondary-background-color)}.message.assistant{border-left:3px solid var(--primary-color)}.message.user{border-left:3px solid var(--accent-color,var(--warning-color,#f9ab00))}.message p{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0;line-height:1.55}.toast{position:fixed;right:24px;bottom:24px;z-index:10000;max-width:min(460px,calc(100vw - 32px));padding:13px 17px;border-radius:9px;background:var(--success-color,#0f9d58);color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.25);opacity:0;transform:translateY(12px);pointer-events:none;transition:.2s}.toast.visible{opacity:1;transform:none}.toast.toast-error{background:var(--error-color,#db4437)}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--secondary-background-color);padding:14px;border-radius:9px}code{font-family:var(--code-font-family,ui-monospace,monospace)}
+    :host{display:block;min-height:100%;padding:28px;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);box-sizing:border-box;background:var(--primary-background-color)}*{box-sizing:border-box}.page-shell{max-width:1220px;margin:auto}header{display:flex;justify-content:space-between;gap:36px;align-items:end;margin-bottom:28px}.page-heading h1{margin:0;font-size:30px;font-weight:500}.page-heading p,.section-heading p,.notice p{margin:6px 0 0;color:var(--secondary-text-color);line-height:1.5}.agent-picker{width:min(390px,100%)}label{display:grid;gap:7px;font-size:13px;color:var(--secondary-text-color)}input,select,textarea,button{font:inherit}input,select,textarea{width:100%;min-height:42px;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:9px;padding:10px 12px}textarea{resize:vertical;line-height:1.55}button{min-height:42px;border:0;border-radius:9px;padding:9px 16px;cursor:pointer;background:var(--primary-color);color:var(--text-primary-color)}button.secondary{background:transparent;color:var(--primary-color);border:1px solid var(--primary-color)}button.danger{background:var(--error-color,#db4437);color:#fff}.secondary-danger{margin-left:auto}button.icon{min-width:42px;padding:4px;background:transparent;color:var(--secondary-text-color);font-size:25px}button:disabled{opacity:.6;cursor:wait}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible,summary:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}nav{display:flex;overflow:auto;border-bottom:1px solid var(--divider-color);margin-bottom:28px}nav button{background:transparent;color:var(--secondary-text-color);border-radius:0;padding:13px 18px;white-space:nowrap}nav button.active{color:var(--primary-color);border-bottom:3px solid var(--primary-color)}main{display:grid;gap:30px}.scope-bar,.content-card,.metric,.notice{background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:13px}.scope-bar{max-width:1220px;margin:0 auto 28px;padding:18px 22px;display:flex;align-items:end;gap:20px;flex-wrap:wrap}.scope-bar>label:first-child{min-width:min(420px,100%)}.scope-bar .show-empty{display:flex;grid-gap:8px;align-items:center;min-height:42px}.show-empty input{width:18px;min-height:18px}.scope-bar small{margin-left:auto}.content-card{padding:24px}.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:18px}.metric-grid.compact{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}.metric{padding:20px;display:grid;gap:7px}.metric span,.meta,small,.help,.counter{color:var(--secondary-text-color)}.metric strong{font-size:22px;font-weight:500}.section-heading{display:flex;align-items:start;justify-content:space-between;gap:24px;margin-bottom:20px}.section-heading h2,.content-card>h2{margin:0;font-size:20px}.search,.search-row{margin-bottom:20px}.search-row{display:flex;gap:12px}.search-row input{flex:1}.list{display:grid;gap:12px}.list-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:center;border:1px solid var(--divider-color);border-radius:11px;padding:17px}.card-main.clickable{cursor:pointer;border-radius:8px;padding:4px;margin:-4px}.card-main.clickable:hover{background:var(--secondary-background-color)}.list-card h3,.primary-copy{margin:0;font-size:16px;line-height:1.45;overflow-wrap:anywhere}.list-card .description{margin:5px 0;line-height:1.45;overflow-wrap:anywhere}.meta{margin:6px 0 0;font-size:12px;line-height:1.45}.actions,.section-actions,.dialog-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.actions button{min-height:38px;padding:7px 12px}.notice{padding:20px 22px;border-left:4px solid var(--warning-color,#f9ab00)}.notice.on{border-left-color:var(--success-color,#0f9d58)}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 22px}fieldset{border:0;border-top:1px solid var(--divider-color);padding:26px 0 4px;margin:24px 0 0}legend{padding-right:14px;font-size:16px;font-weight:600}.toggle{display:flex;align-items:center;justify-content:space-between;min-height:42px}.toggle input{width:42px;height:24px;min-height:24px;accent-color:var(--primary-color)}details{border-top:1px solid var(--divider-color);margin-top:28px;padding-top:20px}summary{cursor:pointer;font-weight:600;padding:8px 0}.advanced-body{display:grid;gap:12px;padding-top:12px}.json-editor{min-height:230px;font-family:var(--code-font-family,ui-monospace,monospace)}.validation{font-size:12px}.validation.valid{color:var(--success-color,#0f9d58)}.validation.invalid,.inline-error{color:var(--error-color,#db4437)}.section-actions{margin-top:24px}.chart{height:170px;display:flex;align-items:end;gap:5px;border-bottom:1px solid var(--divider-color);padding-top:12px}.chart span{flex:1;min-width:4px;max-width:28px;background:var(--primary-color);border-radius:4px 4px 0 0}.table{overflow:auto}table{border-collapse:collapse;width:100%;margin-top:12px}th,td{text-align:left;border-bottom:1px solid var(--divider-color);padding:11px;white-space:nowrap}.empty{text-align:center;color:var(--secondary-text-color);padding:34px 18px}.error{background:var(--error-color,#db4437);color:#fff;padding:15px;border-radius:9px}.loading{display:flex;align-items:center;justify-content:center;gap:10px;min-height:130px;color:var(--secondary-text-color)}.spinner{width:20px;height:20px;border:2px solid var(--divider-color);border-top-color:var(--primary-color);border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}dialog{color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:14px;padding:0;width:min(620px,calc(100vw - 28px));max-height:calc(100vh - 28px);box-shadow:0 16px 50px rgba(0,0,0,.35)}dialog.wide{width:min(900px,calc(100vw - 28px))}dialog::backdrop{background:rgba(0,0,0,.5)}dialog form{margin:0}.dialog-header{padding:18px 22px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--divider-color)}.dialog-header h2{margin:0;font-size:20px}.dialog-body{padding:22px;display:grid;gap:18px;overflow:auto;max-height:calc(100vh - 155px)}.dialog-actions{justify-content:flex-end;padding:14px 22px 18px;border-top:1px solid var(--divider-color)}.dialog-actions>.danger:first-child{margin-right:auto}.short-textarea{min-height:80px}.knowledge-editor{height:52vh;min-height:320px;max-height:65vh;font-family:var(--code-font-family,ui-monospace,monospace)}#memory-content{min-height:150px}.counter{text-align:right;font-size:12px;margin-top:-12px}.inline-error:empty{display:none}.session-body{gap:16px}.turn{display:grid;gap:9px;border-bottom:1px solid var(--divider-color);padding-bottom:18px}.message{padding:13px 15px;border-radius:10px;background:var(--secondary-background-color)}.message.assistant{border-left:3px solid var(--primary-color)}.message.user{border-left:3px solid var(--accent-color,var(--warning-color,#f9ab00))}.message p{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0;line-height:1.55}.toast{position:fixed;right:24px;bottom:24px;z-index:10000;max-width:min(460px,calc(100vw - 32px));padding:13px 17px;border-radius:9px;background:var(--success-color,#0f9d58);color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.25);opacity:0;transform:translateY(12px);pointer-events:none;transition:.2s}.toast.visible{opacity:1;transform:none}.toast.toast-error{background:var(--error-color,#db4437)}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--secondary-background-color);padding:14px;border-radius:9px}code{font-family:var(--code-font-family,ui-monospace,monospace)}
     @media(max-width:850px){:host{padding:20px}header{align-items:stretch;flex-direction:column;gap:20px}.agent-picker{width:100%}.form-grid{grid-template-columns:1fr}.scope-bar small{margin-left:0}.list-card{grid-template-columns:1fr}.actions{justify-content:flex-start}}
     @media(max-width:600px){:host{padding:12px}.page-heading h1{font-size:26px}nav{margin-inline:-12px;padding-inline:4px}.content-card{padding:18px}.section-heading{flex-direction:column;align-items:stretch}.section-heading button{width:100%}.search-row{flex-direction:column}.scope-bar{padding:16px}.knowledge-editor{height:50vh;min-height:260px}.dialog-body{padding:18px}.dialog-header,.dialog-actions{padding-inline:18px}.actions button{flex:1}.secondary-danger{margin-left:0}}
   `; }
