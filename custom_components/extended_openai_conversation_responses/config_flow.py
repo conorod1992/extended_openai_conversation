@@ -330,9 +330,10 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Handle reconfiguration of a subentry."""
-        self.options = normalize_agent_config(
-            dict(self._get_reconfigure_subentry().data), reject_unknown=False
-        )
+        # This flow only points at the management panel. Do not validate or rewrite
+        # existing agent data here: legacy/custom Function Tools must not prevent
+        # the lifecycle UI from opening, and this screen never saves those fields.
+        self.options = dict(self._get_reconfigure_subentry().data)
         return await self.async_step_init()
 
     async def async_step_init(
