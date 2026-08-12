@@ -88,10 +88,10 @@
                         "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers.",
                         "memory_auto_retrieve_limit": "Maximum relevant memories added automatically to each request. Set to 0 for tool-only retrieval."
                     }
-                },
-                "abort": {
-                    "agent_configuration_managed_in_panel": "Conversation-agent behaviour is managed from Extended OpenAI > Configuration in the sidebar."
                 }
+            },
+            "abort": {
+                "agent_configuration_managed_in_panel": "Conversation-agent behaviour is managed from Extended OpenAI > Configuration in the sidebar."
             }
         },
         "ai_task_data": {
