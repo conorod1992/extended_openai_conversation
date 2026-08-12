@@ -100,6 +100,15 @@ jobs:
       - name: Run Ruff formatter check
         run: ruff format --check custom_components/
 
+      - name: Check frontend modules and help metadata
+        run: |
+          node --check custom_components/extended_openai_conversation_responses/frontend/agent-config-help.js
+          node --check custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js
+          node --check custom_components/extended_openai_conversation_responses/frontend/management-panel.js
+          node --check custom_components/extended_openai_conversation_responses/frontend/usage-chart.js
+          node tests/frontend-help.test.mjs
+          node tests/usage-chart.test.mjs
+
   type-check:
     name: Type Check
     runs-on: ubuntu-latest
