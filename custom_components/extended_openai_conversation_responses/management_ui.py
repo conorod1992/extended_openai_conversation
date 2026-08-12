@@ -71,6 +71,12 @@ from .usage import async_get_usage
 
 WS_COMMAND = f"{DOMAIN}/management"
 _UI_SETUP = f"{DOMAIN}.management_ui_setup"
+MANAGEMENT_FRONTEND_MODULES = (
+    "management-panel.js",
+    "agent-config-editor.js",
+    "agent-config-help.js",
+    "usage-chart.js",
+)
 
 
 def entry_and_agent(hass: HomeAssistant, entry_id: str, subentry_id: str):
@@ -726,18 +732,15 @@ async def async_setup_management_ui(hass: HomeAssistant) -> None:
     if hass.data.get(_UI_SETUP):
         return
     hass.data[_UI_SETUP] = True
-    panel_file = Path(__file__).parent / "frontend" / "management-panel.js"
-    config_editor_file = Path(__file__).parent / "frontend" / "agent-config-editor.js"
+    frontend_dir = Path(__file__).parent / "frontend"
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
-                f"/{DOMAIN}/management-panel.js", str(panel_file), cache_headers=False
-            ),
-            StaticPathConfig(
-                f"/{DOMAIN}/agent-config-editor.js",
-                str(config_editor_file),
+                f"/{DOMAIN}/{module_name}",
+                str(frontend_dir / module_name),
                 cache_headers=False,
-            ),
+            )
+            for module_name in MANAGEMENT_FRONTEND_MODULES
         ]
     )
     websocket_api.async_register_command(hass, websocket_management)

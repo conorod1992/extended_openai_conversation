@@ -1,5 +1,7 @@
 """Tests for authenticated agent configuration management operations."""
 
+from pathlib import Path
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -9,9 +11,28 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.management_ui import (
+    MANAGEMENT_FRONTEND_MODULES,
     async_management_command,
 )
 from homeassistant.exceptions import HomeAssistantError
+
+
+def test_management_frontend_routes_cover_module_imports() -> None:
+    """Every local ES module import must have a registered static route."""
+    frontend_dir = (
+        Path(__file__).parents[1]
+        / "custom_components"
+        / "extended_openai_conversation_responses"
+        / "frontend"
+    )
+    served = set(MANAGEMENT_FRONTEND_MODULES)
+    assert {"agent-config-help.js", "usage-chart.js"} <= served
+    for module_name in served:
+        source = (frontend_dir / module_name).read_text(encoding="utf-8")
+        imports = set(re.findall(r'from "\./([^"]+\.js)"', source))
+        assert imports <= served, (
+            f"{module_name} imports unserved modules: {imports - served}"
+        )
 
 
 def _setup_entry(hass):
