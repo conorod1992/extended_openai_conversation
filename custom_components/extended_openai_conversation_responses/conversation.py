@@ -97,6 +97,7 @@ from .memory import (
 )
 from .scope import ResolvedDataScope, memory_scope_id, resolve_data_scope
 from .skills import Skill, SkillManager
+from .speech import process_speech_text
 from .usage import async_get_usage
 
 _LOGGER = logging.getLogger(__name__)
@@ -364,7 +365,9 @@ class ExtendedOpenAIAgentEntity(
         # Get last assistant message
         last_content = chat_log.content[-1]
         if isinstance(last_content, conversation.AssistantContent):
-            intent_response.async_set_speech(last_content.content or "")
+            original_text = last_content.content or ""
+            speech_text = process_speech_text(original_text, self.subentry.data)
+            intent_response.async_set_speech(speech_text)
         else:
             intent_response.async_set_speech("")
 

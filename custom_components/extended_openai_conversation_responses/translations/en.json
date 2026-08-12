@@ -29,6 +29,8 @@
             "step": {
                 "init": {
                     "data": {
+                        "name": "Agent name",
+                        "management_panel": "Configuration location",
                         "max_tokens": "Maximum tokens to return in response",
                         "model": "Completion Model",
                         "api_mode": "API mode",
@@ -87,6 +89,9 @@
                         "memory_auto_retrieve_limit": "Maximum relevant memories added automatically to each request. Set to 0 for tool-only retrieval."
                     }
                 }
+            },
+            "abort": {
+                "agent_configuration_managed_in_panel": "Conversation-agent behaviour is managed from Extended OpenAI > Configuration in the sidebar."
             }
         },
         "ai_task_data": {

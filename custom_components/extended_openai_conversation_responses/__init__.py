@@ -15,7 +15,6 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
-    CONFIG_ENTRY_VERSION,
     CONF_API_PROVIDER,
     CONF_API_VERSION,
     CONF_ARCHIVE_ENABLED,
@@ -31,11 +30,16 @@ from .const import (
     CONF_SHARED_ARCHIVE_ENABLED,
     CONF_SHARED_MEMORY_MODE,
     CONF_SKIP_AUTHENTICATION,
+    CONF_SPEECH_PROCESSING_ENABLED,
+    CONF_SPEECH_REGEX_REPLACEMENTS,
+    CONF_SPEECH_STRIP_MARKDOWN,
+    CONF_SPEECH_STRIP_URLS,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
     CONF_VOICE_DEVICE_MAPPINGS,
     CONF_VOICE_SCOPE_POLICY,
     CONF_VOICE_UNMAPPED_POLICY,
+    CONFIG_ENTRY_VERSION,
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -44,6 +48,10 @@ from .const import (
     DEFAULT_SHARED_ARCHIVE_ENABLED,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_SKIP_AUTHENTICATION,
+    DEFAULT_SPEECH_PROCESSING_ENABLED,
+    DEFAULT_SPEECH_REGEX_REPLACEMENTS,
+    DEFAULT_SPEECH_STRIP_MARKDOWN,
+    DEFAULT_SPEECH_STRIP_URLS,
     DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
     DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_VOICE_SCOPE_POLICY,
@@ -184,6 +192,16 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
             data.setdefault(
                 CONF_USAGE_RUN_RETENTION_DAYS,
                 DEFAULT_USAGE_RUN_RETENTION_DAYS,
+            )
+            data.setdefault(
+                CONF_SPEECH_PROCESSING_ENABLED,
+                DEFAULT_SPEECH_PROCESSING_ENABLED,
+            )
+            data.setdefault(CONF_SPEECH_STRIP_MARKDOWN, DEFAULT_SPEECH_STRIP_MARKDOWN)
+            data.setdefault(CONF_SPEECH_STRIP_URLS, DEFAULT_SPEECH_STRIP_URLS)
+            data.setdefault(
+                CONF_SPEECH_REGEX_REPLACEMENTS,
+                list(DEFAULT_SPEECH_REGEX_REPLACEMENTS),
             )
             hass.config_entries.async_update_subentry(entry, subentry, data=data)
         hass.config_entries.async_update_entry(entry, version=CONFIG_ENTRY_VERSION)

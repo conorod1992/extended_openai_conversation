@@ -3,21 +3,53 @@ title: "Configuration"
 description: "Configure Extended OpenAI Conversation (Responses) options and customize behavior"
 ---
 
-Configure Extended OpenAI Conversation (Responses) through the Options menu in your Voice Assistant settings.
+Connection details and conversation-agent behaviour are configured in separate places so there is one clear editor for each responsibility.
 
 ## Access Configuration
 
 <Steps>
-  <Step title="Navigate to Voice Assistants">
-    Go to **Settings** > **Voice Assistants**
+  <Step title="Configure the provider connection">
+    Go to **Settings** > **Devices & services** and add or reconfigure Extended OpenAI. The native Home Assistant flow contains API provider, key, base URL, API version, organisation, and authentication/bootstrap settings.
   </Step>
-  <Step title="Edit Assistant">
-    Click on your Extended OpenAI Conversation (Responses) assistant
+  <Step title="Open the agent editor">
+    Choose **Extended OpenAI** in the Home Assistant sidebar, select a conversation agent, then open **Configuration**.
   </Step>
-  <Step title="Open Options">
-    Click the **Options** button to access configuration
+  <Step title="Manage Function Tools">
+    Use the top-level **Tools** section for the structured editor or its full YAML fallback.
   </Step>
 </Steps>
+
+The frontend edits the existing Home Assistant conversation subentry through authenticated WebSocket commands. It does not create a separate configuration store. Edits remain local until **Save configuration** is pressed; **Revert** discards the draft. Model-specific fields are supplied by the backend and dependent settings appear only when their parent capability is enabled.
+
+## Agent lifecycle and portability
+
+- **Duplicate** creates a new conversation subentry with a `- Copy` title and validated configuration. It does not duplicate memories, archive sessions, Knowledge sources, or usage history.
+- **Export** downloads a human-readable, versioned JSON document containing agent-level behaviour only. It is disabled while the shared Configuration/Tools draft is dirty. Entry-level API credentials and retained runtime data are excluded, and common credential fields receive best-effort redaction. Function Tool definitions can still contain sensitive values in arbitrary strings, URLs, templates, commands, headers, or provider-specific fields, so review exported files before sharing them.
+- **Import** validates and previews a versioned JSON/YAML document before it can create a new agent or overwrite the current agent. Creating a new agent preserves the current draft. Current-agent overwrite requires confirmation, explicitly discards a dirty draft, and never changes provider credentials.
+
+## Speech / TTS post-processing
+
+Enable speech post-processing under **Configuration → Voice, identity & speech** to create a cleaned TTS-only string. The assistant's original response remains unchanged in the visual UI, events, archive, memory/context, and diagnostics.
+
+The processing order is:
+
+1. built-in Markdown/link cleanup
+2. ordered custom regex replacements
+3. final whitespace cleanup
+4. trimming before TTS
+
+Built-in options can remove Markdown links/citations, bare URLs, and conservative formatting markers such as headings, emphasis, inline-code markers, and list bullets. Use **Preview spoken text** to run sample text through the same backend pipeline used by conversations.
+
+Custom replacements use standard Python regular expressions and affect spoken output only:
+
+```yaml
+- pattern: '\[[0-9]+\]'
+  replacement: ''
+- pattern: '\bHA\b'
+  replacement: 'Home Assistant'
+```
+
+Regex is an advanced feature. Rules run sequentially, are length/count limited, and invalid patterns are rejected during validation. Unexpected persisted runtime failures are logged and skipped so they cannot break conversation processing.
 
 <Frame>
   <img width="400" alt="Edit Assist" src="https://github.com/jekalmin/extended_openai_conversation/assets/2917984/bb394cd4-5790-4ac9-9311-dbcab0fcca56" />
