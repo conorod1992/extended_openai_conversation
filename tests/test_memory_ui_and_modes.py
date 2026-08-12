@@ -13,12 +13,15 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 )
 from custom_components.extended_openai_conversation_responses.config_flow import (
     ExtendedOpenAIConversationConfigFlow,
+    ExtendedOpenAISubentryFlowHandler,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_CONTEXT_TRUNCATE_STRATEGY,
+    CONF_FUNCTION_TOOLS,
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_ENABLED,
     CONF_MEMORY_MODE,
+    CONF_PROMPT,
     CONFIG_ENTRY_VERSION,
     CONTEXT_TRUNCATE_KEEP_RECENT,
     MEMORY_MODE_AUTOMATIC,
@@ -60,16 +63,39 @@ def test_config_flow_declares_current_migration_version() -> None:
     assert ExtendedOpenAIConversationConfigFlow.VERSION == CONFIG_ENTRY_VERSION
 
 
-async def test_version_two_migration_preserves_memories_and_legacy_behavior() -> None:
+async def test_reconfigure_guidance_does_not_validate_legacy_agent_data() -> None:
+    """The panel guidance flow must open even for data the new editor cannot parse."""
+    handler = ExtendedOpenAISubentryFlowHandler()
+    legacy = SimpleNamespace(data={CONF_PROMPT: 123, CONF_FUNCTION_TOOLS: "invalid: ["})
+    with (
+        patch.object(handler, "_get_reconfigure_subentry", return_value=legacy),
+        patch.object(
+            handler, "async_step_init", AsyncMock(return_value={"type": "form"})
+        ),
+    ):
+        result = await handler.async_step_reconfigure()
+
+    assert result == {"type": "form"}
+    assert handler.options == legacy.data
+
+
+async def test_version_four_migration_preserves_agent_content() -> None:
     """Migration changes only subentry settings, never integration-owned storage."""
+    functions = "- spec:\n    name: legacy_tool\n  function:\n    type: native\n"
     subentry = SimpleNamespace(
         subentry_id="agent-1",
         subentry_type="conversation",
-        data={CONF_MEMORY_ENABLED: True, CONF_MEMORY_AUTO_CREATE: False},
+        data={
+            CONF_MEMORY_ENABLED: True,
+            CONF_MEMORY_AUTO_CREATE: False,
+            CONF_PROMPT: "My irreplaceable custom prompt",
+            CONF_FUNCTION_TOOLS: functions,
+            "legacy_custom_field": {"keep": "unchanged"},
+        },
     )
     entry = SimpleNamespace(
         entry_id="entry-1",
-        version=2,
+        version=4,
         disabled_by=None,
         subentries={"agent-1": subentry},
     )
@@ -81,6 +107,9 @@ async def test_version_two_migration_preserves_memories_and_legacy_behavior() ->
     migrated = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
     assert migrated[CONF_MEMORY_MODE] == MEMORY_MODE_MANUAL
     assert migrated[CONF_CONTEXT_TRUNCATE_STRATEGY] == "clear"
+    assert migrated[CONF_PROMPT] == "My irreplaceable custom prompt"
+    assert migrated[CONF_FUNCTION_TOOLS] == functions
+    assert migrated["legacy_custom_field"] == {"keep": "unchanged"}
     hass.config_entries.async_update_entry.assert_called_with(
         entry, version=CONFIG_ENTRY_VERSION
     )
