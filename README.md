@@ -178,7 +178,7 @@ Skills provide reusable instructions, while custom functions provide new tools. 
 
 ### Spoken-response cleanup
 
-Speech post-processing creates a TTS-only version of the final assistant response. The full original remains available to Assist UI, conversation events, archives, and context. Processing order is built-in Markdown/link cleanup, ordered custom regex replacements, whitespace cleanup, then trimming.
+Speech post-processing removes Markdown links/citations, formatting, and bare URLs from progressive and completed TTS while retaining the original provider response in ChatLog history, events, archives, and context. Home Assistant's progressive visual updates and TTS share one listener, so live visual deltas are speech-safe too. Custom regex replacements run on the completed response and disable progressive TTS for that agent because arbitrary patterns cannot be applied reliably to incomplete text.
 
 Custom regex is an advanced feature. Rules use standard Python regular expressions and run sequentially, for example:
 

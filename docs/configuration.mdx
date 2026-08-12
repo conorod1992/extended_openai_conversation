@@ -31,7 +31,7 @@ Function Tools use YAML as the only editor format. Existing tools are serialized
 
 ## Speech / TTS post-processing
 
-Enable speech post-processing under **Configuration → Spoken response** to create a cleaned TTS-only string. The assistant's original response remains unchanged in the visual UI, events, archive, memory/context, and diagnostics. Custom replacements are displayed directly rather than hidden in a disclosure, and adding or reordering a rule keeps focus and position near the edited rule.
+Enable speech post-processing under **Configuration → Spoken response** to clean both progressive and completed TTS. Built-in cleanup uses a bounded, stateful stream parser, so links and URLs split across provider deltas are removed before Home Assistant feeds them to TTS. The original response remains in ChatLog history, events, archive, memory/context, and diagnostics. Home Assistant exposes one shared progressive listener for visual updates and TTS, so live visual deltas are cleaned too; retained content remains original.
 
 The processing order is:
 
@@ -40,7 +40,7 @@ The processing order is:
 3. final whitespace cleanup
 4. trimming before TTS
 
-Built-in options can remove Markdown links/citations, bare URLs, and conservative formatting markers such as headings, emphasis, inline-code markers, and list bullets. Use **Preview spoken text** to run sample text through the same backend pipeline used by conversations.
+Built-in options can remove Markdown links/citations, bare URLs, and conservative formatting markers such as headings, emphasis, inline-code markers, and list bullets. Responses API structured URL annotations are retained with native response items, while a provider-neutral text fallback protects Responses, Chat Completions, and compatible-provider streams. Use **Preview spoken text** to run sample text through the deterministic completed-response pipeline.
 
 Custom replacements use standard Python regular expressions and affect spoken output only:
 
@@ -51,7 +51,7 @@ Custom replacements use standard Python regular expressions and affect spoken ou
   replacement: 'Home Assistant'
 ```
 
-Regex is an advanced feature. Rules run sequentially, are length/count limited, and invalid patterns are rejected during validation. Unexpected persisted runtime failures are logged and skipped so they cannot break conversation processing.
+Regex is an advanced feature. Rules run sequentially on the completed response, are length/count limited, and invalid patterns are rejected during validation. Because an arbitrary regex can depend on future text, progressive TTS is disabled for an agent whenever custom rules are configured. Unexpected persisted runtime failures are logged and skipped so they cannot break conversation processing.
 
 <Frame>
   <img width="400" alt="Edit Assist" src="https://github.com/jekalmin/extended_openai_conversation/assets/2917984/bb394cd4-5790-4ac9-9311-dbcab0fcca56" />
