@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+from openai.types.responses import ResponseOutputTextAnnotationAddedEvent
 import pytest
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -35,6 +36,7 @@ from custom_components.extended_openai_conversation_responses.entity import (
     _build_web_search_tool,
     _convert_content_to_responses_param,
     _format_tools,
+    _normalize_url_citation,
 )
 from custom_components.extended_openai_conversation_responses.helpers import (
     get_api_mode,
@@ -137,6 +139,63 @@ def _completed_event() -> SimpleNamespace:
             usage=SimpleNamespace(input_tokens=10, output_tokens=5)
         ),
     )
+
+
+def test_url_citation_annotation_accepts_object_and_mapping() -> None:
+    """Pinned SDK generic objects and compatible-provider mappings are accepted."""
+    expected = {
+        "type": "url_citation",
+        "start_index": 10,
+        "end_index": 42,
+        "title": "Example",
+        "url": "https://example.com/article",
+    }
+    assert _normalize_url_citation(SimpleNamespace(**expected)) == expected
+    assert _normalize_url_citation(expected) == expected
+    assert _normalize_url_citation({"type": "file_citation"}) is None
+
+
+async def test_responses_annotation_event_after_cited_text_is_observed(caplog) -> None:
+    """Real event shape may deliver structured metadata after its text delta."""
+    annotation = {
+        "type": "url_citation",
+        "start_index": 8,
+        "end_index": 50,
+        "title": "Example",
+        "url": "https://example.com/article",
+    }
+    stream = FakeStream(
+        [
+            _event("response.output_item.added", item=SimpleNamespace(type="message")),
+            _event(
+                "response.output_text.delta",
+                output_index=0,
+                content_index=0,
+                delta="Answer. ([example.com](https://example.com/article))",
+            ),
+            ResponseOutputTextAnnotationAddedEvent(
+                type="response.output_text.annotation.added",
+                item_id="msg_1",
+                output_index=0,
+                content_index=0,
+                annotation_index=0,
+                sequence_number=3,
+                annotation=annotation,
+            ),
+        ]
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+
+    with caplog.at_level("DEBUG"):
+        deltas = [
+            delta
+            async for delta in entity._transform_responses_stream(
+                SimpleNamespace(), stream
+            )
+        ]
+
+    assert deltas[-1]["content"].startswith("Answer.")
+    assert "structured URL citation after cited text" in caplog.text
 
 
 def _function_call(

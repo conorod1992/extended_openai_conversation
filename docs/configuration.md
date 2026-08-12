@@ -15,7 +15,9 @@ Configuration and Tools share one local draft, so moving between those pages pre
 
 ## Speech cleanup
 
-Speech post-processing affects TTS only. The original assistant message remains available to the UI, events, archive, and conversation context. Processing runs built-in Markdown/link cleanup, ordered custom regex replacements, whitespace cleanup, and trimming.
+Speech post-processing cleans both progressive and completed TTS. A bounded streaming sanitizer removes Markdown links/citations, formatting, and bare URLs before Home Assistant's shared ChatLog listener can feed progressive TTS. The provider-neutral fallback works for Responses, Chat Completions, and compatible providers across arbitrary delta boundaries. The original provider text remains in ChatLog history, events, archive, and conversation context; Home Assistant currently shares one progressive listener between visual updates and TTS, so the live visual stream also receives the speech-safe deltas.
+
+Responses API `url_citation` annotations are retained on the native response item for replay and context. Annotation events may arrive after their cited text, so structured metadata supplements rather than replaces the textual streaming sanitizer.
 
 Example advanced rules:
 
@@ -26,7 +28,7 @@ Example advanced rules:
   replacement: 'Home Assistant'
 ```
 
-Rules use standard Python regex syntax and run sequentially. Invalid rules are rejected on save and skipped defensively at runtime. Use the frontend speech preview to test the exact backend pipeline.
+Rules use standard Python regex syntax and run sequentially on the completed response. Because arbitrary patterns can depend on text that has not arrived yet, configuring any custom replacement disables progressive TTS for that agent. Invalid rules are rejected on save and skipped defensively at runtime. Use the frontend speech preview to test the exact completed-response pipeline.
 
 Conversation-agent options are available from the assistant/integration configuration in Home Assistant. Most users can start with the defaults and change only the model.
 

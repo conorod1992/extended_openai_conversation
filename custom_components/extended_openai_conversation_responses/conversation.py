@@ -97,7 +97,7 @@ from .memory import (
 )
 from .scope import ResolvedDataScope, memory_scope_id, resolve_data_scope
 from .skills import Skill, SkillManager
-from .speech import process_speech_text
+from .speech import has_custom_speech_replacements, process_speech_text
 from .usage import async_get_usage
 
 _LOGGER = logging.getLogger(__name__)
@@ -148,6 +148,19 @@ class ExtendedOpenAIAgentEntity(
     _memory: PersistentMemory | None = None
     _knowledge: KnowledgeLibrary | None = None
     _archive: ConversationArchive | None = None
+
+    def __init__(self, entry: ExtendedOpenAIConfigEntry, subentry: Any) -> None:
+        """Initialize the conversation agent and its streaming capability."""
+        super().__init__(entry, subentry)
+        # Arbitrary regex can depend on future text. Home Assistant selects whether
+        # to attach its progressive listener from this per-agent capability flag.
+        self._attr_supports_streaming = not has_custom_speech_replacements(
+            subentry.data
+        )
+        if not self._attr_supports_streaming:
+            _LOGGER.debug(
+                "Progressive TTS disabled because custom speech regex rules are configured"
+            )
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:

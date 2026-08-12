@@ -45,7 +45,7 @@ The integration's Usage sensor reports provider-supplied token/request metadata.
 
 ## Citations
 
-OpenAI can return structured citation information with Web Search results. Home Assistant voice responses do not currently expose that structured citation data as clickable sources through this integration.
+OpenAI can return structured `url_citation` annotations with Web Search results. The integration retains them on native Responses output items for context/replay, but Home Assistant voice responses do not currently expose them as clickable sources. When spoken-response cleanup is enabled, the stateful provider-neutral fallback also removes textual Markdown citations from progressive TTS, including citations split across arbitrary stream boundaries.
 
 ## Web Search versus Home Assistant data
 

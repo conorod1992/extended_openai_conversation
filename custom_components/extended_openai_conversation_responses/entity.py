@@ -77,6 +77,7 @@ from .context import (
 from .exceptions import FunctionNotFound, ParseArgumentsFailed, TokenLengthExceededError
 from .functions import get_function
 from .helpers import get_api_mode, get_model_config, supports_openai_hosted_tools
+from .speech import async_streaming_speech_cleanup
 from .usage import RequestUsage, UsageManager, extract_usage
 
 if TYPE_CHECKING:
@@ -120,6 +121,30 @@ def _shorten_tool_call_id(tool_call_id: str) -> str:
     import hashlib
 
     return hashlib.sha256(tool_call_id.encode()).hexdigest()[:9]
+
+
+def _annotation_value(annotation: object, field: str) -> Any:
+    """Read an SDK annotation field from a typed object or generic mapping."""
+    if isinstance(annotation, Mapping):
+        return annotation.get(field)
+    return getattr(annotation, field, None)
+
+
+def _normalize_url_citation(annotation: object) -> dict[str, Any] | None:
+    """Normalize the documented URL citation fields across SDK minor versions."""
+    if _annotation_value(annotation, "type") != "url_citation":
+        return None
+    start_index = _annotation_value(annotation, "start_index")
+    end_index = _annotation_value(annotation, "end_index")
+    if not isinstance(start_index, int) or not isinstance(end_index, int):
+        return None
+    return {
+        "type": "url_citation",
+        "start_index": start_index,
+        "end_index": end_index,
+        "title": _annotation_value(annotation, "title"),
+        "url": _annotation_value(annotation, "url"),
+    }
 
 
 def _adjust_schema(schema: dict[str, Any]) -> None:
@@ -537,14 +562,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 existing_content_ids = {id(content) for content in chat_log.content}
                 pending_tool_calls: list[llm.ToolInput] = []
 
-                async for content in chat_log.async_add_delta_content_stream(
-                    self.entity_id, transformed_stream
-                ):
-                    if (
-                        isinstance(content, conversation.AssistantContent)
-                        and content.tool_calls
+                with async_streaming_speech_cleanup(chat_log, options):
+                    async for content in chat_log.async_add_delta_content_stream(
+                        self.entity_id, transformed_stream
                     ):
-                        pending_tool_calls.extend(content.tool_calls)
+                        if (
+                            isinstance(content, conversation.AssistantContent)
+                            and content.tool_calls
+                        ):
+                            pending_tool_calls.extend(content.tool_calls)
             except BaseException as err:
                 if self._usage is not None:
                     await self._usage.async_record_request(
@@ -945,6 +971,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
     ]:
         """Transform a Responses API event stream to Home Assistant format."""
         request_usage = request_usage or RequestUsage()
+        response_text_lengths: dict[tuple[int | None, int | None], int] = {}
+        url_citations: dict[tuple[int | None, int | None], list[dict[str, Any]]] = {}
         async for event in result:
             _LOGGER.debug("Received Responses event: %s", event)
             event_type = getattr(event, "type", "")
@@ -962,7 +990,35 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             if event_type == "response.output_text.delta":
                 if event.delta:
+                    part_key = (
+                        getattr(event, "output_index", None),
+                        getattr(event, "content_index", None),
+                    )
+                    response_text_lengths[part_key] = response_text_lengths.get(
+                        part_key, 0
+                    ) + len(event.delta)
                     yield {"content": event.delta}
+                continue
+
+            if event_type == "response.output_text.annotation.added":
+                citation = _normalize_url_citation(getattr(event, "annotation", None))
+                if citation is not None:
+                    part_key = (
+                        getattr(event, "output_index", None),
+                        getattr(event, "content_index", None),
+                    )
+                    url_citations.setdefault(part_key, []).append(citation)
+                    current_length = response_text_lengths.get(part_key, 0)
+                    timing = (
+                        "after cited text"
+                        if citation["end_index"] <= current_length
+                        else "before cited text completed"
+                    )
+                    _LOGGER.debug(
+                        "Observed structured URL citation %s (%d total for content part)",
+                        timing,
+                        len(url_citations[part_key]),
+                    )
                 continue
 
             if event_type == "response.output_item.done":
@@ -977,7 +1033,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     and getattr(item, "content", None) is not None
                 ):
                     # Keep URL citation annotations internally. Home Assistant's
-                    # spoken ConversationResult still uses only the streamed text.
+                    # native field is not exposed to the streaming listener, so the
+                    # original message and structured metadata remain available for
+                    # stateless replay while speech receives sanitized text deltas.
                     yield {"native": item}
                 elif item_type == "function_call":
                     try:
