@@ -4,10 +4,12 @@ Home Assistant's native integration flow now focuses on the provider connection:
 
 Configure conversation-agent behaviour from **Extended OpenAI** in the sidebar:
 
-- **Configuration** provides a responsive, searchable full-width editor for prompts, model options, capabilities, archive/memory/Knowledge, voice identity, context, speech cleanup, and retention.
-- **Tools** provides a list editor, common structured fields, duplication/deletion, backend validation, and a large YAML fallback.
+- **Configuration** is one searchable, full-width settings surface. Its sections remain in a single vertical document, with optional jump links and responsive fields inside each section.
+- **Tools** keeps a browseable tool list with Edit, Duplicate, and Delete actions. Editing opens a large YAML-first editor for one complete tool.
 
-The editor writes the existing Home Assistant config subentry; there is no separate frontend store. Changes remain a local draft until Save is pressed.
+The editor writes the existing Home Assistant config subentry; there is no separate frontend store. Changes remain a local draft until Save is pressed. Voice ownership is separate from spoken-response cleanup, dependent options stay visible but disabled, and Custom replacements remain directly visible while speech processing is enabled.
+
+Function Tool YAML uses a clean single-tool shape with `spec:` and `function:` at the top level. The backend serializes existing tools to readable YAML, parses edits, validates the selected function type, and returns normalized metadata. The browser does not maintain a second JSON/Form representation or duplicate backend schema validation.
 
 Configuration and Tools share one local draft, so moving between those pages preserves unsaved changes. Duplicate and Export are disabled until the draft is saved or reverted. Duplicate and versioned import/export copy configuration only. Parent provider credentials, memories, retained conversations, Knowledge content, and usage history are excluded. Export redaction is best effort: Function Tool definitions may still contain embedded credentials or sensitive values in arbitrary fields. Review exported files before sharing them. Import can create a new agent without discarding the current draft, or overwrite the current agent after validation and explicit confirmation that any dirty draft will be discarded.
 

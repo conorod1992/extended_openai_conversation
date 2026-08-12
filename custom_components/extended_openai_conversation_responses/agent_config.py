@@ -267,6 +267,43 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
     return result
 
 
+def validate_single_function_tool(value: Any) -> dict[str, Any]:
+    """Parse and validate one function tool from a clean editor document."""
+    if isinstance(value, str):
+        try:
+            value = yaml.safe_load(value)
+        except yaml.YAMLError as err:
+            raise AgentConfigError(CONF_FUNCTION_TOOLS, f"invalid YAML: {err}") from err
+    if isinstance(value, list):
+        raise AgentConfigError(
+            CONF_FUNCTION_TOOLS,
+            "single-tool YAML must contain an object, not a list",
+        )
+    return validate_function_tools([value])[0]
+
+
+def function_tool_yaml(value: Any) -> str:
+    """Serialize one validated function tool as readable YAML."""
+    tool = validate_single_function_tool(value)
+    return yaml.safe_dump(tool, sort_keys=False, allow_unicode=True)
+
+
+def starter_function_tool_yaml() -> str:
+    """Return the generic YAML-first editor template for a new function tool."""
+    return yaml.safe_dump(
+        {
+            "spec": {
+                "name": "my_tool",
+                "description": "Describe what this tool does.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": {"type": "native", "name": ""},
+        },
+        sort_keys=False,
+        allow_unicode=True,
+    )
+
+
 def validate_speech_regex_replacements(value: Any) -> list[dict[str, str]]:
     """Validate ordered spoken-text regex replacements."""
     if not isinstance(value, list):
