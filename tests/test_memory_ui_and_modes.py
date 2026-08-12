@@ -8,16 +8,18 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     async_migrate_integration,
 )
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    normalize_agent_config,
+)
 from custom_components.extended_openai_conversation_responses.config_flow import (
     ExtendedOpenAIConversationConfigFlow,
-    ExtendedOpenAISubentryFlowHandler,
 )
 from custom_components.extended_openai_conversation_responses.const import (
-    CONFIG_ENTRY_VERSION,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_ENABLED,
     CONF_MEMORY_MODE,
+    CONFIG_ENTRY_VERSION,
     CONTEXT_TRUNCATE_KEEP_RECENT,
     MEMORY_MODE_AUTOMATIC,
     MEMORY_MODE_MANUAL,
@@ -42,7 +44,7 @@ def test_legacy_memory_settings_map_to_modes() -> None:
 
 
 def test_mode_normalization_preserves_legacy_runtime_fields() -> None:
-    normalized = ExtendedOpenAISubentryFlowHandler._normalized_options(
+    normalized = normalize_agent_config(
         {
             CONF_MEMORY_MODE: MEMORY_MODE_AUTOMATIC,
             CONF_CONTEXT_TRUNCATE_STRATEGY: CONTEXT_TRUNCATE_KEEP_RECENT,

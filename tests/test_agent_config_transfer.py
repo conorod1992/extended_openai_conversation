@@ -32,12 +32,20 @@ def test_export_redaction_preserves_schema_fields_but_removes_values() -> None:
     value = {
         "function": {
             "api_key": "secret",
+            "apiKey": "secret",
+            "clientSecret": "secret",
+            "accessToken": "secret",
+            "refreshToken": "secret",
             "headers": {"Authorization": "Bearer secret", "Accept": "json"},
         },
         "spec": {"parameters": {"properties": {"password": {"type": "string"}}}},
     }
     redacted = _redact_export_secrets(value)
     assert "api_key" not in redacted["function"]
+    assert "apiKey" not in redacted["function"]
+    assert "clientSecret" not in redacted["function"]
+    assert "accessToken" not in redacted["function"]
+    assert "refreshToken" not in redacted["function"]
     assert "Authorization" not in redacted["function"]["headers"]
     assert "password" in redacted["spec"]["parameters"]["properties"]
 

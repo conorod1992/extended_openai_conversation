@@ -46,6 +46,7 @@ async def test_configuration_read_and_update_require_admin(hass) -> None:
     result = await async_management_command(hass, "admin", True, message)
     assert result["title"] == "Jarvis"
     assert result["defaults"]["max_tokens"] == 500
+    assert result["options"]["api_mode"][0] == {"value": "auto", "label": "Auto"}
 
     updated = await async_management_command(
         hass,

@@ -122,7 +122,7 @@ Most users can start with the defaults and choose only a model. The main options
 
 See the [full configuration guide](docs/configuration.md) for details and provider-specific limitations.
 
-The Configuration page keeps edits in a local draft until **Save configuration** is pressed. It also supports search, defaults, speech preview, duplicate, and versioned import/export. Duplicate and import/export copy agent behaviour only: API credentials stay on the parent integration entry, likely embedded credential fields are redacted from exports, and memories, archives, Knowledge content, and usage history are not copied.
+The Configuration and Tools pages share a local draft until it is explicitly saved or reverted. Duplicate and Export are disabled while that draft is dirty. Duplicate and import/export copy agent behaviour only: API credentials stay on the parent integration entry, and memories, archives, Knowledge content, and usage history are not copied. Export performs best-effort redaction of common credential fields, but Function Tool definitions can contain secrets in arbitrary strings, URLs, templates, commands, or provider-specific fields. Review every exported file before sharing it.
 
 ## Key features
 

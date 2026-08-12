@@ -175,6 +175,50 @@ def agent_config_defaults() -> dict[str, Any]:
     return deepcopy(dict(AGENT_CONFIG_DEFAULTS))
 
 
+def _choice(value: Any, label: str | None = None) -> dict[str, Any]:
+    """Return one frontend-safe configuration choice."""
+    return {
+        "value": value,
+        "label": label or str(value).replace("_", " ").replace("-", " ").title(),
+    }
+
+
+def agent_config_options() -> dict[str, list[dict[str, Any]]]:
+    """Return authoritative option metadata for the management frontend."""
+    return {
+        CONF_API_MODE: [
+            _choice(item["key"], str(item["label"])) for item in API_MODE_OPTIONS
+        ],
+        CONF_CONTINUE_CONVERSATION: [
+            _choice(value) for value in CONTINUE_CONVERSATION_OPTIONS
+        ],
+        CONF_WEB_SEARCH_CONTEXT: [
+            _choice(value) for value in WEB_SEARCH_CONTEXT_OPTIONS
+        ],
+        CONF_MEMORY_MODE: [_choice(value) for value in MEMORY_MODES],
+        CONF_ARCHIVE_RETENTION_DAYS: [
+            _choice(value, f"{value} days") for value in ARCHIVE_RETENTION_OPTIONS
+        ],
+        CONF_VOICE_SCOPE_POLICY: [_choice(value) for value in VOICE_POLICIES],
+        CONF_VOICE_UNMAPPED_POLICY: [_choice(value) for value in VOICE_POLICIES],
+        CONF_SHARED_MEMORY_MODE: [_choice(value) for value in SHARED_MEMORY_MODES],
+        CONF_USAGE_REQUEST_RETENTION_DAYS: [
+            _choice(value, f"{value} days" if value else "Disabled")
+            for value in USAGE_RETENTION_OPTIONS
+        ],
+        CONF_USAGE_RUN_RETENTION_DAYS: [
+            _choice(value, f"{value} days" if value else "Disabled")
+            for value in USAGE_RETENTION_OPTIONS
+        ],
+        CONF_CONTEXT_TRUNCATE_STRATEGY: [
+            _choice(item["key"], str(item["label"]))
+            for item in CONTEXT_TRUNCATE_STRATEGIES
+        ],
+        CONF_REASONING_EFFORT: [_choice(value) for value in REASONING_EFFORT_OPTIONS],
+        CONF_SERVICE_TIER: [_choice(value) for value in SERVICE_TIER_OPTIONS],
+    }
+
+
 def validate_function_tools(value: Any) -> list[dict[str, Any]]:
     """Parse and validate function tools without executing them."""
     if isinstance(value, str):
@@ -253,10 +297,16 @@ def validate_speech_regex_replacements(value: Any) -> list[dict[str, str]]:
         if len(replacement) > MAX_SPEECH_REGEX_REPLACEMENT_LENGTH:
             raise AgentConfigError(f"{field}.replacement", "is too long")
         try:
-            re.compile(pattern)
+            compiled = re.compile(pattern)
         except re.error as err:
             raise AgentConfigError(
                 f"{field}.pattern", f"invalid regular expression: {err}"
+            ) from err
+        try:
+            compiled.sub(replacement, "")
+        except re.error as err:
+            raise AgentConfigError(
+                f"{field}.replacement", f"invalid replacement expression: {err}"
             ) from err
         result.append({"pattern": pattern, "replacement": replacement})
     return result

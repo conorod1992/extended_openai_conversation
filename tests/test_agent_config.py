@@ -5,6 +5,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
     agent_config_defaults,
+    agent_config_options,
     agent_config_snapshot,
     merge_agent_config,
     model_capabilities,
@@ -84,9 +85,45 @@ def test_regex_validation_is_field_specific_and_ordered() -> None:
         }
     )
     assert config[CONF_SPEECH_REGEX_REPLACEMENTS][0]["replacement"] == "Home Assistant"
+    capture = normalize_agent_config(
+        {
+            CONF_SPEECH_REGEX_REPLACEMENTS: [
+                {"pattern": "(HA)", "replacement": r"\1 assistant"}
+            ]
+        }
+    )
+    assert capture[CONF_SPEECH_REGEX_REPLACEMENTS][0]["replacement"] == r"\1 assistant"
     with pytest.raises(
         AgentConfigError, match=r"speech_regex_replacements\[0\]\.pattern"
     ):
         normalize_agent_config(
             {CONF_SPEECH_REGEX_REPLACEMENTS: [{"pattern": "[", "replacement": ""}]}
         )
+    with pytest.raises(
+        AgentConfigError, match=r"speech_regex_replacements\[0\]\.replacement"
+    ):
+        normalize_agent_config(
+            {
+                CONF_SPEECH_REGEX_REPLACEMENTS: [
+                    {"pattern": "(HA)", "replacement": r"\2 assistant"}
+                ]
+            }
+        )
+    with pytest.raises(AgentConfigError, match="invalid replacement expression"):
+        normalize_agent_config(
+            {CONF_SPEECH_REGEX_REPLACEMENTS: [{"pattern": "HA", "replacement": "\\"}]}
+        )
+
+
+def test_option_metadata_is_authoritative_and_labeled() -> None:
+    options = agent_config_options()
+    assert {item["value"] for item in options["api_mode"]} == {
+        "auto",
+        "chat_completions",
+        "responses",
+    }
+    assert all(
+        set(item) == {"value", "label"}
+        for choices in options.values()
+        for item in choices
+    )

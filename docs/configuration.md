@@ -9,7 +9,7 @@ Configure conversation-agent behaviour from **Extended OpenAI** in the sidebar:
 
 The editor writes the existing Home Assistant config subentry; there is no separate frontend store. Changes remain a local draft until Save is pressed.
 
-Duplicate and versioned import/export copy configuration only. Provider credentials, memories, retained conversations, Knowledge content, and usage history are excluded. Import can create a new agent or overwrite the current one after validation and explicit confirmation.
+Configuration and Tools share one local draft, so moving between those pages preserves unsaved changes. Duplicate and Export are disabled until the draft is saved or reverted. Duplicate and versioned import/export copy configuration only. Parent provider credentials, memories, retained conversations, Knowledge content, and usage history are excluded. Export redaction is best effort: Function Tool definitions may still contain embedded credentials or sensitive values in arbitrary fields. Review exported files before sharing them. Import can create a new agent without discarding the current draft, or overwrite the current agent after validation and explicit confirmation that any dirty draft will be discarded.
 
 ## Speech cleanup
 

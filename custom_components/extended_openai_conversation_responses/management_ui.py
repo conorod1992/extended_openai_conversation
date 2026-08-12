@@ -21,6 +21,7 @@ from .agent_config import (
     AGENT_CONFIG_FIELDS,
     AgentConfigError,
     agent_config_defaults,
+    agent_config_options,
     agent_config_snapshot,
     merge_agent_config,
     model_capabilities,
@@ -115,7 +116,8 @@ def _validation_result(callback) -> dict[str, Any]:
 
 
 _SECRET_KEY = re.compile(
-    r"(?:^|_)(?:api_?key|password|passwd|secret|token|authorization)(?:$|_)",
+    r"(?:^|[_-])(?:api_?key|password|passwd|secret|token|authorization)(?:$|[_-])"
+    r"|(?:apiKey|clientSecret|accessToken|refreshToken)$",
     re.IGNORECASE,
 )
 
@@ -136,7 +138,7 @@ def _redact_export_secrets(value: Any, *, schema: bool = False) -> Any:
 
 
 def _export_agent(subentry) -> dict[str, Any]:
-    """Build a versioned, secret-free configuration document."""
+    """Build a versioned configuration document with best-effort redaction."""
     return {
         "schema": "extended_openai_conversation.agent",
         "version": AGENT_CONFIG_EXPORT_VERSION,
@@ -278,6 +280,7 @@ async def async_management_command(
                 "title": subentry.title,
                 "config": config,
                 "defaults": agent_config_snapshot(agent_config_defaults()),
+                "options": agent_config_options(),
                 "model_capabilities": model_capabilities(config[CONF_CHAT_MODEL]),
                 "function_types": sorted(FUNCTIONS),
             }

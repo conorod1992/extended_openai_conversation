@@ -24,8 +24,8 @@ The frontend edits the existing Home Assistant conversation subentry through aut
 ## Agent lifecycle and portability
 
 - **Duplicate** creates a new conversation subentry with a `- Copy` title and validated configuration. It does not duplicate memories, archive sessions, Knowledge sources, or usage history.
-- **Export** downloads a human-readable, versioned JSON document containing agent-level behaviour only. Entry-level API credentials, likely embedded credential fields, and retained runtime data are excluded.
-- **Import** validates and previews a versioned JSON/YAML document before it can create a new agent or overwrite the current agent. Current-agent overwrite requires confirmation and never changes provider credentials.
+- **Export** downloads a human-readable, versioned JSON document containing agent-level behaviour only. It is disabled while the shared Configuration/Tools draft is dirty. Entry-level API credentials and retained runtime data are excluded, and common credential fields receive best-effort redaction. Function Tool definitions can still contain sensitive values in arbitrary strings, URLs, templates, commands, headers, or provider-specific fields, so review exported files before sharing them.
+- **Import** validates and previews a versioned JSON/YAML document before it can create a new agent or overwrite the current agent. Creating a new agent preserves the current draft. Current-agent overwrite requires confirmation, explicitly discards a dirty draft, and never changes provider credentials.
 
 ## Speech / TTS post-processing
 
