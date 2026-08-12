@@ -23,10 +23,13 @@ from .agent_config import (
     agent_config_defaults,
     agent_config_options,
     agent_config_snapshot,
+    function_tool_yaml,
     merge_agent_config,
     model_capabilities,
     normalize_agent_config,
+    starter_function_tool_yaml,
     validate_function_tools,
+    validate_single_function_tool,
 )
 from .agent_test import async_test_agent
 from .const import (
@@ -399,9 +402,31 @@ async def async_management_command(
             normalized = merge_agent_config(subentry.data, updates)
             return {"speech_text": process_speech_text(sample, normalized)}
 
-    if section == "tools" and action == "validate":
+    if section == "tools":
         _require_admin(is_admin)
-        return _validation_result(lambda: validate_function_tools(message.get("tools")))
+        if action == "validate":
+            return _validation_result(
+                lambda: validate_function_tools(message.get("tools"))
+            )
+        if action == "serialize":
+            return {"yaml": function_tool_yaml(message.get("tool"))}
+        if action == "starter":
+            return {"yaml": starter_function_tool_yaml()}
+        if action == "validate_yaml":
+            result = _validation_result(
+                lambda: validate_single_function_tool(message.get("yaml"))
+            )
+            if result["valid"]:
+                tool = result["config"]
+                result.update(
+                    {
+                        "yaml": function_tool_yaml(tool),
+                        "name": tool["spec"]["name"],
+                        "type": tool["function"]["type"],
+                        "description": tool["spec"].get("description", ""),
+                    }
+                )
+            return result
 
     if section == "scopes" and action == "catalog":
         memory = await async_get_memory(hass, entry_id, subentry_id)
@@ -658,6 +683,8 @@ def asdict_or_none(value: Any) -> dict[str, Any] | None:
         vol.Optional("settings"): dict,
         vol.Optional("config"): dict,
         vol.Optional("tools"): vol.Any(str, list),
+        vol.Optional("tool"): dict,
+        vol.Optional("yaml"): str,
         vol.Optional("document"): vol.Any(str, dict),
         vol.Optional("sample_text"): str,
         vol.Optional("mode"): str,

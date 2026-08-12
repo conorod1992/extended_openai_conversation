@@ -15,11 +15,13 @@ Connection details and conversation-agent behaviour are configured in separate p
     Choose **Extended OpenAI** in the Home Assistant sidebar, select a conversation agent, then open **Configuration**.
   </Step>
   <Step title="Manage Function Tools">
-    Use the top-level **Tools** section for the structured editor or its full YAML fallback.
+    Use the top-level **Tools** section to browse configured tools. **Edit** opens the large YAML-first editor immediately; **Add Function Tool** starts from a generic single-tool YAML template.
   </Step>
 </Steps>
 
-The frontend edits the existing Home Assistant conversation subentry through authenticated WebSocket commands. It does not create a separate configuration store. Edits remain local until **Save configuration** is pressed; **Revert** discards the draft. Model-specific fields are supplied by the backend and dependent settings appear only when their parent capability is enabled.
+The frontend edits the existing Home Assistant conversation subentry through authenticated WebSocket commands. It does not create a separate configuration store. Configuration is one full-width settings document with lightweight jump links, search, and responsive fields inside each section. Edits remain local until **Save configuration** is pressed; **Revert** discards the draft. Model-specific fields are supplied by the backend. Simple dependent settings remain visible but disabled so available options are discoverable and the layout stays stable.
+
+Function Tools use YAML as the only editor format. Existing tools are serialized by the Python backend as readable single-tool YAML (`spec:` plus `function:`), and new tools begin with a generic template. **Validate** parses YAML and applies the same backend function schemas used at runtime without executing the function. Validated name, type, and description become the metadata shown in the list; they are not separate sources of truth.
 
 ## Agent lifecycle and portability
 
@@ -29,7 +31,7 @@ The frontend edits the existing Home Assistant conversation subentry through aut
 
 ## Speech / TTS post-processing
 
-Enable speech post-processing under **Configuration → Voice, identity & speech** to create a cleaned TTS-only string. The assistant's original response remains unchanged in the visual UI, events, archive, memory/context, and diagnostics.
+Enable speech post-processing under **Configuration → Spoken response** to create a cleaned TTS-only string. The assistant's original response remains unchanged in the visual UI, events, archive, memory/context, and diagnostics. Custom replacements are displayed directly rather than hidden in a disclosure, and adding or reordering a rule keeps focus and position near the edited rule.
 
 The processing order is:
 

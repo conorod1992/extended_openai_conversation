@@ -70,7 +70,7 @@ Copy the `extended_openai_conversation_responses` folder from `custom_components
 4. Enter your API key.
 5. Leave **Base URL** unchanged for the OpenAI API. Change it only when using a compatible provider that requires a custom endpoint.
 
-The native Home Assistant flow is intentionally limited to provider and connection setup. After the integration is added, open **Extended OpenAI** in the sidebar and choose **Configuration** for conversation-agent behaviour, prompts, model options, memory/archive/knowledge, voice, speech cleanup, and retention. Use the separate **Tools** section for function tools.
+The native Home Assistant flow is intentionally limited to provider and connection setup. After the integration is added, open **Extended OpenAI** in the sidebar and choose **Configuration** for a searchable, full-width settings document covering conversation behaviour, prompts, capabilities, archive, voice identity, spoken-response cleanup, context, model options, and retention. Use **Tools** for the friendly tool list and YAML-first single-tool editor; YAML parsing and function validation remain backend-authoritative.
 
 ### 3. Select the conversation agent
 

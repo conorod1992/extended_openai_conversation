@@ -1,16 +1,22 @@
 """Tests for the shared conversation-agent configuration contract."""
 
+from pathlib import Path
+
 import pytest
+import yaml
 
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
     agent_config_defaults,
     agent_config_options,
     agent_config_snapshot,
+    function_tool_yaml,
     merge_agent_config,
     model_capabilities,
     normalize_agent_config,
+    starter_function_tool_yaml,
     validate_function_tools,
+    validate_single_function_tool,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_MEMORY_AUTO_CREATE,
@@ -91,6 +97,56 @@ def test_function_tool_unknown_fields_are_preserved() -> None:
     tool = _native_tool()
     tool["x-extension"] = {"enabled": True}
     assert validate_function_tools([tool])[0]["x-extension"] == {"enabled": True}
+
+
+def test_single_function_tool_yaml_round_trip_preserves_structure() -> None:
+    tool = _native_tool()
+    tool["x-extension"] = {"enabled": True, "labels": ["one", "two"]}
+    serialized = function_tool_yaml(tool)
+    assert serialized.startswith("spec:\n")
+    assert not serialized.startswith("-")
+    assert validate_single_function_tool(serialized) == tool
+
+
+def test_single_function_tool_yaml_rejects_invalid_yaml_and_list_wrapper() -> None:
+    with pytest.raises(AgentConfigError, match="invalid YAML"):
+        validate_single_function_tool("spec: [")
+    with pytest.raises(AgentConfigError, match="must contain an object"):
+        validate_single_function_tool([_native_tool()])
+
+
+def test_starter_function_tool_yaml_has_clean_single_tool_shape() -> None:
+    starter = starter_function_tool_yaml()
+    assert starter.startswith("spec:\n")
+    assert "name: my_tool" in starter
+    assert "type: native" in starter
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    [
+        "native_execute_service_example.yaml",
+        "template_example.yaml",
+        "bash_example.yaml",
+        "rest_example.yaml",
+        "scrape_example.yaml",
+        "sqlite_example.yaml",
+        "script_example.yaml",
+        "read_file_example.yaml",
+        "write_file_example.yaml",
+        "edit_file_example.yaml",
+        "composite_example.yaml",
+    ],
+)
+def test_single_tool_yaml_validates_existing_function_types(
+    hass, fixture_name: str
+) -> None:
+    tools = yaml.safe_load(
+        (Path(__file__).parent / "fixtures" / "functions" / fixture_name).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert validate_single_function_tool(yaml.safe_dump(tools[0]))["spec"]["name"]
 
 
 def test_regex_validation_is_field_specific_and_ordered() -> None:

@@ -102,3 +102,67 @@ async def test_duplicate_copies_configuration_not_runtime_history(hass) -> None:
     assert duplicate.data["prompt"] == "Custom prompt"
     assert "archive_history" not in duplicate.data
     assert "memory_contents" not in duplicate.data
+
+
+async def test_function_tool_yaml_management_operations(hass) -> None:
+    _setup_entry(hass)
+    tool = {
+        "spec": {
+            "name": "test_tool",
+            "description": "Test tool",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "native", "name": "execute_service"},
+        "x-extension": {"enabled": True},
+    }
+    base = {
+        "section": "tools",
+        "entry_id": "entry-1",
+        "subentry_id": "agent-1",
+    }
+    serialized = await async_management_command(
+        hass, "admin", True, {**base, "action": "serialize", "tool": tool}
+    )
+    assert serialized["yaml"].startswith("spec:\n")
+    assert "x-extension:" in serialized["yaml"]
+
+    validated = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {**base, "action": "validate_yaml", "yaml": serialized["yaml"]},
+    )
+    assert validated["valid"] is True
+    assert validated["name"] == "test_tool"
+    assert validated["type"] == "native"
+    assert validated["config"]["x-extension"] == {"enabled": True}
+
+    invalid = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {**base, "action": "validate_yaml", "yaml": "spec: ["},
+    )
+    assert invalid["valid"] is False
+    assert "functions" in invalid["errors"]
+
+    starter = await async_management_command(
+        hass, "admin", True, {**base, "action": "starter"}
+    )
+    assert starter["yaml"].startswith("spec:\n")
+
+
+async def test_function_tool_yaml_operations_require_admin(hass) -> None:
+    _setup_entry(hass)
+    with pytest.raises(HomeAssistantError, match="Administrator"):
+        await async_management_command(
+            hass,
+            "user",
+            False,
+            {
+                "section": "tools",
+                "action": "starter",
+                "entry_id": "entry-1",
+                "subentry_id": "agent-1",
+            },
+        )
