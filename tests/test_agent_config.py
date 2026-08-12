@@ -46,6 +46,23 @@ def test_normalization_preserves_legacy_memory_fields() -> None:
     assert result[CONF_MEMORY_AUTO_CREATE] is True
 
 
+def test_normalization_accepts_legacy_numeric_selector_values() -> None:
+    result = normalize_agent_config(
+        {
+            "archive_session_timeout_minutes": "30",
+            "archive_retention_days": "90",
+            "usage_request_retention_days": "7",
+            "max_tokens": 750.0,
+            "temperature": "0.5",
+        }
+    )
+    assert result["archive_session_timeout_minutes"] == 30
+    assert result["archive_retention_days"] == 90
+    assert result["usage_request_retention_days"] == 7
+    assert result["max_tokens"] == 750
+    assert result["temperature"] == 0.5
+
+
 def test_model_capabilities_are_model_specific() -> None:
     assert model_capabilities("gpt-5-mini")["supports_reasoning_effort"] is True
     assert model_capabilities("gpt-4o")["supports_temperature"] is True

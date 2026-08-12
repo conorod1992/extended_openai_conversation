@@ -328,6 +328,36 @@ def _require_type(
             raise AgentConfigError(key, f"must be a {label}")
 
 
+def _coerce_legacy_numbers(config: dict[str, Any]) -> None:
+    """Normalize numeric values stored as strings by older selector flows."""
+    integer_keys = (
+        CONF_MAX_TOKENS,
+        CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+        CONF_CONTEXT_THRESHOLD,
+        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+        CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
+        CONF_ARCHIVE_RETENTION_DAYS,
+        CONF_USAGE_REQUEST_RETENTION_DAYS,
+        CONF_USAGE_RUN_RETENTION_DAYS,
+    )
+    for key in integer_keys:
+        value = config.get(key)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if re.fullmatch(r"[+-]?\d+(?:\.0+)?", stripped):
+                config[key] = int(stripped.split(".", maxsplit=1)[0])
+        elif isinstance(value, float) and value.is_integer():
+            config[key] = int(value)
+
+    for key in (CONF_TOP_P, CONF_TEMPERATURE):
+        value = config.get(key)
+        if isinstance(value, str):
+            try:
+                config[key] = float(value.strip())
+            except ValueError:
+                continue
+
+
 def normalize_agent_config(
     data: dict[str, Any], *, apply_defaults: bool = True, reject_unknown: bool = True
 ) -> dict[str, Any]:
@@ -341,6 +371,7 @@ def normalize_agent_config(
         )
     result = agent_config_defaults() if apply_defaults else {}
     result.update(deepcopy(data))
+    _coerce_legacy_numbers(result)
 
     _require_type(
         result,
