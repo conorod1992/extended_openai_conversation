@@ -70,6 +70,8 @@ Copy the `extended_openai_conversation_responses` folder from `custom_components
 4. Enter your API key.
 5. Leave **Base URL** unchanged for the OpenAI API. Change it only when using a compatible provider that requires a custom endpoint.
 
+The native Home Assistant flow is intentionally limited to provider and connection setup. After the integration is added, open **Extended OpenAI** in the sidebar and choose **Configuration** for conversation-agent behaviour, prompts, model options, memory/archive/knowledge, voice, speech cleanup, and retention. Use the separate **Tools** section for function tools.
+
 ### 3. Select the conversation agent
 
 1. Open **Settings > Voice assistants**.
@@ -116,8 +118,11 @@ Most users can start with the defaults and choose only a model. The main options
 | **Context strategy** | Keep recent messages | Controls long-conversation truncation. |
 | **Skills** | All available for new agents | Selects reusable instructions the agent may load. |
 | **Functions** | Included HA tools | Defines tools available to the model. |
+| **Speech cleanup** | Off | Optionally removes Markdown links/URLs and applies ordered regex replacements to TTS only. |
 
 See the [full configuration guide](docs/configuration.md) for details and provider-specific limitations.
+
+The Configuration page keeps edits in a local draft until **Save configuration** is pressed. It also supports search, defaults, speech preview, duplicate, and versioned import/export. Duplicate and import/export copy agent behaviour only: API credentials stay on the parent integration entry, likely embedded credential fields are redacted from exports, and memories, archives, Knowledge content, and usage history are not copied.
 
 ## Key features
 
@@ -170,6 +175,21 @@ Long conversations can keep recent complete turns, clear previous history, or su
 Skills provide reusable instructions, while custom functions provide new tools. You do **not** need to build custom functions for basic exposed-entity control.
 
 [Read about skills](docs/features/skills.md) · [Read about custom functions](docs/functions/index.md)
+
+### Spoken-response cleanup
+
+Speech post-processing creates a TTS-only version of the final assistant response. The full original remains available to Assist UI, conversation events, archives, and context. Processing order is built-in Markdown/link cleanup, ordered custom regex replacements, whitespace cleanup, then trimming.
+
+Custom regex is an advanced feature. Rules use standard Python regular expressions and run sequentially, for example:
+
+```yaml
+- pattern: '\[[0-9]+\]'
+  replacement: ''
+- pattern: '\bHA\b'
+  replacement: 'Home Assistant'
+```
+
+Invalid expressions are rejected when configuration is saved and skipped defensively at runtime.
 
 ### Usage statistics and agent testing
 

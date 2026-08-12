@@ -1,7 +1,8 @@
 """Constants for the Extended OpenAI Conversation (Responses) integration."""
 
 DOMAIN = "extended_openai_conversation_responses"
-CONFIG_ENTRY_VERSION = 4
+CONFIG_ENTRY_VERSION = 5
+AGENT_CONFIG_EXPORT_VERSION = 1
 DEFAULT_NAME = "Extended OpenAI Conversation (Responses)"
 DEFAULT_CONVERSATION_NAME = "Extended OpenAI Conversation (Responses)"
 DEFAULT_AI_TASK_NAME = "Extended OpenAI AI Task (Responses)"
@@ -398,6 +399,19 @@ DEFAULT_CONF_FUNCTION_TOOLS = [
         "function": {"type": "bash", "command": "{{command}}"},
     },
 ]
+
+# Spoken-response post-processing. These options never mutate the visual response.
+CONF_SPEECH_PROCESSING_ENABLED = "speech_processing_enabled"
+CONF_SPEECH_STRIP_MARKDOWN = "speech_strip_markdown"
+CONF_SPEECH_STRIP_URLS = "speech_strip_urls"
+CONF_SPEECH_REGEX_REPLACEMENTS = "speech_regex_replacements"
+DEFAULT_SPEECH_PROCESSING_ENABLED = False
+DEFAULT_SPEECH_STRIP_MARKDOWN = True
+DEFAULT_SPEECH_STRIP_URLS = True
+DEFAULT_SPEECH_REGEX_REPLACEMENTS: list[dict[str, str]] = []
+MAX_SPEECH_REGEX_RULES = 20
+MAX_SPEECH_REGEX_PATTERN_LENGTH = 500
+MAX_SPEECH_REGEX_REPLACEMENT_LENGTH = 1000
 CONF_CONTEXT_THRESHOLD = "context_threshold"
 DEFAULT_CONTEXT_THRESHOLD = 40000
 CONTEXT_TRUNCATE_KEEP_RECENT = "keep_recent"

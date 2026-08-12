@@ -1,5 +1,31 @@
 # Configuration
 
+Home Assistant's native integration flow now focuses on the provider connection: API provider/key, base URL, API version, organisation, and authentication/bootstrap options. Create, remove, and rename conversation subentries with normal Home Assistant lifecycle controls.
+
+Configure conversation-agent behaviour from **Extended OpenAI** in the sidebar:
+
+- **Configuration** provides a responsive, searchable full-width editor for prompts, model options, capabilities, archive/memory/Knowledge, voice identity, context, speech cleanup, and retention.
+- **Tools** provides a list editor, common structured fields, duplication/deletion, backend validation, and a large YAML fallback.
+
+The editor writes the existing Home Assistant config subentry; there is no separate frontend store. Changes remain a local draft until Save is pressed.
+
+Duplicate and versioned import/export copy configuration only. Provider credentials, memories, retained conversations, Knowledge content, and usage history are excluded. Import can create a new agent or overwrite the current one after validation and explicit confirmation.
+
+## Speech cleanup
+
+Speech post-processing affects TTS only. The original assistant message remains available to the UI, events, archive, and conversation context. Processing runs built-in Markdown/link cleanup, ordered custom regex replacements, whitespace cleanup, and trimming.
+
+Example advanced rules:
+
+```yaml
+- pattern: '\[[0-9]+\]'
+  replacement: ''
+- pattern: '\bHA\b'
+  replacement: 'Home Assistant'
+```
+
+Rules use standard Python regex syntax and run sequentially. Invalid rules are rejected on save and skipped defensively at runtime. Use the frontend speech preview to test the exact backend pipeline.
+
 Conversation-agent options are available from the assistant/integration configuration in Home Assistant. Most users can start with the defaults and change only the model.
 
 ## Main options

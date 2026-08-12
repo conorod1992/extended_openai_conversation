@@ -2,19 +2,34 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import re
+from types import MappingProxyType
 from typing import Any
 
 import voluptuous as vol
+import yaml
 
 from homeassistant.components import panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
+from .agent_config import (
+    AGENT_CONFIG_FIELDS,
+    AgentConfigError,
+    agent_config_defaults,
+    agent_config_snapshot,
+    merge_agent_config,
+    model_capabilities,
+    normalize_agent_config,
+    validate_function_tools,
+)
 from .agent_test import async_test_agent
 from .const import (
-    ARCHIVE_RETENTION_OPTIONS,
+    AGENT_CONFIG_EXPORT_VERSION,
     CONF_API_PROVIDER,
     CONF_ARCHIVE_ENABLED,
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -41,14 +56,13 @@ from .const import (
     DOMAIN,
     MANAGEMENT_PANEL_TITLE,
     MANAGEMENT_PANEL_URL,
-    SHARED_MEMORY_MODES,
-    USAGE_RETENTION_OPTIONS,
-    VOICE_POLICIES,
 )
 from .conversation_archive import async_get_archive
+from .functions import FUNCTIONS
 from .knowledge import async_get_knowledge, knowledge_source_as_dict
 from .memory import ANONYMOUS_USER_ID, async_get_memory, get_memory_mode, memory_as_dict
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
+from .speech import process_speech_text
 from .usage import async_get_usage
 
 WS_COMMAND = f"{DOMAIN}/management"
@@ -91,6 +105,72 @@ def _memory_scope(scope_id: str) -> str:
     return scope_id.removeprefix("user:") if scope_id.startswith("user:") else scope_id
 
 
+def _validation_result(callback) -> dict[str, Any]:
+    """Run configuration validation and return frontend-friendly errors."""
+    try:
+        value = callback()
+    except AgentConfigError as err:
+        return {"valid": False, "errors": {err.field: str(err).split(": ", 1)[-1]}}
+    return {"valid": True, "errors": {}, "config": value}
+
+
+_SECRET_KEY = re.compile(
+    r"(?:^|_)(?:api_?key|password|passwd|secret|token|authorization)(?:$|_)",
+    re.IGNORECASE,
+)
+
+
+def _redact_export_secrets(value: Any, *, schema: bool = False) -> Any:
+    """Remove likely credential values while preserving JSON-schema properties."""
+    if isinstance(value, list):
+        return [_redact_export_secrets(item, schema=schema) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {}
+    for key, item in value.items():
+        child_schema = schema or key in {"parameters", "properties", "items"}
+        if not schema and _SECRET_KEY.search(str(key)):
+            continue
+        result[key] = _redact_export_secrets(item, schema=child_schema)
+    return result
+
+
+def _export_agent(subentry) -> dict[str, Any]:
+    """Build a versioned, secret-free configuration document."""
+    return {
+        "schema": "extended_openai_conversation.agent",
+        "version": AGENT_CONFIG_EXPORT_VERSION,
+        "title": subentry.title,
+        "config": _redact_export_secrets(agent_config_snapshot(subentry.data)),
+    }
+
+
+def _parse_import_document(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        try:
+            value = yaml.safe_load(value)
+        except yaml.YAMLError as err:
+            raise AgentConfigError("document", f"invalid JSON/YAML: {err}") from err
+    if not isinstance(value, dict):
+        raise AgentConfigError("document", "must be an object")
+    if value.get("schema") != "extended_openai_conversation.agent":
+        raise AgentConfigError("schema", "unsupported or missing export schema")
+    if value.get("version") != AGENT_CONFIG_EXPORT_VERSION:
+        raise AgentConfigError("version", "unsupported export version")
+    unknown = set(value) - {"schema", "version", "title", "config"}
+    if unknown:
+        raise AgentConfigError(
+            "document", "unknown fields: " + ", ".join(sorted(unknown))
+        )
+    config = value.get("config")
+    if not isinstance(config, dict):
+        raise AgentConfigError("config", "must be an object")
+    return {
+        "title": str(value.get("title") or "Imported conversation agent").strip(),
+        "config": normalize_agent_config(config),
+    }
+
+
 async def _scope_catalog(
     hass: HomeAssistant,
     user_id: str,
@@ -114,9 +194,15 @@ async def _scope_catalog(
 
     if not is_admin:
         user = await hass.auth.async_get_user(user_id)
-        return [scope_item(f"user:{user_id}", "user", user.name if user else user_id)]
+        return [
+            scope_item(
+                f"user:{user_id}", "user", (user.name or user_id) if user else user_id
+            )
+        ]
     users = await hass.auth.async_get_users()
-    scopes = [scope_item(f"user:{user.id}", "user", user.name) for user in users]
+    scopes = [
+        scope_item(f"user:{user.id}", "user", user.name or user.id) for user in users
+    ]
     scopes.append(scope_item(SHARED_HOUSEHOLD_SCOPE_ID, "shared", "Shared household"))
     legacy = scope_item(ANONYMOUS_USER_ID, "anonymous_legacy", "Legacy anonymous")
     if legacy["memory_count"] or legacy["conversation_count"]:
@@ -183,6 +269,136 @@ async def async_management_command(
     if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
         raise HomeAssistantError("entry_id and subentry_id are required")
     entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
+
+    if section == "configuration":
+        _require_admin(is_admin)
+        if action == "get":
+            config = agent_config_snapshot(subentry.data)
+            return {
+                "title": subentry.title,
+                "config": config,
+                "defaults": agent_config_snapshot(agent_config_defaults()),
+                "model_capabilities": model_capabilities(config[CONF_CHAT_MODEL]),
+                "function_types": sorted(FUNCTIONS),
+            }
+        if action == "validate":
+            updates = message.get("config", {})
+            if not isinstance(updates, dict):
+                raise HomeAssistantError("config must be an object")
+            result = _validation_result(
+                lambda: agent_config_snapshot(
+                    merge_agent_config(subentry.data, updates)
+                )
+            )
+            if result["valid"]:
+                result["model_capabilities"] = model_capabilities(
+                    result["config"][CONF_CHAT_MODEL]
+                )
+            return result
+        if action == "update":
+            _require_admin(is_admin)
+            updates = message.get("config")
+            if not isinstance(updates, dict):
+                raise HomeAssistantError("config must be an object")
+            normalized = merge_agent_config(subentry.data, updates)
+            title = message.get("title")
+            if title is not None and (not isinstance(title, str) or not title.strip()):
+                raise AgentConfigError("title", "must not be empty")
+            hass.config_entries.async_update_subentry(
+                entry,
+                subentry,
+                data=normalized,
+                **({"title": title.strip()} if isinstance(title, str) else {}),
+            )
+            snapshot = agent_config_snapshot(normalized)
+            return {
+                "title": title.strip() if isinstance(title, str) else subentry.title,
+                "config": snapshot,
+                "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
+            }
+        if action == "duplicate":
+            _require_admin(is_admin)
+            requested_title = message.get("title")
+            title = (
+                requested_title.strip()
+                if isinstance(requested_title, str) and requested_title.strip()
+                else f"{subentry.title} - Copy"
+            )
+            duplicate = ConfigSubentry(
+                data=MappingProxyType(
+                    normalize_agent_config(
+                        {
+                            key: value
+                            for key, value in subentry.data.items()
+                            if key in AGENT_CONFIG_FIELDS
+                        }
+                    )
+                ),
+                subentry_type="conversation",
+                title=title,
+                unique_id=None,
+            )
+            hass.config_entries.async_add_subentry(entry, duplicate)
+            return {
+                "status": "created",
+                "entry_id": entry.entry_id,
+                "subentry_id": duplicate.subentry_id,
+                "title": duplicate.title,
+            }
+        if action == "export":
+            document = _export_agent(subentry)
+            return {
+                "document": document,
+                "json": json.dumps(document, indent=2, ensure_ascii=False),
+            }
+        if action == "import_preview":
+            parsed = _parse_import_document(message.get("document"))
+            return {
+                "valid": True,
+                "title": parsed["title"],
+                "config": agent_config_snapshot(parsed["config"]),
+                "summary": {
+                    "model": parsed["config"][CONF_CHAT_MODEL],
+                    "tools": len(
+                        validate_function_tools(parsed["config"].get("functions"))
+                    ),
+                    "speech_rules": len(
+                        parsed["config"].get("speech_regex_replacements", [])
+                    ),
+                },
+            }
+        if action == "import":
+            _require_admin(is_admin)
+            parsed = _parse_import_document(message.get("document"))
+            mode = message.get("mode", "current")
+            if mode == "current":
+                if message.get("confirm") is not True:
+                    raise HomeAssistantError("Explicit confirmation is required")
+                hass.config_entries.async_update_subentry(
+                    entry, subentry, data=parsed["config"], title=parsed["title"]
+                )
+                return {"status": "updated", "subentry_id": subentry.subentry_id}
+            if mode != "new":
+                raise HomeAssistantError("mode must be current or new")
+            imported = ConfigSubentry(
+                data=MappingProxyType(parsed["config"]),
+                subentry_type="conversation",
+                title=parsed["title"],
+                unique_id=None,
+            )
+            hass.config_entries.async_add_subentry(entry, imported)
+            return {"status": "created", "subentry_id": imported.subentry_id}
+        if action == "speech_preview":
+            sample = message.get("sample_text", "")
+            updates = message.get("config", {})
+            if not isinstance(sample, str) or not isinstance(updates, dict):
+                raise HomeAssistantError("sample_text and config are invalid")
+            normalized = merge_agent_config(subentry.data, updates)
+            return {"speech_text": process_speech_text(sample, normalized)}
+
+    if section == "tools" and action == "validate":
+        _require_admin(is_admin)
+        return _validation_result(lambda: validate_function_tools(message.get("tools")))
 
     if section == "scopes" and action == "catalog":
         memory = await async_get_memory(hass, entry_id, subentry_id)
@@ -391,66 +607,16 @@ async def async_management_command(
 
 
 def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
-    allowed = {
-        CONF_ARCHIVE_ENABLED,
-        CONF_ARCHIVE_RETENTION_DAYS,
-        CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
-        CONF_SHARED_ARCHIVE_ENABLED,
-        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
-        CONF_VOICE_SCOPE_POLICY,
-        CONF_VOICE_DEFAULT_USER_ID,
-        CONF_VOICE_DEVICE_MAPPINGS,
-        CONF_VOICE_UNMAPPED_POLICY,
-        CONF_SHARED_MEMORY_MODE,
-        CONF_USAGE_REQUEST_RETENTION_DAYS,
-        CONF_USAGE_RUN_RETENTION_DAYS,
-    }
-    unknown = set(settings) - allowed
-    if unknown:
-        raise HomeAssistantError("Unknown settings: " + ", ".join(sorted(unknown)))
-    result = dict(settings)
-    for key in (
-        CONF_ARCHIVE_ENABLED,
-        CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
-        CONF_SHARED_ARCHIVE_ENABLED,
-    ):
-        if key in result and not isinstance(result[key], bool):
-            raise HomeAssistantError(f"{key} must be a boolean")
-    if (
-        CONF_ARCHIVE_RETENTION_DAYS in result
-        and result[CONF_ARCHIVE_RETENTION_DAYS] not in ARCHIVE_RETENTION_OPTIONS
-    ):
-        raise HomeAssistantError("unsupported archive retention")
-    for key in (CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS):
-        if key in result and result[key] not in USAGE_RETENTION_OPTIONS:
-            raise HomeAssistantError(f"unsupported {key}")
-    for key in (CONF_VOICE_SCOPE_POLICY, CONF_VOICE_UNMAPPED_POLICY):
-        if key in result and result[key] not in VOICE_POLICIES:
-            raise HomeAssistantError(f"unsupported {key}")
-    if (
-        CONF_SHARED_MEMORY_MODE in result
-        and result[CONF_SHARED_MEMORY_MODE] not in SHARED_MEMORY_MODES
-    ):
-        raise HomeAssistantError("unsupported shared memory mode")
-    if CONF_VOICE_DEVICE_MAPPINGS in result:
-        mappings = result[CONF_VOICE_DEVICE_MAPPINGS]
-        if not isinstance(mappings, dict) or not all(
-            isinstance(k, str) and isinstance(v, str) for k, v in mappings.items()
-        ):
+    """Compatibility wrapper using the shared agent configuration contract."""
+    try:
+        normalized = merge_agent_config({}, settings)
+    except AgentConfigError as err:
+        if err.field == "config":
             raise HomeAssistantError(
-                "voice_device_mappings must map device IDs to scope owners"
-            )
-    if CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES in result:
-        value = result[CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES]
-        if (
-            not isinstance(value, int)
-            or isinstance(value, bool)
-            or not 1 <= value <= 1440
-        ):
-            raise HomeAssistantError(
-                "archive_session_timeout_minutes must be 1 to 1440"
-            )
-    return result
+                str(err).replace("config: unknown fields", "Unknown settings")
+            ) from err
+        raise
+    return {key: normalized[key] for key in settings}
 
 
 def _settings_snapshot(options: dict[str, Any]) -> dict[str, Any]:
@@ -487,6 +653,11 @@ def asdict_or_none(value: Any) -> dict[str, Any] | None:
         vol.Optional("scope_id"): str,
         vol.Optional("target_scope_id"): str,
         vol.Optional("settings"): dict,
+        vol.Optional("config"): dict,
+        vol.Optional("tools"): vol.Any(str, list),
+        vol.Optional("document"): vol.Any(str, dict),
+        vol.Optional("sample_text"): str,
+        vol.Optional("mode"): str,
         vol.Optional("memory_ids"): list,
         vol.Optional("memory_id"): str,
         vol.Optional("session_id"): str,
@@ -526,11 +697,17 @@ async def async_setup_management_ui(hass: HomeAssistant) -> None:
         return
     hass.data[_UI_SETUP] = True
     panel_file = Path(__file__).parent / "frontend" / "management-panel.js"
+    config_editor_file = Path(__file__).parent / "frontend" / "agent-config-editor.js"
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
                 f"/{DOMAIN}/management-panel.js", str(panel_file), cache_headers=False
-            )
+            ),
+            StaticPathConfig(
+                f"/{DOMAIN}/agent-config-editor.js",
+                str(config_editor_file),
+                cache_headers=False,
+            ),
         ]
     )
     websocket_api.async_register_command(hass, websocket_management)

@@ -37,12 +37,12 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
 )
 
+from .agent_config import agent_config_defaults, normalize_agent_config
 from .agent_test import async_test_agent
 from .const import (
     API_MODE_OPTIONS,
     API_PROVIDERS,
     ARCHIVE_RETENTION_OPTIONS,
-    CONFIG_ENTRY_VERSION,
     CONF_ADVANCED_OPTIONS,
     CONF_API_MODE,
     CONF_API_PROVIDER,
@@ -60,9 +60,7 @@ from .const import (
     CONF_KNOWLEDGE_ENABLED,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MAX_TOKENS,
-    CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
-    CONF_MEMORY_ENABLED,
     CONF_MEMORY_MODE,
     CONF_ORGANIZATION,
     CONF_PROMPT,
@@ -83,6 +81,7 @@ from .const import (
     CONF_VOICE_UNMAPPED_POLICY,
     CONF_WEB_SEARCH,
     CONF_WEB_SEARCH_CONTEXT,
+    CONFIG_ENTRY_VERSION,
     CONTEXT_TRUNCATE_STRATEGIES,
     CONTINUE_CONVERSATION_OPTIONS,
     DEFAULT_ADVANCED_OPTIONS,
@@ -123,7 +122,6 @@ from .const import (
     DEFAULT_WEB_SEARCH,
     DEFAULT_WEB_SEARCH_CONTEXT,
     DOMAIN,
-    LEGACY_CONTEXT_TRUNCATE_STRATEGY,
     MAX_MEMORY_AUTO_RETRIEVE_LIMIT,
     MEMORY_MODES,
     REASONING_EFFORT_OPTIONS,
@@ -134,7 +132,6 @@ from .const import (
     WEB_SEARCH_CONTEXT_OPTIONS,
 )
 from .helpers import get_authenticated_client, get_model_config
-from .memory import get_memory_mode
 from .skills import SkillManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -265,41 +262,7 @@ DEFAULT_CONF_FUNCTION_TOOLS_STR = yaml.dump(
     DEFAULT_CONF_FUNCTION_TOOLS, sort_keys=False
 )
 
-DEFAULT_OPTIONS = types.MappingProxyType(
-    {
-        CONF_PROMPT: DEFAULT_PROMPT,
-        CONF_CHAT_MODEL: DEFAULT_CHAT_MODEL,
-        CONF_API_MODE: DEFAULT_API_MODE,
-        CONF_MAX_TOKENS: DEFAULT_MAX_TOKENS,
-        CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-        CONF_TOP_P: DEFAULT_TOP_P,
-        CONF_TEMPERATURE: DEFAULT_TEMPERATURE,
-        CONF_FUNCTION_TOOLS: DEFAULT_CONF_FUNCTION_TOOLS_STR,
-        CONF_CONTEXT_THRESHOLD: DEFAULT_CONTEXT_THRESHOLD,
-        CONF_CONTEXT_TRUNCATE_STRATEGY: DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
-        CONF_CONTINUE_CONVERSATION: DEFAULT_CONTINUE_CONVERSATION,
-        CONF_WEB_SEARCH: DEFAULT_WEB_SEARCH,
-        CONF_WEB_SEARCH_CONTEXT: DEFAULT_WEB_SEARCH_CONTEXT,
-        CONF_MEMORY_MODE: DEFAULT_MEMORY_MODE,
-        CONF_MEMORY_ENABLED: False,
-        CONF_MEMORY_AUTO_CREATE: False,
-        CONF_MEMORY_AUTO_RETRIEVE_LIMIT: DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
-        CONF_KNOWLEDGE_ENABLED: DEFAULT_KNOWLEDGE_ENABLED,
-        CONF_ARCHIVE_ENABLED: DEFAULT_ARCHIVE_ENABLED,
-        CONF_ARCHIVE_RETENTION_DAYS: DEFAULT_ARCHIVE_RETENTION_DAYS,
-        CONF_ARCHIVE_MODEL_SEARCH_ENABLED: DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
-        CONF_SHARED_ARCHIVE_ENABLED: DEFAULT_SHARED_ARCHIVE_ENABLED,
-        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES: DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
-        CONF_VOICE_SCOPE_POLICY: DEFAULT_VOICE_SCOPE_POLICY,
-        CONF_VOICE_UNMAPPED_POLICY: DEFAULT_VOICE_UNMAPPED_POLICY,
-        CONF_VOICE_DEVICE_MAPPINGS: {},
-        CONF_SHARED_MEMORY_MODE: DEFAULT_SHARED_MEMORY_MODE,
-        CONF_USAGE_REQUEST_RETENTION_DAYS: DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-        CONF_USAGE_RUN_RETENTION_DAYS: DEFAULT_USAGE_RUN_RETENTION_DAYS,
-        CONF_SHORTEN_TOOL_CALL_ID: DEFAULT_SHORTEN_TOOL_CALL_ID,
-        CONF_ADVANCED_OPTIONS: DEFAULT_ADVANCED_OPTIONS,
-    }
-)
+DEFAULT_OPTIONS = types.MappingProxyType(agent_config_defaults())
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
@@ -416,17 +379,15 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Add a subentry."""
-        self.options = dict(DEFAULT_OPTIONS)
+        self.options = agent_config_defaults()
         return await self.async_step_init()
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Handle reconfiguration of a subentry."""
-        self.options = dict(self._get_reconfigure_subentry().data)
-        self.options.setdefault(CONF_MEMORY_MODE, get_memory_mode(self.options))
-        self.options.setdefault(
-            CONF_CONTEXT_TRUNCATE_STRATEGY, LEGACY_CONTEXT_TRUNCATE_STRATEGY
+        self.options = normalize_agent_config(
+            dict(self._get_reconfigure_subentry().data), reject_unknown=False
         )
         return await self.async_step_init()
 
@@ -434,9 +395,42 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Manage the options."""
-        # abort if entry is not loaded
+        # Keep native HA flows focused on lifecycle. Detailed behaviour is edited
+        # in the full-width integration panel, which writes this same subentry.
         if self._get_entry().state != ConfigEntryState.LOADED:
             return self.async_abort(reason="entry_not_loaded")
+
+        if user_input is not None:
+            if not self._is_new:
+                return self.async_abort(reason="agent_configuration_managed_in_panel")
+            title = str(user_input.get(CONF_NAME, DEFAULT_CONVERSATION_NAME)).strip()
+            initial = dict(self.options)
+            initial[CONF_SKILLS] = [
+                skill["name"] for skill in await self._async_get_skills()
+            ]
+            return self.async_create_entry(
+                title=title or DEFAULT_CONVERSATION_NAME,
+                data=normalize_agent_config(initial),
+            )
+
+        if self._is_new:
+            return self.async_show_form(
+                step_id="init",
+                data_schema=vol.Schema(
+                    {vol.Required(CONF_NAME, default=DEFAULT_CONVERSATION_NAME): str}
+                ),
+            )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        "management_panel",
+                        default="Open Extended OpenAI in the sidebar to configure this agent.",
+                    ): TextSelector(TextSelectorConfig(read_only=True))
+                }
+            ),
+        )
 
         # Load available skills
         if self._available_skills is None:
@@ -603,11 +597,7 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
     @staticmethod
     def _normalized_options(options: dict[str, Any]) -> dict[str, Any]:
         """Store the mode abstraction while retaining legacy compatibility fields."""
-        mode = get_memory_mode(options)
-        options[CONF_MEMORY_MODE] = mode
-        options[CONF_MEMORY_ENABLED] = mode != "off"
-        options[CONF_MEMORY_AUTO_CREATE] = mode == "automatic"
-        return options
+        return normalize_agent_config(options, reject_unknown=False)
 
     def openai_config_option_schema(
         self, options: dict[str, Any], skills: list[dict[str, Any]] | None = None
