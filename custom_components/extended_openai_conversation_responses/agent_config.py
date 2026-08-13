@@ -209,7 +209,10 @@ def agent_config_options() -> dict[str, list[dict[str, Any]]]:
         ],
         CONF_CONVERSATION_TIMEOUT_MINUTES: [
             _choice(
-                value, f"{value // 60} hours" if value >= 60 else f"{value} minutes"
+                value,
+                (f"{value // 60} hour" if value == 60 else f"{value // 60} hours")
+                if value >= 60
+                else f"{value} minutes",
             )
             for value in CONVERSATION_TIMEOUT_OPTIONS
         ],
