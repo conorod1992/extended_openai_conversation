@@ -22,6 +22,23 @@ export const HELP_METADATA = Object.freeze({
     keywords: "follow-up follow up keep listening immediate turn home assistant default conditional",
     href: `${DOCS_ROOT}/features/voice-followups.md`,
   }),
+  conversation_continuity: Object.freeze({
+    title: "Conversation continuity",
+    paragraphs: ["This is separate from Continue conversation, which controls immediate follow-up listening. Continuity lets a new wake-word or Assist request reuse recent model context. It does not perform speaker recognition."],
+    items: [
+      { term: "Home Assistant default", text: "Uses Home Assistant's normal conversation sessions." },
+      { term: "Per device", text: "Requests from the same Assist device can resume a recent conversation until the timeout expires." },
+      { term: "Per user", text: "Requests resolved to the same user can resume across devices. Unresolved speech safely falls back to its device or a new session; shared household scope is never treated as a personal user." },
+    ],
+    keywords: "conversation continuity resume separate Assist invocation cross-device satellite user device speaker recognition",
+    href: `${DOCS_ROOT}/features/conversation-continuity.md`,
+  }),
+  conversation_timeout: Object.freeze({
+    title: "Conversation timeout",
+    paragraphs: ["This inactivity timeout applies only to active model context. Every successful turn resets it. It is separate from archive retention and archive session timeout."],
+    keywords: "inactivity timeout fresh conversation reset context archive separate",
+    href: `${DOCS_ROOT}/features/conversation-continuity.md`,
+  }),
   web_search_context: Object.freeze({
     title: "Search context",
     paragraphs: ["Low, Medium, and High ask the provider for progressively more search context. More context can improve coverage, but may increase the amount of material sent back with a search."],
@@ -49,6 +66,18 @@ export const HELP_METADATA = Object.freeze({
     ],
     keywords: "persistent remembered durable facts across conversations manual automatic safety history archive",
     href: `${DOCS_ROOT}/features/persistent-memory.md`,
+  }),
+  temporary_memory: Object.freeze({
+    title: "Temporary memory",
+    paragraphs: ["Temporary memory is automatic, silent, scoped with Conversation continuity, and separate from durable persistent memory. The assistant infers practical expiry times in Home Assistant's local timezone."],
+    items: [
+      { term: "Off", text: "No temporary facts are automatically created or injected." },
+      { term: "Balanced", text: "Remembers clearly useful temporary context and infers reasonable expiry times." },
+      { term: "Eager", text: "More readily preserves plausible near-term context while still avoiding trivial conversational details." },
+    ],
+    example: "My parents are visiting this weekend → remembered until the end of Sunday without asking for an exact departure time.",
+    keywords: "temporary ephemeral short-term memory automatic silent expiry balanced eager today weekend",
+    href: `${DOCS_ROOT}/features/temporary-memory.md`,
   }),
   archive_model_search: Object.freeze({
     title: "Model archive search",

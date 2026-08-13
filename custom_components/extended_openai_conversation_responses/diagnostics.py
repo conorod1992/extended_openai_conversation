@@ -9,19 +9,25 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     CONF_ARCHIVE_ENABLED,
+    CONF_CONVERSATION_CONTINUITY,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_MEMORY_ENABLED,
+    CONF_TEMPORARY_MEMORY,
     DEFAULT_ARCHIVE_ENABLED,
+    DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_KNOWLEDGE_ENABLED,
     DEFAULT_MEMORY_AUTO_CREATE,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_MEMORY_ENABLED,
+    DEFAULT_TEMPORARY_MEMORY,
 )
+from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
 from .knowledge import async_get_knowledge
 from .memory import async_get_memory, get_memory_mode
+from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
 
 
@@ -52,7 +58,23 @@ async def async_get_config_entry_diagnostics(
             "archive_enabled": subentry.data.get(
                 CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED
             ),
+            "continuity_mode": subentry.data.get(
+                CONF_CONVERSATION_CONTINUITY, DEFAULT_CONVERSATION_CONTINUITY
+            ),
+            "temporary_memory_mode": subentry.data.get(
+                CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY
+            ),
         }
+        diagnostics.update(
+            async_get_continuity(hass, entry.entry_id, subentry.subentry_id).stats()
+        )
+        try:
+            temporary = await async_get_temporary_memory(
+                hass, entry.entry_id, subentry.subentry_id
+            )
+            diagnostics.update(temporary.stats())
+        except Exception as err:
+            diagnostics["temporary_memory_storage_error"] = type(err).__name__
         try:
             memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
             diagnostics.update(memory.stats())

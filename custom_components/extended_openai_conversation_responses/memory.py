@@ -519,6 +519,11 @@ def memory_as_dict(
     return result
 
 
+def validate_memory_privacy(content: str, *, automatic: bool) -> None:
+    """Apply the durable-memory secret and sensitivity safeguards to other stores."""
+    _validate_privacy(content, "implicit" if automatic else "explicit")
+
+
 def memory_tools() -> list[dict[str, Any]]:
     """Return internal function definitions for persistent memory."""
     return [

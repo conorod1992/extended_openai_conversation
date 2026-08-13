@@ -16,6 +16,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._result = null;
     this._busy = false;
     this._query = "";
+    this._memoryKind = "persistent";
     this._showEmptyScopes = false;
     this._confirmResolver = null;
     this._configDirty = false;
@@ -159,13 +160,14 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
         ]);
         this._result = { summary, days, runs, retention };
       } else if (this._section === "conversations") {
-        const [sessions, settings] = await Promise.all([
+        const [sessions, settings, active] = await Promise.all([
           this._call("conversations", "list", { scope_id: this._scopeId, limit: 50 }),
           this._call("conversations", "settings", { scope_id: this._scopeId }),
+          this._data?.is_admin ? this._call("conversations", "active") : Promise.resolve({active: []}),
         ]);
-        this._result = { sessions, settings };
+        this._result = { sessions, settings, active };
       } else if (this._section === "memories") {
-        this._result = await this._call("memories", "list", { scope_id: this._scopeId, limit: 100 });
+        this._result = await this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: this._scopeId, limit: 100 });
       } else if (this._section === "knowledge") {
         this._result = await this._call("knowledge", "list");
       } else if (["configuration", "tools"].includes(this._section)) {
@@ -297,14 +299,16 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   _conversations() {
     const result = this._result || {};
     const settings = result.settings || {};
-    return `<section class="notice ${settings.archive_enabled ? "on" : ""}"><div><strong>Archive ${settings.archive_enabled ? "enabled" : "disabled"}</strong><p>${settings.archive_retention_days || 30}-day retention · Model search ${settings.archive_model_search_enabled ? "on" : "off"}</p></div></section>
+    const active = result.active?.active || [];
+    return `${this._data?.is_admin && active.length ? `<section class="content-card"><div class="section-heading"><div><h2>Active conversations</h2><p>Recent model context eligible to resume.</p></div></div><div class="list">${active.map((item) => `<article class="list-card"><div class="card-main"><h3>${this._e(item.label)}</h3><p class="meta">Last active ${this._e(this._formatDate(item.last_active))} · Expires ${this._e(this._formatDate(item.expires_at))}</p></div><div class="actions"><button type="button" class="danger end-active" data-key="${this._e(item.key)}">End conversation</button></div></article>`).join("")}</div></section>` : ""}<section class="notice ${settings.archive_enabled ? "on" : ""}"><div><strong>Archive ${settings.archive_enabled ? "enabled" : "disabled"}</strong><p>${settings.archive_retention_days || 30}-day retention · Model search ${settings.archive_model_search_enabled ? "on" : "off"}</p></div></section>
       <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-id="${this._e(item.session_id)}"><h3>${this._e(item.title || "Untitled conversation")}</h3><p class="meta">${this._e(this._formatDate(item.last_message_at))} · ${this._e(String(item.turn_count))} turns · ${this._e(item.scope_source)}</p></div><div class="actions"><button type="button" class="secondary view-session" data-id="${this._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${this._e(item.session_id)}">Delete</button></div></article>`).join("") || this._empty("No retained conversations in this scope.")}</div></section>
       ${this._data?.is_admin ? `<p class="help">Archive behaviour and retention are configured in the unified Configuration section.</p>` : ""}`;
   }
 
   _memories() {
     const items = this._filtered(this._result?.memories || [], (item) => `${item.content} ${item.category} ${item.source}`);
-    return `<section class="content-card"><div class="section-heading"><div><h2>Memories</h2><p>Lightweight facts available to this conversation agent.</p></div><button type="button" id="add-memory">+ Add memory</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map((memory) => `<article class="list-card"><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${this._e(memory.memory_id)}"><p class="primary-copy">${this._e(memory.content)}</p><p class="meta">${this._e(memory.category)} · ${this._e(memory.source)} · Updated ${this._e(this._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${this._e(memory.memory_id)}">Edit</button>${this._data?.is_admin && this._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${this._e(memory.memory_id)}">Reassign</button>` : ""}<button type="button" class="danger delete-memory" data-id="${this._e(memory.memory_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No memories match this filter." : "No memories in this scope.")}</div>${this._data?.is_admin && this._scopeId === "__anonymous__" ? `<p class="help">Legacy anonymous memories remain unassigned until an administrator explicitly reassigns or deletes them.</p>` : ""}</section>`;
+    const temporary = this._memoryKind === "temporary";
+    return `<section class="content-card"><div class="section-heading"><div><h2>Memories</h2><p>${temporary ? "Short-lived context that disappears automatically." : "Durable facts available to this conversation agent."}</p></div>${temporary ? "" : `<button type="button" id="add-memory">+ Add memory</button>`}</div><div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent" ${temporary ? "" : "disabled"}>Persistent</button><button type="button" class="secondary memory-kind" data-kind="temporary" ${temporary ? "disabled" : ""}>Temporary</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map((memory) => temporary ? `<article class="list-card"><div class="card-main"><p class="primary-copy">${this._e(memory.content)}</p><p class="meta">${this._e(memory.category)} · ${this._e(memory.scope_id || "Current user")} · Expires ${this._e(this._formatDate(memory.expires_at))}</p></div><div class="actions"><button type="button" class="danger delete-temporary" data-id="${this._e(memory.memory_id)}" data-scope="${this._e(memory.scope_id || this._scopeId)}">Delete</button></div></article>` : `<article class="list-card"><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${this._e(memory.memory_id)}"><p class="primary-copy">${this._e(memory.content)}</p><p class="meta">${this._e(memory.category)} · ${this._e(memory.source)} · Updated ${this._e(this._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${this._e(memory.memory_id)}">Edit</button>${this._data?.is_admin && this._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${this._e(memory.memory_id)}">Reassign</button>` : ""}<button type="button" class="danger delete-memory" data-id="${this._e(memory.memory_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No memories match this filter." : `No ${temporary ? "temporary" : "persistent"} memories.`)}</div></section>`;
   }
 
   _knowledge() {
@@ -337,6 +341,9 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     root.querySelectorAll(".open-session, .view-session").forEach((element) => this._activate(element, () => this._openSession(element.dataset.id)));
     root.querySelectorAll(".delete-source").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSource(button.dataset.id); }));
     root.querySelectorAll(".delete-memory").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteMemory(button.dataset.id); }));
+    root.querySelectorAll(".delete-temporary").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteTemporaryMemory(button.dataset.id, button.dataset.scope); }));
+    root.querySelectorAll(".memory-kind").forEach((button) => button.addEventListener("click", async () => { this._memoryKind = button.dataset.kind; this._query = ""; await this._loadSection(); }));
+    root.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => { if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return; await this._call("conversations", "end_active", { continuity_key: button.dataset.key }); await this._loadSection(); }));
     root.querySelectorAll(".delete-session").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSession(button.dataset.id); }));
     root.querySelectorAll(".reassign-memory").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._openReassign(button.dataset.id); }));
     root.querySelectorAll(".close-editor").forEach((button) => button.addEventListener("click", () => this._requestEditorClose()));
@@ -508,6 +515,15 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
       await this._refreshAfterMutation();
       this._toast("Memory deleted");
     } catch (err) { this._toast(`Unable to delete memory: ${err.message || String(err)}`, true); }
+  }
+
+  async _deleteTemporaryMemory(memoryId, scopeId) {
+    if (!memoryId || !await this._confirm("Delete temporary memory?", "This short-lived fact will no longer be included in later requests.", "Delete")) return;
+    try {
+      await this._call("memories", "temporary_delete", { scope_id: this._scopeId, temporary_scope_id: scopeId, memory_id: memoryId });
+      await this._refreshAfterMutation();
+      this._toast("Temporary memory deleted");
+    } catch (err) { this._toast(`Unable to delete temporary memory: ${err.message || String(err)}`, true); }
   }
 
   async _openSession(sessionId) {
