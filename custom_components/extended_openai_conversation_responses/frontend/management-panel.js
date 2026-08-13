@@ -308,7 +308,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   _memories() {
     const items = this._filtered(this._result?.memories || [], (item) => `${item.content} ${item.category} ${item.source}`);
     const temporary = this._memoryKind === "temporary";
-    return `<section class="content-card"><div class="section-heading"><div><h2>Memories</h2><p>${temporary ? "Short-lived context that disappears automatically." : "Durable facts available to this conversation agent."}</p></div>${temporary ? "" : `<button type="button" id="add-memory">+ Add memory</button>`}</div><div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent" ${temporary ? "" : "disabled"}>Persistent</button><button type="button" class="secondary memory-kind" data-kind="temporary" ${temporary ? "disabled" : ""}>Temporary</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map((memory) => temporary ? `<article class="list-card"><div class="card-main"><p class="primary-copy">${this._e(memory.content)}</p><p class="meta">${this._e(memory.category)} · ${this._e(memory.scope_id || "Current user")} · Expires ${this._e(this._formatDate(memory.expires_at))}</p></div><div class="actions"><button type="button" class="danger delete-temporary" data-id="${this._e(memory.memory_id)}" data-scope="${this._e(memory.scope_id || this._scopeId)}">Delete</button></div></article>` : `<article class="list-card"><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${this._e(memory.memory_id)}"><p class="primary-copy">${this._e(memory.content)}</p><p class="meta">${this._e(memory.category)} · ${this._e(memory.source)} · Updated ${this._e(this._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${this._e(memory.memory_id)}">Edit</button>${this._data?.is_admin && this._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${this._e(memory.memory_id)}">Reassign</button>` : ""}<button type="button" class="danger delete-memory" data-id="${this._e(memory.memory_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No memories match this filter." : `No ${temporary ? "temporary" : "persistent"} memories.`)}</div></section>`;
+    return `<section class="content-card"><div class="section-heading"><div><h2>Memories</h2><p>${temporary ? "Short-lived context that disappears automatically." : "Durable facts available to this conversation agent."}</p></div>${temporary ? "" : `<button type="button" id="add-memory">+ Add memory</button>`}</div><div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent" ${temporary ? "" : "disabled"}>Persistent</button><button type="button" class="secondary memory-kind" data-kind="temporary" ${temporary ? "disabled" : ""}>Temporary</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map((memory) => temporary ? `<article class="list-card"><div class="card-main"><p class="primary-copy">${this._e(memory.content)}</p><p class="meta">${this._e(memory.category)} · ${this._e(this._temporaryOwner(memory.scope_id))} · Expires ${this._e(this._formatDate(memory.expires_at))}</p></div><div class="actions"><button type="button" class="danger delete-temporary" data-id="${this._e(memory.memory_id)}" data-scope="${this._e(memory.scope_id || this._scopeId)}">Delete</button></div></article>` : `<article class="list-card"><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${this._e(memory.memory_id)}"><p class="primary-copy">${this._e(memory.content)}</p><p class="meta">${this._e(memory.category)} · ${this._e(memory.source)} · Updated ${this._e(this._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${this._e(memory.memory_id)}">Edit</button>${this._data?.is_admin && this._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${this._e(memory.memory_id)}">Reassign</button>` : ""}<button type="button" class="danger delete-memory" data-id="${this._e(memory.memory_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No memories match this filter." : `No ${temporary ? "temporary" : "persistent"} memories.`)}</div></section>`;
   }
 
   _knowledge() {
@@ -667,7 +667,21 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   _empty(message) { return `<div class="empty">${this._e(message)}</div>`; }
   _label(value) { return value[0].toUpperCase() + value.slice(1); }
   _titleCase(value) { return String(value || "").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
-  _formatDate(value) { if (!value) return "Unknown date"; const date = new Date(value); return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString(); }
+  _temporaryOwner(scopeId) {
+    const known = (this._data?.scopes || []).find((scope) => scope.scope_id === scopeId);
+    if (known) return known.display_name;
+    if (String(scopeId || "").startsWith("device:")) return "Assist device";
+    if (String(scopeId || "").startsWith("conversation:")) return "Current Assist conversation";
+    return "Current user";
+  }
+
+  _formatDate(value) {
+    if (!value) return "Unknown date";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    try { return date.toLocaleString(undefined, { timeZone: this._hass?.config?.time_zone }); }
+    catch (_) { return date.toLocaleString(); }
+  }
   _e(value) { return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]); }
 
   _styles() { return `
