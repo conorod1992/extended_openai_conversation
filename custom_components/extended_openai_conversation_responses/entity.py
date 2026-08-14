@@ -497,6 +497,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         observed_input_tokens = 0
         function_call_rounds = 0
         loader_rounds = 0
+        integration_loader_seen = False
         force_finalizer_only = False
 
         for n_requests in range(MAX_TOOL_ITERATIONS):
@@ -505,11 +506,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if function_tools_factory is not None
                 else function_tools
             )
+            integration_loader_seen = integration_loader_seen or any(
+                tool.get("function", {}).get("type") == "function_group_loader"
+                for tool in request_function_tools
+            )
             if loader_rounds >= MAX_FUNCTION_GROUP_LOAD_ROUNDS:
                 request_function_tools = [
                     tool
                     for tool in request_function_tools
-                    if tool["spec"]["name"] != FUNCTION_GROUP_LOADER_TOOL_NAME
+                    if tool.get("function", {}).get("type") != "function_group_loader"
                 ]
             if conditional_continue and any(
                 tool["spec"]["name"] == CONTINUE_CONVERSATION_TOOL_NAME
@@ -658,12 +663,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             loader_calls = [
                 tool_input
                 for tool_input in pending_tool_calls
-                if tool_input.tool_name == FUNCTION_GROUP_LOADER_TOOL_NAME
+                if integration_loader_seen
+                and tool_input.tool_name == FUNCTION_GROUP_LOADER_TOOL_NAME
             ]
             pending_tool_calls = [
                 tool_input
                 for tool_input in pending_tool_calls
-                if tool_input.tool_name != FUNCTION_GROUP_LOADER_TOOL_NAME
+                if not (
+                    integration_loader_seen
+                    and tool_input.tool_name == FUNCTION_GROUP_LOADER_TOOL_NAME
+                )
             ]
 
             if loader_calls:

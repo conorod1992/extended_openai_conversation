@@ -71,6 +71,10 @@ class FunctionGroupRuntime:
             ),
         }
 
+    def end(self, session_key: str) -> bool:
+        """Discard loaded groups when one logical conversation ends."""
+        return self._sessions.pop(session_key, None) is not None
+
     def stats(self) -> dict[str, Any]:
         """Return non-sensitive runtime diagnostics."""
         return {

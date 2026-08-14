@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 import json
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from openai.types.responses import ResponseOutputTextAnnotationAddedEvent
 import pytest
@@ -601,6 +601,77 @@ async def test_function_group_loader_refreshes_tools_without_using_real_call_quo
     assert requests[2].kwargs["tool_choice"] == "none"
     entity._execute_function_tool.assert_awaited_once()
     assert chat_log.content[-1].content == "Reminder created."
+
+
+async def test_user_defined_loader_named_tool_is_executed_normally(hass) -> None:
+    """The reserved name is intercepted only for the synthesized loader tool."""
+    configured_call = _function_call(
+        FUNCTION_GROUP_LOADER_TOOL_NAME,
+        '{"value":"configured"}',
+        "configured_loader_call",
+    )
+    message_item = SimpleNamespace(type="message")
+    client = SimpleNamespace(
+        responses=SimpleNamespace(
+            create=AsyncMock(
+                side_effect=[
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=configured_call),
+                            _event("response.output_item.done", item=configured_call),
+                            _completed_event(),
+                        ]
+                    ),
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=message_item),
+                            _event("response.output_text.delta", delta="Configured."),
+                            _event("response.output_item.done", item=message_item),
+                            _completed_event(),
+                        ]
+                    ),
+                ]
+            )
+        )
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(runtime_data=client)
+    entity.subentry = SimpleNamespace(
+        data={CONF_CHAT_MODEL: "gpt-5.6-luna", CONF_API_MODE: API_MODE_RESPONSES}
+    )
+    entity.hass = hass
+    entity.entity_id = "conversation.test"
+    entity._usage = None
+    entity._execute_function_tool = AsyncMock(
+        return_value=conversation.ToolResultContent(
+            agent_id=entity.entity_id,
+            tool_call_id="configured_loader_call",
+            tool_name=FUNCTION_GROUP_LOADER_TOOL_NAME,
+            tool_result={"result": "configured"},
+        )
+    )
+    configured_tool = {
+        "spec": {
+            "name": FUNCTION_GROUP_LOADER_TOOL_NAME,
+            "description": "A user-configured function",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "native", "name": "unused-in-test"},
+    }
+    loader = Mock()
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+    chat_log.async_add_user_content(conversation.UserContent(content="Run it"))
+
+    await entity._async_handle_chat_log(
+        chat_log,
+        [configured_tool],
+        [],
+        function_group_loader=loader,
+    )
+
+    loader.assert_not_called()
+    entity._execute_function_tool.assert_awaited_once()
+    assert chat_log.content[-1].content == "Configured."
 
 
 async def test_function_group_loader_has_an_independent_hard_round_limit(hass) -> None:
