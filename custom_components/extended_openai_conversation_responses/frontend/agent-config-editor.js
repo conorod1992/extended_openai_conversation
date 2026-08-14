@@ -9,6 +9,24 @@ const field = (panel, key, label, value, type = "text", description = "", disabl
 const select = (panel, key, label, value, options, description = "", disabled = false, helpKey = null) => `<div class="setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey)}<select id="config-${key}" data-config="${key}" ${disabled ? "disabled" : ""}>${options.map((item) => option(panel, typeof item === "string" ? item : item.value, value, typeof item === "string" ? null : item.label)).join("")}</select>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span></div>`;
 const toggle = (panel, key, label, value, description = "", disabled = false, helpKey = null) => `<div class="config-toggle setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}"><span class="setting-copy">${labelRow(panel, label, key, helpKey, true)}${description ? `<small>${description}</small>` : ""}</span><label class="switch-control" for="config-${key}"><input id="config-${key}" data-config="${key}" data-type="boolean" type="checkbox" role="switch" ${bool(value)} ${disabled ? "disabled" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>`;
 
+export const functionGroupIdFromName = (name) => String(name || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").replace(/^[^a-z]+/, "").slice(0, 64);
+
+export function deleteFunctionGroup(config, groupId) {
+  const result = clone(config);
+  result.function_groups = (result.function_groups || []).filter((group) => group.id !== groupId);
+  return result;
+}
+
+export function categorizeFunctionTools(config) {
+  const tools = config.functions || [];
+  const groups = config.function_groups || [];
+  const assigned = new Set(groups.flatMap((group) => group.functions || []));
+  return {
+    alwaysAvailable: tools.filter((tool) => !assigned.has(tool.spec?.name)),
+    groups: groups.map((group) => ({...group, tools: tools.filter((tool) => (group.functions || []).includes(tool.spec?.name))})),
+  };
+}
+
 function section(panel, id, title, description, keywords, body) {
   return `<section id="config-${id}" class="config-section" data-config-section data-search="${panel._e(`${title} ${description} ${keywords}`.toLowerCase())}"><div class="config-section-heading"><p class="eyebrow">${title}</p><p>${description}</p></div>${body}</section>`;
 }
@@ -189,15 +207,29 @@ export function bindConfiguration(panel) {
   root.querySelector("#duplicate-agent")?.addEventListener("click", async () => { if(panel._configDirty)return; try { const result=await panel._call("configuration","duplicate"); await panel._loadAgents(result.subentry_id); panel._toast(`Created ${result.title}`); } catch(err){panel._toast(`Unable to duplicate agent: ${err.message||String(err)}`,true);} });
   root.querySelector("#export-agent")?.addEventListener("click", async () => { if(panel._configDirty)return; if(!await panel._confirm("Export saved agent configuration?","Export applies best-effort secret redaction, but Function Tool definitions may contain embedded credentials. Review the downloaded file before sharing it.","Export"))return; const result=await panel._call("configuration","export"); const blob=new Blob([result.json],{type:"application/json"}); const url=URL.createObjectURL(blob); const link=document.createElement("a"); link.href=url; link.download=`${(panel._draftTitle||"agent").replace(/[^a-z0-9]+/gi,"-").toLowerCase()}.json`; link.click(); URL.revokeObjectURL(url); });
   root.querySelector("#import-agent")?.addEventListener("click", () => root.querySelector("#import-dialog")?.showModal());
-  root.querySelector("#import-preview")?.addEventListener("click", async () => { try { const result=await panel._call("configuration","import_preview",{document:root.querySelector("#import-document").value}); panel._importDocument=root.querySelector("#import-document").value; root.querySelector("#import-summary").textContent=`${result.title} / ${result.summary.model} / ${result.summary.tools} tools / ${result.summary.speech_rules} speech rules`; root.querySelector("#import-apply").disabled=false; } catch(err){root.querySelector("#import-summary").textContent=err.message||String(err);root.querySelector("#import-apply").disabled=true;} });
+  root.querySelector("#import-preview")?.addEventListener("click", async () => { try { const result=await panel._call("configuration","import_preview",{document:root.querySelector("#import-document").value}); panel._importDocument=root.querySelector("#import-document").value; root.querySelector("#import-summary").textContent=`${result.title} / ${result.summary.model} / ${result.summary.tools} tools / ${result.summary.function_groups} function groups / ${result.summary.speech_rules} speech rules`; root.querySelector("#import-apply").disabled=false; } catch(err){root.querySelector("#import-summary").textContent=err.message||String(err);root.querySelector("#import-apply").disabled=true;} });
   root.querySelector("#import-apply")?.addEventListener("click", async () => { const mode=root.querySelector('input[name="import-mode"]:checked').value; if(mode==="current"&&!await panel._confirm("Overwrite this agent?",`The saved configuration will be replaced.${panel._configDirty ? " Your unsaved shared draft will be discarded." : ""} Retained history and parent-entry credentials are not affected.`,"Overwrite"))return; try { await panel._call("configuration","import",{document:panel._importDocument,mode,confirm:mode==="current"}); root.querySelector("#import-dialog").close(); if(mode==="current")panel._clearConfigDraft(); await panel._loadAgents(panel._agentId); panel._toast(mode==="current"?"Configuration imported":"Agent created from import; your current draft is preserved"); } catch(err){panel._toast(`Unable to import: ${err.message||String(err)}`,true);} });
   root.querySelector("#import-cancel")?.addEventListener("click",()=>root.querySelector("#import-dialog").close());
   if (panel._configRestoreFocus) { const selector=panel._configRestoreFocus; panel._configRestoreFocus=null; requestAnimationFrame(()=>root.querySelector(selector)?.focus({preventScroll:true})); }
 }
 
+function functionToolCard(panel, tool, allTools) {
+  const index = allTools.indexOf(tool);
+  return `<article class="list-card tool-card" data-tool-index="${index}" data-tool-search="${panel._e(`${tool.spec?.name || ""} ${tool.spec?.description || ""} ${tool.function?.type || ""}`.toLowerCase())}"><div class="card-main"><div class="tool-title"><h4>${panel._e(tool.spec?.name||"Unnamed tool")}</h4><span class="type-badge">${panel._e(tool.function?.type||"Unknown type")}</span></div><p class="description">${panel._e(tool.spec?.description||"No description")}</p></div><div class="actions"><button type="button" class="secondary edit-tool" data-index="${index}">Edit</button><button type="button" class="secondary duplicate-tool" data-index="${index}">Duplicate</button><button type="button" class="danger delete-tool" data-index="${index}">Delete</button></div></article>`;
+}
+
+function functionGroupCard(panel, group, tools) {
+  const mode = group.loading_mode === "on_demand" ? "Load when needed" : "Always available";
+  const members = group.tools.map((tool) => functionToolCard(panel,tool,tools)).join("");
+  return `<article class="function-group-card" data-group-id="${panel._e(group.id)}" data-group-search="${panel._e(`${group.name} ${group.description} ${group.id}`.toLowerCase())}"><div class="function-group-heading"><div><div class="tool-title"><h3>${panel._e(group.name)}</h3><span class="availability-badge ${group.loading_mode === "on_demand" ? "on-demand" : ""}">${mode}</span><span class="function-count">${group.tools.length} ${group.tools.length===1?"function":"functions"}</span></div><p>${panel._e(group.description)}</p><code>${panel._e(group.id)}</code></div><div class="actions"><button type="button" class="secondary edit-group" data-group-id="${panel._e(group.id)}">Edit group</button><button type="button" class="danger delete-group" data-group-id="${panel._e(group.id)}">Delete group</button></div></div><details><summary>Show member functions</summary><div class="list tool-list">${members || panel._empty("This group has no functions yet. Edit it to choose functions.")}</div></details></article>`;
+}
+
 export function renderTools(panel) {
-  const tools = panel._draft?.functions || panel._result?.config?.functions || [];
-  return `<section class="content-card tools-surface"><div class="section-heading"><div><span class="setting-label-row"><h2>Function Tools</h2>${helpButton(panel,"function_tools")}</span><p>Browse configured tools and edit each complete definition as backend-validated YAML.</p></div><button type="button" id="add-tool">+ Add Function Tool</button></div><div class="list tool-list">${tools.map((tool,index)=>`<article class="list-card tool-card" data-tool-index="${index}"><div class="card-main"><div class="tool-title"><h3>${panel._e(tool.spec?.name||"Unnamed tool")}</h3><span class="type-badge">${panel._e(tool.function?.type||"Unknown type")}</span></div><p class="description">${panel._e(tool.spec?.description||"No description")}</p></div><div class="actions"><button type="button" class="secondary edit-tool" data-index="${index}">Edit</button><button type="button" class="secondary duplicate-tool" data-index="${index}">Duplicate</button><button type="button" class="danger delete-tool" data-index="${index}">Delete</button></div></article>`).join("")||panel._empty("No function tools configured.")}</div><div class="section-actions tools-actions"><button type="button" class="secondary" id="validate-tools">Validate all</button><button type="button" id="save-tools" ${panel._configDirty?"":"disabled"}>Save tools</button><span id="tool-status" class="validation" aria-live="polite"></span></div></section>`;
+  const config = panel._draft || panel._result?.config || {};
+  const tools = config.functions || [];
+  const categories = categorizeFunctionTools(config);
+  const ungrouped = categories.alwaysAvailable.map((tool)=>functionToolCard(panel,tool,tools)).join("");
+  return `<section class="content-card tools-surface"><div class="section-heading"><div><span class="setting-label-row"><h2>Function groups</h2>${helpButton(panel,"function_tools")}</span><p>Group related tools so the model can load their full definitions only when needed. This can significantly reduce input-token usage when you have many functions.</p></div><div class="actions"><button type="button" class="secondary" id="add-group">+ Create group</button><button type="button" id="add-tool">+ Add Function Tool</button></div></div><div class="notice function-groups-help"><strong>How on-demand groups work</strong><p>Normal requests send only the short group name and description. The model loads relevant detailed definitions for the rest of the active conversation. The first use may add one model round-trip.</p></div><label class="tool-search"><span class="sr-only">Search functions and groups</span><input id="tool-search" type="search" placeholder="Search functions and groups..." aria-label="Search functions and groups"></label><div class="function-groups"><article class="function-group-card always-card" data-group-search="always available ungrouped general"><div class="function-group-heading"><div><div class="tool-title"><h3>Always available</h3><span class="availability-badge">Always available</span><span class="function-count">${categories.alwaysAvailable.length} ${categories.alwaysAvailable.length===1?"function":"functions"}</span></div><p>Ungrouped functions keep the existing behaviour and their full definitions are sent on every request.</p></div></div><details open><summary>Show member functions</summary><div class="list tool-list">${ungrouped || panel._empty("No ungrouped functions.")}</div></details></article>${categories.groups.map((group)=>functionGroupCard(panel,group,tools)).join("")||panel._empty("No groups yet. Existing functions remain always available until you create one.")}</div><div class="section-actions tools-actions"><button type="button" class="secondary" id="validate-tools">Validate all</button><button type="button" id="save-tools" ${panel._configDirty?"":"disabled"}>Save tools and groups</button><span id="tool-status" class="validation" aria-live="polite"></span></div></section>`;
 }
 
 async function openTool(panel,index=null) {
@@ -237,23 +269,79 @@ async function validateDialogTool(panel) {
   } catch(err){status.className="validation invalid";status.textContent=err.message||String(err);return null;}
 }
 
+function renderGroupFunctionChoices(panel, selected = []) {
+  const root=panel.shadowRoot;
+  const selectedNames=new Set(selected);
+  const tools=panel._draft.functions || [];
+  const list=root.querySelector("#group-functions");
+  list.innerHTML=tools.map((tool)=>{const name=tool.spec?.name||"";return `<label class="group-function-choice" data-choice-search="${panel._e(`${name} ${tool.spec?.description||""}`.toLowerCase())}"><input type="checkbox" value="${panel._e(name)}" ${selectedNames.has(name)?"checked":""}><span><strong>${panel._e(name)}</strong><small>${panel._e(tool.spec?.description||"No description")}</small></span></label>`;}).join("") || panel._empty("Add function tools before assigning them to a group.");
+}
+
+function openFunctionGroup(panel, groupId = null) {
+  const root=panel.shadowRoot;
+  const group=(panel._draft.function_groups||[]).find((item)=>item.id===groupId);
+  panel._groupOriginalId=group?.id||null;
+  panel._groupIdEdited=Boolean(group);
+  root.querySelector("#group-dialog-title").textContent=group?"Edit function group":"Create function group";
+  root.querySelector("#group-name").value=group?.name||"";
+  root.querySelector("#group-id").value=group?.id||"";
+  root.querySelector("#group-description").value=group?.description||"";
+  root.querySelector("#group-loading-mode").value=group?.loading_mode||"on_demand";
+  root.querySelector("#group-function-search").value="";
+  root.querySelector("#group-error").textContent="";
+  renderGroupFunctionChoices(panel,group?.functions||[]);
+  root.querySelector("#group-dialog").showModal();
+  root.querySelector("#group-name").focus();
+}
+
+function saveFunctionGroup(panel) {
+  const root=panel.shadowRoot;
+  const name=root.querySelector("#group-name").value.trim();
+  const id=root.querySelector("#group-id").value.trim();
+  const description=root.querySelector("#group-description").value.trim();
+  const loading_mode=root.querySelector("#group-loading-mode").value;
+  const functions=[...root.querySelectorAll("#group-functions input:checked")].map((input)=>input.value);
+  const error=root.querySelector("#group-error");
+  if(!name){error.textContent="Group name is required.";return;}
+  if(!/^[a-z][a-z0-9_-]{0,63}$/.test(id)){error.textContent="Group ID must start with a lowercase letter and use only lowercase letters, numbers, underscores, or hyphens.";return;}
+  if(!description){error.textContent="Add a concise description so the model knows when this group is relevant.";return;}
+  const others=(panel._draft.function_groups||[]).filter((group)=>group.id!==panel._groupOriginalId);
+  if(others.some((group)=>group.id===id)){error.textContent="That group ID is already in use.";return;}
+  if(others.some((group)=>String(group.name).toLowerCase()===name.toLowerCase())){error.textContent="That group name is already in use.";return;}
+  const selected=new Set(functions);
+  panel._draft.function_groups=[...others.map((group)=>({...group,functions:(group.functions||[]).filter((functionName)=>!selected.has(functionName))})),{id,name,description,loading_mode,functions}];
+  panel._setConfigDirty(true);
+  root.querySelector("#group-dialog").close();
+  panel._render();
+}
+
 export function bindTools(panel) {
   const root=panel.shadowRoot;
   bindHelp(panel);
   root.querySelector("#add-tool")?.addEventListener("click",()=>openTool(panel));
+  root.querySelector("#add-group")?.addEventListener("click",()=>openFunctionGroup(panel));
+  root.querySelectorAll(".edit-group").forEach((button)=>button.addEventListener("click",()=>openFunctionGroup(panel,button.dataset.groupId)));
+  root.querySelectorAll(".delete-group").forEach((button)=>button.addEventListener("click",async()=>{const group=(panel._draft.function_groups||[]).find((item)=>item.id===button.dataset.groupId);if(!await panel._confirm("Delete function group?",`The group “${group?.name||button.dataset.groupId}” will be removed. Its functions will not be deleted; they will move to Always available.`,"Delete group"))return;panel._draft=deleteFunctionGroup(panel._draft,button.dataset.groupId);panel._setConfigDirty(true);panel._render();}));
+  root.querySelector("#tool-search")?.addEventListener("input",(event)=>{const query=event.target.value.trim().toLowerCase();root.querySelectorAll(".function-group-card").forEach((card)=>{const groupMatch=Boolean(query)&&(card.dataset.groupSearch||"").includes(query);let toolMatch=false;card.querySelectorAll(".tool-card").forEach((tool)=>{const matches=!query||groupMatch||(tool.dataset.toolSearch||"").includes(query);tool.hidden=!matches;toolMatch=toolMatch||matches;});card.hidden=Boolean(query)&&!groupMatch&&!toolMatch;if(query&&toolMatch)card.querySelector("details")?.setAttribute("open","");});});
   root.querySelectorAll(".edit-tool").forEach(button=>button.addEventListener("click",()=>openTool(panel,Number(button.dataset.index))));
   root.querySelectorAll(".duplicate-tool").forEach(button=>button.addEventListener("click",()=>{const tool=clone(panel._draft.functions[Number(button.dataset.index)]);let base=`${tool.spec.name}_copy`,name=base,n=2;const names=new Set(panel._draft.functions.map(item=>item.spec?.name));while(names.has(name))name=`${base}_${n++}`;tool.spec.name=name;panel._draft.functions.push(tool);panel._setConfigDirty(true);panel._render();}));
-  root.querySelectorAll(".delete-tool").forEach(button=>button.addEventListener("click",async()=>{if(!await panel._confirm("Delete function tool?","The tool will be removed from this local draft. Save tools to apply the change.","Delete"))return;panel._draft.functions.splice(Number(button.dataset.index),1);panel._setConfigDirty(true);panel._render();}));
-  root.querySelector("#validate-tools")?.addEventListener("click",async()=>{const status=root.querySelector("#tool-status");try{const result=await panel._call("tools","validate",{tools:panel._draft.functions});status.className=`validation ${result.valid?"valid":"invalid"}`;status.textContent=result.valid?"All tools are valid":toolErrorText(result.errors);}catch(err){status.className="validation invalid";status.textContent=err.message||String(err);}});
-  root.querySelector("#save-tools")?.addEventListener("click",async()=>{try{const draft=clone(panel._draft);const title=panel._draftTitle;const result=await panel._call("configuration","update",{config:{functions:draft.functions}});panel._configData={...panel._configData,...result};panel._result=panel._configData;panel._draft={...draft,functions:clone(result.config.functions)};panel._draftTitle=title;panel._syncConfigDirty();panel._toast("Function tools saved; other draft changes are preserved");panel._render();}catch(err){panel._toast(`Unable to save tools: ${err.message||String(err)}`,true);}});
+  root.querySelectorAll(".delete-tool").forEach(button=>button.addEventListener("click",async()=>{if(!await panel._confirm("Delete function tool?","The tool will be removed from this local draft and from any group assignment. Save tools to apply the change.","Delete"))return;const [removed]=panel._draft.functions.splice(Number(button.dataset.index),1);panel._draft.function_groups=(panel._draft.function_groups||[]).map((group)=>({...group,functions:(group.functions||[]).filter((name)=>name!==removed?.spec?.name)}));panel._setConfigDirty(true);panel._render();}));
+  root.querySelector("#validate-tools")?.addEventListener("click",async()=>{const status=root.querySelector("#tool-status");try{const result=await panel._call("configuration","validate",{config:{functions:panel._draft.functions,function_groups:panel._draft.function_groups||[]}});status.className=`validation ${result.valid?"valid":"invalid"}`;status.textContent=result.valid?"All tools and groups are valid":toolErrorText(result.errors);}catch(err){status.className="validation invalid";status.textContent=err.message||String(err);}});
+  root.querySelector("#save-tools")?.addEventListener("click",async()=>{try{const draft=clone(panel._draft);const title=panel._draftTitle;const result=await panel._call("configuration","update",{config:{functions:draft.functions,function_groups:draft.function_groups||[]}});panel._configData={...panel._configData,...result};panel._result=panel._configData;panel._draft={...draft,functions:clone(result.config.functions),function_groups:clone(result.config.function_groups)};panel._draftTitle=title;panel._syncConfigDirty();panel._toast("Function tools and groups saved; other draft changes are preserved");panel._render();}catch(err){panel._toast(`Unable to save tools: ${err.message||String(err)}`,true);}});
   root.querySelector("#tool-yaml")?.addEventListener("input",()=>{root.querySelector("#tool-error").className="validation";root.querySelector("#tool-error").textContent="YAML changed; validate to refresh metadata.";});
   root.querySelector("#tool-cancel")?.addEventListener("click",()=>root.querySelector("#tool-dialog").close());
   root.querySelector("#tool-dialog")?.addEventListener("cancel",()=>{panel._toolIndex=null;});
   root.querySelector("#tool-validate")?.addEventListener("click",()=>validateDialogTool(panel));
-  root.querySelector("#tool-save")?.addEventListener("click",async()=>{const tool=await validateDialogTool(panel);if(!tool)return;if(panel._toolIndex===null)panel._draft.functions.push(tool);else panel._draft.functions[panel._toolIndex]=tool;panel._setConfigDirty(true);root.querySelector("#tool-dialog").close();panel._render();});
+  root.querySelector("#tool-save")?.addEventListener("click",async()=>{const tool=await validateDialogTool(panel);if(!tool)return;if(panel._toolIndex===null)panel._draft.functions.push(tool);else{const oldName=panel._draft.functions[panel._toolIndex]?.spec?.name;panel._draft.functions[panel._toolIndex]=tool;if(oldName&&oldName!==tool.spec?.name)panel._draft.function_groups=(panel._draft.function_groups||[]).map((group)=>({...group,functions:(group.functions||[]).map((name)=>name===oldName?tool.spec.name:name)}));}panel._setConfigDirty(true);root.querySelector("#tool-dialog").close();panel._render();});
+  root.querySelector("#group-name")?.addEventListener("input",(event)=>{if(!panel._groupIdEdited)root.querySelector("#group-id").value=functionGroupIdFromName(event.target.value);});
+  root.querySelector("#group-id")?.addEventListener("input",()=>{panel._groupIdEdited=true;});
+  root.querySelector("#group-function-search")?.addEventListener("input",(event)=>{const query=event.target.value.trim().toLowerCase();root.querySelectorAll(".group-function-choice").forEach((choice)=>{choice.hidden=Boolean(query)&&!choice.dataset.choiceSearch.includes(query);});});
+  root.querySelector("#group-cancel")?.addEventListener("click",()=>root.querySelector("#group-dialog").close());
+  root.querySelector("#group-save")?.addEventListener("click",()=>saveFunctionGroup(panel));
 }
 
 export function configurationDialogs(panel) {
   return `<dialog id="import-dialog" class="editor-dialog wide" aria-labelledby="import-dialog-title"><div class="dialog-header"><h2 id="import-dialog-title">Import agent configuration</h2></div><div class="dialog-body">${panel._configDirty ? `<div class="notice"><strong>Unsaved shared draft</strong><p>Creating a new agent preserves this draft. Overwriting the current agent discards it after confirmation.</p></div>` : ""}<label>Exported JSON or YAML<textarea id="import-document" class="yaml-editor" spellcheck="false"></textarea></label><div class="mode-row"><label><input type="radio" name="import-mode" value="new" checked> Create a new agent</label><label><input type="radio" name="import-mode" value="current"> Overwrite current agent</label></div><div id="import-summary" class="validation" aria-live="polite">Validate the document to preview it.</div></div><div class="dialog-actions"><button type="button" class="secondary" id="import-cancel">Cancel</button><button type="button" class="secondary" id="import-preview">Validate & preview</button><button type="button" id="import-apply" disabled>Import</button></div></dialog>
-  <dialog id="tool-dialog" class="editor-dialog tool-dialog" aria-labelledby="tool-dialog-title"><div class="dialog-header"><div><span class="setting-label-row"><h2 id="tool-dialog-title">Function Tool</h2>${helpButton(panel,"function_tools")}</span><p id="tool-dialog-meta" class="dialog-meta">YAML</p></div></div><div class="dialog-body tool-dialog-body"><label class="tool-editor-label"><span class="sr-only">Function Tool YAML</span><textarea id="tool-yaml" class="yaml-editor tool-yaml-editor" spellcheck="false" wrap="off" aria-describedby="tool-error"></textarea></label><div id="tool-error" class="validation" role="status" aria-live="polite"></div></div><div class="dialog-actions"><button type="button" class="secondary" id="tool-cancel">Cancel</button><button type="button" class="secondary" id="tool-validate">Validate</button><button type="button" id="tool-save">Keep in draft</button></div></dialog>${helpPopover()}`;
+  <dialog id="tool-dialog" class="editor-dialog tool-dialog" aria-labelledby="tool-dialog-title"><div class="dialog-header"><div><span class="setting-label-row"><h2 id="tool-dialog-title">Function Tool</h2>${helpButton(panel,"function_tools")}</span><p id="tool-dialog-meta" class="dialog-meta">YAML</p></div></div><div class="dialog-body tool-dialog-body"><label class="tool-editor-label"><span class="sr-only">Function Tool YAML</span><textarea id="tool-yaml" class="yaml-editor tool-yaml-editor" spellcheck="false" wrap="off" aria-describedby="tool-error"></textarea></label><div id="tool-error" class="validation" role="status" aria-live="polite"></div></div><div class="dialog-actions"><button type="button" class="secondary" id="tool-cancel">Cancel</button><button type="button" class="secondary" id="tool-validate">Validate</button><button type="button" id="tool-save">Keep in draft</button></div></dialog>
+  <dialog id="group-dialog" class="editor-dialog group-dialog" aria-labelledby="group-dialog-title"><div class="dialog-header"><div><h2 id="group-dialog-title">Function group</h2><p>Create a compact capability the model can load only when needed.</p></div></div><div class="dialog-body group-dialog-body"><div class="form-grid"><label>Group name<input id="group-name" maxlength="100" autocomplete="off" placeholder="Reminders"></label><label>Group ID<input id="group-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="reminders"><small>Stable lowercase ID used by the model. Advanced users may edit it.</small></label></div><label>Description<textarea id="group-description" class="short-textarea" maxlength="500" placeholder="Create and manage scheduled, recurring, and triggered reminders."></textarea><small>Keep this concise; it is included in the compact catalogue sent with normal requests.</small></label><label>Availability<select id="group-loading-mode"><option value="on_demand">Load when needed</option><option value="always">Always available</option></select><small>On-demand groups add one model round-trip the first time they are needed in an active conversation.</small></label><fieldset class="group-functions-fieldset"><legend>Functions</legend><input id="group-function-search" type="search" placeholder="Search functions..." aria-label="Search functions to assign"><small>Selecting a function moves it from any other group. Unselected functions are not deleted.</small><div id="group-functions" class="group-function-choices"></div></fieldset><div id="group-error" class="validation invalid" role="alert"></div></div><div class="dialog-actions"><button type="button" class="secondary" id="group-cancel">Cancel</button><button type="button" id="group-save">Keep in draft</button></div></dialog>${helpPopover()}`;
 }

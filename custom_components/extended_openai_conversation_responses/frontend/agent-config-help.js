@@ -180,9 +180,14 @@ export const HELP_METADATA = Object.freeze({
     keywords: "provider processing billing latency auto default flex priority",
   }),
   function_tools: Object.freeze({
-    title: "Function Tool YAML",
-    paragraphs: ["spec describes the tool to the model: its name, description, and input schema. function tells Extended OpenAI how to execute the tool; available fields depend on function.type. Use Validate to check the definition without executing it."],
-    keywords: "yaml spec name description parameters input schema function type validate execute",
+    title: "Function tools and groups",
+    paragraphs: ["Function groups are optional. Existing ungrouped functions remain always available. An on-demand group sends only its compact name and description until the model decides the current task needs it.", "Loading a group performs no Home Assistant action. It makes the group's existing, backend-validated tool definitions available for the active conversation and may add one model round-trip on first use."],
+    items: [
+      { term: "Always available", text: "Sends full definitions on every request, matching existing behaviour." },
+      { term: "Load when needed", text: "Withholds full definitions until the model requests the group; loaded groups remain available for the active conversation." },
+      { term: "Function YAML", text: "spec describes the model-facing schema and function tells Extended OpenAI how to execute it. Grouping does not change this format or its validation." },
+    ],
+    keywords: "group on demand load when needed tokens catalogue yaml spec schema validate execute",
     href: `${DOCS_ROOT}/functions/overview.mdx`,
   }),
 });

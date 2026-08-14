@@ -65,6 +65,7 @@ from .const import (
 )
 from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
+from .function_groups import get_function_group_runtime
 from .functions import FUNCTIONS
 from .knowledge import async_get_knowledge, knowledge_source_as_dict
 from .memory import ANONYMOUS_USER_ID, async_get_memory, get_memory_mode, memory_as_dict
@@ -378,6 +379,7 @@ async def async_management_command(
                     "tools": len(
                         validate_function_tools(parsed["config"].get("functions"))
                     ),
+                    "function_groups": len(parsed["config"].get("function_groups", [])),
                     "speech_rules": len(
                         parsed["config"].get("speech_regex_replacements", [])
                     ),
@@ -518,7 +520,14 @@ async def async_management_command(
             key = message.get("continuity_key")
             if not isinstance(key, str):
                 raise HomeAssistantError("continuity_key is required")
-            return {"ended": int(await continuity.async_end(key))}
+            ended = await continuity.async_end(key)
+            if ended:
+                function_groups = get_function_group_runtime(
+                    hass, entry_id, subentry_id
+                )
+                if function_groups is not None:
+                    function_groups.end(f"continuity:{key}")
+            return {"ended": int(ended)}
         archive = await async_get_archive(hass, entry_id, subentry_id)
         if action == "list":
             return await archive.async_list_sessions(

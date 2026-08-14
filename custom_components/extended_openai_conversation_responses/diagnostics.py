@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
+import yaml
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .agent_config import validate_function_groups, validate_function_tools
 from .const import (
     CONF_ARCHIVE_ENABLED,
     CONF_CONVERSATION_CONTINUITY,
+    CONF_FUNCTION_GROUPS,
+    CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
@@ -17,6 +22,7 @@ from .const import (
     CONF_TEMPORARY_MEMORY,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CONVERSATION_CONTINUITY,
+    DEFAULT_FUNCTION_GROUPS,
     DEFAULT_KNOWLEDGE_ENABLED,
     DEFAULT_MEMORY_AUTO_CREATE,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
@@ -25,6 +31,7 @@ from .const import (
 )
 from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
+from .function_groups import get_function_group_runtime
 from .knowledge import async_get_knowledge
 from .memory import async_get_memory, get_memory_mode
 from .temporary_memory import async_get_temporary_memory
@@ -68,6 +75,31 @@ async def async_get_config_entry_diagnostics(
         diagnostics.update(
             async_get_continuity(hass, entry.entry_id, subentry.subentry_id).stats()
         )
+        try:
+            function_tools = validate_function_tools(
+                yaml.safe_load(subentry.data.get(CONF_FUNCTION_TOOLS, "[]"))
+            )
+            function_groups = validate_function_groups(
+                subentry.data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
+                function_tools,
+            )
+            diagnostics.update(
+                {
+                    "configured_function_tools": len(function_tools),
+                    "configured_function_groups": len(function_groups),
+                    "configured_on_demand_function_groups": sum(
+                        group["loading_mode"] == "on_demand"
+                        for group in function_groups
+                    ),
+                }
+            )
+            runtime = get_function_group_runtime(
+                hass, entry.entry_id, subentry.subentry_id
+            )
+            if runtime is not None:
+                diagnostics.update(runtime.stats())
+        except Exception as err:
+            diagnostics["function_group_configuration_error"] = type(err).__name__
         try:
             temporary = await async_get_temporary_memory(
                 hass, entry.entry_id, subentry.subentry_id

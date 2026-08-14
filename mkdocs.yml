@@ -51,6 +51,7 @@ nav:
       - Conversation archive: features/conversation-archive.md
       - Context management: features/context-management.md
       - Skills: features/skills.md
+      - Function groups: features/function-groups.md
       - Usage statistics: features/usage-statistics.md
       - AI Task: features/ai-task.md
   - Custom functions:

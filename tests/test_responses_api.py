@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 import json
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from openai.types.responses import ResponseOutputTextAnnotationAddedEvent
 import pytest
@@ -19,12 +19,14 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_API_PROVIDER,
     CONF_BASE_URL,
     CONF_CHAT_MODEL,
+    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_REASONING_EFFORT,
     CONF_WEB_SEARCH,
     CONF_WEB_SEARCH_CONTEXT,
     CONTINUE_CONVERSATION_ALWAYS,
     CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_CONTINUE_CONVERSATION,
+    FUNCTION_GROUP_LOADER_TOOL_NAME,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
     _get_continue_conversation_mode,
@@ -486,6 +488,260 @@ async def test_responses_tool_chain_preserves_reasoning(
     assert any(item["type"] == "function_call" for item in second_input)
     assert any(item["type"] == "function_call_output" for item in second_input)
     assert chat_log.content[-1].content == "The light is on."
+
+
+async def test_function_group_loader_refreshes_tools_without_using_real_call_quota(
+    hass,
+) -> None:
+    """A loader-only round exposes schemas before one allowed real function round."""
+    loader_call = _function_call(
+        FUNCTION_GROUP_LOADER_TOOL_NAME,
+        '{"groups":["reminders"]}',
+        "load_call",
+    )
+    reminder_call = _function_call(
+        "create_reminder", '{"text":"Put the bins out"}', "reminder_call"
+    )
+    message_item = SimpleNamespace(type="message")
+    client = SimpleNamespace(
+        responses=SimpleNamespace(
+            create=AsyncMock(
+                side_effect=[
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=loader_call),
+                            _event("response.output_item.done", item=loader_call),
+                            _completed_event(),
+                        ]
+                    ),
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=reminder_call),
+                            _event("response.output_item.done", item=reminder_call),
+                            _completed_event(),
+                        ]
+                    ),
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=message_item),
+                            _event(
+                                "response.output_text.delta", delta="Reminder created."
+                            ),
+                            _event("response.output_item.done", item=message_item),
+                            _completed_event(),
+                        ]
+                    ),
+                ]
+            )
+        )
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(runtime_data=client)
+    entity.subentry = SimpleNamespace(
+        data={
+            CONF_CHAT_MODEL: "gpt-5.6-luna",
+            CONF_API_MODE: API_MODE_RESPONSES,
+            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: 1,
+        }
+    )
+    entity.hass = hass
+    entity.entity_id = "conversation.test"
+    entity._usage = None
+    entity._execute_function_tool = AsyncMock(
+        return_value=conversation.ToolResultContent(
+            agent_id=entity.entity_id,
+            tool_call_id="reminder_call",
+            tool_name="create_reminder",
+            tool_result={"result": "created"},
+        )
+    )
+    loaded = False
+    reminder_tool = {
+        "spec": {
+            "name": "create_reminder",
+            "description": "Create a reminder",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "native", "name": "unused-in-test"},
+    }
+    loader_tool = {
+        "spec": {
+            "name": FUNCTION_GROUP_LOADER_TOOL_NAME,
+            "description": "Load reminders",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "function_group_loader"},
+    }
+
+    def tool_factory() -> list[dict[str, Any]]:
+        return [reminder_tool] if loaded else [loader_tool]
+
+    def loader(groups: Any) -> dict[str, Any]:
+        nonlocal loaded
+        assert groups == ["reminders"]
+        loaded = True
+        return {"status": "success", "loaded": ["reminders"]}
+
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+    chat_log.async_add_user_content(
+        conversation.UserContent(content="Remind me to put the bins out")
+    )
+    await entity._async_handle_chat_log(
+        chat_log,
+        tool_factory(),
+        [],
+        function_tools_factory=tool_factory,
+        function_group_loader=loader,
+    )
+
+    assert client.responses.create.await_count == 3
+    requests = client.responses.create.await_args_list
+    assert requests[0].kwargs["tools"][0]["name"] == FUNCTION_GROUP_LOADER_TOOL_NAME
+    assert requests[1].kwargs["tools"][0]["name"] == "create_reminder"
+    assert requests[2].kwargs["tool_choice"] == "none"
+    entity._execute_function_tool.assert_awaited_once()
+    assert chat_log.content[-1].content == "Reminder created."
+
+
+async def test_user_defined_loader_named_tool_is_executed_normally(hass) -> None:
+    """The reserved name is intercepted only for the synthesized loader tool."""
+    configured_call = _function_call(
+        FUNCTION_GROUP_LOADER_TOOL_NAME,
+        '{"value":"configured"}',
+        "configured_loader_call",
+    )
+    message_item = SimpleNamespace(type="message")
+    client = SimpleNamespace(
+        responses=SimpleNamespace(
+            create=AsyncMock(
+                side_effect=[
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=configured_call),
+                            _event("response.output_item.done", item=configured_call),
+                            _completed_event(),
+                        ]
+                    ),
+                    FakeStream(
+                        [
+                            _event("response.output_item.added", item=message_item),
+                            _event("response.output_text.delta", delta="Configured."),
+                            _event("response.output_item.done", item=message_item),
+                            _completed_event(),
+                        ]
+                    ),
+                ]
+            )
+        )
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(runtime_data=client)
+    entity.subentry = SimpleNamespace(
+        data={CONF_CHAT_MODEL: "gpt-5.6-luna", CONF_API_MODE: API_MODE_RESPONSES}
+    )
+    entity.hass = hass
+    entity.entity_id = "conversation.test"
+    entity._usage = None
+    entity._execute_function_tool = AsyncMock(
+        return_value=conversation.ToolResultContent(
+            agent_id=entity.entity_id,
+            tool_call_id="configured_loader_call",
+            tool_name=FUNCTION_GROUP_LOADER_TOOL_NAME,
+            tool_result={"result": "configured"},
+        )
+    )
+    configured_tool = {
+        "spec": {
+            "name": FUNCTION_GROUP_LOADER_TOOL_NAME,
+            "description": "A user-configured function",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "native", "name": "unused-in-test"},
+    }
+    loader = Mock()
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+    chat_log.async_add_user_content(conversation.UserContent(content="Run it"))
+
+    await entity._async_handle_chat_log(
+        chat_log,
+        [configured_tool],
+        [],
+        function_group_loader=loader,
+    )
+
+    loader.assert_not_called()
+    entity._execute_function_tool.assert_awaited_once()
+    assert chat_log.content[-1].content == "Configured."
+
+
+async def test_function_group_loader_has_an_independent_hard_round_limit(hass) -> None:
+    """Repeated loader calls stop reaching the runtime after five rounds."""
+    streams = []
+    for index in range(6):
+        call = _function_call(
+            FUNCTION_GROUP_LOADER_TOOL_NAME,
+            '{"groups":["reminders"]}',
+            f"load_{index}",
+        )
+        streams.append(
+            FakeStream(
+                [
+                    _event("response.output_item.added", item=call),
+                    _event("response.output_item.done", item=call),
+                    _completed_event(),
+                ]
+            )
+        )
+    message_item = SimpleNamespace(type="message")
+    streams.append(
+        FakeStream(
+            [
+                _event("response.output_item.added", item=message_item),
+                _event("response.output_text.delta", delta="Unable to load more."),
+                _event("response.output_item.done", item=message_item),
+                _completed_event(),
+            ]
+        )
+    )
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=AsyncMock(side_effect=streams))
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(runtime_data=client)
+    entity.subentry = SimpleNamespace(
+        data={CONF_CHAT_MODEL: "gpt-5.6-luna", CONF_API_MODE: API_MODE_RESPONSES}
+    )
+    entity.hass = hass
+    entity.entity_id = "conversation.test"
+    entity._usage = None
+    loader_tool = {
+        "spec": {
+            "name": FUNCTION_GROUP_LOADER_TOOL_NAME,
+            "description": "Load reminders",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "function_group_loader"},
+    }
+    handled = 0
+
+    def loader(_groups: Any) -> dict[str, Any]:
+        nonlocal handled
+        handled += 1
+        return {"status": "error"}
+
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+    chat_log.async_add_user_content(conversation.UserContent(content="Loop"))
+    await entity._async_handle_chat_log(
+        chat_log,
+        [loader_tool],
+        [],
+        function_tools_factory=lambda: [loader_tool],
+        function_group_loader=loader,
+    )
+
+    assert handled == 5
+    assert "tools" not in client.responses.create.await_args_list[5].kwargs
+    assert chat_log.content[-1].content == "Unable to load more."
 
 
 async def test_responses_stream_supports_multiple_tool_calls() -> None:

@@ -30,6 +30,7 @@ from homeassistant.helpers.chat_session import async_get_chat_session
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import ExtendedOpenAIConfigEntry
+from .agent_config import validate_function_groups, validate_function_tools
 from .const import (
     CONDITIONAL_CONTINUATION_PROMPT,
     CONF_ARCHIVE_ENABLED,
@@ -39,6 +40,7 @@ from .const import (
     CONF_CONTINUE_CONVERSATION,
     CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
+    CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
@@ -59,6 +61,7 @@ from .const import (
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+    DEFAULT_FUNCTION_GROUPS,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_PROMPT,
     DEFAULT_SHARED_ARCHIVE_ENABLED,
@@ -85,6 +88,14 @@ from .conversation_archive import (
 )
 from .entity import ExtendedOpenAIBaseLLMEntity
 from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
+from .function_groups import (
+    FunctionGroupRuntime,
+    FunctionGroupSession,
+    assemble_function_tools,
+    load_function_groups,
+    remove_function_group_runtime,
+    reset_function_group_runtime,
+)
 from .functions import get_function
 from .helpers import get_exposed_entities
 from .knowledge import (
@@ -129,6 +140,9 @@ _ACTIVE_ARCHIVE: ContextVar[tuple[str, str] | None] = ContextVar(
 _ACTIVE_TEMPORARY_SCOPE: ContextVar[str | None] = ContextVar(
     "extended_openai_active_temporary_scope", default=None
 )
+_ACTIVE_FUNCTION_GROUP_SESSION: ContextVar[FunctionGroupSession | None] = ContextVar(
+    "extended_openai_active_function_group_session", default=None
+)
 
 ARCHIVE_PROMPT = """
 ## Retained conversation archive
@@ -171,6 +185,7 @@ class ExtendedOpenAIAgentEntity(
     _continuity: ConversationContinuity | None = None
     _knowledge: KnowledgeLibrary | None = None
     _archive: ConversationArchive | None = None
+    _function_groups_runtime: FunctionGroupRuntime | None = None
 
     def __init__(self, entry: ExtendedOpenAIConfigEntry, subentry: Any) -> None:
         """Initialize the conversation agent and its streaming capability."""
@@ -232,6 +247,9 @@ class ExtendedOpenAIAgentEntity(
         self._continuity = async_get_continuity(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
+        self._function_groups_runtime = reset_function_group_runtime(
+            self.hass, self.entry.entry_id, self.subentry.subentry_id
+        )
         if (
             self.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
             != TEMPORARY_MEMORY_OFF
@@ -268,6 +286,9 @@ class ExtendedOpenAIAgentEntity(
     async def async_will_remove_from_hass(self) -> None:
         """When entity will be removed from Home Assistant."""
         conversation.async_unset_agent(self.hass, self.entry)
+        remove_function_group_runtime(
+            self.hass, self.entry.entry_id, self.subentry.subentry_id
+        )
         await super().async_will_remove_from_hass()
 
     async def async_process(self, user_input: ConversationInput) -> ConversationResult:
@@ -339,6 +360,21 @@ class ExtendedOpenAIAgentEntity(
                 resolution.key or f"conversation:{chat_log.conversation_id}"
             )
             temporary_token = _ACTIVE_TEMPORARY_SCOPE.set(temporary_scope)
+            function_group_session = (
+                self._function_groups_runtime.begin(
+                    (
+                        f"continuity:{resolution.key}"
+                        if resolution.key
+                        else f"conversation:{chat_log.conversation_id}"
+                    ),
+                    timeout_minutes if resolution.key else 5,
+                )
+                if self._function_groups_runtime is not None
+                else None
+            )
+            function_group_token = _ACTIVE_FUNCTION_GROUP_SESSION.set(
+                function_group_session
+            )
             if resolution.history and len(chat_log.content) <= 2:
                 # Core chat logs expire independently after five minutes. Restore the
                 # integration-owned bounded model history when Core recreates the log.
@@ -379,6 +415,7 @@ class ExtendedOpenAIAgentEntity(
                     return result
             finally:
                 await self._continuity.async_release(resolution.key)
+                _ACTIVE_FUNCTION_GROUP_SESSION.reset(function_group_token)
                 _ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
                 _ACTIVE_ARCHIVE.reset(archive_token)
                 _ACTIVE_SCOPE.reset(scope_token)
@@ -426,6 +463,12 @@ class ExtendedOpenAIAgentEntity(
                 llm_context=llm_context,
                 conditional_continue=(
                     continue_mode == CONTINUE_CONVERSATION_CONDITIONAL
+                ),
+                function_tools_factory=self._get_function_tools,
+                function_group_loader=(
+                    self._load_function_groups
+                    if _ACTIVE_FUNCTION_GROUP_SESSION.get() is not None
+                    else None
                 ),
             )
         except OpenAIError as err:
@@ -650,31 +693,27 @@ memory for facts expected to expire, and do not create both by default.
         return get_exposed_entities(self.hass)
 
     def _get_function_tools(self) -> list[dict[str, Any]]:
-        """Get custom functions configuration."""
+        """Get the effective configured and integration-owned function tools."""
         try:
-            function_tools_config = self.subentry.data.get(CONF_FUNCTION_TOOLS)
-            function_tools: list[dict[str, Any]] | None = (
-                yaml.safe_load(function_tools_config)
-                if function_tools_config
-                else DEFAULT_CONF_FUNCTION_TOOLS
+            configured_tools = self._get_configured_function_tools()
+            groups = validate_function_groups(
+                self.subentry.data.get(
+                    CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)
+                ),
+                configured_tools,
             )
-            if function_tools:
-                for function_tool in function_tools:
-                    if isinstance(function_tool, dict) and "function" in function_tool:
-                        function_config = function_tool["function"]
-                        if (
-                            isinstance(function_config, dict)
-                            and "type" in function_config
-                        ):
-                            function = get_function(function_config["type"])
-                            function_tool["function"] = function.validate_schema(
-                                function_config
-                            )
-
-            result = list(function_tools or [])
+            session = _ACTIVE_FUNCTION_GROUP_SESSION.get()
+            assembly = assemble_function_tools(
+                configured_tools,
+                groups,
+                session.loaded_group_ids if session is not None else set(),
+            )
+            if self._function_groups_runtime is not None:
+                self._function_groups_runtime.record_request(assembly)
+            result = list(assembly.tools)
             configured_names = {
                 tool.get("spec", {}).get("name")
-                for tool in result
+                for tool in configured_tools
                 if isinstance(tool, dict)
             }
             if (
@@ -724,6 +763,36 @@ memory for facts expected to expire, and do not create both by default.
             raise e
         except Exception as e:
             raise FunctionLoadFailed() from e
+
+    def _get_configured_function_tools(self) -> list[dict[str, Any]]:
+        """Parse and validate only user-configured tools without changing storage."""
+        function_tools_config = self.subentry.data.get(CONF_FUNCTION_TOOLS)
+        parsed = (
+            yaml.safe_load(function_tools_config)
+            if function_tools_config
+            else DEFAULT_CONF_FUNCTION_TOOLS
+        )
+        function_tools = validate_function_tools(parsed)
+        for function_tool in function_tools:
+            function_config = function_tool["function"]
+            function = get_function(function_config["type"])
+            function_tool["function"] = function.validate_schema(function_config)
+        return function_tools
+
+    def _load_function_groups(self, requested: Any) -> dict[str, Any]:
+        """Apply an integration-owned loader call to the active conversation."""
+        session = _ACTIVE_FUNCTION_GROUP_SESSION.get()
+        if session is None:
+            return {
+                "status": "error",
+                "error": "No active conversation is available for group loading",
+            }
+        configured_tools = self._get_configured_function_tools()
+        groups = validate_function_groups(
+            self.subentry.data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
+            configured_tools,
+        )
+        return load_function_groups(session, requested, groups)
 
     async def _execute_function_tool(
         self,

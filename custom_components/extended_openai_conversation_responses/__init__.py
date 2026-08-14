@@ -23,6 +23,7 @@ from .const import (
     CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     CONF_BASE_URL,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
+    CONF_FUNCTION_GROUPS,
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_ENABLED,
     CONF_MEMORY_MODE,
@@ -45,6 +46,7 @@ from .const import (
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
     DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+    DEFAULT_FUNCTION_GROUPS,
     DEFAULT_SHARED_ARCHIVE_ENABLED,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_SKIP_AUTHENTICATION,
@@ -203,5 +205,6 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 CONF_SPEECH_REGEX_REPLACEMENTS,
                 list(DEFAULT_SPEECH_REGEX_REPLACEMENTS),
             )
+            data.setdefault(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS))
             hass.config_entries.async_update_subentry(entry, subentry, data=data)
         hass.config_entries.async_update_entry(entry, version=CONFIG_ENTRY_VERSION)

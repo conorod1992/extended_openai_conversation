@@ -30,6 +30,7 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 - **Web Search** — let compatible OpenAI Responses models retrieve current information when needed.
 - **Skills** — load reusable instruction sets per conversation agent.
 - **Custom functions** — extend the assistant with native tools, Home Assistant scripts, templates, REST endpoints, scraping, composite functions, and SQLite queries.
+- **On-demand function groups** — keep large function collections compact by letting the model load only the relevant detailed tool schemas for an active conversation.
 - **Usage diagnostics** — track provider-reported request and token usage without estimating cost.
 - **Optional conversation archive** — locally retain and lexically search discussions, with deterministic private-session and deletion controls.
 - **Explicit voice ownership** — map unidentified satellites to users, a separate shared household, or a no-retention policy.
@@ -175,6 +176,20 @@ Long conversations can keep recent complete turns, clear previous history, or su
 Skills provide reusable instructions, while custom functions provide new tools. You do **not** need to build custom functions for basic exposed-entity control.
 
 [Read about skills](docs/features/skills.md) · [Read about custom functions](docs/functions/index.md)
+
+### Function groups and on-demand tools
+
+Function groups are an optional way to reduce repeated input from large tool collections. Open **Extended OpenAI → Tools**, choose **Create group**, add a concise model-facing description, select **Always available** or **Load when needed**, and choose member functions with the searchable checklist. Existing ungrouped functions remain always available, so upgrades do not change existing agent behaviour.
+
+For an on-demand group, normal requests contain only a compact catalogue entry such as `Reminders — Create and manage scheduled reminders`. If the current request needs it, the model calls the integration-owned `load_function_groups` tool inside the existing tool loop. The next model step includes that group's full, already-validated function schemas. There is no classifier, separate router model, keyword matching, or embedding lookup.
+
+Loaded groups remain available for follow-ups in the same active conversation and reset when that conversation expires, is replaced, or the agent/integration reloads. Loading itself performs no Home Assistant action and does not consume the configured real-function-call allowance, though a five-round internal loader cap prevents loops. The first use of a group may add one provider round-trip.
+
+**Before:** an agent with 50 configured functions sends 50 full schemas on every request.
+
+**After:** normal requests send ungrouped/always-available schemas plus a compact catalogue for groups such as Reminders, Calendar, Gmail, Conditional Notifications, and Deferred Actions. After the model requests `reminders`, only the Reminder functions are added for that active conversation. Exact savings vary with schema size; diagnostics report schema counts and serialized character estimates rather than fabricated token counts.
+
+[Read the Function Groups guide](docs/features/function-groups.md)
 
 ### Spoken-response cleanup
 

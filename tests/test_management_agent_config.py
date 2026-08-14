@@ -9,11 +9,21 @@ import pytest
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
 )
-from custom_components.extended_openai_conversation_responses.const import DOMAIN
+from custom_components.extended_openai_conversation_responses.const import (
+    CONVERSATION_CONTINUITY_USER,
+    DOMAIN,
+)
+from custom_components.extended_openai_conversation_responses.continuity import (
+    async_get_continuity,
+)
+from custom_components.extended_openai_conversation_responses.function_groups import (
+    reset_function_group_runtime,
+)
 from custom_components.extended_openai_conversation_responses.management_ui import (
     MANAGEMENT_FRONTEND_MODULES,
     async_management_command,
 )
+from custom_components.extended_openai_conversation_responses.scope import user_scope
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -107,6 +117,15 @@ async def test_configuration_validation_returns_field_errors(hass) -> None:
 async def test_duplicate_copies_configuration_not_runtime_history(hass) -> None:
     _entry, subentry = _setup_entry(hass)
     subentry.data["prompt"] = "Custom prompt"
+    subentry.data["function_groups"] = [
+        {
+            "id": "general",
+            "name": "General",
+            "description": "General tools",
+            "loading_mode": "always",
+            "functions": [],
+        }
+    ]
     result = await async_management_command(
         hass,
         "admin",
@@ -121,8 +140,44 @@ async def test_duplicate_copies_configuration_not_runtime_history(hass) -> None:
     assert result["title"] == "Jarvis - Copy"
     duplicate = hass.config_entries.async_add_subentry.call_args.args[1]
     assert duplicate.data["prompt"] == "Custom prompt"
+    assert duplicate.data["function_groups"][0]["id"] == "general"
     assert "archive_history" not in duplicate.data
     assert "memory_contents" not in duplicate.data
+
+
+async def test_ending_continuity_discards_loaded_function_groups(hass) -> None:
+    """Ending model context also ends its on-demand function-group session."""
+    _setup_entry(hass)
+    continuity = async_get_continuity(hass, "entry-1", "agent-1")
+    resolution = await continuity.async_resolve(
+        CONVERSATION_CONTINUITY_USER,
+        user_scope("admin", source="test"),
+        None,
+        None,
+        30,
+    )
+    assert resolution.key is not None
+    runtime = reset_function_group_runtime(hass, "entry-1", "agent-1")
+    previous = runtime.begin(f"continuity:{resolution.key}", 30)
+    previous.loaded_group_ids.add("reminders")
+
+    result = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "conversations",
+            "action": "end_active",
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "continuity_key": resolution.key,
+        },
+    )
+
+    assert result == {"ended": 1}
+    recreated = runtime.begin(f"continuity:{resolution.key}", 30)
+    assert recreated is not previous
+    assert recreated.loaded_group_ids == set()
 
 
 async def test_function_tool_yaml_management_operations(hass) -> None:

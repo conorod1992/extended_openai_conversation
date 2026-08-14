@@ -26,6 +26,7 @@ from .const import (
     CONF_CONTINUE_CONVERSATION,
     CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
+    CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
@@ -73,6 +74,7 @@ from .const import (
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+    DEFAULT_FUNCTION_GROUPS,
     DEFAULT_KNOWLEDGE_ENABLED,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MAX_TOKENS,
@@ -97,6 +99,9 @@ from .const import (
     DEFAULT_VOICE_UNMAPPED_POLICY,
     DEFAULT_WEB_SEARCH,
     DEFAULT_WEB_SEARCH_CONTEXT,
+    FUNCTION_GROUP_LOADER_TOOL_NAME,
+    FUNCTION_GROUP_LOADING_MODES,
+    FUNCTION_GROUP_LOADING_ON_DEMAND,
     MAX_MEMORY_AUTO_RETRIEVE_LIMIT,
     MAX_SPEECH_REGEX_PATTERN_LENGTH,
     MAX_SPEECH_REGEX_REPLACEMENT_LENGTH,
@@ -142,6 +147,7 @@ AGENT_CONFIG_DEFAULTS = MappingProxyType(
         CONF_FUNCTION_TOOLS: yaml.safe_dump(
             DEFAULT_CONF_FUNCTION_TOOLS, sort_keys=False, allow_unicode=True
         ),
+        CONF_FUNCTION_GROUPS: list(DEFAULT_FUNCTION_GROUPS),
         CONF_CONTEXT_THRESHOLD: DEFAULT_CONTEXT_THRESHOLD,
         CONF_CONTEXT_TRUNCATE_STRATEGY: DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
         CONF_CONTINUE_CONVERSATION: DEFAULT_CONTINUE_CONVERSATION,
@@ -241,6 +247,9 @@ def agent_config_options() -> dict[str, list[dict[str, Any]]]:
         ],
         CONF_REASONING_EFFORT: [_choice(value) for value in REASONING_EFFORT_OPTIONS],
         CONF_SERVICE_TIER: [_choice(value) for value in SERVICE_TIER_OPTIONS],
+        "function_group_loading_modes": [
+            _choice(value) for value in FUNCTION_GROUP_LOADING_MODES
+        ],
     }
 
 
@@ -289,6 +298,113 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
         normalized["spec"] = deepcopy(spec)
         normalized["function"] = deepcopy(function_config)
         result.append(normalized)
+    return result
+
+
+_FUNCTION_GROUP_ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+
+
+def validate_function_groups(
+    value: Any, function_tools: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Validate compact group metadata and references to configured functions."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise AgentConfigError(CONF_FUNCTION_GROUPS, "must be a list")
+    if len(value) > 50:
+        raise AgentConfigError(CONF_FUNCTION_GROUPS, "supports at most 50 groups")
+
+    tool_names = {tool["spec"]["name"] for tool in function_tools}
+    group_ids: set[str] = set()
+    group_names: set[str] = set()
+    assigned_functions: dict[str, str] = {}
+    result: list[dict[str, Any]] = []
+    allowed = {"id", "name", "description", "loading_mode", "functions"}
+    for index, group in enumerate(value):
+        field = f"{CONF_FUNCTION_GROUPS}[{index}]"
+        if not isinstance(group, dict):
+            raise AgentConfigError(field, "group must be an object")
+        unknown_fields = set(group) - allowed
+        if unknown_fields:
+            raise AgentConfigError(
+                field, "unknown fields: " + ", ".join(sorted(unknown_fields))
+            )
+        group_id = group.get("id")
+        if not isinstance(group_id, str) or not _FUNCTION_GROUP_ID.fullmatch(group_id):
+            raise AgentConfigError(
+                f"{field}.id",
+                "must start with a lowercase letter and contain only lowercase "
+                "letters, numbers, underscores, or hyphens (maximum 64 characters)",
+            )
+        if group_id in group_ids:
+            raise AgentConfigError(f"{field}.id", f"duplicate group ID: {group_id}")
+        group_ids.add(group_id)
+
+        name = group.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise AgentConfigError(f"{field}.name", "is required")
+        name = name.strip()
+        if len(name) > 100:
+            raise AgentConfigError(f"{field}.name", "must be at most 100 characters")
+        normalized_name = name.casefold()
+        if normalized_name in group_names:
+            raise AgentConfigError(f"{field}.name", f"duplicate group name: {name}")
+        group_names.add(normalized_name)
+
+        description = group.get("description")
+        if not isinstance(description, str) or not description.strip():
+            raise AgentConfigError(f"{field}.description", "is required")
+        description = description.strip()
+        if len(description) > 500:
+            raise AgentConfigError(
+                f"{field}.description", "must be at most 500 characters"
+            )
+
+        loading_mode = group.get("loading_mode")
+        if loading_mode not in FUNCTION_GROUP_LOADING_MODES:
+            raise AgentConfigError(f"{field}.loading_mode", "unsupported value")
+        functions = group.get("functions", [])
+        if not isinstance(functions, list) or not all(
+            isinstance(name, str) for name in functions
+        ):
+            raise AgentConfigError(f"{field}.functions", "must be a list of names")
+        if len(functions) != len(set(functions)):
+            raise AgentConfigError(f"{field}.functions", "contains duplicate names")
+        for function_name in functions:
+            if function_name not in tool_names:
+                raise AgentConfigError(
+                    f"{field}.functions", f"unknown function: {function_name}"
+                )
+            if function_name in assigned_functions:
+                raise AgentConfigError(
+                    f"{field}.functions",
+                    f"function {function_name} is already assigned to group "
+                    f"{assigned_functions[function_name]}",
+                )
+            assigned_functions[function_name] = group_id
+        result.append(
+            {
+                "id": group_id,
+                "name": name,
+                "description": description,
+                "loading_mode": loading_mode,
+                "functions": list(functions),
+            }
+        )
+
+    if (
+        any(
+            group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
+            for group in result
+        )
+        and FUNCTION_GROUP_LOADER_TOOL_NAME in tool_names
+    ):
+        raise AgentConfigError(
+            CONF_FUNCTION_TOOLS,
+            f"tool name `{FUNCTION_GROUP_LOADER_TOOL_NAME}` is reserved when an "
+            "on-demand function group is configured",
+        )
     return result
 
 
@@ -549,8 +665,14 @@ def normalize_agent_config(
     ):
         raise AgentConfigError(CONF_SKILLS, "must be a list of names")
 
+    function_tools = validate_function_tools(result.get(CONF_FUNCTION_TOOLS, []))
+    result[CONF_FUNCTION_GROUPS] = validate_function_groups(
+        result.get(CONF_FUNCTION_GROUPS, []), function_tools
+    )
     if CONF_FUNCTION_TOOLS in data:
-        result[CONF_FUNCTION_TOOLS] = _tools_yaml(result.get(CONF_FUNCTION_TOOLS, []))
+        result[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+            function_tools, sort_keys=False, allow_unicode=True
+        )
     result[CONF_SPEECH_REGEX_REPLACEMENTS] = validate_speech_regex_replacements(
         result.get(CONF_SPEECH_REGEX_REPLACEMENTS, [])
     )
@@ -588,6 +710,9 @@ def agent_config_snapshot(data: dict[str, Any]) -> dict[str, Any]:
         {key: value for key, value in data.items() if key in AGENT_CONFIG_FIELDS}
     )
     result[CONF_FUNCTION_TOOLS] = validate_function_tools(result[CONF_FUNCTION_TOOLS])
+    result[CONF_FUNCTION_GROUPS] = validate_function_groups(
+        result[CONF_FUNCTION_GROUPS], result[CONF_FUNCTION_TOOLS]
+    )
     return result
 
 
