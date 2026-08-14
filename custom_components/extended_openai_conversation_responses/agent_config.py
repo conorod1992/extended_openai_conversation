@@ -270,6 +270,8 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
         field = f"{CONF_FUNCTION_TOOLS}[{index}]"
         if not isinstance(tool, dict):
             raise AgentConfigError(field, "tool must be an object")
+        if "enabled" in tool and not isinstance(tool["enabled"], bool):
+            raise AgentConfigError(f"{field}.enabled", "must be a boolean")
         spec = tool.get("spec")
         function_config = tool.get("function")
         if not isinstance(spec, dict):
@@ -299,6 +301,11 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
         normalized["function"] = deepcopy(function_config)
         result.append(normalized)
     return result
+
+
+def function_tool_enabled(tool: dict[str, Any]) -> bool:
+    """Return the single authoritative enabled state for a configured tool."""
+    return tool.get("enabled", True) is True
 
 
 _FUNCTION_GROUP_ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")

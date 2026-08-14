@@ -30,6 +30,7 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 - **Web Search** — let compatible OpenAI Responses models retrieve current information when needed.
 - **Skills** — load reusable instruction sets per conversation agent.
 - **Custom functions** — extend the assistant with native tools, Home Assistant scripts, templates, REST endpoints, scraping, composite functions, and SQLite queries.
+- **Built-in Function presets and capability controls** — insert shipped native capabilities into the editable YAML workflow, and enable or disable any configured Function Tool without losing its definition or group assignment.
 - **On-demand function groups** — keep large function collections compact by letting the model load only the relevant detailed tool schemas for an active conversation.
 - **Usage diagnostics** — track provider-reported request and token usage without estimating cost.
 - **Optional conversation archive** — locally retain and lexically search discussions, with deterministic private-session and deletion controls.

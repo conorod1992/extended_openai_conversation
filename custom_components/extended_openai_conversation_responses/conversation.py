@@ -30,7 +30,11 @@ from homeassistant.helpers.chat_session import async_get_chat_session
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import ExtendedOpenAIConfigEntry
-from .agent_config import validate_function_groups, validate_function_tools
+from .agent_config import (
+    function_tool_enabled,
+    validate_function_groups,
+    validate_function_tools,
+)
 from .const import (
     CONDITIONAL_CONTINUATION_PROMPT,
     CONF_ARCHIVE_ENABLED,
@@ -773,7 +777,11 @@ default.
 
     def _get_configured_function_tools(self) -> list[dict[str, Any]]:
         """Parse and validate only user-configured tools without changing storage."""
-        function_tools_config = self.subentry.data.get(CONF_FUNCTION_TOOLS)
+        return self._configured_function_tools_from_data(self.subentry.data)
+
+    def _configured_function_tools_from_data(self, data: Any) -> list[dict[str, Any]]:
+        """Parse configured tools from one current or persisted data mapping."""
+        function_tools_config = data.get(CONF_FUNCTION_TOOLS)
         parsed = (
             yaml.safe_load(function_tools_config)
             if function_tools_config
@@ -799,7 +807,7 @@ default.
             self.subentry.data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
             configured_tools,
         )
-        return load_function_groups(session, requested, groups)
+        return load_function_groups(session, requested, groups, configured_tools)
 
     async def _execute_function_tool(
         self,
@@ -816,6 +824,31 @@ default.
             "knowledge",
             "archive",
         }:
+            tool_name = function_tool.get("spec", {}).get("name")
+            latest_entry = self.hass.config_entries.async_get_entry(self.entry.entry_id)
+            latest_subentry = (
+                latest_entry.subentries.get(self.subentry.subentry_id)
+                if latest_entry is not None
+                else None
+            )
+            current_tool = next(
+                (
+                    tool
+                    for tool in self._configured_function_tools_from_data(
+                        latest_subentry.data
+                        if latest_subentry is not None
+                        else self.subentry.data
+                    )
+                    if tool.get("spec", {}).get("name") == tool_name
+                ),
+                None,
+            )
+            if current_tool is None:
+                raise FunctionNotFound(str(tool_name))
+            if not function_tool_enabled(function_tool) or not function_tool_enabled(
+                current_tool
+            ):
+                raise HomeAssistantError(f"Function Tool `{tool_name}` is disabled")
             return await super()._execute_function_tool(
                 function_tool, tool_input, llm_context, exposed_entities
             )

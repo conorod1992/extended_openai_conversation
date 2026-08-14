@@ -17,12 +17,16 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
     normalize_agent_config,
     validate_function_groups,
 )
+from custom_components.extended_openai_conversation_responses.conversation import (
+    ExtendedOpenAIAgentEntity,
+)
 from custom_components.extended_openai_conversation_responses.function_groups import (
     FunctionGroupRuntime,
     assemble_function_tools,
     load_function_groups,
     reset_function_group_runtime,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def _tool(name: str) -> dict:
@@ -93,6 +97,87 @@ def test_always_and_on_demand_assembly_is_compact(hass) -> None:
         "required": ["groups"],
         "additionalProperties": False,
     }
+
+
+def test_disabled_tools_stay_grouped_but_are_excluded_from_effective_assembly() -> None:
+    enabled = _tool("enabled")
+    disabled = {**_tool("disabled"), "enabled": False}
+    groups = [_group("mixed", ["enabled", "disabled"])]
+    session = FunctionGroupRuntime().begin("conversation:one", 30)
+    load_function_groups(session, ["mixed"], groups, [enabled, disabled])
+    assembly = assemble_function_tools(
+        [enabled, disabled], groups, session.loaded_group_ids
+    )
+    assert groups[0]["functions"] == ["enabled", "disabled"]
+    assert [tool["spec"]["name"] for tool in assembly.tools] == ["enabled"]
+    assert assembly.configured_count == 2
+    assert assembly.configured_schemas_sent == 1
+
+
+def test_empty_enabled_on_demand_group_is_omitted_then_reappears() -> None:
+    tool = {**_tool("remind"), "enabled": False}
+    groups = [_group("reminders", ["remind"])]
+    session = FunctionGroupRuntime().begin("conversation:one", 30)
+    disabled = assemble_function_tools([tool], groups, session.loaded_group_ids)
+    assert disabled.tools == []
+    assert disabled.available_on_demand_groups == 0
+    assert (
+        load_function_groups(session, ["reminders"], groups, [tool])["status"]
+        == "error"
+    )
+
+    tool["enabled"] = True
+    enabled = assemble_function_tools([tool], groups, session.loaded_group_ids)
+    assert [item["spec"]["name"] for item in enabled.tools] == ["load_function_groups"]
+    assert enabled.available_on_demand_groups == 1
+
+
+def test_loaded_group_state_tracks_enable_disable_without_stale_resurrection() -> None:
+    tool = _tool("remind")
+    groups = [_group("reminders", ["remind"])]
+    session = FunctionGroupRuntime().begin("conversation:one", 30)
+    load_function_groups(session, ["reminders"], groups, [tool])
+    assert session.loaded_group_ids == {"reminders"}
+
+    tool["enabled"] = False
+    assert assemble_function_tools([tool], groups, session.loaded_group_ids).tools == []
+    assert session.loaded_group_ids == {"reminders"}
+
+    tool["enabled"] = True
+    assert [
+        item["spec"]["name"]
+        for item in assemble_function_tools(
+            [tool], groups, session.loaded_group_ids
+        ).tools
+    ] == ["remind"]
+
+
+async def test_disabled_tool_is_rejected_at_execution_time(monkeypatch) -> None:
+    stale_tool = _tool("sensitive")
+    disabled_tool = {**_tool("sensitive"), "enabled": False}
+    entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
+    entity.entry = SimpleNamespace(entry_id="entry")
+    entity.subentry = SimpleNamespace(subentry_id="agent", data={})
+    persisted_subentry = SimpleNamespace(data={})
+    entity.hass = SimpleNamespace(
+        config_entries=SimpleNamespace(
+            async_get_entry=lambda _entry_id: SimpleNamespace(
+                subentries={"agent": persisted_subentry}
+            )
+        )
+    )
+    monkeypatch.setattr(
+        ExtendedOpenAIAgentEntity,
+        "_configured_function_tools_from_data",
+        lambda _self, _data: [disabled_tool],
+    )
+    with pytest.raises(HomeAssistantError, match=r"sensitive.*disabled"):
+        await entity._execute_function_tool(
+            stale_tool,
+            SimpleNamespace(tool_name="sensitive", tool_args={}, id="call-1"),
+            None,
+            [],
+        )
 
 
 def test_runtime_diagnostics_name_configured_schema_measurements() -> None:

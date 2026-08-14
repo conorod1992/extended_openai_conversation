@@ -227,6 +227,20 @@ async def test_function_tool_yaml_management_operations(hass) -> None:
     )
     assert starter["yaml"].startswith("spec:\n")
 
+    catalog = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {**base, "action": "built_in_catalog", "tools": [tool]},
+    )
+    execute_service = next(
+        item
+        for item in catalog["functions"]
+        if item["implementation"] == "execute_service"
+    )
+    assert execute_service["already_configured"] is True
+    assert execute_service["yaml"].startswith("spec:\n")
+
 
 async def test_function_tool_yaml_operations_require_admin(hass) -> None:
     _setup_entry(hass)

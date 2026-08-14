@@ -171,3 +171,49 @@ memory_clear:
       description: Must be enabled to confirm this destructive action.
       selector:
         boolean:
+enable_function_tools:
+  name: Enable Function Tools
+  description: Enable one or more configured Function Tools for a conversation agent. This administrator action is not exposed to the model automatically.
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: extended_openai_conversation_responses
+    agent_id:
+      required: true
+      description: Conversation agent. Legacy action calls may also use its subentry ID.
+      selector:
+        entity:
+          filter:
+            integration: extended_openai_conversation_responses
+            domain: conversation
+    functions:
+      required: true
+      description: One or more configured model-facing Function Tool names.
+      selector:
+        text:
+          multiple: true
+disable_function_tools:
+  name: Disable Function Tools
+  description: Disable one or more configured Function Tools so their schemas are withheld and calls are rejected. This administrator action is not exposed to the model automatically.
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: extended_openai_conversation_responses
+    agent_id:
+      required: true
+      description: Conversation agent. Legacy action calls may also use its subentry ID.
+      selector:
+        entity:
+          filter:
+            integration: extended_openai_conversation_responses
+            domain: conversation
+    functions:
+      required: true
+      description: One or more configured model-facing Function Tool names.
+      selector:
+        text:
+          multiple: true

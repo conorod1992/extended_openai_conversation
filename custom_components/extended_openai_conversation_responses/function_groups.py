@@ -7,6 +7,7 @@ import json
 import time
 from typing import Any, cast
 
+from .agent_config import function_tool_enabled
 from .const import (
     FUNCTION_GROUP_LOADER_TOOL_NAME,
     FUNCTION_GROUP_LOADING_ALWAYS,
@@ -157,8 +158,10 @@ def assemble_function_tools(
     }
     loaded_group_ids.intersection_update(current_on_demand_ids)
 
+    enabled_tools = [tool for tool in configured_tools if function_tool_enabled(tool)]
+    enabled_names = {tool["spec"]["name"] for tool in enabled_tools}
     effective: list[dict[str, Any]] = []
-    for tool in configured_tools:
+    for tool in enabled_tools:
         group = membership.get(tool["spec"]["name"])
         if (
             group is None
@@ -172,7 +175,7 @@ def assemble_function_tools(
         for group in groups
         if group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
         and group["id"] not in loaded_group_ids
-        and group["functions"]
+        and any(name in enabled_names for name in group["functions"])
     ]
     if unloaded:
         effective.append(build_loader_tool(unloaded))
@@ -199,12 +202,22 @@ def load_function_groups(
     session: FunctionGroupSession,
     requested: Any,
     groups: list[dict[str, Any]],
+    configured_tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Validate and apply one model-requested group load operation."""
+    enabled_names = {
+        tool["spec"]["name"]
+        for tool in configured_tools or []
+        if function_tool_enabled(tool)
+    }
     on_demand = {
         group["id"]: group
         for group in groups
         if group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
+        and (
+            configured_tools is None
+            or any(name in enabled_names for name in group["functions"])
+        )
     }
     always = {
         group["id"]
