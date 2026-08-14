@@ -40,6 +40,7 @@ from .const import (
     CONF_ARCHIVE_RETENTION_DAYS,
     CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     CONF_CHAT_MODEL,
+    CONF_CONVERSATION_TIMEOUT_MINUTES,
     CONF_SHARED_ARCHIVE_ENABLED,
     CONF_SHARED_MEMORY_MODE,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
@@ -52,6 +53,7 @@ from .const import (
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
     DEFAULT_CHAT_MODEL,
+    DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
     DEFAULT_USAGE_RUN_RETENTION_DAYS,
@@ -61,12 +63,14 @@ from .const import (
     MANAGEMENT_PANEL_TITLE,
     MANAGEMENT_PANEL_URL,
 )
+from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
 from .functions import FUNCTIONS
 from .knowledge import async_get_knowledge, knowledge_source_as_dict
 from .memory import ANONYMOUS_USER_ID, async_get_memory, get_memory_mode, memory_as_dict
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .speech import process_speech_text
+from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_get_usage
 
 WS_COMMAND = f"{DOMAIN}/management"
@@ -496,6 +500,25 @@ async def async_management_command(
 
     scope_id = _selected_scope(user_id, is_admin, message.get("scope_id"))
     if section == "conversations":
+        continuity = async_get_continuity(hass, entry_id, subentry_id)
+        if action == "active":
+            _require_admin(is_admin)
+            return {
+                "active": await continuity.async_list(
+                    int(
+                        subentry.data.get(
+                            CONF_CONVERSATION_TIMEOUT_MINUTES,
+                            DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+                        )
+                    )
+                )
+            }
+        if action == "end_active":
+            _require_admin(is_admin)
+            key = message.get("continuity_key")
+            if not isinstance(key, str):
+                raise HomeAssistantError("continuity_key is required")
+            return {"ended": int(await continuity.async_end(key))}
         archive = await async_get_archive(hass, entry_id, subentry_id)
         if action == "list":
             return await archive.async_list_sessions(
@@ -538,6 +561,32 @@ async def async_management_command(
             return _settings_snapshot(subentry.data)
 
     if section == "memories":
+        if action.startswith("temporary_"):
+            temporary = await async_get_temporary_memory(hass, entry_id, subentry_id)
+            if action == "temporary_list":
+                temporary_records = (
+                    await temporary.async_list_all()
+                    if is_admin
+                    else await temporary.async_list(scope_id)
+                )
+                return {
+                    "memories": [
+                        temporary_memory_as_dict(record, include_scope=is_admin)
+                        for record in temporary_records
+                    ]
+                }
+            if action == "temporary_delete":
+                memory_id = str(message.get("memory_id", ""))
+                requested_scope = message.get("temporary_scope_id", scope_id)
+                if not isinstance(requested_scope, str):
+                    raise HomeAssistantError("temporary_scope_id is invalid")
+                if not is_admin and requested_scope != scope_id:
+                    raise HomeAssistantError("This temporary memory is not available")
+                return {
+                    "deleted": await temporary.async_delete(
+                        requested_scope, [memory_id]
+                    )
+                }
         memory = await async_get_memory(hass, entry_id, subentry_id)
         owner = _memory_scope(scope_id)
         if action == "list":
@@ -686,6 +735,8 @@ def asdict_or_none(value: Any) -> dict[str, Any] | None:
         vol.Optional("subentry_id"): str,
         vol.Optional("scope_id"): str,
         vol.Optional("target_scope_id"): str,
+        vol.Optional("temporary_scope_id"): str,
+        vol.Optional("continuity_key"): str,
         vol.Optional("settings"): dict,
         vol.Optional("config"): dict,
         vol.Optional("tools"): vol.Any(str, list),

@@ -1,0 +1,381 @@
+"""Automatic, expiring temporary context for conversation agents."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
+from datetime import timedelta
+from typing import Any, cast
+from uuid import uuid4
+
+from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
+
+from .const import DOMAIN
+from .memory import validate_memory_privacy
+
+STORAGE_VERSION = 1
+STORAGE_KEY_PREFIX = f"{DOMAIN}.temporary_memory"
+MAX_ACTIVE_RECORDS = 100
+MAX_CONTENT_LENGTH = 500
+MAX_CATEGORY_LENGTH = 64
+MAX_INJECT_RECORDS = 30
+MAX_INJECT_CHARACTERS = 6_000
+
+TEMPORARY_MEMORY_TOOL_NAMES = {
+    "temporary_memory_add",
+    "temporary_memory_update",
+    "temporary_memory_delete",
+}
+
+
+@dataclass(slots=True, frozen=True)
+class TemporaryMemoryRecord:
+    """One concise fact that expires automatically."""
+
+    memory_id: str
+    scope_id: str
+    content: str
+    category: str
+    source: str
+    expires_at: str
+    created_at: str
+    updated_at: str
+
+
+class TemporaryMemoryStore(Store[dict[str, Any]]):
+    """Versioned private Home Assistant storage."""
+
+
+class TemporaryMemory:
+    """Concurrency-safe short-lived context store."""
+
+    def __init__(self, store: TemporaryMemoryStore) -> None:
+        self._store = store
+        self._records: dict[str, TemporaryMemoryRecord] = {}
+        self._lock = asyncio.Lock()
+        self._initialized = False
+        self.expired_pruned = 0
+
+    async def async_initialize(self) -> None:
+        """Load and prune records once at startup."""
+        async with self._lock:
+            if self._initialized:
+                return
+            data = await self._store.async_load()
+            raw_records = data.get("records", []) if isinstance(data, Mapping) else []
+            for raw in raw_records:
+                try:
+                    record = TemporaryMemoryRecord(**raw)
+                    if _parse_expiry(record.expires_at) > dt_util.utcnow():
+                        self._records[record.memory_id] = record
+                    else:
+                        self.expired_pruned += 1
+                except TypeError, ValueError:
+                    continue
+            self._initialized = True
+            if self.expired_pruned:
+                await self._async_save_locked()
+
+    async def async_active(self, scope_id: str) -> list[TemporaryMemoryRecord]:
+        """Return bounded active context and opportunistically prune expiry."""
+        async with self._lock:
+            await self._async_prune_locked()
+            records = [r for r in self._records.values() if r.scope_id == scope_id]
+            records.sort(
+                key=lambda item: (item.updated_at, item.expires_at), reverse=True
+            )
+            selected: list[TemporaryMemoryRecord] = []
+            characters = 0
+            for record in records:
+                if len(selected) >= MAX_INJECT_RECORDS:
+                    break
+                size = len(record.content)
+                if selected and characters + size > MAX_INJECT_CHARACTERS:
+                    continue
+                selected.append(record)
+                characters += size
+            return selected
+
+    async def async_add(
+        self,
+        scope_id: str,
+        content: str,
+        expires_at: str,
+        category: str = "general",
+    ) -> dict[str, Any]:
+        """Add an automatic fact, coalescing an exact active duplicate."""
+        content = _clean(content, MAX_CONTENT_LENGTH, "content")
+        category = _clean(category, MAX_CATEGORY_LENGTH, "category")
+        validate_memory_privacy(content, automatic=True)
+        expiry = _parse_future_expiry(expires_at)
+        async with self._lock:
+            await self._async_prune_locked()
+            now = dt_util.utcnow().isoformat()
+            for current in self._records.values():
+                if (
+                    current.scope_id == scope_id
+                    and current.content.casefold() == content.casefold()
+                ):
+                    updated = TemporaryMemoryRecord(
+                        current.memory_id,
+                        current.scope_id,
+                        content,
+                        category,
+                        "automatic",
+                        expiry.isoformat(),
+                        current.created_at,
+                        now,
+                    )
+                    self._records[current.memory_id] = updated
+                    await self._async_save_locked()
+                    return {
+                        "status": "updated",
+                        "memory": temporary_memory_as_dict(updated),
+                    }
+            if len(self._records) >= MAX_ACTIVE_RECORDS:
+                raise ValueError("temporary memory limit reached")
+            record = TemporaryMemoryRecord(
+                uuid4().hex,
+                scope_id,
+                content,
+                category,
+                "automatic",
+                expiry.isoformat(),
+                now,
+                now,
+            )
+            self._records[record.memory_id] = record
+            await self._async_save_locked()
+            return {"status": "created", "memory": temporary_memory_as_dict(record)}
+
+    async def async_update(
+        self,
+        scope_id: str,
+        memory_id: str,
+        content: str | None,
+        expires_at: str | None,
+        category: str | None,
+    ) -> TemporaryMemoryRecord:
+        """Update/supersede an owned temporary fact."""
+        async with self._lock:
+            await self._async_prune_locked()
+            current = self._owned(scope_id, memory_id)
+            new_content = (
+                _clean(content, MAX_CONTENT_LENGTH, "content")
+                if content is not None
+                else current.content
+            )
+            validate_memory_privacy(new_content, automatic=True)
+            new_expiry = (
+                _parse_future_expiry(expires_at).isoformat()
+                if expires_at is not None
+                else current.expires_at
+            )
+            updated = TemporaryMemoryRecord(
+                current.memory_id,
+                current.scope_id,
+                new_content,
+                _clean(category, MAX_CATEGORY_LENGTH, "category")
+                if category is not None
+                else current.category,
+                current.source,
+                new_expiry,
+                current.created_at,
+                dt_util.utcnow().isoformat(),
+            )
+            self._records[memory_id] = updated
+            await self._async_save_locked()
+            return updated
+
+    async def async_delete(self, scope_id: str, memory_ids: list[str]) -> int:
+        """Delete selected records only from the current scope."""
+        async with self._lock:
+            deleted = 0
+            for memory_id in set(memory_ids[:50]):
+                record = self._records.get(memory_id)
+                if record is not None and record.scope_id == scope_id:
+                    del self._records[memory_id]
+                    deleted += 1
+            if deleted:
+                await self._async_save_locked()
+            return deleted
+
+    async def async_list(self, scope_id: str) -> list[TemporaryMemoryRecord]:
+        """List active records for management."""
+        return await self.async_active(scope_id)
+
+    async def async_list_all(self) -> list[TemporaryMemoryRecord]:
+        """List bounded active records for administrator management."""
+        async with self._lock:
+            await self._async_prune_locked()
+            records = sorted(
+                self._records.values(), key=lambda item: item.updated_at, reverse=True
+            )
+            return records[:MAX_ACTIVE_RECORDS]
+
+    def stats(self) -> dict[str, int]:
+        """Return non-sensitive diagnostics."""
+        return {
+            "active_temporary_memory_count": len(self._records),
+            "expired_temporary_memories_pruned": self.expired_pruned,
+        }
+
+    def scope_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for record in self._records.values():
+            counts[record.scope_id] = counts.get(record.scope_id, 0) + 1
+        return counts
+
+    def _owned(self, scope_id: str, memory_id: str) -> TemporaryMemoryRecord:
+        record = self._records.get(memory_id)
+        if record is None or record.scope_id != scope_id:
+            raise ValueError("temporary memory not found")
+        return record
+
+    async def _async_prune_locked(self) -> None:
+        now = dt_util.utcnow()
+        expired = [
+            memory_id
+            for memory_id, record in self._records.items()
+            if _parse_expiry(record.expires_at) <= now
+        ]
+        for memory_id in expired:
+            del self._records[memory_id]
+        if expired:
+            self.expired_pruned += len(expired)
+            await self._async_save_locked()
+
+    async def _async_save_locked(self) -> None:
+        await self._store.async_save(
+            {"records": [asdict(record) for record in self._records.values()]}
+        )
+
+
+def _parse_expiry(value: str):
+    parsed = dt_util.parse_datetime(value)
+    if parsed is None:
+        raise ValueError("expires_at must be an ISO date-time with a timezone")
+    if parsed.tzinfo is None:
+        raise ValueError("expires_at must include a timezone")
+    return dt_util.as_utc(parsed)
+
+
+def _parse_future_expiry(value: str):
+    parsed = _parse_expiry(value)
+    if parsed <= dt_util.utcnow():
+        raise ValueError("expires_at must be in the future")
+    if parsed > dt_util.utcnow() + timedelta(days=366):
+        raise ValueError("temporary memory cannot last longer than one year")
+    return parsed
+
+
+def _clean(value: str, limit: int, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    value = " ".join(value.split()).strip()
+    if not value or len(value) > limit:
+        raise ValueError(f"{field} must contain 1 to {limit} characters")
+    return value
+
+
+def temporary_memory_as_dict(
+    record: TemporaryMemoryRecord, *, include_scope: bool = False
+) -> dict[str, str]:
+    result = {
+        "memory_id": record.memory_id,
+        "content": record.content,
+        "category": record.category,
+        "source": record.source,
+        "expires_at": record.expires_at,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+    if include_scope:
+        result["scope_id"] = record.scope_id
+    return result
+
+
+def temporary_memory_tools() -> list[dict[str, Any]]:
+    """Return the small model-facing maintenance surface."""
+    common = {"type": "temporary_memory"}
+    return [
+        {
+            "spec": {
+                "name": "temporary_memory_add",
+                "description": "Silently store one useful short-lived fact for the current context.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "expires_at": {
+                            "type": "string",
+                            "description": "ISO date-time with timezone, inferred reasonably from ordinary language.",
+                        },
+                        "category": {"type": "string"},
+                    },
+                    "required": ["content", "expires_at"],
+                    "additionalProperties": False,
+                },
+            },
+            "function": {**common, "operation": "add"},
+        },
+        {
+            "spec": {
+                "name": "temporary_memory_update",
+                "description": "Silently supersede an active temporary fact when circumstances change.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "memory_id": {"type": "string"},
+                        "content": {"type": "string"},
+                        "expires_at": {"type": "string"},
+                        "category": {"type": "string"},
+                    },
+                    "required": ["memory_id"],
+                    "additionalProperties": False,
+                },
+            },
+            "function": {**common, "operation": "update"},
+        },
+        {
+            "spec": {
+                "name": "temporary_memory_delete",
+                "description": "Silently forget one or more active temporary facts for the current context.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "memory_ids": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["memory_ids"],
+                    "additionalProperties": False,
+                },
+            },
+            "function": {**common, "operation": "delete"},
+        },
+    ]
+
+
+_MANAGERS = f"{DOMAIN}.temporary_memory_managers"
+
+
+async def async_get_temporary_memory(
+    hass: Any, entry_id: str, subentry_id: str
+) -> TemporaryMemory:
+    managers = hass.data.setdefault(_MANAGERS, {})
+    key = (entry_id, subentry_id)
+    if key not in managers:
+        managers[key] = TemporaryMemory(
+            TemporaryMemoryStore(
+                hass,
+                STORAGE_VERSION,
+                f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}",
+                private=True,
+                atomic_writes=True,
+                serialize_in_event_loop=False,
+            )
+        )
+    manager = managers[key]
+    await manager.async_initialize()
+    return cast(TemporaryMemory, manager)

@@ -44,8 +44,11 @@ nav:
       - Responses API: features/responses-api.md
       - Web Search: features/web-search.md
       - Persistent memory: features/persistent-memory.md
+      - Temporary memory: features/temporary-memory.md
       - Knowledge Library: features/knowledge-library.md
       - Voice follow-ups: features/voice-followups.md
+      - Conversation continuity: features/conversation-continuity.md
+      - Conversation archive: features/conversation-archive.md
       - Context management: features/context-management.md
       - Skills: features/skills.md
       - Usage statistics: features/usage-statistics.md
