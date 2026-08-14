@@ -11,6 +11,34 @@ const toggle = (panel, key, label, value, description = "", disabled = false, he
 
 export const functionGroupIdFromName = (name) => String(name || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").replace(/^[^a-z]+/, "").slice(0, 64);
 
+const searchTokens = (value) => String(value || "")
+  .normalize("NFKD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, " ")
+  .trim()
+  .split(/\s+/)
+  .filter(Boolean)
+  .map((token) => {
+    if (token.length > 4 && token.endsWith("ies")) return `${token.slice(0, -3)}y`;
+    if (token.length > 4 && /(ches|shes|sses|xes|zes)$/.test(token)) return token.slice(0, -2);
+    if (token.length > 3 && token.endsWith("s") && !token.endsWith("ss")) return token.slice(0, -1);
+    return token;
+  });
+
+export function matchesFunctionSearch(query, searchableText) {
+  const queryTokens = searchTokens(query);
+  if (!queryTokens.length) return true;
+  const textTokens = searchTokens(searchableText);
+  return queryTokens.every((queryToken) => textTokens.some((textToken) =>
+    textToken === queryToken || (
+      Math.min(textToken.length, queryToken.length) >= 3
+      && (textToken.startsWith(queryToken) || queryToken.startsWith(textToken))
+    )
+  ));
+}
+
 export function deleteFunctionGroup(config, groupId) {
   const result = clone(config);
   result.function_groups = (result.function_groups || []).filter((group) => group.id !== groupId);
@@ -322,7 +350,7 @@ export function bindTools(panel) {
   root.querySelector("#add-group")?.addEventListener("click",()=>openFunctionGroup(panel));
   root.querySelectorAll(".edit-group").forEach((button)=>button.addEventListener("click",()=>openFunctionGroup(panel,button.dataset.groupId)));
   root.querySelectorAll(".delete-group").forEach((button)=>button.addEventListener("click",async()=>{const group=(panel._draft.function_groups||[]).find((item)=>item.id===button.dataset.groupId);if(!await panel._confirm("Delete function group?",`The group “${group?.name||button.dataset.groupId}” will be removed. Its functions will not be deleted; they will move to Always available.`,"Delete group"))return;panel._draft=deleteFunctionGroup(panel._draft,button.dataset.groupId);panel._setConfigDirty(true);panel._render();}));
-  root.querySelector("#tool-search")?.addEventListener("input",(event)=>{const query=event.target.value.trim().toLowerCase();root.querySelectorAll(".function-group-card").forEach((card)=>{const groupMatch=Boolean(query)&&(card.dataset.groupSearch||"").includes(query);let toolMatch=false;card.querySelectorAll(".tool-card").forEach((tool)=>{const matches=!query||groupMatch||(tool.dataset.toolSearch||"").includes(query);tool.hidden=!matches;toolMatch=toolMatch||matches;});card.hidden=Boolean(query)&&!groupMatch&&!toolMatch;if(query&&toolMatch)card.querySelector("details")?.setAttribute("open","");});});
+  root.querySelector("#tool-search")?.addEventListener("input",(event)=>{const query=event.target.value;root.querySelectorAll(".function-group-card").forEach((card)=>{const groupMatch=Boolean(query.trim())&&matchesFunctionSearch(query,card.dataset.groupSearch);let toolMatch=false;card.querySelectorAll(".tool-card").forEach((tool)=>{const matches=!query.trim()||groupMatch||matchesFunctionSearch(query,tool.dataset.toolSearch);tool.hidden=!matches;toolMatch=toolMatch||matches;});card.hidden=Boolean(query.trim())&&!groupMatch&&!toolMatch;if(query.trim()&&toolMatch)card.querySelector("details")?.setAttribute("open","");});});
   root.querySelectorAll(".edit-tool").forEach(button=>button.addEventListener("click",()=>openTool(panel,Number(button.dataset.index))));
   root.querySelectorAll(".duplicate-tool").forEach(button=>button.addEventListener("click",()=>{const tool=clone(panel._draft.functions[Number(button.dataset.index)]);let base=`${tool.spec.name}_copy`,name=base,n=2;const names=new Set(panel._draft.functions.map(item=>item.spec?.name));while(names.has(name))name=`${base}_${n++}`;tool.spec.name=name;panel._draft.functions.push(tool);panel._setConfigDirty(true);panel._render();}));
   root.querySelectorAll(".delete-tool").forEach(button=>button.addEventListener("click",async()=>{if(!await panel._confirm("Delete function tool?","The tool will be removed from this local draft and from any group assignment. Save tools to apply the change.","Delete"))return;const [removed]=panel._draft.functions.splice(Number(button.dataset.index),1);panel._draft.function_groups=(panel._draft.function_groups||[]).map((group)=>({...group,functions:(group.functions||[]).filter((name)=>name!==removed?.spec?.name)}));panel._setConfigDirty(true);panel._render();}));
@@ -335,7 +363,7 @@ export function bindTools(panel) {
   root.querySelector("#tool-save")?.addEventListener("click",async()=>{const tool=await validateDialogTool(panel);if(!tool)return;if(panel._toolIndex===null)panel._draft.functions.push(tool);else{const oldName=panel._draft.functions[panel._toolIndex]?.spec?.name;panel._draft.functions[panel._toolIndex]=tool;if(oldName&&oldName!==tool.spec?.name)panel._draft.function_groups=(panel._draft.function_groups||[]).map((group)=>({...group,functions:(group.functions||[]).map((name)=>name===oldName?tool.spec.name:name)}));}panel._setConfigDirty(true);root.querySelector("#tool-dialog").close();panel._render();});
   root.querySelector("#group-name")?.addEventListener("input",(event)=>{if(!panel._groupIdEdited)root.querySelector("#group-id").value=functionGroupIdFromName(event.target.value);});
   root.querySelector("#group-id")?.addEventListener("input",()=>{panel._groupIdEdited=true;});
-  root.querySelector("#group-function-search")?.addEventListener("input",(event)=>{const query=event.target.value.trim().toLowerCase();root.querySelectorAll(".group-function-choice").forEach((choice)=>{choice.hidden=Boolean(query)&&!choice.dataset.choiceSearch.includes(query);});});
+  root.querySelector("#group-function-search")?.addEventListener("input",(event)=>{const query=event.target.value;root.querySelectorAll(".group-function-choice").forEach((choice)=>{choice.hidden=!matchesFunctionSearch(query,choice.dataset.choiceSearch);});});
   root.querySelector("#group-cancel")?.addEventListener("click",()=>root.querySelector("#group-dialog").close());
   root.querySelector("#group-save")?.addEventListener("click",()=>saveFunctionGroup(panel));
 }
