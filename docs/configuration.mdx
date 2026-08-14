@@ -23,6 +23,10 @@ The frontend edits the existing Home Assistant conversation subentry through aut
 
 Function Tools use YAML as the only editor format. Existing tools are serialized by the Python backend as readable single-tool YAML (`spec:` plus `function:`), and new tools begin with a generic template. **Validate** parses YAML and applies the same backend function schemas used at runtime without executing the function. Validated name, type, and description become the metadata shown in the list; they are not separate sources of truth.
 
+The Add Function Tool dialog also offers **Insert Built-in Function**. Built-in functions are implemented directly by Extended OpenAI Conversation; the picker inserts a complete editable native preset into the existing YAML editor without saving it. Already-configured implementations remain visible and are labelled accordingly.
+
+Function Tools are enabled by default. Set the card switch off, or add top-level `enabled: false`, to retain a tool and its Function Group membership without sending its schema to the model or allowing it to execute. Administrators can persist the same state through `extended_openai_conversation_responses.enable_function_tools` and `extended_openai_conversation_responses.disable_function_tools`. These Home Assistant actions are deliberately not exposed as model-facing tools unless an advanced user explicitly wraps them.
+
 Function Groups are separate metadata around those unchanged tools. Existing ungrouped functions remain **Always available**. Choose **Load when needed** to send only a compact group catalogue until the model requests the group in the normal tool loop. Loaded groups persist for the active conversation, may add one provider round-trip on first use, and require no classifier/router model or keyword matching. Deleting a group moves its functions back to **Always available** without deleting them. See [Function Groups](/features/function-groups).
 
 ## Agent lifecycle and portability

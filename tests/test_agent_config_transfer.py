@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
@@ -72,6 +73,26 @@ def test_import_applies_defaults_and_preserves_tools(hass) -> None:
     assert parsed["config"]["functions"] == "[]\n"
     assert parsed["config"]["function_groups"] == []
     assert parsed["config"]["max_tokens"] > 0
+
+
+def test_import_export_round_trip_preserves_disabled_tool_state(hass) -> None:
+    data = agent_config_defaults()
+    data["functions"] = yaml.safe_dump(
+        [
+            {
+                "enabled": False,
+                "spec": {
+                    "name": "energy",
+                    "description": "Get energy",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                "function": {"type": "native", "name": "get_energy"},
+            }
+        ]
+    )
+    exported = _export_agent(SimpleNamespace(title="Jarvis", data=data))
+    parsed = _parse_import_document(exported)
+    assert yaml.safe_load(parsed["config"]["functions"])[0]["enabled"] is False
 
 
 def test_import_rejects_versions_unknown_fields_and_credentials() -> None:

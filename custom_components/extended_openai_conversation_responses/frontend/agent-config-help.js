@@ -181,13 +181,14 @@ export const HELP_METADATA = Object.freeze({
   }),
   function_tools: Object.freeze({
     title: "Function tools and groups",
-    paragraphs: ["Function groups are optional. Existing ungrouped functions remain always available. An on-demand group sends only its compact name and description until the model decides the current task needs it.", "Loading a group performs no Home Assistant action. It makes the group's existing, backend-validated tool definitions available for the active conversation and may add one model round-trip on first use."],
+    paragraphs: ["Function groups are optional. Existing ungrouped functions remain always available when enabled. An on-demand group sends only its compact name and description until the model decides the current task needs it.", "Built-in Functions are editable presets for native capabilities implemented directly by Extended OpenAI Conversation. Disabled tools remain configured and grouped, but their schemas are not sent to the model and calls are rejected."],
     items: [
       { term: "Always available", text: "Sends full definitions on every request, matching existing behaviour." },
       { term: "Load when needed", text: "Withholds full definitions until the model requests the group; loaded groups remain available for the active conversation." },
       { term: "Function YAML", text: "spec describes the model-facing schema and function tells Extended OpenAI how to execute it. Grouping does not change this format or its validation." },
+      { term: "Enabled", text: "Uses the same saved state in the Tools page and Home Assistant enable/disable actions. Disabled is a capability boundary, not a prompt preference." },
     ],
-    keywords: "group on demand load when needed tokens catalogue yaml spec schema validate execute",
+    keywords: "group on demand load when needed tokens catalogue yaml spec schema validate execute built in enabled disabled",
     href: `${DOCS_ROOT}/functions/overview.mdx`,
   }),
 });

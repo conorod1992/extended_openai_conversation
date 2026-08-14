@@ -10,6 +10,7 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
     agent_config_defaults,
     agent_config_options,
     agent_config_snapshot,
+    function_tool_enabled,
     function_tool_yaml,
     merge_agent_config,
     model_capabilities,
@@ -17,6 +18,9 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
     starter_function_tool_yaml,
     validate_function_tools,
     validate_single_function_tool,
+)
+from custom_components.extended_openai_conversation_responses.built_in_functions import (
+    built_in_function_catalog,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_MEMORY_AUTO_CREATE,
@@ -91,6 +95,39 @@ def test_function_tools_validate_yaml_schema_and_duplicates() -> None:
         validate_function_tools([invalid_type])
     with pytest.raises(AgentConfigError, match="duplicate tool name"):
         validate_function_tools([_native_tool(), _native_tool()])
+
+
+def test_function_tool_enabled_defaults_and_boolean_validation() -> None:
+    legacy = validate_function_tools([_native_tool()])[0]
+    assert "enabled" not in legacy
+    assert function_tool_enabled(legacy) is True
+    for value in (True, False):
+        tool = _native_tool()
+        tool["enabled"] = value
+        assert validate_function_tools([tool])[0]["enabled"] is value
+    for value in (0, 1, "false", None):
+        tool = _native_tool()
+        tool["enabled"] = value
+        with pytest.raises(AgentConfigError, match=r"enabled.*boolean"):
+            validate_function_tools([tool])
+
+
+def test_built_in_catalogue_presets_are_valid_and_marks_used_native_tools() -> None:
+    configured = _native_tool()
+    catalog = built_in_function_catalog([configured])
+    assert len(catalog) == 7
+    assert all(validate_function_tools([preset["tool"]]) for preset in catalog)
+    execute_service = next(
+        preset for preset in catalog if preset["implementation"] == "execute_service"
+    )
+    assert execute_service["already_configured"] is True
+    assert execute_service["tool"]["spec"]["name"] == "execute_service"
+    assert (
+        next(preset for preset in catalog if preset["implementation"] == "get_energy")[
+            "already_configured"
+        ]
+        is False
+    )
 
 
 def test_function_tool_unknown_fields_are_preserved() -> None:

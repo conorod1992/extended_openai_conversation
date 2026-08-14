@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 import {
+  canReplaceToolYamlWithoutConfirmation,
   categorizeFunctionTools,
   deleteFunctionGroup,
   functionGroupIdFromName,
+  functionToolCountLabel,
+  isFunctionToolEnabled,
   matchesFunctionSearch,
 } from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
 
@@ -23,6 +26,12 @@ assert.equal(matchesFunctionSearch("Reminder", "Reminders Manage reminders"), tr
 assert.equal(matchesFunctionSearch("Reminder", "remind family native"), true);
 assert.equal(matchesFunctionSearch("manage calendar", "Calendar Manage calendars"), true);
 assert.equal(matchesFunctionSearch("weather", "Reminders Manage reminders"), false);
+assert.equal(isFunctionToolEnabled(tool("enabled")), true);
+assert.equal(isFunctionToolEnabled({...tool("disabled"), enabled: false}), false);
+assert.equal(functionToolCountLabel([tool("one"), {...tool("two"), enabled: false}]), "1 enabled · 1 disabled");
+assert.equal(canReplaceToolYamlWithoutConfirmation("", "starter"), true);
+assert.equal(canReplaceToolYamlWithoutConfirmation("starter", "starter"), true);
+assert.equal(canReplaceToolYamlWithoutConfirmation("edited", "starter"), false);
 const managementPanelSource = await readFile(
   new URL(
     "../custom_components/extended_openai_conversation_responses/frontend/management-panel.js",

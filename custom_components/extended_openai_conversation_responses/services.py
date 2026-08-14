@@ -26,6 +26,7 @@ from homeassistant.helpers import (
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
+from .agent_config import merge_agent_config, validate_function_tools
 from .const import (
     API_MODE_OPTIONS,
     API_MODE_RESPONSES,
@@ -33,6 +34,7 @@ from .const import (
     CONF_API_PROVIDER,
     CONF_API_VERSION,
     CONF_BASE_URL,
+    CONF_FUNCTION_TOOLS,
     CONF_ORGANIZATION,
     CONF_SKIP_AUTHENTICATION,
     DEFAULT_API_MODE,
@@ -42,7 +44,9 @@ from .const import (
     GITHUB_REPO_OWNER,
     GITHUB_SKILLS_BRANCH,
     GITHUB_SKILLS_PATH,
+    SERVICE_DISABLE_FUNCTION_TOOLS,
     SERVICE_DOWNLOAD_SKILL,
+    SERVICE_ENABLE_FUNCTION_TOOLS,
     SERVICE_MEMORY_CLEAR,
     SERVICE_MEMORY_DELETE,
     SERVICE_MEMORY_LIST,
@@ -125,6 +129,15 @@ MEMORY_CLEAR_SCHEMA = vol.Schema(
     }
 )
 
+FUNCTION_TOOL_STATE_SCHEMA = vol.Schema(
+    {
+        **MEMORY_AGENT_FIELDS,
+        vol.Required("functions"): vol.All(
+            cv.ensure_list, vol.Length(min=1, max=100), [cv.string]
+        ),
+    }
+)
+
 _LOGGER = logging.getLogger(__package__)
 
 
@@ -153,6 +166,46 @@ def resolve_memory_agent(
     if subentry is None or subentry.subentry_type != "conversation":
         raise HomeAssistantError("Conversation agent not found")
     return entry_id, subentry_id
+
+
+async def async_set_function_tools_enabled(
+    hass: HomeAssistant,
+    entry_id: str,
+    agent_reference: str,
+    function_names: list[str],
+    enabled: bool,
+) -> None:
+    """Persist the authoritative enabled state for selected Function Tools."""
+    _, subentry_id = resolve_memory_agent(hass, entry_id, agent_reference)
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is None:
+        raise HomeAssistantError("Config entry not found")
+    subentry = entry.subentries[subentry_id]
+    configured = validate_function_tools(subentry.data.get(CONF_FUNCTION_TOOLS, []))
+    requested = list(dict.fromkeys(function_names))
+    configured_names = {tool["spec"]["name"] for tool in configured}
+    missing = [name for name in requested if name not in configured_names]
+    if missing:
+        raise HomeAssistantError(
+            "Function Tool not found: " + ", ".join(sorted(missing))
+        )
+    for tool in configured:
+        if tool["spec"]["name"] in requested:
+            tool["enabled"] = enabled
+    normalized = merge_agent_config(
+        dict(subentry.data), {CONF_FUNCTION_TOOLS: configured}
+    )
+    hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
+
+
+async def _async_require_service_admin(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Allow system automations and require admin rights for user-originated calls."""
+    user_id = getattr(getattr(call, "context", None), "user_id", None)
+    if user_id is None:
+        return
+    user = await hass.auth.async_get_user(user_id)
+    if user is None or not user.is_admin:
+        raise HomeAssistantError("Administrator permission is required")
 
 
 async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
@@ -419,6 +472,28 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         )
         return {"deleted": deleted}
 
+    async def enable_function_tools(call: ServiceCall) -> None:
+        """Enable one or more configured Function Tools."""
+        await _async_require_service_admin(hass, call)
+        await async_set_function_tools_enabled(
+            hass,
+            call.data["config_entry"],
+            call.data["agent_id"],
+            call.data["functions"],
+            True,
+        )
+
+    async def disable_function_tools(call: ServiceCall) -> None:
+        """Disable one or more configured Function Tools."""
+        await _async_require_service_admin(hass, call)
+        await async_set_function_tools_enabled(
+            hass,
+            call.data["config_entry"],
+            call.data["agent_id"],
+            call.data["functions"],
+            False,
+        )
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_QUERY_IMAGE,
@@ -472,6 +547,20 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         memory_clear,
         schema=MEMORY_CLEAR_SCHEMA,
         supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ENABLE_FUNCTION_TOOLS,
+        enable_function_tools,
+        schema=FUNCTION_TOOL_STATE_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_DISABLE_FUNCTION_TOOLS,
+        disable_function_tools,
+        schema=FUNCTION_TOOL_STATE_SCHEMA,
     )
 
 

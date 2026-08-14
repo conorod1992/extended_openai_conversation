@@ -531,6 +531,8 @@ SERVICE_DOWNLOAD_SKILL = "download_skill"
 SERVICE_MEMORY_LIST = "memory_list"
 SERVICE_MEMORY_DELETE = "memory_delete"
 SERVICE_MEMORY_CLEAR = "memory_clear"
+SERVICE_ENABLE_FUNCTION_TOOLS = "enable_function_tools"
+SERVICE_DISABLE_FUNCTION_TOOLS = "disable_function_tools"
 
 # Integration-owned UI and storage
 MEMORY_PANEL_URL = "extended-openai-memory"

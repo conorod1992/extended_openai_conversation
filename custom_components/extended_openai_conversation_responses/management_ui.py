@@ -32,6 +32,7 @@ from .agent_config import (
     validate_single_function_tool,
 )
 from .agent_test import async_test_agent
+from .built_in_functions import built_in_function_catalog
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
     CONF_API_PROVIDER,
@@ -424,6 +425,21 @@ async def async_management_command(
             return {"yaml": function_tool_yaml(message.get("tool"))}
         if action == "starter":
             return {"yaml": starter_function_tool_yaml()}
+        if action == "built_in_catalog":
+            configured = validate_function_tools(message.get("tools", []))
+            return {
+                "functions": [
+                    {
+                        "label": preset["label"],
+                        "implementation": preset["implementation"],
+                        "name": preset["tool"]["spec"]["name"],
+                        "description": preset["tool"]["spec"]["description"],
+                        "already_configured": preset["already_configured"],
+                        "yaml": function_tool_yaml(preset["tool"]),
+                    }
+                    for preset in built_in_function_catalog(configured)
+                ]
+            }
         if action == "validate_yaml":
             result = _validation_result(
                 lambda: validate_single_function_tool(message.get("yaml"))
