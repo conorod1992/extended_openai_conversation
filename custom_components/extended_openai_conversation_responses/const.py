@@ -1,7 +1,7 @@
 """Constants for the Extended OpenAI Conversation (Responses) integration."""
 
 DOMAIN = "extended_openai_conversation_responses"
-CONFIG_ENTRY_VERSION = 5
+CONFIG_ENTRY_VERSION = 6
 AGENT_CONFIG_EXPORT_VERSION = 1
 DEFAULT_NAME = "Extended OpenAI Conversation (Responses)"
 DEFAULT_CONVERSATION_NAME = "Extended OpenAI Conversation (Responses)"
@@ -129,6 +129,18 @@ DEFAULT_WEB_SEARCH = False
 CONF_WEB_SEARCH_CONTEXT = "web_search_context"
 WEB_SEARCH_CONTEXT_OPTIONS = ["low", "medium", "high"]
 DEFAULT_WEB_SEARCH_CONTEXT = WEB_SEARCH_CONTEXT_OPTIONS[0]
+
+# Optional on-demand loading for configured function tools.
+CONF_FUNCTION_GROUPS = "function_groups"
+DEFAULT_FUNCTION_GROUPS = ()
+FUNCTION_GROUP_LOADING_ALWAYS = "always"
+FUNCTION_GROUP_LOADING_ON_DEMAND = "on_demand"
+FUNCTION_GROUP_LOADING_MODES = [
+    FUNCTION_GROUP_LOADING_ALWAYS,
+    FUNCTION_GROUP_LOADING_ON_DEMAND,
+]
+FUNCTION_GROUP_LOADER_TOOL_NAME = "load_function_groups"
+MAX_FUNCTION_GROUP_LOAD_ROUNDS = 5
 
 # Persistent memory (opt-in per conversation agent)
 CONF_MEMORY_ENABLED = "memory_enabled"

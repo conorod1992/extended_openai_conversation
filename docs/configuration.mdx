@@ -15,13 +15,15 @@ Connection details and conversation-agent behaviour are configured in separate p
     Choose **Extended OpenAI** in the Home Assistant sidebar, select a conversation agent, then open **Configuration**.
   </Step>
   <Step title="Manage Function Tools">
-    Use the top-level **Tools** section to browse configured tools. **Edit** opens the large YAML-first editor immediately; **Add Function Tool** starts from a generic single-tool YAML template.
+    Use the top-level **Tools** section to browse configured tools and optional Function Groups. **Edit** opens the large YAML-first function editor; **Create group** opens friendly group fields and a searchable function checklist.
   </Step>
 </Steps>
 
 The frontend edits the existing Home Assistant conversation subentry through authenticated WebSocket commands. It does not create a separate configuration store. Configuration is one full-width settings document with lightweight jump links, search, and responsive fields inside each section. Edits remain local until **Save configuration** is pressed; **Revert** discards the draft. Model-specific fields are supplied by the backend. Simple dependent settings remain visible but disabled so available options are discoverable and the layout stays stable.
 
 Function Tools use YAML as the only editor format. Existing tools are serialized by the Python backend as readable single-tool YAML (`spec:` plus `function:`), and new tools begin with a generic template. **Validate** parses YAML and applies the same backend function schemas used at runtime without executing the function. Validated name, type, and description become the metadata shown in the list; they are not separate sources of truth.
+
+Function Groups are separate metadata around those unchanged tools. Existing ungrouped functions remain **Always available**. Choose **Load when needed** to send only a compact group catalogue until the model requests the group in the normal tool loop. Loaded groups persist for the active conversation, may add one provider round-trip on first use, and require no classifier/router model or keyword matching. Deleting a group moves its functions back to **Always available** without deleting them. See [Function Groups](/features/function-groups).
 
 ## Agent lifecycle and portability
 
@@ -223,6 +225,8 @@ Regex is an advanced feature. Rules run sequentially on the completed response, 
     - `function`: Implementation details (type and configuration)
 
     See [Functions Overview](/functions/overview) for detailed information.
+
+    The Tools page can optionally organize configured functions into **Always available** or **Load when needed** groups without changing their YAML. See [Function Groups](/features/function-groups).
   </Accordion>
 
   <Accordion title="Context Threshold">

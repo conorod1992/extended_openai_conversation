@@ -18,10 +18,20 @@ from custom_components.extended_openai_conversation_responses.management_ui impo
 def test_export_is_versioned_and_excludes_history_and_credentials(hass) -> None:
     data = agent_config_defaults()
     data["prompt"] = "Custom"
+    data["function_groups"] = [
+        {
+            "id": "general",
+            "name": "General",
+            "description": "General functions",
+            "loading_mode": "always",
+            "functions": [],
+        }
+    ]
     subentry = SimpleNamespace(title="Jarvis", data=data)
     document = _export_agent(subentry)
     assert document["version"] == 1
     assert document["config"]["prompt"] == "Custom"
+    assert document["config"]["function_groups"][0]["id"] == "general"
     serialized = str(document)
     assert "api_key" not in serialized
     assert "memory_contents" not in serialized
@@ -60,6 +70,7 @@ def test_import_applies_defaults_and_preserves_tools(hass) -> None:
     parsed = _parse_import_document(document)
     assert parsed["title"] == "Imported"
     assert parsed["config"]["functions"] == "[]\n"
+    assert parsed["config"]["function_groups"] == []
     assert parsed["config"]["max_tokens"] > 0
 
 

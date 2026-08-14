@@ -107,6 +107,15 @@ async def test_configuration_validation_returns_field_errors(hass) -> None:
 async def test_duplicate_copies_configuration_not_runtime_history(hass) -> None:
     _entry, subentry = _setup_entry(hass)
     subentry.data["prompt"] = "Custom prompt"
+    subentry.data["function_groups"] = [
+        {
+            "id": "general",
+            "name": "General",
+            "description": "General tools",
+            "loading_mode": "always",
+            "functions": [],
+        }
+    ]
     result = await async_management_command(
         hass,
         "admin",
@@ -121,6 +130,7 @@ async def test_duplicate_copies_configuration_not_runtime_history(hass) -> None:
     assert result["title"] == "Jarvis - Copy"
     duplicate = hass.config_entries.async_add_subentry.call_args.args[1]
     assert duplicate.data["prompt"] == "Custom prompt"
+    assert duplicate.data["function_groups"][0]["id"] == "general"
     assert "archive_history" not in duplicate.data
     assert "memory_contents" not in duplicate.data
 

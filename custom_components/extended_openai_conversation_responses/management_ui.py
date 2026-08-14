@@ -378,6 +378,7 @@ async def async_management_command(
                     "tools": len(
                         validate_function_tools(parsed["config"].get("functions"))
                     ),
+                    "function_groups": len(parsed["config"].get("function_groups", [])),
                     "speech_rules": len(
                         parsed["config"].get("speech_regex_replacements", [])
                     ),

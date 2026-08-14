@@ -1,0 +1,84 @@
+# Function groups
+
+Function groups let an agent keep related configured functions **always available** or **load them only when needed**. They are optional: every existing ungrouped function keeps the previous behaviour and sends its full schema on each model request.
+
+This feature is useful when an agent has many functions whose names, descriptions, parameters, and examples would otherwise consume input on unrelated requests.
+
+## How it works
+
+An on-demand group initially contributes only compact metadata: its stable ID, friendly name, and concise description. The integration adds an internal `load_function_groups` tool containing that catalogue. It does not include member function names, parameter schemas, examples, or execution configuration.
+
+When the model determines that a group is relevant, it can load one or several groups in the normal tool loop:
+
+```json
+{"groups": ["calendar", "reminders"]}
+```
+
+Loading performs no Home Assistant action. The integration validates the requested IDs, records them for the active conversation, returns a short result, and rebuilds the next provider request with the detailed schemas from those groups. The configured functions still pass through the same backend validation, Home Assistant permissions, exposed-entity restrictions, and execution safeguards as always.
+
+There is no separate classifier request, routing model, embedding lookup, or local keyword matching. The same conversational model chooses a group from its compact semantic description.
+
+## Availability modes
+
+- **Always available** sends every member's complete schema immediately.
+- **Load when needed** withholds complete member schemas until the model requests the group.
+- **Ungrouped functions** remain always available for backwards compatibility.
+
+A function belongs to at most one group. Group membership is stored separately from the function YAML, so the existing `spec` and `function` format does not change.
+
+## Configure groups in the UI
+
+1. Open **Extended OpenAI** in the Home Assistant sidebar.
+2. Select the conversation agent and open **Tools**.
+3. Select **Create group**.
+4. Enter a friendly name. Review the generated stable group ID.
+5. Write a concise description that explains when the capability is useful.
+6. Choose **Always available** or **Load when needed**.
+7. Search for and select the member functions, then keep the group in the shared draft.
+8. Select **Save tools and groups**.
+
+The overview shows a distinct card for each group, its availability, member count, description, and expandable member list. Search matches groups and functions. Editing a group can move selected functions from another group without editing YAML.
+
+Deleting a group never deletes its functions. They become ungrouped and therefore **Always available** when the draft is saved. Deleting a function removes its group assignment. Renaming a function through the editor updates its assignment.
+
+## Lifecycle and follow-ups
+
+Loaded groups persist for the same active conversation. For example:
+
+1. “Remind me at 8 to put the bins out” loads **Reminders** and calls the create function.
+2. “Actually make that 9” can use the update function without loading **Reminders** again.
+
+A separate or expired conversation starts with no on-demand groups loaded. State is isolated by provider entry, conversation agent, and active conversation key. It is stored explicitly rather than inferred from textual history, so context truncation does not unload a group halfway through a conversation.
+
+Loaded state is intentionally ephemeral and resets when Home Assistant or the integration restarts, when the agent is reconfigured/reloaded, or when its conversation state expires. The model can load the group again naturally after a reset. No separate function-group timeout is added.
+
+The loader does not consume the agent's **Maximum function calls** allowance because it performs no user action. It has a separate hard limit of five loader rounds within one model run, while the existing overall tool-loop bound remains in place.
+
+## Token-use example
+
+**Before**
+
+An agent has 50 configured functions. Every request includes all 50 complete schemas, even a general knowledge question.
+
+**After**
+
+The agent keeps a few general functions always available and creates on-demand groups for Reminders, Conditional Notifications, Deferred Actions, Gmail, and Calendar. A general question sends the general schemas plus the compact group catalogue. A calendar request first loads **Calendar**, after which only the Calendar group's complete schemas are added for the active conversation.
+
+Schema sizes vary, so the integration does not promise an exact token percentage. Diagnostics expose:
+
+- configured function count;
+- full configured schemas sent on the latest request;
+- available on-demand group count;
+- loaded group IDs;
+- serialized function-schema character count.
+
+The character count is labelled as serialized size, not a provider token count.
+
+## Compatibility and limitations
+
+- Legacy configurations, imports, exports, and duplicated agents remain valid.
+- Groups and assignments are included in agent duplication and import/export.
+- Responses and Chat Completions use the same integration-owned function loop, so grouping works in both modes when the selected model/provider supports function tools.
+- Built-in Web Search, memory, Knowledge Library, archive, temporary-memory, continuation, and skills capabilities are not placed in user function groups.
+- Empty groups are allowed for drafting but do not appear in the loadable catalogue until they have members.
+- The first use of an on-demand group may add one model round-trip.

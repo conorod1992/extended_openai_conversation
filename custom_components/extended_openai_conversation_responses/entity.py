@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import AsyncGenerator, Iterable, Mapping
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
 from dataclasses import replace
 import json
 import logging
@@ -66,7 +66,9 @@ from .const import (
     DEFAULT_WEB_SEARCH,
     DEFAULT_WEB_SEARCH_CONTEXT,
     DOMAIN,
+    FUNCTION_GROUP_LOADER_TOOL_NAME,
     LEGACY_CONTEXT_TRUNCATE_STRATEGY,
+    MAX_FUNCTION_GROUP_LOAD_ROUNDS,
 )
 from .context import (
     history_as_summary_text,
@@ -388,6 +390,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         structure_name: str | None = None,
         structure: vol.Schema | None = None,
         conditional_continue: bool = False,
+        function_tools_factory: Callable[[], list[dict[str, Any]]] | None = None,
+        function_group_loader: Callable[[Any], dict[str, Any]] | None = None,
     ) -> bool | None:
         """Generate an answer for the chat log with streaming support."""
         if self._usage is not None:
@@ -421,26 +425,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
         await self._async_add_attachments(chat_log, messages, api_mode)
 
-        if conditional_continue and any(
-            function_tool["spec"]["name"] == CONTINUE_CONVERSATION_TOOL_NAME
-            for function_tool in function_tools
-        ):
-            raise HomeAssistantError(
-                f"Function tool name `{CONTINUE_CONVERSATION_TOOL_NAME}` is reserved "
-                "for Conditional continue conversation mode"
-            )
-
-        function_api_tools = _format_tools(
-            [
-                *function_tools,
-                *([CONTINUE_CONVERSATION_TOOL] if conditional_continue else []),
-            ],
-            api_mode,
-        )
         web_search_tool = _build_web_search_tool(
             options, api_mode, getattr(self.entry, "data", {})
         )
-        tools = [*([web_search_tool] if web_search_tool else []), *function_api_tools]
         continuation_decision: bool | None = None
         api_kwargs: dict[str, Any] = {
             "model": model,
@@ -505,17 +492,56 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     },
                 }
 
-        tool_kwargs: dict[str, Any] = {}
-        if tools:
-            tool_kwargs["tools"] = tools
-            tool_kwargs["tool_choice"] = "required" if conditional_continue else "auto"
-
         finalization_retry_attempted = False
         draft_content_ids: set[int] = set()
         observed_input_tokens = 0
+        function_call_rounds = 0
+        loader_rounds = 0
+        force_finalizer_only = False
 
         for n_requests in range(MAX_TOOL_ITERATIONS):
-            if tools and 0 <= max_function_calls <= n_requests:
+            request_function_tools = (
+                function_tools_factory()
+                if function_tools_factory is not None
+                else function_tools
+            )
+            if loader_rounds >= MAX_FUNCTION_GROUP_LOAD_ROUNDS:
+                request_function_tools = [
+                    tool
+                    for tool in request_function_tools
+                    if tool["spec"]["name"] != FUNCTION_GROUP_LOADER_TOOL_NAME
+                ]
+            if conditional_continue and any(
+                tool["spec"]["name"] == CONTINUE_CONVERSATION_TOOL_NAME
+                for tool in request_function_tools
+            ):
+                raise HomeAssistantError(
+                    f"Function tool name `{CONTINUE_CONVERSATION_TOOL_NAME}` is "
+                    "reserved for Conditional continue conversation mode"
+                )
+            formatted_function_tools = _format_tools(
+                [
+                    *request_function_tools,
+                    *([CONTINUE_CONVERSATION_TOOL] if conditional_continue else []),
+                ],
+                api_mode,
+            )
+            tools = [
+                *([web_search_tool] if web_search_tool else []),
+                *formatted_function_tools,
+            ]
+            tool_kwargs: dict[str, Any] = {}
+            if tools:
+                tool_kwargs["tools"] = tools
+                tool_kwargs["tool_choice"] = (
+                    "required" if conditional_continue else "auto"
+                )
+            if force_finalizer_only:
+                tool_kwargs["tools"] = _format_tools(
+                    [CONTINUE_CONVERSATION_TOOL], api_mode
+                )
+                tool_kwargs["tool_choice"] = "required"
+            elif tools and 0 <= max_function_calls <= function_call_rounds:
                 if conditional_continue:
                     tool_kwargs["tools"] = _format_tools(
                         [CONTINUE_CONVERSATION_TOOL], api_mode
@@ -629,6 +655,44 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 for tool_input in pending_tool_calls
                 if tool_input.tool_name != CONTINUE_CONVERSATION_TOOL_NAME
             ]
+            loader_calls = [
+                tool_input
+                for tool_input in pending_tool_calls
+                if tool_input.tool_name == FUNCTION_GROUP_LOADER_TOOL_NAME
+            ]
+            pending_tool_calls = [
+                tool_input
+                for tool_input in pending_tool_calls
+                if tool_input.tool_name != FUNCTION_GROUP_LOADER_TOOL_NAME
+            ]
+
+            if loader_calls:
+                loader_rounds += 1
+                for loader_call in loader_calls:
+                    if function_group_loader is None:
+                        loader_result = {
+                            "status": "error",
+                            "error": "Function-group loading is unavailable",
+                        }
+                    elif loader_rounds > MAX_FUNCTION_GROUP_LOAD_ROUNDS:
+                        loader_result = {
+                            "status": "error",
+                            "error": "Function-group loader safety limit reached",
+                        }
+                    else:
+                        loader_result = function_group_loader(
+                            loader_call.tool_args.get("groups")
+                        )
+                    chat_log.async_add_assistant_content_without_tools(
+                        conversation.ToolResultContent(
+                            agent_id=self.entity_id,
+                            tool_call_id=loader_call.id,
+                            tool_name=loader_call.tool_name,
+                            tool_result={
+                                "result": json.dumps(loader_result, ensure_ascii=False)
+                            },
+                        )
+                    )
 
             if control_calls:
                 control_call = control_calls[-1]
@@ -639,7 +703,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
                 # A finalizer emitted beside an action tool is premature. Remove it
                 # from history and wait for the post-tool response to decide.
-                is_final = not pending_tool_calls
+                is_final = not pending_tool_calls and not loader_calls
                 self._consume_continue_conversation_tool(
                     chat_log,
                     existing_content_ids,
@@ -658,7 +722,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 function_tool = next(
                     (
                         f
-                        for f in (function_tools)
+                        for f in request_function_tools
                         if f["spec"]["name"] == tool_input.tool_name
                     ),
                     None,
@@ -675,6 +739,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
 
                 chat_log.async_add_assistant_content_without_tools(tool_result_content)
+
+            if pending_tool_calls:
+                function_call_rounds += 1
 
             if api_mode == API_MODE_RESPONSES:
                 messages.extend(
@@ -694,6 +761,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 and continuation_decision is None
                 and not pending_tool_calls
                 and not control_calls
+                and not loader_calls
             ):
                 if not finalization_retry_attempted:
                     draft_content_ids.update(
@@ -705,10 +773,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         and not content.tool_calls
                     )
                     finalization_retry_attempted = True
-                    tool_kwargs["tools"] = _format_tools(
-                        [CONTINUE_CONVERSATION_TOOL], api_mode
-                    )
-                    tool_kwargs["tool_choice"] = "required"
+                    force_finalizer_only = True
                     _LOGGER.warning(
                         "Conditional response omitted %s; retrying once with only "
                         "the finalizer available",
