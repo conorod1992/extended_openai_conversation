@@ -35,6 +35,14 @@ Function Groups are separate metadata around those unchanged tools. Existing ung
 - **Export** downloads a human-readable, versioned JSON document containing agent-level behaviour only. It is disabled while the shared Configuration/Tools draft is dirty. Entry-level API credentials and retained runtime data are excluded, and common credential fields receive best-effort redaction. Function Tool definitions can still contain sensitive values in arbitrary strings, URLs, templates, commands, headers, or provider-specific fields, so review exported files before sharing them.
 - **Import** validates and previews a versioned JSON/YAML document before it can create a new agent or overwrite the current agent. Creating a new agent preserves the current draft. Current-agent overwrite requires confirmation, explicitly discards a dirty draft, and never changes provider credentials.
 
+## Full Backup & Restore
+
+**Export configuration** remains the lightweight format for reusing or sharing agent behaviour. The separate **Backup & Restore** section creates a private recovery or migration backup for one conversation agent. It includes normalized saved configuration, persistent memories, active temporary memories with their original absolute expiry, canonical Knowledge source content and metadata, retained archive sessions and turns, and complete persisted usage totals, daily aggregates, requests, and runs.
+
+Provider credentials, API keys, OAuth tokens, parent config-entry secrets, active requests or conversations, currently loaded on-demand Function Groups, locks, caches, and derived indexes are not included. A migrated agent may therefore require its provider connection to be reconfigured separately.
+
+Selecting a backup only validates it and opens a human-readable summary. No state changes until **Restore everything** is explicitly selected. Restore uses deterministic replacement semantics rather than merging: current configuration and each backed-up storage category are replaced, usage is not added or double-counted, expired temporary memories are dropped, unexpired ones retain their original expiry, and the Knowledge search index is rebuilt from source content. A failed storage commit triggers a best-effort rollback to the pre-restore snapshot. Because full backups can contain prompts and private user-owned data, store the JSON file securely.
+
 ## Speech / TTS post-processing
 
 Enable speech post-processing under **Configuration → Spoken response** to clean both progressive and completed TTS. Built-in cleanup uses a bounded, stateful stream parser, so links and URLs split across provider deltas are removed before Home Assistant feeds them to TTS. The original response remains in ChatLog history, events, archive, memory/context, and diagnostics. Home Assistant exposes one shared progressive listener for visual updates and TTS, so live visual deltas are cleaned too; retained content remains original.

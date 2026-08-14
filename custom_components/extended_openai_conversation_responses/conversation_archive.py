@@ -535,6 +535,145 @@ class ConversationArchive:
             counts[session.scope_id] = counts.get(session.scope_id, 0) + 1
         return counts
 
+    async def async_backup_data(self) -> dict[str, Any]:
+        """Return retained archive content without active-session runtime state."""
+        async with self._lock:
+            self._ensure_initialized()
+            sessions = [
+                session
+                for session in self._sessions.values()
+                if session.retention_state != "unretained"
+            ]
+            retained_ids = {session.session_id for session in sessions}
+            return {
+                "sessions": [asdict(session) for session in sessions],
+                "turns": [
+                    asdict(turn)
+                    for session_id, turns in self._turns.items()
+                    if session_id in retained_ids
+                    for turn in turns
+                ],
+            }
+
+    @staticmethod
+    def validate_backup_data(
+        data: Any, target_agent_id: str
+    ) -> tuple[list[ArchiveSession], list[ArchiveTurn]]:
+        """Validate archive source data and bind it to the selected agent."""
+        if not isinstance(data, dict) or set(data) != {"sessions", "turns"}:
+            raise ValueError("archive data is incomplete or corrupted")
+        if not isinstance(data["sessions"], list) or not isinstance(
+            data["turns"], list
+        ):
+            raise ValueError("archive sessions and turns must be lists")
+        sessions: list[ArchiveSession] = []
+        session_ids: set[str] = set()
+        for raw in data["sessions"]:
+            if not isinstance(raw, dict):
+                raise ValueError("archive session must be an object")
+            raw = {**raw, "agent_subentry_id": target_agent_id}
+            try:
+                session = ArchiveSession(**raw)
+            except TypeError as err:
+                raise ValueError("archive session is invalid") from err
+            string_values = (
+                session.session_id,
+                session.agent_subentry_id,
+                session.scope_id,
+                session.scope_type,
+                session.scope_source,
+                session.started_at,
+                session.last_message_at,
+                session.title,
+                session.retention_state,
+            )
+            optional_values = (
+                session.home_assistant_conversation_id,
+                session.source_device_id,
+            )
+            if not all(isinstance(value, str) for value in string_values) or not all(
+                value is None or isinstance(value, str) for value in optional_values
+            ):
+                raise ValueError("archive session fields have invalid types")
+            if (
+                not session.session_id
+                or len(session.session_id) > 128
+                or session.session_id in session_ids
+                or session.retention_state not in {"retained", "private"}
+                or not isinstance(session.turn_count, int)
+                or isinstance(session.turn_count, bool)
+                or session.turn_count < 0
+                or len(session.title) > MAX_TITLE_LENGTH
+                or _parse_time(session.started_at)
+                == datetime.min.replace(tzinfo=dt_util.UTC)
+                or _parse_time(session.last_message_at)
+                == datetime.min.replace(tzinfo=dt_util.UTC)
+            ):
+                raise ValueError("archive session metadata is invalid")
+            session_ids.add(session.session_id)
+            sessions.append(session)
+
+        turns: list[ArchiveTurn] = []
+        turn_ids: set[str] = set()
+        per_session: dict[str, int] = defaultdict(int)
+        for raw in data["turns"]:
+            if not isinstance(raw, dict):
+                raise ValueError("archive turn must be an object")
+            try:
+                turn = ArchiveTurn(**raw)
+            except TypeError as err:
+                raise ValueError("archive turn is invalid") from err
+            if (
+                not all(
+                    isinstance(value, str)
+                    for value in (
+                        turn.turn_id,
+                        turn.session_id,
+                        turn.timestamp,
+                        turn.user_text,
+                        turn.assistant_text,
+                    )
+                )
+                or (turn.run_id is not None and not isinstance(turn.run_id, str))
+                or not isinstance(turn.successful, bool)
+                or not turn.turn_id
+                or len(turn.turn_id) > 128
+                or turn.turn_id in turn_ids
+                or turn.session_id not in session_ids
+                or len(turn.user_text) > MAX_TEXT_LENGTH
+                or len(turn.assistant_text) > MAX_TEXT_LENGTH
+                or _parse_time(turn.timestamp)
+                == datetime.min.replace(tzinfo=dt_util.UTC)
+            ):
+                raise ValueError("archive turn metadata is invalid")
+            turn_ids.add(turn.turn_id)
+            per_session[turn.session_id] += 1
+            turns.append(turn)
+        if any(
+            session.turn_count != per_session[session.session_id]
+            for session in sessions
+        ):
+            raise ValueError("archive turn counts do not match session metadata")
+        return sessions, turns
+
+    async def async_replace_backup(
+        self, sessions: list[ArchiveSession], turns: list[ArchiveTurn]
+    ) -> None:
+        """Replace durable archive data while leaving active sessions empty."""
+        async with self._lock:
+            self._ensure_initialized()
+            old_partitions = set(self._partitions)
+            self._sessions = {session.session_id: session for session in sessions}
+            self._turns = defaultdict(list)
+            for turn in turns:
+                self._turns[turn.session_id].append(turn)
+            self._active.clear()
+            self._partitions = {turn.timestamp[:7] for turn in turns}
+            for partition in sorted(old_partitions - self._partitions):
+                await self._storage.async_save_partition(partition, {"turns": []})
+            await self._async_save_all_partitions_locked()
+            await self._async_save_metadata_locked()
+
     def _require_session(self, session_id: str) -> ArchiveSession:
         session = self._sessions.get(session_id)
         if session is None:

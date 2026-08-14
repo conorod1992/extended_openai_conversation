@@ -421,6 +421,52 @@ class KnowledgeLibrary:
             "knowledge_indexed_chunk_count": len(self._chunks),
         }
 
+    async def async_backup_data(self) -> dict[str, Any]:
+        """Return canonical Knowledge sources, excluding the derived index."""
+        async with self._lock:
+            self._ensure_initialized()
+            return {"sources": [asdict(source) for source in self._sources.values()]}
+
+    @staticmethod
+    def validate_backup_data(data: Any) -> list[KnowledgeSource]:
+        """Validate source material before a replacement restore."""
+        if not isinstance(data, Mapping) or set(data) != {"sources"}:
+            raise ValueError("Knowledge data is incomplete or corrupted")
+        raw_sources = data["sources"]
+        if (
+            not isinstance(raw_sources, list)
+            or len(raw_sources) > MAX_SOURCES_PER_AGENT
+        ):
+            raise ValueError("Knowledge source count is invalid")
+        sources: list[KnowledgeSource] = []
+        seen: set[str] = set()
+        for raw in raw_sources:
+            try:
+                source = _source_from_stored(raw)
+            except (KeyError, TypeError, ValueError) as err:
+                raise ValueError("Knowledge source is invalid") from err
+            if source.source_id in seen:
+                raise ValueError("Knowledge source IDs must be unique")
+            if (
+                dt_util.parse_datetime(source.created_at) is None
+                or dt_util.parse_datetime(source.updated_at) is None
+            ):
+                raise ValueError("Knowledge source timestamp is invalid")
+            seen.add(source.source_id)
+            sources.append(source)
+        return sources
+
+    async def async_replace_backup(self, sources: list[KnowledgeSource]) -> None:
+        """Replace source material and rebuild the derived lexical index."""
+        async with self._lock:
+            self._ensure_initialized()
+            self._sources = {source.source_id: source for source in sources}
+            self._chunks.clear()
+            self._token_index.clear()
+            for source in sources:
+                self._index(source)
+            await self._async_save_locked()
+
     def _source(self, source_id: str) -> KnowledgeSource:
         source = self._sources.get(source_id)
         if source is None:

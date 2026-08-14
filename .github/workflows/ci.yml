@@ -108,6 +108,7 @@ jobs:
           node --check custom_components/extended_openai_conversation_responses/frontend/usage-chart.js
           node tests/frontend-help.test.mjs
           node tests/function-groups-ui.test.mjs
+          node tests/backup-ui.test.mjs
           node tests/usage-chart.test.mjs
 
   type-check:

@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timedelta
 import time
@@ -509,6 +510,86 @@ class UsageManager:
     def as_dict(self) -> dict[str, Any]:
         return asdict(self.totals)
 
+    async def async_backup_data(self) -> dict[str, Any]:
+        """Return all persisted usage categories without in-flight run state."""
+        async with self._lock:
+            if not self._initialized:
+                raise RuntimeError("usage statistics have not been initialized")
+            return {
+                "totals": self.as_dict(),
+                "daily": deepcopy(self.daily),
+                "requests": [asdict(request) for request in self.requests],
+                "runs": [asdict(run) for run in self.runs],
+            }
+
+    @staticmethod
+    def validate_backup_data(
+        data: Any, target_agent_id: str
+    ) -> tuple[
+        UsageTotals, dict[str, dict[str, Any]], list[UsageRequest], list[UsageRun]
+    ]:
+        """Validate exact replacement usage state without mutating counters."""
+        if not isinstance(data, dict) or set(data) != {
+            "totals",
+            "daily",
+            "requests",
+            "runs",
+        }:
+            raise ValueError("usage data is incomplete or corrupted")
+        totals_raw = data["totals"]
+        allowed_totals = {item.name for item in fields(UsageTotals)}
+        if not isinstance(totals_raw, dict) or set(totals_raw) != allowed_totals:
+            raise ValueError("usage totals are invalid")
+        _validate_counter_mapping(totals_raw, allowed_totals - {"details"})
+        details = _validate_breakdown(totals_raw["details"], "usage total details")
+        totals = UsageTotals(**{**totals_raw, "details": details})
+
+        daily_raw = data["daily"]
+        if not isinstance(daily_raw, dict) or len(daily_raw) > 3660:
+            raise ValueError("daily usage data is invalid")
+        daily: dict[str, dict[str, Any]] = {}
+        for date, day in daily_raw.items():
+            if not isinstance(date, str) or len(date) != 10:
+                raise ValueError("daily usage date is invalid")
+            try:
+                datetime.fromisoformat(date)
+            except ValueError as err:
+                raise ValueError("daily usage date is invalid") from err
+            daily[date] = _validate_usage_day(date, day)
+
+        if not isinstance(data["requests"], list) or not isinstance(data["runs"], list):
+            raise ValueError("usage details must be lists")
+        requests = [
+            _usage_request_from_backup(raw, target_agent_id) for raw in data["requests"]
+        ]
+        runs = [_usage_run_from_backup(raw, target_agent_id) for raw in data["runs"]]
+        if len({request.request_id for request in requests}) != len(requests):
+            raise ValueError("usage request IDs must be unique")
+        if len({run.run_id for run in runs}) != len(runs):
+            raise ValueError("usage run IDs must be unique")
+        return totals, daily, requests, runs
+
+    async def async_replace_backup(
+        self,
+        totals: UsageTotals,
+        daily: dict[str, dict[str, Any]],
+        requests: list[UsageRequest],
+        runs: list[UsageRun],
+    ) -> None:
+        """Replace usage accounting and reapply current retention policies."""
+        async with self._lock:
+            self.totals = totals
+            self.daily = deepcopy(daily)
+            self.requests = list(requests)
+            self.runs = list(runs)
+            await self._async_save_totals()
+            if self._daily_storage is not None:
+                await self._daily_storage.async_save({"days": self.daily})
+            if self._detail_storage is not None:
+                await self._async_save_details()
+        await self.async_prune_details()
+        self._notify()
+
     @staticmethod
     def _add_tokens(target: Any, usage: RequestUsage) -> None:
         target.input_tokens += usage.input_tokens
@@ -537,6 +618,154 @@ class UsageManager:
     def _notify(self) -> None:
         for listener in tuple(self._listeners):
             listener()
+
+
+def _validate_counter_mapping(data: dict[str, Any], keys: set[str]) -> None:
+    for key in keys:
+        value = data.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(f"usage counter {key} is invalid")
+
+
+def _validate_breakdown(value: Any, label: str) -> dict[str, int]:
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str)
+        and isinstance(amount, int)
+        and not isinstance(amount, bool)
+        and amount >= 0
+        for key, amount in value.items()
+    ):
+        raise ValueError(f"{label} is invalid")
+    return dict(value)
+
+
+def _validate_usage_day(date: str, value: Any) -> dict[str, Any]:
+    expected = _empty_day(date)
+    if not isinstance(value, dict) or set(value) != set(expected):
+        raise ValueError("daily usage record is invalid")
+    if value.get("date") != date:
+        raise ValueError("daily usage date does not match its key")
+    counter_keys = {
+        key
+        for key, default in expected.items()
+        if isinstance(default, int) and not isinstance(default, bool)
+    }
+    _validate_counter_mapping(value, counter_keys)
+    for key in (
+        "average_requests_per_completed_run",
+        "average_duration_ms_per_completed_run",
+    ):
+        amount = value[key]
+        if (
+            not isinstance(amount, int | float)
+            or isinstance(amount, bool)
+            or amount < 0
+        ):
+            raise ValueError(f"daily usage value {key} is invalid")
+    result = dict(value)
+    for key in ("provider_breakdown", "model_breakdown", "api_mode_breakdown"):
+        result[key] = _validate_breakdown(value[key], key)
+    return result
+
+
+def _usage_request_from_backup(raw: Any, target_agent_id: str) -> UsageRequest:
+    if not isinstance(raw, dict):
+        raise ValueError("usage request must be an object")
+    try:
+        request = UsageRequest(**{**raw, "agent_subentry_id": target_agent_id})
+    except TypeError as err:
+        raise ValueError("usage request is invalid") from err
+    string_values = (
+        request.request_id,
+        request.run_id,
+        request.timestamp,
+        request.agent_subentry_id,
+        request.provider,
+        request.model,
+        request.api_mode,
+        request.request_stage,
+    )
+    counter_keys = {
+        "duration_ms",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "cached_input_tokens",
+        "reasoning_tokens",
+        "tool_calls_requested",
+    }
+    if (
+        not all(isinstance(value, str) for value in string_values)
+        or not request.request_id
+        or not request.run_id
+        or not isinstance(request.successful, bool)
+        or not isinstance(request.web_search_used, bool)
+        or (request.error_type is not None and not isinstance(request.error_type, str))
+        or _parse_time(request.timestamp) == datetime.min.replace(tzinfo=dt_util.UTC)
+    ):
+        raise ValueError("usage request metadata is invalid")
+    values = asdict(request)
+    _validate_counter_mapping(values, counter_keys)
+    request.details = _validate_breakdown(request.details, "usage request details")
+    return request
+
+
+def _usage_run_from_backup(raw: Any, target_agent_id: str) -> UsageRun:
+    if not isinstance(raw, dict):
+        raise ValueError("usage run must be an object")
+    try:
+        run = UsageRun(**{**raw, "agent_subentry_id": target_agent_id})
+    except TypeError as err:
+        raise ValueError("usage run is invalid") from err
+    counter_keys = {
+        "duration_ms",
+        "request_count",
+        "successful_request_count",
+        "failed_request_count",
+        "tool_call_count",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "cached_input_tokens",
+        "reasoning_tokens",
+    }
+    if (
+        not isinstance(run.run_id, str)
+        or not run.run_id
+        or not isinstance(run.started_at, str)
+        or (run.completed_at is not None and not isinstance(run.completed_at, str))
+        or not isinstance(run.agent_subentry_id, str)
+        or (
+            run.home_assistant_conversation_id is not None
+            and not isinstance(run.home_assistant_conversation_id, str)
+        )
+        or (
+            run.source_device_id is not None
+            and not isinstance(run.source_device_id, str)
+        )
+        or not isinstance(run.successful, bool)
+        or not isinstance(run.web_search_used, bool)
+        or (run.error_type is not None and not isinstance(run.error_type, str))
+        or not all(
+            isinstance(item, str)
+            for collection in (run.models, run.providers, run.api_modes)
+            if isinstance(collection, list)
+            for item in collection
+        )
+        or not all(
+            isinstance(collection, list)
+            for collection in (run.models, run.providers, run.api_modes)
+        )
+        or _parse_time(run.started_at) == datetime.min.replace(tzinfo=dt_util.UTC)
+        or (
+            run.completed_at is not None
+            and _parse_time(run.completed_at)
+            == datetime.min.replace(tzinfo=dt_util.UTC)
+        )
+    ):
+        raise ValueError("usage run metadata is invalid")
+    _validate_counter_mapping(asdict(run), counter_keys)
+    return run
 
 
 def _empty_day(date: str) -> dict[str, Any]:
