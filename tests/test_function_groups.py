@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from types import SimpleNamespace
 
@@ -55,7 +56,7 @@ def test_legacy_config_has_no_groups_and_keeps_all_tools(hass) -> None:
     assert snapshot["function_groups"] == []
     assembly = assemble_function_tools(snapshot["functions"], [], set())
     assert [tool["spec"]["name"] for tool in assembly.tools] == ["one", "two"]
-    assert assembly.full_schemas_sent == 2
+    assert assembly.configured_schemas_sent == 2
 
 
 def test_always_and_on_demand_assembly_is_compact(hass) -> None:
@@ -70,11 +71,44 @@ def test_always_and_on_demand_assembly_is_compact(hass) -> None:
     assembly = assemble_function_tools(tools, groups, set())
     names = [tool["spec"]["name"] for tool in assembly.tools]
     assert names == ["general", "calendar", "load_function_groups"]
-    assert assembly.full_schemas_sent == 2
+    assert assembly.configured_schemas_sent == 2
     assert assembly.available_on_demand_groups == 1
     loader_text = assembly.tools[-1]["spec"]["description"]
     assert "reminders" in loader_text
     assert "create_reminder" not in loader_text
+    assert assembly.serialized_configured_schema_characters == sum(
+        len(json.dumps(tool["spec"], separators=(",", ":")))
+        for tool in assembly.tools[:-1]
+    )
+    loader_spec = assembly.tools[-1]["spec"]
+    assert "strict" not in loader_spec
+    assert loader_spec["parameters"] == {
+        "type": "object",
+        "properties": {
+            "groups": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["reminders"]},
+            }
+        },
+        "required": ["groups"],
+        "additionalProperties": False,
+    }
+
+
+def test_runtime_diagnostics_name_configured_schema_measurements() -> None:
+    runtime = FunctionGroupRuntime()
+    assembly = assemble_function_tools([_tool("one")], [], set())
+    runtime.record_request(assembly)
+    assert runtime.stats() == {
+        "active_function_group_sessions": 0,
+        "configured_function_tools": 1,
+        "configured_function_schemas_sent": 1,
+        "available_on_demand_groups": 0,
+        "loaded_function_groups": [],
+        "serialized_configured_function_schema_characters": (
+            assembly.serialized_configured_schema_characters
+        ),
+    }
 
 
 def test_loader_accepts_one_or_multiple_groups_and_is_idempotent() -> None:
