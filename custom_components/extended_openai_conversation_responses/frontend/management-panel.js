@@ -1,4 +1,4 @@
-import { bindConfiguration, bindTools, configurationDialogs, renderConfiguration, renderTools } from "./agent-config-editor.js";
+import { bindConfiguration, bindTools, configurationDialogs, renderConfiguration, renderTools, restoreDialog } from "./agent-config-editor.js";
 import { tokenBreakdown } from "./usage-chart.js";
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
@@ -327,7 +327,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
       <dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>
       <dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Reassign legacy memory</h2></div><div class="dialog-body"><label>New owner<select id="reassign-scope">${this._scopeOptions("memories", true, true)}</select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Reassign</button></div></dialog>
       <dialog id="confirm-dialog" class="editor-dialog confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-header"><h2 id="confirm-title">Confirm</h2></div><div class="dialog-body"><p id="confirm-message"></p></div><div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">Cancel</button><button type="button" class="danger" id="confirm-accept">Confirm</button></div></dialog>
-      ${configurationDialogs(this)}`;
+      ${configurationDialogs(this)}${restoreDialog(this)}`;
   }
 
   _bindActions() {

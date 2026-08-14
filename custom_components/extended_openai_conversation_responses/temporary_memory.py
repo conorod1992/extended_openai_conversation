@@ -228,6 +228,72 @@ class TemporaryMemory:
             counts[record.scope_id] = counts.get(record.scope_id, 0) + 1
         return counts
 
+    async def async_backup_data(self) -> dict[str, Any]:
+        """Return active records with their original absolute expiry."""
+        async with self._lock:
+            await self._async_prune_locked()
+            return {"records": [asdict(record) for record in self._records.values()]}
+
+    @staticmethod
+    def validate_backup_data(data: Any) -> list[TemporaryMemoryRecord]:
+        """Validate and drop records that have expired since backup creation."""
+        if not isinstance(data, Mapping) or set(data) != {"records"}:
+            raise ValueError("temporary memories are incomplete or corrupted")
+        raw_records = data["records"]
+        if not isinstance(raw_records, list) or len(raw_records) > MAX_ACTIVE_RECORDS:
+            raise ValueError("temporary memory count is invalid")
+        records: list[TemporaryMemoryRecord] = []
+        seen: set[str] = set()
+        now = dt_util.utcnow()
+        for raw in raw_records:
+            if not isinstance(raw, Mapping):
+                raise ValueError("temporary memory record must be an object")
+            try:
+                record = TemporaryMemoryRecord(**raw)
+            except TypeError as err:
+                raise ValueError("temporary memory record is invalid") from err
+            if not all(
+                isinstance(value, str)
+                for value in (
+                    record.memory_id,
+                    record.scope_id,
+                    record.content,
+                    record.category,
+                    record.source,
+                    record.expires_at,
+                    record.created_at,
+                    record.updated_at,
+                )
+            ):
+                raise ValueError("temporary memory fields must be strings")
+            if (
+                not record.memory_id
+                or len(record.memory_id) > 128
+                or record.memory_id in seen
+                or not record.scope_id
+                or len(record.scope_id) > 128
+                or record.source != "automatic"
+            ):
+                raise ValueError("temporary memory metadata is invalid")
+            _clean(record.content, MAX_CONTENT_LENGTH, "content")
+            _clean(record.category, MAX_CATEGORY_LENGTH, "category")
+            expiry = _parse_expiry(record.expires_at)
+            if (
+                dt_util.parse_datetime(record.created_at) is None
+                or dt_util.parse_datetime(record.updated_at) is None
+            ):
+                raise ValueError("temporary memory timestamp is invalid")
+            seen.add(record.memory_id)
+            if expiry > now:
+                records.append(record)
+        return records
+
+    async def async_replace_backup(self, records: list[TemporaryMemoryRecord]) -> None:
+        """Replace active temporary memories without changing their expiry."""
+        async with self._lock:
+            self._records = {record.memory_id: record for record in records}
+            await self._async_save_locked()
+
     def _owned(self, scope_id: str, memory_id: str) -> TemporaryMemoryRecord:
         record = self._records.get(memory_id)
         if record is None or record.scope_id != scope_id:

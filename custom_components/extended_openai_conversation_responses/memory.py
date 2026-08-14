@@ -410,6 +410,75 @@ class PersistentMemory:
             counts[memory.user_id] = counts.get(memory.user_id, 0) + 1
         return counts
 
+    async def async_backup_data(self) -> dict[str, Any]:
+        """Return the stable durable representation used by full backups."""
+        async with self._lock:
+            self._ensure_initialized()
+            return {"memories": [asdict(memory) for memory in self._memories.values()]}
+
+    @staticmethod
+    def validate_backup_data(data: Any) -> list[MemoryRecord]:
+        """Validate a complete replacement without changing stored memories."""
+        if not isinstance(data, Mapping) or set(data) != {"memories"}:
+            raise ValueError("persistent memories are incomplete or corrupted")
+        raw_memories = data["memories"]
+        if (
+            not isinstance(raw_memories, list)
+            or len(raw_memories) > MAX_MEMORIES_PER_AGENT
+        ):
+            raise ValueError("persistent memory count is invalid")
+        records: list[MemoryRecord] = []
+        seen: set[str] = set()
+        for raw in raw_memories:
+            if not isinstance(raw, Mapping):
+                raise ValueError("persistent memory record must be an object")
+            try:
+                record = MemoryRecord(**raw)
+            except TypeError as err:
+                raise ValueError("persistent memory record is invalid") from err
+            if not all(
+                isinstance(value, str)
+                for value in (
+                    record.memory_id,
+                    record.user_id,
+                    record.content,
+                    record.category,
+                    record.source,
+                    record.created_at,
+                    record.updated_at,
+                )
+            ):
+                raise ValueError("persistent memory fields must be strings")
+            if (
+                not record.memory_id
+                or len(record.memory_id) > 128
+                or record.memory_id in seen
+                or not record.user_id
+                or len(record.user_id) > 128
+                or record.source not in {"explicit", "implicit"}
+            ):
+                raise ValueError("persistent memory metadata is invalid")
+            _clean_content(record.content)
+            _clean_category(record.category)
+            if (
+                dt_util.parse_datetime(record.created_at) is None
+                or dt_util.parse_datetime(record.updated_at) is None
+            ):
+                raise ValueError("persistent memory timestamp is invalid")
+            seen.add(record.memory_id)
+            records.append(record)
+        return records
+
+    async def async_replace_backup(self, records: list[MemoryRecord]) -> None:
+        """Atomically replace all persistent memories with validated records."""
+        async with self._lock:
+            self._ensure_initialized()
+            self._memories = {record.memory_id: record for record in records}
+            self._token_index.clear()
+            for record in records:
+                self._index(record)
+            await self._async_save_locked()
+
     def _find_duplicate(self, user_id: str, content: str) -> MemoryRecord | None:
         normalized = _normalize(content)
         content_tokens = _tokens(content)

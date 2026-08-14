@@ -63,6 +63,22 @@ def _setup_entry(hass):
     return entry, subentry
 
 
+async def test_backup_management_requires_admin(hass) -> None:
+    _setup_entry(hass)
+    with pytest.raises(HomeAssistantError, match="Administrator permission"):
+        await async_management_command(
+            hass,
+            "user-1",
+            False,
+            {
+                "section": "backup",
+                "action": "create",
+                "entry_id": "entry-1",
+                "subentry_id": "agent-1",
+            },
+        )
+
+
 async def test_configuration_read_and_update_require_admin(hass) -> None:
     _entry, _subentry = _setup_entry(hass)
     message = {

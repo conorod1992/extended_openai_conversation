@@ -32,6 +32,7 @@ from .agent_config import (
     validate_single_function_tool,
 )
 from .agent_test import async_test_agent
+from .backup import async_create_backup, async_restore_backup, inspect_backup
 from .built_in_functions import built_in_function_catalog
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
@@ -286,6 +287,24 @@ async def async_management_command(
     if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
         raise HomeAssistantError("entry_id and subentry_id are required")
     entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
+
+    if section == "backup":
+        _require_admin(is_admin)
+        if action == "create":
+            return await async_create_backup(hass, entry, subentry)
+        if action == "inspect":
+            prepared = inspect_backup(message.get("document"), subentry.subentry_id)
+            return {
+                "valid": True,
+                "title": prepared.title,
+                "summary": prepared.summary(),
+            }
+        if action == "restore":
+            if message.get("confirm") is not True:
+                raise HomeAssistantError("Explicit confirmation is required")
+            return await async_restore_backup(
+                hass, entry, subentry, message.get("document")
+            )
 
     if section == "configuration":
         _require_admin(is_admin)
