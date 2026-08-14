@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -132,7 +133,7 @@ def test_expired_conversation_starts_with_no_loaded_groups() -> None:
     runtime = FunctionGroupRuntime()
     expired = runtime.begin("conversation:expired", 30)
     expired.loaded_group_ids.add("reminders")
-    expired.last_active = 0
+    expired.last_active = time.monotonic() - (31 * 60)
     fresh = runtime.begin("conversation:fresh", 30)
     assert fresh.loaded_group_ids == set()
     recreated = runtime.begin("conversation:expired", 30)
