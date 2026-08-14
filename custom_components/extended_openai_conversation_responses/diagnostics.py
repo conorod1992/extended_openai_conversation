@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import yaml
@@ -21,6 +22,7 @@ from .const import (
     CONF_MEMORY_ENABLED,
     CONF_TEMPORARY_MEMORY,
     DEFAULT_ARCHIVE_ENABLED,
+    DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_KNOWLEDGE_ENABLED,
@@ -36,6 +38,16 @@ from .knowledge import async_get_knowledge
 from .memory import async_get_memory, get_memory_mode
 from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
+
+
+def _configured_function_tools(data: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Parse configured tools with the same missing-value fallback as execution."""
+    function_tools_config = data.get(CONF_FUNCTION_TOOLS)
+    return validate_function_tools(
+        yaml.safe_load(function_tools_config)
+        if function_tools_config
+        else DEFAULT_CONF_FUNCTION_TOOLS
+    )
 
 
 async def async_get_config_entry_diagnostics(
@@ -76,9 +88,7 @@ async def async_get_config_entry_diagnostics(
             async_get_continuity(hass, entry.entry_id, subentry.subentry_id).stats()
         )
         try:
-            function_tools = validate_function_tools(
-                yaml.safe_load(subentry.data.get(CONF_FUNCTION_TOOLS, "[]"))
-            )
+            function_tools = _configured_function_tools(subentry.data)
             function_groups = validate_function_groups(
                 subentry.data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
                 function_tools,

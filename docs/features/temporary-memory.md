@@ -8,8 +8,9 @@ the end of Sunday.
 
 - **Off** creates and injects no temporary memories.
 - **Balanced** stores clearly useful near-term facts.
-- **Eager** more readily stores plausible near-term context, without storing every
-  sentence or conversational debris.
+- **Eager** proactively stores useful short-lived context when it could plausibly be
+  relevant again, preferring to retain it when uncertain while still excluding
+  secrets, sensitive information, trivial fragments, and conversational filler.
 
 The model infers reasonable expiry in Home Assistant's configured timezone instead of
 asking unnecessary questions. “Waiting for a parcel today” lasts through today;

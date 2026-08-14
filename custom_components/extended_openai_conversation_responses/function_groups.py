@@ -31,10 +31,10 @@ class FunctionToolAssembly:
 
     tools: list[dict[str, Any]]
     configured_count: int
-    full_schemas_sent: int
+    configured_schemas_sent: int
     available_on_demand_groups: int
     loaded_group_ids: list[str]
-    serialized_schema_characters: int
+    serialized_configured_schema_characters: int
 
 
 class FunctionGroupRuntime:
@@ -63,11 +63,11 @@ class FunctionGroupRuntime:
         """Retain only non-sensitive schema counts for diagnostics."""
         self._last_request = {
             "configured_function_tools": assembly.configured_count,
-            "full_function_schemas_sent": assembly.full_schemas_sent,
+            "configured_function_schemas_sent": assembly.configured_schemas_sent,
             "available_on_demand_groups": assembly.available_on_demand_groups,
             "loaded_function_groups": assembly.loaded_group_ids,
-            "serialized_function_schema_characters": (
-                assembly.serialized_schema_characters
+            "serialized_configured_function_schema_characters": (
+                assembly.serialized_configured_schema_characters
             ),
         }
 
@@ -124,16 +124,12 @@ def build_loader_tool(groups: list[dict[str, Any]]) -> dict[str, Any]:
                 "Loading exposes configured tools but performs no user-visible action. "
                 "Available groups:\n" + catalogue
             ),
-            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
                     "groups": {
                         "type": "array",
-                        "description": "One or more relevant function group IDs.",
                         "items": {"type": "string", "enum": group_ids},
-                        "minItems": 1,
-                        "uniqueItems": True,
                     }
                 },
                 "required": ["groups"],
@@ -184,6 +180,7 @@ def assemble_function_tools(
     serialized_characters = sum(
         len(json.dumps(tool["spec"], ensure_ascii=False, separators=(",", ":")))
         for tool in effective
+        if tool["spec"]["name"] != FUNCTION_GROUP_LOADER_TOOL_NAME
     )
     sent_configured = sum(
         tool["spec"]["name"] != FUNCTION_GROUP_LOADER_TOOL_NAME for tool in effective
@@ -191,10 +188,10 @@ def assemble_function_tools(
     return FunctionToolAssembly(
         tools=effective,
         configured_count=len(configured_tools),
-        full_schemas_sent=sent_configured,
+        configured_schemas_sent=sent_configured,
         available_on_demand_groups=len(unloaded),
         loaded_group_ids=sorted(loaded_group_ids),
-        serialized_schema_characters=serialized_characters,
+        serialized_configured_schema_characters=serialized_characters,
     )
 
 

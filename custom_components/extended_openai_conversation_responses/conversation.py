@@ -591,25 +591,32 @@ class ExtendedOpenAIAgentEntity(
             CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY
         )
         if temporary_mode != TEMPORARY_MEMORY_OFF:
-            eagerness = (
-                "When a temporary fact has a plausible chance of helping later in "
-                "the same day, event, or short period, prefer storing it."
+            retention_guidance = (
+                "You should proactively store useful short-lived facts whenever they "
+                "have a plausible chance of being relevant again before expiry. When "
+                "uncertain whether a non-sensitive, non-trivial temporary fact is "
+                "worth retaining, prefer storing it. Normally retain travel or visits "
+                "later today or this weekend; upcoming appointments, events, or visits; "
+                "a film or show the user is currently watching; an ongoing short-lived "
+                "task or project; and a temporary household issue in progress."
                 if temporary_mode == TEMPORARY_MEMORY_EAGER
                 else "Store a temporary fact when it has clear near-term usefulness."
             )
             rendered_prompt += f"""
 
 ## Temporary memory
-You may silently store concise facts likely to improve later turns but expected to
-stop being true. {eagerness} Infer a useful approximate expiry from ordinary
+Silently store concise facts expected to stop being true according to this mode:
+{retention_guidance} Infer a useful approximate expiry from ordinary
 language instead of asking unnecessary clarification. Use Home Assistant local time
 ({self.hass.config.time_zone}) and include a timezone offset in expires_at. For
 "today" use the end of today; for "this weekend" use the end of Sunday; for an
 ongoing meal, film, or task use a reasonable few hours. Explicit durations and dates
-take precedence. Do not store trivial conversation fragments or secrets. Do not
-announce automatic temporary-memory actions. Update or remove an existing temporary
-memory when later information supersedes it. Prefer temporary memory over persistent
-memory for facts expected to expire, and do not create both by default.
+take precedence. Do not automatically store secrets, sensitive information, trivial
+fragments, low-value conversational filler, or facts better suited to persistent
+memory. Do not announce automatic temporary-memory actions. Update or remove an
+existing temporary memory when later information supersedes it. Prefer temporary
+memory over persistent memory for facts expected to expire, and do not create both by
+default.
 """
             if temporary_memories:
                 rendered_prompt += (
