@@ -134,6 +134,11 @@ class SkillManager:
 
     _instance: SkillManager | None = None
 
+    @classmethod
+    def get_loaded_instance(cls) -> SkillManager | None:
+        """Return the loaded singleton without performing discovery or I/O."""
+        return cls._instance
+
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the skill manager.
 
