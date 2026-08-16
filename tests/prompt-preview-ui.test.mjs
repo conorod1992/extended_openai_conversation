@@ -6,9 +6,14 @@ const editor = readFileSync(
   "utf8",
 );
 
-assert.match(editor, /id="preview-prompt">Preview effective prompt/);
+assert.match(editor, /id="preview-request">Preview effective request/);
 assert.match(editor, /id="prompt-preview-dialog"/);
-assert.match(editor, /id="prompt-preview-output"[^>]*readonly/);
+assert.match(editor, /class="yaml-editor request-preview-output" readonly/);
 assert.match(editor, /id="copy-prompt-preview"/);
-assert.match(editor, /User input and conversation history are not included/);
+assert.match(editor, /User input and conversation history are excluded/);
+assert.match(editor, /Include current date & time/);
+assert.match(editor, /Include exposed devices/);
+assert.match(editor, /Advanced context formatting/);
+assert.match(editor, /Saved by Function Groups/);
+assert.match(editor, /copy-request-section/);
 assert.match(editor, /navigator\.clipboard\.writeText/);

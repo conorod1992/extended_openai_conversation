@@ -9,7 +9,9 @@ Configure conversation-agent behaviour from **Extended OpenAI** in the sidebar:
 
 The editor writes the existing Home Assistant config subentry; there is no separate frontend store. Changes remain a local draft until Save is pressed. Voice ownership is separate from spoken-response cleanup, dependent options stay visible but disabled, and Custom replacements remain directly visible while speech processing is enabled.
 
-**Preview effective prompt**, beside the prompt editor, renders the fresh-request system/context baseline from the same builder used by live conversations. It resolves templates and current Home Assistant context, excludes user input and conversation history, and does not save or mutate agent state. Query-derived persistent memories are omitted because there is no user query; temporary context is included only when its request scope can be resolved without inventing one. The dialog may contain private entity state, memory data, Knowledge context, and user instructions.
+The **Prompt & context** section has default-on controls for Home Assistant-local date/time and exposed-device names/states on new or reset configurations. Their integration-maintained output is placed with volatile context after the indivisible user prompt. Optional advanced templates are collapsed by default and can be cleared to restore the maintained format. Migration never rewrites an existing prompt and leaves both generated blocks off for existing agents, preventing duplicate legacy template output.
+
+**Preview effective request** renders the locally inspectable content accompanying a brand-new message: production-ordered system/context, first-request custom tools, the Function Group loader/catalogue, integration and provider-hosted tools, and non-secret request settings. User input, conversation and tool-call history, query-derived persistent memories, credentials, and opaque provider framing are excluded. Counts are exact characters of the displayed text or canonical local JSON serialization; Function Group savings compare the grouped first request (including loader overhead) with all enabled custom schemas sent eagerly. Provider token/cache usage after real requests remains authoritative. Preview does not save, call the provider, record usage, load groups, or mutate memory/history.
 
 For natural provider prompt-cache reuse, the user-authored prompt remains an indivisible rendered block, followed by stable integration-owned memory, temporary-memory, Knowledge, archive, and continuation guidance where enabled. Volatile retrieved persistent-memory and active temporary-memory context follows those stable sections. Tool schemas remain provider tool definitions, message roles retain their normal system/history/current-user order, and actual cache hits remain provider-controlled.
 
@@ -52,7 +54,9 @@ Conversation-agent options are available from the assistant/integration configur
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| **Prompt Template** | Included assistant prompt | Instructions and Home Assistant context sent to the model. Supports Home Assistant templates. |
+| **Prompt Template** | Included assistant prompt | User-authored behavioural instructions sent as one intact block. Supports Home Assistant templates. |
+| **Include current date & time** | On for new agents | Adds Home Assistant-local date/time as volatile integration context. |
+| **Include exposed devices** | On for new agents | Adds compact exposed entity names, states, and genuine aliases as volatile integration context. |
 | **Completion Model** | `gpt-5-mini` | Model name sent to the configured provider. |
 | **API mode** | Auto | Chooses Chat Completions or Responses. |
 | **Continue conversation** | HA Default | Controls immediate voice follow-ups. |

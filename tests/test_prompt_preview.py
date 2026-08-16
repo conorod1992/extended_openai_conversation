@@ -4,20 +4,33 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import yaml
 
 from custom_components.extended_openai_conversation_responses.agent_config import (
+    AgentConfigError,
     agent_config_defaults,
+    normalize_agent_config,
 )
 from custom_components.extended_openai_conversation_responses.const import (
+    CONF_API_MODE,
     CONF_ARCHIVE_ENABLED,
+    CONF_CHAT_MODEL,
     CONF_CONTINUE_CONVERSATION,
     CONF_CONVERSATION_CONTINUITY,
+    CONF_CURRENT_DATETIME_ENABLED,
+    CONF_CURRENT_DATETIME_TEMPLATE,
+    CONF_EXPOSED_ENTITIES_ENABLED,
+    CONF_EXPOSED_ENTITIES_TEMPLATE,
+    CONF_FUNCTION_GROUPS,
+    CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_MODE,
     CONF_PROMPT,
     CONF_TEMPORARY_MEMORY,
+    CONF_WEB_SEARCH,
     CONTINUE_CONVERSATION_CONDITIONAL,
     CONVERSATION_CONTINUITY_USER,
+    DEFAULT_PROMPT,
     MEMORY_MODE_AUTOMATIC,
     TEMPORARY_MEMORY_BALANCED,
 )
@@ -35,6 +48,19 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
     TemporaryMemoryRecord,
 )
 from homeassistant.exceptions import HomeAssistantError
+
+
+def test_new_agent_defaults_use_first_class_volatile_context() -> None:
+    """New agents opt in without duplicating volatile context in the user prompt."""
+    options = agent_config_defaults()
+
+    assert options[CONF_CURRENT_DATETIME_ENABLED] is True
+    assert options[CONF_EXPOSED_ENTITIES_ENABLED] is True
+    assert options[CONF_CURRENT_DATETIME_TEMPLATE] == ""
+    assert options[CONF_EXPOSED_ENTITIES_TEMPLATE] == ""
+    assert options[CONF_PROMPT] == DEFAULT_PROMPT
+    assert "now()" not in DEFAULT_PROMPT
+    assert "exposed_entities" not in DEFAULT_PROMPT
 
 
 def _options() -> dict:
@@ -86,7 +112,14 @@ def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last
     result = render_effective_prompt(
         hass,
         _options(),
-        exposed_entities=[{"state": "on"}],
+        exposed_entities=[
+            {
+                "entity_id": "light.bedroom",
+                "name": "Bedroom Lamp",
+                "state": "on",
+                "aliases": [],
+            }
+        ],
         current_device_id=None,
         user_input=SimpleNamespace(text="not serialized"),
         skills=[],
@@ -96,25 +129,91 @@ def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last
     )
 
     expected_keys = [
-        "user_prompt",
         "persistent_memory_instructions",
         "temporary_memory_instructions",
         "knowledge_instructions",
         "archive_instructions",
         "conditional_continuation_instructions",
+        "user_prompt",
+        "current_datetime_context",
+        "exposed_entities_context",
         "persistent_memory_context",
         "temporary_memory_context",
     ]
     assert [section.key for section in result.sections] == expected_keys
     assert "USER-BEGIN\nCurrent Home / on\nUSER-END" in result.text
     assert result.text.index("USER-BEGIN") < result.text.index("USER-END")
-    assert result.text.index("USER-END") < result.text.index("## Persistent memory")
+    assert result.text.index("## Persistent memory") < result.text.index("USER-BEGIN")
+    assert result.text.index("USER-END") < result.text.index("## Current date and time")
+    assert result.text.index("## Current date and time") < result.text.index(
+        "## Available Devices"
+    )
     assert result.text.index("## Knowledge Library") < result.text.index(
         "Potentially relevant local memories"
     )
     assert result.text.index("Retained conversation archive") < result.text.index(
         "Current temporary context"
     )
+
+
+def _entity_context() -> list[dict]:
+    return [
+        {
+            "entity_id": "light.bedroom",
+            "name": "Bedroom Lamp",
+            "state": "on",
+            "aliases": [],
+        }
+    ]
+
+
+def test_generated_context_toggles_and_custom_templates(hass) -> None:
+    """Date/device blocks are independent and custom formatting stays late."""
+    options = agent_config_defaults()
+    options[CONF_PROMPT] = "USER BLOCK"
+    options[CONF_CURRENT_DATETIME_TEMPLATE] = "## Clock\nLOCAL TIME"
+    options[CONF_EXPOSED_ENTITIES_TEMPLATE] = (
+        "## Devices\n{{ exposed_entities[0].name }}={{ exposed_entities[0].state }}"
+    )
+    entities = [{"name": "Lamp", "state": "on"}]
+    result = render_effective_prompt(
+        hass,
+        options,
+        exposed_entities=entities,
+        current_device_id=None,
+        user_input=None,
+        skills=[],
+    )
+    assert "USER BLOCK\n## Clock\nLOCAL TIME\n## Devices\nLamp=on" in result.text
+
+    options[CONF_CURRENT_DATETIME_ENABLED] = False
+    result = render_effective_prompt(
+        hass,
+        options,
+        exposed_entities=entities,
+        current_device_id=None,
+        user_input=None,
+        skills=[],
+    )
+    assert "LOCAL TIME" not in result.text
+    assert "Lamp=on" in result.text
+
+    options[CONF_EXPOSED_ENTITIES_ENABLED] = False
+    result = render_effective_prompt(
+        hass,
+        options,
+        exposed_entities=entities,
+        current_device_id=None,
+        user_input=None,
+        skills=[],
+    )
+    assert "Lamp=on" not in result.text
+
+
+def test_invalid_custom_context_template_is_rejected_cleanly() -> None:
+    """Custom overrides are syntax-validated before save."""
+    with pytest.raises(AgentConfigError, match="invalid template"):
+        normalize_agent_config({CONF_CURRENT_DATETIME_TEMPLATE: "{% if %}"})
 
 
 async def test_preview_matches_production_builder_without_user_or_history(
@@ -127,11 +226,12 @@ async def test_preview_matches_production_builder_without_user_or_history(
     options[CONF_KNOWLEDGE_ENABLED] = False
     options[CONF_ARCHIVE_ENABLED] = False
     options[CONF_TEMPORARY_MEMORY] = "off"
+    options[CONF_CURRENT_DATETIME_TEMPLATE] = "## Current date and time\nfixed"
     subentry = SimpleNamespace(subentry_id="agent-1", data=options)
     entry = SimpleNamespace(entry_id="entry-1")
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.management_ui.get_exposed_entities",
-        lambda _hass: [{"state": "on"}],
+        lambda _hass: _entity_context(),
     )
 
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
@@ -140,7 +240,7 @@ async def test_preview_matches_production_builder_without_user_or_history(
     entity.skill_manager = SimpleNamespace(get_all_skills=lambda: [])
     entity._knowledge = None
     production = entity._build_system_prompt(
-        [{"state": "on"}],
+        _entity_context(),
         SimpleNamespace(device_id=None),
         None,
     )
@@ -151,6 +251,7 @@ async def test_preview_matches_production_builder_without_user_or_history(
     assert preview["prompt"] == production
     assert "not serialized" not in preview["prompt"]
     assert any("conversation history are excluded" in note for note in preview["notes"])
+    assert preview["function_group_savings"]["characters"] == 0
 
 
 async def test_preview_reads_temporary_context_without_mutation(
@@ -172,7 +273,7 @@ async def test_preview_reads_temporary_context_without_mutation(
     )
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.management_ui.get_exposed_entities",
-        lambda _hass: [{"state": "on"}],
+        lambda _hass: _entity_context(),
     )
 
     result = await _async_preview_effective_prompt(
@@ -208,7 +309,7 @@ async def test_preview_reads_stored_temporary_context_before_manager_load(
     )
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.management_ui.get_exposed_entities",
-        lambda _hass: [{"state": "on"}],
+        lambda _hass: _entity_context(),
     )
 
     result = await _async_preview_effective_prompt(
@@ -236,7 +337,7 @@ async def test_preview_render_failure_is_controlled(hass, monkeypatch) -> None:
 
     with pytest.raises(
         HomeAssistantError,
-        match="The effective prompt could not be rendered: bad template",
+        match="The effective request could not be assembled: bad template",
     ):
         await _async_preview_effective_prompt(
             hass,
@@ -245,3 +346,97 @@ async def test_preview_render_failure_is_controlled(hass, monkeypatch) -> None:
             agent_config_defaults(),
             "admin",
         )
+
+
+async def test_effective_request_preview_uses_first_request_tool_assembly(
+    hass, monkeypatch
+) -> None:
+    """Preview withholds on-demand schemas and reports exact local counts."""
+    options = agent_config_defaults()
+    options.update(
+        {
+            CONF_PROMPT: "BASE",
+            CONF_API_MODE: "responses",
+            CONF_CHAT_MODEL: "gpt-5.6-mini",
+            CONF_WEB_SEARCH: True,
+            CONF_ARCHIVE_ENABLED: False,
+            CONF_CURRENT_DATETIME_ENABLED: False,
+            CONF_EXPOSED_ENTITIES_ENABLED: False,
+            CONF_FUNCTION_TOOLS: yaml.safe_dump(
+                [
+                    {
+                        "spec": {
+                            "name": "eager_tool",
+                            "description": "Eager schema",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                        "function": {"type": "native", "name": "execute_service"},
+                    },
+                    {
+                        "spec": {
+                            "name": "demand_tool",
+                            "description": "Large on-demand schema",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "long_argument": {
+                                        "type": "string",
+                                        "description": "x" * 500,
+                                    }
+                                },
+                            },
+                        },
+                        "function": {"type": "native", "name": "execute_service"},
+                    },
+                    {
+                        "enabled": False,
+                        "spec": {
+                            "name": "disabled_tool",
+                            "description": "Disabled",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                        "function": {"type": "native", "name": "execute_service"},
+                    },
+                ],
+                sort_keys=False,
+            ),
+            CONF_FUNCTION_GROUPS: [
+                {
+                    "id": "demand",
+                    "name": "Demand tools",
+                    "description": "Load only when needed",
+                    "loading_mode": "on_demand",
+                    "functions": ["demand_tool", "disabled_tool"],
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_ui.get_exposed_entities",
+        lambda _hass: [],
+    )
+    result = await _async_preview_effective_prompt(
+        hass,
+        SimpleNamespace(entry_id="entry-1", data={}),
+        SimpleNamespace(subentry_id="agent-1"),
+        options,
+        "admin",
+    )
+
+    sections = {section["key"]: section for section in result["sections"]}
+    assert "eager_tool" in sections["function_tools"]["content"]
+    assert "demand_tool" not in sections["function_tools"]["content"]
+    assert "disabled_tool" not in "".join(
+        section["content"] for section in result["sections"]
+    )
+    assert "load_function_groups" in sections["function_group_loader"]["content"]
+    assert "web_search" in sections["provider_tools"]["content"]
+    assert '"api_mode":"responses"' in sections["request_settings"]["content"]
+    assert result["total_character_count"] == sum(
+        section["character_count"] for section in result["sections"]
+    )
+    assert result["function_group_savings"]["characters"] > 0
+    assert (
+        result["function_group_savings"]["grouped_characters"]
+        < result["function_group_savings"]["without_on_demand_grouping_characters"]
+    )

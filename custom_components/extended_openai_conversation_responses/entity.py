@@ -18,7 +18,6 @@ from openai.types.chat import (
     ChatCompletionAssistantMessageParam,
     ChatCompletionChunk,
     ChatCompletionMessageParam,
-    ChatCompletionToolParam,
 )
 import orjson
 import voluptuous as vol
@@ -35,19 +34,12 @@ from .const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_API_PROVIDER,
-    CONF_BASE_URL,
     CONF_CHAT_MODEL,
     CONF_CONTEXT_THRESHOLD,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MAX_TOKENS,
-    CONF_REASONING_EFFORT,
-    CONF_SERVICE_TIER,
     CONF_SHORTEN_TOOL_CALL_ID,
-    CONF_TEMPERATURE,
-    CONF_TOP_P,
-    CONF_WEB_SEARCH,
-    CONF_WEB_SEARCH_CONTEXT,
     CONTEXT_TRUNCATE_CLEAR,
     CONTEXT_TRUNCATE_KEEP_RECENT,
     CONTEXT_TRUNCATE_SUMMARIZE,
@@ -58,13 +50,7 @@ from .const import (
     DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MAX_TOKENS,
-    DEFAULT_REASONING_EFFORT,
-    DEFAULT_SERVICE_TIER,
     DEFAULT_SHORTEN_TOOL_CALL_ID,
-    DEFAULT_TEMPERATURE,
-    DEFAULT_TOP_P,
-    DEFAULT_WEB_SEARCH,
-    DEFAULT_WEB_SEARCH_CONTEXT,
     DOMAIN,
     FUNCTION_GROUP_LOADER_TOOL_NAME,
     LEGACY_CONTEXT_TRUNCATE_STRATEGY,
@@ -78,7 +64,14 @@ from .context import (
 )
 from .exceptions import FunctionNotFound, ParseArgumentsFailed, TokenLengthExceededError
 from .functions import get_function
-from .helpers import get_api_mode, get_model_config, supports_openai_hosted_tools
+from .helpers import get_api_mode, get_model_config
+from .request import (
+    CONTINUE_CONVERSATION_TOOL,
+    CONTINUE_CONVERSATION_TOOL_NAME,
+    build_provider_request_snapshot,
+    build_web_search_tool,
+    format_function_tools,
+)
 from .speech import async_streaming_speech_cleanup
 from .usage import RequestUsage, UsageManager, extract_usage
 
@@ -89,33 +82,6 @@ _LOGGER = logging.getLogger(__name__)
 
 # Max number of back and forth with the LLM to generate a response
 MAX_TOOL_ITERATIONS = 20
-
-CONTINUE_CONVERSATION_TOOL_NAME = "set_continue_conversation"
-CONTINUE_CONVERSATION_TOOL = {
-    "spec": {
-        "name": CONTINUE_CONVERSATION_TOOL_NAME,
-        "description": (
-            "Return the final spoken response and whether the user is expected to "
-            "reply immediately. Use this only when the final answer is ready."
-        ),
-        "strict": True,
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "response": {
-                    "type": "string",
-                    "description": "The complete plain-text response spoken to the user.",
-                },
-                "continue_conversation": {
-                    "type": "boolean",
-                    "description": "Whether to listen for an immediate follow-up.",
-                },
-            },
-            "required": ["response", "continue_conversation"],
-            "additionalProperties": False,
-        },
-    }
-}
 
 
 def _shorten_tool_call_id(tool_call_id: str) -> str:
@@ -310,20 +276,7 @@ def _format_tools(
     function_tools: list[dict[str, Any]], api_mode: str
 ) -> list[dict[str, Any]]:
     """Format function definitions for the selected OpenAI API."""
-    if api_mode == API_MODE_RESPONSES:
-        return [
-            {"type": "function", **func_spec["spec"]} for func_spec in function_tools
-        ]
-
-    return [
-        dict(
-            ChatCompletionToolParam(
-                type="function",
-                function=func_spec["spec"],
-            )
-        )
-        for func_spec in function_tools
-    ]
+    return format_function_tools(function_tools, api_mode)
 
 
 def _build_web_search_tool(
@@ -332,26 +285,7 @@ def _build_web_search_tool(
     entry_data: Mapping[str, Any],
 ) -> dict[str, Any] | None:
     """Build the native OpenAI Responses Web Search tool when enabled."""
-    if not options.get(CONF_WEB_SEARCH, DEFAULT_WEB_SEARCH):
-        return None
-    if api_mode != API_MODE_RESPONSES:
-        raise HomeAssistantError(
-            "Web Search requires the Responses API. Select Responses API mode or "
-            "use a model for which Auto resolves to Responses."
-        )
-    if not supports_openai_hosted_tools(
-        entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
-    ):
-        raise HomeAssistantError(
-            "Web Search is available only with the direct OpenAI Responses API; "
-            "Azure and custom base URLs are not supported."
-        )
-    return {
-        "type": "web_search",
-        "search_context_size": options.get(
-            CONF_WEB_SEARCH_CONTEXT, DEFAULT_WEB_SEARCH_CONTEXT
-        ),
-    }
+    return build_web_search_tool(options, api_mode, entry_data)
 
 
 class ExtendedOpenAIBaseLLMEntity(Entity):
@@ -402,11 +336,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 # double-counting live conversation runs.
                 await self._usage.async_record_conversation()
         options = self.subentry.data
-        model = options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
-        api_mode = get_api_mode(
-            options.get(CONF_API_MODE, DEFAULT_API_MODE),
-            model,
+        provider_snapshot = build_provider_request_snapshot(
+            options, getattr(self.entry, "data", {})
         )
+        api_kwargs = dict(provider_snapshot.api_kwargs)
+        model = str(api_kwargs["model"])
+        api_mode = provider_snapshot.api_mode
         max_function_calls = options.get(
             CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
             DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
@@ -416,7 +351,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             DEFAULT_SHORTEN_TOOL_CALL_ID,
         )
 
-        model_config = get_model_config(model)
         messages: Any
         if api_mode == API_MODE_RESPONSES:
             messages = _convert_content_to_responses_param(chat_log.content)
@@ -425,51 +359,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
         await self._async_add_attachments(chat_log, messages, api_mode)
 
-        web_search_tool = _build_web_search_tool(
-            options, api_mode, getattr(self.entry, "data", {})
+        web_search_tool = (
+            provider_snapshot.provider_tools[0]
+            if provider_snapshot.provider_tools
+            else None
         )
         continuation_decision: bool | None = None
-        api_kwargs: dict[str, Any] = {
-            "model": model,
-            "stream": True,
-        }
-
-        max_tokens = options.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
-        if api_mode == API_MODE_RESPONSES:
-            api_kwargs["max_output_tokens"] = max_tokens
-            # Responses are kept stateless, matching the integration's existing
-            # ChatLog-owned conversation history. Encrypted reasoning items let
-            # reasoning models continue across chained tool calls.
-            api_kwargs["store"] = False
-        else:
-            api_kwargs["stream_options"] = {"include_usage": True}
-            if model_config["supports_max_completion_tokens"]:
-                api_kwargs["max_completion_tokens"] = max_tokens
-            elif model_config["supports_max_tokens"]:
-                api_kwargs["max_tokens"] = max_tokens
-
-        if model_config["supports_top_p"]:
-            api_kwargs["top_p"] = options.get(CONF_TOP_P, DEFAULT_TOP_P)
-
-        if model_config["supports_temperature"]:
-            api_kwargs["temperature"] = options.get(
-                CONF_TEMPERATURE, DEFAULT_TEMPERATURE
-            )
-
-        if model_config.get("supports_reasoning_effort"):
-            reasoning_effort = options.get(
-                CONF_REASONING_EFFORT, DEFAULT_REASONING_EFFORT
-            )
-            if api_mode == API_MODE_RESPONSES:
-                api_kwargs["reasoning"] = {"effort": reasoning_effort}
-                api_kwargs["include"] = ["reasoning.encrypted_content"]
-            else:
-                api_kwargs["reasoning_effort"] = reasoning_effort
-
-        if model_config.get("supports_service_tier"):
-            api_kwargs["service_tier"] = options.get(
-                CONF_SERVICE_TIER, DEFAULT_SERVICE_TIER
-            )
 
         if structure is not None:
             output_format = {

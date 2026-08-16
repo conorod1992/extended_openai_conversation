@@ -23,11 +23,14 @@ from .agent_config import (
     agent_config_defaults,
     agent_config_options,
     agent_config_snapshot,
+    configured_function_tools_from_data,
+    function_tool_enabled,
     function_tool_yaml,
     merge_agent_config,
     model_capabilities,
     normalize_agent_config,
     starter_function_tool_yaml,
+    validate_function_groups,
     validate_function_tools,
     validate_single_function_tool,
 )
@@ -42,8 +45,10 @@ from .const import (
     CONF_ARCHIVE_RETENTION_DAYS,
     CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     CONF_CHAT_MODEL,
+    CONF_CONTINUE_CONVERSATION,
     CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
+    CONF_FUNCTION_GROUPS,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_SHARED_ARCHIVE_ENABLED,
@@ -56,12 +61,15 @@ from .const import (
     CONF_VOICE_DEVICE_MAPPINGS,
     CONF_VOICE_SCOPE_POLICY,
     CONF_VOICE_UNMAPPED_POLICY,
+    CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
     DEFAULT_CHAT_MODEL,
+    DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+    DEFAULT_FUNCTION_GROUPS,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_TEMPORARY_MEMORY,
@@ -70,13 +78,14 @@ from .const import (
     DEFAULT_VOICE_SCOPE_POLICY,
     DEFAULT_VOICE_UNMAPPED_POLICY,
     DOMAIN,
+    FUNCTION_GROUP_LOADER_TOOL_NAME,
     MANAGEMENT_PANEL_TITLE,
     MANAGEMENT_PANEL_URL,
     TEMPORARY_MEMORY_OFF,
 )
 from .continuity import ConversationContinuity, async_get_continuity
 from .conversation_archive import async_get_archive
-from .function_groups import get_function_group_runtime
+from .function_groups import assemble_function_tools, get_function_group_runtime
 from .functions import FUNCTIONS
 from .helpers import get_exposed_entities
 from .knowledge import (
@@ -84,8 +93,21 @@ from .knowledge import (
     get_loaded_knowledge,
     knowledge_source_as_dict,
 )
-from .memory import ANONYMOUS_USER_ID, async_get_memory, get_memory_mode, memory_as_dict
+from .memory import (
+    ANONYMOUS_USER_ID,
+    async_get_memory,
+    get_memory_mode,
+    memory_as_dict,
+    memory_enabled,
+)
 from .prompt import render_effective_prompt
+from .request import (
+    CONTINUE_CONVERSATION_TOOL,
+    assemble_integration_function_tools,
+    build_provider_request_snapshot,
+    canonical_json,
+    format_function_tools,
+)
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID, user_scope
 from .skills import SkillManager
 from .speech import process_speech_text
@@ -118,14 +140,14 @@ def entry_and_agent(hass: HomeAssistant, entry_id: str, subentry_id: str):
     return entry, subentry
 
 
-async def _async_preview_effective_prompt(
+async def _async_preview_effective_request(
     hass: HomeAssistant,
     entry: Any,
     subentry: Any,
     options: dict[str, Any],
     user_id: str,
 ) -> dict[str, Any]:
-    """Render a side-effect-free fresh-request system/context baseline."""
+    """Assemble a side-effect-free snapshot of a fresh provider request."""
     temporary_memories = []
     notes = [
         "User input and conversation history are excluded.",
@@ -165,6 +187,11 @@ async def _async_preview_effective_prompt(
         else []
     )
     knowledge = get_loaded_knowledge(hass, entry.entry_id, subentry.subentry_id)
+    knowledge_available = bool(
+        options.get(CONF_KNOWLEDGE_ENABLED)
+        and knowledge is not None
+        and knowledge.source_count > 0
+    )
     try:
         preview = render_effective_prompt(
             hass,
@@ -175,16 +202,127 @@ async def _async_preview_effective_prompt(
             skills=skills,
             memories=None,
             temporary_memories=temporary_memories,
-            knowledge_available=bool(
-                options.get(CONF_KNOWLEDGE_ENABLED)
-                and knowledge is not None
-                and knowledge.source_count > 0
+            knowledge_available=knowledge_available,
+        )
+        configured_tools = configured_function_tools_from_data(options)
+        groups = validate_function_groups(
+            options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
+            configured_tools,
+        )
+        grouped = assemble_function_tools(configured_tools, groups, set())
+        provider = build_provider_request_snapshot(options, getattr(entry, "data", {}))
+        custom_tools = [
+            tool
+            for tool in grouped.tools
+            if tool.get("spec", {}).get("name") != FUNCTION_GROUP_LOADER_TOOL_NAME
+        ]
+        loader_tools = [
+            tool
+            for tool in grouped.tools
+            if tool.get("spec", {}).get("name") == FUNCTION_GROUP_LOADER_TOOL_NAME
+        ]
+        configured_names = {
+            tool.get("spec", {}).get("name")
+            for tool in configured_tools
+            if isinstance(tool, dict)
+        }
+        integration_tools = assemble_integration_function_tools(
+            options,
+            configured_names,
+            memory_scope_available=memory_enabled(options),
+            temporary_scope_available=(
+                temporary_mode != TEMPORARY_MEMORY_OFF and temporary_scope is not None
             ),
+            knowledge_available=knowledge_available,
+        )
+        conditional_continue = (
+            options.get(CONF_CONTINUE_CONVERSATION, DEFAULT_CONTINUE_CONVERSATION)
+            == CONTINUE_CONVERSATION_CONDITIONAL
+        )
+        if conditional_continue:
+            integration_tools.append(CONTINUE_CONVERSATION_TOOL)
+
+        formatted_custom = format_function_tools(custom_tools, provider.api_mode)
+        formatted_loader = format_function_tools(loader_tools, provider.api_mode)
+        formatted_integration = format_function_tools(
+            integration_tools, provider.api_mode
+        )
+        formatted_provider = list(provider.provider_tools)
+        request_settings = {"api_mode": provider.api_mode, **provider.api_kwargs}
+        if (
+            formatted_custom
+            or formatted_loader
+            or formatted_integration
+            or formatted_provider
+        ):
+            request_settings["tool_choice"] = (
+                "required" if conditional_continue else "auto"
+            )
+
+        section_values = (
+            ("system_context", "System / context", preview.text, "text"),
+            (
+                "function_tools",
+                "Function tools",
+                canonical_json(formatted_custom),
+                "json",
+            ),
+            (
+                "function_group_loader",
+                "Function Group catalogue / loader",
+                canonical_json(formatted_loader),
+                "json",
+            ),
+            (
+                "integration_tools",
+                "Integration tools",
+                canonical_json(formatted_integration),
+                "json",
+            ),
+            (
+                "provider_tools",
+                "Provider tools",
+                canonical_json(formatted_provider),
+                "json",
+            ),
+            (
+                "request_settings",
+                "Request settings",
+                canonical_json(request_settings),
+                "json",
+            ),
+        )
+        sections = [
+            {
+                "key": key,
+                "label": label,
+                "content": content,
+                "format": output_format,
+                "character_count": len(content),
+            }
+            for key, label, content, output_format in section_values
+        ]
+
+        enabled_tools = [
+            tool for tool in configured_tools if function_tool_enabled(tool)
+        ]
+        grouped_payload = canonical_json(
+            format_function_tools(grouped.tools, provider.api_mode)
+        )
+        ungrouped_payload = canonical_json(
+            format_function_tools(enabled_tools, provider.api_mode)
+        )
+        raw_savings = len(ungrouped_payload) - len(grouped_payload)
+        savings = max(0, raw_savings)
+        savings_percent = (
+            round((savings / len(ungrouped_payload)) * 100)
+            if savings and ungrouped_payload
+            else 0
         )
     except Exception as err:
         concise = " ".join(str(err).split())[:500] or type(err).__name__
         raise HomeAssistantError(
-            f"The effective prompt could not be rendered: {concise}"
+            f"The effective request could not be assembled: {concise}"
         ) from err
 
     if (
@@ -202,7 +340,7 @@ async def _async_preview_effective_prompt(
         ]
     return {
         "prompt": preview.text,
-        "sections": [
+        "prompt_sections": [
             {
                 "key": section.key,
                 "label": section.label,
@@ -210,8 +348,31 @@ async def _async_preview_effective_prompt(
             }
             for section in preview.sections
         ],
+        "sections": sections,
+        "total_character_count": sum(
+            section["character_count"] for section in sections
+        ),
+        "function_group_savings": {
+            "characters": savings,
+            "percent": savings_percent,
+            "grouped_characters": len(grouped_payload),
+            "without_on_demand_grouping_characters": len(ungrouped_payload),
+        },
         "notes": notes,
     }
+
+
+async def _async_preview_effective_prompt(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    options: dict[str, Any],
+    user_id: str,
+) -> dict[str, Any]:
+    """Backward-compatible internal alias for the expanded request preview."""
+    return await _async_preview_effective_request(
+        hass, entry, subentry, options, user_id
+    )
 
 
 def _require_admin(is_admin: bool) -> None:
@@ -550,12 +711,12 @@ async def async_management_command(
                 raise HomeAssistantError("sample_text and config are invalid")
             normalized = merge_agent_config(subentry.data, updates)
             return {"speech_text": process_speech_text(sample, normalized)}
-        if action == "prompt_preview":
+        if action in {"prompt_preview", "request_preview"}:
             updates = message.get("config", {})
             if not isinstance(updates, dict):
                 raise HomeAssistantError("config must be an object")
             normalized = merge_agent_config(subentry.data, updates)
-            return await _async_preview_effective_prompt(
+            return await _async_preview_effective_request(
                 hass, entry, subentry, normalized, user_id
             )
 

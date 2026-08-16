@@ -17,6 +17,9 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
     normalize_agent_config,
     validate_function_groups,
 )
+from custom_components.extended_openai_conversation_responses.const import (
+    CONFIG_ENTRY_VERSION,
+)
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
@@ -289,7 +292,10 @@ async def test_version_six_migration_adds_empty_groups_without_rewriting_tools(
     migrated = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
     assert migrated["functions"] == "[]\n"
     assert migrated["function_groups"] == []
-    assert hass.config_entries.async_update_entry.call_args.kwargs["version"] == 6
+    assert (
+        hass.config_entries.async_update_entry.call_args.kwargs["version"]
+        == CONFIG_ENTRY_VERSION
+    )
 
 
 @pytest.mark.parametrize(

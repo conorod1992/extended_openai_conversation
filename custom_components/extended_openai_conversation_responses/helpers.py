@@ -83,9 +83,7 @@ def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:
         entity_id = state.entity_id
         entity = entity_registry.async_get(entity_id)
 
-        aliases: list[str] = []
-        if entity and entity.aliases:
-            aliases = [str(a) for a in entity.aliases]
+        aliases = normalize_entity_aliases(entity.aliases if entity else None)
 
         exposed_entities.append(
             {
@@ -96,6 +94,19 @@ def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:
             }
         )
     return exposed_entities
+
+
+def normalize_entity_aliases(aliases: Any) -> list[str]:
+    """Keep genuine aliases while dropping computed-name and unknown sentinels."""
+    if not aliases:
+        return []
+    # COMPUTED_NAME is represented separately by state.name. Unknown non-string
+    # sentinel objects are intentionally not stringified into model context.
+    return [
+        alias
+        for alias in aliases
+        if isinstance(alias, str) and not isinstance(alias, er.ComputedNameType)
+    ]
 
 
 def is_azure_url(base_url: str | None) -> bool:

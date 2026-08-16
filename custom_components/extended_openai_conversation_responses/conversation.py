@@ -11,7 +11,6 @@ from types import SimpleNamespace
 from typing import Any, Literal
 
 from openai import OpenAIError
-import yaml
 
 from homeassistant.components import conversation
 from homeassistant.components.conversation import (
@@ -31,9 +30,9 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import ExtendedOpenAIConfigEntry
 from .agent_config import (
+    configured_function_tools_from_data,
     function_tool_enabled,
     validate_function_groups,
-    validate_function_tools,
 )
 from .const import (
     CONF_ARCHIVE_ENABLED,
@@ -44,7 +43,6 @@ from .const import (
     CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
     CONF_FUNCTION_GROUPS,
-    CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_SHARED_ARCHIVE_ENABLED,
@@ -59,7 +57,6 @@ from .const import (
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
     DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
-    DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
@@ -78,12 +75,7 @@ from .const import (
     TEMPORARY_MEMORY_OFF,
 )
 from .continuity import ConversationContinuity, async_get_continuity
-from .conversation_archive import (
-    ArchiveSession,
-    ConversationArchive,
-    archive_tools,
-    async_get_archive,
-)
+from .conversation_archive import ArchiveSession, ConversationArchive, async_get_archive
 from .entity import ExtendedOpenAIBaseLLMEntity
 from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
 from .function_groups import (
@@ -94,37 +86,27 @@ from .function_groups import (
     remove_function_group_runtime,
     reset_function_group_runtime,
 )
-from .functions import get_function
 from .helpers import get_exposed_entities
-from .knowledge import (
-    KNOWLEDGE_TOOL_NAMES,
-    KnowledgeLibrary,
-    async_get_knowledge,
-    knowledge_tools,
-    search_result_as_dict,
-)
+from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
 from .memory import (
-    MEMORY_TOOL_NAMES,
     MemoryRecord,
     PersistentMemory,
     async_get_memory,
     automatic_memory_enabled,
     memory_as_dict,
     memory_enabled,
-    memory_tools,
     memory_user_id,
 )
 from .prompt import render_effective_prompt
+from .request import assemble_integration_function_tools
 from .scope import ResolvedDataScope, memory_scope_id, resolve_data_scope
 from .skills import Skill, SkillManager
 from .speech import has_custom_speech_replacements, process_speech_text
 from .temporary_memory import (
-    TEMPORARY_MEMORY_TOOL_NAMES,
     TemporaryMemory,
     TemporaryMemoryRecord,
     async_get_temporary_memory,
     temporary_memory_as_dict,
-    temporary_memory_tools,
 )
 from .usage import async_get_usage
 
@@ -611,48 +593,18 @@ class ExtendedOpenAIAgentEntity(
                 for tool in configured_tools
                 if isinstance(tool, dict)
             }
-            if (
-                memory_enabled(self.subentry.data)
-                and self._current_memory_scope_id() is not None
-            ):
-                conflicts = configured_names & MEMORY_TOOL_NAMES
-                if conflicts:
-                    raise HomeAssistantError(
-                        "Reserved persistent-memory tool name configured: "
-                        + ", ".join(sorted(conflicts))
-                    )
-                result.extend(memory_tools())
-            if (
-                self._temporary_memory is not None
-                and _ACTIVE_TEMPORARY_SCOPE.get() is not None
-            ):
-                conflicts = configured_names & TEMPORARY_MEMORY_TOOL_NAMES
-                if conflicts:
-                    raise HomeAssistantError(
-                        "Reserved temporary-memory tool name configured: "
-                        + ", ".join(sorted(conflicts))
-                    )
-                result.extend(temporary_memory_tools())
-            if self.subentry.data.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED):
-                configured_archive_tools = archive_tools()
-                if not self.subentry.data.get(
-                    CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
-                    DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
-                ):
-                    configured_archive_tools = [
-                        tool
-                        for tool in configured_archive_tools
-                        if tool["function"]["operation"] not in {"search", "get"}
-                    ]
-                result.extend(configured_archive_tools)
-            if self._knowledge_available:
-                conflicts = configured_names & KNOWLEDGE_TOOL_NAMES
-                if conflicts:
-                    raise HomeAssistantError(
-                        "Reserved Knowledge Library tool name configured: "
-                        + ", ".join(sorted(conflicts))
-                    )
-                result.extend(knowledge_tools())
+            result.extend(
+                assemble_integration_function_tools(
+                    self.subentry.data,
+                    configured_names,
+                    memory_scope_available=self._current_memory_scope_id() is not None,
+                    temporary_scope_available=(
+                        self._temporary_memory is not None
+                        and _ACTIVE_TEMPORARY_SCOPE.get() is not None
+                    ),
+                    knowledge_available=self._knowledge_available,
+                )
+            )
             return result
         except (InvalidFunction, FunctionNotFound) as e:
             raise e
@@ -665,18 +617,7 @@ class ExtendedOpenAIAgentEntity(
 
     def _configured_function_tools_from_data(self, data: Any) -> list[dict[str, Any]]:
         """Parse configured tools from one current or persisted data mapping."""
-        function_tools_config = data.get(CONF_FUNCTION_TOOLS)
-        parsed = (
-            yaml.safe_load(function_tools_config)
-            if function_tools_config
-            else DEFAULT_CONF_FUNCTION_TOOLS
-        )
-        function_tools = validate_function_tools(parsed)
-        for function_tool in function_tools:
-            function_config = function_tool["function"]
-            function = get_function(function_config["type"])
-            function_tool["function"] = function.validate_schema(function_config)
-        return function_tools
+        return configured_function_tools_from_data(data)
 
     def _load_function_groups(self, requested: Any) -> dict[str, Any]:
         """Apply an integration-owned loader call to the active conversation."""
