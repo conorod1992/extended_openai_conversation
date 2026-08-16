@@ -23,6 +23,10 @@ from .const import (
     CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     CONF_BASE_URL,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
+    CONF_CURRENT_DATETIME_ENABLED,
+    CONF_CURRENT_DATETIME_TEMPLATE,
+    CONF_EXPOSED_ENTITIES_ENABLED,
+    CONF_EXPOSED_ENTITIES_TEMPLATE,
     CONF_FUNCTION_GROUPS,
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_ENABLED,
@@ -46,6 +50,8 @@ from .const import (
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
     DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+    DEFAULT_CURRENT_DATETIME_TEMPLATE,
+    DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_SHARED_ARCHIVE_ENABLED,
     DEFAULT_SHARED_MEMORY_MODE,
@@ -206,5 +212,16 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 list(DEFAULT_SPEECH_REGEX_REPLACEMENTS),
             )
             data.setdefault(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS))
+            # Existing prompts are preserved byte-for-byte and may already embed
+            # now() or exposed_entities(). Keep new generated context disabled for
+            # migrated agents so migration cannot duplicate arbitrary templates.
+            data.setdefault(CONF_CURRENT_DATETIME_ENABLED, False)
+            data.setdefault(
+                CONF_CURRENT_DATETIME_TEMPLATE, DEFAULT_CURRENT_DATETIME_TEMPLATE
+            )
+            data.setdefault(CONF_EXPOSED_ENTITIES_ENABLED, False)
+            data.setdefault(
+                CONF_EXPOSED_ENTITIES_TEMPLATE, DEFAULT_EXPOSED_ENTITIES_TEMPLATE
+            )
             hass.config_entries.async_update_subentry(entry, subentry, data=data)
         hass.config_entries.async_update_entry(entry, version=CONFIG_ENTRY_VERSION)

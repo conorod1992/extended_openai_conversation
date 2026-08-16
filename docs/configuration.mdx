@@ -21,7 +21,9 @@ Connection details and conversation-agent behaviour are configured in separate p
 
 The frontend edits the existing Home Assistant conversation subentry through authenticated WebSocket commands. It does not create a separate configuration store. Configuration is one full-width settings document with lightweight jump links, search, and responsive fields inside each section. Edits remain local until **Save configuration** is pressed; **Revert** discards the draft. Model-specific fields are supplied by the backend. Simple dependent settings remain visible but disabled so available options are discoverable and the layout stays stable.
 
-**Preview effective prompt**, beside the prompt editor, renders the fresh-request system/context baseline with the same builder used by live conversations. Current Home Assistant template values are resolved, while user input and conversation history are excluded. The preview does not save the draft or mutate agent state. Query-derived persistent memories are omitted without a user query, and temporary context appears only when its scope can be resolved without fabrication. Treat the dialog as private because it may contain entity state, memory data, Knowledge context, and user instructions.
+The **Prompt & context** section gives new agents two simple default-on controls for Home Assistant-local date/time and exposed-device names/states. Generated blocks are volatile integration context after the intact user prompt. Optional advanced formatting templates stay collapsed and clearing an override restores the maintained default. Existing agents keep their prompt byte-for-byte and migrate with generated date/device blocks off, avoiding duplicated legacy Jinja.
+
+**Preview effective request** uses the production builders to show fresh-request system/context, effective custom Function Tools, the initial Function Group loader/catalogue, integration/provider-hosted tools, and non-secret request settings. It excludes user input, conversation/tool-call history, query-derived persistent memories, credentials, and opaque provider content, and has no save/provider/usage/memory/group/history side effects. Counts are exact for displayed text or canonical local JSON; Function Group savings include loader overhead and compare against eagerly sending every enabled custom schema. Real provider token and cache reporting remains authoritative.
 
 To improve natural provider prompt-cache reuse, the rendered user-authored prompt remains one indivisible block. Stable integration-owned memory, temporary-memory, Knowledge, archive, and continuation guidance follows where enabled; volatile retrieved persistent-memory and active temporary-memory data is placed later. Tool schemas remain tool definitions, request message roles are unchanged, and actual cache hits remain provider-controlled.
 
@@ -83,7 +85,7 @@ Regex is an advanced feature. Rules run sequentially on the completed response, 
   <Accordion title="Prompt">
     **Type**: Template (Jinja2)
 
-    **Default**: System prompt with Home Assistant context
+    **Default**: Behavioural system instructions; live date/device context is managed separately
 
     Custom system prompt to guide AI behavior. Supports Jinja2 templates with access to context variables and custom functions.
 
@@ -111,21 +113,15 @@ Regex is an advanced feature. Rules run sequentially on the completed response, 
 
     ```jinja
     You are a helpful assistant for {{ha_name}}.
-    Current time: {{now()}}
     Current area: {{area_id(current_device_id)}}
     Working directory: {{extended_openai.working_directory()}}
-
-    Available devices:
-    {% for entity in exposed_entities -%}
-    - {{entity.name}} ({{entity.entity_id}}): {{entity.state}}
-    {% endfor -%}
 
     {% if skills %}
     Enabled skills: {% for skill in skills %}{{skill.name}}{% if not loop.last %}, {% endif %}{% endfor %}
     {% endif %}
     ```
 
-    See the default prompt for a complete example.
+    Date/time and exposed devices normally come from the first-class context controls. The variables and functions remain available for advanced custom prompts and formatting overrides.
   </Accordion>
 
   <Accordion title="Model">

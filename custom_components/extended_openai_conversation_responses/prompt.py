@@ -12,11 +12,19 @@ from .const import (
     CONDITIONAL_CONTINUATION_PROMPT,
     CONF_ARCHIVE_ENABLED,
     CONF_CONTINUE_CONVERSATION,
+    CONF_CURRENT_DATETIME_ENABLED,
+    CONF_CURRENT_DATETIME_TEMPLATE,
+    CONF_EXPOSED_ENTITIES_ENABLED,
+    CONF_EXPOSED_ENTITIES_TEMPLATE,
     CONF_PROMPT,
     CONF_TEMPORARY_MEMORY,
     CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CONTINUE_CONVERSATION,
+    DEFAULT_CURRENT_DATETIME_CONTEXT_TEMPLATE,
+    DEFAULT_CURRENT_DATETIME_TEMPLATE,
+    DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE,
+    DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
     DEFAULT_PROMPT,
     DEFAULT_TEMPORARY_MEMORY,
     KNOWLEDGE_PROMPT,
@@ -58,6 +66,30 @@ class EffectivePrompt:
 def _append_section(current: str, section: PromptSection) -> str:
     """Append a section with the prompt builder's established whitespace behavior."""
     return f"{current.rstrip()}\n{section.text}"
+
+
+def _render_template(
+    hass: Any,
+    raw: str,
+    *,
+    exposed_entities: list[dict[str, Any]],
+    current_device_id: str | None,
+    user_input: Any,
+    skills: list[Any],
+) -> str:
+    """Render one user or integration-managed context template consistently."""
+    return str(
+        template.Template(raw, hass).async_render(
+            {
+                "ha_name": hass.config.location_name,
+                "exposed_entities": exposed_entities,
+                "current_device_id": current_device_id,
+                "user_input": user_input,
+                "skills": skills,
+            },
+            parse_result=False,
+        )
+    )
 
 
 def _persistent_memory_instructions(options: Any) -> str:
@@ -165,21 +197,15 @@ def render_effective_prompt(
 ) -> EffectivePrompt:
     """Render and assemble the production system prompt in deterministic order."""
     raw_prompt: str = options.get(CONF_PROMPT, DEFAULT_PROMPT)
-    rendered_prompt = str(
-        template.Template(raw_prompt, hass).async_render(
-            {
-                "ha_name": hass.config.location_name,
-                "exposed_entities": exposed_entities,
-                "current_device_id": current_device_id,
-                "user_input": user_input,
-                "skills": skills,
-            },
-            parse_result=False,
-        )
+    rendered_prompt = _render_template(
+        hass,
+        raw_prompt,
+        exposed_entities=exposed_entities,
+        current_device_id=current_device_id,
+        user_input=user_input,
+        skills=skills,
     )
-    sections: list[PromptSection] = [
-        PromptSection("user_prompt", "Rendered user prompt", rendered_prompt, "mixed")
-    ]
+    sections: list[PromptSection] = []
 
     if memory_enabled(options):
         sections.append(
@@ -232,6 +258,61 @@ def render_effective_prompt(
                 "Conditional-continuation instructions",
                 CONDITIONAL_CONTINUATION_PROMPT,
                 "stable",
+            )
+        )
+
+    # The user's template remains one indivisible block. Stable integration-owned
+    # guidance precedes it so volatile Jinja in this block does not invalidate the
+    # reusable provider prefix before that guidance.
+    sections.append(
+        PromptSection("user_prompt", "Rendered user prompt", rendered_prompt, "mixed")
+    )
+
+    # Missing keys are treated as legacy/migrated data and remain off. New and
+    # reset configurations persist the explicit integration default of True.
+    if options.get(CONF_CURRENT_DATETIME_ENABLED, False):
+        raw_datetime = (
+            options.get(
+                CONF_CURRENT_DATETIME_TEMPLATE, DEFAULT_CURRENT_DATETIME_TEMPLATE
+            ).strip()
+            or DEFAULT_CURRENT_DATETIME_CONTEXT_TEMPLATE
+        )
+        sections.append(
+            PromptSection(
+                "current_datetime_context",
+                "Current date/time context",
+                _render_template(
+                    hass,
+                    raw_datetime,
+                    exposed_entities=exposed_entities,
+                    current_device_id=current_device_id,
+                    user_input=user_input,
+                    skills=skills,
+                ),
+                "volatile",
+            )
+        )
+
+    if options.get(CONF_EXPOSED_ENTITIES_ENABLED, False):
+        raw_entities = (
+            options.get(
+                CONF_EXPOSED_ENTITIES_TEMPLATE, DEFAULT_EXPOSED_ENTITIES_TEMPLATE
+            ).strip()
+            or DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE
+        )
+        sections.append(
+            PromptSection(
+                "exposed_entities_context",
+                "Exposed-device context",
+                _render_template(
+                    hass,
+                    raw_entities,
+                    exposed_entities=exposed_entities,
+                    current_device_id=current_device_id,
+                    user_input=user_input,
+                    skills=skills,
+                ),
+                "volatile",
             )
         )
 

@@ -5,11 +5,12 @@ from __future__ import annotations
 from copy import deepcopy
 import re
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import template
 
 from .const import (
     API_MODE_OPTIONS,
@@ -26,6 +27,10 @@ from .const import (
     CONF_CONTINUE_CONVERSATION,
     CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
+    CONF_CURRENT_DATETIME_ENABLED,
+    CONF_CURRENT_DATETIME_TEMPLATE,
+    CONF_EXPOSED_ENTITIES_ENABLED,
+    CONF_EXPOSED_ENTITIES_TEMPLATE,
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
@@ -74,6 +79,10 @@ from .const import (
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+    DEFAULT_CURRENT_DATETIME_ENABLED,
+    DEFAULT_CURRENT_DATETIME_TEMPLATE,
+    DEFAULT_EXPOSED_ENTITIES_ENABLED,
+    DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_KNOWLEDGE_ENABLED,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
@@ -136,6 +145,10 @@ def _tools_yaml(value: Any) -> str:
 AGENT_CONFIG_DEFAULTS = MappingProxyType(
     {
         CONF_PROMPT: DEFAULT_PROMPT,
+        CONF_CURRENT_DATETIME_ENABLED: DEFAULT_CURRENT_DATETIME_ENABLED,
+        CONF_CURRENT_DATETIME_TEMPLATE: DEFAULT_CURRENT_DATETIME_TEMPLATE,
+        CONF_EXPOSED_ENTITIES_ENABLED: DEFAULT_EXPOSED_ENTITIES_ENABLED,
+        CONF_EXPOSED_ENTITIES_TEMPLATE: DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
         CONF_CHAT_MODEL: DEFAULT_CHAT_MODEL,
         CONF_API_MODE: DEFAULT_API_MODE,
         CONF_MAX_TOKENS: DEFAULT_MAX_TOKENS,
@@ -306,6 +319,19 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
 def function_tool_enabled(tool: dict[str, Any]) -> bool:
     """Return the single authoritative enabled state for a configured tool."""
     return tool.get("enabled", True) is True
+
+
+def configured_function_tools_from_data(data: Any) -> list[dict[str, Any]]:
+    """Parse fully validated production Function Tools from agent data."""
+    configured = data.get(CONF_FUNCTION_TOOLS)
+    parsed = yaml.safe_load(configured) if configured else DEFAULT_CONF_FUNCTION_TOOLS
+    tools = validate_function_tools(parsed)
+    for tool in tools:
+        function_config = tool["function"]
+        tool["function"] = get_function(function_config["type"]).validate_schema(
+            function_config
+        )
+    return tools
 
 
 _FUNCTION_GROUP_ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -568,6 +594,8 @@ def normalize_agent_config(
             CONF_KNOWLEDGE_ENABLED,
             CONF_SHORTEN_TOOL_CALL_ID,
             CONF_ADVANCED_OPTIONS,
+            CONF_CURRENT_DATETIME_ENABLED,
+            CONF_EXPOSED_ENTITIES_ENABLED,
             CONF_SPEECH_PROCESSING_ENABLED,
             CONF_SPEECH_STRIP_MARKDOWN,
             CONF_SPEECH_STRIP_URLS,
@@ -578,6 +606,8 @@ def normalize_agent_config(
         result,
         (
             CONF_PROMPT,
+            CONF_CURRENT_DATETIME_TEMPLATE,
+            CONF_EXPOSED_ENTITIES_TEMPLATE,
             CONF_CHAT_MODEL,
             CONF_API_MODE,
             CONF_CONTEXT_TRUNCATE_STRATEGY,
@@ -658,6 +688,15 @@ def normalize_agent_config(
         raise AgentConfigError(CONF_TOP_P, "must be 0 to 1")
     if not 0 <= float(result[CONF_TEMPERATURE]) <= 2:
         raise AgentConfigError(CONF_TEMPERATURE, "must be 0 to 2")
+    for key in (CONF_CURRENT_DATETIME_TEMPLATE, CONF_EXPOSED_ENTITIES_TEMPLATE):
+        value = result[key]
+        if not value.strip():
+            continue
+        try:
+            template.Template(value, cast(Any, None)).ensure_valid()
+        except Exception as err:
+            concise = " ".join(str(err).split())[:300] or type(err).__name__
+            raise AgentConfigError(key, f"invalid template: {concise}") from err
     mappings = result.get(CONF_VOICE_DEVICE_MAPPINGS, {})
     if not isinstance(mappings, dict) or not all(
         isinstance(key, str) and isinstance(value, str)

@@ -1,7 +1,7 @@
 """Constants for the Extended OpenAI Conversation (Responses) integration."""
 
 DOMAIN = "extended_openai_conversation_responses"
-CONFIG_ENTRY_VERSION = 6
+CONFIG_ENTRY_VERSION = 7
 AGENT_CONFIG_EXPORT_VERSION = 1
 DEFAULT_NAME = "Extended OpenAI Conversation (Responses)"
 DEFAULT_CONVERSATION_NAME = "Extended OpenAI Conversation (Responses)"
@@ -28,6 +28,25 @@ EVENT_CONVERSATION_FINISHED = (
 )
 
 CONF_PROMPT = "prompt"
+CONF_CURRENT_DATETIME_ENABLED = "current_datetime_enabled"
+CONF_CURRENT_DATETIME_TEMPLATE = "current_datetime_template"
+CONF_EXPOSED_ENTITIES_ENABLED = "exposed_entities_enabled"
+CONF_EXPOSED_ENTITIES_TEMPLATE = "exposed_entities_template"
+DEFAULT_CURRENT_DATETIME_ENABLED = True
+DEFAULT_CURRENT_DATETIME_TEMPLATE = ""
+DEFAULT_EXPOSED_ENTITIES_ENABLED = True
+DEFAULT_EXPOSED_ENTITIES_TEMPLATE = ""
+DEFAULT_CURRENT_DATETIME_CONTEXT_TEMPLATE = """## Current date and time
+{{ now() }}
+"""
+DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE = """## Available Devices
+```csv
+entity_id,name,state,aliases
+{% for entity in exposed_entities -%}
+{{ entity.entity_id }},{{ entity.name }},{{ entity.state }},{{ entity.aliases | join('/') }}
+{% endfor -%}
+```
+"""
 CONF_CONTINUE_CONVERSATION = "continue_conversation"
 CONTINUE_CONVERSATION_DEFAULT = "ha_default"
 CONTINUE_CONVERSATION_ALWAYS = "always"
@@ -58,7 +77,6 @@ DEFAULT_PROMPT = """You are a helpful AI voice assistant of Home Assistant that 
 Your goal is to proactively improve the user's comfort.
 
 ## Environment State
-- Current Time: {{now()}}
 - Current Area: {{area_id(current_device_id)}}
 
 ## Workspace
@@ -81,15 +99,6 @@ Your workspace is at: {{extended_openai.working_directory()}}
 - Otherwise, infer the user's goal and select the most likely target entity, preferring primary environmental controls. Use get_attributes to check adjustable state values alone is not sufficient.
 - If the selected entity is already at its limit, evaluate the next most likely entity. Repeat until a viable adjustment is found or all candidates are exhausted.
 - Ask user a minimum adjustment proposal about selected entity. If no entity can further improve the situation, inform the user that conditions are already optimal.
-
-## Devices
-Available Devices:
-```csv
-entity_id,name,state,area_id,aliases
-{% for entity in extended_openai.exposed_entities() -%}
-{{ entity.entity_id }},{{ entity.name }},{{ entity.state }},{{area_id(entity.entity_id)}},{{entity.aliases | join('/')}}
-{% endfor -%}
-```
 
 {%- if skills %}
 ## Skills

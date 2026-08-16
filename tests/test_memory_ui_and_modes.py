@@ -17,6 +17,8 @@ from custom_components.extended_openai_conversation_responses.config_flow import
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_CONTEXT_TRUNCATE_STRATEGY,
+    CONF_CURRENT_DATETIME_ENABLED,
+    CONF_EXPOSED_ENTITIES_ENABLED,
     CONF_FUNCTION_TOOLS,
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_ENABLED,
@@ -108,6 +110,8 @@ async def test_version_four_migration_preserves_agent_content() -> None:
     assert migrated[CONF_MEMORY_MODE] == MEMORY_MODE_MANUAL
     assert migrated[CONF_CONTEXT_TRUNCATE_STRATEGY] == "clear"
     assert migrated[CONF_PROMPT] == "My irreplaceable custom prompt"
+    assert migrated[CONF_CURRENT_DATETIME_ENABLED] is False
+    assert migrated[CONF_EXPOSED_ENTITIES_ENABLED] is False
     assert migrated[CONF_FUNCTION_TOOLS] == functions
     assert migrated["legacy_custom_field"] == {"keep": "unchanged"}
     hass.config_entries.async_update_entry.assert_called_with(

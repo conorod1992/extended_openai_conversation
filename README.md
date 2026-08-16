@@ -77,7 +77,9 @@ Copy the `extended_openai_conversation_responses` folder from `custom_components
 
 The native Home Assistant flow is intentionally limited to provider and connection setup. After the integration is added, open **Extended OpenAI** in the sidebar and choose **Configuration** for a searchable, full-width settings document covering conversation behaviour, prompts, capabilities, archive, voice identity, spoken-response cleanup, context, model options, and retention. Use **Tools** for the friendly tool list and YAML-first single-tool editor; YAML parsing and function validation remain backend-authoritative.
 
-Beside the prompt editor, **Preview effective prompt** shows the system/context content for a new request using current Home Assistant state. It excludes user input and conversation history, does not save the draft, and may display private entity, memory, Knowledge, or instruction data. Integration-owned stable guidance is kept before volatile retrieved context where semantics permit; the rendered user-authored prompt remains one untouched block, and actual prompt-cache reuse remains provider-controlled.
+Under **Prompt & context**, new agents include Home Assistant-local date/time and exposed-device state through two simple, default-on controls. Advanced formatting stays collapsed and accepts optional templates; clearing an override restores the integration-maintained format. Existing agents keep their prompt unchanged and migrate with both generated blocks off, avoiding duplicate legacy `now()` or `exposed_entities()` output.
+
+**Preview effective request** shows the locally assembled fresh-request system/context, effective first-request Function Tools and Function Group loader, integration/provider tools, and non-secret request settings. It excludes user input and all conversation/tool-call history, does not save or mutate runtime state, and reports deterministic character counts plus exact local Function Group schema savings. Provider token accounting and actual prompt-cache reuse remain authoritative after real requests.
 
 ### 3. Select the conversation agent
 
