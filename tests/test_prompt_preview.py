@@ -148,6 +148,7 @@ def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last
     assert result.text.index("## Current date and time") < result.text.index(
         "## Available Devices"
     )
+    assert "entity_id,name,state,area_id,aliases" in result.text
     assert result.text.index("## Knowledge Library") < result.text.index(
         "Potentially relevant local memories"
     )

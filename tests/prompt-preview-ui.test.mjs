@@ -15,5 +15,6 @@ assert.match(editor, /Include current date & time/);
 assert.match(editor, /Include exposed devices/);
 assert.match(editor, /Advanced context formatting/);
 assert.match(editor, /Saved by Function Groups/);
+assert.match(editor, /Previewed Request Content/);
 assert.match(editor, /copy-request-section/);
 assert.match(editor, /navigator\.clipboard\.writeText/);

@@ -41,9 +41,9 @@ DEFAULT_CURRENT_DATETIME_CONTEXT_TEMPLATE = """## Current date and time
 """
 DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE = """## Available Devices
 ```csv
-entity_id,name,state,aliases
+entity_id,name,state,area_id,aliases
 {% for entity in exposed_entities -%}
-{{ entity.entity_id }},{{ entity.name }},{{ entity.state }},{{ entity.aliases | join('/') }}
+{{ entity.entity_id }},{{ entity.name }},{{ entity.state }},{{ area_id(entity.entity_id) }},{{ entity.aliases | join('/') }}
 {% endfor -%}
 ```
 """

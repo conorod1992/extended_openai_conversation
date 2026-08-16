@@ -256,7 +256,7 @@ export function bindConfiguration(panel) {
     try {
       const result=await panel._call("configuration","request_preview",{config:readConfig(panel)});
       panel._effectiveRequestPreview=result;
-      root.querySelector("#request-footprint").textContent=`Current request footprint: ${Number(result.total_character_count||0).toLocaleString()} characters`;
+      root.querySelector("#request-footprint").textContent=`Previewed Request Content: ${Number(result.total_character_count||0).toLocaleString()} characters`;
       const savings=result.function_group_savings||{};
       root.querySelector("#function-group-savings").textContent=`Saved by Function Groups: ${Number(savings.characters||0).toLocaleString()} characters (${Number(savings.percent||0)}%)`;
       sections.innerHTML=(result.sections||[]).map((section,index)=>`<details class="request-preview-section" ${index===0?"open":""}><summary><span>${panel._e(section.label)}</span><span class="request-section-meta">${Number(section.character_count||0).toLocaleString()} characters <button type="button" class="secondary compact-button copy-request-section" data-section-index="${index}">Copy section</button></span></summary><textarea class="yaml-editor request-preview-output" readonly spellcheck="false">${panel._e(section.content||"")}</textarea></details>`).join("");
