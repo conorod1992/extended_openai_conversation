@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 import logging
 import re
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 from homeassistant.core import HomeAssistant
@@ -511,6 +511,16 @@ class KnowledgeLibrary:
 
 
 _KNOWLEDGE_MANAGERS = f"{DOMAIN}.knowledge_managers"
+
+
+def get_loaded_knowledge(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> KnowledgeLibrary | None:
+    """Return an already initialized library without creating runtime state."""
+    return cast(
+        KnowledgeLibrary | None,
+        hass.data.get(_KNOWLEDGE_MANAGERS, {}).get((entry_id, subentry_id)),
+    )
 
 
 async def async_get_knowledge(

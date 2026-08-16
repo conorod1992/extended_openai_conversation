@@ -82,21 +82,33 @@ class TemporaryMemory:
         """Return bounded active context and opportunistically prune expiry."""
         async with self._lock:
             await self._async_prune_locked()
-            records = [r for r in self._records.values() if r.scope_id == scope_id]
-            records.sort(
-                key=lambda item: (item.updated_at, item.expires_at), reverse=True
-            )
-            selected: list[TemporaryMemoryRecord] = []
-            characters = 0
-            for record in records:
-                if len(selected) >= MAX_INJECT_RECORDS:
-                    break
-                size = len(record.content)
-                if selected and characters + size > MAX_INJECT_CHARACTERS:
-                    continue
-                selected.append(record)
-                characters += size
-            return selected
+            return self._active_snapshot_locked(scope_id)
+
+    async def async_active_snapshot(self, scope_id: str) -> list[TemporaryMemoryRecord]:
+        """Return active context without pruning, saving, or changing counters."""
+        async with self._lock:
+            return self._active_snapshot_locked(scope_id)
+
+    def _active_snapshot_locked(self, scope_id: str) -> list[TemporaryMemoryRecord]:
+        """Select bounded, currently active records while the lock is held."""
+        now = dt_util.utcnow()
+        records = [
+            record
+            for record in self._records.values()
+            if record.scope_id == scope_id and _parse_expiry(record.expires_at) > now
+        ]
+        records.sort(key=lambda item: (item.updated_at, item.expires_at), reverse=True)
+        selected: list[TemporaryMemoryRecord] = []
+        characters = 0
+        for record in records:
+            if len(selected) >= MAX_INJECT_RECORDS:
+                break
+            size = len(record.content)
+            if selected and characters + size > MAX_INJECT_CHARACTERS:
+                continue
+            selected.append(record)
+            characters += size
+        return selected
 
     async def async_add(
         self,
@@ -424,6 +436,16 @@ def temporary_memory_tools() -> list[dict[str, Any]]:
 
 
 _MANAGERS = f"{DOMAIN}.temporary_memory_managers"
+
+
+def get_loaded_temporary_memory(
+    hass: Any, entry_id: str, subentry_id: str
+) -> TemporaryMemory | None:
+    """Return an already initialized manager without creating runtime state."""
+    return cast(
+        TemporaryMemory | None,
+        hass.data.get(_MANAGERS, {}).get((entry_id, subentry_id)),
+    )
 
 
 async def async_get_temporary_memory(

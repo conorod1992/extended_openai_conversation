@@ -42,9 +42,13 @@ from .const import (
     CONF_ARCHIVE_RETENTION_DAYS,
     CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     CONF_CHAT_MODEL,
+    CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
+    CONF_KNOWLEDGE_ENABLED,
+    CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_SHARED_ARCHIVE_ENABLED,
     CONF_SHARED_MEMORY_MODE,
+    CONF_SKILLS,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
     CONF_VOICE_DEFAULT_USER_ID,
@@ -55,7 +59,9 @@ from .const import (
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
     DEFAULT_CHAT_MODEL,
+    DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+    DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
     DEFAULT_USAGE_RUN_RETENTION_DAYS,
@@ -65,15 +71,26 @@ from .const import (
     MANAGEMENT_PANEL_TITLE,
     MANAGEMENT_PANEL_URL,
 )
-from .continuity import async_get_continuity
+from .continuity import ConversationContinuity, async_get_continuity
 from .conversation_archive import async_get_archive
 from .function_groups import get_function_group_runtime
 from .functions import FUNCTIONS
-from .knowledge import async_get_knowledge, knowledge_source_as_dict
+from .helpers import get_exposed_entities
+from .knowledge import (
+    async_get_knowledge,
+    get_loaded_knowledge,
+    knowledge_source_as_dict,
+)
 from .memory import ANONYMOUS_USER_ID, async_get_memory, get_memory_mode, memory_as_dict
-from .scope import SHARED_HOUSEHOLD_SCOPE_ID
+from .prompt import render_effective_prompt
+from .scope import SHARED_HOUSEHOLD_SCOPE_ID, user_scope
+from .skills import SkillManager
 from .speech import process_speech_text
-from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
+from .temporary_memory import (
+    async_get_temporary_memory,
+    get_loaded_temporary_memory,
+    temporary_memory_as_dict,
+)
 from .usage import async_get_usage
 
 WS_COMMAND = f"{DOMAIN}/management"
@@ -95,6 +112,95 @@ def entry_and_agent(hass: HomeAssistant, entry_id: str, subentry_id: str):
     if subentry is None or subentry.subentry_type != "conversation":
         raise HomeAssistantError("Conversation agent not found")
     return entry, subentry
+
+
+async def _async_preview_effective_prompt(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    options: dict[str, Any],
+    user_id: str,
+) -> dict[str, Any]:
+    """Render a side-effect-free fresh-request system/context baseline."""
+    temporary_memories = []
+    notes = [
+        "User input and conversation history are excluded.",
+        "Query-derived persistent memories are excluded because there is no user query.",
+    ]
+    temporary = get_loaded_temporary_memory(hass, entry.entry_id, subentry.subentry_id)
+    scope = user_scope(user_id, source="management_preview")
+    temporary_scope, _label = ConversationContinuity.identity_key(
+        options.get(CONF_CONVERSATION_CONTINUITY, DEFAULT_CONVERSATION_CONTINUITY),
+        scope,
+        None,
+    )
+    if temporary is not None and temporary_scope is not None:
+        temporary_memories = await temporary.async_active_snapshot(temporary_scope)
+    elif temporary is not None:
+        notes.append(
+            "Active temporary memories are excluded because a fresh device or "
+            "conversation scope cannot be identified without a request."
+        )
+
+    skill_manager = SkillManager.get_loaded_instance()
+    enabled_names = set(options.get(CONF_SKILLS, []) or [])
+    skills = (
+        [
+            skill
+            for skill in skill_manager.get_all_skills()
+            if skill.name in enabled_names
+        ]
+        if skill_manager is not None
+        else []
+    )
+    knowledge = get_loaded_knowledge(hass, entry.entry_id, subentry.subentry_id)
+    try:
+        preview = render_effective_prompt(
+            hass,
+            options,
+            exposed_entities=get_exposed_entities(hass),
+            current_device_id=None,
+            user_input=None,
+            skills=skills,
+            memories=None,
+            temporary_memories=temporary_memories,
+            knowledge_available=bool(
+                options.get(CONF_KNOWLEDGE_ENABLED)
+                and knowledge is not None
+                and knowledge.source_count > 0
+            ),
+        )
+    except Exception as err:
+        concise = " ".join(str(err).split())[:500] or type(err).__name__
+        raise HomeAssistantError(
+            f"The effective prompt could not be rendered: {concise}"
+        ) from err
+
+    if (
+        int(
+            options.get(
+                CONF_MEMORY_AUTO_RETRIEVE_LIMIT, DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT
+            )
+        )
+        <= 0
+    ):
+        notes = [
+            note
+            for note in notes
+            if not note.startswith("Query-derived persistent memories")
+        ]
+    return {
+        "prompt": preview.text,
+        "sections": [
+            {
+                "key": section.key,
+                "label": section.label,
+                "volatility": section.volatility,
+            }
+            for section in preview.sections
+        ],
+        "notes": notes,
+    }
 
 
 def _require_admin(is_admin: bool) -> None:
@@ -433,6 +539,14 @@ async def async_management_command(
                 raise HomeAssistantError("sample_text and config are invalid")
             normalized = merge_agent_config(subentry.data, updates)
             return {"speech_text": process_speech_text(sample, normalized)}
+        if action == "prompt_preview":
+            updates = message.get("config", {})
+            if not isinstance(updates, dict):
+                raise HomeAssistantError("config must be an object")
+            normalized = merge_agent_config(subentry.data, updates)
+            return await _async_preview_effective_prompt(
+                hass, entry, subentry, normalized, user_id
+            )
 
     if section == "tools":
         _require_admin(is_admin)

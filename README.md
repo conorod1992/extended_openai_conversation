@@ -35,6 +35,7 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 - **Built-in Function presets and capability controls** — insert shipped native capabilities into the editable YAML workflow, and enable or disable any configured Function Tool without losing its definition or group assignment.
 - **On-demand function groups** — keep large function collections compact by letting the model load only the relevant detailed tool schemas for an active conversation.
 - **Usage diagnostics** — track provider-reported request and token usage without estimating cost.
+- **Effective prompt preview** — render the fresh-request system/context baseline with current Home Assistant template values, excluding user input and conversation history.
 - **Optional conversation archive** — locally retain and lexically search discussions, with deterministic private-session and deletion controls.
 - **Explicit voice ownership** — map unidentified satellites to users, a separate shared household, or a no-retention policy.
 - **Agent testing** — validate the configured model, API mode, tools, Web Search, memory, entities, and skills from the integration UI.
@@ -75,6 +76,8 @@ Copy the `extended_openai_conversation_responses` folder from `custom_components
 5. Leave **Base URL** unchanged for the OpenAI API. Change it only when using a compatible provider that requires a custom endpoint.
 
 The native Home Assistant flow is intentionally limited to provider and connection setup. After the integration is added, open **Extended OpenAI** in the sidebar and choose **Configuration** for a searchable, full-width settings document covering conversation behaviour, prompts, capabilities, archive, voice identity, spoken-response cleanup, context, model options, and retention. Use **Tools** for the friendly tool list and YAML-first single-tool editor; YAML parsing and function validation remain backend-authoritative.
+
+Beside the prompt editor, **Preview effective prompt** shows the system/context content for a new request using current Home Assistant state. It excludes user input and conversation history, does not save the draft, and may display private entity, memory, Knowledge, or instruction data. Integration-owned stable guidance is kept before volatile retrieved context where semantics permit; the rendered user-authored prompt remains one untouched block, and actual prompt-cache reuse remains provider-controlled.
 
 ### 3. Select the conversation agent
 
