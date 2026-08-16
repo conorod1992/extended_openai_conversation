@@ -188,6 +188,41 @@ async def test_preview_reads_temporary_context_without_mutation(
     assert "A delivery is due today" in result["prompt"]
 
 
+async def test_preview_reads_stored_temporary_context_before_manager_load(
+    hass, monkeypatch
+) -> None:
+    """An unsaved enablement draft uses a read-only storage snapshot."""
+    hass.config.location_name = "Current Home"
+    hass.config.time_zone = "Europe/Dublin"
+    options = _options()
+    options[CONF_CONVERSATION_CONTINUITY] = CONVERSATION_CONTINUITY_USER
+    options[CONF_KNOWLEDGE_ENABLED] = False
+    read_snapshot = AsyncMock(return_value=[_temporary()])
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_ui.get_loaded_temporary_memory",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_ui.async_read_temporary_memory_snapshot",
+        read_snapshot,
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_ui.get_exposed_entities",
+        lambda _hass: [{"state": "on"}],
+    )
+
+    result = await _async_preview_effective_prompt(
+        hass,
+        SimpleNamespace(entry_id="entry-1"),
+        SimpleNamespace(subentry_id="agent-1"),
+        options,
+        "admin",
+    )
+
+    read_snapshot.assert_awaited_once_with(hass, "entry-1", "agent-1", "user:admin")
+    assert "A delivery is due today" in result["prompt"]
+
+
 async def test_preview_render_failure_is_controlled(hass, monkeypatch) -> None:
     """Template failures become concise management errors without saving config."""
     monkeypatch.setattr(

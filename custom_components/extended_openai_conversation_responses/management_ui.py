@@ -49,6 +49,7 @@ from .const import (
     CONF_SHARED_ARCHIVE_ENABLED,
     CONF_SHARED_MEMORY_MODE,
     CONF_SKILLS,
+    CONF_TEMPORARY_MEMORY,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
     CONF_VOICE_DEFAULT_USER_ID,
@@ -63,6 +64,7 @@ from .const import (
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_SHARED_MEMORY_MODE,
+    DEFAULT_TEMPORARY_MEMORY,
     DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
     DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_VOICE_SCOPE_POLICY,
@@ -70,6 +72,7 @@ from .const import (
     DOMAIN,
     MANAGEMENT_PANEL_TITLE,
     MANAGEMENT_PANEL_URL,
+    TEMPORARY_MEMORY_OFF,
 )
 from .continuity import ConversationContinuity, async_get_continuity
 from .conversation_archive import async_get_archive
@@ -88,6 +91,7 @@ from .skills import SkillManager
 from .speech import process_speech_text
 from .temporary_memory import (
     async_get_temporary_memory,
+    async_read_temporary_memory_snapshot,
     get_loaded_temporary_memory,
     temporary_memory_as_dict,
 )
@@ -128,15 +132,22 @@ async def _async_preview_effective_prompt(
         "Query-derived persistent memories are excluded because there is no user query.",
     ]
     temporary = get_loaded_temporary_memory(hass, entry.entry_id, subentry.subentry_id)
+    temporary_mode = options.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
     scope = user_scope(user_id, source="management_preview")
     temporary_scope, _label = ConversationContinuity.identity_key(
         options.get(CONF_CONVERSATION_CONTINUITY, DEFAULT_CONVERSATION_CONTINUITY),
         scope,
         None,
     )
-    if temporary is not None and temporary_scope is not None:
-        temporary_memories = await temporary.async_active_snapshot(temporary_scope)
-    elif temporary is not None:
+    if temporary_mode != TEMPORARY_MEMORY_OFF and temporary_scope is not None:
+        temporary_memories = (
+            await temporary.async_active_snapshot(temporary_scope)
+            if temporary is not None
+            else await async_read_temporary_memory_snapshot(
+                hass, entry.entry_id, subentry.subentry_id, temporary_scope
+            )
+        )
+    elif temporary_mode != TEMPORARY_MEMORY_OFF:
         notes.append(
             "Active temporary memories are excluded because a fresh device or "
             "conversation scope cannot be identified without a request."

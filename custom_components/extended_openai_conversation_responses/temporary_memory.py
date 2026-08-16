@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import timedelta
 from typing import Any, cast
@@ -91,10 +91,17 @@ class TemporaryMemory:
 
     def _active_snapshot_locked(self, scope_id: str) -> list[TemporaryMemoryRecord]:
         """Select bounded, currently active records while the lock is held."""
+        return self.select_active_snapshot(self._records.values(), scope_id)
+
+    @staticmethod
+    def select_active_snapshot(
+        records: Iterable[TemporaryMemoryRecord], scope_id: str
+    ) -> list[TemporaryMemoryRecord]:
+        """Select the bounded active records for one scope without mutation."""
         now = dt_util.utcnow()
         records = [
             record
-            for record in self._records.values()
+            for record in records
             if record.scope_id == scope_id and _parse_expiry(record.expires_at) > now
         ]
         records.sort(key=lambda item: (item.updated_at, item.expires_at), reverse=True)
@@ -438,6 +445,20 @@ def temporary_memory_tools() -> list[dict[str, Any]]:
 _MANAGERS = f"{DOMAIN}.temporary_memory_managers"
 
 
+def _temporary_memory_store(
+    hass: Any, entry_id: str, subentry_id: str
+) -> TemporaryMemoryStore:
+    """Build the versioned store adapter without loading or changing manager state."""
+    return TemporaryMemoryStore(
+        hass,
+        STORAGE_VERSION,
+        f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}",
+        private=True,
+        atomic_writes=True,
+        serialize_in_event_loop=False,
+    )
+
+
 def get_loaded_temporary_memory(
     hass: Any, entry_id: str, subentry_id: str
 ) -> TemporaryMemory | None:
@@ -448,6 +469,23 @@ def get_loaded_temporary_memory(
     )
 
 
+async def async_read_temporary_memory_snapshot(
+    hass: Any, entry_id: str, subentry_id: str, scope_id: str
+) -> list[TemporaryMemoryRecord]:
+    """Read active stored context without creating, pruning, or saving a manager."""
+    data = await _temporary_memory_store(hass, entry_id, subentry_id).async_load()
+    raw_records = data.get("records", []) if isinstance(data, Mapping) else []
+    records: list[TemporaryMemoryRecord] = []
+    for raw in raw_records:
+        try:
+            record = TemporaryMemoryRecord(**raw)
+            _parse_expiry(record.expires_at)
+            records.append(record)
+        except TypeError, ValueError:
+            continue
+    return TemporaryMemory.select_active_snapshot(records, scope_id)
+
+
 async def async_get_temporary_memory(
     hass: Any, entry_id: str, subentry_id: str
 ) -> TemporaryMemory:
@@ -455,14 +493,7 @@ async def async_get_temporary_memory(
     key = (entry_id, subentry_id)
     if key not in managers:
         managers[key] = TemporaryMemory(
-            TemporaryMemoryStore(
-                hass,
-                STORAGE_VERSION,
-                f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}",
-                private=True,
-                atomic_writes=True,
-                serialize_in_event_loop=False,
-            )
+            _temporary_memory_store(hass, entry_id, subentry_id)
         )
     manager = managers[key]
     await manager.async_initialize()
