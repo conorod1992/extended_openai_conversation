@@ -110,9 +110,12 @@ def _temporary() -> TemporaryMemoryRecord:
 
 def _setup_area_template_registries(hass) -> None:
     """Set up registries required by Home Assistant's area_id template helper."""
-    hass.data[ar.DATA_REGISTRY] = ar.AreaRegistry(hass)
-    hass.data[dr.DATA_REGISTRY] = dr.DeviceRegistry(hass)
-    hass.data[er.DATA_REGISTRY] = er.EntityRegistry(hass)
+    hass.data[ar.DATA_REGISTRY] = SimpleNamespace(
+        async_get_area_by_name=lambda _value: None,
+        async_get_areas_by_alias=lambda _value: [],
+    )
+    hass.data[dr.DATA_REGISTRY] = SimpleNamespace(async_get=lambda _value: None)
+    hass.data[er.DATA_REGISTRY] = SimpleNamespace(async_get=lambda _value: None)
 
 
 def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last(
