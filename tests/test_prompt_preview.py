@@ -48,6 +48,11 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
     TemporaryMemoryRecord,
 )
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
 
 
 def test_new_agent_defaults_use_first_class_volatile_context() -> None:
@@ -103,10 +108,18 @@ def _temporary() -> TemporaryMemoryRecord:
     )
 
 
+def _setup_area_template_registries(hass) -> None:
+    """Set up registries required by Home Assistant's area_id template helper."""
+    ar.async_setup(hass)
+    dr.async_setup(hass)
+    er.async_setup(hass)
+
+
 def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last(
     hass,
 ) -> None:
     """Stable integration guidance precedes request-varying context."""
+    _setup_area_template_registries(hass)
     hass.config.location_name = "Current Home"
     hass.config.time_zone = "Europe/Dublin"
     result = render_effective_prompt(
@@ -220,6 +233,7 @@ def test_invalid_custom_context_template_is_rejected_cleanly() -> None:
 async def test_preview_matches_production_builder_without_user_or_history(
     hass, monkeypatch
 ) -> None:
+    _setup_area_template_registries(hass)
     """Preview and live execution share the same renderer and baseline assembly."""
     hass.config.location_name = "Current Home"
     hass.config.time_zone = "Europe/Dublin"
@@ -258,6 +272,7 @@ async def test_preview_matches_production_builder_without_user_or_history(
 async def test_preview_reads_temporary_context_without_mutation(
     hass, monkeypatch
 ) -> None:
+    _setup_area_template_registries(hass)
     """Preview uses the read-only active snapshot and does not invoke mutation APIs."""
     hass.config.location_name = "Current Home"
     hass.config.time_zone = "Europe/Dublin"
@@ -293,6 +308,7 @@ async def test_preview_reads_temporary_context_without_mutation(
 async def test_preview_reads_stored_temporary_context_before_manager_load(
     hass, monkeypatch
 ) -> None:
+    _setup_area_template_registries(hass)
     """An unsaved enablement draft uses a read-only storage snapshot."""
     hass.config.location_name = "Current Home"
     hass.config.time_zone = "Europe/Dublin"

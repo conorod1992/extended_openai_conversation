@@ -11,12 +11,7 @@ if str(config_dir) not in sys.path:
 
 import pytest  # noqa: E402
 
-from homeassistant.helpers import (  # noqa: E402
-    area_registry as ar,
-    config_validation as cv,
-    device_registry as dr,
-    entity_registry as er,
-)
+from homeassistant.helpers import config_validation as cv  # noqa: E402
 from homeassistant.helpers.template import TemplateEnvironment  # noqa: E402
 
 
@@ -46,9 +41,6 @@ def hass(tmp_path: Path) -> MagicMock:
         "template.environment_limited": template_env,
         "template.environment_strict": template_env,
     }
-    ar.async_setup(hass)
-    dr.async_setup(hass)
-    er.async_setup(hass)
 
     # For async_add_executor_job - run the function directly
     async def run_executor_job(func, *args):
