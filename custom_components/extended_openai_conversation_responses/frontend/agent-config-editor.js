@@ -9,6 +9,33 @@ const field = (panel, key, label, value, type = "text", description = "", disabl
 const select = (panel, key, label, value, options, description = "", disabled = false, helpKey = null) => `<div class="setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey)}<select id="config-${key}" data-config="${key}" ${disabled ? "disabled" : ""}>${options.map((item) => option(panel, typeof item === "string" ? item : item.value, value, typeof item === "string" ? null : item.label)).join("")}</select>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span></div>`;
 const toggle = (panel, key, label, value, description = "", disabled = false, helpKey = null) => `<div class="config-toggle setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}"><span class="setting-copy">${labelRow(panel, label, key, helpKey, true)}${description ? `<small>${description}</small>` : ""}</span><label class="switch-control" for="config-${key}"><input id="config-${key}" data-config="${key}" data-type="boolean" type="checkbox" role="switch" ${bool(value)} ${disabled ? "disabled" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>`;
 
+export async function copyTextToClipboard(text, clipboardNavigator = globalThis.navigator, clipboardDocument = globalThis.document) {
+  const writeText = clipboardNavigator?.clipboard?.writeText;
+  if (typeof writeText === "function") {
+    try {
+      await writeText.call(clipboardNavigator.clipboard, text);
+      return;
+    } catch (err) {
+      if (!clipboardDocument) throw err;
+    }
+  }
+  if (!clipboardDocument?.body || typeof clipboardDocument.createElement !== "function" || typeof clipboardDocument.execCommand !== "function") {
+    throw new Error("Clipboard access is unavailable in this browser context");
+  }
+  const textarea = clipboardDocument.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  clipboardDocument.body.appendChild(textarea);
+  try {
+    textarea.select();
+    if (!clipboardDocument.execCommand("copy")) throw new Error("Browser copy command failed");
+  } finally {
+    textarea.remove();
+  }
+}
+
 export const functionGroupIdFromName = (name) => String(name || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").replace(/^[^a-z]+/, "").slice(0, 64);
 export const isFunctionToolEnabled = (tool) => tool?.enabled !== false;
 
@@ -260,7 +287,7 @@ export function bindConfiguration(panel) {
       const savings=result.function_group_savings||{};
       root.querySelector("#function-group-savings").textContent=`Saved by Function Groups: ${Number(savings.characters||0).toLocaleString()} characters (${Number(savings.percent||0)}%)`;
       sections.innerHTML=(result.sections||[]).map((section,index)=>`<details class="request-preview-section" ${index===0?"open":""}><summary><span>${panel._e(section.label)}</span><span class="request-section-meta">${Number(section.character_count||0).toLocaleString()} characters <button type="button" class="secondary compact-button copy-request-section" data-section-index="${index}">Copy section</button></span></summary><textarea class="yaml-editor request-preview-output" readonly spellcheck="false">${panel._e(section.content||"")}</textarea></details>`).join("");
-      root.querySelectorAll(".copy-request-section").forEach((button)=>button.addEventListener("click",async(event)=>{event.preventDefault();event.stopPropagation();const section=result.sections[Number(button.dataset.sectionIndex)];try{await navigator.clipboard.writeText(section.content||"");panel._toast(`${section.label} copied`);}catch(err){panel._toast(`Unable to copy section: ${err.message||String(err)}`,true);}}));
+      root.querySelectorAll(".copy-request-section").forEach((button)=>button.addEventListener("click",async(event)=>{event.preventDefault();event.stopPropagation();const section=result.sections[Number(button.dataset.sectionIndex)];try{await copyTextToClipboard(section.content||"");panel._toast(`${section.label} copied`);}catch(err){panel._toast(`Unable to copy section: ${err.message||String(err)}`,true);}}));
       notes.innerHTML=(result.notes||[]).map((note)=>`<li>${panel._e(note)}</li>`).join("");
       status.textContent="Resolved using current Home Assistant state and production request assembly";
       status.className="validation valid";
@@ -271,7 +298,7 @@ export function bindConfiguration(panel) {
     }
   });
   root.querySelector("#prompt-preview-close")?.addEventListener("click",()=>root.querySelector("#prompt-preview-dialog").close());
-  root.querySelector("#copy-prompt-preview")?.addEventListener("click",async()=>{try{const text=(panel._effectiveRequestPreview?.sections||[]).map((section)=>`## ${section.label}\n${section.content}`).join("\n\n");await navigator.clipboard.writeText(text);panel._toast("Effective request copied");}catch(err){panel._toast(`Unable to copy request: ${err.message||String(err)}`,true);}});
+  root.querySelector("#copy-prompt-preview")?.addEventListener("click",async()=>{try{const text=(panel._effectiveRequestPreview?.sections||[]).map((section)=>`## ${section.label}\n${section.content}`).join("\n\n");await copyTextToClipboard(text);panel._toast("Effective request copied");}catch(err){panel._toast(`Unable to copy request: ${err.message||String(err)}`,true);}});
   root.querySelector("#reset-advanced")?.addEventListener("click", () => { ["temperature","top_p","reasoning_effort","service_tier","shorten_tool_call_id","memory_auto_retrieve_limit"].forEach((key) => { panel._draft[key]=clone(panel._result.defaults[key]); const input=root.querySelector(`[data-config="${key}"]`); if(input) input.dataset.type==="boolean" ? input.checked=panel._draft[key] : input.value=panel._draft[key]; }); panel._setConfigDirty(true); dirty(panel); });
   root.querySelector("#add-regex")?.addEventListener("click", () => { readConfig(panel); panel._draft.speech_regex_replacements.push({pattern:"",replacement:""}); panel._setConfigDirty(true); renderRegexRules(panel,panel._draft.speech_regex_replacements.length-1); });
   root.querySelector("#revert-config")?.addEventListener("click", () => { panel._draft=clone(panel._configData.config); panel._draftTitle=panel._configData.title; panel._setConfigDirty(false); panel._render(); });
