@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import {
   canReplaceToolYamlWithoutConfirmation,
   categorizeFunctionTools,
+  configurationChoiceLabel,
   deleteFunctionGroup,
   functionGroupIdFromName,
   functionToolCountLabel,
@@ -22,6 +23,9 @@ const config = {
 
 assert.equal(functionGroupIdFromName("  Conditional Notifications  "), "conditional-notifications");
 assert.equal(functionGroupIdFromName("123 Reminders"), "reminders");
+assert.equal(configurationChoiceLabel("conversation_continuity", {value: "ha_default", label: "Ha Default"}), "Use Home Assistant sessions");
+assert.equal(configurationChoiceLabel("voice_scope_policy", {value: "shared", label: "Shared"}), "Use shared household data");
+assert.equal(configurationChoiceLabel("service_tier", {value: "flex", label: "Flex"}), "Flex");
 assert.equal(matchesFunctionSearch("Reminder", "Reminders Manage reminders"), true);
 assert.equal(matchesFunctionSearch("Reminder", "remind family native"), true);
 assert.equal(matchesFunctionSearch("manage calendar", "Calendar Manage calendars"), true);

@@ -2,7 +2,7 @@ const DOCS_ROOT = "https://github.com/conorod1992/extended_openai_conversation/b
 
 export const HELP_METADATA = Object.freeze({
   api_mode: Object.freeze({
-    title: "API mode",
+    title: "Provider API format",
     paragraphs: ["Auto uses Chat Completions by default and selects Responses for GPT-5.6 and later GPT-5 minor models. Override it when an OpenAI-compatible provider supports only one API style."],
     items: [
       { term: "Auto", text: "Lets the integration choose using its model compatibility rules." },
@@ -13,7 +13,7 @@ export const HELP_METADATA = Object.freeze({
     href: `${DOCS_ROOT}/features/responses-api.md`,
   }),
   continue_conversation: Object.freeze({
-    title: "Continue conversation",
+    title: "Listen for a follow-up",
     items: [
       { term: "HA Default", text: "Uses Home Assistant's normal continuation behaviour." },
       { term: "Always", text: "Keeps listening after every successful response." },
@@ -23,12 +23,12 @@ export const HELP_METADATA = Object.freeze({
     href: `${DOCS_ROOT}/features/voice-followups.md`,
   }),
   conversation_continuity: Object.freeze({
-    title: "Conversation continuity",
-    paragraphs: ["This is separate from Continue conversation, which controls immediate follow-up listening. Continuity lets a new wake-word or Assist request reuse recent model context. It does not perform speaker recognition."],
+    title: "Remember recent conversation",
+    paragraphs: ["This is separate from immediate follow-up listening. It lets a new wake-word or Assist request continue a recent conversation. It does not identify speakers."],
     items: [
-      { term: "Home Assistant default", text: "Uses Home Assistant's normal conversation sessions." },
-      { term: "Per device", text: "Requests from the same Assist device can resume a recent conversation until the timeout expires." },
-      { term: "Per user", text: "Requests resolved to the same user can resume across devices. Unresolved speech safely falls back to its device or a new session; shared household scope is never treated as a personal user." },
+      { term: "Use Home Assistant sessions", text: "Starts or continues conversations using Home Assistant's normal session handling." },
+      { term: "Remember by voice device", text: "Requests from the same Assist device can continue a recent conversation until the timeout expires." },
+      { term: "Remember by user across devices", text: "Requests assigned to the same user can continue across devices. Unidentified speech safely falls back to its device or a new conversation." },
     ],
     keywords: "conversation continuity resume separate Assist invocation cross-device satellite user device speaker recognition",
     href: `${DOCS_ROOT}/features/conversation-continuity.md`,
@@ -40,7 +40,7 @@ export const HELP_METADATA = Object.freeze({
     href: `${DOCS_ROOT}/features/conversation-continuity.md`,
   }),
   web_search_context: Object.freeze({
-    title: "Search context",
+    title: "Web search detail",
     paragraphs: ["Low, Medium, and High ask the provider for progressively more search context. More context can improve coverage, but may increase the amount of material sent back with a search."],
     keywords: "web current provider low medium high amount coverage",
     href: `${DOCS_ROOT}/features/web-search.md`,
@@ -98,30 +98,30 @@ export const HELP_METADATA = Object.freeze({
     href: `${DOCS_ROOT}/features/conversation-archive.md`,
   }),
   voice_scope_policy: Object.freeze({
-    title: "Unidentified voice policy",
+    title: "When the speaker is not identified",
     items: [
-      { term: "Unretained", text: "Uses no persistent owner, so memory and archive retention are unavailable for the request." },
-      { term: "Shared", text: "Assigns the request to the shared household scope." },
-      { term: "Default user", text: "Assigns it to the configured Home Assistant user." },
-      { term: "Device mapping", text: "Uses the source satellite or device ID to find a configured owner, then applies the unmapped fallback if no mapping resolves." },
+      { term: "Do not retain personal data", text: "Uses no personal owner, so long-term memory and conversation archiving are unavailable for the request." },
+      { term: "Use shared household data", text: "Uses memories and history shared by the household." },
+      { term: "Use the default user", text: "Uses the configured Home Assistant user's memories and history." },
+      { term: "Use a device-to-user mapping", text: "Looks up the source satellite or device. If it has no assignment, the unmapped-device setting is used." },
     ],
     keywords: "speaker unidentified owner unretained shared default user device mapping satellite scope",
     href: `${DOCS_ROOT}/features/persistent-memory.md`,
   }),
   voice_unmapped_policy: Object.freeze({
-    title: "Unmapped fallback",
-    paragraphs: ["This policy is used when Device mapping is selected but the request has no matching device entry."],
+    title: "When a device has no mapping",
+    paragraphs: ["This setting is used when device-to-user mapping is selected but the request comes from a device with no assignment."],
     items: [
-      { term: "Unretained", text: "Uses no persistent owner." },
-      { term: "Shared", text: "Uses the shared household scope." },
-      { term: "Default user", text: "Uses the configured default voice owner." },
-      { term: "Device mapping", text: "Cannot resolve another mapping at this stage and therefore falls back to unretained." },
+      { term: "Do not retain personal data", text: "Uses no personal memories or archived conversation history." },
+      { term: "Use shared household data", text: "Uses memories and history shared by the household." },
+      { term: "Use the default user", text: "Uses the configured default user's memories and history." },
+      { term: "Device mapping (no retained data)", text: "A second device lookup cannot resolve the request, so this option uses no retained personal data." },
     ],
     keywords: "speaker unresolved unknown device satellite fallback owner mapping unretained shared",
     href: `${DOCS_ROOT}/features/persistent-memory.md`,
   }),
   shared_memory_mode: Object.freeze({
-    title: "Shared memory mode",
+    title: "Shared household memory",
     items: [
       { term: "Disabled", text: "Persistent memory is unavailable in the shared household scope." },
       { term: "Explicit", text: "Shared memories may be added only by an explicit request or through the memory UI." },
@@ -131,8 +131,8 @@ export const HELP_METADATA = Object.freeze({
     href: `${DOCS_ROOT}/features/persistent-memory.md`,
   }),
   voice_device_mappings: Object.freeze({
-    title: "Satellite and device mappings",
-    paragraphs: ["Map each Home Assistant source device or voice satellite ID to a user ID, user:<id>, shared, or unretained. Mappings are consulted only when the unidentified voice policy is Device mapping."],
+    title: "Voice device assignments",
+    paragraphs: ["Assign each Home Assistant source device or voice satellite ID to a user ID, user:<id>, shared, or unretained. Assignments are used only when the unidentified-speaker setting uses a device-to-user mapping."],
     keywords: "voice satellite source device id user owner shared unretained json mapping",
     href: `${DOCS_ROOT}/features/persistent-memory.md`,
   }),
@@ -143,13 +143,13 @@ export const HELP_METADATA = Object.freeze({
     keywords: "python regex regular expression capture groups ordered remove validation tts spoken",
   }),
   context_threshold: Object.freeze({
-    title: "Context threshold",
+    title: "Conversation history token limit",
     paragraphs: ["This is a context-size threshold based on provider-reported input tokens, not a message count. Higher values preserve more history but can use more context and tokens. What is retained depends on the truncation strategy."],
     keywords: "tokens context size message count threshold history limit",
     href: `${DOCS_ROOT}/features/context-management.md`,
   }),
   context_truncation: Object.freeze({
-    title: "Truncation strategies",
+    title: "Conversation history trimming",
     items: [
       { term: "Keep recent messages", text: "Drops the oldest complete turns while preserving the system prompt and newest conversation turns." },
       { term: "Clear all messages", text: "Clears prior conversation content when the threshold is exceeded." },
@@ -169,8 +169,8 @@ export const HELP_METADATA = Object.freeze({
     keywords: "thinking latency cost performance low medium high hard tasks",
   }),
   service_tier: Object.freeze({
-    title: "Service tier",
-    paragraphs: ["Passes the selected processing tier to the provider when supported. Availability, billing, and response characteristics depend on the provider and account."],
+    title: "Processing tier",
+    paragraphs: ["This is called Service Tier in OpenAI and some provider documentation. It can affect request priority, availability, billing, and response time depending on your provider and account."],
     items: [
       { term: "Auto", text: "Lets the provider choose the tier." },
       { term: "Default", text: "Requests the provider's standard tier." },
