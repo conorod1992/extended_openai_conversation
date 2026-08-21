@@ -274,7 +274,6 @@ async def test_storage_migration_from_legacy_list() -> None:
         "key": None,
         "valid_from": None,
         "last_confirmed_at": None,
-        "embedding": None,
     }
     with pytest.raises(NotImplementedError):
         await store._async_migrate_func(99, 1, {})
@@ -344,6 +343,35 @@ async def test_implicit_tool_write_is_structurally_disabled() -> None:
     assert result == {"status": "created"}
     entity._memory.async_add.assert_awaited_once_with(
         "user-1", "User prefers Celsius.", "preferences", "explicit"
+    )
+
+
+async def test_upsert_tool_preserves_omitted_metadata_arguments() -> None:
+    """The tool path forwards only metadata keys the model supplied."""
+    entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
+    entity.subentry = SimpleNamespace(data={CONF_MEMORY_ENABLED: True})
+    entity._memory = SimpleNamespace(
+        async_upsert=AsyncMock(return_value={"status": "updated"})
+    )
+    context = SimpleNamespace(context=SimpleNamespace(user_id="user-1"))
+
+    await entity._async_execute_memory_tool(
+        "upsert",
+        {
+            "content": "Oscar is a Cavapoo.",
+            "category": "pets",
+            "source": "explicit",
+            "key": "pet.oscar.breed",
+        },
+        context,
+    )
+
+    entity._memory.async_upsert.assert_awaited_once_with(
+        "user-1",
+        "Oscar is a Cavapoo.",
+        "pets",
+        "explicit",
+        key="pet.oscar.breed",
     )
 
 
@@ -487,7 +515,9 @@ def test_prompt_frames_memories_as_potentially_relevant_untrusted_data(hass) -> 
     assert "Persistent memory" in prompt
     assert "Search before adding" in prompt
     assert "When a fact changes, update the existing memory" in normalized_prompt
-    assert "Only call memory_add" in prompt
+    assert "Use memory_upsert where appropriate" in prompt
+    assert "source to explicit" in prompt
+    assert "Only call memory_add" not in prompt
     prompt_lower = prompt.lower()
     assert "potentially relevant" in prompt_lower
     assert "stale" in prompt_lower

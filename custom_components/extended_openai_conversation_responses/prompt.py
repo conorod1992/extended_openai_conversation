@@ -96,9 +96,9 @@ def _persistent_memory_instructions(options: Any) -> str:
     text = MEMORY_PROMPT
     if not automatic_memory_enabled(options):
         text += (
-            "\nAutomatic memory creation is disabled. Only call memory_add "
-            "when the user explicitly asks you to remember something, and set "
-            "source to explicit.\n"
+            "\nAutomatic memory creation is disabled. Write memory only when "
+            "the user explicitly asks you to remember something. Use memory_upsert "
+            "where appropriate and set source to explicit.\n"
         )
     return text
 
