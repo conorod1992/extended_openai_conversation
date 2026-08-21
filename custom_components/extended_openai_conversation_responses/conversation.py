@@ -271,7 +271,15 @@ class ExtendedOpenAIAgentEntity(
                     )
                     == MEMORY_RETRIEVAL_HYBRID
                 ):
-                    self._memory.set_embedding_provider(self._async_create_embeddings)
+                    self._memory.set_embedding_provider(
+                        self._async_create_embeddings,
+                        str(
+                            self.subentry.data.get(
+                                CONF_MEMORY_EMBEDDING_MODEL,
+                                DEFAULT_MEMORY_EMBEDDING_MODEL,
+                            )
+                        ),
+                    )
             except Exception:
                 _LOGGER.exception("Unable to initialize persistent memory")
 
@@ -919,22 +927,12 @@ class ExtendedOpenAIAgentEntity(
                 if operation == "upsert"
                 else self._memory.async_add
             )
-            metadata_values = (
-                arguments.get("importance") or "normal",
-                arguments.get("subject"),
-                arguments.get("key"),
-                arguments.get("valid_from"),
-            )
-            if operation == "add" and metadata_values == (
-                "normal",
-                None,
-                None,
-                None,
-            ):
-                return await method(write_scope_id, content, category, source)
-            return await method(
-                write_scope_id, content, category, source, *metadata_values
-            )
+            metadata = {
+                name: arguments[name]
+                for name in ("importance", "subject", "key", "valid_from")
+                if name in arguments
+            }
+            return await method(write_scope_id, content, category, source, **metadata)
         if operation == "search":
             query = arguments.get("query")
             category = arguments.get("category")

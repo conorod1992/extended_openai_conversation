@@ -22,6 +22,7 @@ from custom_components.extended_openai_conversation_responses.conversation impor
     ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.memory import (
+    EMBEDDING_CACHE_BATCH_SIZE,
     MemoryRecord,
     PersistentMemory,
 )
@@ -44,6 +45,13 @@ class FakeStorage:
 
     async def async_save(self, data):
         self.data = deepcopy(data)
+
+
+class FailingCacheStorage(FakeStorage):
+    """Embedding cache that cannot persist generated data."""
+
+    async def async_save(self, data):
+        raise OSError("cache unavailable")
 
 
 async def _memory(data=None) -> PersistentMemory:
@@ -160,6 +168,72 @@ async def test_upsert_key_uniqueness_confirmation_conflict_and_scope() -> None:
     }
 
 
+async def test_upsert_preserves_omitted_metadata_for_key_and_confirmation() -> None:
+    memory = await _memory()
+    valid_from = "2025-01-01T00:00:00+00:00"
+    created = await memory.async_upsert(
+        "alice",
+        "Oscar is a Cavachon.",
+        "pets",
+        "explicit",
+        importance="high",
+        subject="Oscar",
+        key="pet.oscar.breed",
+        valid_from=valid_from,
+    )
+    original_confirmation = created["memory"]["last_confirmed_at"]
+
+    updated = await memory.async_upsert(
+        "alice",
+        "Oscar is a Cavapoo.",
+        "pets",
+        "explicit",
+        key="pet.oscar.breed",
+    )
+    assert updated["status"] == "updated"
+    assert updated["memory"]["importance"] == "high"
+    assert updated["memory"]["subject"] == "Oscar"
+    assert updated["memory"]["valid_from"] == valid_from
+    assert updated["memory"]["last_confirmed_at"] >= original_confirmation
+
+    confirmed = await memory.async_upsert(
+        "alice", "Oscar is a Cavapoo", "pets", "explicit"
+    )
+    assert confirmed["status"] == "confirmed"
+    assert confirmed["memory"]["importance"] == "high"
+    assert confirmed["memory"]["subject"] == "Oscar"
+    assert confirmed["memory"]["key"] == "pet.oscar.breed"
+    assert confirmed["memory"]["valid_from"] == valid_from
+
+
+async def test_upsert_replaces_explicitly_supplied_metadata() -> None:
+    memory = await _memory()
+    await memory.async_upsert(
+        "alice",
+        "Oscar is a Cavachon.",
+        "pets",
+        "explicit",
+        importance="high",
+        subject="Oscar",
+        key="pet.oscar.breed",
+        valid_from="2025-01-01T00:00:00+00:00",
+    )
+
+    updated = await memory.async_upsert(
+        "alice",
+        "Oscar is a Cavapoo.",
+        "pets",
+        "explicit",
+        importance="low",
+        subject="Oscar James",
+        key="pet.oscar.breed",
+        valid_from="2026-01-01T00:00:00+00:00",
+    )
+    assert updated["memory"]["importance"] == "low"
+    assert updated["memory"]["subject"] == "Oscar James"
+    assert updated["memory"]["valid_from"] == "2026-01-01T00:00:00+00:00"
+
+
 async def test_hybrid_semantic_and_lexical_fallback() -> None:
     memory = await _memory()
     created = await memory.async_add(
@@ -181,6 +255,253 @@ async def test_hybrid_semantic_and_lexical_fallback() -> None:
         query_embedding=query_embedding,
     )
     assert found[0].memory_id == created["memory"]["memory_id"]
+
+
+async def test_hybrid_embeddings_use_separate_model_fingerprinted_cache() -> None:
+    durable = FakeStorage()
+    cache = FakeStorage()
+    memory = PersistentMemory(durable, cache)
+    await memory.async_initialize()
+    created = await memory.async_add(
+        "alice", "Oscar is a Cavachon.", "pets", "explicit", subject="Oscar"
+    )
+
+    async def embeddings(inputs: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0] for _ in inputs]
+
+    memory.set_embedding_provider(embeddings, "test-model")
+    assert await memory.async_prepare_hybrid(["alice"], "What breed is my dog?")
+    assert "embedding" not in durable.data["memories"][0]
+    entry = cache.data["embeddings"][created["memory"]["memory_id"]]
+    assert entry["model"] == "test-model"
+    assert len(entry["fingerprint"]) == 64
+    assert entry["vector"] == [1.0, 0.0]
+
+
+async def test_legacy_inline_embeddings_are_removed_from_durable_storage() -> None:
+    durable = FakeStorage()
+    memory = PersistentMemory(durable)
+    await memory.async_initialize()
+    await memory.async_add("alice", "Oscar is a Cavachon.", "pets", "explicit")
+    durable.data["memories"][0]["embedding"] = [1.0, 0.0]
+
+    reloaded = PersistentMemory(durable, FakeStorage())
+    await reloaded.async_initialize()
+
+    assert "embedding" not in durable.data["memories"][0]
+    assert (await reloaded.async_list("alice"))[0].content == "Oscar is a Cavachon."
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("content", "Oscar is a Cavapoo."),
+        ("category", "animals"),
+        ("subject", "Oscar James"),
+        ("key", "pet.oscar.description"),
+    ],
+)
+async def test_embedding_relevant_updates_invalidate_cache(
+    field: str, value: str
+) -> None:
+    cache = FakeStorage()
+    memory = PersistentMemory(FakeStorage(), cache)
+    await memory.async_initialize()
+    created = await memory.async_add(
+        "alice",
+        "Oscar is a Cavachon.",
+        "pets",
+        "explicit",
+        subject="Oscar",
+        key="pet.oscar.breed",
+    )
+    calls: list[list[str]] = []
+
+    async def embeddings(inputs: list[str]) -> list[list[float]]:
+        calls.append(inputs)
+        return [[1.0, 0.0] for _ in inputs]
+
+    memory.set_embedding_provider(embeddings, "test-model")
+    await memory.async_prepare_hybrid(["alice"], "breed")
+    calls.clear()
+    await memory.async_update("alice", created["memory"]["memory_id"], **{field: value})
+    await memory.async_prepare_hybrid(["alice"], "breed")
+    assert len(calls) == 2
+    assert len(calls[0]) == 1
+    assert calls[1] == ["breed"]
+
+
+async def test_importance_only_update_keeps_cached_embedding() -> None:
+    memory = PersistentMemory(FakeStorage(), FakeStorage())
+    await memory.async_initialize()
+    created = await memory.async_add(
+        "alice", "Oscar is a Cavachon.", "pets", "explicit"
+    )
+    calls: list[list[str]] = []
+
+    async def embeddings(inputs: list[str]) -> list[list[float]]:
+        calls.append(inputs)
+        return [[1.0, 0.0] for _ in inputs]
+
+    memory.set_embedding_provider(embeddings, "test-model")
+    await memory.async_prepare_hybrid(["alice"], "breed")
+    calls.clear()
+    await memory.async_update(
+        "alice", created["memory"]["memory_id"], importance="high"
+    )
+    await memory.async_prepare_hybrid(["alice"], "breed")
+    assert calls == [["breed"]]
+
+
+async def test_hybrid_embedding_generation_is_batched() -> None:
+    memory = PersistentMemory(FakeStorage(), FakeStorage())
+    await memory.async_initialize()
+    total = EMBEDDING_CACHE_BATCH_SIZE * 2 + 3
+    for index in range(total):
+        unique_token = "".join(
+            chr(ord("a") + digit)
+            for digit in (index // (26 * 26), (index // 26) % 26, index % 26)
+        )
+        await memory.async_add(
+            "alice",
+            unique_token,
+            "preferences",
+            "explicit",
+        )
+    batch_sizes: list[int] = []
+
+    async def embeddings(inputs: list[str]) -> list[list[float]]:
+        batch_sizes.append(len(inputs))
+        return [[1.0, 0.0] for _ in inputs]
+
+    memory.set_embedding_provider(embeddings, "test-model")
+    assert await memory.async_prepare_hybrid(["alice"], "preferences")
+    assert batch_sizes == [
+        EMBEDDING_CACHE_BATCH_SIZE,
+        EMBEDDING_CACHE_BATCH_SIZE,
+        3,
+        1,
+    ]
+
+
+async def test_hybrid_batch_failure_preserves_completed_cache_progress() -> None:
+    cache = FakeStorage()
+    memory = PersistentMemory(FakeStorage(), cache)
+    await memory.async_initialize()
+    total = EMBEDDING_CACHE_BATCH_SIZE + 2
+    for index in range(total):
+        unique_token = "".join(
+            chr(ord("a") + digit)
+            for digit in (index // (26 * 26), (index // 26) % 26, index % 26)
+        )
+        await memory.async_add("alice", unique_token, "preferences", "explicit")
+    calls = 0
+
+    async def embeddings(inputs: list[str]) -> list[list[float]]:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("provider batch failed")
+        return [[1.0, 0.0] for _ in inputs]
+
+    memory.set_embedding_provider(embeddings, "test-model")
+    assert await memory.async_prepare_hybrid(["alice"], "preferences") is None
+    assert len(cache.data["embeddings"]) == EMBEDDING_CACHE_BATCH_SIZE
+
+
+async def test_embedding_model_change_regenerates_cached_vectors() -> None:
+    memory = PersistentMemory(FakeStorage(), FakeStorage())
+    await memory.async_initialize()
+    await memory.async_add("alice", "Oscar is a Cavachon.", "pets", "explicit")
+    calls: list[list[str]] = []
+
+    async def embeddings(inputs: list[str]) -> list[list[float]]:
+        calls.append(inputs)
+        return [[1.0, 0.0] for _ in inputs]
+
+    memory.set_embedding_provider(embeddings, "first-model")
+    await memory.async_prepare_hybrid(["alice"], "breed")
+    calls.clear()
+    memory.set_embedding_provider(embeddings, "second-model")
+    await memory.async_prepare_hybrid(["alice"], "breed")
+    assert len(calls) == 2
+
+
+async def test_hybrid_cache_failure_falls_back_without_harming_memory() -> None:
+    durable = FakeStorage()
+    memory = PersistentMemory(durable, FailingCacheStorage())
+    await memory.async_initialize()
+    await memory.async_add("alice", "Oscar is a Cavachon.", "pets", "explicit")
+
+    async def embeddings(inputs: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0] for _ in inputs]
+
+    memory.set_embedding_provider(embeddings, "test-model")
+    assert await memory.async_prepare_hybrid(["alice"], "breed") is None
+    assert (await memory.async_list("alice"))[0].content == "Oscar is a Cavachon."
+    assert "embedding" not in durable.data["memories"][0]
+
+
+async def test_hybrid_relevance_gate_accepts_semantic_and_rejects_unrelated() -> None:
+    memory = PersistentMemory(FakeStorage(), FakeStorage())
+    await memory.async_initialize()
+    oscar = await memory.async_add(
+        "alice", "Oscar is a Cavachon.", "pets", "explicit", importance="high"
+    )
+    heating = await memory.async_add(
+        "alice", "User dislikes very warm rooms.", "preferences", "explicit"
+    )
+    await memory.async_add(
+        "alice", "Passport expires in 2028.", "travel", "explicit", importance="high"
+    )
+    await memory.async_add(
+        "alice", "User prefers horror games.", "preferences", "explicit"
+    )
+
+    def vector(text: str) -> list[float]:
+        if "Oscar" in text or "breed" in text:
+            return [1.0, 0.0, 0.0, 0.0]
+        if "warm rooms" in text or "temperature" in text:
+            return [0.0, 1.0, 0.0, 0.0]
+        if "kitchen lights" in text:
+            return [0.0, 0.0, 0.0, 1.0]
+        return [0.0, 0.0, 1.0, 0.0]
+
+    async def embeddings(inputs: list[str]) -> list[list[float]]:
+        return [vector(text) for text in inputs]
+
+    memory.set_embedding_provider(embeddings, "test-model")
+    dog_query = await memory.async_prepare_hybrid(["alice"], "What breed is my dog?")
+    assert [
+        item.memory_id
+        for item in await memory.async_search(
+            "alice", "What breed is my dog?", hybrid=True, query_embedding=dog_query
+        )
+    ] == [oscar["memory"]["memory_id"]]
+    heat_query = await memory.async_prepare_hybrid(
+        ["alice"], "What temperature should I set the heating to?"
+    )
+    assert heating["memory"]["memory_id"] in {
+        item.memory_id
+        for item in await memory.async_search(
+            "alice",
+            "What temperature should I set the heating to?",
+            hybrid=True,
+            query_embedding=heat_query,
+        )
+    }
+    unrelated_query = await memory.async_prepare_hybrid(
+        ["alice"], "Turn the kitchen lights off"
+    )
+    assert (
+        await memory.async_search(
+            "alice",
+            "Turn the kitchen lights off",
+            hybrid=True,
+            query_embedding=unrelated_query,
+        )
+        == []
+    )
 
 
 async def test_conversation_bundle_selects_once_reuses_and_resets() -> None:
