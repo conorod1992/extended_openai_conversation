@@ -82,11 +82,15 @@
                         "reasoning_effort": "Reasoning effort",
                         "service_tier": "Service tier",
                         "shorten_tool_call_id": "Shorten tool call IDs",
-                        "memory_auto_retrieve_limit": "Automatically retrieved memories"
+                        "memory_auto_retrieve_limit": "Automatically include memories",
+                        "memory_retrieval_mode": "Memory retrieval",
+                        "memory_embedding_model": "Embedding model"
                     },
                     "data_description": {
                         "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers.",
-                        "memory_auto_retrieve_limit": "Maximum relevant memories added automatically to each request. Set to 0 for tool-only retrieval."
+                        "memory_auto_retrieve_limit": "Select up to this many relevant memories when a new conversation starts. The same memories remain available for that conversation. Set to 0 to use memory only on demand.",
+                        "memory_retrieval_mode": "Use lightweight local lexical ranking or optional embedding-based hybrid semantic retrieval.",
+                        "memory_embedding_model": "Embedding model used only for hybrid semantic retrieval."
                     }
                 }
             },

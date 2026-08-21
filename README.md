@@ -20,7 +20,7 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 
 - **Home Assistant control** — call services and control exposed devices and entities.
 - **History access** — answer questions using Home Assistant entity history.
-- **Persistent memory** — remember selected facts across separate conversations, with Off, Manual, and Automatic modes.
+- **Persistent memory** — conversation-start lexical or embedding-assisted retrieval, personal plus shared-household reads, importance, canonical keys, and reliable upserts, while preserving Off, Manual, and Automatic modes.
 - **Knowledge Library** — keep large per-agent reference sources local and retrieve only relevant excerpts on demand.
 - **Voice follow-ups** — use Home Assistant's default behavior, always keep listening, or let the model decide whether a reply is expected.
 - **Context management** — keep recent turns, clear history, or summarize older conversation context.
@@ -149,7 +149,7 @@ When enabled with the direct OpenAI Responses API, the model can decide when cur
 
 ### Persistent memory
 
-Persistent memory can retain concise facts beyond a single chat. **Manual** mode stores explicit remember requests; **Automatic** mode can also save stable useful facts. Memories are stored locally in Home Assistant and scoped by conversation agent and Home Assistant user.
+Persistent memory retains concise facts beyond a single chat. **Manual** stores explicit remember requests; **Automatic** can also save stable useful facts. A bounded bundle is selected once from the opening message and reused for the logical conversation; `0` keeps retrieval tool-only. Local BM25-style lexical retrieval is the default, with optional embedding-only hybrid semantic retrieval and graceful lexical fallback. Authenticated users may read their personal and enabled shared-household facts, while writes default strictly to personal. Importance, canonical subject/key metadata, freshness timestamps, and `memory_upsert` support durable fact replacement without automatic expiry.
 
 [Read the persistent memory guide](docs/features/persistent-memory.md)
 

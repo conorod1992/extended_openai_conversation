@@ -20,6 +20,7 @@ from .const import (
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_MEMORY_ENABLED,
+    CONF_MEMORY_RETRIEVAL_MODE,
     CONF_TEMPORARY_MEMORY,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CONF_FUNCTION_TOOLS,
@@ -29,6 +30,7 @@ from .const import (
     DEFAULT_MEMORY_AUTO_CREATE,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_MEMORY_ENABLED,
+    DEFAULT_MEMORY_RETRIEVAL_MODE,
     DEFAULT_TEMPORARY_MEMORY,
 )
 from .continuity import async_get_continuity
@@ -70,6 +72,9 @@ async def async_get_config_entry_diagnostics(
             "automatic_retrieval_limit": subentry.data.get(
                 CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
                 DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
+            ),
+            "memory_retrieval_mode": subentry.data.get(
+                CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE
             ),
             "knowledge_enabled": subentry.data.get(
                 CONF_KNOWLEDGE_ENABLED, DEFAULT_KNOWLEDGE_ENABLED

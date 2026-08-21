@@ -266,7 +266,16 @@ async def test_storage_migration_from_legacy_list() -> None:
     store = MemoryStore.__new__(MemoryStore)
     old = [{"memory_id": "one"}]
 
-    assert await store._async_migrate_func(0, 1, old) == {"memories": old}
+    migrated = await store._async_migrate_func(0, 1, old)
+    assert migrated["memories"][0] == {
+        "memory_id": "one",
+        "importance": "normal",
+        "subject": None,
+        "key": None,
+        "valid_from": None,
+        "last_confirmed_at": None,
+        "embedding": None,
+    }
     with pytest.raises(NotImplementedError):
         await store._async_migrate_func(99, 1, {})
 
@@ -496,6 +505,7 @@ def test_prompt_frames_memories_as_potentially_relevant_untrusted_data(hass) -> 
     assert json.loads(serialized_memories) == [
         {
             "memory_id": "one",
+            "scope": "personal",
             "category": "misc",
             "content": memory.content,
         }

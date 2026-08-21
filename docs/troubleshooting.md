@@ -102,6 +102,8 @@ If the conversation exceeded the threshold, older turns may have been removed, s
 
 Persistent memory is separate from conversation history: a remembered fact can survive context truncation, but ordinary chat history does not become persistent memory automatically unless Automatic memory chooses to store an appropriate fact.
 
+Automatic persistent-memory ranking runs only when a logical conversation starts. If the topic changes, ask the assistant to use `memory_search`; the initial bundle is intentionally stable. In hybrid semantic mode, an unsupported embedding endpoint/model or request failure is logged and retrieval continues lexically. Verify the configured OpenAI-compatible provider supports the selected embedding model. Hybrid mode adds no LLM/classifier call, exports no raw embeddings, and does not guarantee perfect semantic matches.
+
 ## The assistant does not use a Knowledge source
 
 Confirm that **Knowledge Library** is On for the same conversation agent selected in **Manage knowledge**, and that at least one source exists. The tools are intentionally absent when the feature is Off or the library is empty.

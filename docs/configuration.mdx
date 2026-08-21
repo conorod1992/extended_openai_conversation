@@ -190,7 +190,7 @@ Regex is an advanced feature. Rules run sequentially on the completed response, 
     - `Manual`: Store memories only after an explicit remember request. Relevant memories can still be retrieved automatically.
     - `Automatic`: Allow proactive storage of stable, useful facts under the existing memory safety rules.
 
-    The retrieval limit is an advanced memory setting. Use **Extended OpenAI → Memories** to inspect, add, edit, delete, or clear permitted scopes. See [Persistent memory](/persistent-memory) for storage, privacy, user isolation, and examples.
+    **Automatically include memories** selects `0–10` records once from the opening message and reuses them for that conversation; `0` is tool-only. Lightweight lexical retrieval is local and default. Hybrid semantic retrieval uses embeddings only and falls back to lexical if the provider or model does not support them. Use **Extended OpenAI → Memories** to inspect, filter, add, edit, delete, or clear permitted personal and shared scopes. See [Persistent memory](/persistent-memory) for keys, importance, freshness, upserts, storage, and privacy.
   </Accordion>
 
   <Accordion title="Knowledge Library">

@@ -305,7 +305,16 @@ async def test_replace_helpers_rebuild_canonical_state() -> None:
     memory = PersistentMemory(FakeStorage({"memories": []}))
     await memory.async_initialize()
     await memory.async_replace_backup(memory_records)
-    assert (await memory.async_backup_data()) == document["memories"]
+    memory_backup = await memory.async_backup_data()
+    original = document["memories"]["memories"][0]
+    assert memory_backup["memories"][0] == {
+        **original,
+        "importance": "normal",
+        "subject": None,
+        "key": None,
+        "valid_from": None,
+        "last_confirmed_at": original["updated_at"],
+    }
 
     temporary = TemporaryMemory(FakeStorage({"records": []}))
     await temporary.async_initialize()

@@ -41,12 +41,22 @@ class ActiveConversation:
     in_flight: bool = False
 
 
+@dataclass(slots=True)
+class ConversationMemoryBundle:
+    """Automatically selected memory references for one logical conversation."""
+
+    references: list[tuple[str, str]]
+    selected_at: Any
+    last_active: Any
+
+
 class ConversationContinuity:
     """Resolve and retain active model context without relying on a provider."""
 
     def __init__(self, agent_id: str) -> None:
         self._agent_id = agent_id
         self._sessions: dict[str, ActiveConversation] = {}
+        self._memory_bundles: dict[str, ConversationMemoryBundle] = {}
         self._lock = asyncio.Lock()
         self.resume_count = 0
         self.new_session_count = 0
@@ -134,7 +144,41 @@ class ConversationContinuity:
     async def async_end(self, key: str) -> bool:
         """End one active conversation."""
         async with self._lock:
-            return self._sessions.pop(key, None) is not None
+            session = self._sessions.pop(key, None)
+            if session is not None:
+                self._memory_bundles.pop(f"continuity:{key}", None)
+            return session is not None
+
+    async def async_get_memory_bundle(
+        self, session_key: str, timeout_minutes: int
+    ) -> list[tuple[str, str]] | None:
+        """Load and touch a bundle without changing its selected references."""
+        now = dt_util.utcnow()
+        cutoff = now - timedelta(minutes=timeout_minutes)
+        async with self._lock:
+            self._prune_memory_bundles_locked(cutoff)
+            bundle = self._memory_bundles.get(session_key)
+            if bundle is None:
+                return None
+            bundle.last_active = now
+            return bundle.references.copy()
+
+    async def async_set_memory_bundle(
+        self, session_key: str, references: list[tuple[str, str]], timeout_minutes: int
+    ) -> list[tuple[str, str]]:
+        """Store the first selection; concurrent later callers reuse it."""
+        now = dt_util.utcnow()
+        cutoff = now - timedelta(minutes=timeout_minutes)
+        async with self._lock:
+            self._prune_memory_bundles_locked(cutoff)
+            existing = self._memory_bundles.get(session_key)
+            if existing is not None:
+                existing.last_active = now
+                return existing.references.copy()
+            self._memory_bundles[session_key] = ConversationMemoryBundle(
+                references.copy(), now, now
+            )
+            return references.copy()
 
     async def async_list(self, timeout_minutes: int) -> list[dict[str, Any]]:
         """List compact non-transcript management data."""
@@ -164,12 +208,19 @@ class ConversationContinuity:
             "active_continuity_sessions": len(self._sessions),
             "continuity_resume_count": self.resume_count,
             "continuity_new_session_count": self.new_session_count,
+            "active_memory_bundles": len(self._memory_bundles),
         }
 
     def _prune_locked(self, cutoff: Any) -> None:
         for key, session in list(self._sessions.items()):
             if session.last_active < cutoff:
                 del self._sessions[key]
+                self._memory_bundles.pop(f"continuity:{key}", None)
+
+    def _prune_memory_bundles_locked(self, cutoff: Any) -> None:
+        for key, bundle in list(self._memory_bundles.items()):
+            if bundle.last_active < cutoff:
+                del self._memory_bundles[key]
 
 
 _MANAGERS = "extended_openai_conversation_responses.continuity_managers"

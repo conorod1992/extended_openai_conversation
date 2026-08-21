@@ -45,6 +45,8 @@ from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
+    CONF_MEMORY_EMBEDDING_MODEL,
+    CONF_MEMORY_RETRIEVAL_MODE,
     CONF_SHARED_ARCHIVE_ENABLED,
     CONF_SHARED_MEMORY_MODE,
     CONF_SKILLS,
@@ -62,6 +64,8 @@ from .const import (
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
+    DEFAULT_MEMORY_EMBEDDING_MODEL,
+    DEFAULT_MEMORY_RETRIEVAL_MODE,
     DEFAULT_SHARED_ARCHIVE_ENABLED,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_TEMPORARY_MEMORY,
@@ -70,6 +74,7 @@ from .const import (
     DEFAULT_WORKING_DIRECTORY,
     DOMAIN,
     EVENT_CONVERSATION_FINISHED,
+    MEMORY_RETRIEVAL_HYBRID,
     SHARED_MEMORY_AUTOMATIC,
     SHARED_MEMORY_DISABLED,
     TEMPORARY_MEMORY_OFF,
@@ -99,7 +104,12 @@ from .memory import (
 )
 from .prompt import render_effective_prompt
 from .request import assemble_integration_function_tools
-from .scope import ResolvedDataScope, memory_scope_id, resolve_data_scope
+from .scope import (
+    SHARED_HOUSEHOLD_SCOPE_ID,
+    ResolvedDataScope,
+    memory_scope_id,
+    resolve_data_scope,
+)
 from .skills import Skill, SkillManager
 from .speech import has_custom_speech_replacements, process_speech_text
 from .temporary_memory import (
@@ -123,6 +133,9 @@ _ACTIVE_TEMPORARY_SCOPE: ContextVar[str | None] = ContextVar(
 )
 _ACTIVE_FUNCTION_GROUP_SESSION: ContextVar[FunctionGroupSession | None] = ContextVar(
     "extended_openai_active_function_group_session", default=None
+)
+_ACTIVE_MEMORY_SESSION: ContextVar[tuple[str, int] | None] = ContextVar(
+    "extended_openai_active_memory_session", default=None
 )
 
 
@@ -252,6 +265,13 @@ class ExtendedOpenAIAgentEntity(
                 self._memory = await async_get_memory(
                     self.hass, self.entry.entry_id, self.subentry.subentry_id
                 )
+                if (
+                    self.subentry.data.get(
+                        CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE
+                    )
+                    == MEMORY_RETRIEVAL_HYBRID
+                ):
+                    self._memory.set_embedding_provider(self._async_create_embeddings)
             except Exception:
                 _LOGGER.exception("Unable to initialize persistent memory")
 
@@ -324,6 +344,9 @@ class ExtendedOpenAIAgentEntity(
         archive_token = _ACTIVE_ARCHIVE.set(
             (session_key, archive_session.session_id) if archive_session else None
         )
+        memory_session_token = _ACTIVE_MEMORY_SESSION.set(
+            (session_key, timeout_minutes if resolution.key else 5)
+        )
         with (
             async_get_chat_session(self.hass, resolution.conversation_id) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
@@ -390,6 +413,7 @@ class ExtendedOpenAIAgentEntity(
                 _ACTIVE_FUNCTION_GROUP_SESSION.reset(function_group_token)
                 _ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
                 _ACTIVE_ARCHIVE.reset(archive_token)
+                _ACTIVE_MEMORY_SESSION.reset(memory_session_token)
                 _ACTIVE_SCOPE.reset(scope_token)
 
     async def _async_handle_message(
@@ -524,11 +548,11 @@ class ExtendedOpenAIAgentEntity(
     async def _async_retrieve_memories(
         self, llm_context: llm.LLMContext, query: str
     ) -> list[MemoryRecord]:
-        """Retrieve bounded automatic context when memory is enabled."""
+        """Select once, then resolve the same bundle without automatic reranking."""
         if self._memory is None:
             return []
-        scope_id = self._current_memory_scope_id(llm_context)
-        if scope_id is None:
+        readable_scope_ids = self._current_readable_memory_scope_ids(llm_context)
+        if not readable_scope_ids:
             return []
         try:
             retrieve_limit = int(
@@ -539,12 +563,65 @@ class ExtendedOpenAIAgentEntity(
             )
             if retrieve_limit <= 0:
                 return []
-            return await self._memory.async_search(
-                scope_id, query, limit=retrieve_limit
+            active_session = _ACTIVE_MEMORY_SESSION.get()
+            if active_session is None or self._continuity is None:
+                return await self._async_rank_memories(
+                    readable_scope_ids, query, retrieve_limit
+                )
+            session_key, timeout_minutes = active_session
+            references = await self._continuity.async_get_memory_bundle(
+                session_key, timeout_minutes
             )
+            if references is None:
+                selected = await self._async_rank_memories(
+                    readable_scope_ids, query, retrieve_limit
+                )
+                references = await self._continuity.async_set_memory_bundle(
+                    session_key,
+                    [(memory.user_id, memory.memory_id) for memory in selected],
+                    timeout_minutes,
+                )
+            return await self._memory.async_get_many(references, readable_scope_ids)
         except Exception:
             _LOGGER.exception("Automatic memory retrieval failed; continuing")
             return []
+
+    async def _async_rank_memories(
+        self, readable_scope_ids: list[str], query: str, limit: int
+    ) -> list[MemoryRecord]:
+        assert self._memory is not None
+        hybrid = (
+            self.subentry.data.get(
+                CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE
+            )
+            == MEMORY_RETRIEVAL_HYBRID
+        )
+        query_embedding = (
+            await self._memory.async_prepare_hybrid(readable_scope_ids, query)
+            if hybrid
+            else None
+        )
+        if not hybrid and len(readable_scope_ids) == 1:
+            return await self._memory.async_search(
+                readable_scope_ids[0], query, limit=limit
+            )
+        return await self._memory.async_search(
+            readable_scope_ids,
+            query,
+            limit=limit,
+            query_embedding=query_embedding,
+            hybrid=hybrid and query_embedding is not None,
+        )
+
+    async def _async_create_embeddings(self, inputs: list[str]) -> list[list[float]]:
+        """Create embedding vectors without an LLM/classifier retrieval call."""
+        response = await self._client.embeddings.create(
+            model=self.subentry.data.get(
+                CONF_MEMORY_EMBEDDING_MODEL, DEFAULT_MEMORY_EMBEDDING_MODEL
+            ),
+            input=inputs,
+        )
+        return [list(item.embedding) for item in response.data]
 
     async def _async_retrieve_temporary_memories(
         self,
@@ -805,11 +882,11 @@ class ExtendedOpenAIAgentEntity(
         """Execute a scoped persistent-memory operation."""
         if self._memory is None:
             raise RuntimeError("persistent memory is unavailable")
-        user_id = self._current_memory_scope_id(llm_context)
-        if user_id is None:
+        readable_scope_ids = self._current_readable_memory_scope_ids(llm_context)
+        if not readable_scope_ids:
             raise RuntimeError("persistent memory is disabled for this data scope")
 
-        if operation == "add":
+        if operation in {"add", "upsert"}:
             source = arguments.get("source")
             content = arguments.get("content")
             category = arguments.get("category")
@@ -834,11 +911,29 @@ class ExtendedOpenAIAgentEntity(
                 != SHARED_MEMORY_AUTOMATIC
             ):
                 raise ValueError("automatic shared memory creation is disabled")
-            return await self._memory.async_add(
-                user_id,
-                content,
-                category,
-                source,
+            write_scope_id = self._current_write_memory_scope_id(
+                arguments.get("scope"), llm_context, source=source
+            )
+            method = (
+                self._memory.async_upsert
+                if operation == "upsert"
+                else self._memory.async_add
+            )
+            metadata_values = (
+                arguments.get("importance") or "normal",
+                arguments.get("subject"),
+                arguments.get("key"),
+                arguments.get("valid_from"),
+            )
+            if operation == "add" and metadata_values == (
+                "normal",
+                None,
+                None,
+                None,
+            ):
+                return await method(write_scope_id, content, category, source)
+            return await method(
+                write_scope_id, content, category, source, *metadata_values
             )
         if operation == "search":
             query = arguments.get("query")
@@ -851,13 +946,25 @@ class ExtendedOpenAIAgentEntity(
                 or isinstance(limit, bool)
             ):
                 raise ValueError("query, category, or limit has an invalid type")
+            requested_scope = arguments.get("scope")
+            search_scopes = self._filter_read_scopes(
+                readable_scope_ids, requested_scope
+            )
             memories = await self._memory.async_search(
-                user_id,
+                search_scopes,
                 query,
                 category,
                 limit,
             )
-            return {"memories": [memory_as_dict(memory) for memory in memories]}
+            personal_id = self._personal_memory_scope_id(llm_context)
+            return {
+                "memories": [
+                    memory_as_dict(
+                        memory, include_scope=True, personal_scope_id=personal_id
+                    )
+                    for memory in memories
+                ]
+            }
         if operation == "list":
             category = arguments.get("category")
             limit = arguments.get("limit", 50)
@@ -870,38 +977,71 @@ class ExtendedOpenAIAgentEntity(
                 or isinstance(offset, bool)
             ):
                 raise ValueError("category, limit, or offset has an invalid type")
+            list_scopes = self._filter_read_scopes(
+                readable_scope_ids, arguments.get("scope")
+            )
             memories = await self._memory.async_list(
-                user_id,
+                list_scopes,
                 category,
                 limit,
                 offset,
             )
-            return {"memories": [memory_as_dict(memory) for memory in memories]}
+            personal_id = self._personal_memory_scope_id(llm_context)
+            return {
+                "memories": [
+                    memory_as_dict(
+                        memory, include_scope=True, personal_scope_id=personal_id
+                    )
+                    for memory in memories
+                ]
+            }
         if operation == "update":
             memory_id = arguments.get("memory_id")
             content = arguments.get("content")
             category = arguments.get("category")
+            metadata = {
+                key: arguments.get(key)
+                for key in ("importance", "subject", "key", "valid_from")
+            }
             if (
                 not isinstance(memory_id, str)
                 or (content is not None and not isinstance(content, str))
                 or (category is not None and not isinstance(category, str))
-                or (content is None and category is None)
+                or (
+                    content is None
+                    and category is None
+                    and all(value is None for value in metadata.values())
+                )
             ):
                 raise ValueError("memory_id and at least one valid update are required")
+            write_scope_id = self._current_write_memory_scope_id(
+                arguments.get("scope"), llm_context, source="explicit"
+            )
             memory = await self._memory.async_update(
-                user_id,
+                write_scope_id,
                 memory_id,
                 content,
                 category,
+                **metadata,
             )
-            return {"status": "updated", "memory": memory_as_dict(memory)}
+            return {
+                "status": "updated",
+                "memory": memory_as_dict(
+                    memory,
+                    include_scope=True,
+                    personal_scope_id=self._personal_memory_scope_id(llm_context),
+                ),
+            }
         if operation == "delete":
             memory_ids = arguments.get("memory_ids")
             if not isinstance(memory_ids, list) or not all(
                 isinstance(memory_id, str) for memory_id in memory_ids
             ):
                 raise ValueError("memory_ids must be a list of strings")
-            deleted = await self._memory.async_delete(user_id, memory_ids)
+            write_scope_id = self._current_write_memory_scope_id(
+                arguments.get("scope"), llm_context, source="explicit"
+            )
+            deleted = await self._memory.async_delete(write_scope_id, memory_ids)
             return {"status": "deleted", "deleted": deleted}
         raise ValueError("unknown memory operation")
 
@@ -924,6 +1064,91 @@ class ExtendedOpenAIAgentEntity(
         ):
             return None
         return memory_scope_id(scope)
+
+    def _personal_memory_scope_id(
+        self, llm_context: llm.LLMContext | None = None
+    ) -> str | None:
+        scope = _ACTIVE_SCOPE.get()
+        if scope is not None:
+            return scope.user_id if scope.scope_type == "user" else None
+        fallback = memory_user_id(llm_context)
+        return fallback if fallback != "__anonymous__" else None
+
+    def _current_readable_memory_scope_ids(
+        self, llm_context: llm.LLMContext | None = None
+    ) -> list[str]:
+        """Compose personal and enabled household scopes without crossing users."""
+        scope = _ACTIVE_SCOPE.get()
+        shared_enabled = (
+            self.subentry.data.get(CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE)
+            != SHARED_MEMORY_DISABLED
+        )
+        if scope is None:
+            fallback = memory_user_id(llm_context)
+            return [fallback] if fallback else []
+        if scope.scope_type == "user" and scope.user_id:
+            result = [scope.user_id]
+            if shared_enabled:
+                result.append(SHARED_HOUSEHOLD_SCOPE_ID)
+            return result
+        if scope.scope_type == "shared" and shared_enabled:
+            return [SHARED_HOUSEHOLD_SCOPE_ID]
+        return []
+
+    @staticmethod
+    def _filter_read_scopes(readable_scope_ids: list[str], selector: Any) -> list[str]:
+        if selector is None:
+            return readable_scope_ids
+        if selector not in {"personal", "household"}:
+            raise ValueError("scope must be personal or household")
+        if selector == "household":
+            return [
+                scope_id
+                for scope_id in readable_scope_ids
+                if scope_id == SHARED_HOUSEHOLD_SCOPE_ID
+            ]
+        return [
+            scope_id
+            for scope_id in readable_scope_ids
+            if scope_id != SHARED_HOUSEHOLD_SCOPE_ID
+        ]
+
+    def _current_write_memory_scope_id(
+        self,
+        selector: Any,
+        llm_context: llm.LLMContext | None,
+        *,
+        source: str,
+    ) -> str:
+        """Resolve a deliberate write target; never infer another user's owner."""
+        if selector is not None and selector not in {"personal", "household"}:
+            raise ValueError("scope must be personal or household")
+        scope = _ACTIVE_SCOPE.get()
+        if scope is None:
+            if selector == "household":
+                raise ValueError("household scope requires a resolved conversation")
+            return memory_user_id(llm_context)
+        if scope.scope_type == "shared":
+            if selector == "personal":
+                raise ValueError(
+                    "shared household conversations cannot write personal memory"
+                )
+            target = SHARED_HOUSEHOLD_SCOPE_ID
+        elif scope.scope_type == "user" and scope.user_id:
+            target = (
+                SHARED_HOUSEHOLD_SCOPE_ID if selector == "household" else scope.user_id
+            )
+        else:
+            raise RuntimeError("persistent memory is disabled for this data scope")
+        if target == SHARED_HOUSEHOLD_SCOPE_ID:
+            shared_mode = self.subentry.data.get(
+                CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE
+            )
+            if shared_mode == SHARED_MEMORY_DISABLED:
+                raise ValueError("shared household memory is disabled")
+            if source == "implicit" and shared_mode != SHARED_MEMORY_AUTOMATIC:
+                raise ValueError("automatic shared memory creation is disabled")
+        return target
 
     async def _async_execute_temporary_memory_tool(
         self, operation: str, arguments: dict[str, Any]

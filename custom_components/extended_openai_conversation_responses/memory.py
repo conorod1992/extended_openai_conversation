@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 import logging
+import math
 import re
 from typing import Any, Protocol
 from uuid import uuid4
@@ -31,21 +32,28 @@ from .scope import LEGACY_ANONYMOUS_SCOPE_ID
 
 _LOGGER = logging.getLogger(__name__)
 
-STORAGE_VERSION = 1
+STORAGE_VERSION = 2
 STORAGE_KEY_PREFIX = f"{DOMAIN}.memory"
 ANONYMOUS_USER_ID = LEGACY_ANONYMOUS_SCOPE_ID
 MAX_MEMORIES_PER_AGENT = 10_000
 MAX_CONTENT_LENGTH = 1_000
 MAX_CATEGORY_LENGTH = 64
+MAX_SUBJECT_LENGTH = 128
+MAX_KEY_LENGTH = 160
 MAX_SEARCH_LIMIT = 50
 MAX_LIST_LIMIT = 100
 MEMORY_TOOL_NAMES = {
     "memory_add",
+    "memory_upsert",
     "memory_search",
     "memory_list",
     "memory_update",
     "memory_delete",
 }
+MEMORY_IMPORTANCES = {"low", "normal", "high"}
+IMPORTANCE_MULTIPLIERS = {"low": 0.85, "normal": 1.0, "high": 1.2}
+MIN_RELEVANCE_SCORE = 0.08
+EmbeddingProvider = Callable[[list[str]], Awaitable[list[list[float]]]]
 
 _TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
@@ -98,6 +106,15 @@ _STOP_WORDS = {
     "to",
     "user",
     "with",
+    "what",
+    "do",
+    "does",
+    "did",
+    "normally",
+    "usually",
+    "use",
+    "using",
+    "how",
 }
 
 
@@ -112,6 +129,12 @@ class MemoryRecord:
     source: str
     created_at: str
     updated_at: str
+    importance: str = "normal"
+    subject: str | None = None
+    key: str | None = None
+    valid_from: str | None = None
+    last_confirmed_at: str | None = None
+    embedding: list[float] | None = None
 
 
 class MemoryStorage(Protocol):
@@ -133,9 +156,17 @@ class MemoryStore(Store[dict[str, Any]]):
         """Migrate older memory payloads."""
         if old_major_version == 0:
             if isinstance(old_data, list):
-                return {"memories": old_data}
+                old_data = {"memories": old_data}
             if isinstance(old_data, dict):
-                return {"memories": old_data.get("memories", [])}
+                old_data = {"memories": old_data.get("memories", [])}
+        if old_major_version in {0, 1} and isinstance(old_data, dict):
+            return {
+                "memories": [
+                    _migrate_raw_record(raw)
+                    for raw in old_data.get("memories", [])
+                    if isinstance(raw, Mapping)
+                ]
+            }
         raise NotImplementedError
 
 
@@ -171,6 +202,8 @@ class PersistentMemory:
         self._storage = storage
         self._memories: dict[str, MemoryRecord] = {}
         self._token_index: dict[tuple[str, str], set[str]] = defaultdict(set)
+        self._key_index: dict[tuple[str, str], str] = {}
+        self._embedding_provider: EmbeddingProvider | None = None
         self._lock = asyncio.Lock()
         self._initialized = False
 
@@ -183,7 +216,7 @@ class PersistentMemory:
             raw_memories = data.get("memories", []) if isinstance(data, Mapping) else []
             for raw in raw_memories:
                 try:
-                    memory = MemoryRecord(**raw)
+                    memory = MemoryRecord(**_migrate_raw_record(raw))
                 except TypeError, ValueError:
                     _LOGGER.warning("Ignoring malformed persistent memory record")
                     continue
@@ -191,21 +224,42 @@ class PersistentMemory:
                 self._index(memory)
             self._initialized = True
 
+    def set_embedding_provider(self, provider: EmbeddingProvider | None) -> None:
+        """Configure the optional provider used only by hybrid retrieval."""
+        self._embedding_provider = provider
+
     async def async_add(
-        self, user_id: str, content: str, category: str, source: str
+        self,
+        user_id: str,
+        content: str,
+        category: str,
+        source: str,
+        importance: str = "normal",
+        subject: str | None = None,
+        key: str | None = None,
+        valid_from: str | None = None,
     ) -> dict[str, Any]:
         """Add a memory, or return a likely duplicate."""
         content = _clean_content(content)
         category = _clean_category(category)
+        importance = _clean_importance(importance)
+        subject = _clean_optional(subject, "subject", MAX_SUBJECT_LENGTH)
+        key = _clean_key(key)
+        valid_from = _clean_timestamp(valid_from, "valid_from")
         if source not in {"explicit", "implicit"}:
             raise ValueError("source must be explicit or implicit")
         _validate_privacy(content, source)
+        embedding = await self._async_embed_record_fields(
+            content, category, subject, key
+        )
 
         async with self._lock:
             self._ensure_initialized()
             duplicate = self._find_duplicate(user_id, content)
             if duplicate:
                 return {"status": "duplicate", "memory": memory_as_dict(duplicate)}
+            if key and (user_id, key) in self._key_index:
+                raise ValueError("canonical key already exists in this memory scope")
             if len(self._memories) >= MAX_MEMORIES_PER_AGENT:
                 raise ValueError(
                     "memory limit reached; delete memories before adding more"
@@ -220,50 +274,246 @@ class PersistentMemory:
                 source=source,
                 created_at=timestamp,
                 updated_at=timestamp,
+                importance=importance,
+                subject=subject,
+                key=key,
+                valid_from=valid_from,
+                last_confirmed_at=timestamp,
+                embedding=embedding,
             )
             self._memories[memory.memory_id] = memory
             self._index(memory)
             await self._async_save_locked()
             return {"status": "created", "memory": memory_as_dict(memory)}
 
-    async def async_search(
+    async def async_upsert(
         self,
         user_id: str,
+        content: str,
+        category: str,
+        source: str,
+        importance: str = "normal",
+        subject: str | None = None,
+        key: str | None = None,
+        valid_from: str | None = None,
+    ) -> dict[str, Any]:
+        """Create, confirm, update by canonical key, or surface a likely conflict."""
+        content = _clean_content(content)
+        category = _clean_category(category)
+        importance = _clean_importance(importance)
+        subject = _clean_optional(subject, "subject", MAX_SUBJECT_LENGTH)
+        key = _clean_key(key)
+        valid_from = _clean_timestamp(valid_from, "valid_from")
+        if source not in {"explicit", "implicit"}:
+            raise ValueError("source must be explicit or implicit")
+        _validate_privacy(content, source)
+        embedding = await self._async_embed_record_fields(
+            content, category, subject, key
+        )
+        async with self._lock:
+            self._ensure_initialized()
+            timestamp = dt_util.utcnow().isoformat()
+            if key and (memory_id := self._key_index.get((user_id, key))):
+                current = self._memories[memory_id]
+                updated = self._replace_record(
+                    current,
+                    content=content,
+                    category=category,
+                    importance=importance,
+                    subject=subject,
+                    key=key,
+                    valid_from=valid_from,
+                    updated_at=timestamp,
+                    last_confirmed_at=timestamp,
+                    embedding=embedding,
+                )
+                await self._async_save_locked()
+                return {"status": "updated", "memory": memory_as_dict(updated)}
+            duplicate = self._find_duplicate(user_id, content)
+            if duplicate:
+                confirmed = self._replace_record(
+                    duplicate,
+                    category=category,
+                    importance=importance,
+                    subject=subject if subject is not None else duplicate.subject,
+                    key=key if key is not None else duplicate.key,
+                    valid_from=(
+                        valid_from if valid_from is not None else duplicate.valid_from
+                    ),
+                    last_confirmed_at=timestamp,
+                )
+                await self._async_save_locked()
+                return {"status": "confirmed", "memory": memory_as_dict(confirmed)}
+            candidate = self._find_related_candidate(user_id, content, subject, key)
+            if candidate is not None:
+                return {
+                    "status": "needs_resolution",
+                    "candidate": memory_as_dict(candidate),
+                }
+            if len(self._memories) >= MAX_MEMORIES_PER_AGENT:
+                raise ValueError(
+                    "memory limit reached; delete memories before adding more"
+                )
+            memory = MemoryRecord(
+                memory_id=uuid4().hex,
+                user_id=user_id,
+                content=content,
+                category=category,
+                source=source,
+                created_at=timestamp,
+                updated_at=timestamp,
+                importance=importance,
+                subject=subject,
+                key=key,
+                valid_from=valid_from,
+                last_confirmed_at=timestamp,
+                embedding=embedding,
+            )
+            self._memories[memory.memory_id] = memory
+            self._index(memory)
+            await self._async_save_locked()
+            return {"status": "created", "memory": memory_as_dict(memory)}
+
+    async def _async_embed_record_fields(
+        self, content: str, category: str, subject: str | None, key: str | None
+    ) -> list[float] | None:
+        if self._embedding_provider is None:
+            return None
+        try:
+            vectors = await self._embedding_provider(
+                [" | ".join(filter(None, (subject, key, category, content)))]
+            )
+            return _clean_embedding(vectors[0]) if len(vectors) == 1 else None
+        except Exception:
+            _LOGGER.warning(
+                "Memory embedding generation failed; storing lexical memory",
+                exc_info=True,
+            )
+            return None
+
+    async def async_search(
+        self,
+        user_id: str | Sequence[str],
         query: str,
         category: str | None = None,
         limit: int = 5,
+        *,
+        query_embedding: list[float] | None = None,
+        hybrid: bool = False,
     ) -> list[MemoryRecord]:
-        """Return the most relevant memories without scanning model context."""
+        """Return deterministic BM25-style lexical or hybrid results."""
         self._ensure_initialized()
         limit = max(1, min(limit, MAX_SEARCH_LIMIT))
-        query_tokens = _tokens(query)
+        scope_ids = (
+            (user_id,) if isinstance(user_id, str) else tuple(dict.fromkeys(user_id))
+        )
+        query_terms = _token_list(query)
+        query_tokens = set(query_terms)
         if not query_tokens:
             return []
         category_filter = _clean_category(category) if category else None
-
-        candidates: set[str] = set()
-        for token in query_tokens:
-            candidates.update(self._token_index.get((user_id, token), set()))
-
+        corpus = [
+            memory
+            for memory in self._memories.values()
+            if memory.user_id in scope_ids
+            and (category_filter is None or memory.category == category_filter)
+        ]
+        if not corpus:
+            return []
+        document_terms = {
+            memory.memory_id: _record_token_list(memory) for memory in corpus
+        }
+        document_frequency = {
+            token: sum(token in set(terms) for terms in document_terms.values())
+            for token in query_tokens
+        }
+        average_length = max(1.0, sum(map(len, document_terms.values())) / len(corpus))
         normalized_query = _normalize(query)
-        ranked: list[tuple[float, str, MemoryRecord]] = []
-        for memory_id in candidates:
-            memory = self._memories[memory_id]
-            if category_filter and memory.category != category_filter:
+        ranked: list[tuple[float, float, str, MemoryRecord]] = []
+        for memory in corpus:
+            terms = document_terms[memory.memory_id]
+            lexical = _bm25_score(
+                query_terms,
+                terms,
+                document_frequency,
+                len(corpus),
+                average_length,
+            )
+            lexical += _metadata_bonus(query_tokens, memory)
+            normalized_content = _normalize(memory.content)
+            if normalized_query and normalized_query in normalized_content:
+                lexical += 0.35
+            elif len(query_terms) > 1 and " ".join(query_terms) in " ".join(terms):
+                lexical += 0.18
+            if lexical <= 0:
+                lexical = _fuzzy_relevance(query_tokens, set(terms))
+            semantic = (
+                _cosine_similarity(query_embedding, memory.embedding)
+                if hybrid
+                else None
+            )
+            relevance = lexical
+            if semantic is not None:
+                semantic = max(0.0, semantic)
+                relevance = 0.58 * lexical + 0.42 * semantic
+            if relevance < MIN_RELEVANCE_SCORE:
                 continue
-            memory_tokens = _tokens(memory.content)
-            overlap = len(query_tokens & memory_tokens)
-            score = overlap / len(query_tokens)
-            if normalized_query in _normalize(memory.content):
-                score += 1
-            ranked.append((score, memory.updated_at, memory))
+            final_score = relevance * IMPORTANCE_MULTIPLIERS[memory.importance]
+            freshness = _freshness_tiebreak(memory)
+            ranked.append((final_score, freshness, memory.memory_id, memory))
+        ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
+        return [memory for _, _, _, memory in ranked[:limit]]
 
-        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        return [memory for _, _, memory in ranked[:limit]]
+    async def async_prepare_hybrid(
+        self, scope_ids: Sequence[str], query: str
+    ) -> list[float] | None:
+        """Refresh missing embeddings and return one query embedding, or fall back."""
+        if self._embedding_provider is None:
+            return None
+        missing = [
+            memory
+            for memory in self._memories.values()
+            if memory.user_id in scope_ids and memory.embedding is None
+        ]
+        try:
+            if missing:
+                vectors = await self._embedding_provider(
+                    [_embedding_text(memory) for memory in missing]
+                )
+                if len(vectors) != len(missing):
+                    raise ValueError(
+                        "embedding provider returned the wrong number of vectors"
+                    )
+                async with self._lock:
+                    for memory, vector in zip(missing, vectors, strict=True):
+                        self._replace_record(memory, embedding=_clean_embedding(vector))
+                    await self._async_save_locked()
+            vectors = await self._embedding_provider([query])
+            return _clean_embedding(vectors[0]) if len(vectors) == 1 else None
+        except Exception:
+            _LOGGER.warning(
+                "Hybrid memory embeddings unavailable; using lexical retrieval",
+                exc_info=True,
+            )
+            return None
+
+    async def async_get_many(
+        self, references: Sequence[tuple[str, str]], readable_scope_ids: Sequence[str]
+    ) -> list[MemoryRecord]:
+        """Resolve a selected bundle by owner and ID without reranking."""
+        self._ensure_initialized()
+        allowed = set(readable_scope_ids)
+        return [
+            record
+            for scope_id, memory_id in references
+            if scope_id in allowed
+            and (record := self._memories.get(memory_id)) is not None
+            and record.user_id == scope_id
+        ]
 
     async def async_list(
         self,
-        user_id: str,
+        user_id: str | Sequence[str],
         category: str | None = None,
         limit: int = 50,
         offset: int = 0,
@@ -273,10 +523,11 @@ class PersistentMemory:
         limit = max(1, min(limit, MAX_LIST_LIMIT))
         offset = max(0, offset)
         category_filter = _clean_category(category) if category else None
+        scope_ids = {user_id} if isinstance(user_id, str) else set(user_id)
         memories = [
             memory
             for memory in self._memories.values()
-            if memory.user_id == user_id
+            if memory.user_id in scope_ids
             and (category_filter is None or memory.category == category_filter)
         ]
         memories.sort(key=lambda memory: memory.updated_at, reverse=True)
@@ -288,11 +539,18 @@ class PersistentMemory:
         memory_id: str,
         content: str | None = None,
         category: str | None = None,
+        importance: str | None = None,
+        subject: str | None = None,
+        key: str | None = None,
+        valid_from: str | None = None,
+        refresh_confirmation: bool = True,
+        target_user_id: str | None = None,
     ) -> MemoryRecord:
         """Update a memory owned by one user scope."""
         async with self._lock:
             self._ensure_initialized()
             current = self._owned_memory(user_id, memory_id)
+            target_user_id = target_user_id or user_id
             new_content = (
                 _clean_content(content) if content is not None else current.content
             )
@@ -300,18 +558,42 @@ class PersistentMemory:
                 _clean_category(category) if category is not None else current.category
             )
             _validate_privacy(new_content, current.source)
-            self._unindex(current)
-            updated = MemoryRecord(
-                memory_id=current.memory_id,
-                user_id=current.user_id,
+            new_key = _clean_key(key) if key is not None else current.key
+            if new_key and self._key_index.get((target_user_id, new_key)) not in {
+                None,
+                memory_id,
+            }:
+                raise ValueError("canonical key already exists in this memory scope")
+            timestamp = dt_util.utcnow().isoformat()
+            updated = self._replace_record(
+                current,
+                user_id=target_user_id,
                 content=new_content,
                 category=new_category,
-                source=current.source,
-                created_at=current.created_at,
-                updated_at=dt_util.utcnow().isoformat(),
+                importance=(
+                    _clean_importance(importance)
+                    if importance is not None
+                    else current.importance
+                ),
+                subject=(
+                    _clean_optional(subject, "subject", MAX_SUBJECT_LENGTH)
+                    if subject is not None
+                    else current.subject
+                ),
+                key=new_key,
+                valid_from=(
+                    _clean_timestamp(valid_from, "valid_from")
+                    if valid_from is not None
+                    else current.valid_from
+                ),
+                updated_at=timestamp,
+                last_confirmed_at=(
+                    timestamp if refresh_confirmation else current.last_confirmed_at
+                ),
+                embedding=(
+                    None if new_content != current.content else current.embedding
+                ),
             )
-            self._memories[memory_id] = updated
-            self._index(updated)
             await self._async_save_locked()
             return updated
 
@@ -371,18 +653,13 @@ class PersistentMemory:
                 current = self._memories.get(memory_id)
                 if current is None or current.user_id != source_scope_id:
                     continue
-                self._unindex(current)
-                updated = MemoryRecord(
-                    memory_id=current.memory_id,
+                if current.key and (target_scope_id, current.key) in self._key_index:
+                    continue
+                self._replace_record(
+                    current,
                     user_id=target_scope_id,
-                    content=current.content,
-                    category=current.category,
-                    source=current.source,
-                    created_at=current.created_at,
                     updated_at=dt_util.utcnow().isoformat(),
                 )
-                self._memories[memory_id] = updated
-                self._index(updated)
                 moved += 1
             if moved:
                 await self._async_save_locked()
@@ -414,7 +691,12 @@ class PersistentMemory:
         """Return the stable durable representation used by full backups."""
         async with self._lock:
             self._ensure_initialized()
-            return {"memories": [asdict(memory) for memory in self._memories.values()]}
+            return {
+                "memories": [
+                    _record_as_storage_dict(memory, embedding=False)
+                    for memory in self._memories.values()
+                ]
+            }
 
     @staticmethod
     def validate_backup_data(data: Any) -> list[MemoryRecord]:
@@ -433,7 +715,7 @@ class PersistentMemory:
             if not isinstance(raw, Mapping):
                 raise ValueError("persistent memory record must be an object")
             try:
-                record = MemoryRecord(**raw)
+                record = MemoryRecord(**_migrate_raw_record(raw, keep_embedding=False))
             except TypeError as err:
                 raise ValueError("persistent memory record is invalid") from err
             if not all(
@@ -446,6 +728,7 @@ class PersistentMemory:
                     record.source,
                     record.created_at,
                     record.updated_at,
+                    record.importance,
                 )
             ):
                 raise ValueError("persistent memory fields must be strings")
@@ -456,17 +739,38 @@ class PersistentMemory:
                 or not record.user_id
                 or len(record.user_id) > 128
                 or record.source not in {"explicit", "implicit"}
+                or record.importance not in MEMORY_IMPORTANCES
             ):
                 raise ValueError("persistent memory metadata is invalid")
             _clean_content(record.content)
             _clean_category(record.category)
+            _clean_optional(record.subject, "subject", MAX_SUBJECT_LENGTH)
+            normalized_key = _clean_key(record.key)
+            if normalized_key != record.key:
+                raise ValueError("persistent memory key is not normalized")
             if (
                 dt_util.parse_datetime(record.created_at) is None
                 or dt_util.parse_datetime(record.updated_at) is None
+                or (
+                    record.valid_from is not None
+                    and dt_util.parse_datetime(record.valid_from) is None
+                )
+                or (
+                    record.last_confirmed_at is not None
+                    and dt_util.parse_datetime(record.last_confirmed_at) is None
+                )
             ):
                 raise ValueError("persistent memory timestamp is invalid")
             seen.add(record.memory_id)
             records.append(record)
+        keys: set[tuple[str, str]] = set()
+        for record in records:
+            if record.key is None:
+                continue
+            pair = (record.user_id, record.key)
+            if pair in keys:
+                raise ValueError("duplicate canonical key in memory scope")
+            keys.add(pair)
         return records
 
     async def async_replace_backup(self, records: list[MemoryRecord]) -> None:
@@ -475,6 +779,7 @@ class PersistentMemory:
             self._ensure_initialized()
             self._memories = {record.memory_id: record for record in records}
             self._token_index.clear()
+            self._key_index.clear()
             for record in records:
                 self._index(record)
             await self._async_save_locked()
@@ -493,6 +798,31 @@ class PersistentMemory:
                 return memory
         return None
 
+    def _find_related_candidate(
+        self, user_id: str, content: str, subject: str | None, key: str | None
+    ) -> MemoryRecord | None:
+        incoming = _tokens(content)
+        key_root = key.rsplit(".", 1)[0] if key and "." in key else None
+        best: tuple[float, str, MemoryRecord] | None = None
+        for memory in self._memories.values():
+            if memory.user_id != user_id:
+                continue
+            existing = _tokens(memory.content)
+            union = incoming | existing
+            similarity = len(incoming & existing) / len(union) if union else 0.0
+            if (
+                subject
+                and memory.subject
+                and _normalize(subject) == _normalize(memory.subject)
+            ) or (subject and _tokens(subject) & existing):
+                similarity += 0.3
+            if key_root and memory.key and memory.key.startswith(f"{key_root}."):
+                similarity += 0.35
+            candidate = (similarity, memory.memory_id, memory)
+            if best is None or candidate[:2] > best[:2]:
+                best = candidate
+        return best[2] if best is not None and best[0] >= 0.62 else None
+
     def _owned_memory(self, user_id: str, memory_id: str) -> MemoryRecord:
         memory = self._memories.get(memory_id)
         if memory is None or memory.user_id != user_id:
@@ -500,11 +830,16 @@ class PersistentMemory:
         return memory
 
     def _index(self, memory: MemoryRecord) -> None:
-        for token in _tokens(memory.content):
+        for token in _record_tokens(memory):
             self._token_index[(memory.user_id, token)].add(memory.memory_id)
+        if memory.key:
+            existing = self._key_index.get((memory.user_id, memory.key))
+            if existing is not None and existing != memory.memory_id:
+                raise ValueError("canonical key already exists in this memory scope")
+            self._key_index[(memory.user_id, memory.key)] = memory.memory_id
 
     def _unindex(self, memory: MemoryRecord) -> None:
-        for token in _tokens(memory.content):
+        for token in _record_tokens(memory):
             key = (memory.user_id, token)
             ids = self._token_index.get(key)
             if ids is None:
@@ -512,10 +847,26 @@ class PersistentMemory:
             ids.discard(memory.memory_id)
             if not ids:
                 del self._token_index[key]
+        if memory.key:
+            self._key_index.pop((memory.user_id, memory.key), None)
+
+    def _replace_record(self, current: MemoryRecord, **changes: Any) -> MemoryRecord:
+        self._unindex(current)
+        values = asdict(current)
+        values.update(changes)
+        updated = MemoryRecord(**values)
+        self._memories[current.memory_id] = updated
+        self._index(updated)
+        return updated
 
     async def _async_save_locked(self) -> None:
         await self._storage.async_save(
-            {"memories": [asdict(memory) for memory in self._memories.values()]}
+            {
+                "memories": [
+                    _record_as_storage_dict(memory)
+                    for memory in self._memories.values()
+                ]
+            }
         )
 
     def _ensure_initialized(self) -> None:
@@ -572,8 +923,11 @@ def memory_user_id(context: Any) -> str:
 
 
 def memory_as_dict(
-    memory: MemoryRecord, *, include_scope: bool = False
-) -> dict[str, str]:
+    memory: MemoryRecord,
+    *,
+    include_scope: bool = False,
+    personal_scope_id: str | None = None,
+) -> dict[str, Any]:
     """Serialize a memory, exposing its owner only to explicit admin callers."""
     result = {
         "memory_id": memory.memory_id,
@@ -582,9 +936,22 @@ def memory_as_dict(
         "source": memory.source,
         "created_at": memory.created_at,
         "updated_at": memory.updated_at,
+        "importance": getattr(memory, "importance", "normal"),
+        "subject": getattr(memory, "subject", None),
+        "key": getattr(memory, "key", None),
+        "valid_from": getattr(memory, "valid_from", None),
+        "last_confirmed_at": getattr(memory, "last_confirmed_at", None),
     }
     if include_scope:
-        result["scope_id"] = memory.user_id
+        owner = getattr(memory, "user_id", personal_scope_id)
+        result["scope_id"] = owner
+        result["scope"] = (
+            "Personal"
+            if personal_scope_id == owner
+            else "Shared household"
+            if owner == "shared:household"
+            else "Personal"
+        )
     return result
 
 
@@ -616,12 +983,31 @@ def memory_tools() -> list[dict[str, Any]]:
                             "enum": ["explicit", "implicit"],
                             "description": "Whether the user explicitly asked or this is proactively useful.",
                         },
+                        **_memory_metadata_schema(include_scope=True),
                     },
                     "required": ["content", "category", "source"],
                     "additionalProperties": False,
                 },
             },
             "function": {"type": "memory", "operation": "add"},
+        },
+        {
+            "spec": {
+                "name": "memory_upsert",
+                "description": "Create, confirm, or replace a durable fact using a stable canonical key when available.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "category": {"type": "string"},
+                        "source": {"type": "string", "enum": ["explicit", "implicit"]},
+                        **_memory_metadata_schema(include_scope=True),
+                    },
+                    "required": ["content", "category", "source"],
+                    "additionalProperties": False,
+                },
+            },
+            "function": {"type": "memory", "operation": "upsert"},
         },
         {
             "spec": {
@@ -632,6 +1018,7 @@ def memory_tools() -> list[dict[str, Any]]:
                     "properties": {
                         "query": {"type": "string"},
                         "category": {"type": "string"},
+                        "scope": {"type": "string", "enum": ["personal", "household"]},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 50},
                     },
                     "required": ["query"],
@@ -648,6 +1035,7 @@ def memory_tools() -> list[dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "category": {"type": "string"},
+                        "scope": {"type": "string", "enum": ["personal", "household"]},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 100},
                         "offset": {"type": "integer", "minimum": 0},
                     },
@@ -666,6 +1054,7 @@ def memory_tools() -> list[dict[str, Any]]:
                         "memory_id": {"type": "string"},
                         "content": {"type": "string"},
                         "category": {"type": "string"},
+                        **_memory_metadata_schema(include_scope=True),
                     },
                     "required": ["memory_id"],
                     "additionalProperties": False,
@@ -685,7 +1074,8 @@ def memory_tools() -> list[dict[str, Any]]:
                             "items": {"type": "string"},
                             "minItems": 1,
                             "maxItems": 50,
-                        }
+                        },
+                        "scope": {"type": "string", "enum": ["personal", "household"]},
                     },
                     "required": ["memory_ids"],
                     "additionalProperties": False,
@@ -696,21 +1086,187 @@ def memory_tools() -> list[dict[str, Any]]:
     ]
 
 
-def _tokens(value: str) -> set[str]:
-    return {
+def _memory_metadata_schema(*, include_scope: bool) -> dict[str, Any]:
+    schema: dict[str, Any] = {
+        "importance": {"type": "string", "enum": ["low", "normal", "high"]},
+        "subject": {"type": "string"},
+        "key": {"type": "string"},
+        "valid_from": {
+            "type": "string",
+            "description": "ISO 8601 time when the fact became true, if known.",
+        },
+    }
+    if include_scope:
+        schema["scope"] = {"type": "string", "enum": ["personal", "household"]}
+    return schema
+
+
+def _token_list(value: str) -> list[str]:
+    return [
         _stem(token)
         for token in _TOKEN_PATTERN.findall(value.casefold())
         if len(token) > 1 and token not in _STOP_WORDS
-    }
+    ]
+
+
+def _tokens(value: str) -> set[str]:
+    return set(_token_list(value))
 
 
 def _stem(token: str) -> str:
-    """Apply small deterministic suffix normalization for local lookup."""
+    """Apply conservative deterministic English suffix normalization."""
     if len(token) > 4 and token.endswith("ies"):
         return f"{token[:-3]}y"
+    if len(token) > 5 and token.endswith("ing"):
+        root = token[:-3]
+        if len(root) > 2 and root[-1] == root[-2]:
+            root = root[:-1]
+        return root
+    if len(token) > 4 and token.endswith("ed"):
+        return token[:-2]
+    if len(token) > 5 and token.endswith(("ches", "shes", "xes", "zes", "oes")):
+        return token[:-2]
     if len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
         return token[:-1]
     return token
+
+
+def _record_token_list(memory: MemoryRecord) -> list[str]:
+    return _token_list(
+        " ".join(
+            filter(None, (memory.content, memory.category, memory.subject, memory.key))
+        )
+    )
+
+
+def _record_tokens(memory: MemoryRecord) -> set[str]:
+    return set(_record_token_list(memory))
+
+
+def _bm25_score(
+    query_terms: list[str],
+    document_terms: list[str],
+    document_frequency: Mapping[str, int],
+    document_count: int,
+    average_length: float,
+) -> float:
+    frequencies: dict[str, int] = defaultdict(int)
+    for term in document_terms:
+        frequencies[term] += 1
+    k1, b = 1.2, 0.75
+    score = 0.0
+    max_score = 0.0
+    for term in dict.fromkeys(query_terms):
+        df = document_frequency.get(term, 0)
+        idf = math.log(1 + (document_count - df + 0.5) / (df + 0.5))
+        tf = frequencies.get(term, 0)
+        denominator = tf + k1 * (1 - b + b * len(document_terms) / average_length)
+        if tf:
+            score += idf * (tf * (k1 + 1) / denominator)
+        max_score += idf * (k1 + 1) / (1 + k1 * (1 - b))
+    return score / max_score if max_score else 0.0
+
+
+def _metadata_bonus(query_tokens: set[str], memory: MemoryRecord) -> float:
+    category = _tokens(memory.category)
+    subject = _tokens(memory.subject or "")
+    key = _tokens((memory.key or "").replace(".", " "))
+    return (
+        0.10 * len(query_tokens & category)
+        + 0.16 * len(query_tokens & subject)
+        + 0.18 * len(query_tokens & key)
+    )
+
+
+def _edit_distance_one(left: str, right: str) -> bool:
+    if abs(len(left) - len(right)) > 1 or min(len(left), len(right)) < 4:
+        return False
+    if len(left) == len(right):
+        return sum(a != b for a, b in zip(left, right, strict=True)) <= 1
+    shorter, longer = (left, right) if len(left) < len(right) else (right, left)
+    index = 0
+    while index < len(shorter) and shorter[index] == longer[index]:
+        index += 1
+    return shorter[index:] == longer[index + 1 :]
+
+
+def _fuzzy_relevance(query_tokens: set[str], document_tokens: set[str]) -> float:
+    matches = 0
+    for query in query_tokens:
+        if any(
+            (
+                min(len(query), len(token)) >= 5
+                and (query.startswith(token) or token.startswith(query))
+            )
+            or _edit_distance_one(query, token)
+            for token in document_tokens
+        ):
+            matches += 1
+    return 0.16 * matches / max(1, len(query_tokens))
+
+
+def _cosine_similarity(
+    left: list[float] | None, right: list[float] | None
+) -> float | None:
+    if not left or not right or len(left) != len(right):
+        return None
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if not left_norm or not right_norm:
+        return None
+    return sum(a * b for a, b in zip(left, right, strict=True)) / (
+        left_norm * right_norm
+    )
+
+
+def _freshness_tiebreak(memory: MemoryRecord) -> float:
+    parsed = dt_util.parse_datetime(memory.last_confirmed_at or memory.updated_at)
+    return parsed.timestamp() if parsed else 0.0
+
+
+def _embedding_text(memory: MemoryRecord) -> str:
+    return " | ".join(
+        filter(None, (memory.subject, memory.key, memory.category, memory.content))
+    )
+
+
+def _clean_embedding(value: Any) -> list[float]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError("embedding must be a numeric sequence")
+    result = [float(item) for item in value]
+    if (
+        not result
+        or len(result) > 16_384
+        or not all(math.isfinite(item) for item in result)
+    ):
+        raise ValueError("embedding is invalid")
+    return result
+
+
+def _record_as_storage_dict(
+    memory: MemoryRecord, *, embedding: bool = True
+) -> dict[str, Any]:
+    result = asdict(memory)
+    if not embedding:
+        result.pop("embedding", None)
+    return result
+
+
+def _migrate_raw_record(
+    raw: Mapping[str, Any], *, keep_embedding: bool = True
+) -> dict[str, Any]:
+    result = dict(raw)
+    result.setdefault("importance", "normal")
+    result.setdefault("subject", None)
+    result.setdefault("key", None)
+    result.setdefault("valid_from", None)
+    result.setdefault(
+        "last_confirmed_at", result.get("updated_at") or result.get("created_at")
+    )
+    if not keep_embedding:
+        result.pop("embedding", None)
+    result.setdefault("embedding", None)
+    return result
 
 
 def _normalize(value: str) -> str:
@@ -733,6 +1289,43 @@ def _clean_category(value: str) -> str:
     if not value or len(value) > MAX_CATEGORY_LENGTH:
         raise ValueError(f"category must be 1 to {MAX_CATEGORY_LENGTH} characters")
     return value
+
+
+def _clean_importance(value: str) -> str:
+    if not isinstance(value, str) or value not in MEMORY_IMPORTANCES:
+        raise ValueError("importance must be low, normal, or high")
+    return value
+
+
+def _clean_optional(value: str | None, field: str, maximum: int) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    cleaned = _SPACE_PATTERN.sub(" ", value).strip()
+    if not cleaned:
+        return None
+    if len(cleaned) > maximum:
+        raise ValueError(f"{field} must be at most {maximum} characters")
+    return cleaned
+
+
+def _clean_key(value: str | None) -> str | None:
+    cleaned = _clean_optional(value, "key", MAX_KEY_LENGTH)
+    if cleaned is None:
+        return None
+    normalized = re.sub(r"[^a-z0-9._-]+", ".", cleaned.casefold()).strip(".")
+    normalized = re.sub(r"\.{2,}", ".", normalized)
+    if not normalized:
+        raise ValueError("key must contain letters or numbers")
+    return normalized
+
+
+def _clean_timestamp(value: str | None, field: str) -> str | None:
+    cleaned = _clean_optional(value, field, 64)
+    if cleaned is not None and dt_util.parse_datetime(cleaned) is None:
+        raise ValueError(f"{field} must be an ISO 8601 timestamp")
+    return cleaned
 
 
 def _validate_privacy(content: str, source: str) -> None:

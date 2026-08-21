@@ -1,128 +1,46 @@
 # Persistent memory
 
-Persistent memory lets a conversation agent retain selected facts after chat history ends. It stores concise memories rather than complete conversation transcripts and retrieves only a bounded relevant subset for a later request.
+Persistent memory keeps concise durable facts after chat history ends. It is off by default and remains separate from conversation transcripts, temporary memory, and the conversation archive.
 
-!!! warning
-    Persistent memory is **Off** by default and must be enabled separately for each conversation agent.
+## Modes and automatic context
 
-## Memory modes
+- **Off** disables memory tools and automatic context without deleting stored records.
+- **Manual** saves only explicit remember requests.
+- **Automatic** may also save stable, useful facts proactively under the same privacy rules.
 
-### Off
+**Automatically include memories** is a per-conversation limit from `0` to `10` (default `3`). The opening user message ranks memories once. The selected IDs are retained with the existing logical conversation and the same bundle is injected on later turns. Updated records appear with their current content; deleted or newly inaccessible records are omitted. The bundle is discarded when the conversation expires or is replaced. `0` makes persistent memory tool-only, and `memory_search` remains available throughout a conversation.
 
-Persistent-memory tools and automatic retrieval are disabled for the agent. Existing stored memories are not deleted when you switch memory off.
+## Retrieval modes
 
-### Manual
+**Lightweight lexical** is the default and is fully local. It uses deterministic BM25-style IDF and term-frequency scoring, phrase bonuses, stemming and normalization, conservative prefix/one-edit typo matching, and category, subject, and canonical-key matches. Importance is applied only after a minimum relevance threshold. Freshness is only a small tie-breaker, and ties finish in stable memory-ID order.
 
-The assistant stores a memory only when you explicitly ask it to remember something.
+**Hybrid semantic** combines lexical relevance with locally calculated cosine similarity. It uses embeddings, not another LLM, classifier, or reranker call. Memory embeddings are generated when retrieval-relevant data changes and regenerated after restore when needed; one query embedding is requested for a new conversation. No vector database is used and raw embeddings are excluded from normal results, diagnostics, prompts, and backups. If the configured OpenAI-compatible provider or embedding model does not support embeddings, retrieval logs the failure and falls back to lexical without breaking the conversation. Semantic matching remains probabilistic and should not be treated as perfect.
 
-For example:
+## Records and reliable updates
 
-> Remember that I prefer temperatures in Celsius.
+Every memory has content, category, source, creation/update timestamps, and an importance of `low`, `normal`, or `high` (`normal` by default). High importance supplies a bounded ranking boost and cannot make an unrelated fact relevant.
 
-Relevant memories can still be retrieved automatically in later conversations.
+Optional advanced metadata includes:
 
-### Automatic
+- `subject`, such as `Oscar`
+- canonical `key`, such as `pet.oscar.breed`
+- `valid_from`, when the fact became true if known
+- `last_confirmed_at`, when it was created, explicitly reconfirmed, or meaningfully updated
 
-The assistant can store stable, useful facts proactively in addition to explicit remember requests. It is instructed not to save ordinary chat, transient details, one-off events, duplicates, full transcript excerpts, or unsuitable sensitive information.
+A non-empty normalized key is unique inside one owner scope; the same key can exist in personal and household scopes. Memories never expire automatically, and age alone does not make a fact false.
 
-## Automatically retrieved memories
+Prefer `memory_upsert` for durable new or changed facts. An exact key updates the record and returns `updated`; a duplicate refreshes confirmation and returns `confirmed`; a strong but uncertain related candidate returns `needs_resolution` without overwriting; otherwise it returns `created`. `memory_add` remains for compatibility. Current user statements always override conflicting memory context.
 
-Under Advanced options, **Automatically retrieved memories** controls how many locally ranked memories can be inserted automatically into a request.
+## Personal and household privacy
 
-- Range: 0 to 10
-- Default: 3
-- Set to `0` for tool-only retrieval
+An authenticated conversation can read that user's personal memories plus shared-household memories when shared memory is enabled. Results identify their friendly scope. It can never read another user's personal records. A conversation explicitly assigned to shared household reads household memory only; an unretained conversation reads and writes no retained memory.
 
-The assistant can also use structured memory tools to search, list, add, update, and delete memories.
+Writes are deliberately stricter. Authenticated conversations default to personal. Household writes require the explicit `household` selector and enabled shared memory. A shared-household conversation can write only household memory. Automatic household writes additionally require the shared **Automatic** setting. Identity is never inferred and raw Home Assistant user IDs are not exposed as model-facing scope selectors.
 
-## Using memory
+## Management, safety, backup, and limits
 
-Store something explicitly:
+Open **Extended OpenAI → Memories** to search/filter by text, category, importance, or scope and edit content, importance, scope, subject, key, and freshness metadata. Advanced fields remain optional. Destructive bulk actions retain confirmation, and authenticated users cannot manipulate another user's personal scope.
 
-> Remember that I prefer temperatures in Celsius.
+Storage uses Home Assistant's private versioned `.storage` API with a 10,000-record limit per agent. Version 2 migrates existing records to normal importance and uses the prior update (or creation) time as `last_confirmed_at`. Full backup/restore round-trips the new metadata and accepts prior records; embeddings are regenerated instead of exported.
 
-In a later conversation:
-
-> What temperature units do I normally use?
-
-Remove it:
-
-> Forget my preference about temperature units.
-
-The assistant searches for the relevant stored record before deleting it.
-
-## Manage memories in Home Assistant
-
-Open **Extended OpenAI → Memories** in the Home Assistant sidebar.
-
-After selecting a conversation agent, you can manage memories belonging to the signed-in Home Assistant user:
-
-- view content and category
-- add a memory
-- edit content or category
-- delete one memory
-- clear one category
-- clear all memories for that user and agent
-
-Category and full clears require confirmation. The backend also enforces confirmation for clear operations.
-
-Home Assistant actions for listing, deleting, and clearing memories remain available for automation/compatibility use.
-
-## What gets remembered?
-
-Manual mode is designed around explicit requests. Automatic mode may also store stable information such as:
-
-- durable preferences
-- household or device context
-- recurring routines
-- long-lived project constraints
-
-Stored facts should be concise and self-contained. When a fact changes, the assistant is encouraged to find and update the related memory rather than creating contradictory records.
-
-The storage layer rejects equal normalized content and records with very high token overlap, but semantic duplicate/contradiction detection still depends partly on model behavior.
-
-## Sensitive information
-
-Persistent memory is **not a secrets manager**.
-
-The storage layer rejects items such as passwords, access tokens, API keys, PINs, security codes, usable payment-card data, and certain bank-account identifiers. Automatic storage also applies stricter rules to sensitive personal categories.
-
-Do not use memory as a place to keep credentials or other secrets.
-
-## Storage and isolation
-
-Memory uses Home Assistant's versioned `.storage` Store API.
-
-- Each conversation-agent subentry has its own store.
-- Authenticated Home Assistant users have separate memory scopes.
-- Memory is independent of Recorder and its database backend.
-- Memories survive Home Assistant restarts and integration reloads.
-- The integration does not retain an OpenAI response/thread as the memory store.
-
-Requests without a Home Assistant user ID use the configured voice-scope policy. They may map to a selected user, a separate shared-household scope, or be unretained. The privacy-conscious default is unretained, which also disables memory writes.
-
-Existing `__anonymous__` memories are preserved in a clearly labelled legacy scope. Administrators can inspect, selectively reassign to a user or shared household, leave, or delete them; no automatic ownership assignment occurs.
-
-## Retrieval and OpenAI
-
-The backend builds a local token index and ranks candidate memories locally.
-
-The full memory database is never inserted into every model request. Instead:
-
-1. a configured number of top local matches may be included automatically
-2. the model can call `memory_search` for additional context
-3. structured tools handle add, update, list, search, and delete operations
-
-A stored memory remains local until its content is selected for inclusion in a model request or returned by a memory tool during a conversation. At that point, that selected content is sent to the configured model provider as conversation context.
-
-## Limits
-
-Current limitations include:
-
-- memories are isolated between conversation agents
-- users do not share a household memory pool
-- keyword ranking may miss some paraphrases
-- anonymous conversation sources share one anonymous scope per agent
-- the storage design is intended for thousands of small records, with a limit of 10,000 per agent
-
-Diagnostics report memory mode, record counts, user-scope counts, backend name, and storage version without exposing memory content.
+Memory context is sent to the configured provider only when selected or returned by a tool. It is always framed as untrusted background data, never instructions or authorization. The storage layer rejects secrets, usable financial credentials, and automatic sensitive-personal facts. Persistent memory is not a secrets manager.

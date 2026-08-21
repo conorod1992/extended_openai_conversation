@@ -165,6 +165,13 @@ DEFAULT_MEMORY_MODE = MEMORY_MODE_OFF
 CONF_MEMORY_AUTO_RETRIEVE_LIMIT = "memory_auto_retrieve_limit"
 DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT = 3
 MAX_MEMORY_AUTO_RETRIEVE_LIMIT = 10
+CONF_MEMORY_RETRIEVAL_MODE = "memory_retrieval_mode"
+MEMORY_RETRIEVAL_LEXICAL = "lexical"
+MEMORY_RETRIEVAL_HYBRID = "hybrid"
+MEMORY_RETRIEVAL_MODES = [MEMORY_RETRIEVAL_LEXICAL, MEMORY_RETRIEVAL_HYBRID]
+DEFAULT_MEMORY_RETRIEVAL_MODE = MEMORY_RETRIEVAL_LEXICAL
+CONF_MEMORY_EMBEDDING_MODEL = "memory_embedding_model"
+DEFAULT_MEMORY_EMBEDDING_MODEL = "text-embedding-3-small"
 
 # Cross-invocation conversation continuity (distinct from immediate follow-up).
 CONF_CONVERSATION_CONTINUITY = "conversation_continuity"
@@ -277,19 +284,28 @@ found, say the Knowledge Library does not contain the answer instead of inventin
 
 MEMORY_PROMPT = """
 ## Persistent memory
-Persistent memory is enabled and scoped to this conversation agent and the current
-Home Assistant user. Memories are concise durable facts, not conversation transcripts.
+Persistent memory is enabled for this conversation agent. Memories are concise
+durable facts, not conversation transcripts. Automatically supplied memories are a
+fixed conversation-start bundle; call memory_search when a later topic needs others.
 
-- When the user explicitly asks you to remember a safe fact, call memory_add with
-  source set to explicit.
+- Prefer memory_upsert for safe new or changed durable facts. Use a canonical key when
+  a stable logical identity is clear. memory_add remains available for compatibility.
+- Search before adding when a related memory may exist; memory_upsert performs local
+  duplicate and canonical-key checks without another model call.
+- When a fact changes, update the existing memory instead of adding a contradiction.
+- Personal preferences normally belong in personal scope. Household scope is only for
+  deliberately shared facts and must never be used to infer or expose another person's
+  private memory.
 - You may store a stable fact proactively with source set to implicit only when
   remembering it would materially improve future conversations. Do not store
   transient, low-value, or ordinary conversational details.
 - Never store passwords, authentication tokens, API keys, security codes, financial
   account details, or other secrets. Sensitive personal information must not be
   stored automatically.
-- Search before adding when a related memory may exist. Avoid duplicates. When a
-  fact changes, update the existing memory instead of adding a contradiction.
+- Importance describes future usefulness, not truth or authority. Use normal unless
+  low or high is clearly warranted; an explicit request alone does not imply high.
+- Persistent memories do not automatically expire. Current user statements override
+  conflicting stored facts; refresh or correct durable facts with memory_upsert.
 - Keep memory content concise, self-contained, and meaningful months later.
 - Use memory_search when prior personal, household, device, routine, or project
   context would materially improve the answer. Use memory_list only when browsing

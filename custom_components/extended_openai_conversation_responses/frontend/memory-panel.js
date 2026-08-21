@@ -5,6 +5,8 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     this._memories = [];
     this._activeCategory = "all";
     this._query = "";
+    this._importanceFilter = "all";
+    this._scopeFilter = "all";
     this._narrow = false;
     this._confirmResolver = null;
   }
@@ -482,7 +484,7 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
         <header class="page-header">
           <div>
             <h1>OpenAI memories</h1>
-            <p class="subtitle">Manage information this assistant can remember between conversations. Memories shown here belong only to your Home Assistant user and the selected conversation agent.</p>
+            <p class="subtitle">Manage your personal memories and, where enabled, facts deliberately shared with the household.</p>
           </div>
         </header>
 
@@ -517,6 +519,10 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
           </div>
 
           <div id="categories" class="chips" aria-label="Filter by category"></div>
+          <div class="agent-row" aria-label="Additional filters">
+            <select id="importanceFilter" aria-label="Filter by importance"><option value="all">All importance</option><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option></select>
+            <select id="scopeFilter" aria-label="Filter by scope"><option value="all">All scopes</option><option value="Personal">Personal</option><option value="Shared household">Shared household</option></select>
+          </div>
           <div id="memories" class="memory-list"></div>
         </section>
       </main>
@@ -529,6 +535,20 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
               <label class="field-label" for="memoryContent">Memory</label>
               <textarea id="memoryContent" required placeholder="What should the agent remember?"></textarea>
             </div>
+            <div class="dialog-field">
+              <label class="field-label" for="memoryImportance">Importance</label>
+              <select id="memoryImportance"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option></select>
+            </div>
+            <div class="dialog-field">
+              <label class="field-label" for="memoryScope">Scope</label>
+              <select id="memoryScope"><option value="personal">Personal</option><option value="household">Shared household</option></select>
+            </div>
+            <details>
+              <summary>Advanced metadata</summary>
+              <div class="dialog-field"><label class="field-label" for="memorySubject">Subject (optional)</label><input id="memorySubject" type="text"></div>
+              <div class="dialog-field"><label class="field-label" for="memoryKey">Canonical key (optional)</label><input id="memoryKey" type="text" placeholder="pet.oscar.breed"></div>
+              <div class="dialog-field"><label class="field-label" for="memoryValidFrom">Valid from (optional ISO 8601)</label><input id="memoryValidFrom" type="text"></div>
+            </details>
             <div class="dialog-field">
               <label class="field-label" for="memoryCategory">Category</label>
               <input id="memoryCategory" type="text" list="categorySuggestions" value="general" required autocomplete="off">
@@ -599,6 +619,8 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
       this._query = event.target.value.trim().toLocaleLowerCase();
       this._renderMemories();
     });
+    root.querySelector("#importanceFilter").addEventListener("change", (event) => { this._importanceFilter = event.target.value; this._renderMemories(); });
+    root.querySelector("#scopeFilter").addEventListener("change", (event) => { this._scopeFilter = event.target.value; this._renderMemories(); });
 
     root.querySelector("#memoryForm").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -752,8 +774,10 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     return this._memories.filter((memory) => {
       const category = memory.category || "general";
       if (this._activeCategory !== "all" && category !== this._activeCategory) return false;
+      if (this._importanceFilter !== "all" && memory.importance !== this._importanceFilter) return false;
+      if (this._scopeFilter !== "all" && memory.scope !== this._scopeFilter) return false;
       if (!this._query) return true;
-      return `${memory.content || ""} ${category}`.toLocaleLowerCase().includes(this._query);
+      return `${memory.content || ""} ${category} ${memory.subject || ""} ${memory.key || ""} ${memory.scope || ""} ${memory.importance || ""}`.toLocaleLowerCase().includes(this._query);
     });
   }
 
@@ -826,8 +850,19 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     const updated = document.createElement("span");
     updated.textContent = `Updated ${this._formatDate(memory.updated_at)}`;
 
-    metadata.append(category, source, separator, updated);
-    body.append(content, metadata);
+    const importance = document.createElement("span");
+    importance.textContent = `${memory.importance || "normal"} importance`;
+    const scope = document.createElement("span");
+    scope.textContent = memory.scope || "Personal";
+    metadata.append(category, scope, importance, source, separator, updated);
+    if (memory.subject || memory.key || memory.valid_from || memory.last_confirmed_at) {
+      const secondary = document.createElement("div");
+      secondary.className = "metadata";
+      secondary.textContent = [memory.subject && `Subject: ${memory.subject}`, memory.key && `Key: ${memory.key}`, memory.valid_from && `Valid from ${this._formatDate(memory.valid_from)}`, memory.last_confirmed_at && `Confirmed ${this._formatDate(memory.last_confirmed_at)}`].filter(Boolean).join(" Â· ");
+      body.append(content, metadata, secondary);
+    } else {
+      body.append(content, metadata);
+    }
 
     const actions = document.createElement("div");
     actions.className = "memory-actions";
@@ -867,6 +902,12 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     title.textContent = memory ? "Edit memory" : "Add memory";
     content.value = memory?.content || "";
     category.value = memory?.category || (this._activeCategory !== "all" ? this._activeCategory : "general");
+    root.querySelector("#memoryImportance").value = memory?.importance || "normal";
+    root.querySelector("#memoryScope").value = memory?.scope === "Shared household" ? "household" : "personal";
+    root.querySelector("#memoryScope").disabled = false;
+    root.querySelector("#memorySubject").value = memory?.subject || "";
+    root.querySelector("#memoryKey").value = memory?.key || "";
+    root.querySelector("#memoryValidFrom").value = memory?.valid_from || "";
     remove.hidden = !memory;
     save.textContent = memory ? "Save" : "Add memory";
 
@@ -888,6 +929,11 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     const dialog = root.querySelector("#memoryDialog");
     const content = root.querySelector("#memoryContent").value.trim();
     const category = root.querySelector("#memoryCategory").value.trim() || "general";
+    const importance = root.querySelector("#memoryImportance").value;
+    const scope = root.querySelector("#memoryScope").value;
+    const subject = root.querySelector("#memorySubject").value.trim();
+    const key = root.querySelector("#memoryKey").value.trim();
+    const valid_from = root.querySelector("#memoryValidFrom").value.trim();
     const save = root.querySelector("#dialogSave");
 
     if (!content) {
@@ -902,9 +948,10 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
           memory_id: this._editingMemory.memory_id,
           content,
           category,
+          importance, scope, original_scope: this._editingMemory.scope === "Shared household" ? "household" : "personal", subject, key, valid_from,
         }));
       } else {
-        await this._call("add", this._data({ content, category }));
+        await this._call("add", this._data({ content, category, importance, scope, subject, key, valid_from }));
       }
       dialog.close();
       this._editingMemory = null;
@@ -934,7 +981,7 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     if (!confirmed) return;
 
     try {
-      await this._call("delete", this._data({ memory_id: memory.memory_id }));
+      await this._call("delete", this._data({ memory_id: memory.memory_id, scope: memory.scope === "Shared household" ? "household" : "personal" }));
       await this._loadMemories();
     } catch (err) {
       this._status(err.message || String(err), true);

@@ -25,7 +25,20 @@ const CHOICE_LABELS = Object.freeze({
 export const configurationChoiceLabel = (key, item) => CHOICE_LABELS[key]?.[item.value] || item.label;
 const settingSearch = (label, description, key, helpKey = null) => `${label} ${description} ${key} ${helpKey ? helpSearchTerms(helpKey) : ""}`.toLowerCase();
 const labelRow = (panel, label, key, helpKey = null, strong = false) => `<span class="setting-label-row"><label for="config-${key}">${strong ? `<strong>${label}</strong>` : label}</label>${helpKey ? helpButton(panel, helpKey) : ""}</span>`;
-const field = (panel, key, label, value, type = "text", description = "", disabled = false, helpKey = null) => `<div class="setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey)}<input id="config-${key}" data-config="${key}" data-type="${type}" type="${type === "number" ? "number" : "text"}" value="${panel._e(value)}" ${disabled ? "disabled" : ""}>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span></div>`;
+const field = (panel, key, label, value, type = "text", description = "", disabled = false, helpKey = null) => {
+  if (key === "memory_auto_retrieve_limit") {
+    label = "Automatically include memories";
+    description = "Select up to this many relevant memories when a new conversation starts. The same memories remain available for that conversation. Set to 0 to use memory only on demand.";
+  }
+  let result = `<div class="setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey)}<input id="config-${key}" data-config="${key}" data-type="${type}" type="${type === "number" ? "number" : "text"}" value="${panel._e(value)}" ${disabled ? "disabled" : ""}>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span></div>`;
+  if (key === "memory_auto_retrieve_limit") {
+    const config = panel._draft || panel._result?.config || {};
+    const choices = panel._result?.options?.memory_retrieval_mode || [];
+    result += select(panel, "memory_retrieval_mode", "Memory retrieval", config.memory_retrieval_mode, choices, "Lightweight lexical is local and dependency-free. Hybrid semantic uses embeddings and falls back to lexical if unavailable.");
+    result += field(panel, "memory_embedding_model", "Embedding model", config.memory_embedding_model || "text-embedding-3-small", "text", "Used only for hybrid semantic retrieval; the provider must support embeddings.");
+  }
+  return result;
+};
 const select = (panel, key, label, value, options, description = "", disabled = false, helpKey = null) => `<div class="setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey)}<select id="config-${key}" data-config="${key}" ${disabled ? "disabled" : ""}>${options.map((item) => option(panel, typeof item === "string" ? item : item.value, value, typeof item === "string" ? null : item.label)).join("")}</select>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span></div>`;
 const toggle = (panel, key, label, value, description = "", disabled = false, helpKey = null) => `<div class="config-toggle setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}"><span class="setting-copy">${labelRow(panel, label, key, helpKey, true)}${description ? `<small>${description}</small>` : ""}</span><label class="switch-control" for="config-${key}"><input id="config-${key}" data-config="${key}" data-type="boolean" type="checkbox" role="switch" ${bool(value)} ${disabled ? "disabled" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>`;
 
@@ -319,7 +332,7 @@ export function bindConfiguration(panel) {
   });
   root.querySelector("#prompt-preview-close")?.addEventListener("click",()=>root.querySelector("#prompt-preview-dialog").close());
   root.querySelector("#copy-prompt-preview")?.addEventListener("click",async()=>{try{const text=(panel._effectiveRequestPreview?.sections||[]).map((section)=>`## ${section.label}\n${section.content}`).join("\n\n");await copyTextToClipboard(text);panel._toast("Effective request copied");}catch(err){panel._toast(`Unable to copy request: ${err.message||String(err)}`,true);}});
-  root.querySelector("#reset-advanced")?.addEventListener("click", () => { ["temperature","top_p","reasoning_effort","service_tier","shorten_tool_call_id","memory_auto_retrieve_limit"].forEach((key) => { panel._draft[key]=clone(panel._result.defaults[key]); const input=root.querySelector(`[data-config="${key}"]`); if(input) input.dataset.type==="boolean" ? input.checked=panel._draft[key] : input.value=panel._draft[key]; }); panel._setConfigDirty(true); dirty(panel); });
+  root.querySelector("#reset-advanced")?.addEventListener("click", () => { ["temperature","top_p","reasoning_effort","service_tier","shorten_tool_call_id","memory_auto_retrieve_limit","memory_retrieval_mode","memory_embedding_model"].forEach((key) => { panel._draft[key]=clone(panel._result.defaults[key]); const input=root.querySelector(`[data-config="${key}"]`); if(input) input.dataset.type==="boolean" ? input.checked=panel._draft[key] : input.value=panel._draft[key]; }); panel._setConfigDirty(true); dirty(panel); });
   root.querySelector("#add-regex")?.addEventListener("click", () => { readConfig(panel); panel._draft.speech_regex_replacements.push({pattern:"",replacement:""}); panel._setConfigDirty(true); renderRegexRules(panel,panel._draft.speech_regex_replacements.length-1); });
   root.querySelector("#revert-config")?.addEventListener("click", () => { panel._draft=clone(panel._configData.config); panel._draftTitle=panel._configData.title; panel._setConfigDirty(false); panel._render(); });
   root.querySelector("#save-config")?.addEventListener("click", async () => {

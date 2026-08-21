@@ -13,8 +13,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .agent_test import async_test_agent
-from .const import DOMAIN, MEMORY_PANEL_TITLE, MEMORY_PANEL_URL
+from .const import (
+    CONF_SHARED_MEMORY_MODE,
+    DEFAULT_SHARED_MEMORY_MODE,
+    DOMAIN,
+    MEMORY_PANEL_TITLE,
+    MEMORY_PANEL_URL,
+    SHARED_MEMORY_DISABLED,
+)
 from .memory import async_get_memory, get_memory_mode, memory_as_dict
+from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 
 WS_COMMAND = f"{DOMAIN}/manage"
 _UI_SETUP = f"{DOMAIN}.memory_ui_setup"
@@ -45,6 +53,10 @@ async def async_manage_command(
                     "subentry_id": subentry.subentry_id,
                     "title": subentry.title,
                     "memory_mode": get_memory_mode(subentry.data),
+                    "shared_memory_enabled": subentry.data.get(
+                        CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE
+                    )
+                    != SHARED_MEMORY_DISABLED,
                 }
                 for entry in hass.config_entries.async_entries(DOMAIN)
                 for subentry in entry.subentries.values()
@@ -62,33 +74,94 @@ async def async_manage_command(
         return (await async_test_agent(hass, entry, subentry)).as_dict()
 
     memory = await async_get_memory(hass, entry_id, subentry_id)
+    shared_enabled = (
+        subentry.data.get(CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE)
+        != SHARED_MEMORY_DISABLED
+    )
+    readable_scopes = [
+        user_id,
+        *([SHARED_HOUSEHOLD_SCOPE_ID] if shared_enabled else []),
+    ]
+    requested_scope = message.get("scope")
+    if requested_scope not in {None, "personal", "household"}:
+        raise HomeAssistantError("scope must be personal or household")
+    if requested_scope == "household":
+        if not shared_enabled:
+            raise HomeAssistantError("Shared household memory is disabled")
+        write_scope = SHARED_HOUSEHOLD_SCOPE_ID
+    else:
+        write_scope = user_id
     if action == "list":
         records = await memory.async_list(
-            user_id,
+            readable_scopes[0] if len(readable_scopes) == 1 else readable_scopes,
             message.get("category"),
             int(message.get("limit", 100)),
             int(message.get("offset", 0)),
         )
-        return {"memories": [memory_as_dict(record) for record in records]}
+        return {
+            "memories": [
+                memory_as_dict(record, include_scope=True, personal_scope_id=user_id)
+                for record in records
+            ]
+        }
     if action == "add":
-        result = await memory.async_add(
-            user_id,
+        add_args = (
+            write_scope,
             str(message.get("content", "")),
             str(message.get("category", "general")),
             "explicit",
         )
+        if any(
+            key in message for key in ("importance", "subject", "key", "valid_from")
+        ):
+            result = await memory.async_add(
+                *add_args,
+                str(message.get("importance", "normal")),
+                message.get("subject"),
+                message.get("key"),
+                message.get("valid_from"),
+            )
+        else:
+            result = await memory.async_add(*add_args)
         return result
     if action == "update":
-        record = await memory.async_update(
-            user_id,
-            str(message.get("memory_id", "")),
+        original_scope = message.get("original_scope")
+        if original_scope not in {None, "personal", "household"}:
+            raise HomeAssistantError("original_scope must be personal or household")
+        original_scope_id = (
+            SHARED_HOUSEHOLD_SCOPE_ID if original_scope == "household" else user_id
+        )
+        memory_id = str(message.get("memory_id", ""))
+        update_args = (
+            original_scope_id,
+            memory_id,
             message.get("content"),
             message.get("category"),
         )
-        return {"status": "updated", "memory": memory_as_dict(record)}
+        if any(
+            key in message for key in ("importance", "subject", "key", "valid_from")
+        ):
+            record = await memory.async_update(
+                *update_args,
+                message.get("importance"),
+                message.get("subject"),
+                message.get("key"),
+                message.get("valid_from"),
+                target_user_id=write_scope,
+            )
+        elif original_scope is not None:
+            record = await memory.async_update(*update_args, target_user_id=write_scope)
+        else:
+            record = await memory.async_update(*update_args)
+        return {
+            "status": "updated",
+            "memory": memory_as_dict(
+                record, include_scope=True, personal_scope_id=user_id
+            ),
+        }
     if action == "delete":
         deleted = await memory.async_delete(
-            user_id, [str(message.get("memory_id", ""))]
+            write_scope, [str(message.get("memory_id", ""))]
         )
         return {"deleted": deleted}
     if action == "clear":
@@ -97,7 +170,7 @@ async def async_manage_command(
         category = message.get("category")
         if category is not None and not isinstance(category, str):
             raise HomeAssistantError("category must be a string")
-        return {"deleted": await memory.async_clear(user_id, category)}
+        return {"deleted": await memory.async_clear(write_scope, category)}
     raise HomeAssistantError(f"Unknown management action: {action}")
 
 
@@ -110,6 +183,12 @@ async def async_manage_command(
         vol.Optional("memory_id"): str,
         vol.Optional("content"): str,
         vol.Optional("category"): str,
+        vol.Optional("importance"): str,
+        vol.Optional("scope"): str,
+        vol.Optional("original_scope"): str,
+        vol.Optional("subject"): str,
+        vol.Optional("key"): str,
+        vol.Optional("valid_from"): str,
         vol.Optional("limit"): int,
         vol.Optional("offset"): int,
         vol.Optional("confirm"): bool,
