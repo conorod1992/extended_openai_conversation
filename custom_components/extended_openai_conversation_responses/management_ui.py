@@ -87,6 +87,7 @@ from .continuity import ConversationContinuity, async_get_continuity
 from .conversation_archive import async_get_archive
 from .function_groups import assemble_function_tools, get_function_group_runtime
 from .functions import FUNCTIONS
+from .guest_mode import async_get_guest_mode, resolve_guest_policy
 from .helpers import get_exposed_entities
 from .knowledge import (
     async_get_knowledge,
@@ -148,6 +149,11 @@ async def _async_preview_effective_request(
     user_id: str,
 ) -> dict[str, Any]:
     """Assemble a side-effect-free snapshot of a fresh provider request."""
+    configured_tools = configured_function_tools_from_data(options)
+    guest_manager = await async_get_guest_mode(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    guest_policy = resolve_guest_policy(hass, options, guest_manager, configured_tools)
     temporary_memories = []
     notes = [
         "User input and conversation history are excluded.",
@@ -161,7 +167,11 @@ async def _async_preview_effective_request(
         scope,
         None,
     )
-    if temporary_mode != TEMPORARY_MEMORY_OFF and temporary_scope is not None:
+    if (
+        temporary_mode != TEMPORARY_MEMORY_OFF
+        and temporary_scope is not None
+        and guest_policy.temporary_memory
+    ):
         temporary_memories = (
             await temporary.async_active_snapshot(temporary_scope)
             if temporary is not None
@@ -183,32 +193,64 @@ async def _async_preview_effective_request(
             for skill in skill_manager.get_all_skills()
             if skill.name in enabled_names
         ]
-        if skill_manager is not None
+        if skill_manager is not None and guest_policy.skills
         else []
     )
     knowledge = get_loaded_knowledge(hass, entry.entry_id, subentry.subentry_id)
     knowledge_available = bool(
-        options.get(CONF_KNOWLEDGE_ENABLED)
+        guest_policy.knowledge_access
+        and options.get(CONF_KNOWLEDGE_ENABLED)
         and knowledge is not None
         and knowledge.source_count > 0
     )
     try:
+        exposed_entities = get_exposed_entities(hass)
+        if guest_policy.guest_active:
+            exposed_entities = [
+                entity
+                for entity in exposed_entities
+                if guest_policy.allows_entity_read(str(entity.get("entity_id", "")))
+            ]
         preview = render_effective_prompt(
             hass,
             options,
-            exposed_entities=get_exposed_entities(hass),
+            exposed_entities=exposed_entities,
             current_device_id=None,
             user_input=None,
             skills=skills,
             memories=None,
             temporary_memories=temporary_memories,
             knowledge_available=knowledge_available,
+            guest_policy=guest_policy,
         )
-        configured_tools = configured_function_tools_from_data(options)
         groups = validate_function_groups(
             options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
             configured_tools,
         )
+        if guest_policy.guest_active:
+            membership = {
+                name: group for group in groups for name in group.get("functions", [])
+            }
+            configured_tools = [
+                tool
+                for tool in configured_tools
+                if guest_policy.allows_configured_tool(tool["spec"]["name"])
+                and (
+                    tool["spec"]["name"] not in membership
+                    or membership[tool["spec"]["name"]].get("guest_allowed") is True
+                )
+            ]
+            allowed_names = {tool["spec"]["name"] for tool in configured_tools}
+            groups = [
+                {
+                    **group,
+                    "functions": [
+                        name for name in group["functions"] if name in allowed_names
+                    ],
+                }
+                for group in groups
+                if group.get("guest_allowed") is True
+            ]
         grouped = assemble_function_tools(configured_tools, groups, set())
         provider = build_provider_request_snapshot(options, getattr(entry, "data", {}))
         custom_tools = [
@@ -234,6 +276,7 @@ async def _async_preview_effective_request(
                 temporary_mode != TEMPORARY_MEMORY_OFF and temporary_scope is not None
             ),
             knowledge_available=knowledge_available,
+            guest_policy=guest_policy,
         )
         conditional_continue = (
             options.get(CONF_CONTINUE_CONVERSATION, DEFAULT_CONTINUE_CONVERSATION)
@@ -247,7 +290,9 @@ async def _async_preview_effective_request(
         formatted_integration = format_function_tools(
             integration_tools, provider.api_mode
         )
-        formatted_provider = list(provider.provider_tools)
+        formatted_provider = (
+            list(provider.provider_tools) if guest_policy.web_search else []
+        )
         request_settings = {"api_mode": provider.api_mode, **provider.api_kwargs}
         if (
             formatted_custom
@@ -348,6 +393,10 @@ async def _async_preview_effective_request(
             }
             for section in preview.sections
         ],
+        "guest_mode": {
+            "status": guest_manager.status(),
+            "policy": guest_policy.as_diagnostics(),
+        },
         "sections": sections,
         "total_character_count": sum(
             section["character_count"] for section in sections
@@ -530,6 +579,9 @@ async def async_management_command(
                 knowledge = await async_get_knowledge(
                     hass, entry.entry_id, subentry.subentry_id
                 )
+                guest_mode = await async_get_guest_mode(
+                    hass, entry.entry_id, subentry.subentry_id
+                )
                 agents.append(
                     {
                         "entry_id": entry.entry_id,
@@ -552,6 +604,7 @@ async def async_management_command(
                             )
                         ),
                         "tokens_today": usage.today_summary()["total_tokens"],
+                        "guest_mode": guest_mode.status(),
                     }
                 )
         return {
@@ -565,6 +618,29 @@ async def async_management_command(
     if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
         raise HomeAssistantError("entry_id and subentry_id are required")
     entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
+
+    if section == "guest_mode":
+        manager = await async_get_guest_mode(hass, entry_id, subentry_id)
+        if action == "get":
+            configured_tools = configured_function_tools_from_data(subentry.data)
+            policy = resolve_guest_policy(
+                hass, subentry.data, manager, configured_tools
+            )
+            return {
+                "status": manager.status(),
+                "policy": policy.as_diagnostics(),
+            }
+        _require_admin(is_admin)
+        if action == "update":
+            return {
+                "status": await manager.async_update_trusted(
+                    active_from=message.get("active_from"),
+                    active_until=message.get("active_until"),
+                    indefinite=message.get("indefinite") is True,
+                )
+            }
+        if action == "disable":
+            return {"status": await manager.async_disable_trusted()}
 
     if section == "backup":
         _require_admin(is_admin)
@@ -1087,6 +1163,9 @@ def asdict_or_none(value: Any) -> dict[str, Any] | None:
         vol.Optional("category"): str,
         vol.Optional("start_date"): str,
         vol.Optional("end_date"): str,
+        vol.Optional("active_from"): str,
+        vol.Optional("active_until"): str,
+        vol.Optional("indefinite"): bool,
         vol.Optional("limit"): int,
         vol.Optional("offset"): int,
         vol.Optional("start_turn"): int,

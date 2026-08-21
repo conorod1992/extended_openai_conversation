@@ -19,6 +19,7 @@ from .const import (
     DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DOMAIN,
 )
+from .guest_mode import GuestModeManager, async_get_guest_mode
 from .usage import UsageManager, async_get_usage
 
 
@@ -32,6 +33,9 @@ async def async_setup_entry(
         if subentry.subentry_type != "conversation":
             continue
         usage = await async_get_usage(hass, config_entry.entry_id, subentry.subentry_id)
+        guest_mode = await async_get_guest_mode(
+            hass, config_entry.entry_id, subentry.subentry_id
+        )
         usage.request_retention_days = int(
             subentry.data.get(
                 CONF_USAGE_REQUEST_RETENTION_DAYS,
@@ -49,8 +53,52 @@ async def async_setup_entry(
                 UsageTodaySensor(subentry, usage),
                 UsageMonthSensor(subentry, usage),
                 LastResponseUsageSensor(subentry, usage),
+                GuestModeSensor(subentry, guest_mode),
             ],
             config_subentry_id=subentry.subentry_id,
+        )
+
+
+class GuestModeSensor(SensorEntity):
+    """Expose the integration-owned Guest Mode schedule."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "guest_mode"
+    _attr_icon = "mdi:account-lock"
+
+    def __init__(self, subentry: ConfigSubentry, guest_mode: GuestModeManager) -> None:
+        self._guest_mode = guest_mode
+        self._attr_unique_id = f"{subentry.subentry_id}_guest_mode"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, subentry.subentry_id)},
+            name=subentry.title,
+            manufacturer="OpenAI",
+            model=subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
+            entry_type=DeviceEntryType.SERVICE,
+        )
+
+    @property
+    def native_value(self) -> str:
+        return str(self._guest_mode.status()["state"])
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        status = self._guest_mode.status()
+        return {
+            key: status[key]
+            for key in (
+                "active_from",
+                "active_until",
+                "indefinite",
+                "currently_active",
+                "scheduled",
+            )
+        }
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            self._guest_mode.async_add_listener(self.async_write_ha_state)
         )
 
 

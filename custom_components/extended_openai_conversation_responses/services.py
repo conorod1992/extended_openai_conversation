@@ -47,12 +47,15 @@ from .const import (
     SERVICE_DISABLE_FUNCTION_TOOLS,
     SERVICE_DOWNLOAD_SKILL,
     SERVICE_ENABLE_FUNCTION_TOOLS,
+    SERVICE_GUEST_MODE_DISABLE,
+    SERVICE_GUEST_MODE_UPDATE,
     SERVICE_MEMORY_CLEAR,
     SERVICE_MEMORY_DELETE,
     SERVICE_MEMORY_LIST,
     SERVICE_QUERY_IMAGE,
     SERVICE_RELOAD_SKILLS,
 )
+from .guest_mode import async_get_guest_mode
 from .helpers import get_api_mode, get_authenticated_client, get_token_param_for_model
 from .memory import async_get_memory, memory_as_dict, memory_user_id
 
@@ -137,6 +140,17 @@ FUNCTION_TOOL_STATE_SCHEMA = vol.Schema(
         ),
     }
 )
+
+GUEST_MODE_UPDATE_SCHEMA = vol.Schema(
+    {
+        **MEMORY_AGENT_FIELDS,
+        vol.Optional("active_from"): cv.string,
+        vol.Optional("active_until"): cv.string,
+        vol.Optional("indefinite", default=False): cv.boolean,
+    }
+)
+
+GUEST_MODE_DISABLE_SCHEMA = vol.Schema({**MEMORY_AGENT_FIELDS})
 
 _LOGGER = logging.getLogger(__package__)
 
@@ -494,6 +508,34 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             False,
         )
 
+    async def guest_mode_update(call: ServiceCall) -> ServiceResponse:
+        """Set the full Guest Mode interval from a trusted HA action."""
+        await _async_require_service_admin(hass, call)
+        entry_id, subentry_id = resolve_memory_agent(
+            hass, call.data["config_entry"], call.data["agent_id"]
+        )
+        manager = await async_get_guest_mode(hass, entry_id, subentry_id)
+        try:
+            return cast(
+                ServiceResponse,
+                await manager.async_update_trusted(
+                    active_from=call.data.get("active_from"),
+                    active_until=call.data.get("active_until"),
+                    indefinite=call.data["indefinite"],
+                ),
+            )
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+
+    async def guest_mode_disable(call: ServiceCall) -> ServiceResponse:
+        """End or cancel Guest Mode from a trusted HA action."""
+        await _async_require_service_admin(hass, call)
+        entry_id, subentry_id = resolve_memory_agent(
+            hass, call.data["config_entry"], call.data["agent_id"]
+        )
+        manager = await async_get_guest_mode(hass, entry_id, subentry_id)
+        return cast(ServiceResponse, await manager.async_disable_trusted())
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_QUERY_IMAGE,
@@ -561,6 +603,22 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         SERVICE_DISABLE_FUNCTION_TOOLS,
         disable_function_tools,
         schema=FUNCTION_TOOL_STATE_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GUEST_MODE_UPDATE,
+        guest_mode_update,
+        schema=GUEST_MODE_UPDATE_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GUEST_MODE_DISABLE,
+        guest_mode_disable,
+        schema=GUEST_MODE_DISABLE_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
     )
 
 

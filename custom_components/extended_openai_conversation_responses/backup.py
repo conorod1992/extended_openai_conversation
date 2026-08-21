@@ -28,6 +28,7 @@ from .conversation_archive import (
     ConversationArchive,
     async_get_archive,
 )
+from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
 from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
 from .memory import MemoryRecord, PersistentMemory, async_get_memory
 from .temporary_memory import (
@@ -38,7 +39,7 @@ from .temporary_memory import (
 from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
 
 BACKUP_FORMAT = "extended_openai_conversation_backup"
-BACKUP_VERSION = 1
+BACKUP_VERSION = 2
 MAX_BACKUP_BYTES = 16 * 1024 * 1024
 _BACKUP_LOCKS = f"{DOMAIN}.backup_locks"
 _LOGGER = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ class PreparedRestore:
     usage_daily: dict[str, dict[str, Any]]
     usage_requests: list[UsageRequest]
     usage_runs: list[UsageRun]
+    guest_mode_schedule: GuestModeSchedule | None
     created_at: str
     integration_version: str
 
@@ -82,6 +84,7 @@ class PreparedRestore:
             "archive_turns": len(self.archive_turns),
             "usage_requests": len(self.usage_requests),
             "usage_runs": len(self.usage_runs),
+            "guest_mode_scheduled": self.guest_mode_schedule is not None,
             "created_at": self.created_at,
             "integration_version": self.integration_version,
         }
@@ -121,7 +124,7 @@ async def async_create_backup(
 ) -> dict[str, Any]:
     """Collect a private, JSON-compatible snapshot of one agent."""
     async with _backup_lock(hass, entry.entry_id, subentry.subentry_id):
-        memory, temporary, knowledge, archive, usage = await _managers(
+        memory, temporary, knowledge, archive, usage, guest_mode = await _managers(
             hass, entry.entry_id, subentry.subentry_id
         )
         document = {
@@ -140,6 +143,7 @@ async def async_create_backup(
             "knowledge": await knowledge.async_backup_data(),
             "archive": await archive.async_backup_data(),
             "usage": await usage.async_backup_data(),
+            "guest_mode": await guest_mode.async_backup_data(),
         }
         serialized = json.dumps(document, indent=2, ensure_ascii=False)
         if len(serialized.encode("utf-8")) > MAX_BACKUP_BYTES:
@@ -180,7 +184,7 @@ def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
     if value.get("format") != BACKUP_FORMAT:
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
     version = value.get("version")
-    if version != BACKUP_VERSION:
+    if version not in {1, BACKUP_VERSION}:
         if isinstance(version, int) and version > BACKUP_VERSION:
             raise BackupError(
                 "This backup was created using a newer unsupported backup format"
@@ -198,7 +202,8 @@ def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
         "archive",
         "usage",
     }
-    if set(value) != expected:
+    allowed = expected | ({"guest_mode"} if version >= 2 else set())
+    if not expected.issubset(value) or not set(value).issubset(allowed):
         raise BackupError("The backup is incomplete or corrupted")
     created_at = value["created_at"]
     integration_version = value["integration_version"]
@@ -237,6 +242,11 @@ def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
         usage_totals, usage_daily, usage_requests, usage_runs = (
             UsageManager.validate_backup_data(value["usage"], target_agent_id)
         )
+        guest_mode_schedule = (
+            GuestModeManager.validate_backup_data(value["guest_mode"])
+            if version >= 2 and "guest_mode" in value
+            else None
+        )
     except (TypeError, ValueError) as err:
         raise BackupError(f"The backup is incomplete or corrupted: {err}") from err
     return PreparedRestore(
@@ -251,6 +261,7 @@ def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
         usage_daily,
         usage_requests,
         usage_runs,
+        guest_mode_schedule,
         created_at,
         integration_version,
     )
@@ -293,13 +304,14 @@ async def _managers(hass: HomeAssistant, entry_id: str, subentry_id: str):
         await async_get_knowledge(hass, entry_id, subentry_id),
         await async_get_archive(hass, entry_id, subentry_id),
         await async_get_usage(hass, entry_id, subentry_id),
+        await async_get_guest_mode(hass, entry_id, subentry_id),
     )
 
 
 async def _snapshot_for_restore(
     managers: tuple[Any, ...], subentry: Any
 ) -> PreparedRestore:
-    memory, temporary, knowledge, archive, usage = managers
+    memory, temporary, knowledge, archive, usage, guest_mode = managers
     archive_sessions, archive_turns = ConversationArchive.validate_backup_data(
         await archive.async_backup_data(), subentry.subentry_id
     )
@@ -307,6 +319,9 @@ async def _snapshot_for_restore(
         UsageManager.validate_backup_data(
             await usage.async_backup_data(), subentry.subentry_id
         )
+    )
+    guest_mode_schedule = GuestModeManager.validate_backup_data(
+        await guest_mode.async_backup_data()
     )
     return PreparedRestore(
         subentry.title,
@@ -320,13 +335,14 @@ async def _snapshot_for_restore(
         usage_daily,
         usage_requests,
         usage_runs,
+        guest_mode_schedule,
         dt_util.utcnow().isoformat(),
         _integration_version(),
     )
 
 
 async def _apply_restore(managers: tuple[Any, ...], prepared: PreparedRestore) -> None:
-    memory, temporary, knowledge, archive, usage = managers
+    memory, temporary, knowledge, archive, usage, guest_mode = managers
     usage.request_retention_days = int(
         prepared.config.get(
             CONF_USAGE_REQUEST_RETENTION_DAYS, DEFAULT_USAGE_REQUEST_RETENTION_DAYS
@@ -349,3 +365,4 @@ async def _apply_restore(managers: tuple[Any, ...], prepared: PreparedRestore) -
         prepared.usage_requests,
         prepared.usage_runs,
     )
+    await guest_mode.async_replace_backup(prepared.guest_mode_schedule)

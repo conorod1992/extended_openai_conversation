@@ -427,7 +427,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 api_mode,
             )
             tools = [
-                *([web_search_tool] if web_search_tool else []),
+                *(
+                    [web_search_tool]
+                    if web_search_tool and self._provider_tool_allowed("web_search")
+                    else []
+                ),
                 *formatted_function_tools,
             ]
             tool_kwargs: dict[str, Any] = {}
@@ -1105,6 +1109,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             tool_name=tool_input.tool_name,
             tool_result={"result": str(result)},
         )
+
+    def _provider_tool_allowed(self, tool_type: str) -> bool:
+        """Allow subclasses to tighten provider-owned tools between rounds."""
+        return True
 
     def should_run_in_background(self, arguments: dict[str, Any]) -> bool:
         """Check if function needs delay."""

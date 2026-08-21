@@ -33,6 +33,18 @@ from .const import (
     CONF_EXPOSED_ENTITIES_TEMPLATE,
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
+    CONF_GUEST_CONTROLLABLE_AREAS,
+    CONF_GUEST_CONTROLLABLE_DOMAINS,
+    CONF_GUEST_CONTROLLABLE_ENTITIES,
+    CONF_GUEST_CONTROLLABLE_LABELS,
+    CONF_GUEST_KNOWLEDGE_ENABLED,
+    CONF_GUEST_MODE_ENABLED,
+    CONF_GUEST_READABLE_AREAS,
+    CONF_GUEST_READABLE_DOMAINS,
+    CONF_GUEST_READABLE_ENTITIES,
+    CONF_GUEST_READABLE_LABELS,
+    CONF_GUEST_SHARED_MEMORY_READ,
+    CONF_GUEST_SHARED_MEMORY_WRITE,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MAX_TOKENS,
@@ -86,6 +98,11 @@ from .const import (
     DEFAULT_EXPOSED_ENTITIES_ENABLED,
     DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
     DEFAULT_FUNCTION_GROUPS,
+    DEFAULT_GUEST_ENTITY_SELECTORS,
+    DEFAULT_GUEST_KNOWLEDGE_ENABLED,
+    DEFAULT_GUEST_MODE_ENABLED,
+    DEFAULT_GUEST_SHARED_MEMORY_READ,
+    DEFAULT_GUEST_SHARED_MEMORY_WRITE,
     DEFAULT_KNOWLEDGE_ENABLED,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MAX_TOKENS,
@@ -181,6 +198,18 @@ AGENT_CONFIG_DEFAULTS = MappingProxyType(
         CONF_MEMORY_RETRIEVAL_MODE: DEFAULT_MEMORY_RETRIEVAL_MODE,
         CONF_MEMORY_EMBEDDING_MODEL: DEFAULT_MEMORY_EMBEDDING_MODEL,
         CONF_KNOWLEDGE_ENABLED: DEFAULT_KNOWLEDGE_ENABLED,
+        CONF_GUEST_MODE_ENABLED: DEFAULT_GUEST_MODE_ENABLED,
+        CONF_GUEST_READABLE_ENTITIES: list(DEFAULT_GUEST_ENTITY_SELECTORS),
+        CONF_GUEST_CONTROLLABLE_ENTITIES: list(DEFAULT_GUEST_ENTITY_SELECTORS),
+        CONF_GUEST_READABLE_DOMAINS: list(DEFAULT_GUEST_ENTITY_SELECTORS),
+        CONF_GUEST_CONTROLLABLE_DOMAINS: list(DEFAULT_GUEST_ENTITY_SELECTORS),
+        CONF_GUEST_READABLE_AREAS: list(DEFAULT_GUEST_ENTITY_SELECTORS),
+        CONF_GUEST_CONTROLLABLE_AREAS: list(DEFAULT_GUEST_ENTITY_SELECTORS),
+        CONF_GUEST_READABLE_LABELS: list(DEFAULT_GUEST_ENTITY_SELECTORS),
+        CONF_GUEST_CONTROLLABLE_LABELS: list(DEFAULT_GUEST_ENTITY_SELECTORS),
+        CONF_GUEST_SHARED_MEMORY_READ: DEFAULT_GUEST_SHARED_MEMORY_READ,
+        CONF_GUEST_SHARED_MEMORY_WRITE: DEFAULT_GUEST_SHARED_MEMORY_WRITE,
+        CONF_GUEST_KNOWLEDGE_ENABLED: DEFAULT_GUEST_KNOWLEDGE_ENABLED,
         CONF_ARCHIVE_ENABLED: DEFAULT_ARCHIVE_ENABLED,
         CONF_ARCHIVE_RETENTION_DAYS: DEFAULT_ARCHIVE_RETENTION_DAYS,
         CONF_ARCHIVE_MODEL_SEARCH_ENABLED: DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -295,6 +324,8 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
             raise AgentConfigError(field, "tool must be an object")
         if "enabled" in tool and not isinstance(tool["enabled"], bool):
             raise AgentConfigError(f"{field}.enabled", "must be a boolean")
+        if "guest_allowed" in tool and not isinstance(tool["guest_allowed"], bool):
+            raise AgentConfigError(f"{field}.guest_allowed", "must be a boolean")
         spec = tool.get("spec")
         function_config = tool.get("function")
         if not isinstance(spec, dict):
@@ -363,7 +394,14 @@ def validate_function_groups(
     group_names: set[str] = set()
     assigned_functions: dict[str, str] = {}
     result: list[dict[str, Any]] = []
-    allowed = {"id", "name", "description", "loading_mode", "functions"}
+    allowed = {
+        "id",
+        "name",
+        "description",
+        "loading_mode",
+        "functions",
+        "guest_allowed",
+    }
     for index, group in enumerate(value):
         field = f"{CONF_FUNCTION_GROUPS}[{index}]"
         if not isinstance(group, dict):
@@ -407,6 +445,9 @@ def validate_function_groups(
         loading_mode = group.get("loading_mode")
         if loading_mode not in FUNCTION_GROUP_LOADING_MODES:
             raise AgentConfigError(f"{field}.loading_mode", "unsupported value")
+        guest_allowed = group.get("guest_allowed", False)
+        if not isinstance(guest_allowed, bool):
+            raise AgentConfigError(f"{field}.guest_allowed", "must be a boolean")
         functions = group.get("functions", [])
         if not isinstance(functions, list) or not all(
             isinstance(name, str) for name in functions
@@ -426,15 +467,16 @@ def validate_function_groups(
                     f"{assigned_functions[function_name]}",
                 )
             assigned_functions[function_name] = group_id
-        result.append(
-            {
-                "id": group_id,
-                "name": name,
-                "description": description,
-                "loading_mode": loading_mode,
-                "functions": list(functions),
-            }
-        )
+        normalized_group = {
+            "id": group_id,
+            "name": name,
+            "description": description,
+            "loading_mode": loading_mode,
+            "functions": list(functions),
+        }
+        if guest_allowed:
+            normalized_group["guest_allowed"] = True
+        result.append(normalized_group)
 
     if (
         any(
@@ -606,6 +648,10 @@ def normalize_agent_config(
             CONF_ADVANCED_OPTIONS,
             CONF_CURRENT_DATETIME_ENABLED,
             CONF_EXPOSED_ENTITIES_ENABLED,
+            CONF_GUEST_MODE_ENABLED,
+            CONF_GUEST_SHARED_MEMORY_READ,
+            CONF_GUEST_SHARED_MEMORY_WRITE,
+            CONF_GUEST_KNOWLEDGE_ENABLED,
             CONF_SPEECH_PROCESSING_ENABLED,
             CONF_SPEECH_STRIP_MARKDOWN,
             CONF_SPEECH_STRIP_URLS,
@@ -723,6 +769,22 @@ def normalize_agent_config(
         isinstance(skill, str) for skill in skills
     ):
         raise AgentConfigError(CONF_SKILLS, "must be a list of names")
+    for key in (
+        CONF_GUEST_READABLE_ENTITIES,
+        CONF_GUEST_CONTROLLABLE_ENTITIES,
+        CONF_GUEST_READABLE_DOMAINS,
+        CONF_GUEST_CONTROLLABLE_DOMAINS,
+        CONF_GUEST_READABLE_AREAS,
+        CONF_GUEST_CONTROLLABLE_AREAS,
+        CONF_GUEST_READABLE_LABELS,
+        CONF_GUEST_CONTROLLABLE_LABELS,
+    ):
+        values = result.get(key, [])
+        if not isinstance(values, list) or not all(
+            isinstance(value, str) and value.strip() for value in values
+        ):
+            raise AgentConfigError(key, "must be a list of non-empty strings")
+        result[key] = list(dict.fromkeys(value.strip() for value in values))
 
     function_tools = validate_function_tools(result.get(CONF_FUNCTION_TOOLS, []))
     result[CONF_FUNCTION_GROUPS] = validate_function_groups(

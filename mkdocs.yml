@@ -52,6 +52,7 @@ nav:
       - Context management: features/context-management.md
       - Skills: features/skills.md
       - Function groups: features/function-groups.md
+      - Guest Mode: features/guest-mode.md
       - Usage statistics: features/usage-statistics.md
       - AI Task: features/ai-task.md
   - Custom functions:

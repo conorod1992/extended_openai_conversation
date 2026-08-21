@@ -1,7 +1,7 @@
 """Constants for the Extended OpenAI Conversation (Responses) integration."""
 
 DOMAIN = "extended_openai_conversation_responses"
-CONFIG_ENTRY_VERSION = 7
+CONFIG_ENTRY_VERSION = 8
 AGENT_CONFIG_EXPORT_VERSION = 1
 DEFAULT_NAME = "Extended OpenAI Conversation (Responses)"
 DEFAULT_CONVERSATION_NAME = "Extended OpenAI Conversation (Responses)"
@@ -251,6 +251,25 @@ USAGE_RETENTION_OPTIONS = [0, 7, 30, 90, 180, 365]
 # Knowledge Library (opt-in per conversation agent)
 CONF_KNOWLEDGE_ENABLED = "knowledge_enabled"
 DEFAULT_KNOWLEDGE_ENABLED = False
+
+# Backend-enforced Guest Mode. Integration-owned schedule state is stored separately.
+CONF_GUEST_MODE_ENABLED = "guest_mode_enabled"
+DEFAULT_GUEST_MODE_ENABLED = False
+CONF_GUEST_READABLE_ENTITIES = "guest_readable_entities"
+CONF_GUEST_CONTROLLABLE_ENTITIES = "guest_controllable_entities"
+CONF_GUEST_READABLE_DOMAINS = "guest_readable_domains"
+CONF_GUEST_CONTROLLABLE_DOMAINS = "guest_controllable_domains"
+CONF_GUEST_READABLE_AREAS = "guest_readable_areas"
+CONF_GUEST_CONTROLLABLE_AREAS = "guest_controllable_areas"
+CONF_GUEST_READABLE_LABELS = "guest_readable_labels"
+CONF_GUEST_CONTROLLABLE_LABELS = "guest_controllable_labels"
+CONF_GUEST_SHARED_MEMORY_READ = "guest_shared_memory_read"
+CONF_GUEST_SHARED_MEMORY_WRITE = "guest_shared_memory_write"
+CONF_GUEST_KNOWLEDGE_ENABLED = "guest_knowledge_enabled"
+DEFAULT_GUEST_ENTITY_SELECTORS: tuple[str, ...] = ()
+DEFAULT_GUEST_SHARED_MEMORY_READ = False
+DEFAULT_GUEST_SHARED_MEMORY_WRITE = False
+DEFAULT_GUEST_KNOWLEDGE_ENABLED = False
 
 KNOWLEDGE_PROMPT = """
 ## Knowledge Library
@@ -558,6 +577,8 @@ SERVICE_MEMORY_DELETE = "memory_delete"
 SERVICE_MEMORY_CLEAR = "memory_clear"
 SERVICE_ENABLE_FUNCTION_TOOLS = "enable_function_tools"
 SERVICE_DISABLE_FUNCTION_TOOLS = "disable_function_tools"
+SERVICE_GUEST_MODE_UPDATE = "guest_mode_update"
+SERVICE_GUEST_MODE_DISABLE = "guest_mode_disable"
 
 # Integration-owned UI and storage
 MEMORY_PANEL_URL = "extended-openai-memory"

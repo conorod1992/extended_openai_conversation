@@ -10,6 +10,7 @@ const lines = backupSummaryLines({
   archive_turns: 19,
   usage_runs: 8,
   usage_requests: 13,
+  guest_mode_scheduled: true,
 });
 
 assert.deepEqual(lines, [
@@ -19,4 +20,5 @@ assert.deepEqual(lines, [
   "11 Knowledge sources",
   "4 archived conversations (19 turns)",
   "Usage history (8 runs, 13 requests)",
+  "Guest Mode schedule included",
 ]);

@@ -36,6 +36,7 @@ from .const import (
 from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
 from .function_groups import get_function_group_runtime
+from .guest_mode import async_get_guest_mode, resolve_guest_policy
 from .knowledge import async_get_knowledge
 from .memory import async_get_memory, get_memory_mode
 from .temporary_memory import async_get_temporary_memory
@@ -113,6 +114,15 @@ async def async_get_config_entry_diagnostics(
             )
             if runtime is not None:
                 diagnostics.update(runtime.stats())
+            guest_mode = await async_get_guest_mode(
+                hass, entry.entry_id, subentry.subentry_id
+            )
+            diagnostics["guest_mode"] = {
+                "status": guest_mode.status(),
+                "policy": resolve_guest_policy(
+                    hass, subentry.data, guest_mode, function_tools
+                ).as_diagnostics(),
+            }
         except Exception as err:
             diagnostics["function_group_configuration_error"] = type(err).__name__
         try:

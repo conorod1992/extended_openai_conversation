@@ -1,0 +1,543 @@
+"""Backend-enforced Guest Mode state and capability policy."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, dataclass
+import logging
+from typing import Any, cast
+
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
+
+from .const import (
+    CONF_FUNCTION_GROUPS,
+    CONF_GUEST_CONTROLLABLE_AREAS,
+    CONF_GUEST_CONTROLLABLE_DOMAINS,
+    CONF_GUEST_CONTROLLABLE_ENTITIES,
+    CONF_GUEST_CONTROLLABLE_LABELS,
+    CONF_GUEST_KNOWLEDGE_ENABLED,
+    CONF_GUEST_READABLE_AREAS,
+    CONF_GUEST_READABLE_DOMAINS,
+    CONF_GUEST_READABLE_ENTITIES,
+    CONF_GUEST_READABLE_LABELS,
+    CONF_GUEST_SHARED_MEMORY_READ,
+    CONF_GUEST_SHARED_MEMORY_WRITE,
+    DOMAIN,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+GUEST_MODE_STORAGE_VERSION = 1
+GUEST_MODE_STORAGE_PREFIX = f"{DOMAIN}.guest_mode"
+GUEST_MODE_UNAVAILABLE = "This capability is unavailable in Guest Mode."
+GUEST_MODE_PROMPT = """
+## Guest Mode
+Guest Mode is active. You have access only to capabilities explicitly permitted
+for guests. Do not infer or request hidden owner or private information. If a
+requested capability is unavailable, say briefly that it is unavailable in Guest
+Mode. Do not reveal what the owner normally has access to.
+"""
+
+_MANAGERS = f"{DOMAIN}.guest_mode_managers"
+
+
+@dataclass(slots=True, frozen=True)
+class GuestModeSchedule:
+    """Persisted interval during which Guest Mode is active."""
+
+    active_from: str
+    active_until: str | None = None
+    source: str = "home_assistant"
+    updated_at: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class GuestCapabilityPolicy:
+    """Resolved capabilities held stable for one user request."""
+
+    guest_active: bool
+    readable_entity_ids: frozenset[str] | None = None
+    controllable_entity_ids: frozenset[str] | None = None
+    configured_tool_names: frozenset[str] | None = None
+    personal_memory_read: bool = True
+    personal_memory_write: bool = True
+    shared_memory_read: bool = True
+    shared_memory_write: bool = True
+    archive_access: bool = True
+    archive_retention: bool = True
+    knowledge_access: bool = True
+    temporary_memory: bool = True
+    skills: bool = True
+    web_search: bool = True
+    private_capabilities: bool = True
+
+    @classmethod
+    def unrestricted(cls) -> GuestCapabilityPolicy:
+        """Return the normal baseline policy."""
+        return cls(False)
+
+    def allows_entity_read(self, entity_id: str) -> bool:
+        return self.readable_entity_ids is None or entity_id in self.readable_entity_ids
+
+    def allows_entity_control(self, entity_id: str) -> bool:
+        return (
+            self.controllable_entity_ids is None
+            or entity_id in self.controllable_entity_ids
+        )
+
+    def allows_configured_tool(self, name: str) -> bool:
+        return self.configured_tool_names is None or name in self.configured_tool_names
+
+    def as_diagnostics(self) -> dict[str, Any]:
+        """Return counts and booleans without private identifiers."""
+        return {
+            "active": self.guest_active,
+            "readable_entity_count": (
+                None
+                if self.readable_entity_ids is None
+                else len(self.readable_entity_ids)
+            ),
+            "controllable_entity_count": (
+                None
+                if self.controllable_entity_ids is None
+                else len(self.controllable_entity_ids)
+            ),
+            "configured_tool_count": (
+                None
+                if self.configured_tool_names is None
+                else len(self.configured_tool_names)
+            ),
+            "memory": {
+                "personal_read": self.personal_memory_read,
+                "personal_write": self.personal_memory_write,
+                "shared_read": self.shared_memory_read,
+                "shared_write": self.shared_memory_write,
+            },
+            "archive_access": self.archive_access,
+            "archive_retention": self.archive_retention,
+            "knowledge_access": self.knowledge_access,
+            "temporary_memory": self.temporary_memory,
+        }
+
+
+class GuestModeManager:
+    """Integration-owned, per-agent Guest Mode schedule."""
+
+    def __init__(self, hass: HomeAssistant, entry_id: str, subentry_id: str) -> None:
+        self.hass = hass
+        self._store = Store[dict[str, Any]](
+            hass,
+            GUEST_MODE_STORAGE_VERSION,
+            f"{GUEST_MODE_STORAGE_PREFIX}.{entry_id}.{subentry_id}",
+            private=True,
+            atomic_writes=True,
+            serialize_in_event_loop=False,
+        )
+        self._schedule: GuestModeSchedule | None = None
+        self._listeners: set[Callable[[], None]] = set()
+        self._initialized = False
+
+    async def async_initialize(self) -> None:
+        if self._initialized:
+            return
+        try:
+            data = await self._store.async_load()
+            raw = data.get("schedule") if isinstance(data, Mapping) else None
+            if isinstance(raw, Mapping):
+                schedule = GuestModeSchedule(**dict(raw))
+                _parse_timestamp(self.hass, schedule.active_from, "active_from")
+                if schedule.active_until is not None:
+                    _parse_timestamp(self.hass, schedule.active_until, "active_until")
+                self._schedule = schedule
+        except Exception:
+            _LOGGER.warning("Ignoring malformed Guest Mode state", exc_info=True)
+            self._schedule = None
+        self._initialized = True
+
+    @property
+    def schedule(self) -> GuestModeSchedule | None:
+        return self._schedule
+
+    def status(self, now: Any | None = None) -> dict[str, Any]:
+        """Return the current non-sensitive state and schedule."""
+        current = _as_utc(now or dt_util.utcnow())
+        schedule = self._schedule
+        if schedule is None:
+            state = "inactive"
+            active = scheduled = indefinite = False
+        else:
+            start = _parse_timestamp(self.hass, schedule.active_from, "active_from")
+            end = (
+                _parse_timestamp(self.hass, schedule.active_until, "active_until")
+                if schedule.active_until is not None
+                else None
+            )
+            active = start <= current and (end is None or current < end)
+            scheduled = current < start
+            indefinite = end is None
+            state = (
+                "active_indefinitely"
+                if active and indefinite
+                else "active"
+                if active
+                else "scheduled"
+                if scheduled
+                else "inactive"
+            )
+        return {
+            "state": state,
+            "active_from": schedule.active_from if schedule else None,
+            "active_until": schedule.active_until if schedule else None,
+            "indefinite": indefinite,
+            "currently_active": active,
+            "scheduled": scheduled,
+            "source": schedule.source if schedule else None,
+            "updated_at": schedule.updated_at if schedule else None,
+        }
+
+    def is_active(self, now: Any | None = None) -> bool:
+        return bool(self.status(now)["currently_active"])
+
+    async def async_restrict(
+        self,
+        *,
+        active_from: str | None = None,
+        active_until: str | None = None,
+        make_indefinite: bool = False,
+        now: Any | None = None,
+    ) -> dict[str, Any]:
+        """Apply a monotonic LLM restriction that can only widen the interval."""
+        current = _as_utc(now or dt_util.utcnow())
+        requested_start = (
+            _parse_timestamp(self.hass, active_from, "active_from")
+            if active_from is not None
+            else current
+        )
+        requested_end = (
+            _parse_timestamp(self.hass, active_until, "active_until")
+            if active_until is not None
+            else None
+        )
+        if requested_end is not None and requested_end <= requested_start:
+            raise ValueError("active_until must be later than active_from")
+
+        existing = self._live_or_future_schedule(current)
+        if existing is None:
+            start = requested_start
+            end = None if make_indefinite or active_until is None else requested_end
+        else:
+            existing_start = _parse_timestamp(
+                self.hass, existing.active_from, "active_from"
+            )
+            existing_end = (
+                _parse_timestamp(self.hass, existing.active_until, "active_until")
+                if existing.active_until is not None
+                else None
+            )
+            start = min(existing_start, requested_start)
+            if existing_end is None or make_indefinite:
+                end = None
+            elif requested_end is None:
+                end = existing_end
+            else:
+                end = max(existing_end, requested_end)
+        await self._async_set(start, end, "llm")
+        return self.status(current)
+
+    async def async_update_trusted(
+        self,
+        *,
+        active_from: str | None = None,
+        active_until: str | None = None,
+        indefinite: bool = False,
+        now: Any | None = None,
+    ) -> dict[str, Any]:
+        """Replace the interval from an authenticated HA control surface."""
+        current = _as_utc(now or dt_util.utcnow())
+        start = (
+            _parse_timestamp(self.hass, active_from, "active_from")
+            if active_from is not None
+            else current
+        )
+        end = (
+            None
+            if indefinite
+            else _parse_timestamp(self.hass, active_until, "active_until")
+            if active_until is not None
+            else None
+        )
+        if end is not None and end <= start:
+            raise ValueError("active_until must be later than active_from")
+        await self._async_set(start, end, "home_assistant")
+        return self.status(current)
+
+    async def async_disable_trusted(self) -> dict[str, Any]:
+        """End or cancel Guest Mode from a trusted HA control surface."""
+        self._schedule = None
+        await self._store.async_save({"schedule": None})
+        self._notify()
+        return self.status()
+
+    async def async_backup_data(self) -> dict[str, Any]:
+        """Return JSON-compatible Guest Mode state for a private agent backup."""
+        return {"schedule": asdict(self._schedule) if self._schedule else None}
+
+    @staticmethod
+    def validate_backup_data(value: Any) -> GuestModeSchedule | None:
+        """Validate schedule data without mutating runtime state."""
+        if not isinstance(value, Mapping) or set(value) != {"schedule"}:
+            raise ValueError("Guest Mode backup is invalid")
+        raw = value["schedule"]
+        if raw is None:
+            return None
+        if not isinstance(raw, Mapping) or set(raw) != {
+            "active_from",
+            "active_until",
+            "source",
+            "updated_at",
+        }:
+            raise ValueError("Guest Mode schedule backup is invalid")
+        schedule = GuestModeSchedule(**dict(raw))
+        for field, timestamp in (
+            ("active_from", schedule.active_from),
+            ("active_until", schedule.active_until),
+            ("updated_at", schedule.updated_at),
+        ):
+            if timestamp is None and field != "active_from":
+                continue
+            if not isinstance(timestamp, str):
+                raise ValueError(f"Guest Mode {field} is invalid")
+            parsed = dt_util.parse_datetime(timestamp)
+            if parsed is None or parsed.tzinfo is None:
+                raise ValueError(f"Guest Mode {field} is invalid")
+        if not isinstance(schedule.source, str) or not schedule.source:
+            raise ValueError("Guest Mode source is invalid")
+        return schedule
+
+    async def async_replace_backup(self, schedule: GuestModeSchedule | None) -> None:
+        """Replace durable Guest Mode state during an atomic agent restore."""
+        self._schedule = schedule
+        await self._store.async_save(
+            {"schedule": asdict(schedule) if schedule is not None else None}
+        )
+        self._notify()
+
+    def async_add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        self._listeners.add(listener)
+
+        def remove() -> None:
+            self._listeners.discard(listener)
+
+        return remove
+
+    async def _async_set(self, start: Any, end: Any | None, source: str) -> None:
+        updated = dt_util.utcnow().isoformat()
+        self._schedule = GuestModeSchedule(
+            active_from=_as_utc(start).isoformat(),
+            active_until=_as_utc(end).isoformat() if end is not None else None,
+            source=source,
+            updated_at=updated,
+        )
+        await self._store.async_save({"schedule": asdict(self._schedule)})
+        self._notify()
+
+    def _live_or_future_schedule(self, now: Any) -> GuestModeSchedule | None:
+        schedule = self._schedule
+        if schedule is None or schedule.active_until is None:
+            return schedule
+        end = _parse_timestamp(self.hass, schedule.active_until, "active_until")
+        return schedule if now < end else None
+
+    def _notify(self) -> None:
+        for listener in tuple(self._listeners):
+            listener()
+
+
+async def async_get_guest_mode(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> GuestModeManager:
+    managers: dict[tuple[str, str], GuestModeManager] = hass.data.setdefault(
+        _MANAGERS, {}
+    )
+    key = (entry_id, subentry_id)
+    if key not in managers:
+        managers[key] = GuestModeManager(hass, entry_id, subentry_id)
+    manager = managers[key]
+    await manager.async_initialize()
+    return manager
+
+
+def get_loaded_guest_mode(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> GuestModeManager | None:
+    return cast(
+        GuestModeManager | None,
+        hass.data.get(_MANAGERS, {}).get((entry_id, subentry_id)),
+    )
+
+
+def resolve_guest_policy(
+    hass: HomeAssistant,
+    options: Mapping[str, Any],
+    manager: GuestModeManager | None,
+    configured_tools: Sequence[Mapping[str, Any]] = (),
+) -> GuestCapabilityPolicy:
+    """Resolve one restrictive policy from the current Guest state and config."""
+    if manager is None or not manager.is_active():
+        return GuestCapabilityPolicy.unrestricted()
+    readable = _resolve_entity_ids(hass, options, control=False)
+    controllable = _resolve_entity_ids(hass, options, control=True) & readable
+    groups = options.get(CONF_FUNCTION_GROUPS, ())
+    membership = (
+        {
+            name: group
+            for group in groups
+            if isinstance(group, Mapping)
+            for name in group.get("functions", ())
+            if isinstance(name, str)
+        }
+        if isinstance(groups, Sequence) and not isinstance(groups, (str, bytes))
+        else {}
+    )
+    unscopable_native = {"add_automation", "get_energy", "get_user_from_user_id"}
+    guest_tools = frozenset(
+        str(tool.get("spec", {}).get("name"))
+        for tool in configured_tools
+        if tool.get("guest_allowed", False) is True
+        and isinstance(tool.get("spec"), Mapping)
+        and isinstance(tool.get("spec", {}).get("name"), str)
+        and (
+            tool.get("spec", {}).get("name") not in membership
+            or membership[str(tool.get("spec", {}).get("name"))].get("guest_allowed")
+            is True
+        )
+        and not (
+            tool.get("function", {}).get("type") == "native"
+            and tool.get("function", {}).get("name") in unscopable_native
+        )
+    )
+    return GuestCapabilityPolicy(
+        True,
+        readable_entity_ids=frozenset(readable),
+        controllable_entity_ids=frozenset(controllable),
+        configured_tool_names=guest_tools,
+        personal_memory_read=False,
+        personal_memory_write=False,
+        shared_memory_read=bool(options.get(CONF_GUEST_SHARED_MEMORY_READ, False)),
+        shared_memory_write=bool(options.get(CONF_GUEST_SHARED_MEMORY_WRITE, False)),
+        archive_access=False,
+        archive_retention=False,
+        knowledge_access=bool(options.get(CONF_GUEST_KNOWLEDGE_ENABLED, False)),
+        temporary_memory=False,
+        skills=False,
+        web_search=False,
+        private_capabilities=False,
+    )
+
+
+def guest_mode_restrict_tool() -> dict[str, Any]:
+    """Return the structurally one-way model tool."""
+    return {
+        "spec": {
+            "name": "guest_mode_restrict",
+            "description": (
+                "Enable, start sooner, or extend Guest Mode. This operation cannot "
+                "disable, cancel, delay, or shorten Guest Mode. Omit active_until "
+                "for indefinite activation when enabling it for the first time."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "active_from": {
+                        "type": "string",
+                        "description": "ISO 8601 start time; omit to start now.",
+                    },
+                    "active_until": {
+                        "type": "string",
+                        "description": "ISO 8601 expiry used only to extend restrictions.",
+                    },
+                    "make_indefinite": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "function": {"type": "guest_mode", "operation": "restrict"},
+    }
+
+
+def _resolve_entity_ids(
+    hass: HomeAssistant, options: Mapping[str, Any], *, control: bool
+) -> set[str]:
+    prefix = "controllable" if control else "readable"
+    entity_key = (
+        CONF_GUEST_CONTROLLABLE_ENTITIES if control else CONF_GUEST_READABLE_ENTITIES
+    )
+    domain_key = (
+        CONF_GUEST_CONTROLLABLE_DOMAINS if control else CONF_GUEST_READABLE_DOMAINS
+    )
+    area_key = CONF_GUEST_CONTROLLABLE_AREAS if control else CONF_GUEST_READABLE_AREAS
+    label_key = (
+        CONF_GUEST_CONTROLLABLE_LABELS if control else CONF_GUEST_READABLE_LABELS
+    )
+    explicit = _string_set(options.get(entity_key, ()))
+    domains = _string_set(options.get(domain_key, ()))
+    areas = _string_set(options.get(area_key, ()))
+    labels = _string_set(options.get(label_key, ()))
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    allowed: set[str] = set()
+    for state in hass.states.async_all():
+        entity_id = state.entity_id
+        registry_entry = entity_registry.async_get(entity_id)
+        device = (
+            device_registry.async_get(registry_entry.device_id)
+            if registry_entry is not None and registry_entry.device_id
+            else None
+        )
+        entity_areas = {
+            value
+            for value in (
+                getattr(registry_entry, "area_id", None),
+                getattr(device, "area_id", None),
+            )
+            if value
+        }
+        entity_labels = set(getattr(registry_entry, "labels", ()) or ()) | set(
+            getattr(device, "labels", ()) or ()
+        )
+        if (
+            entity_id in explicit
+            or entity_id.partition(".")[0] in domains
+            or bool(entity_areas & areas)
+            or bool(entity_labels & labels)
+        ):
+            allowed.add(entity_id)
+    _LOGGER.debug("Resolved %d Guest %s entities", len(allowed), prefix)
+    return allowed
+
+
+def _string_set(value: Any) -> set[str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return set()
+    return {item for item in value if isinstance(item, str) and item}
+
+
+def _parse_timestamp(hass: HomeAssistant, value: str, field: str) -> Any:
+    parsed = dt_util.parse_datetime(value)
+    if parsed is None:
+        raise ValueError(f"{field} must be an ISO 8601 timestamp")
+    if parsed.tzinfo is None:
+        zone = dt_util.get_time_zone(hass.config.time_zone)
+        if zone is None:
+            raise ValueError("Home Assistant timezone is unavailable")
+        parsed = parsed.replace(tzinfo=zone)
+    return dt_util.as_utc(parsed)
+
+
+def _as_utc(value: Any) -> Any:
+    if value.tzinfo is None:
+        raise ValueError("timestamp must include timezone information")
+    return dt_util.as_utc(value)

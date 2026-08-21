@@ -217,3 +217,49 @@ disable_function_tools:
       selector:
         text:
           multiple: true
+guest_mode_update:
+  name: Update Guest Mode
+  description: Set or replace the Guest Mode interval for a conversation agent. This trusted administrator action may shorten or move the interval.
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: extended_openai_conversation_responses
+    agent_id:
+      required: true
+      description: Conversation agent. Legacy action calls may also use its subentry ID.
+      selector:
+        entity:
+          filter:
+            integration: extended_openai_conversation_responses
+            domain: conversation
+    active_from:
+      description: ISO 8601 start time. Leave empty to start now.
+      selector:
+        datetime:
+    active_until:
+      description: ISO 8601 end time. Ignored when indefinite is enabled.
+      selector:
+        datetime:
+    indefinite:
+      default: false
+      selector:
+        boolean:
+guest_mode_disable:
+  name: End Guest Mode
+  description: Immediately end active Guest Mode or cancel a future schedule for a conversation agent.
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: extended_openai_conversation_responses
+    agent_id:
+      required: true
+      description: Conversation agent. Legacy action calls may also use its subentry ID.
+      selector:
+        entity:
+          filter:
+            integration: extended_openai_conversation_responses
+            domain: conversation

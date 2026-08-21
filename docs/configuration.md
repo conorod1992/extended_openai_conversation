@@ -27,7 +27,7 @@ Configuration and Tools share one local draft, so moving between those pages pre
 
 ## Backup & Restore
 
-**Export configuration** remains the lightweight, reusable agent-configuration format. The separate **Backup & Restore** section creates a private recovery or migration backup for one conversation agent. A full backup contains the normalized saved configuration, persistent memories, active temporary memories with their original absolute expiry, canonical Knowledge source text and metadata, retained archive sessions and turns, plus lifetime, daily, request, and run usage data. Provider API keys, OAuth tokens, parent config-entry credentials, in-flight conversations, loaded Function Groups, caches, locks, and other runtime state are excluded.
+**Export configuration** remains the lightweight, reusable agent-configuration format. The separate **Backup & Restore** section creates a private recovery or migration backup for one conversation agent. A full backup contains the normalized saved configuration, persistent memories, active temporary memories with their original absolute expiry, canonical Knowledge source text and metadata, retained archive sessions and turns, the Guest Mode schedule, plus lifetime, daily, request, and run usage data. Provider API keys, OAuth tokens, parent config-entry credentials, in-flight conversations, loaded Function Groups, caches, locks, and other runtime state are excluded.
 
 Restore first validates the format and every category, drops temporary memories that have expired since the backup was created, and shows a summary. **Restore everything** then replaces the selected agent's existing durable state; it does not merge or add usage totals. Knowledge source data is restored and its derived local search index is rebuilt. If a storage write fails, the integration attempts to restore the pre-restore snapshot. Full backups can contain prompts, private memories, Knowledge content, archived conversations, and usage metadata, so store them securely. Reconnect or re-enter provider credentials separately when migrating to another Home Assistant installation.
 
@@ -135,6 +135,15 @@ See [Persistent memory](features/persistent-memory.md).
 Turn on **Knowledge Library** to expose the built-in `knowledge_search`, `knowledge_list`, and `knowledge_get` tools when the agent has at least one source. Sources remain stored when the option is Off and can still be prepared in **Configure > Manage knowledge**. This option is independent of persistent-memory mode, and source contents are never injected wholesale into the normal system prompt.
 
 See [Knowledge Library](features/knowledge-library.md).
+
+## Guest Mode
+
+The Guest Mode policy is deny-by-default and independent for each conversation
+agent. Configure readable and controllable entity, domain, area, and label IDs;
+shared-household memory read/write; Knowledge access; and whether the model may
+use the one-way activation tool. Mark individual custom Function Tools as Guest
+only after reviewing their full behavior. Schedule and trusted full controls live
+on the panel's **Guest** page. See [Guest Mode](features/guest-mode.md).
 
 ## Context management
 
