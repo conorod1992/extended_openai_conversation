@@ -18,8 +18,11 @@ deny-by-default:
 - mark an individual custom Function Tool as **Guest** only after reviewing the
   complete function, including any file, shell, network, administrative, or
   indirect data access it provides;
-- turn on **Allow voice/model activation** to expose the one-way
-  `guest_mode_restrict` tool.
+- turn on **Enable Guest Mode voice/model controls** to expose the one-way
+  `guest_mode_restrict` tool. This setting controls tool availability only.
+  Turning it off does not cancel, shorten, or deactivate an active or scheduled
+  Guest Mode interval; use the trusted Guest page or Home Assistant service for
+  those changes.
 
 Existing custom tools and Function Groups are owner-only after migration. A tool
 needs top-level `guest_allowed: true`; a grouped tool additionally requires its
@@ -50,15 +53,20 @@ immediate activation without an expiry is indefinite.
 
 While Guest Mode is active, the integration filters prompt entity context,
 configured tools, Function Groups, state/history targets, and control targets.
-Every dispatch re-checks the current restriction, so activation after tool
-assembly still fails closed. Deactivation during a request does not add
-permissions until the next user turn.
+Model-visible context is fully re-resolved at the next user turn. If Guest Mode
+becomes active after a provider request has already been sent, execution-time
+restrictions tighten immediately, but context already sent to the model cannot be
+retroactively removed. Deactivation during a request does not add permissions
+until the next user turn.
 
 Personal memory is always unavailable. Shared-household memory is available only
 according to its two Guest switches. Conversation archive access and retention,
 temporary memory, skills, and hosted Web Search are disabled. Knowledge is
-independently opt-in. Guest turns use a fresh isolated conversation ID and are not
-written to the owner's archive.
+independently opt-in. Guest turns can resume recent Guest context under the
+selected continuity mode's normal session and timeout behavior, using a
+structurally separate Guest namespace. They never resume owner context, owner
+turns never resume Guest context, and Guest turns are not written to the owner's
+archive.
 
 Forbidden calls return the generic message `This capability is unavailable in
 Guest Mode.` without naming hidden entities or tools. Guest state and policy

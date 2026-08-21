@@ -158,6 +158,34 @@ def test_resolved_policy_intersects_read_and_control(hass, monkeypatch) -> None:
     assert policy.web_search is False
 
 
+def test_disabling_controls_does_not_weaken_active_guest_policy(
+    hass, monkeypatch
+) -> None:
+    manager = _manager(hass)
+    monkeypatch.setattr(manager, "is_active", lambda: True)
+    hass.states.async_all.return_value = []
+    monkeypatch.setattr(
+        er,
+        "async_get",
+        lambda _hass: SimpleNamespace(async_get=lambda _entity_id: None),
+    )
+    monkeypatch.setattr(
+        dr,
+        "async_get",
+        lambda _hass: SimpleNamespace(async_get=lambda _device_id: None),
+    )
+
+    policy = resolve_guest_policy(
+        hass,
+        {CONF_GUEST_MODE_ENABLED: False},
+        manager,
+    )
+
+    assert policy.guest_active is True
+    assert policy.archive_retention is False
+    assert policy.personal_memory_read is False
+
+
 def test_guest_integration_tools_are_filtered() -> None:
     options = agent_config_defaults()
     options.update(

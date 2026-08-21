@@ -9,7 +9,6 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal
-from uuid import uuid4
 
 from openai import OpenAIError
 
@@ -81,7 +80,11 @@ from .const import (
     SHARED_MEMORY_DISABLED,
     TEMPORARY_MEMORY_OFF,
 )
-from .continuity import ConversationContinuity, async_get_continuity
+from .continuity import (
+    GUEST_CONTINUITY_NAMESPACE,
+    ConversationContinuity,
+    async_get_continuity,
+)
 from .conversation_archive import ArchiveSession, ConversationArchive, async_get_archive
 from .entity import ExtendedOpenAIBaseLLMEntity
 from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
@@ -323,11 +326,6 @@ class ExtendedOpenAIAgentEntity(
         continuity_mode = self.subentry.data.get(
             CONF_CONVERSATION_CONTINUITY, DEFAULT_CONVERSATION_CONTINUITY
         )
-        if request_policy.guest_active:
-            # Never attach an owner conversation ID or continuity history to a Guest
-            # request. Guest turns intentionally start in an isolated chat log.
-            user_input.conversation_id = f"guest-{uuid4().hex}"
-            continuity_mode = DEFAULT_CONVERSATION_CONTINUITY
         timeout_minutes = int(
             self.subentry.data.get(
                 CONF_CONVERSATION_TIMEOUT_MINUTES,
@@ -342,6 +340,9 @@ class ExtendedOpenAIAgentEntity(
             source_device_id,
             user_input.conversation_id,
             timeout_minutes,
+            namespace=(
+                GUEST_CONTINUITY_NAMESPACE if request_policy.guest_active else None
+            ),
         )
         user_input.conversation_id = resolution.conversation_id
         context_id = getattr(getattr(llm_context, "context", None), "id", None)
@@ -403,11 +404,7 @@ class ExtendedOpenAIAgentEntity(
             function_group_token = _ACTIVE_FUNCTION_GROUP_SESSION.set(
                 function_group_session
             )
-            if (
-                not request_policy.guest_active
-                and resolution.history
-                and len(chat_log.content) <= 2
-            ):
+            if resolution.history and len(chat_log.content) <= 2:
                 # Core chat logs expire independently after five minutes. Restore the
                 # integration-owned bounded model history when Core recreates the log.
                 current_user = chat_log.content[-1]

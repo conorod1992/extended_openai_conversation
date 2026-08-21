@@ -141,9 +141,11 @@ See [Knowledge Library](features/knowledge-library.md).
 The Guest Mode policy is deny-by-default and independent for each conversation
 agent. Configure readable and controllable entity, domain, area, and label IDs;
 shared-household memory read/write; Knowledge access; and whether the model may
-use the one-way activation tool. Mark individual custom Function Tools as Guest
-only after reviewing their full behavior. Schedule and trusted full controls live
-on the panel's **Guest** page. See [Guest Mode](features/guest-mode.md).
+use the one-way activation tool. That switch only enables the voice/model control;
+turning it off does not end an active or scheduled restriction. Mark individual
+custom Function Tools as Guest only after reviewing their full behavior. Schedule
+and trusted full controls live on the panel's **Guest** page. See
+[Guest Mode](features/guest-mode.md).
 
 ## Context management
 

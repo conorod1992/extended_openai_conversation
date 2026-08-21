@@ -8,6 +8,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONVERSATION_CONTINUITY_USER,
 )
 from custom_components.extended_openai_conversation_responses.continuity import (
+    GUEST_CONTINUITY_NAMESPACE,
     ConversationContinuity,
 )
 from custom_components.extended_openai_conversation_responses.scope import (
@@ -122,3 +123,143 @@ async def test_overlapping_requests_do_not_share_mutable_chat_log() -> None:
     )
     assert overlapping.key is None
     assert overlapping.conversation_id != first.conversation_id
+
+
+async def test_consecutive_guest_turns_resume_guest_history() -> None:
+    manager = ConversationContinuity("agent")
+    scope = unretained_scope(device_id="kitchen")
+    first = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_DEVICE,
+        scope,
+        "kitchen",
+        "owner-conversation",
+        30,
+        namespace=GUEST_CONTINUITY_NAMESPACE,
+    )
+    history = [conversation.SystemContent(content="guest follow-up context")]
+    await manager.async_record_success(first.key, history)
+
+    resumed = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_DEVICE,
+        scope,
+        "kitchen",
+        first.conversation_id,
+        30,
+        namespace=GUEST_CONTINUITY_NAMESPACE,
+    )
+
+    assert first.key == "guest:device:kitchen"
+    assert resumed.conversation_id == first.conversation_id
+    assert resumed.history == history
+    assert resumed.resumed is True
+
+
+async def test_owner_to_guest_never_inherits_owner_history() -> None:
+    manager = ConversationContinuity("agent")
+    scope = unretained_scope(device_id="kitchen")
+    owner = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_DEVICE, scope, "kitchen", None, 30
+    )
+    owner_history = [conversation.SystemContent(content="owner private history")]
+    await manager.async_record_success(owner.key, owner_history)
+
+    guest = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_DEVICE,
+        scope,
+        "kitchen",
+        owner.conversation_id,
+        30,
+        namespace=GUEST_CONTINUITY_NAMESPACE,
+    )
+
+    assert owner.key == "device:kitchen"
+    assert guest.key == "guest:device:kitchen"
+    assert guest.conversation_id != owner.conversation_id
+    assert guest.history == []
+
+
+async def test_guest_to_owner_never_inherits_guest_history() -> None:
+    cases = (
+        (
+            CONVERSATION_CONTINUITY_HA_DEFAULT,
+            unretained_scope(device_id="kitchen"),
+            "kitchen",
+        ),
+        (CONVERSATION_CONTINUITY_USER, shared_scope(source="test"), None),
+    )
+    for mode, scope, device_id in cases:
+        manager = ConversationContinuity("agent")
+        guest = await manager.async_resolve(
+            mode,
+            scope,
+            device_id,
+            "owner-conversation",
+            30,
+            namespace=GUEST_CONTINUITY_NAMESPACE,
+        )
+        guest_follow_up = await manager.async_resolve(
+            mode,
+            scope,
+            device_id,
+            guest.conversation_id,
+            30,
+            namespace=GUEST_CONTINUITY_NAMESPACE,
+        )
+
+        owner = await manager.async_resolve(
+            mode,
+            scope,
+            device_id,
+            guest.conversation_id,
+            30,
+        )
+
+        assert guest.conversation_id is not None
+        assert guest.conversation_id.startswith("extended-openai-guest-")
+        assert guest.conversation_id != "owner-conversation"
+        assert guest_follow_up.conversation_id == guest.conversation_id
+        assert owner.conversation_id is None
+        assert owner.key is None
+        assert owner.history == []
+
+
+async def test_guest_continuity_respects_timeout_and_explicit_end() -> None:
+    manager = ConversationContinuity("agent")
+    scope = unretained_scope(device_id="kitchen")
+    first = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_DEVICE,
+        scope,
+        "kitchen",
+        None,
+        30,
+        namespace=GUEST_CONTINUITY_NAMESPACE,
+    )
+    await manager.async_record_success(
+        first.key, [conversation.SystemContent(content="expired guest history")]
+    )
+    assert first.key is not None
+    manager._sessions[first.key].last_active = dt_util.utcnow() - timedelta(minutes=31)
+
+    expired = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_DEVICE,
+        scope,
+        "kitchen",
+        first.conversation_id,
+        30,
+        namespace=GUEST_CONTINUITY_NAMESPACE,
+    )
+    assert expired.conversation_id != first.conversation_id
+    assert expired.history == []
+    await manager.async_release(expired.key)
+    assert expired.key is not None and await manager.async_end(expired.key)
+
+    restarted = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_DEVICE,
+        scope,
+        "kitchen",
+        expired.conversation_id,
+        30,
+        namespace=GUEST_CONTINUITY_NAMESPACE,
+    )
+    assert restarted.conversation_id != expired.conversation_id
+    assert restarted.history == []

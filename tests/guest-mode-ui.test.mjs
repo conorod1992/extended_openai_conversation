@@ -15,6 +15,8 @@ assert.match(panel, /guest_mode", "update"/);
 assert.match(panel, /guest_mode", "disable"/);
 assert.match(panel, /Voice and model safety boundary/);
 assert.match(editor, /Guest Mode policy/);
+assert.match(editor, /Enable Guest Mode voice\/model controls/);
+assert.match(editor, /Turning this off does not end an active or scheduled Guest Mode interval/);
 assert.match(editor, /guest_shared_memory_read/);
 assert.match(editor, /tool-guest-allowed/);
 assert.match(editor, /group-guest-allowed/);
