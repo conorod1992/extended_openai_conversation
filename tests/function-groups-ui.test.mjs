@@ -10,6 +10,8 @@ import {
   functionToolCountLabel,
   isFunctionToolEnabled,
   matchesFunctionSearch,
+  saveBar,
+  synchronizePersistedFunctions,
 } from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
 
 const tool = (name) => ({spec: {name, description: name}, function: {type: "native"}});
@@ -61,8 +63,42 @@ assert.deepEqual(
 );
 assert.equal(config.function_groups.length, 2, "group helpers must not mutate the saved draft");
 
+assert.equal(saveBar({_configDirty:false}), "");
+assert.match(saveBar({_configDirty:true}), /<strong id="dirty-state" class="dirty-state">Unsaved changes<\/strong>/);
+assert.doesNotMatch(saveBar({_configDirty:true}), /All changes saved/);
+
+const panel = {
+  _configData:{title:"Agent",config:{prompt:"A",functions:[tool("old")],function_groups:[]}},
+  _result:null,
+  _draft:{prompt:"B",functions:[tool("old")],function_groups:[]},
+  _draftTitle:"Agent",
+  _configDirty:false,
+  _syncConfigDirty(){this._configDirty=this._draftTitle!==this._configData.title||JSON.stringify(this._draft)!==JSON.stringify(this._configData.config);},
+};
+synchronizePersistedFunctions(panel,{functions:[tool("new")],function_groups:[]});
+assert.equal(panel._configData.config.prompt,"A", "direct Function saves must preserve the saved prompt");
+assert.equal(panel._draft.prompt,"B", "direct Function saves must preserve the local prompt draft");
+assert.equal(panel._configData.config.functions[0].spec.name,"new");
+assert.equal(panel._draft.functions[0].spec.name,"new");
+assert.equal(panel._configDirty,true,"an unrelated prompt draft must remain dirty");
+
+panel._draft.prompt="A";
+synchronizePersistedFunctions(panel,{functions:[tool("newer")],function_groups:[]});
+assert.equal(panel._configDirty,false,"a direct Function save must not create false dirty state");
+
 const many = {
   functions: Array.from({length: 100}, (_, index) => tool(`tool_${index}`)),
   function_groups: [],
 };
 assert.equal(categorizeFunctionTools(many).alwaysAvailable.length, 100);
+
+const editorSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
+assert.match(editorSource, /insertAdjacentHTML\("beforebegin", saveBar\(panel\)\)/, "the bar should appear as soon as a clean configuration becomes dirty");
+assert.match(editorSource, /#revert-config[\s\S]*?_setConfigDirty\(false\); panel\._render\(\)/, "reverting should clear dirty state and remove the bar");
+assert.match(editorSource, /_toast\("Configuration saved"\)/, "saving should use a transient success toast");
+assert.doesNotMatch(editorSource, /Save tools and groups|Keep in draft|unsaved tool draft/i);
+assert.match(editorSource, />Save function<\/button>/);
+assert.match(editorSource, />Save group<\/button>/);
+for (const action of ["save","set_enabled","delete","save_group","delete_group"]) {
+  assert.match(editorSource,new RegExp(`panel\\._call\\(\"tools\",\"${action}\"`));
+}

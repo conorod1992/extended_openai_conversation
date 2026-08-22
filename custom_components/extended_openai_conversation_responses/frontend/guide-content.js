@@ -435,7 +435,7 @@ export const GUIDE_TOPICS = [
         items: [
           "Today, month and lifetime totals give the broad picture.",
           "Recent runs show individual completed requests, request counts, duration and success or failure.",
-          "Cached input tokens are part of the total token figure, not extra tokens added on top of it.",
+          "Cached input is reusable request content within the total token figure and may be cheaper when the provider supports discounted caching.",
           "Retention settings control detailed usage records separately from lifetime totals."
         ]
       },

@@ -15,11 +15,11 @@ Connection details and conversation-agent behaviour are configured in separate p
     Choose **Extended OpenAI** in the Home Assistant sidebar, select a conversation agent, then open **Configuration**.
   </Step>
   <Step title="Manage Function Tools">
-    Use the top-level **Tools** section to browse configured tools and optional Function Groups. **Edit** opens the large YAML-first function editor; **Create group** opens friendly group fields and a searchable function checklist.
+    Use **Capabilities → Functions** to browse configured tools and optional Function Groups. **Edit** opens the large YAML-first function editor; **Create group** opens friendly group fields and a searchable function checklist. Each item saves directly.
   </Step>
 </Steps>
 
-The frontend edits the existing Home Assistant conversation subentry through authenticated WebSocket commands. It does not create a separate configuration store. Configuration is one full-width settings document with lightweight jump links, search, and responsive fields inside each section. Edits remain local until **Save configuration** is pressed; **Revert** discards the draft. Model-specific fields are supplied by the backend. Simple dependent settings remain visible but disabled so available options are discoverable and the layout stays stable.
+The frontend edits the existing Home Assistant conversation subentry through authenticated WebSocket commands. It does not create a separate configuration store. Configuration is one full-width settings document with lightweight jump links, search, and responsive fields inside each section. Settings edits remain local until **Save configuration** is pressed; the Save/Revert bar appears only while changes exist. Function and Function Group operations save directly without saving or discarding unrelated settings. Model-specific fields are supplied by the backend. Simple dependent settings remain visible but disabled so available options are discoverable and the layout stays stable.
 
 The **Prompt & context** section gives new agents two simple default-on controls for Home Assistant-local date/time and exposed-device names/states. Generated blocks are volatile integration context after the intact user prompt. Optional advanced formatting templates stay collapsed and clearing an override restores the maintained default. Existing agents keep their prompt byte-for-byte and migrate with generated date/device blocks off, avoiding duplicated legacy Jinja.
 
@@ -31,14 +31,14 @@ Function Tools use YAML as the only editor format. Existing tools are serialized
 
 The Add Function Tool dialog also offers **Insert Built-in Function**. Built-in functions are implemented directly by Extended OpenAI Conversation; the picker inserts a complete editable native preset into the existing YAML editor without saving it. Already-configured implementations remain visible and are labelled accordingly.
 
-Function Tools are enabled by default. Set the card switch off, or add top-level `enabled: false`, to retain a tool and its Function Group membership without sending its schema to the model or allowing it to execute. Administrators can persist the same state through `extended_openai_conversation_responses.enable_function_tools` and `extended_openai_conversation_responses.disable_function_tools`. These Home Assistant actions are deliberately not exposed as model-facing tools unless an advanced user explicitly wraps them.
+Function Tools are enabled by default. The card switch persists immediately; top-level `enabled: false` in saved YAML likewise retains a tool and its Function Group membership without sending its schema to the model or allowing it to execute. Administrators can persist the same state through `extended_openai_conversation_responses.enable_function_tools` and `extended_openai_conversation_responses.disable_function_tools`. These Home Assistant actions are deliberately not exposed as model-facing tools unless an advanced user explicitly wraps them.
 
 Function Groups are separate metadata around those unchanged tools. Existing ungrouped functions remain **Always available**. Choose **Load when needed** to send only a compact group catalogue until the model requests the group in the normal tool loop. Loaded groups persist for the active conversation, may add one provider round-trip on first use, and require no classifier/router model or keyword matching. Deleting a group moves its functions back to **Always available** without deleting them. See [Function Groups](/features/function-groups).
 
 ## Agent lifecycle and portability
 
 - **Duplicate** creates a new conversation subentry with a `- Copy` title and validated configuration. It does not duplicate memories, archive sessions, Knowledge sources, or usage history.
-- **Export** downloads a human-readable, versioned JSON document containing agent-level behaviour only. It is disabled while the shared Configuration/Tools draft is dirty. Entry-level API credentials and retained runtime data are excluded, and common credential fields receive best-effort redaction. Function Tool definitions can still contain sensitive values in arbitrary strings, URLs, templates, commands, headers, or provider-specific fields, so review exported files before sharing them.
+- **Export** downloads a human-readable, versioned JSON document containing agent-level behaviour only. It is disabled while the settings draft is dirty. Entry-level API credentials and retained runtime data are excluded, and common credential fields receive best-effort redaction. Function Tool definitions can still contain sensitive values in arbitrary strings, URLs, templates, commands, headers, or provider-specific fields, so review exported files before sharing them.
 - **Import** validates and previews a versioned JSON/YAML document before it can create a new agent or overwrite the current agent. Creating a new agent preserves the current draft. Current-agent overwrite requires confirmation, explicitly discards a dirty draft, and never changes provider credentials.
 
 ## Full Backup & Restore

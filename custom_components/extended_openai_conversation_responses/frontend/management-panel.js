@@ -3,7 +3,7 @@ import {NAVIGATION, pageMetadata, routeFromPath, routePath, searchSettings, shou
 import {freshGuestPolicyDraft} from "./guest-mode-ui.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview} from "./overview-page.js";
-import { tokenBreakdown } from "./usage-chart.js";
+import {formatUsageTimestamp, tokenBreakdown} from "./usage-chart.js";
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
 const KNOWLEDGE_TITLE_LIMIT = 120;
@@ -84,7 +84,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _handleRouteChange(route) {
     if (this._isDraftView() && !this._isDraftView(route.page, route.section)) {
       if (this._configDirty) {
-        const discard = await this._confirm("Discard unsaved changes?", "Your shared Configuration and Tools draft has not been saved.", "Discard");
+        const discard = await this._confirm("Discard unsaved changes?", "Your configuration changes have not been saved.", "Discard");
         if (!discard) {
           history.pushState({}, "", routePath(this._page, this._subsection));
           return;
@@ -253,7 +253,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     const targetSubsection = subsection || this._visibleSubsections(page)[0]?.id || metadata.sections[0]?.id || null;
     if (this._isDraftView() && !this._isDraftView(page, targetSubsection)) {
       if (this._configDirty) {
-        const discard = await this._confirm("Discard unsaved changes?", "Your shared Configuration and Tools draft has not been saved.", "Discard");
+        const discard = await this._confirm("Discard unsaved changes?", "Your configuration changes have not been saved.", "Discard");
         if (!discard) return;
       }
       this._clearConfigDraft();
@@ -306,7 +306,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     root.querySelectorAll(".guide-topic-link").forEach((button) => button.addEventListener("click", () => { this._guideTopic = button.dataset.guideTopic; this._navigate("guide"); }));
     root.querySelector("#agent")?.addEventListener("change", async (event) => {
       if (this._configDirty) {
-        const discard = await this._confirm("Discard unsaved changes?", "Your shared Configuration and Tools draft has not been saved.", "Discard");
+        const discard = await this._confirm("Discard unsaved changes?", "Your configuration changes have not been saved.", "Discard");
         if (!discard) { event.target.value = this._agentId; return; }
         this._clearConfigDraft();
       }
@@ -342,7 +342,8 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _homeAssistant(agent) {
-    return `<section class="page-intro"><h1>Home Assistant access</h1><p>Controls which Home Assistant state and actions are available to this assistant.</p></section><section class="content-card"><div class="section-heading"><div><h2>Normal assistant access</h2><p>Entity exposure is managed by Home Assistant Assist. This integration can include exposed entity state in model context.</p></div></div><div class="metric-grid compact">${this._metric("Exposed context", this._draft?.exposed_entities_enabled ? "Included" : "Not included")}${this._metric("Assistant", agent.title)}${this._metric("Provider", agent.provider)}</div><button type="button" class="secondary inline-route" data-page="assistant" data-subsection="prompt-context">Configure exposed context</button></section><section class="notice"><strong>Guest Mode adds another boundary</strong><p>Guest Mode applies additional restrictions to the assistant's normal Home Assistant access.</p><button type="button" class="secondary inline-route" data-page="capabilities" data-subsection="guest-mode">Configure Guest Mode</button></section>`;
+    const contextIncluded = this._draft?.exposed_entities_enabled === true;
+    return `<section class="page-intro"><h1>Home Assistant access</h1><p>Home Assistant controls which entities this assistant is allowed to access through Assist. Extended OpenAI can also automatically include exposed entity names and current states in the context sent to the model.</p></section><section class="content-card access-explainer"><div><h2>Entity access</h2><p>Home Assistant's Assist exposure settings decide which entities may be used by the assistant. Manage exposure in Home Assistant's voice assistant settings.</p></div><div class="compact-status"><span><strong>Include exposed entity states in the prompt</strong><small>Adds exposed entity names and current states to the context sent with each request. Turning this off does not necessarily prevent the assistant from using exposed entities through Home Assistant tools.</small></span><strong class="status-value ${contextIncluded ? "on" : ""}">${contextIncluded ? "On" : "Off"}</strong></div><button type="button" class="secondary inline-route" data-page="assistant" data-subsection="prompt-context">Configure exposed entity context</button></section><section class="notice"><strong>Guest Mode adds another boundary</strong><p>Guest Mode applies additional restrictions to the assistant's normal Home Assistant access.</p><button type="button" class="secondary inline-route" data-page="capabilities" data-subsection="guest-mode">Configure Guest Mode</button></section>`;
   }
 
   _overview(agent) {
@@ -378,9 +379,14 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     const lifetime = result.summary?.lifetime || {};
     const latest = result.summary?.latest || null;
     const cachedMeta = (value) => `${Number(value || 0).toLocaleString()} cached input`;
+    const recentRows = (result.runs?.runs || []).map((run) => {
+      const tokens = tokenBreakdown(run.total_tokens,run.cached_input_tokens);
+      const completed = formatUsageTimestamp(run.completed_at);
+      return `<tr><td><time datetime="${this._e(completed.datetime)}" title="${this._e(completed.datetime)}">${this._e(completed.display)}</time></td><td>${tokens.total}</td><td>${tokens.cached}</td><td>${tokens.uncached}</td><td>${this._e(run.request_count)}</td><td>${this._e(`${run.duration_ms} ms`)}</td><td>${this._e(run.successful ? "Success" : run.error_type || "Failed")}</td></tr>`;
+    }).join("");
     return `<section class="metric-grid compact">${this._metric("Today",today.total_tokens || 0,cachedMeta(today.cached_input_tokens))}${this._metric("This month",month.total_tokens || 0,cachedMeta(month.cached_input_tokens))}${this._metric("Lifetime",lifetime.total_tokens || 0,cachedMeta(lifetime.cached_input_tokens))}${this._metric("Latest response",latest?.total_tokens ?? "—",latest ? cachedMeta(latest.cached_input_tokens) : "")}</section>
-      <section class="content-card"><div class="chart-heading"><h2>Tokens by day</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" aria-label="Daily token usage; cached input tokens are included within each day's total">${days.slice(-31).map((day) => this._usageBar(day,max)).join("") || this._empty("No completed runs yet.")}</div><p class="chart-note">Cached input tokens are a subset of total tokens, not additional usage.</p></section>
-      <section class="content-card"><h2>Recent runs</h2>${this._table(["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"], (result.runs?.runs || []).map((run) => {const tokens=tokenBreakdown(run.total_tokens,run.cached_input_tokens);return [run.completed_at || "—",tokens.total,tokens.cached,tokens.uncached,run.request_count,`${run.duration_ms} ms`,run.successful ? "Success" : run.error_type || "Failed"];}))}</section>
+      <section class="content-card"><div class="chart-heading"><h2>Tokens by day</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" aria-label="Daily token usage; cached input tokens are included within each day's total">${days.slice(-31).map((day) => this._usageBar(day,max)).join("") || this._empty("No completed runs yet.")}</div><p class="chart-note"><strong>Cached input</strong> is request content the provider has seen before and can reuse. It is included in the total token count, but cached input is usually cheaper than uncached input when the provider supports discounted caching.</p></section>
+      <section class="content-card"><h2>Recent runs</h2><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody>${recentRows}</tbody></table></div></section>
       ${this._data?.is_admin ? `<section class="content-card"><h2>Usage detail maintenance</h2><p>Retention is available in the local Retention & maintenance subsection.</p><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Daily, monthly, and lifetime totals are never removed by detail pruning.</small></section>` : ""}`;
   }
 
@@ -896,6 +902,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     @media(max-width:679px){.form-grid,.general-grid{grid-template-columns:1fr}.config-surface{padding:0 18px 92px}.config-section{padding:28px 0}.config-jumps{margin-inline:-4px}.rule-headings{display:none}.rule-row{grid-template-columns:1fr}.mobile-label{display:block}.rule-actions{padding-top:0}.save-bar{align-items:stretch;flex-direction:column;bottom:6px;margin-inline:-8px}.save-bar .actions{display:grid;grid-template-columns:1fr 1fr}.tool-dialog,.group-dialog{box-sizing:border-box;left:6px;top:6px;margin:0;width:calc(100vw - 12px);max-width:calc(100vw - 12px);height:calc(100vh - 12px);max-height:calc(100vh - 12px);overflow:hidden}.tool-dialog-body{padding:12px}.built-in-picker{grid-template-columns:1fr}.built-in-picker small{grid-column:auto}.tool-yaml-editor{min-height:0}.tools-surface{padding:18px}.tools-actions{justify-content:stretch}.tools-actions button{flex:1}.tools-actions .validation{width:100%;order:-1}.function-group-heading{display:grid}.function-group-heading .actions{display:grid;grid-template-columns:1fr 1fr}.group-dialog-body{padding:14px}.group-function-choices{max-height:34vh}.help-popover{left:8px!important;right:8px;top:auto!important;bottom:8px;width:auto;max-width:none;max-height:min(70vh,560px);border-radius:14px}}
     .page-shell{max-width:1380px}.section-layout{display:block}.section-selector{display:grid;grid-template-columns:minmax(240px,420px) minmax(0,620px);align-items:end;gap:18px;margin:0 0 28px}.section-selector p{margin:0 0 10px;color:var(--secondary-text-color);line-height:1.45}.config-toolbar{justify-content:flex-end}.agent-actions-menu{position:relative;margin:0;padding:0;border:0}.agent-actions-menu>summary{min-height:42px;padding:10px 16px;border:1px solid var(--primary-color);border-radius:9px;color:var(--primary-color);list-style:none}.agent-actions-menu>summary:after{content:" ▾"}.agent-actions-menu>summary::-webkit-details-marker{display:none}.agent-actions-menu>div{position:absolute;z-index:15;right:0;top:calc(100% + 6px);display:grid;gap:5px;min-width:230px;padding:8px;border:1px solid var(--divider-color);border-radius:10px;background:var(--card-background-color);box-shadow:0 10px 28px rgba(0,0,0,.25)}.agent-actions-menu button{text-align:left}.switch-track{position:relative}.switch-track:after{position:absolute;left:3px;top:50%;margin:0;transform:translateY(-50%)}.switch-control input:checked+.switch-track:after{transform:translate(18px,-50%)}.page-intro{max-width:780px}.local-nav,.mobile-local-nav{display:none!important}
     .scope-bar{max-width:1380px}
+    .access-explainer{display:grid;gap:24px}.access-explainer h2,.access-explainer p{margin:0}.access-explainer p{margin-top:7px;max-width:780px;color:var(--secondary-text-color);line-height:1.5}.compact-status{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:17px 0;border-block:1px solid var(--divider-color)}.compact-status>span{display:grid;gap:5px}.compact-status small{max-width:780px;line-height:1.45}.status-value{padding:5px 10px;border-radius:999px;background:var(--secondary-background-color)}.status-value.on{color:var(--success-color,#0f9d58)}
     @media(max-width:760px){.section-selector{grid-template-columns:1fr;gap:7px}.section-selector p{margin:0}.agent-actions-menu,.agent-actions-menu>summary{width:100%}.agent-actions-menu>div{left:0;right:0}}
   `; }
 }
