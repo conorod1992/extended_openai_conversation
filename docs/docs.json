@@ -22,6 +22,7 @@
               "persistent-memory",
               "features/conversation-archive",
               "features/knowledge-library",
+              "features/request-rules",
               "usage-statistics",
               "services"
             ]

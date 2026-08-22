@@ -19,6 +19,7 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 ### Better Home Assistant conversations
 
 - **Home Assistant control** — call services and control exposed devices and entities.
+- **Request Rules** — handle fast local commands without an API call, or route one request/conversation to a different model and reasoning effort.
 - **History access** — answer questions using Home Assistant entity history.
 - **Persistent memory** — conversation-start lexical or embedding-assisted retrieval, personal plus shared-household reads, importance, canonical keys, and reliable upserts, while preserving Off, Manual, and Automatic modes.
 - **Knowledge Library** — keep large per-agent reference sources local and retrieve only relevant excerpts on demand.
@@ -28,7 +29,7 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 
 ### Extensible and observable
 
-- **Per-agent Backup & Restore** — create a private recovery or migration backup containing configuration, memories, Knowledge sources, archived conversations, Guest Mode schedule, and usage history, then inspect and explicitly restore it with replacement semantics.
+- **Per-agent Backup & Restore** — create a private recovery or migration backup containing configuration, Request Rules, memories, Knowledge sources, archived conversations, Guest Mode schedule, and usage history, then inspect and explicitly restore it with replacement semantics.
 
 - **Web Search** — let compatible OpenAI Responses models retrieve current information when needed.
 - **Skills** — load reusable instruction sets per conversation agent.
