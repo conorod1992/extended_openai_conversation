@@ -258,22 +258,33 @@ async def test_multiple_local_actions_and_failure_response(fail) -> None:
     assert len(services.calls) == (1 if fail else 2)
 
 
-async def test_guest_mode_prevalidates_entire_local_action_sequence() -> None:
+async def test_guest_mode_prevalidates_entire_local_action_sequence(
+    monkeypatch,
+) -> None:
     rule = local_rule()
     rule["action"]["actions"].append(
         {
-            "domain": "lock",
-            "service": "unlock",
-            "target": {"entity_id": ["lock.private"]},
+            "domain": "light",
+            "service": "turn_off",
+            "target": {"area_id": ["kitchen"]},
             "data": {},
         }
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.guest_mode.target_helpers.async_extract_referenced_entity_ids",
+        lambda _hass, _selection: SimpleNamespace(
+            referenced=set(),
+            indirectly_referenced={"light.kitchen_ceiling", "light.kitchen_cabinet"},
+        ),
     )
     rules = await manager(rule)
     services = FakeServices()
     policy = GuestCapabilityPolicy(
         True,
-        readable_entity_ids=frozenset({"script.goodnight"}),
-        controllable_entity_ids=frozenset({"script.goodnight"}),
+        readable_entity_ids=frozenset({"script.goodnight", "light.kitchen_ceiling"}),
+        controllable_entity_ids=frozenset(
+            {"script.goodnight", "light.kitchen_ceiling"}
+        ),
     )
     result = await async_evaluate_rule(
         SimpleNamespace(services=services),

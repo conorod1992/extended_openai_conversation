@@ -8,7 +8,11 @@ import logging
 from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import (
+    device_registry as dr,
+    entity_registry as er,
+    target as target_helpers,
+)
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
@@ -807,6 +811,7 @@ def guest_arguments_allowed_runtime(
     selected: dict[str, set[str]] = {
         "areas": set(),
         "devices": set(),
+        "floors": set(),
         "labels": set(),
     }
     explicit_entity_selector = False
@@ -838,6 +843,8 @@ def guest_arguments_allowed_runtime(
                     if normalized in {"area_id", "area_ids"}
                     else "devices"
                     if normalized in {"device_id", "device_ids"}
+                    else "floors"
+                    if normalized in {"floor_id", "floor_ids"}
                     else "labels"
                     if normalized in {"label_id", "label_ids"}
                     else None
@@ -859,18 +866,22 @@ def guest_arguments_allowed_runtime(
         return False
     allows = policy.allows_entity_control if control else policy.allows_entity_read
     if any(selected.values()):
-        candidates = {
-            item["entity_id"]
-            for item in get_exposed_entities(hass)
-            if isinstance(item.get("entity_id"), str)
-        }
-        matched = resolve_guest_selector_entity_ids(
-            hass,
-            candidates,
-            areas=selected["areas"],
-            labels=selected["labels"],
-            devices=selected["devices"],
+        # Resolve with HA's service-target rules. Assist exposure is intentionally
+        # not a candidate filter: an area, device, floor, or label can also target
+        # unexposed entities, which must fail the Guest policy check below.
+        target_selection = target_helpers.TargetSelection(
+            {
+                "area_id": list(selected["areas"]),
+                "device_id": list(selected["devices"]),
+                "floor_id": list(selected["floors"]),
+                "label_id": list(selected["labels"]),
+            }
         )
+        referenced = target_helpers.async_extract_referenced_entity_ids(
+            hass,
+            target_selection,
+        )
+        matched = referenced.referenced | referenced.indirectly_referenced
         if not matched or not all(allows(entity_id) for entity_id in matched):
             return False
 
@@ -879,6 +890,8 @@ def guest_arguments_allowed_runtime(
         "area_ids",
         "device_id",
         "device_ids",
+        "floor_id",
+        "floor_ids",
         "label_id",
         "label_ids",
     }
