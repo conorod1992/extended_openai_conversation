@@ -1,16 +1,57 @@
 import {GUIDE_TOPICS, MEMORY_COMPARISON} from "./guide-content.js";
 
+function blockSearchText(block) {
+  if (typeof block === "string") return block;
+  if (!block || typeof block !== "object") return "";
+  return [block.title, block.text, ...(block.items || [])].filter(Boolean).join(" ");
+}
+
+function topicSearchText(topic) {
+  return [
+    topic.title,
+    topic.summary,
+    topic.terms,
+    ...(topic.body || []).map(blockSearchText),
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function renderGuideBlock(panel, block) {
+  if (typeof block === "string") return `<p>${panel._e(block)}</p>`;
+  if (!block || typeof block !== "object") return "";
+
+  if (block.type === "heading") {
+    return `<h3>${panel._e(block.text || "")}</h3>`;
+  }
+  if (block.type === "list" || block.type === "steps") {
+    const tag = block.type === "steps" ? "ol" : "ul";
+    return `<${tag}>${(block.items || []).map((item) => `<li>${panel._e(item)}</li>`).join("")}</${tag}>`;
+  }
+  if (block.type === "note") {
+    return `<div class="notice"><strong>${panel._e(block.title || "Good to know")}</strong><p>${panel._e(block.text || "")}</p></div>`;
+  }
+  return `<p>${panel._e(block.text || "")}</p>`;
+}
+
 export function renderGuide(panel) {
   const query = String(panel._guideQuery || "").trim().toLowerCase();
-  const topics = GUIDE_TOPICS.filter((topic) => `${topic.title} ${topic.summary} ${topic.terms}`.toLowerCase().includes(query));
-  return `<section class="page-intro"><h1>Guide</h1><p>A quick map of how the assistant, its capabilities, and retained data fit together.</p></section>
+  const topics = GUIDE_TOPICS.filter((topic) => !query || topicSearchText(topic).includes(query));
+
+  return `<section class="page-intro"><h1>Guide</h1><p>New to Extended OpenAI, or unsure which feature you need? Start here. This Guide explains the main features in plain language and links directly to the relevant settings.</p></section>
     <label class="guide-search"><span class="sr-only">Search Guide topics</span><input id="guide-search" type="search" value="${panel._e(panel._guideQuery || "")}" placeholder="Search the Guide" aria-label="Search Guide topics"></label>
-    <section class="guide-topics" aria-live="polite">${topics.map((topic) => `<details class="content-card guide-topic" id="guide-${topic.id}" ${panel._guideTopic === topic.id ? "open" : ""}><summary><span><strong>${panel._e(topic.title)}</strong><small>${panel._e(topic.summary)}</small></span></summary><div class="guide-topic-body"><p>${panel._e(topic.summary)}</p><button type="button" class="secondary guide-action" data-page="${topic.action.page}" data-subsection="${topic.action.section}">${panel._e(topic.action.label)}</button></div></details>`).join("") || panel._empty("No Guide topics match your search.")}</section>
-    <section class="content-card"><div class="section-heading"><div><h2>How these features differ</h2><p>Choose the smallest kind of retained data that fits the job.</p></div></div><div class="comparison-table"><table><thead><tr><th>Feature</th><th>What it is for</th><th>How long it lasts</th><th>When the model uses it</th></tr></thead><tbody>${MEMORY_COMPARISON.map((row) => `<tr>${row.map((cell) => `<td>${panel._e(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
+    <section class="guide-topics" aria-live="polite">${topics.map((topic) => `<details class="content-card guide-topic" id="guide-${topic.id}" ${panel._guideTopic === topic.id ? "open" : ""}><summary><span><strong>${panel._e(topic.title)}</strong><small>${panel._e(topic.summary)}</small></span></summary><div class="guide-topic-body">${(topic.body?.length ? topic.body : [{type:"p", text:topic.summary}]).map((block) => renderGuideBlock(panel, block)).join("")}<button type="button" class="secondary guide-action" data-page="${topic.action.page}" data-subsection="${topic.action.section}">${panel._e(topic.action.label)}</button></div></details>`).join("") || panel._empty("No Guide topics match your search.")}</section>
+    <section class="content-card"><div class="section-heading"><div><h2>How the memory and history features differ</h2><p>These features can look similar at first. Use the smallest kind of retained data that fits what you want the assistant to remember or retrieve.</p></div></div><div class="comparison-table"><table><thead><tr><th>Feature</th><th>Best used for</th><th>How long it lasts</th><th>When the model uses it</th></tr></thead><tbody>${MEMORY_COMPARISON.map((row) => `<tr>${row.map((cell) => `<td>${panel._e(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
 }
 
 export function bindGuide(panel) {
   const root = panel.shadowRoot;
-  root.querySelector("#guide-search")?.addEventListener("input", (event) => { panel._guideQuery = event.target.value; panel._render(); requestAnimationFrame(() => panel.shadowRoot.querySelector("#guide-search")?.focus()); });
+  root.querySelector("#guide-search")?.addEventListener("input", (event) => {
+    panel._guideQuery = event.target.value;
+    panel._render();
+    requestAnimationFrame(() => {
+      const input = panel.shadowRoot.querySelector("#guide-search");
+      input?.focus();
+      if (input) input.setSelectionRange(input.value.length, input.value.length);
+    });
+  });
   root.querySelectorAll(".guide-action").forEach((button) => button.addEventListener("click", () => panel._navigate(button.dataset.page, button.dataset.subsection)));
 }
