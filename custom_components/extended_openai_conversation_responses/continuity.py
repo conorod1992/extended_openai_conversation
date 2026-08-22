@@ -18,6 +18,9 @@ from .const import (
 )
 from .scope import ResolvedDataScope
 
+GUEST_CONTINUITY_NAMESPACE = "guest"
+GUEST_CONVERSATION_ID_PREFIX = "extended-openai-guest-"
+
 
 @dataclass(slots=True)
 class ContinuityResolution:
@@ -63,16 +66,27 @@ class ConversationContinuity:
 
     @staticmethod
     def identity_key(
-        mode: str, scope: ResolvedDataScope, device_id: str | None
+        mode: str,
+        scope: ResolvedDataScope,
+        device_id: str | None,
+        namespace: str | None = None,
     ) -> tuple[str | None, str]:
         """Return the safe continuity owner and a human-readable label."""
         if mode == CONVERSATION_CONTINUITY_USER and scope.scope_type == "user":
-            return scope.scope_id, "Resolved user"
-        if mode in {CONVERSATION_CONTINUITY_DEVICE, CONVERSATION_CONTINUITY_USER}:
+            key, label = scope.scope_id, "Resolved user"
+        elif mode in {
+            CONVERSATION_CONTINUITY_DEVICE,
+            CONVERSATION_CONTINUITY_USER,
+        }:
             if device_id:
-                return f"device:{device_id}", "Assist device"
-            return None, "Home Assistant default"
-        return None, "Home Assistant default"
+                key, label = f"device:{device_id}", "Assist device"
+            else:
+                key, label = None, "Home Assistant default"
+        else:
+            key, label = None, "Home Assistant default"
+        if key is not None and namespace is not None:
+            return f"{namespace}:{key}", f"Guest {label.lower()}"
+        return key, label
 
     async def async_resolve(
         self,
@@ -81,12 +95,40 @@ class ConversationContinuity:
         device_id: str | None,
         incoming_conversation_id: str | None,
         timeout_minutes: int,
+        *,
+        namespace: str | None = None,
     ) -> ContinuityResolution:
         """Resolve one request using a small lock and no network I/O."""
+        if namespace is None and self._is_guest_conversation_id(
+            incoming_conversation_id
+        ):
+            # HA may return the last Guest ChatLog ID on the first owner turn after
+            # Guest Mode ends. HA-default owner continuity must not reopen that log.
+            incoming_conversation_id = None
         if mode == CONVERSATION_CONTINUITY_HA_DEFAULT:
-            return ContinuityResolution(incoming_conversation_id, None, [], False)
-        key, label = self.identity_key(mode, scope, device_id)
+            if namespace is None:
+                return ContinuityResolution(incoming_conversation_id, None, [], False)
+            # Preserve HA-default session behavior, but accept only a Guest-issued
+            # ID. An owner ID starts a fresh, structurally marked Guest ChatLog.
+            conversation_id = (
+                incoming_conversation_id
+                if self._is_namespaced_conversation_id(
+                    incoming_conversation_id, namespace
+                )
+                else self._new_conversation_id(namespace)
+            )
+            return ContinuityResolution(conversation_id, None, [], False)
+        key, label = self.identity_key(mode, scope, device_id, namespace)
         if key is None:
+            if namespace is not None:
+                conversation_id = (
+                    incoming_conversation_id
+                    if self._is_namespaced_conversation_id(
+                        incoming_conversation_id, namespace
+                    )
+                    else self._new_conversation_id(namespace)
+                )
+                return ContinuityResolution(conversation_id, None, [], False)
             return ContinuityResolution(incoming_conversation_id, None, [], False)
         now = dt_util.utcnow()
         cutoff = now - timedelta(minutes=timeout_minutes)
@@ -99,7 +141,7 @@ class ConversationContinuity:
                     # The overlapping request starts independently and does not take
                     # ownership of the established continuity mapping.
                     return ContinuityResolution(
-                        f"extended-openai-{self._agent_id}-{uuid4().hex}",
+                        self._new_conversation_id(namespace),
                         None,
                         [],
                         False,
@@ -111,12 +153,37 @@ class ConversationContinuity:
                 )
             # A non-ULID caller-selected ID is explicitly supported by HA's
             # chat-session helper and remains stable if Core recreates its log.
-            conversation_id = f"extended-openai-{self._agent_id}-{uuid4().hex}"
+            conversation_id = self._new_conversation_id(namespace)
             self._sessions[key] = ActiveConversation(
                 key, conversation_id, label, now, [], True
             )
             self.new_session_count += 1
             return ContinuityResolution(conversation_id, key, [], False)
+
+    def _new_conversation_id(self, namespace: str | None) -> str:
+        """Create an integration-owned ID with an inspectable privacy namespace."""
+        prefix = f"extended-openai-{self._agent_id}-"
+        if namespace is not None:
+            prefix = f"extended-openai-{namespace}-{self._agent_id}-"
+        return f"{prefix}{uuid4().hex}"
+
+    def _is_namespaced_conversation_id(
+        self, conversation_id: str | None, namespace: str
+    ) -> bool:
+        """Return whether an incoming ID belongs to an integration namespace."""
+        return bool(
+            conversation_id
+            and conversation_id.startswith(
+                f"extended-openai-{namespace}-{self._agent_id}-"
+            )
+        )
+
+    @staticmethod
+    def _is_guest_conversation_id(conversation_id: str | None) -> bool:
+        """Return whether an incoming ID belongs to Guest continuity."""
+        return bool(
+            conversation_id and conversation_id.startswith(GUEST_CONVERSATION_ID_PREFIX)
+        )
 
     async def async_record_success(
         self, key: str | None, content: list[conversation.Content]

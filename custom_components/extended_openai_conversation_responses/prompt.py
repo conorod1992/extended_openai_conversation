@@ -32,6 +32,7 @@ from .const import (
     TEMPORARY_MEMORY_EAGER,
     TEMPORARY_MEMORY_OFF,
 )
+from .guest_mode import GUEST_MODE_PROMPT, GuestCapabilityPolicy
 from .memory import MemoryRecord, automatic_memory_enabled, memory_enabled
 from .temporary_memory import TemporaryMemoryRecord
 
@@ -212,6 +213,7 @@ def render_effective_prompt(
     memories: list[MemoryRecord] | None = None,
     temporary_memories: list[TemporaryMemoryRecord] | None = None,
     knowledge_available: bool = False,
+    guest_policy: GuestCapabilityPolicy | None = None,
 ) -> EffectivePrompt:
     """Render and assemble the production system prompt in deterministic order."""
     raw_prompt: str = options.get(CONF_PROMPT, DEFAULT_PROMPT)
@@ -224,8 +226,23 @@ def render_effective_prompt(
         skills=skills,
     )
     sections: list[PromptSection] = []
+    policy = guest_policy or GuestCapabilityPolicy.unrestricted()
 
-    if memory_enabled(options):
+    if policy.guest_active:
+        sections.append(
+            PromptSection(
+                "guest_mode",
+                "Guest Mode",
+                GUEST_MODE_PROMPT,
+                "stable",
+            )
+        )
+
+    if memory_enabled(options) and (
+        not policy.guest_active
+        or policy.shared_memory_read
+        or policy.shared_memory_write
+    ):
         sections.append(
             PromptSection(
                 "persistent_memory_instructions",
@@ -236,7 +253,7 @@ def render_effective_prompt(
         )
 
     temporary_mode = options.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
-    if temporary_mode != TEMPORARY_MEMORY_OFF:
+    if temporary_mode != TEMPORARY_MEMORY_OFF and policy.temporary_memory:
         sections.append(
             PromptSection(
                 "temporary_memory_instructions",
@@ -246,7 +263,7 @@ def render_effective_prompt(
             )
         )
 
-    if knowledge_available:
+    if knowledge_available and policy.knowledge_access:
         sections.append(
             PromptSection(
                 "knowledge_instructions",
@@ -256,7 +273,10 @@ def render_effective_prompt(
             )
         )
 
-    if options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED):
+    if (
+        options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+        and policy.archive_access
+    ):
         sections.append(
             PromptSection(
                 "archive_instructions",
@@ -334,7 +354,11 @@ def render_effective_prompt(
             )
         )
 
-    if memory_enabled(options) and memories:
+    if (
+        memory_enabled(options)
+        and memories
+        and (not policy.guest_active or policy.shared_memory_read)
+    ):
         sections.append(
             PromptSection(
                 "persistent_memory_context",
@@ -344,7 +368,11 @@ def render_effective_prompt(
             )
         )
 
-    if temporary_mode != TEMPORARY_MEMORY_OFF and temporary_memories:
+    if (
+        temporary_mode != TEMPORARY_MEMORY_OFF
+        and temporary_memories
+        and policy.temporary_memory
+    ):
         sections.append(
             PromptSection(
                 "temporary_memory_context",

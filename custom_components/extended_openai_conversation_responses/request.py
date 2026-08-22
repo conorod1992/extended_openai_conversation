@@ -19,6 +19,7 @@ from .const import (
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
     CONF_BASE_URL,
     CONF_CHAT_MODEL,
+    CONF_GUEST_MODE_ENABLED,
     CONF_MAX_TOKENS,
     CONF_REASONING_EFFORT,
     CONF_SERVICE_TIER,
@@ -39,6 +40,7 @@ from .const import (
     DEFAULT_WEB_SEARCH_CONTEXT,
 )
 from .conversation_archive import archive_tools
+from .guest_mode import GuestCapabilityPolicy, guest_mode_restrict_tool
 from .helpers import get_api_mode, get_model_config, supports_openai_hosted_tools
 from .knowledge import KNOWLEDGE_TOOL_NAMES, knowledge_tools
 from .memory import MEMORY_TOOL_NAMES, memory_enabled, memory_tools
@@ -184,9 +186,11 @@ def assemble_integration_function_tools(
     memory_scope_available: bool,
     temporary_scope_available: bool,
     knowledge_available: bool,
+    guest_policy: GuestCapabilityPolicy | None = None,
 ) -> list[dict[str, Any]]:
     """Assemble non-configured tools from the same feature/scope decisions."""
     result: list[dict[str, Any]] = []
+    guest_policy = guest_policy or GuestCapabilityPolicy.unrestricted()
     if memory_enabled(options) and memory_scope_available:
         conflicts = configured_names & MEMORY_TOOL_NAMES
         if conflicts:
@@ -194,8 +198,30 @@ def assemble_integration_function_tools(
                 "Reserved persistent-memory tool name configured: "
                 + ", ".join(sorted(conflicts))
             )
-        result.extend(memory_tools())
-    if temporary_scope_available:
+        configured_memory_tools = memory_tools()
+        if guest_policy.guest_active:
+            readable = guest_policy.shared_memory_read
+            writable = guest_policy.shared_memory_write
+            configured_memory_tools = [
+                tool
+                for tool in configured_memory_tools
+                if (
+                    tool["spec"]["name"] in {"memory_search", "memory_list"}
+                    and readable
+                )
+                or (
+                    tool["spec"]["name"]
+                    in {
+                        "memory_add",
+                        "memory_upsert",
+                        "memory_update",
+                        "memory_delete",
+                    }
+                    and writable
+                )
+            ]
+        result.extend(configured_memory_tools)
+    if temporary_scope_available and guest_policy.temporary_memory:
         conflicts = configured_names & TEMPORARY_MEMORY_TOOL_NAMES
         if conflicts:
             raise HomeAssistantError(
@@ -203,7 +229,10 @@ def assemble_integration_function_tools(
                 + ", ".join(sorted(conflicts))
             )
         result.extend(temporary_memory_tools())
-    if options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED):
+    if (
+        options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+        and guest_policy.archive_access
+    ):
         configured_archive_tools = archive_tools()
         if not options.get(
             CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -215,7 +244,7 @@ def assemble_integration_function_tools(
                 if tool["function"]["operation"] not in {"search", "get"}
             ]
         result.extend(configured_archive_tools)
-    if knowledge_available:
+    if knowledge_available and guest_policy.knowledge_access:
         conflicts = configured_names & KNOWLEDGE_TOOL_NAMES
         if conflicts:
             raise HomeAssistantError(
@@ -223,4 +252,10 @@ def assemble_integration_function_tools(
                 + ", ".join(sorted(conflicts))
             )
         result.extend(knowledge_tools())
+    if options.get(CONF_GUEST_MODE_ENABLED, False):
+        if "guest_mode_restrict" in configured_names:
+            raise HomeAssistantError(
+                "Reserved Guest Mode tool name configured: guest_mode_restrict"
+            )
+        result.append(guest_mode_restrict_tool())
     return result

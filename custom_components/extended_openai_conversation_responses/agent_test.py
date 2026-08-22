@@ -11,6 +11,7 @@ import yaml
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
 
+from .agent_config import configured_function_tools_from_data
 from .const import (
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
@@ -27,6 +28,7 @@ from .const import (
     DEFAULT_WEB_SEARCH,
 )
 from .functions import get_function
+from .guest_mode import get_loaded_guest_mode, resolve_guest_policy
 from .helpers import (
     get_api_mode,
     get_exposed_entities,
@@ -123,6 +125,30 @@ async def async_test_agent(
         return AgentTestResult(_overall(checks), checks)
     checks.append(
         _check("Configuration", "Passed", f"{function_count} tool schemas valid")
+    )
+    guest_mode = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
+    guest_status = (
+        guest_mode.status() if guest_mode is not None else {"state": "inactive"}
+    )
+    guest_policy = resolve_guest_policy(
+        hass,
+        subentry.data,
+        guest_mode,
+        configured_function_tools_from_data(subentry.data),
+    )
+    policy = guest_policy.as_diagnostics()
+    checks.append(
+        _check(
+            "Guest Mode",
+            "Passed",
+            (
+                f"{str(guest_status['state']).replace('_', ' ').title()}; "
+                f"{policy['readable_entity_count'] or 0} visible entities; "
+                f"{policy['configured_tool_count'] or 0} custom tools"
+                if guest_policy.guest_active
+                else "Inactive"
+            ),
+        )
     )
 
     try:

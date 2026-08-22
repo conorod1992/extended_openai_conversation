@@ -43,6 +43,7 @@ from .const import (
     CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
     CONF_FUNCTION_GROUPS,
+    CONF_GUEST_MODE_ENABLED,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_MEMORY_EMBEDDING_MODEL,
@@ -79,7 +80,11 @@ from .const import (
     SHARED_MEMORY_DISABLED,
     TEMPORARY_MEMORY_OFF,
 )
-from .continuity import ConversationContinuity, async_get_continuity
+from .continuity import (
+    GUEST_CONTINUITY_NAMESPACE,
+    ConversationContinuity,
+    async_get_continuity,
+)
 from .conversation_archive import ArchiveSession, ConversationArchive, async_get_archive
 from .entity import ExtendedOpenAIBaseLLMEntity
 from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
@@ -90,6 +95,13 @@ from .function_groups import (
     load_function_groups,
     remove_function_group_runtime,
     reset_function_group_runtime,
+)
+from .guest_mode import (
+    GUEST_MODE_UNAVAILABLE,
+    GuestCapabilityPolicy,
+    GuestModeManager,
+    async_get_guest_mode,
+    resolve_guest_policy,
 )
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
@@ -137,6 +149,9 @@ _ACTIVE_FUNCTION_GROUP_SESSION: ContextVar[FunctionGroupSession | None] = Contex
 _ACTIVE_MEMORY_SESSION: ContextVar[tuple[str, int] | None] = ContextVar(
     "extended_openai_active_memory_session", default=None
 )
+_ACTIVE_GUEST_POLICY: ContextVar[GuestCapabilityPolicy | None] = ContextVar(
+    "extended_openai_active_guest_policy", default=None
+)
 
 
 async def async_setup_entry(
@@ -171,6 +186,7 @@ class ExtendedOpenAIAgentEntity(
     _knowledge: KnowledgeLibrary | None = None
     _archive: ConversationArchive | None = None
     _function_groups_runtime: FunctionGroupRuntime | None = None
+    _guest_mode: GuestModeManager | None = None
 
     def __init__(self, entry: ExtendedOpenAIConfigEntry, subentry: Any) -> None:
         """Initialize the conversation agent and its streaming capability."""
@@ -212,6 +228,9 @@ class ExtendedOpenAIAgentEntity(
         )
 
         self._usage = await async_get_usage(
+            self.hass, self.entry.entry_id, self.subentry.subentry_id
+        )
+        self._guest_mode = await async_get_guest_mode(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
         self._usage.request_retention_days = int(
@@ -294,6 +313,8 @@ class ExtendedOpenAIAgentEntity(
     async def async_process(self, user_input: ConversationInput) -> ConversationResult:
         """Process a sentence."""
         llm_context = user_input.as_llm_context(DOMAIN)
+        request_policy = self._resolve_live_guest_policy()
+        guest_policy_token = _ACTIVE_GUEST_POLICY.set(request_policy)
         source_device_id = user_input.satellite_id or user_input.device_id
         scope = resolve_data_scope(
             SimpleNamespace(
@@ -319,6 +340,9 @@ class ExtendedOpenAIAgentEntity(
             source_device_id,
             user_input.conversation_id,
             timeout_minutes,
+            namespace=(
+                GUEST_CONTINUITY_NAMESPACE if request_policy.guest_active else None
+            ),
         )
         user_input.conversation_id = resolution.conversation_id
         context_id = getattr(getattr(llm_context, "context", None), "id", None)
@@ -330,7 +354,7 @@ class ExtendedOpenAIAgentEntity(
             else f"context:{context_id or scope.device_id or 'unidentified'}"
         )
         archive_session: ArchiveSession | None = None
-        if self._archive is not None:
+        if self._archive is not None and request_policy.archive_retention:
             archive_session = await self._archive.async_begin_session(
                 session_key,
                 scope,
@@ -360,7 +384,9 @@ class ExtendedOpenAIAgentEntity(
             async_get_chat_log(self.hass, session, user_input) as chat_log,
         ):
             temporary_scope = (
-                resolution.key or f"conversation:{chat_log.conversation_id}"
+                None
+                if request_policy.guest_active
+                else resolution.key or f"conversation:{chat_log.conversation_id}"
             )
             temporary_token = _ACTIVE_TEMPORARY_SCOPE.set(temporary_scope)
             function_group_session = (
@@ -398,7 +424,11 @@ class ExtendedOpenAIAgentEntity(
                     source_device_id=source_device_id,
                 ) as run:
                     result = await self._async_handle_message(user_input, chat_log)
-                    if self._archive is not None and archive_session is not None:
+                    if (
+                        self._archive is not None
+                        and archive_session is not None
+                        and self._effective_guest_policy().archive_retention
+                    ):
                         assistant_text = ""
                         if chat_log.content and isinstance(
                             chat_log.content[-1], conversation.AssistantContent
@@ -423,6 +453,7 @@ class ExtendedOpenAIAgentEntity(
                 _ACTIVE_ARCHIVE.reset(archive_token)
                 _ACTIVE_MEMORY_SESSION.reset(memory_session_token)
                 _ACTIVE_SCOPE.reset(scope_token)
+                _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
 
     async def _async_handle_message(
         self,
@@ -541,16 +572,18 @@ class ExtendedOpenAIAgentEntity(
         temporary_memories: list[TemporaryMemoryRecord] | None = None,
     ) -> str:
         """Build system prompt with exposed entities and skills."""
+        policy = self._effective_guest_policy()
         return render_effective_prompt(
             self.hass,
             self.subentry.data,
             exposed_entities=exposed_entities,
-            current_device_id=llm_context.device_id,
+            current_device_id=None if policy.guest_active else llm_context.device_id,
             user_input=user_input,
             skills=self._get_enabled_skills(),
             memories=memories,
             temporary_memories=temporary_memories,
             knowledge_available=self._knowledge_available,
+            guest_policy=policy,
         ).text
 
     async def _async_retrieve_memories(
@@ -635,6 +668,8 @@ class ExtendedOpenAIAgentEntity(
         self,
     ) -> list[TemporaryMemoryRecord]:
         """Inject all active bounded facts for the safe continuity scope."""
+        if not self._effective_guest_policy().temporary_memory:
+            return []
         scope_id = _ACTIVE_TEMPORARY_SCOPE.get()
         if self._temporary_memory is None or scope_id is None:
             return []
@@ -646,23 +681,66 @@ class ExtendedOpenAIAgentEntity(
 
     def _get_enabled_skills(self) -> list[Skill]:
         """Get enabled skills as list for template rendering."""
+        if not self._effective_guest_policy().skills:
+            return []
         enabled_skill_names = self.skills
         all_skills = self.skill_manager.get_all_skills()
 
         return [s for s in all_skills if s.name in enabled_skill_names]
 
     def _get_exposed_entities(self) -> list[dict[str, Any]]:
-        return get_exposed_entities(self.hass)
+        return self._filter_guest_entities(get_exposed_entities(self.hass))
+
+    def _resolve_live_guest_policy(self) -> GuestCapabilityPolicy:
+        """Resolve policy from current state without expanding a request policy."""
+        try:
+            configured = self._get_configured_function_tools()
+        except Exception:
+            configured = []
+        return resolve_guest_policy(
+            self.hass, self.subentry.data, self._guest_mode, configured
+        )
+
+    def _effective_guest_policy(self) -> GuestCapabilityPolicy:
+        """Hold request permissions stable while allowing mid-request tightening."""
+        request_policy = _ACTIVE_GUEST_POLICY.get()
+        if request_policy is not None and request_policy.guest_active:
+            return request_policy
+        live_policy = self._resolve_live_guest_policy()
+        if live_policy.guest_active:
+            # Pin a mid-request activation so a later trusted disable cannot
+            # expand this in-flight request. The next user turn resolves afresh.
+            _ACTIVE_GUEST_POLICY.set(live_policy)
+            return live_policy
+        return request_policy or GuestCapabilityPolicy.unrestricted()
+
+    def _filter_guest_entities(
+        self, entities: list[dict[str, Any]], *, control: bool = False
+    ) -> list[dict[str, Any]]:
+        policy = self._effective_guest_policy()
+        if not policy.guest_active:
+            return entities
+        allows = policy.allows_entity_control if control else policy.allows_entity_read
+        return [
+            entity
+            for entity in entities
+            if isinstance(entity.get("entity_id"), str)
+            and allows(str(entity["entity_id"]))
+        ]
 
     def _get_function_tools(self) -> list[dict[str, Any]]:
         """Get the effective configured and integration-owned function tools."""
         try:
             configured_tools = self._get_configured_function_tools()
+            policy = self._effective_guest_policy()
             groups = validate_function_groups(
                 self.subentry.data.get(
                     CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)
                 ),
                 configured_tools,
+            )
+            configured_tools, groups = self._filter_guest_tools_and_groups(
+                configured_tools, groups, policy
             )
             session = _ACTIVE_FUNCTION_GROUP_SESSION.get()
             assembly = assemble_function_tools(
@@ -688,6 +766,7 @@ class ExtendedOpenAIAgentEntity(
                         and _ACTIVE_TEMPORARY_SCOPE.get() is not None
                     ),
                     knowledge_available=self._knowledge_available,
+                    guest_policy=policy,
                 )
             )
             return result
@@ -713,11 +792,49 @@ class ExtendedOpenAIAgentEntity(
                 "error": "No active conversation is available for group loading",
             }
         configured_tools = self._get_configured_function_tools()
+        policy = self._effective_guest_policy()
         groups = validate_function_groups(
             self.subentry.data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
             configured_tools,
         )
+        configured_tools, groups = self._filter_guest_tools_and_groups(
+            configured_tools, groups, policy
+        )
         return load_function_groups(session, requested, groups, configured_tools)
+
+    @staticmethod
+    def _filter_guest_tools_and_groups(
+        configured_tools: list[dict[str, Any]],
+        groups: list[dict[str, Any]],
+        policy: GuestCapabilityPolicy,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Apply both tool and group Guest flags without orphaning group members."""
+        if not policy.guest_active:
+            return configured_tools, groups
+        membership = {
+            name: group for group in groups for name in group.get("functions", [])
+        }
+        configured_tools = [
+            tool
+            for tool in configured_tools
+            if policy.allows_configured_tool(tool["spec"]["name"])
+            and (
+                tool["spec"]["name"] not in membership
+                or membership[tool["spec"]["name"]].get("guest_allowed") is True
+            )
+        ]
+        allowed_names = {tool["spec"]["name"] for tool in configured_tools}
+        guest_groups = [
+            {
+                **group,
+                "functions": [
+                    name for name in group["functions"] if name in allowed_names
+                ],
+            }
+            for group in groups
+            if group.get("guest_allowed") is True
+        ]
+        return configured_tools, guest_groups
 
     async def _execute_function_tool(
         self,
@@ -728,6 +845,13 @@ class ExtendedOpenAIAgentEntity(
     ) -> conversation.ToolResultContent:
         """Execute an integration-owned tool or a configured tool."""
         function_type = function_tool.get("function", {}).get("type")
+        policy = self._effective_guest_policy()
+        if function_type == "guest_mode":
+            try:
+                result = await self._async_execute_guest_mode_tool(tool_input.tool_args)
+            except (RuntimeError, ValueError) as err:
+                result = {"status": "error", "error": str(err)}
+            return self._tool_result(tool_input, result)
         if function_type not in {
             "memory",
             "temporary_memory",
@@ -741,29 +865,88 @@ class ExtendedOpenAIAgentEntity(
                 if latest_entry is not None
                 else None
             )
+            latest_data = (
+                latest_subentry.data
+                if latest_subentry is not None
+                else self.subentry.data
+            )
+            current_configured = self._configured_function_tools_from_data(latest_data)
             current_tool = next(
                 (
                     tool
-                    for tool in self._configured_function_tools_from_data(
-                        latest_subentry.data
-                        if latest_subentry is not None
-                        else self.subentry.data
-                    )
+                    for tool in current_configured
                     if tool.get("spec", {}).get("name") == tool_name
                 ),
                 None,
             )
             if current_tool is None:
+                if policy.guest_active:
+                    return self._tool_result(
+                        tool_input,
+                        {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                    )
                 raise FunctionNotFound(str(tool_name))
+            if policy.guest_active and (
+                current_tool.get("guest_allowed") is not True
+                or not policy.allows_configured_tool(str(tool_name))
+                or self._is_guest_unscopable_tool(current_tool)
+            ):
+                return self._tool_result(
+                    tool_input,
+                    {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                )
+            if policy.guest_active:
+                current_groups = validate_function_groups(
+                    latest_data.get(
+                        CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)
+                    ),
+                    current_configured,
+                )
+                allowed_tools, _allowed_groups = self._filter_guest_tools_and_groups(
+                    current_configured, current_groups, policy
+                )
+                if str(tool_name) not in {
+                    tool["spec"]["name"] for tool in allowed_tools
+                }:
+                    return self._tool_result(
+                        tool_input,
+                        {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                    )
             if not function_tool_enabled(function_tool) or not function_tool_enabled(
                 current_tool
             ):
                 raise HomeAssistantError(f"Function Tool `{tool_name}` is disabled")
-            return await super()._execute_function_tool(
-                function_tool, tool_input, llm_context, exposed_entities
-            )
+            guest_entities = exposed_entities
+            if policy.guest_active:
+                control = self._is_control_tool(current_tool)
+                if not self._guest_arguments_allowed(
+                    tool_input.tool_args, policy, control=control
+                ):
+                    return self._tool_result(
+                        tool_input,
+                        {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                    )
+                guest_entities = self._filter_guest_entities(
+                    get_exposed_entities(self.hass), control=control
+                )
+            try:
+                return await super()._execute_function_tool(
+                    function_tool, tool_input, llm_context, guest_entities
+                )
+            except Exception:
+                if policy.guest_active:
+                    _LOGGER.warning("Guest tool execution was denied or failed")
+                    return self._tool_result(
+                        tool_input,
+                        {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                    )
+                raise
 
         try:
+            if policy.guest_active and not self._guest_integration_allowed(
+                function_type, function_tool.get("function", {}).get("operation", "")
+            ):
+                raise RuntimeError(GUEST_MODE_UNAVAILABLE)
             if function_type == "archive":
                 result = await self._async_execute_archive_tool(
                     function_tool["function"]["operation"], tool_input.tool_args
@@ -805,11 +988,104 @@ class ExtendedOpenAIAgentEntity(
             tool_result={"result": json.dumps(result, ensure_ascii=False)},
         )
 
+    def _tool_result(
+        self, tool_input: llm.ToolInput, result: dict[str, Any]
+    ) -> conversation.ToolResultContent:
+        return conversation.ToolResultContent(
+            agent_id=self.entity_id,
+            tool_call_id=tool_input.id,
+            tool_name=tool_input.tool_name,
+            tool_result={"result": json.dumps(result, ensure_ascii=False)},
+        )
+
+    async def _async_execute_guest_mode_tool(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        if (
+            self._guest_mode is None
+            or self.subentry.data.get(CONF_GUEST_MODE_ENABLED, False) is not True
+        ):
+            raise RuntimeError("Guest Mode is unavailable")
+        return await self._guest_mode.async_restrict(
+            active_from=arguments.get("active_from"),
+            active_until=arguments.get("active_until"),
+            make_indefinite=arguments.get("make_indefinite", False) is True,
+        )
+
+    def _guest_integration_allowed(self, function_type: str, operation: str) -> bool:
+        policy = self._effective_guest_policy()
+        if function_type == "memory":
+            return (
+                policy.shared_memory_read
+                if operation in {"search", "list"}
+                else policy.shared_memory_write
+            )
+        if function_type == "knowledge":
+            return policy.knowledge_access
+        if function_type == "archive":
+            return policy.archive_access
+        if function_type == "temporary_memory":
+            return policy.temporary_memory
+        return False
+
+    @staticmethod
+    def _is_control_tool(tool: Mapping[str, Any]) -> bool:
+        function = tool.get("function", {})
+        return function.get("type") == "native" and function.get("name") in {
+            "execute_service",
+            "execute_service_single",
+            "add_automation",
+        }
+
+    @staticmethod
+    def _is_guest_unscopable_tool(tool: Mapping[str, Any]) -> bool:
+        """Deny native operations whose results or effects cannot be entity-scoped."""
+        function = tool.get("function", {})
+        return function.get("type") == "native" and function.get("name") in {
+            "add_automation",
+            "get_energy",
+            "get_user_from_user_id",
+        }
+
+    @staticmethod
+    def _guest_arguments_allowed(
+        value: Any, policy: GuestCapabilityPolicy, *, control: bool
+    ) -> bool:
+        """Fail closed for explicit entity and broad target selectors."""
+        allows = policy.allows_entity_control if control else policy.allows_entity_read
+
+        def inspect(item: Any, key: str | None = None) -> bool:
+            if isinstance(item, Mapping):
+                for child_key, child in item.items():
+                    normalized = str(child_key).lower()
+                    if normalized in {"area_id", "area_ids", "device_id", "device_ids"}:
+                        return False
+                    if not inspect(child, normalized):
+                        return False
+                return True
+            if isinstance(item, list):
+                return all(inspect(child, key) for child in item)
+            if key in {"entity_id", "entity_ids", "statistic_id", "statistic_ids"}:
+                values = (
+                    [part.strip() for part in item.split(",")]
+                    if isinstance(item, str)
+                    else []
+                )
+                return bool(values) and all(allows(entity_id) for entity_id in values)
+            return True
+
+        return inspect(value)
+
+    def _provider_tool_allowed(self, tool_type: str) -> bool:
+        policy = self._effective_guest_policy()
+        return tool_type != "web_search" or policy.web_search
+
     @property
     def _knowledge_available(self) -> bool:
         """Return whether an enabled, populated library is ready."""
         return bool(
-            self.subentry.data.get(CONF_KNOWLEDGE_ENABLED, False)
+            self._effective_guest_policy().knowledge_access
+            and self.subentry.data.get(CONF_KNOWLEDGE_ENABLED, False)
             and self._knowledge is not None
             and self._knowledge.source_count > 0
         )
@@ -1076,6 +1352,17 @@ class ExtendedOpenAIAgentEntity(
         self, llm_context: llm.LLMContext | None = None
     ) -> list[str]:
         """Compose personal and enabled household scopes without crossing users."""
+        policy = self._effective_guest_policy()
+        if policy.guest_active:
+            return (
+                [SHARED_HOUSEHOLD_SCOPE_ID]
+                if policy.shared_memory_read
+                and self.subentry.data.get(
+                    CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE
+                )
+                != SHARED_MEMORY_DISABLED
+                else []
+            )
         scope = _ACTIVE_SCOPE.get()
         shared_enabled = (
             self.subentry.data.get(CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE)
@@ -1119,6 +1406,13 @@ class ExtendedOpenAIAgentEntity(
         source: str,
     ) -> str:
         """Resolve a deliberate write target; never infer another user's owner."""
+        policy = self._effective_guest_policy()
+        if policy.guest_active:
+            if not policy.shared_memory_write:
+                raise RuntimeError(GUEST_MODE_UNAVAILABLE)
+            if selector not in {None, "household"}:
+                raise RuntimeError(GUEST_MODE_UNAVAILABLE)
+            selector = "household"
         if selector is not None and selector not in {"personal", "household"}:
             raise ValueError("scope must be personal or household")
         scope = _ACTIVE_SCOPE.get()
@@ -1152,6 +1446,8 @@ class ExtendedOpenAIAgentEntity(
         self, operation: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         """Execute a narrow operation within the request-derived scope."""
+        if not self._effective_guest_policy().temporary_memory:
+            raise RuntimeError(GUEST_MODE_UNAVAILABLE)
         if self._temporary_memory is None:
             raise RuntimeError("temporary memory is unavailable")
         scope_id = _ACTIVE_TEMPORARY_SCOPE.get()

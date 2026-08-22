@@ -28,6 +28,18 @@ from .const import (
     CONF_EXPOSED_ENTITIES_ENABLED,
     CONF_EXPOSED_ENTITIES_TEMPLATE,
     CONF_FUNCTION_GROUPS,
+    CONF_GUEST_CONTROLLABLE_AREAS,
+    CONF_GUEST_CONTROLLABLE_DOMAINS,
+    CONF_GUEST_CONTROLLABLE_ENTITIES,
+    CONF_GUEST_CONTROLLABLE_LABELS,
+    CONF_GUEST_KNOWLEDGE_ENABLED,
+    CONF_GUEST_MODE_ENABLED,
+    CONF_GUEST_READABLE_AREAS,
+    CONF_GUEST_READABLE_DOMAINS,
+    CONF_GUEST_READABLE_ENTITIES,
+    CONF_GUEST_READABLE_LABELS,
+    CONF_GUEST_SHARED_MEMORY_READ,
+    CONF_GUEST_SHARED_MEMORY_WRITE,
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_ENABLED,
     CONF_MEMORY_MODE,
@@ -212,6 +224,21 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 list(DEFAULT_SPEECH_REGEX_REPLACEMENTS),
             )
             data.setdefault(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS))
+            data.setdefault(CONF_GUEST_MODE_ENABLED, False)
+            data.setdefault(CONF_GUEST_SHARED_MEMORY_READ, False)
+            data.setdefault(CONF_GUEST_SHARED_MEMORY_WRITE, False)
+            data.setdefault(CONF_GUEST_KNOWLEDGE_ENABLED, False)
+            for guest_selector in (
+                CONF_GUEST_READABLE_ENTITIES,
+                CONF_GUEST_CONTROLLABLE_ENTITIES,
+                CONF_GUEST_READABLE_DOMAINS,
+                CONF_GUEST_CONTROLLABLE_DOMAINS,
+                CONF_GUEST_READABLE_AREAS,
+                CONF_GUEST_CONTROLLABLE_AREAS,
+                CONF_GUEST_READABLE_LABELS,
+                CONF_GUEST_CONTROLLABLE_LABELS,
+            ):
+                data.setdefault(guest_selector, [])
             # Existing prompts are preserved byte-for-byte and may already embed
             # now() or exposed_entities(). Keep new generated context disabled for
             # migrated agents so migration cannot duplicate arbitrary templates.

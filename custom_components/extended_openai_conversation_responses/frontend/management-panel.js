@@ -2,7 +2,7 @@ import { bindConfiguration, bindTools, configurationDialogs, renderConfiguration
 import { tokenBreakdown } from "./usage-chart.js";
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
-const SECTIONS = ["overview", "configuration", "tools", "usage", "conversations", "memories", "knowledge", "diagnostics"];
+const SECTIONS = ["overview", "configuration", "tools", "guest", "usage", "conversations", "memories", "knowledge", "diagnostics"];
 const KNOWLEDGE_TITLE_LIMIT = 120;
 const KNOWLEDGE_DESCRIPTION_LIMIT = 500;
 const KNOWLEDGE_LIMIT = 100000;
@@ -170,6 +170,8 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
         this._result = await this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: this._scopeId, limit: 100 });
       } else if (this._section === "knowledge") {
         this._result = await this._call("knowledge", "list");
+      } else if (this._section === "guest") {
+        this._result = await this._call("guest_mode", "get");
       } else if (["configuration", "tools"].includes(this._section)) {
         if (!this._configData || this._draftAgentId !== this._agentId) {
           this._configData = await this._call("configuration", "get");
@@ -255,6 +257,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._section === "conversations") return this._conversations();
     if (this._section === "memories") return this._memories();
     if (this._section === "knowledge") return this._knowledge();
+    if (this._section === "guest") return this._guestMode();
     return this._diagnostics(agent);
   }
 
@@ -269,6 +272,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
       ${this._metric("Memories", this._titleCase(agent.memory_mode), `${agent.memory_count} memories`)}
       ${this._metric("Knowledge", agent.knowledge_enabled ? "Enabled" : "Disabled", `${agent.knowledge_source_count} sources`)}
       ${this._metric("Conversation archive", agent.archive_enabled ? "Enabled" : "Disabled")}
+      ${this._metric("Guest Mode", this._titleCase(String(agent.guest_mode?.state || "inactive").replaceAll("_", " ")))}
     </section>`;
   }
 
@@ -317,8 +321,48 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     return `<section class="content-card"><div class="section-heading"><div><h2>Knowledge Library</h2><p>${sources.length} source${sources.length === 1 ? "" : "s"} stored locally for on-demand search.</p></div><button type="button" id="add-source">+ Add source</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${items.map((source) => `<article class="list-card"><div class="card-main clickable edit-source" tabindex="0" role="button" data-id="${this._e(source.source_id)}"><h3>${this._e(source.title)}</h3><p class="description">${this._e(source.description || "No description")}</p><p class="meta">${Number(source.character_count || 0).toLocaleString()} characters · Updated ${this._e(this._formatDate(source.updated_at))}</p></div><div class="actions"><button type="button" class="secondary source-edit-button" data-id="${this._e(source.source_id)}">Edit</button><button type="button" class="danger delete-source" data-id="${this._e(source.source_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No sources match this filter." : "No Knowledge sources yet. Add one to make reference information available on demand.")}</div></section>`;
   }
 
+  _guestMode() {
+    const status = this._result?.status || {};
+    const policy = this._result?.policy || {};
+    const state = String(status.state || "inactive").replaceAll("_", " ");
+    const controls = this._data?.is_admin ? `<section class="content-card"><div class="section-heading"><div><h2>Trusted Guest Mode controls</h2><p>Set the complete interval. These controls may move, shorten, cancel, or end Guest Mode.</p></div></div><div class="form-grid"><label>Starts<input id="guest-start" type="datetime-local" value="${this._e(this._dateTimeLocal(status.active_from))}"></label><label>Ends<input id="guest-end" type="datetime-local" value="${this._e(this._dateTimeLocal(status.active_until))}" ${status.indefinite ? "disabled" : ""}></label></div><label class="toggle"><span>Remain active indefinitely</span><input id="guest-indefinite" type="checkbox" ${status.indefinite ? "checked" : ""}></label><div class="section-actions"><button type="button" id="guest-update">Update interval</button><button type="button" class="secondary" id="guest-now">Activate now</button><button type="button" class="danger secondary-danger" id="guest-disable">${status.scheduled ? "Cancel schedule" : "End Guest Mode"}</button></div></section>` : "";
+    return `<section class="notice ${status.currently_active ? "on" : ""}"><div><strong>Guest Mode: ${this._e(this._titleCase(state))}</strong><p>${status.active_from ? `Starts ${this._e(this._formatDate(status.active_from))}` : "No interval is configured"}${status.active_until ? ` · Ends ${this._e(this._formatDate(status.active_until))}` : status.active_from ? " · No expiry" : ""}</p></div></section><section class="metric-grid compact">${this._metric("Guest-visible entities", policy.readable_entity_count ?? "—")}${this._metric("Guest-controllable entities", policy.controllable_entity_count ?? "—")}${this._metric("Guest custom tools", policy.configured_tool_count ?? "—")}${this._metric("Guest archive retention", policy.archive_retention ? "Enabled" : "Disabled")}</section><section class="notice"><strong>Voice and model safety boundary</strong><p>The assistant may only enable Guest Mode, start it sooner, extend it, or make it indefinite. Only trusted Home Assistant controls can shorten, cancel, or disable it.</p></section>${controls}`;
+  }
+
+  _dateTimeLocal(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return shifted.toISOString().slice(0, 16);
+  }
+
+  async _updateGuestMode(now = false) {
+    const root = this.shadowRoot;
+    const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
+    const start = now ? new Date().toISOString() : root.querySelector("#guest-start")?.value;
+    const end = root.querySelector("#guest-end")?.value;
+    try {
+      await this._call("guest_mode", "update", {
+        ...(start ? {active_from: start} : {}),
+        ...(!indefinite && end ? {active_until: end} : {}),
+        indefinite: indefinite || !end,
+      });
+      await this._loadAgents(this._agentId);
+      this._toast("Guest Mode updated");
+    } catch (err) { this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true); }
+  }
+
+  async _disableGuestMode() {
+    if (!await this._confirm("End Guest Mode?", "This immediately ends an active interval or cancels a future schedule.", "End Guest Mode")) return;
+    try {
+      await this._call("guest_mode", "disable");
+      await this._loadAgents(this._agentId);
+      this._toast("Guest Mode ended");
+    } catch (err) { this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true); }
+  }
+
   _diagnostics(agent) {
-    return `<section class="metric-grid">${this._metric("Agent", agent.title)}${this._metric("Provider", agent.provider)}${this._metric("Model", agent.model)}${this._metric("Conversation archive", agent.archive_enabled ? "Enabled" : "Disabled")}</section><section class="content-card"><h2>Test provider connection</h2><p>Sends one minimal request to check the selected provider and model. It does not run Home Assistant actions.</p><button type="button" id="test-agent">Run connection test</button><pre id="test-result"></pre></section>`;
+    return `<section class="metric-grid">${this._metric("Agent", agent.title)}${this._metric("Provider", agent.provider)}${this._metric("Model", agent.model)}${this._metric("Conversation archive", agent.archive_enabled ? "Enabled" : "Disabled")}${this._metric("Guest Mode", this._titleCase(String(agent.guest_mode?.state || "inactive").replaceAll("_", " ")))}</section><section class="content-card"><h2>Test provider connection</h2><p>Sends one minimal request to check the selected provider and model. It does not run Home Assistant actions.</p><button type="button" id="test-agent">Run connection test</button><pre id="test-result"></pre></section>`;
   }
 
   _dialogs() {
@@ -361,6 +405,10 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     q("#archive-search")?.addEventListener("click", () => this._searchArchive());
     q("#archive-query")?.addEventListener("keydown", (event) => { if (event.key === "Enter") this._searchArchive(); });
     q("#test-agent")?.addEventListener("click", () => this._testAgent());
+    q("#guest-indefinite")?.addEventListener("change", (event) => { const end = q("#guest-end"); if (end) end.disabled = event.target.checked; });
+    q("#guest-update")?.addEventListener("click", () => this._updateGuestMode(false));
+    q("#guest-now")?.addEventListener("click", () => this._updateGuestMode(true));
+    q("#guest-disable")?.addEventListener("click", () => this._disableGuestMode());
     if (this._section === "configuration") bindConfiguration(this);
     if (this._section === "tools") bindTools(this);
   }

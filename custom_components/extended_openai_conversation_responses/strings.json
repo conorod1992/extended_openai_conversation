@@ -193,7 +193,8 @@
       "usage": {"name": "Lifetime usage"},
       "usage_today": {"name": "Usage today"},
       "usage_month": {"name": "Usage this month"},
-      "last_response_usage": {"name": "Last response usage"}
+      "last_response_usage": {"name": "Last response usage"},
+      "guest_mode": {"name": "Guest Mode"}
     }
   },
   "services": {
