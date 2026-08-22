@@ -181,6 +181,7 @@ class KnowledgeLibrary:
         query: str | None = None,
         limit: int = DEFAULT_CATALOG_LIMIT,
         offset: int = 0,
+        allowed_source_ids: frozenset[str] | None = None,
     ) -> dict[str, Any]:
         """List bounded source metadata without scanning or returning content."""
         self._ensure_initialized()
@@ -195,7 +196,11 @@ class KnowledgeLibrary:
         normalized_query = _normalize(query or "")
         query_tokens = _tokens(query or "")
 
-        sources = list(self._sources.values())
+        sources = [
+            source
+            for source in self._sources.values()
+            if allowed_source_ids is None or source.source_id in allowed_source_ids
+        ]
         if normalized_query:
             sources = [
                 source

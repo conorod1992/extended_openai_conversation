@@ -1,40 +1,48 @@
 # Guest Mode
 
-Guest Mode is a backend-enforced, per-agent safety boundary for visitors using a
-Home Assistant conversation agent. It can start immediately, start at a future
-time, expire at a chosen time, or remain active indefinitely. Its schedule is
-stored by the integration and exposed through a Guest Mode sensor; the sensor is
-for visibility and automations, not the source of truth.
+Guest Mode is a backend-enforced, per-agent privacy and safety boundary for
+visitors using a Home Assistant conversation agent. It can start now or later,
+expire at a chosen time, or remain active indefinitely. The integration owns the
+schedule; its sensor is for visibility and automations.
 
 ## Configure the guest policy
 
-Open **Extended OpenAI → Configuration → Guest Mode policy**. Guest access is
-deny-by-default:
+Open **Extended OpenAI → Guest**. Guest entity access starts with Home
+Assistant's normal Assist exposure and subtracts every matching entity, domain,
+area, or label exclusion. A match in any category denies the entity from prompt
+context, discovery, reads, history, controls, and entity-scoped native tools.
 
-- choose readable and controllable entities using entity, domain, area, or label
-  IDs; controllable entities are always intersected with the readable set;
-- optionally allow shared-household memory reads and writes independently;
-- optionally allow Knowledge Library reads;
-- mark an individual custom Function Tool as **Guest** only after reviewing the
-  complete function, including any file, shell, network, administrative, or
-  indirect data access it provides;
-- turn on **Enable Guest Mode voice/model controls** to expose the one-way
-  `guest_mode_restrict` tool. This setting controls tool availability only.
-  Turning it off does not cancel, shorten, or deactivate an active or scheduled
-  Guest Mode interval; use the trusted Guest page or Home Assistant service for
-  those changes.
+Optional separate control restrictions add another exclusion layer. When they
+are off, control exactly matches read access; when on, control can only become
+narrower. Home Assistant entity, area, label, and option selectors are used so
+friendly names are shown while stable IDs are stored.
 
-Existing custom tools and Function Groups are owner-only after migration. A tool
-needs top-level `guest_allowed: true`; a grouped tool additionally requires its
-group's **Available in Guest Mode** switch. The restrictive intersection is used
-for both eager and on-demand group loading.
+Knowledge and Functions each have **Off**, **On**, and **Custom** modes. Custom
+Knowledge access selects source IDs from source titles and descriptions. Custom
+Functions selects individual tools or complete Function Groups from their
+metadata. Disabled functions remain disabled, and unsafe unscopable native
+functions are always denied. Shared-household memory has **Off**, **Read only**,
+and **Read & write** modes and defaults to Off. Personal memory is unavailable.
+
+The advanced **Enable Guest Mode controls** setting exposes the one-way
+`guest_mode_restrict` model tool and defaults on for new agents. It controls only
+the availability of that restriction tool. Turning it off never cancels,
+shortens, deactivates, or weakens an active or scheduled Guest restriction.
+
+### Existing configurations
+
+Agents saved with the former allow-list policy keep those exact semantics. The
+Guest page shows a conservative translated exclusion draft and a migration
+notice. Version 2 becomes active only after an administrator explicitly reviews
+and saves that draft. This prevents an old empty allow-list from becoming broad
+access. Legacy Knowledge, function, and memory grants are translated
+conservatively; a legacy write-only shared-memory combination becomes Off.
 
 ## Start, schedule, or end Guest Mode
 
-The **Guest** page in the integration panel shows the current state and resolved
-non-sensitive policy counts. Administrators can activate now, schedule or replace
-the interval, change its end, make it indefinite, end it, or cancel a future
-schedule.
+The **Guest** page shows status, scheduling controls, and non-sensitive resolved
+policy counts. Administrators can activate now, replace the interval, shorten or
+extend it, make it indefinite, end it, or cancel a future schedule.
 
 Automations and scripts can use:
 
@@ -44,58 +52,40 @@ Automations and scripts can use:
 Both actions target a config entry and conversation agent and require an
 administrator. Datetimes without an offset use the Home Assistant timezone.
 
-The model-facing `guest_mode_restrict` operation is deliberately one-way. It may
-enable Guest Mode, move a start earlier, extend an end later, or make the interval
-indefinite. It cannot disable, cancel, move a start later, or shorten an end. An
-immediate activation without an expiry is indefinite.
+The model-facing restriction operation is deliberately one-way. It can enable
+Guest Mode, move a start earlier, extend an end later, or make the interval
+indefinite. It cannot disable, cancel, delay, or shorten Guest Mode.
 
 ## Enforced behavior
 
-While Guest Mode is active, the integration filters prompt entity context,
-configured tools, Function Groups, state/history targets, and control targets.
+While active, Guest Mode filters prompt entity context, discovery, configured
+tools and groups, Knowledge catalogs/search/direct retrieval, state and history
+targets, control targets, and native function execution. Stale tool calls are
+checked again against the live policy before execution. Denied calls return the
+generic message `This capability is unavailable in Guest Mode.` without naming
+hidden resources.
+
+Personal memory, owner archive access and retention, temporary memory, skills,
+and hosted Web Search are disabled. Guest turns can resume recent Guest context
+under the selected continuity mode and normal timeout, using a structurally
+separate Guest namespace. Guest never resumes owner context, owner never resumes
+Guest context, and Guest turns are not written to the owner archive.
+
 Model-visible context is fully re-resolved at the next user turn. If Guest Mode
 becomes active after a provider request has already been sent, execution-time
-restrictions tighten immediately, but context already sent to the model cannot be
+restrictions tighten immediately, but already-sent context cannot be
 retroactively removed. Deactivation during a request does not add permissions
 until the next user turn.
 
-Personal memory is always unavailable. Shared-household memory is available only
-according to its two Guest switches. Conversation archive access and retention,
-temporary memory, skills, and hosted Web Search are disabled. Knowledge is
-independently opt-in. Guest turns can resume recent Guest context under the
-selected continuity mode's normal session and timeout behavior, using a
-structurally separate Guest namespace. They never resume owner context, owner
-turns never resume Guest context, and Guest turns are not written to the owner's
-archive.
-
-Forbidden calls return the generic message `This capability is unavailable in
-Guest Mode.` without naming hidden entities or tools. Guest state and policy
-counts appear in diagnostics and the effective-request preview without exposing
-private data. Full agent backups include the Guest Mode schedule; older version 1
-backups restore with Guest Mode inactive.
-
 ## Status sensor
 
-Each conversation agent has a `Guest Mode` sensor with these states:
+Each conversation agent has a `Guest Mode` sensor with `inactive`, `scheduled`,
+`active`, and `active_indefinitely` states. Attributes include `active_from`,
+`active_until`, `indefinite`, `currently_active`, and `scheduled`.
 
-- `inactive`
-- `scheduled`
-- `active`
-- `active_indefinitely`
+## Current limitations
 
-Its attributes include `active_from`, `active_until`, `indefinite`,
-`currently_active`, and `scheduled`.
-
-## Current limitation
-
-Broad `area_id` and `device_id` targets supplied directly to a custom tool call
-are rejected in Guest Mode. Configure areas and labels in the Guest policy; the
-integration resolves them to individual allowed entities before prompt and
-execution filtering. This conservative behavior prevents a broad service target
-from including a newly added private entity.
-
-Native `add_automation`, `get_energy`, and `get_user_from_user_id` tools are also
-unavailable because their effect or result cannot be reliably reduced to the
-guest entity set. Entity-scoped history and statistics calls remain available
-only when the tool/group flags and every requested entity or statistic ID pass the
-Guest policy.
+Native `add_automation`, `get_energy`, and `get_user_from_user_id` are unavailable
+because their effects or results cannot be reliably reduced to the guest entity
+set. Execution restrictions cannot retract model context already transmitted to
+a provider; the next user turn receives the fully rebuilt Guest context.

@@ -14,7 +14,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from .agent_config import agent_config_snapshot, normalize_agent_config
+from .agent_config import (
+    agent_config_snapshot,
+    normalize_agent_config,
+    preserve_legacy_guest_policy,
+)
 from .const import (
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
@@ -127,6 +131,9 @@ async def async_create_backup(
         memory, temporary, knowledge, archive, usage, guest_mode = await _managers(
             hass, entry.entry_id, subentry.subentry_id
         )
+        config_snapshot = preserve_legacy_guest_policy(
+            dict(subentry.data), agent_config_snapshot(subentry.data)
+        )
         document = {
             "format": BACKUP_FORMAT,
             "version": BACKUP_VERSION,
@@ -136,7 +143,7 @@ async def async_create_backup(
                 "title": subentry.title,
                 "source_entry_id": entry.entry_id,
                 "source_subentry_id": subentry.subentry_id,
-                "config": _safe_configuration(agent_config_snapshot(subentry.data)),
+                "config": _safe_configuration(config_snapshot),
             },
             "memories": await memory.async_backup_data(),
             "temporary_memories": await temporary.async_backup_data(),
@@ -230,7 +237,12 @@ def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
     ):
         raise BackupError("The backup agent identity is invalid")
     try:
-        config = normalize_agent_config(agent["config"])
+        raw_config = agent["config"]
+        if not isinstance(raw_config, dict):
+            raise ValueError("agent config must be an object")
+        config = preserve_legacy_guest_policy(
+            raw_config, normalize_agent_config(raw_config)
+        )
         memories = PersistentMemory.validate_backup_data(value["memories"])
         temporary_memories = TemporaryMemory.validate_backup_data(
             value["temporary_memories"]
@@ -325,7 +337,9 @@ async def _snapshot_for_restore(
     )
     return PreparedRestore(
         subentry.title,
-        agent_config_snapshot(subentry.data),
+        preserve_legacy_guest_policy(
+            dict(subentry.data), agent_config_snapshot(subentry.data)
+        ),
         PersistentMemory.validate_backup_data(await memory.async_backup_data()),
         TemporaryMemory.validate_backup_data(await temporary.async_backup_data()),
         KnowledgeLibrary.validate_backup_data(await knowledge.async_backup_data()),

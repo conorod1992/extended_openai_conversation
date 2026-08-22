@@ -138,13 +138,14 @@ See [Knowledge Library](features/knowledge-library.md).
 
 ## Guest Mode
 
-The Guest Mode policy is deny-by-default and independent for each conversation
-agent. Configure readable and controllable entity, domain, area, and label IDs;
-shared-household memory read/write; Knowledge access; and whether the model may
-use the one-way activation tool. That switch only enables the voice/model control;
-turning it off does not end an active or scheduled restriction. Mark individual
-custom Function Tools as Guest only after reviewing their full behavior. Schedule
-and trusted full controls live on the panel's **Guest** page. See
+The **Guest** page is the single policy editor. Guests begin with entities
+normally exposed to Assist, then entity, domain, area, and label exclusions are
+subtracted. Optional control exclusions can only narrow that readable set.
+Knowledge and Functions support Off, On, or Custom selection; shared-household
+memory supports Off, Read only, or Read & write. Personal memory and owner
+archives remain unavailable. The advanced **Enable Guest Mode controls** setting
+only exposes the model's one-way restriction tool; turning it off does not end or
+weaken an active or scheduled restriction. See
 [Guest Mode](features/guest-mode.md).
 
 ## Context management

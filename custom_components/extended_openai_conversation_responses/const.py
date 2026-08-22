@@ -254,7 +254,29 @@ DEFAULT_KNOWLEDGE_ENABLED = False
 
 # Backend-enforced Guest Mode. Integration-owned schedule state is stored separately.
 CONF_GUEST_MODE_ENABLED = "guest_mode_enabled"
-DEFAULT_GUEST_MODE_ENABLED = False
+DEFAULT_GUEST_MODE_ENABLED = True
+# Version 2 is the exclusion-based Guest policy.  Its presence is deliberately
+# used as the migration marker; configurations without it retain legacy
+# allow-list behavior until an administrator explicitly saves the new policy.
+CONF_GUEST_POLICY_VERSION = "guest_policy_version"
+GUEST_POLICY_VERSION = 2
+CONF_GUEST_EXCLUDED_ENTITIES = "guest_excluded_entities"
+CONF_GUEST_EXCLUDED_DOMAINS = "guest_excluded_domains"
+CONF_GUEST_EXCLUDED_AREAS = "guest_excluded_areas"
+CONF_GUEST_EXCLUDED_LABELS = "guest_excluded_labels"
+CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS = "guest_separate_control_restrictions"
+CONF_GUEST_CONTROL_EXCLUDED_ENTITIES = "guest_control_excluded_entities"
+CONF_GUEST_CONTROL_EXCLUDED_DOMAINS = "guest_control_excluded_domains"
+CONF_GUEST_CONTROL_EXCLUDED_AREAS = "guest_control_excluded_areas"
+CONF_GUEST_CONTROL_EXCLUDED_LABELS = "guest_control_excluded_labels"
+CONF_GUEST_KNOWLEDGE_POLICY = "guest_knowledge_policy"
+CONF_GUEST_KNOWLEDGE_SOURCE_IDS = "guest_knowledge_source_ids"
+CONF_GUEST_FUNCTION_POLICY = "guest_function_policy"
+CONF_GUEST_ALLOWED_FUNCTION_NAMES = "guest_allowed_function_names"
+CONF_GUEST_ALLOWED_GROUP_IDS = "guest_allowed_group_ids"
+CONF_GUEST_SHARED_MEMORY_POLICY = "guest_shared_memory_policy"
+GUEST_ACCESS_POLICIES = ["off", "on", "custom"]
+GUEST_SHARED_MEMORY_POLICIES = ["off", "read_only", "read_write"]
 CONF_GUEST_READABLE_ENTITIES = "guest_readable_entities"
 CONF_GUEST_CONTROLLABLE_ENTITIES = "guest_controllable_entities"
 CONF_GUEST_READABLE_DOMAINS = "guest_readable_domains"

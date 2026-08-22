@@ -3,15 +3,21 @@
 from pathlib import Path
 import re
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses.agent_config import (
+    GUEST_V2_FIELDS,
     agent_config_defaults,
 )
 from custom_components.extended_openai_conversation_responses.const import (
+    CONF_GUEST_EXCLUDED_DOMAINS,
+    CONF_GUEST_FUNCTION_POLICY,
+    CONF_GUEST_POLICY_VERSION,
     CONVERSATION_CONTINUITY_USER,
     DOMAIN,
+    GUEST_POLICY_VERSION,
 )
 from custom_components.extended_openai_conversation_responses.continuity import (
     async_get_continuity,
@@ -108,6 +114,53 @@ async def test_configuration_read_and_update_require_admin(hass) -> None:
     )
     assert updated["config"]["max_tokens"] == 750
     hass.config_entries.async_update_subentry.assert_called_once()
+
+
+async def test_guest_policy_requires_explicit_central_save(hass, monkeypatch) -> None:
+    _entry, subentry = _setup_entry(hass)
+    legacy = dict(subentry.data)
+    for key in GUEST_V2_FIELDS:
+        legacy.pop(key, None)
+    subentry.data = legacy
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_ui.async_get_guest_mode",
+        AsyncMock(return_value=SimpleNamespace()),
+    )
+
+    await async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "configuration",
+            "action": "update",
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "config": {"max_tokens": 700},
+        },
+    )
+    generic_data = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
+    assert CONF_GUEST_POLICY_VERSION not in generic_data
+
+    hass.config_entries.async_update_subentry.reset_mock()
+    await async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "guest_mode",
+            "action": "save_policy",
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "config": {
+                CONF_GUEST_EXCLUDED_DOMAINS: ["lock"],
+                CONF_GUEST_FUNCTION_POLICY: "off",
+            },
+        },
+    )
+    saved = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
+    assert saved[CONF_GUEST_POLICY_VERSION] == GUEST_POLICY_VERSION
+    assert saved[CONF_GUEST_EXCLUDED_DOMAINS] == ["lock"]
 
 
 async def test_configuration_validation_returns_field_errors(hass) -> None:
