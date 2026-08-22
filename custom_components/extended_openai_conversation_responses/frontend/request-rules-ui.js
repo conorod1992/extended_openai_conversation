@@ -1,6 +1,29 @@
 const sensitivityLabel = (value) => value >= 93 ? "Conservative" : value >= 88 ? "Normal" : "Tolerant";
 const sensitivityValue = (value) => value === "Conservative" ? 94 : value === "Tolerant" ? 84 : 90;
 const matchLabel = (value) => ({equals:"Equals",starts_with:"Starts with",ends_with:"Ends with",contains:"Contains"}[value] || value);
+const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+export function parseAdvancedActionConfig(value) {
+  let parsed;
+  try { parsed = JSON.parse(value || "{}"); } catch (_err) { throw new Error("Advanced action configuration must be valid JSON."); }
+  if (!isObject(parsed)) throw new Error("Advanced action configuration must be a JSON object.");
+  const target = parsed.target ?? {};
+  const data = parsed.data ?? {};
+  if (!isObject(target)) throw new Error("Advanced action target must be a JSON object.");
+  if (!isObject(data)) throw new Error("Advanced action data must be a JSON object.");
+  return {target, data};
+}
+
+export function mergeActionEditorValue(action, entityText, advancedText, originalEntityText = "") {
+  const advanced = parseAdvancedActionConfig(advancedText);
+  const target = {...advanced.target};
+  if (entityText.trim() !== originalEntityText.trim()) {
+    const ids = entityText.split(",").map((item) => item.trim()).filter(Boolean);
+    if (ids.length) target.entity_id = ids;
+    else delete target.entity_id;
+  }
+  return {domain:action.domain, service:action.service, target, data:advanced.data};
+}
 
 export function renderRequestRules(panel) {
   const result = panel._result || {};
@@ -23,7 +46,7 @@ export function renderRequestRules(panel) {
 
 export function requestRulesDialog(panel) {
   return `<dialog id="rule-dialog" class="editor-dialog wide request-rule-dialog" aria-labelledby="rule-dialog-title"><form id="rule-form"><div class="dialog-header"><h2 id="rule-dialog-title">Create Request Rule</h2><button type="button" class="icon rule-close" aria-label="Close">×</button></div><div class="dialog-body"><div class="form-grid"><label>Rule name<input id="rule-name" required maxlength="120" placeholder="Good night"></label><label class="toggle"><span>Enabled</span><input id="rule-enabled-edit" type="checkbox" checked></label></div><label>Trigger phrases<textarea id="rule-phrases" required placeholder="One phrase per line&#10;good night"></textarea><small>Put each alternative phrase on a new line.</small></label><div class="form-grid"><label>Match<select id="rule-match"><option value="equals">Equals</option><option value="starts_with">Starts with</option><option value="ends_with">Ends with</option><option value="contains">Contains</option></select></label><label>Behaviour<select id="rule-action-type"><option value="local_action">Local command — run Home Assistant actions</option><option value="model_routing">AI routing — switch model or reasoning</option></select></label></div>
-      <section id="rule-local-config"><h3>Home Assistant actions</h3><p class="help">Actions run in order. Local commands do not call OpenAI.</p><div id="rule-actions"></div><button type="button" class="secondary" id="rule-action-add">Add action</button><div class="form-grid"><label>Success response<input id="rule-success" value="Done"></label><label>Failure response<input id="rule-failure" value="Sorry, that did not work"></label></div></section>
+      <section id="rule-local-config"><h3>Home Assistant actions</h3><p class="help">Actions run in order. Local commands do not call OpenAI. Guest Mode restrictions are checked for the entire sequence before any action runs.</p><div id="rule-actions"></div><button type="button" class="secondary" id="rule-action-add">Add action</button><div class="form-grid"><label>Success response<input id="rule-success" value="Done"></label><label>Failure response<input id="rule-failure" value="Sorry, that did not work"></label></div></section>
       <section id="rule-routing-config" hidden><h3>AI routing</h3><div class="form-grid"><label>Model<input id="rule-model" placeholder="gpt-5-mini"></label><label>Reasoning effort<select id="rule-reasoning"><option value="">Keep current</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label><label>Scope<select id="rule-scope"><option value="request">This request only</option><option value="conversation">Rest of this conversation</option></select></label><label class="toggle"><span>Reset to configured defaults</span><input id="rule-reset" type="checkbox"></label></div><label>Acknowledgement<input id="rule-routing-success" value="Updated"></label><p class="help">An Equals command is acknowledged locally. Broader matches keep the original request wording unchanged.</p></section>
       <section><h3>Matching behaviour</h3><label><select id="rule-matching-behavior"><option value="defaults">Uses default settings</option><option value="custom">Customize for this rule</option></select></label><div id="rule-custom-matching" class="form-grid compact" hidden><label class="toggle"><span>Normalize word forms</span><input id="rule-word-forms" type="checkbox" checked></label><label class="toggle"><span>Common wording alternatives</span><input id="rule-wording" type="checkbox" checked></label><label class="toggle"><span>Fuzzy matching</span><input id="rule-fuzzy" type="checkbox"></label><label>Fuzzy sensitivity<select id="rule-threshold"><option>Conservative</option><option selected>Normal</option><option>Tolerant</option></select></label></div><p class="help">Fuzzy matching can tolerate small speech-recognition mistakes but may also make matches less strict. It is not semantic understanding.</p></section><div id="rule-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" class="secondary rule-close">Cancel</button><button type="submit" id="rule-save">Save rule</button></div></form></dialog>`;
 }
@@ -32,7 +55,10 @@ function actionRow(panel, action = {}) {
   const row = document.createElement("div");
   row.className = "ha-action-row";
   const target = action.target?.entity_id;
-  row.innerHTML = `<label>Domain<input class="ha-domain" required value="${panel._e(action.domain || "")}" placeholder="script"></label><label>Action<input class="ha-service" required value="${panel._e(action.service || "")}" placeholder="turn_on"></label><label>Target entities<input class="ha-target" value="${panel._e(Array.isArray(target) ? target.join(", ") : target || "")}" placeholder="script.goodnight"></label><button type="button" class="icon ha-action-remove" aria-label="Remove action">×</button>`;
+  const entityText = Array.isArray(target) ? target.join(", ") : target || "";
+  row.dataset.originalEntityText = entityText;
+  const advanced = JSON.stringify({target:action.target || {},data:action.data || {}}, null, 2);
+  row.innerHTML = `<label>Domain<input class="ha-domain" required value="${panel._e(action.domain || "")}" placeholder="script"></label><label>Action<input class="ha-service" required value="${panel._e(action.service || "")}" placeholder="turn_on"></label><label>Target entities<input class="ha-target" value="${panel._e(entityText)}" placeholder="script.goodnight"></label><button type="button" class="icon ha-action-remove" aria-label="Remove action">×</button><details class="ha-action-advanced"><summary>Advanced target and action data</summary><label>JSON configuration<textarea class="ha-advanced" spellcheck="false">${panel._e(advanced)}</textarea></label><small>Preserves target selectors such as area_id and device_id, plus all action data.</small></details>`;
   row.querySelector(".ha-action-remove").addEventListener("click", () => row.remove());
   return row;
 }
@@ -84,9 +110,16 @@ export function bindRequestRules(panel) {
   root.querySelectorAll(".rule-close").forEach((button) => button.addEventListener("click", () => q("#rule-dialog").close()));
   q("#rule-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const actionType = q("#rule-action-type").value;
-    const actions = [...root.querySelectorAll(".ha-action-row")].map((row) => { const ids = row.querySelector(".ha-target").value.split(",").map((item) => item.trim()).filter(Boolean); return {domain:row.querySelector(".ha-domain").value,service:row.querySelector(".ha-service").value,target:ids.length ? {entity_id:ids} : {},data:{}}; });
-    const rule = {name:q("#rule-name").value,enabled:q("#rule-enabled-edit").checked,phrases:q("#rule-phrases").value.split("\n").map((item) => item.trim()).filter(Boolean),match_type:q("#rule-match").value,action_type:actionType,action:actionType === "local_action" ? {actions,success_response:q("#rule-success").value,failure_response:q("#rule-failure").value} : {model:q("#rule-model").value,reasoning_effort:q("#rule-reasoning").value,scope:q("#rule-scope").value,reset:q("#rule-reset").checked,success_response:q("#rule-routing-success").value},matching_behavior:q("#rule-matching-behavior").value,matching:{word_forms:q("#rule-word-forms").checked,wording_alternatives:q("#rule-wording").checked,fuzzy:q("#rule-fuzzy").checked,fuzzy_threshold:sensitivityValue(q("#rule-threshold").value)},order:(result.rules || []).find((item) => item.id === panel._editingRuleId)?.order ?? (result.rules || []).length};
-    try { await panel._call("request_rules", panel._editingRuleId ? "update" : "create", {...(panel._editingRuleId ? {rule_id:panel._editingRuleId} : {}),rule}); q("#rule-dialog").close(); await panel._loadSection(); panel._toast(panel._editingRuleId ? "Rule updated" : "Rule created"); } catch (err) { q("#rule-error").textContent = err.message || String(err); }
+    try {
+      const actionType = q("#rule-action-type").value;
+      const actions = [...root.querySelectorAll(".ha-action-row")].map((row) => mergeActionEditorValue(
+        {domain:row.querySelector(".ha-domain").value,service:row.querySelector(".ha-service").value},
+        row.querySelector(".ha-target").value,
+        row.querySelector(".ha-advanced").value,
+        row.dataset.originalEntityText || "",
+      ));
+      const rule = {name:q("#rule-name").value,enabled:q("#rule-enabled-edit").checked,phrases:q("#rule-phrases").value.split("\n").map((item) => item.trim()).filter(Boolean),match_type:q("#rule-match").value,action_type:actionType,action:actionType === "local_action" ? {actions,success_response:q("#rule-success").value,failure_response:q("#rule-failure").value} : {model:q("#rule-model").value,reasoning_effort:q("#rule-reasoning").value,scope:q("#rule-scope").value,reset:q("#rule-reset").checked,success_response:q("#rule-routing-success").value},matching_behavior:q("#rule-matching-behavior").value,matching:{word_forms:q("#rule-word-forms").checked,wording_alternatives:q("#rule-wording").checked,fuzzy:q("#rule-fuzzy").checked,fuzzy_threshold:sensitivityValue(q("#rule-threshold").value)},order:(result.rules || []).find((item) => item.id === panel._editingRuleId)?.order ?? (result.rules || []).length};
+      await panel._call("request_rules", panel._editingRuleId ? "update" : "create", {...(panel._editingRuleId ? {rule_id:panel._editingRuleId} : {}),rule}); q("#rule-dialog").close(); await panel._loadSection(); panel._toast(panel._editingRuleId ? "Rule updated" : "Rule created");
+    } catch (err) { q("#rule-error").textContent = err.message || String(err); }
   });
 }

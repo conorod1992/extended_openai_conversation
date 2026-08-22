@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import {renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
+import {mergeActionEditorValue, parseAdvancedActionConfig, renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const panel = {
@@ -24,3 +24,16 @@ assert.match(html, /Create rule/);
 assert.match(html, /Fuzzy matching/);
 assert.match(requestRulesDialog(panel), /One phrase per line/);
 assert.match(requestRulesDialog(panel), /Rest of this conversation/);
+assert.match(requestRulesDialog(panel), /entire sequence before any action runs/);
+
+const existing = {domain:"light",service:"turn_on",target:{entity_id:["light.lamp"],area_id:["kitchen"],device_id:"device-one"},data:{brightness_pct:35,transition:2}};
+assert.deepEqual(
+  mergeActionEditorValue(existing, "light.lamp", JSON.stringify({target:existing.target,data:existing.data}), "light.lamp"),
+  existing,
+);
+assert.deepEqual(
+  mergeActionEditorValue(existing, "light.desk", JSON.stringify({target:existing.target,data:existing.data}), "light.lamp"),
+  {...existing,target:{...existing.target,entity_id:["light.desk"]}},
+);
+assert.throws(() => parseAdvancedActionConfig("target: bad"), /valid JSON/);
+assert.throws(() => parseAdvancedActionConfig('{"target":[],"data":{}}'), /target must be a JSON object/);

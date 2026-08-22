@@ -93,10 +93,15 @@ covers, and other sensitive actions. The editor highlights obvious sensitive dom
 when tolerant options are active.
 
 Request Rules do not add PIN protection or speaker authentication. Home Assistant
-service validation still applies, and local actions use a shared execution seam so a
-future protected-action authorization gate can cover both local rules and model tool
-execution. Expose and configure only actions appropriate for everyone who can speak
-to the selected Assist pipeline.
+service validation still applies. While Guest Mode is active, every local action in
+the matched rule is checked against the effective per-request Guest policy before any
+action runs. Entity, area, device, and label selectors are resolved through the same
+backend authorization path used by model tools. If any action is unavailable, the
+whole sequence is rejected without calling OpenAI or revealing the restricted target.
+
+The simple action editor preserves entity targets. Use **Advanced target and action
+data** for other Home Assistant target selectors or service data; it accepts a JSON
+object containing `target` and `data` objects and rejects malformed input before save.
 
 Automatic **Suggested Local Commands** are intentionally not included. Local actions
 do store a stable canonical action signature so a future suggestion feature can
