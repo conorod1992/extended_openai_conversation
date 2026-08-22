@@ -102,6 +102,7 @@ from .guest_mode import (
     GuestModeManager,
     async_get_guest_mode,
     resolve_guest_policy,
+    resolve_guest_selector_entity_ids,
 )
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
@@ -808,7 +809,7 @@ class ExtendedOpenAIAgentEntity(
         groups: list[dict[str, Any]],
         policy: GuestCapabilityPolicy,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Apply both tool and group Guest flags without orphaning group members."""
+        """Apply the resolved Guest function policy without orphaning members."""
         if not policy.guest_active:
             return configured_tools, groups
         membership = {
@@ -819,8 +820,11 @@ class ExtendedOpenAIAgentEntity(
             for tool in configured_tools
             if policy.allows_configured_tool(tool["spec"]["name"])
             and (
-                tool["spec"]["name"] not in membership
-                or membership[tool["spec"]["name"]].get("guest_allowed") is True
+                not policy.legacy_function_flags
+                or (
+                    tool["spec"]["name"] not in membership
+                    or membership[tool["spec"]["name"]].get("guest_allowed") is True
+                )
             )
         ]
         allowed_names = {tool["spec"]["name"] for tool in configured_tools}
@@ -832,7 +836,8 @@ class ExtendedOpenAIAgentEntity(
                 ],
             }
             for group in groups
-            if group.get("guest_allowed") is True
+            if (not policy.legacy_function_flags or group.get("guest_allowed") is True)
+            and any(name in allowed_names for name in group.get("functions", []))
         ]
         return configured_tools, guest_groups
 
@@ -887,7 +892,10 @@ class ExtendedOpenAIAgentEntity(
                     )
                 raise FunctionNotFound(str(tool_name))
             if policy.guest_active and (
-                current_tool.get("guest_allowed") is not True
+                (
+                    policy.legacy_function_flags
+                    and current_tool.get("guest_allowed") is not True
+                )
                 or not policy.allows_configured_tool(str(tool_name))
                 or self._is_guest_unscopable_tool(current_tool)
             ):
@@ -919,7 +927,7 @@ class ExtendedOpenAIAgentEntity(
             guest_entities = exposed_entities
             if policy.guest_active:
                 control = self._is_control_tool(current_tool)
-                if not self._guest_arguments_allowed(
+                if not self._guest_arguments_allowed_runtime(
                     tool_input.tool_args, policy, control=control
                 ):
                     return self._tool_result(
@@ -1076,6 +1084,87 @@ class ExtendedOpenAIAgentEntity(
 
         return inspect(value)
 
+    def _guest_arguments_allowed_runtime(
+        self, value: Any, policy: GuestCapabilityPolicy, *, control: bool
+    ) -> bool:
+        """Resolve broad HA selectors and require every matched entity to pass."""
+        selected: dict[str, set[str]] = {
+            "areas": set(),
+            "devices": set(),
+            "labels": set(),
+        }
+
+        def collect(item: Any) -> None:
+            if isinstance(item, Mapping):
+                for key, child in item.items():
+                    normalized = str(key).lower()
+                    bucket = (
+                        "areas"
+                        if normalized in {"area_id", "area_ids"}
+                        else "devices"
+                        if normalized in {"device_id", "device_ids"}
+                        else "labels"
+                        if normalized in {"label_id", "label_ids"}
+                        else None
+                    )
+                    if bucket is not None:
+                        values = child if isinstance(child, list) else [child]
+                        selected[bucket].update(
+                            part
+                            for entry in values
+                            if isinstance(entry, str)
+                            for part in entry.split(",")
+                            if part.strip()
+                        )
+                    else:
+                        collect(child)
+            elif isinstance(item, list):
+                for child in item:
+                    collect(child)
+
+        collect(value)
+        if any(selected.values()):
+            candidates = {
+                item["entity_id"]
+                for item in get_exposed_entities(self.hass)
+                if isinstance(item.get("entity_id"), str)
+            }
+            matched = resolve_guest_selector_entity_ids(
+                self.hass,
+                candidates,
+                areas=selected["areas"],
+                labels=selected["labels"],
+                devices=selected["devices"],
+            )
+            allows = (
+                policy.allows_entity_control if control else policy.allows_entity_read
+            )
+            if not matched or not all(allows(entity_id) for entity_id in matched):
+                return False
+
+        def without_broad(item: Any) -> Any:
+            if isinstance(item, Mapping):
+                return {
+                    key: without_broad(child)
+                    for key, child in item.items()
+                    if str(key).lower()
+                    not in {
+                        "area_id",
+                        "area_ids",
+                        "device_id",
+                        "device_ids",
+                        "label_id",
+                        "label_ids",
+                    }
+                }
+            if isinstance(item, list):
+                return [without_broad(child) for child in item]
+            return item
+
+        return self._guest_arguments_allowed(
+            without_broad(value), policy, control=control
+        )
+
     def _provider_tool_allowed(self, tool_type: str) -> bool:
         policy = self._effective_guest_policy()
         return tool_type != "web_search" or policy.web_search
@@ -1114,6 +1203,28 @@ class ExtendedOpenAIAgentEntity(
             ):
                 raise ValueError("query, source_ids, or limit has an invalid type")
             allowed_ids, ignored_ids = self._knowledge.resolve_source_filter(source_ids)
+            policy_ids = self._effective_guest_policy().knowledge_source_ids
+            if policy_ids is not None:
+                valid_policy_ids, _private_ignored = (
+                    self._knowledge.resolve_source_filter(list(policy_ids))
+                )
+                requested = (
+                    valid_policy_ids
+                    if allowed_ids is None
+                    else allowed_ids & (valid_policy_ids or set())
+                )
+                allowed_ids = set(requested or ())
+                # Never reveal whether a supplied ID exists but is forbidden.
+                ignored_ids = []
+                if not allowed_ids:
+                    return {
+                        "results": [],
+                        "source_filter": {
+                            "applied_source_ids": [],
+                            "ignored_source_ids": [],
+                            "fell_back_to_all_sources": False,
+                        },
+                    }
             results = await self._knowledge.async_search(
                 query, sorted(allowed_ids) if allowed_ids else None, limit
             )
@@ -1139,7 +1250,12 @@ class ExtendedOpenAIAgentEntity(
                 or isinstance(offset, bool)
             ):
                 raise ValueError("query, limit, or offset has an invalid type")
-            return await self._knowledge.async_catalog(query, limit, offset)
+            return await self._knowledge.async_catalog(
+                query,
+                limit,
+                offset,
+                self._effective_guest_policy().knowledge_source_ids,
+            )
         if operation == "get":
             source_id = arguments.get("source_id")
             start = arguments.get("start_character", 0)
@@ -1154,6 +1270,9 @@ class ExtendedOpenAIAgentEntity(
                 raise ValueError(
                     "source_id, start_character, or max_characters has an invalid type"
                 )
+            allowed_sources = self._effective_guest_policy().knowledge_source_ids
+            if allowed_sources is not None and source_id not in allowed_sources:
+                raise RuntimeError(GUEST_MODE_UNAVAILABLE)
             return await self._knowledge.async_get_section(source_id, start, maximum)
         raise ValueError("unknown knowledge operation")
 

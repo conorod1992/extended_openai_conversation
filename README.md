@@ -22,7 +22,7 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 - **History access** — answer questions using Home Assistant entity history.
 - **Persistent memory** — conversation-start lexical or embedding-assisted retrieval, personal plus shared-household reads, importance, canonical keys, and reliable upserts, while preserving Off, Manual, and Automatic modes.
 - **Knowledge Library** — keep large per-agent reference sources local and retrieve only relevant excerpts on demand.
-- **Guest Mode** — schedule a backend-enforced visitor policy with restricted entities, tools, shared memory, Knowledge access, and no owner archive retention.
+- **Guest Mode** — schedule a backend-enforced visitor policy with exclusion-based Home Assistant access, selectable tools and Knowledge sources, isolated guest continuity, and no owner archive retention.
 - **Voice follow-ups** — use Home Assistant's default behavior, always keep listening, or let the model decide whether a reply is expected.
 - **Context management** — keep recent turns, clear history, or summarize older conversation context.
 

@@ -19,6 +19,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
+    GUEST_V2_FIELDS,
     AgentConfigError,
     agent_config_defaults,
     agent_config_options,
@@ -29,6 +30,7 @@ from .agent_config import (
     merge_agent_config,
     model_capabilities,
     normalize_agent_config,
+    preserve_legacy_guest_policy,
     starter_function_tool_yaml,
     validate_function_groups,
     validate_function_tools,
@@ -49,6 +51,8 @@ from .const import (
     CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
     CONF_FUNCTION_GROUPS,
+    CONF_GUEST_MODE_ENABLED,
+    CONF_GUEST_POLICY_VERSION,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_SHARED_ARCHIVE_ENABLED,
@@ -79,6 +83,7 @@ from .const import (
     DEFAULT_VOICE_UNMAPPED_POLICY,
     DOMAIN,
     FUNCTION_GROUP_LOADER_TOOL_NAME,
+    GUEST_POLICY_VERSION,
     MANAGEMENT_PANEL_TITLE,
     MANAGEMENT_PANEL_URL,
     TEMPORARY_MEMORY_OFF,
@@ -87,7 +92,11 @@ from .continuity import ConversationContinuity, async_get_continuity
 from .conversation_archive import async_get_archive
 from .function_groups import assemble_function_tools, get_function_group_runtime
 from .functions import FUNCTIONS
-from .guest_mode import async_get_guest_mode, resolve_guest_policy
+from .guest_mode import (
+    async_get_guest_mode,
+    guest_policy_editor_snapshot,
+    resolve_guest_policy,
+)
 from .helpers import get_exposed_entities
 from .knowledge import (
     async_get_knowledge,
@@ -482,11 +491,14 @@ def _redact_export_secrets(value: Any, *, schema: bool = False) -> Any:
 
 def _export_agent(subentry) -> dict[str, Any]:
     """Build a versioned configuration document with best-effort redaction."""
+    snapshot = preserve_legacy_guest_policy(
+        dict(subentry.data), agent_config_snapshot(subentry.data)
+    )
     return {
         "schema": "extended_openai_conversation.agent",
         "version": AGENT_CONFIG_EXPORT_VERSION,
         "title": subentry.title,
-        "config": _redact_export_secrets(agent_config_snapshot(subentry.data)),
+        "config": _redact_export_secrets(snapshot),
     }
 
 
@@ -512,7 +524,7 @@ def _parse_import_document(value: Any) -> dict[str, Any]:
         raise AgentConfigError("config", "must be an object")
     return {
         "title": str(value.get("title") or "Imported conversation agent").strip(),
-        "config": normalize_agent_config(config),
+        "config": preserve_legacy_guest_policy(config, normalize_agent_config(config)),
     }
 
 
@@ -626,11 +638,77 @@ async def async_management_command(
             policy = resolve_guest_policy(
                 hass, subentry.data, manager, configured_tools
             )
+            if not is_admin:
+                return {
+                    "status": manager.status(),
+                    "policy": policy.as_diagnostics(),
+                }
+            library = await async_get_knowledge(hass, entry_id, subentry_id)
+            groups = validate_function_groups(
+                subentry.data.get(CONF_FUNCTION_GROUPS, []), configured_tools
+            )
             return {
                 "status": manager.status(),
                 "policy": policy.as_diagnostics(),
+                "config": guest_policy_editor_snapshot(
+                    hass, subentry.data, configured_tools
+                ),
+                "legacy_policy": subentry.data.get(CONF_GUEST_POLICY_VERSION)
+                != GUEST_POLICY_VERSION,
+                "migration_notice": (
+                    "This agent still uses the legacy Guest allow-list. Review the "
+                    "conservative exclusion draft below; the legacy policy remains "
+                    "enforced until you save."
+                    if subentry.data.get(CONF_GUEST_POLICY_VERSION)
+                    != GUEST_POLICY_VERSION
+                    else None
+                ),
+                "knowledge_sources": await library.async_list(),
+                "functions": [
+                    {
+                        "name": tool["spec"]["name"],
+                        "description": tool["spec"].get("description", ""),
+                        "enabled": function_tool_enabled(tool),
+                        "unsafe_in_guest_mode": tool.get("function", {}).get("type")
+                        == "native"
+                        and tool.get("function", {}).get("name")
+                        in {"add_automation", "get_energy", "get_user_from_user_id"},
+                    }
+                    for tool in configured_tools
+                ],
+                "function_groups": [
+                    {
+                        "id": group["id"],
+                        "name": group["name"],
+                        "description": group["description"],
+                        "functions": group["functions"],
+                    }
+                    for group in groups
+                ],
+                "domains": sorted(
+                    {
+                        item["entity_id"].partition(".")[0]
+                        for item in get_exposed_entities(hass)
+                        if isinstance(item.get("entity_id"), str)
+                    }
+                ),
             }
         _require_admin(is_admin)
+        if action == "save_policy":
+            updates = message.get("config")
+            if not isinstance(updates, dict):
+                raise HomeAssistantError("config must be an object")
+            guest_fields = GUEST_V2_FIELDS | {CONF_GUEST_MODE_ENABLED}
+            if set(updates) - guest_fields:
+                raise HomeAssistantError("Guest policy contains unknown fields")
+            updates[CONF_GUEST_POLICY_VERSION] = GUEST_POLICY_VERSION
+            normalized = merge_agent_config(subentry.data, updates)
+            hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
+            return {
+                "config": guest_policy_editor_snapshot(
+                    hass, normalized, configured_tools
+                )
+            }
         if action == "update":
             return {
                 "status": await manager.async_update_trusted(
@@ -692,6 +770,12 @@ async def async_management_command(
             if not isinstance(updates, dict):
                 raise HomeAssistantError("config must be an object")
             normalized = merge_agent_config(subentry.data, updates)
+            if CONF_GUEST_POLICY_VERSION not in subentry.data:
+                # The general configuration editor must not implicitly accept
+                # the v2 Guest migration draft. Only Guest Mode's explicit save
+                # action crosses this boundary.
+                for key in GUEST_V2_FIELDS:
+                    normalized.pop(key, None)
             title = message.get("title")
             if title is not None and (not isinstance(title, str) or not title.strip()):
                 raise AgentConfigError("title", "must not be empty")
@@ -715,14 +799,15 @@ async def async_management_command(
                 if isinstance(requested_title, str) and requested_title.strip()
                 else f"{subentry.title} - Copy"
             )
+            duplicate_source = {
+                key: value
+                for key, value in subentry.data.items()
+                if key in AGENT_CONFIG_FIELDS
+            }
             duplicate = ConfigSubentry(
                 data=MappingProxyType(
-                    normalize_agent_config(
-                        {
-                            key: value
-                            for key, value in subentry.data.items()
-                            if key in AGENT_CONFIG_FIELDS
-                        }
+                    preserve_legacy_guest_policy(
+                        duplicate_source, normalize_agent_config(duplicate_source)
                     )
                 ),
                 subentry_type="conversation",
@@ -914,10 +999,10 @@ async def async_management_command(
             }
         if action == "end_active":
             _require_admin(is_admin)
-            key = message.get("continuity_key")
-            if not isinstance(key, str):
+            continuity_key = message.get("continuity_key")
+            if not isinstance(continuity_key, str):
                 raise HomeAssistantError("continuity_key is required")
-            ended = await continuity.async_end(key)
+            ended = await continuity.async_end(continuity_key)
             if ended:
                 function_groups = get_function_group_runtime(
                     hass, entry_id, subentry_id

@@ -13,10 +13,17 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_ENABLED,
+    CONF_GUEST_ALLOWED_GROUP_IDS,
+    CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
     CONF_GUEST_CONTROLLABLE_DOMAINS,
+    CONF_GUEST_EXCLUDED_DOMAINS,
+    CONF_GUEST_FUNCTION_POLICY,
     CONF_GUEST_KNOWLEDGE_ENABLED,
     CONF_GUEST_MODE_ENABLED,
+    CONF_GUEST_POLICY_VERSION,
     CONF_GUEST_READABLE_DOMAINS,
+    CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS,
+    CONF_GUEST_SHARED_MEMORY_POLICY,
     CONF_GUEST_SHARED_MEMORY_READ,
     CONF_GUEST_SHARED_MEMORY_WRITE,
     CONF_KNOWLEDGE_ENABLED,
@@ -24,6 +31,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_PROMPT,
     CONF_SHARED_MEMORY_MODE,
     CONF_TEMPORARY_MEMORY,
+    GUEST_POLICY_VERSION,
     MEMORY_MODE_AUTOMATIC,
     SERVICE_GUEST_MODE_DISABLE,
     SERVICE_GUEST_MODE_UPDATE,
@@ -149,6 +157,24 @@ def test_resolved_policy_intersects_read_and_control(hass, monkeypatch) -> None:
     assert policy.readable_entity_ids == frozenset({"light.guest"})
     assert policy.controllable_entity_ids == frozenset({"light.guest"})
     assert policy.configured_tool_names == frozenset({"safe"})
+
+    custom = resolve_guest_policy(
+        hass,
+        {
+            CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
+            CONF_GUEST_FUNCTION_POLICY: "custom",
+            CONF_GUEST_ALLOWED_GROUP_IDS: ["safe_group"],
+            "function_groups": [
+                {
+                    "id": "safe_group",
+                    "functions": ["safe", "energy"],
+                }
+            ],
+        },
+        manager,
+        tools,
+    )
+    assert custom.configured_tool_names == frozenset({"safe"})
     assert policy.personal_memory_read is False
     assert policy.shared_memory_read is True
     assert policy.shared_memory_write is False
@@ -286,6 +312,42 @@ def test_execution_argument_guard_blocks_hidden_and_broad_targets() -> None:
     )
 
 
+def test_runtime_area_target_denies_if_any_resolved_entity_is_hidden(
+    hass, monkeypatch
+) -> None:
+    entity = object.__new__(ExtendedOpenAIAgentEntity)
+    entity.hass = hass
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.conversation.get_exposed_entities",
+        lambda _hass: [
+            {"entity_id": "light.guest"},
+            {"entity_id": "lock.private"},
+        ],
+    )
+    registry_entries = {
+        "light.guest": SimpleNamespace(area_id="hall", device_id=None, labels=set()),
+        "lock.private": SimpleNamespace(area_id="hall", device_id=None, labels=set()),
+    }
+    monkeypatch.setattr(
+        er,
+        "async_get",
+        lambda _hass: SimpleNamespace(
+            async_get=lambda entity_id: registry_entries[entity_id]
+        ),
+    )
+    monkeypatch.setattr(
+        dr, "async_get", lambda _hass: SimpleNamespace(async_get=lambda _id: None)
+    )
+    policy = GuestCapabilityPolicy(
+        True,
+        readable_entity_ids=frozenset({"light.guest"}),
+        controllable_entity_ids=frozenset({"light.guest"}),
+    )
+    assert not entity._guest_arguments_allowed_runtime(
+        {"area_id": "hall"}, policy, control=True
+    )
+
+
 def test_mid_request_activation_is_pinned_until_turn_ends(monkeypatch) -> None:
     entity = object.__new__(ExtendedOpenAIAgentEntity)
     active = GuestCapabilityPolicy(
@@ -316,7 +378,9 @@ def test_group_and_tool_guest_flags_are_both_required() -> None:
         "functions": ["grouped"],
     }
     policy = GuestCapabilityPolicy(
-        True, configured_tool_names=frozenset({"grouped", "ungrouped"})
+        True,
+        configured_tool_names=frozenset({"grouped", "ungrouped"}),
+        legacy_function_flags=True,
     )
     filtered, groups = ExtendedOpenAIAgentEntity._filter_guest_tools_and_groups(
         tools, [owner_only_group], policy
@@ -333,6 +397,106 @@ def test_group_and_tool_guest_flags_are_both_required() -> None:
         "ungrouped",
     }
     assert groups[0]["functions"] == ["grouped"]
+
+
+def test_v2_exclusions_union_and_control_is_subset(hass, monkeypatch) -> None:
+    manager = _manager(hass)
+    monkeypatch.setattr(manager, "is_active", lambda: True)
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.guest_mode.get_exposed_entities",
+        lambda _hass: [
+            {"entity_id": "light.kitchen"},
+            {"entity_id": "light.hall"},
+            {"entity_id": "lock.front"},
+        ],
+    )
+    monkeypatch.setattr(
+        er, "async_get", lambda _hass: SimpleNamespace(async_get=lambda _id: None)
+    )
+    monkeypatch.setattr(
+        dr, "async_get", lambda _hass: SimpleNamespace(async_get=lambda _id: None)
+    )
+    policy = resolve_guest_policy(
+        hass,
+        {
+            CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
+            CONF_GUEST_EXCLUDED_DOMAINS: ["lock"],
+            CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS: True,
+            CONF_GUEST_CONTROL_EXCLUDED_DOMAINS: ["light"],
+            CONF_GUEST_FUNCTION_POLICY: "off",
+            CONF_GUEST_SHARED_MEMORY_POLICY: "off",
+        },
+        manager,
+    )
+    assert policy.readable_entity_ids == frozenset({"light.kitchen", "light.hall"})
+    assert policy.controllable_entity_ids == frozenset()
+    assert policy.controllable_entity_ids <= policy.readable_entity_ids
+
+
+def test_v2_function_on_still_denies_unsafe_native(hass, monkeypatch) -> None:
+    manager = _manager(hass)
+    monkeypatch.setattr(manager, "is_active", lambda: True)
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.guest_mode.get_exposed_entities",
+        lambda _hass: [],
+    )
+    tools = [
+        {
+            "spec": {"name": "safe"},
+            "function": {"type": "native", "name": "execute_service"},
+        },
+        {
+            "spec": {"name": "energy"},
+            "function": {"type": "native", "name": "get_energy"},
+        },
+    ]
+    policy = resolve_guest_policy(
+        hass,
+        {
+            CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
+            CONF_GUEST_FUNCTION_POLICY: "on",
+        },
+        manager,
+        tools,
+    )
+    assert policy.configured_tool_names == frozenset({"safe"})
+
+
+def test_new_guest_defaults_enable_controls_with_private_capabilities() -> None:
+    defaults = agent_config_defaults()
+    assert defaults[CONF_GUEST_MODE_ENABLED] is True
+    assert defaults[CONF_GUEST_POLICY_VERSION] == GUEST_POLICY_VERSION
+    assert defaults[CONF_GUEST_FUNCTION_POLICY] == "off"
+    assert defaults[CONF_GUEST_SHARED_MEMORY_POLICY] == "off"
+
+
+async def test_custom_knowledge_filters_catalog_and_direct_ids() -> None:
+    entity = object.__new__(ExtendedOpenAIAgentEntity)
+    policy = GuestCapabilityPolicy(
+        True,
+        knowledge_access=True,
+        knowledge_source_ids=frozenset({"allowed"}),
+    )
+    entity._effective_guest_policy = lambda: policy
+    entity.subentry = SimpleNamespace(data={CONF_KNOWLEDGE_ENABLED: True})
+    entity._knowledge = SimpleNamespace(
+        source_count=2,
+        resolve_source_filter=lambda source_ids: (None, list(source_ids or [])),
+        async_search=AsyncMock(return_value=[{"private": True}]),
+        async_catalog=AsyncMock(return_value={"sources": []}),
+        async_get_section=AsyncMock(return_value={"content": "private"}),
+    )
+
+    await entity._async_execute_knowledge_tool("list", {})
+    entity._knowledge.async_catalog.assert_awaited_once_with(
+        None, 20, 0, frozenset({"allowed"})
+    )
+    with pytest.raises(RuntimeError, match="unavailable in Guest Mode"):
+        await entity._async_execute_knowledge_tool("get", {"source_id": "forbidden"})
+    entity._knowledge.async_get_section.assert_not_awaited()
+    searched = await entity._async_execute_knowledge_tool("search", {"query": "secret"})
+    assert searched["results"] == []
+    entity._knowledge.async_search.assert_not_awaited()
 
 
 def test_guest_allowed_metadata_defaults_false_and_validates() -> None:

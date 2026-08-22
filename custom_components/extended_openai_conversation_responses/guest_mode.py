@@ -14,19 +14,38 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_FUNCTION_GROUPS,
+    CONF_GUEST_ALLOWED_FUNCTION_NAMES,
+    CONF_GUEST_ALLOWED_GROUP_IDS,
+    CONF_GUEST_CONTROL_EXCLUDED_AREAS,
+    CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
+    CONF_GUEST_CONTROL_EXCLUDED_ENTITIES,
+    CONF_GUEST_CONTROL_EXCLUDED_LABELS,
     CONF_GUEST_CONTROLLABLE_AREAS,
     CONF_GUEST_CONTROLLABLE_DOMAINS,
     CONF_GUEST_CONTROLLABLE_ENTITIES,
     CONF_GUEST_CONTROLLABLE_LABELS,
+    CONF_GUEST_EXCLUDED_AREAS,
+    CONF_GUEST_EXCLUDED_DOMAINS,
+    CONF_GUEST_EXCLUDED_ENTITIES,
+    CONF_GUEST_EXCLUDED_LABELS,
+    CONF_GUEST_FUNCTION_POLICY,
     CONF_GUEST_KNOWLEDGE_ENABLED,
+    CONF_GUEST_KNOWLEDGE_POLICY,
+    CONF_GUEST_KNOWLEDGE_SOURCE_IDS,
+    CONF_GUEST_MODE_ENABLED,
+    CONF_GUEST_POLICY_VERSION,
     CONF_GUEST_READABLE_AREAS,
     CONF_GUEST_READABLE_DOMAINS,
     CONF_GUEST_READABLE_ENTITIES,
     CONF_GUEST_READABLE_LABELS,
+    CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS,
+    CONF_GUEST_SHARED_MEMORY_POLICY,
     CONF_GUEST_SHARED_MEMORY_READ,
     CONF_GUEST_SHARED_MEMORY_WRITE,
     DOMAIN,
+    GUEST_POLICY_VERSION,
 )
+from .helpers import get_exposed_entities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,6 +81,8 @@ class GuestCapabilityPolicy:
     readable_entity_ids: frozenset[str] | None = None
     controllable_entity_ids: frozenset[str] | None = None
     configured_tool_names: frozenset[str] | None = None
+    knowledge_source_ids: frozenset[str] | None = None
+    legacy_function_flags: bool = False
     personal_memory_read: bool = True
     personal_memory_write: bool = True
     shared_memory_read: bool = True
@@ -119,6 +140,11 @@ class GuestCapabilityPolicy:
             "archive_access": self.archive_access,
             "archive_retention": self.archive_retention,
             "knowledge_access": self.knowledge_access,
+            "knowledge_source_count": (
+                None
+                if self.knowledge_source_ids is None
+                else len(self.knowledge_source_ids)
+            ),
             "temporary_memory": self.temporary_memory,
         }
 
@@ -388,8 +414,19 @@ def resolve_guest_policy(
     """Resolve one restrictive policy from the current Guest state and config."""
     if manager is None or not manager.is_active():
         return GuestCapabilityPolicy.unrestricted()
-    readable = _resolve_entity_ids(hass, options, control=False)
-    controllable = _resolve_entity_ids(hass, options, control=True) & readable
+    if options.get(CONF_GUEST_POLICY_VERSION) == GUEST_POLICY_VERSION:
+        return _resolve_exclusion_policy(hass, options, configured_tools)
+    return _resolve_legacy_policy(hass, options, configured_tools)
+
+
+def _resolve_legacy_policy(
+    hass: HomeAssistant,
+    options: Mapping[str, Any],
+    configured_tools: Sequence[Mapping[str, Any]],
+) -> GuestCapabilityPolicy:
+    """Preserve the pre-v2 allow-list policy without broadening access."""
+    readable = _resolve_legacy_entity_ids(hass, options, control=False)
+    controllable = _resolve_legacy_entity_ids(hass, options, control=True) & readable
     groups = options.get(CONF_FUNCTION_GROUPS, ())
     membership = (
         {
@@ -424,6 +461,7 @@ def resolve_guest_policy(
         readable_entity_ids=frozenset(readable),
         controllable_entity_ids=frozenset(controllable),
         configured_tool_names=guest_tools,
+        legacy_function_flags=True,
         personal_memory_read=False,
         personal_memory_write=False,
         shared_memory_read=bool(options.get(CONF_GUEST_SHARED_MEMORY_READ, False)),
@@ -435,6 +473,101 @@ def resolve_guest_policy(
         skills=False,
         web_search=False,
         private_capabilities=False,
+    )
+
+
+def _resolve_exclusion_policy(
+    hass: HomeAssistant,
+    options: Mapping[str, Any],
+    configured_tools: Sequence[Mapping[str, Any]],
+) -> GuestCapabilityPolicy:
+    """Resolve v2 against HA's normal assistant exposure, then subtract denies."""
+    baseline = {
+        item["entity_id"]
+        for item in get_exposed_entities(hass)
+        if isinstance(item, Mapping) and isinstance(item.get("entity_id"), str)
+    }
+    readable = baseline - resolve_guest_selector_entity_ids(
+        hass,
+        baseline,
+        entities=options.get(CONF_GUEST_EXCLUDED_ENTITIES, ()),
+        domains=options.get(CONF_GUEST_EXCLUDED_DOMAINS, ()),
+        areas=options.get(CONF_GUEST_EXCLUDED_AREAS, ()),
+        labels=options.get(CONF_GUEST_EXCLUDED_LABELS, ()),
+    )
+    controllable = set(readable)
+    if options.get(CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS) is True:
+        controllable -= resolve_guest_selector_entity_ids(
+            hass,
+            baseline,
+            entities=options.get(CONF_GUEST_CONTROL_EXCLUDED_ENTITIES, ()),
+            domains=options.get(CONF_GUEST_CONTROL_EXCLUDED_DOMAINS, ()),
+            areas=options.get(CONF_GUEST_CONTROL_EXCLUDED_AREAS, ()),
+            labels=options.get(CONF_GUEST_CONTROL_EXCLUDED_LABELS, ()),
+        )
+
+    configured_by_name = {
+        str(tool["spec"]["name"]): tool
+        for tool in configured_tools
+        if isinstance(tool.get("spec"), Mapping)
+        and isinstance(tool["spec"].get("name"), str)
+    }
+    function_policy = options.get(CONF_GUEST_FUNCTION_POLICY, "off")
+    if function_policy == "on":
+        guest_tools = set(configured_by_name)
+    elif function_policy == "custom":
+        guest_tools = _string_set(options.get(CONF_GUEST_ALLOWED_FUNCTION_NAMES, ()))
+        selected_groups = _string_set(options.get(CONF_GUEST_ALLOWED_GROUP_IDS, ()))
+        groups = options.get(CONF_FUNCTION_GROUPS, ())
+        if isinstance(groups, Sequence) and not isinstance(groups, (str, bytes)):
+            guest_tools.update(
+                name
+                for group in groups
+                if isinstance(group, Mapping) and group.get("id") in selected_groups
+                for name in group.get("functions", ())
+                if isinstance(name, str)
+            )
+        guest_tools &= set(configured_by_name)
+    else:
+        guest_tools = set()
+    guest_tools = {
+        name
+        for name in guest_tools
+        if not _is_unscopable_native(configured_by_name[name])
+    }
+
+    knowledge_policy = options.get(CONF_GUEST_KNOWLEDGE_POLICY, "off")
+    knowledge_sources = (
+        frozenset(_string_set(options.get(CONF_GUEST_KNOWLEDGE_SOURCE_IDS, ())))
+        if knowledge_policy == "custom"
+        else None
+    )
+    memory_policy = options.get(CONF_GUEST_SHARED_MEMORY_POLICY, "off")
+    return GuestCapabilityPolicy(
+        True,
+        readable_entity_ids=frozenset(readable),
+        controllable_entity_ids=frozenset(controllable),
+        configured_tool_names=frozenset(guest_tools),
+        knowledge_source_ids=knowledge_sources,
+        personal_memory_read=False,
+        personal_memory_write=False,
+        shared_memory_read=memory_policy in ("read_only", "read_write"),
+        shared_memory_write=memory_policy == "read_write",
+        archive_access=False,
+        archive_retention=False,
+        knowledge_access=knowledge_policy == "on" or bool(knowledge_sources),
+        temporary_memory=False,
+        skills=False,
+        web_search=False,
+        private_capabilities=False,
+    )
+
+
+def _is_unscopable_native(tool: Mapping[str, Any]) -> bool:
+    return bool(
+        tool.get("function", {}).get("type") == "native"
+        and tool.get("function", {}).get("name")
+        in {"add_automation", "get_energy", "get_user_from_user_id"}
     )
 
 
@@ -468,7 +601,88 @@ def guest_mode_restrict_tool() -> dict[str, Any]:
     }
 
 
-def _resolve_entity_ids(
+def guest_policy_editor_snapshot(
+    hass: HomeAssistant,
+    options: Mapping[str, Any],
+    configured_tools: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Return a v2 editor draft, conservatively translating legacy settings."""
+    keys = (
+        CONF_GUEST_EXCLUDED_ENTITIES,
+        CONF_GUEST_EXCLUDED_DOMAINS,
+        CONF_GUEST_EXCLUDED_AREAS,
+        CONF_GUEST_EXCLUDED_LABELS,
+        CONF_GUEST_CONTROL_EXCLUDED_ENTITIES,
+        CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
+        CONF_GUEST_CONTROL_EXCLUDED_AREAS,
+        CONF_GUEST_CONTROL_EXCLUDED_LABELS,
+        CONF_GUEST_KNOWLEDGE_SOURCE_IDS,
+        CONF_GUEST_ALLOWED_FUNCTION_NAMES,
+        CONF_GUEST_ALLOWED_GROUP_IDS,
+    )
+    if options.get(CONF_GUEST_POLICY_VERSION) == GUEST_POLICY_VERSION:
+        return {
+            CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
+            CONF_GUEST_MODE_ENABLED: options.get(CONF_GUEST_MODE_ENABLED, True),
+            **{key: sorted(_string_set(options.get(key, ()))) for key in keys},
+            CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS: options.get(
+                CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS, False
+            ),
+            CONF_GUEST_KNOWLEDGE_POLICY: options.get(
+                CONF_GUEST_KNOWLEDGE_POLICY, "off"
+            ),
+            CONF_GUEST_FUNCTION_POLICY: options.get(CONF_GUEST_FUNCTION_POLICY, "off"),
+            CONF_GUEST_SHARED_MEMORY_POLICY: options.get(
+                CONF_GUEST_SHARED_MEMORY_POLICY, "off"
+            ),
+        }
+
+    baseline = {
+        item["entity_id"]
+        for item in get_exposed_entities(hass)
+        if isinstance(item, Mapping) and isinstance(item.get("entity_id"), str)
+    }
+    readable = _resolve_legacy_entity_ids(hass, options, control=False)
+    controllable = _resolve_legacy_entity_ids(hass, options, control=True) & readable
+    legacy_tools = _resolve_legacy_policy(hass, options, configured_tools)
+    shared_read = bool(options.get(CONF_GUEST_SHARED_MEMORY_READ, False))
+    shared_write = bool(options.get(CONF_GUEST_SHARED_MEMORY_WRITE, False))
+    return {
+        CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
+        CONF_GUEST_MODE_ENABLED: options.get(CONF_GUEST_MODE_ENABLED, True),
+        CONF_GUEST_EXCLUDED_ENTITIES: sorted(baseline - readable),
+        CONF_GUEST_EXCLUDED_DOMAINS: [],
+        CONF_GUEST_EXCLUDED_AREAS: [],
+        CONF_GUEST_EXCLUDED_LABELS: [],
+        CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS: readable != controllable,
+        CONF_GUEST_CONTROL_EXCLUDED_ENTITIES: sorted(readable - controllable),
+        CONF_GUEST_CONTROL_EXCLUDED_DOMAINS: [],
+        CONF_GUEST_CONTROL_EXCLUDED_AREAS: [],
+        CONF_GUEST_CONTROL_EXCLUDED_LABELS: [],
+        CONF_GUEST_KNOWLEDGE_POLICY: (
+            "on" if options.get(CONF_GUEST_KNOWLEDGE_ENABLED, False) else "off"
+        ),
+        CONF_GUEST_KNOWLEDGE_SOURCE_IDS: [],
+        CONF_GUEST_FUNCTION_POLICY: (
+            "custom" if legacy_tools.configured_tool_names else "off"
+        ),
+        CONF_GUEST_ALLOWED_FUNCTION_NAMES: sorted(
+            legacy_tools.configured_tool_names or ()
+        ),
+        CONF_GUEST_ALLOWED_GROUP_IDS: [],
+        # A legacy write-only combination has no v2 equivalent and maps to Off,
+        # avoiding a silent grant of read access.
+        CONF_GUEST_SHARED_MEMORY_POLICY: (
+            "read_write"
+            if shared_read and shared_write
+            else "read_only"
+            if shared_read
+            else "off"
+        ),
+    }
+
+
+def _resolve_legacy_entity_ids(
     hass: HomeAssistant, options: Mapping[str, Any], *, control: bool
 ) -> set[str]:
     prefix = "controllable" if control else "readable"
@@ -517,6 +731,57 @@ def _resolve_entity_ids(
             allowed.add(entity_id)
     _LOGGER.debug("Resolved %d Guest %s entities", len(allowed), prefix)
     return allowed
+
+
+def resolve_guest_selector_entity_ids(
+    hass: HomeAssistant,
+    candidates: set[str],
+    *,
+    entities: Any = (),
+    domains: Any = (),
+    areas: Any = (),
+    labels: Any = (),
+    devices: Any = (),
+) -> set[str]:
+    """Resolve a union of selector matches, limited to candidate entities."""
+    explicit = _string_set(entities)
+    selected_domains = _string_set(domains)
+    selected_areas = _string_set(areas)
+    selected_labels = _string_set(labels)
+    selected_devices = _string_set(devices)
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    matched: set[str] = set()
+    for entity_id in candidates:
+        registry_entry = entity_registry.async_get(entity_id)
+        device = (
+            device_registry.async_get(registry_entry.device_id)
+            if registry_entry is not None and registry_entry.device_id
+            else None
+        )
+        entity_areas = {
+            value
+            for value in (
+                getattr(registry_entry, "area_id", None),
+                getattr(device, "area_id", None),
+            )
+            if value
+        }
+        entity_labels = set(getattr(registry_entry, "labels", ()) or ()) | set(
+            getattr(device, "labels", ()) or ()
+        )
+        if (
+            entity_id in explicit
+            or entity_id.partition(".")[0] in selected_domains
+            or bool(entity_areas & selected_areas)
+            or bool(entity_labels & selected_labels)
+            or bool(
+                registry_entry is not None
+                and registry_entry.device_id in selected_devices
+            )
+        ):
+            matched.add(entity_id)
+    return matched
 
 
 def _string_set(value: Any) -> set[str]:

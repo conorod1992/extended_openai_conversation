@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from custom_components.extended_openai_conversation_responses.agent_config import (
+    GUEST_V2_FIELDS,
     AgentConfigError,
     agent_config_defaults,
 )
@@ -73,6 +74,17 @@ def test_import_applies_defaults_and_preserves_tools(hass) -> None:
     assert parsed["config"]["functions"] == "[]\n"
     assert parsed["config"]["function_groups"] == []
     assert parsed["config"]["max_tokens"] > 0
+    assert GUEST_V2_FIELDS.isdisjoint(parsed["config"])
+
+
+def test_legacy_export_does_not_silently_accept_guest_v2(hass) -> None:
+    data = agent_config_defaults()
+    for key in GUEST_V2_FIELDS:
+        data.pop(key, None)
+    parsed = _parse_import_document(
+        _export_agent(SimpleNamespace(title="Old", data=data))
+    )
+    assert GUEST_V2_FIELDS.isdisjoint(parsed["config"])
 
 
 def test_import_export_round_trip_preserves_disabled_tool_state(hass) -> None:
