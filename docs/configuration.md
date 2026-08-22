@@ -9,6 +9,12 @@ Configure conversation-agent behaviour from **Extended OpenAI** in the sidebar:
 - **Data & Memory** contains Memories, Knowledge Library, and Conversation history. **Usage & Maintenance** contains Usage, Backup & Restore, Diagnostics, and retention.
 - **Guide** provides searchable, concise orientation and links back into the relevant management subsection. The global settings search navigates directly to settings across sections.
 
+Each grouped page uses one compact **Section** dropdown above its content on
+desktop and mobile. Settings pages use **Search all settings**; collection pages
+such as Functions, Memories, and Knowledge keep their task-specific search
+instead. Configuration duplication and transfer are grouped under **Agent
+actions**, while Save and Revert remain visible.
+
 The editor writes the existing Home Assistant config subentry; there is no separate frontend store. Changes remain a local draft until Save is pressed. Voice ownership is separate from spoken-response cleanup, dependent options stay visible but disabled, and Custom replacements remain directly visible while speech processing is enabled.
 
 The **Prompt & context** section has default-on controls for Home Assistant-local date/time and exposed-device names/states on new or reset configurations. Their integration-maintained output is placed with volatile context after the indivisible user prompt. Optional advanced templates are collapsed by default and can be cleared to restore the maintained format. Migration never rewrites an existing prompt and leaves both generated blocks off for existing agents, preventing duplicate legacy template output.
@@ -142,14 +148,18 @@ See [Knowledge Library](features/knowledge-library.md).
 
 ## Guest Mode
 
-The **Guest** page is the single policy editor. Guests begin with entities
+The **Guest Mode** page is the single policy editor. Compact managers for Labels,
+Areas, Domains, and Individual entities keep large exclusion sets out of the main
+page; each manager expands to the native Home Assistant selector. Guests begin with entities
 normally exposed to Assist, then entity, domain, area, and label exclusions are
-subtracted. Optional control exclusions can only narrow that readable set.
+subtracted. The advanced **Make some visible entities read-only** option reveals
+the same managers for additional control-only exclusions, which can only narrow
+the readable set.
 Knowledge and Functions support Off, On, or Custom selection; shared-household
 memory supports Off, Read only, or Read & write. Personal memory and owner
-archives remain unavailable. The advanced **Enable Guest Mode controls** setting
-only exposes the model's one-way restriction tool; turning it off does not end or
-weaken an active or scheduled restriction. See
+archives remain unavailable. **Allow the assistant to activate Guest Mode** only
+exposes the model's one-way restriction tool; turning it off does not end,
+shorten, or weaken an active or scheduled restriction. See
 [Guest Mode](features/guest-mode.md).
 
 ## Context management

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
-import {NAVIGATION, routeFromPath, searchSettings} from "../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
+import {NAVIGATION, routeFromPath, searchSettings, shouldShowGlobalSettingsSearch} from "../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
 import {GUIDE_TOPICS, MEMORY_COMPARISON} from "../custom_components/extended_openai_conversation_responses/frontend/guide-content.js";
 import {renderGuide} from "../custom_components/extended_openai_conversation_responses/frontend/guide-page.js";
 import {renderOverview} from "../custom_components/extended_openai_conversation_responses/frontend/overview-page.js";
@@ -17,6 +17,7 @@ assert.deepEqual(NAVIGATION.find((item) => item.id === "assistant").sections.map
 assert.deepEqual(NAVIGATION.find((item) => item.id === "capabilities").sections.map((item) => item.label), [
   "Home Assistant", "Functions", "Guest Mode",
 ]);
+assert.ok(NAVIGATION.flatMap((item) => item.sections).every((item) => item.description));
 
 const legacy = {
   configuration: ["assistant", "basics"],
@@ -40,6 +41,12 @@ for (const query of ["archive", "memory", "timeout", "model", "Guest Mode", "voi
 }
 assert.equal(searchSettings("timeout")[0].section, "conversation");
 assert.equal(searchSettings("backup")[0].section, "backup-restore");
+for (const [page, section] of [["assistant", "basics"], ["capabilities", "guest-mode"], ["usage-maintenance", "retention"]]) {
+  assert.equal(shouldShowGlobalSettingsSearch(page, section), true);
+}
+for (const [page, section] of [["guide", null], ["capabilities", "functions"], ["data-memory", "memories"], ["data-memory", "knowledge"], ["data-memory", "conversations"], ["usage-maintenance", "usage"]]) {
+  assert.equal(shouldShowGlobalSettingsSearch(page, section), false);
+}
 
 assert.ok(GUIDE_TOPICS.length >= 12);
 assert.ok(GUIDE_TOPICS.some((topic) => topic.id === "guest-mode"));
@@ -68,10 +75,21 @@ const panel = await readFile(new URL("../custom_components/extended_openai_conve
 const editor = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
 const overview = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page.js", import.meta.url), "utf8");
 assert.match(panel, /top-section-mobile/);
-assert.match(panel, /local-section-mobile/);
+assert.match(panel, /id="local-section"/);
+assert.doesNotMatch(panel, /local-section-mobile/);
+assert.doesNotMatch(panel, /<aside class="local-nav"/);
 assert.match(panel, /aria-current="page"/);
 assert.match(panel, /settings-result/);
 assert.match(overview, /dashboard-action/);
 assert.match(editor, /panel\._configSectionFilter/);
 assert.match(editor, /if \(root\.querySelector\("#regex-rules"\)\)/);
 assert.match(editor, /if \(voiceMappings\)/);
+assert.doesNotMatch(editor, /id="config-search"/);
+assert.match(editor, /class="agent-actions-menu"/);
+assert.match(editor, /aria-haspopup="menu"/);
+assert.ok(editor.indexOf("Duplicate agent") < editor.indexOf("Import configuration"));
+assert.ok(editor.indexOf("Import configuration") < editor.indexOf("Export configuration"));
+assert.match(editor, /const cleanOnly = panel\._configDirty/);
+assert.match(editor, /id="duplicate-agent" \$\{cleanOnly\}/);
+assert.match(editor, /id="export-agent" \$\{cleanOnly\}/);
+assert.match(editor, /id="import-agent">Import configuration/);

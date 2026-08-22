@@ -14,9 +14,15 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_ENABLED,
     CONF_GUEST_ALLOWED_GROUP_IDS,
+    CONF_GUEST_CONTROL_EXCLUDED_AREAS,
     CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
+    CONF_GUEST_CONTROL_EXCLUDED_ENTITIES,
+    CONF_GUEST_CONTROL_EXCLUDED_LABELS,
     CONF_GUEST_CONTROLLABLE_DOMAINS,
+    CONF_GUEST_EXCLUDED_AREAS,
     CONF_GUEST_EXCLUDED_DOMAINS,
+    CONF_GUEST_EXCLUDED_ENTITIES,
+    CONF_GUEST_EXCLUDED_LABELS,
     CONF_GUEST_FUNCTION_POLICY,
     CONF_GUEST_KNOWLEDGE_ENABLED,
     CONF_GUEST_MODE_ENABLED,
@@ -469,6 +475,20 @@ def test_new_guest_defaults_enable_controls_with_private_capabilities() -> None:
     assert defaults[CONF_GUEST_POLICY_VERSION] == GUEST_POLICY_VERSION
     assert defaults[CONF_GUEST_FUNCTION_POLICY] == "off"
     assert defaults[CONF_GUEST_SHARED_MEMORY_POLICY] == "off"
+    assert defaults[CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS] is False
+    assert all(
+        defaults[key] == []
+        for key in (
+            CONF_GUEST_EXCLUDED_LABELS,
+            CONF_GUEST_EXCLUDED_AREAS,
+            CONF_GUEST_EXCLUDED_DOMAINS,
+            CONF_GUEST_EXCLUDED_ENTITIES,
+            CONF_GUEST_CONTROL_EXCLUDED_LABELS,
+            CONF_GUEST_CONTROL_EXCLUDED_AREAS,
+            CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
+            CONF_GUEST_CONTROL_EXCLUDED_ENTITIES,
+        )
+    )
 
 
 async def test_custom_knowledge_filters_catalog_and_direct_ids() -> None:

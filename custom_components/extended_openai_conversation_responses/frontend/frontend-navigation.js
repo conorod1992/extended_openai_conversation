@@ -2,29 +2,29 @@ export const NAVIGATION = [
   {id: "overview", label: "Overview", path: "/extended-openai/overview", sections: []},
   {id: "guide", label: "Guide", path: "/extended-openai/guide", sections: []},
   {id: "assistant", label: "Assistant", path: "/extended-openai/assistant/basics", sections: [
-    {id: "basics", label: "Basics"},
-    {id: "model-responses", label: "Model & responses"},
-    {id: "conversation", label: "Conversation"},
-    {id: "prompt-context", label: "Prompt & context"},
-    {id: "voice", label: "Voice"},
-    {id: "speech", label: "Speech"},
-    {id: "advanced", label: "Advanced"},
+    {id: "basics", label: "Basics", description: "Name the assistant and choose its everyday model and response behavior."},
+    {id: "model-responses", label: "Model & responses", description: "Fine-tune supported model response controls."},
+    {id: "conversation", label: "Conversation", description: "Control how recent conversations are carried into later requests."},
+    {id: "prompt-context", label: "Prompt & context", description: "Manage instructions and live Home Assistant context."},
+    {id: "voice", label: "Voice", description: "Choose identity and data scope behavior for voice devices."},
+    {id: "speech", label: "Speech", description: "Clean assistant responses before they are spoken."},
+    {id: "advanced", label: "Advanced", description: "Configure less common data and provider capabilities."},
   ]},
   {id: "capabilities", label: "Capabilities", path: "/extended-openai/capabilities/home-assistant", sections: [
-    {id: "home-assistant", label: "Home Assistant"},
-    {id: "functions", label: "Functions"},
-    {id: "guest-mode", label: "Guest Mode"},
+    {id: "home-assistant", label: "Home Assistant", description: "Review normal Home Assistant state and action access."},
+    {id: "functions", label: "Functions", description: "Manage custom Function Tools and on-demand groups."},
+    {id: "guest-mode", label: "Guest Mode", description: "Limit what visitors can see, use, and remember."},
   ]},
   {id: "data-memory", label: "Data & Memory", path: "/extended-openai/data-memory/memories", sections: [
-    {id: "memories", label: "Memories"},
-    {id: "knowledge", label: "Knowledge Library"},
-    {id: "conversations", label: "Conversation history"},
+    {id: "memories", label: "Memories", description: "Review durable and automatically expiring memories."},
+    {id: "knowledge", label: "Knowledge Library", description: "Maintain larger reference sources for on-demand search."},
+    {id: "conversations", label: "Conversation history", description: "Review continuity and retained conversation archives."},
   ]},
   {id: "usage-maintenance", label: "Usage & Maintenance", path: "/extended-openai/usage-maintenance/usage", sections: [
-    {id: "usage", label: "Usage"},
-    {id: "backup-restore", label: "Backup & Restore"},
-    {id: "diagnostics", label: "Diagnostics"},
-    {id: "retention", label: "Retention & maintenance"},
+    {id: "usage", label: "Usage", description: "Review token usage and recent runs."},
+    {id: "backup-restore", label: "Backup & Restore", description: "Create or restore a private agent backup."},
+    {id: "diagnostics", label: "Diagnostics", description: "Test the provider and inspect the selected agent."},
+    {id: "retention", label: "Retention & maintenance", description: "Control detailed usage retention and cleanup."},
   ]},
 ];
 
@@ -79,6 +79,17 @@ export function routePath(page, section = null) {
 
 export function pageMetadata(page) {
   return NAVIGATION.find((item) => item.id === page) || NAVIGATION[0];
+}
+
+export function shouldShowGlobalSettingsSearch(page, subsection = null) {
+  const view = subsection ? `${page}/${subsection}` : page;
+  return page === "assistant" || [
+    "capabilities/home-assistant",
+    "capabilities/guest-mode",
+    "usage-maintenance/backup-restore",
+    "usage-maintenance/retention",
+    "usage-maintenance/diagnostics",
+  ].includes(view);
 }
 
 export function searchSettings(query) {

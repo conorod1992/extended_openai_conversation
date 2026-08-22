@@ -105,6 +105,7 @@ jobs:
           node --check custom_components/extended_openai_conversation_responses/frontend/agent-config-help.js
           node --check custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js
           node --check custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js
+          node --check custom_components/extended_openai_conversation_responses/frontend/guest-mode-ui.js
           node --check custom_components/extended_openai_conversation_responses/frontend/guide-content.js
           node --check custom_components/extended_openai_conversation_responses/frontend/guide-page.js
           node --check custom_components/extended_openai_conversation_responses/frontend/management-panel.js
