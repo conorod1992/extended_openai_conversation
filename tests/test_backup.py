@@ -26,6 +26,9 @@ from custom_components.extended_openai_conversation_responses.knowledge import (
 from custom_components.extended_openai_conversation_responses.memory import (
     PersistentMemory,
 )
+from custom_components.extended_openai_conversation_responses.request_rules import (
+    RequestRules,
+)
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemory,
 )
@@ -193,6 +196,16 @@ def _document() -> dict:
                 }
             ],
         },
+        "request_rules": {
+            "storage_version": 1,
+            "defaults": {
+                "word_forms": True,
+                "wording_alternatives": True,
+                "fuzzy": False,
+                "fuzzy_threshold": 90,
+            },
+            "rules": [],
+        },
     }
 
 
@@ -217,6 +230,7 @@ def test_full_backup_validation_preserves_durable_categories_and_expiry() -> Non
     assert prepared.usage_requests[0].details["input_cached_tokens"] == 8
     assert prepared.usage_runs[0].agent_subentry_id == "agent-new"
     assert prepared.summary()["knowledge_sources"] == 1
+    assert prepared.summary()["request_rules"] == 0
 
 
 def test_backup_rejects_malformed_and_newer_versions() -> None:
@@ -229,6 +243,14 @@ def test_backup_rejects_malformed_and_newer_versions() -> None:
     newer["version"] = BACKUP_VERSION + 1
     with pytest.raises(BackupError, match="newer unsupported"):
         inspect_backup(newer, "agent-new")
+
+
+def test_version_two_backup_migrates_with_empty_request_rules() -> None:
+    legacy = _document()
+    legacy["version"] = 2
+    legacy.pop("request_rules")
+    prepared = inspect_backup(legacy, "agent-new")
+    assert prepared.request_rules["rules"] == []
 
 
 def test_backup_secret_redaction_preserves_schema_property_names() -> None:
@@ -268,6 +290,7 @@ async def test_create_full_backup_contains_only_durable_safe_state(
         ("async_get_knowledge", "knowledge"),
         ("async_get_archive", "archive"),
         ("async_get_usage", "usage"),
+        ("async_get_request_rules", "request_rules"),
     ):
         monkeypatch.setattr(
             f"custom_components.extended_openai_conversation_responses.backup.{getter}",
@@ -330,6 +353,11 @@ async def test_replace_helpers_rebuild_canonical_state() -> None:
     await usage_manager.async_initialize()
     await usage_manager.async_replace_backup(*usage)
     assert usage_manager.as_dict()["total_tokens"] == 120
+
+    request_rules = RequestRules(FakeStorage())
+    await request_rules.async_initialize()
+    await request_rules.async_replace_backup(document["request_rules"])
+    assert (await request_rules.async_backup_data())["rules"] == []
 
 
 async def test_restore_failure_rolls_back_before_reporting(monkeypatch, hass) -> None:

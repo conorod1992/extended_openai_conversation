@@ -22,6 +22,7 @@ import homeassistant.util.dt as dt_util
 
 from ..const import EVENT_AUTOMATION_REGISTERED
 from ..exceptions import CallServiceError, NativeNotFound
+from ..ha_actions import async_call_ha_action
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -100,10 +101,11 @@ class NativeFunction(Function):
         self.validate_entity_ids(hass, entity_id or [], exposed_entities)
 
         try:
-            await hass.services.async_call(
-                domain=domain,
-                service=service,
-                service_data=service_data,
+            await async_call_ha_action(
+                hass,
+                domain,
+                service,
+                data=service_data,
             )
             return {"success": True}
         except HomeAssistantError as e:

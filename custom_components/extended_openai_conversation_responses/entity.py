@@ -326,6 +326,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         conditional_continue: bool = False,
         function_tools_factory: Callable[[], list[dict[str, Any]]] | None = None,
         function_group_loader: Callable[[Any], dict[str, Any]] | None = None,
+        request_options: Mapping[str, Any] | None = None,
     ) -> bool | None:
         """Generate an answer for the chat log with streaming support."""
         if self._usage is not None:
@@ -335,7 +336,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 # the new run context. Preserve the lifetime counter without
                 # double-counting live conversation runs.
                 await self._usage.async_record_conversation()
-        options = self.subentry.data
+        options = request_options or self.subentry.data
         provider_snapshot = build_provider_request_snapshot(
             options, getattr(self.entry, "data", {})
         )

@@ -39,6 +39,7 @@ from .const import (
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
     CONF_ARCHIVE_RETENTION_DAYS,
     CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+    CONF_CHAT_MODEL,
     CONF_CONTINUE_CONVERSATION,
     CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
@@ -60,6 +61,7 @@ from .const import (
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
     DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+    DEFAULT_CHAT_MODEL,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
@@ -117,6 +119,14 @@ from .memory import (
 )
 from .prompt import render_effective_prompt
 from .request import assemble_integration_function_tools
+from .request_rules import (
+    RequestRuleRuntime,
+    RequestRules,
+    async_evaluate_rule,
+    async_get_request_rules,
+    get_request_rule_runtime,
+    request_rule_session_id,
+)
 from .scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
     ResolvedDataScope,
@@ -188,6 +198,8 @@ class ExtendedOpenAIAgentEntity(
     _archive: ConversationArchive | None = None
     _function_groups_runtime: FunctionGroupRuntime | None = None
     _guest_mode: GuestModeManager | None = None
+    _request_rules: RequestRules | None = None
+    _request_rule_runtime: RequestRuleRuntime | None = None
 
     def __init__(self, entry: ExtendedOpenAIConfigEntry, subentry: Any) -> None:
         """Initialize the conversation agent and its streaming capability."""
@@ -253,6 +265,12 @@ class ExtendedOpenAIAgentEntity(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
         self._function_groups_runtime = reset_function_group_runtime(
+            self.hass, self.entry.entry_id, self.subentry.subentry_id
+        )
+        self._request_rules = await async_get_request_rules(
+            self.hass, self.entry.entry_id, self.subentry.subentry_id
+        )
+        self._request_rule_runtime = get_request_rule_runtime(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
         if (
@@ -384,6 +402,9 @@ class ExtendedOpenAIAgentEntity(
             async_get_chat_session(self.hass, resolution.conversation_id) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
         ):
+            rule_session_key = request_rule_session_id(
+                resolution.key, chat_log.conversation_id
+            )
             temporary_scope = (
                 None
                 if request_policy.guest_active
@@ -411,8 +432,54 @@ class ExtendedOpenAIAgentEntity(
                 current_user = chat_log.content[-1]
                 chat_log.content[:] = [*resolution.history, current_user]
             try:
+                try:
+                    evaluation = (
+                        await async_evaluate_rule(
+                            self.hass,
+                            self._request_rules,
+                            self._request_rule_runtime,
+                            user_input.text,
+                            rule_session_key,
+                            str(
+                                self.subentry.data.get(
+                                    CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL
+                                )
+                            ),
+                        )
+                        if self._request_rules is not None
+                        and self._request_rule_runtime is not None
+                        else None
+                    )
+                except HomeAssistantError as err:
+                    _LOGGER.warning("Request Rule routing rejected: %s", err)
+                    return self._local_rule_result(
+                        user_input,
+                        chat_log,
+                        f"Sorry, this Request Rule cannot be used: {err}",
+                    )
+                if evaluation is not None and evaluation.consume:
+                    result = self._local_rule_result(
+                        user_input,
+                        chat_log,
+                        evaluation.response or "Done",
+                    )
+                    await self._continuity.async_record_success(
+                        resolution.key, chat_log.content
+                    )
+                    return result
+                request_options = (
+                    self._request_rule_runtime.effective_options(
+                        self.subentry.data,
+                        rule_session_key,
+                        evaluation.request_override if evaluation else None,
+                    )
+                    if self._request_rule_runtime is not None
+                    else dict(self.subentry.data)
+                )
                 if self._usage is None:
-                    result = await self._async_handle_message(user_input, chat_log)
+                    result = await self._async_handle_message(
+                        user_input, chat_log, request_options
+                    )
                     if chat_log.content and isinstance(
                         chat_log.content[-1], conversation.AssistantContent
                     ):
@@ -424,7 +491,9 @@ class ExtendedOpenAIAgentEntity(
                     home_assistant_conversation_id=user_input.conversation_id,
                     source_device_id=source_device_id,
                 ) as run:
-                    result = await self._async_handle_message(user_input, chat_log)
+                    result = await self._async_handle_message(
+                        user_input, chat_log, request_options
+                    )
                     if (
                         self._archive is not None
                         and archive_session is not None
@@ -460,6 +529,7 @@ class ExtendedOpenAIAgentEntity(
         self,
         user_input: ConversationInput,
         chat_log: ChatLog,
+        request_options: Mapping[str, Any] | None = None,
     ) -> ConversationResult:
         """Call the API."""
         # Create LLM context
@@ -506,6 +576,7 @@ class ExtendedOpenAIAgentEntity(
                     if _ACTIVE_FUNCTION_GROUP_SESSION.get() is not None
                     else None
                 ),
+                request_options=request_options,
             )
         except OpenAIError as err:
             if self._usage is not None:
@@ -562,6 +633,33 @@ class ExtendedOpenAIAgentEntity(
                 chat_log.continue_conversation,
                 conditional_decision,
             ),
+        )
+
+    def _local_rule_result(
+        self,
+        user_input: ConversationInput,
+        chat_log: ChatLog,
+        response: str,
+    ) -> ConversationResult:
+        """Return a local rule response without invoking the provider."""
+        chat_log.content.append(
+            conversation.AssistantContent(agent_id=self.entity_id, content=response)
+        )
+        self.hass.bus.async_fire(
+            EVENT_CONVERSATION_FINISHED,
+            {
+                "user_input": user_input,
+                "messages": [content.as_dict() for content in chat_log.content],
+                "agent_id": self.subentry.subentry_id,
+                "handled_locally": True,
+            },
+        )
+        intent_response = intent.IntentResponse(language=user_input.language)
+        intent_response.async_set_speech(response)
+        return ConversationResult(
+            response=intent_response,
+            conversation_id=chat_log.conversation_id,
+            continue_conversation=False,
         )
 
     def _build_system_prompt(
