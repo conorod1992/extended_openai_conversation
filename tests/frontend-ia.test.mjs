@@ -50,6 +50,7 @@ for (const [page, section] of [["guide", null], ["capabilities", "functions"], [
 
 assert.ok(GUIDE_TOPICS.length >= 12);
 assert.ok(GUIDE_TOPICS.some((topic) => topic.id === "guest-mode"));
+assert.ok(GUIDE_TOPICS.some((topic) => topic.id === "request-rules"));
 assert.ok(GUIDE_TOPICS.every((topic) => topic.action?.page));
 assert.deepEqual(MEMORY_COMPARISON.map((row) => row[0]), [
   "Conversation context", "Temporary memory", "Persistent memory", "Conversation archive", "Knowledge Library",

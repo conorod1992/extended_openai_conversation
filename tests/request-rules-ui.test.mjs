@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import {mergeActionEditorValue, parseAdvancedActionConfig, renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
+import {mergeActionEditorValue, mergeFriendlyActionValue, parseAdvancedActionConfig, renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const panel = {
@@ -25,11 +25,19 @@ assert.match(html, /Fuzzy matching/);
 assert.match(requestRulesDialog(panel), /One phrase per line/);
 assert.match(requestRulesDialog(panel), /Rest of this conversation/);
 assert.match(requestRulesDialog(panel), /entire sequence before any action runs/);
+assert.match(requestRulesDialog(panel), /Home Assistant sentence pattern/);
+assert.match(requestRulesDialog(panel), /Named expansions/);
+assert.match(requestRulesDialog(panel), /1\. What will you say\?/);
+assert.match(requestRulesDialog(panel), /3\. What should the assistant say\?/);
 
 const existing = {domain:"light",service:"turn_on",target:{entity_id:["light.lamp"],area_id:["kitchen"],device_id:"device-one"},data:{brightness_pct:35,transition:2}};
 assert.deepEqual(
   mergeActionEditorValue(existing, "light.lamp", JSON.stringify({target:existing.target,data:existing.data}), "light.lamp"),
   existing,
+);
+assert.deepEqual(
+  mergeFriendlyActionValue(existing, "area_id", ["garage"], JSON.stringify({target:existing.target,data:existing.data}), "entity_id", ["light.lamp"], {brightness_pct:50}),
+  {...existing,target:{area_id:["garage"],device_id:"device-one"},data:{brightness_pct:50,transition:2}},
 );
 assert.deepEqual(
   mergeActionEditorValue(existing, "light.desk", JSON.stringify({target:existing.target,data:existing.data}), "light.lamp"),

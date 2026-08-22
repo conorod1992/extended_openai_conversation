@@ -1,109 +1,95 @@
 # Request Rules
 
-Request Rules examine text received by Extended OpenAI Conversation before its normal
-OpenAI request. They provide one integration-owned place for voice shortcuts and
-request routing that is often simpler than maintaining a separate Home Assistant
-sentence-trigger automation for every Extended OpenAI-specific command.
+Request Rules examine text received by Extended OpenAI Conversation before its normal provider request. They provide deterministic local voice shortcuts and AI-routing commands without asking a model to interpret the trigger.
 
-Open **Extended OpenAI > Capabilities > Request Rules** to manage them. Rules are
-stored locally per conversation agent. They do not replace Home Assistant's native
-intents or Hassil sentences: if Home Assistant handles a sentence before it reaches
-Extended OpenAI, Request Rules are not involved.
+Open **Extended OpenAI > Capabilities > Request Rules**. Rules, matching defaults, and wording synonym groups are stored locally per conversation agent and included in that agent's backup.
+
+Request Rules only see text that Home Assistant routes to this conversation agent. If a native intent or sentence-trigger automation handles a sentence first, the rule is not involved.
+
+## Build a rule
+
+The editor follows the way a command is usually designed:
+
+1. Enter what you will say and choose how it matches.
+2. Choose what should happen.
+3. Choose what the assistant should say.
+4. Open **Advanced matching and action configuration** only when the defaults or friendly action fields are not enough.
 
 ## Local commands
 
-A **Local command** runs one or more configured Home Assistant actions in order and
-does not make an OpenAI/API call. The configured success response defaults to
-`Done`. If an action fails, the rule stops, logs diagnostic detail, and returns the
-configured failure response instead of claiming success.
+A **Local command** runs one or more Home Assistant actions in order and does not make an OpenAI/API call. Select an action by its `domain.action` name, then choose an entity, device, or area through Home Assistant's native selectors. Fields published by the selected service, such as brightness, temperature, media, or a select option, appear as friendly controls when Home Assistant provides selector metadata.
+
+Existing `target` and `data` values are preserved when a rule is edited. **Advanced JSON** is a lossless fallback for service data or target keys that the friendly editor does not expose.
+
+If any action fails, the remaining actions do not run and the configured failure response is returned. While Guest Mode is active, the entire sequence is authorized before the first action runs; if one action is unavailable, none run.
 
 ### Example: fast local script
 
 - Phrase: `good night`
 - Match: **Equals**
-- Action: run `script.goodnight`
-- Result: handled locally without an OpenAI request
-
-Local commands are useful for established household routines where deterministic,
-low-latency behavior is more valuable than model interpretation.
+- Action: `script.turn_on` targeting the Goodnight script
+- Response: `Good night`
 
 ## AI routing
 
-An **AI routing** rule keeps the existing OpenAI request pipeline but can override the
-model, reasoning effort, or both. Its scope can be **This request only** or **Rest of
-this conversation**. Precedence is:
+An **AI routing** rule keeps the provider pipeline but can override the model, reasoning effort, or both. Its scope can be **This request only** or **Rest of this conversation**:
 
 `single-request override > conversation override > configured agent default`
 
-Conversation overrides use the integration's existing conversation/continuity
-identity. They remain in memory for that active conversation, do not change saved
-agent settings, and are not used by a genuinely new conversation. A routing rule can
-also reset the current conversation to configured defaults.
+Conversation overrides use the current conversation/continuity identity and expire with it. They do not change the saved agent configuration. A rule can also reset the active conversation to configured defaults.
 
-### Example: heavier reasoning
+Equals and sentence-pattern routing commands are complete commands and are acknowledged locally. They must use conversation scope. Broader matches keep the original request wording unchanged; the matched prefix or substring is not removed.
 
-- Phrase: `think carefully`
-- Match: **Starts with**
-- Action: model `gpt-5`, reasoning **High**
-- Scope: **This request only**
+## Matching modes
 
-The original request text remains unchanged. Request Rules do not strip the matched
-prefix in this version.
+### Text matching
 
-### Example: conversation model change
+**Equals**, **Starts with**, **Ends with**, and **Contains** are case-insensitive and normalize punctuation and whitespace. Rules can inherit the defaults or customize:
 
-- Phrase: `use the better model`
-- Match: **Equals**
-- Action: switch model/reasoning
-- Scope: **Rest of this conversation**
+- **Normalize word forms** handles conservative English forms such as `light/lights`.
+- **Wording synonym groups** map editable alternatives to canonical wording. The seeded groups preserve the previous built-in behavior, such as `switch on` to `turn on` and `television` to `tv`. Groups can be added, edited, and removed. Ambiguous duplicate phrases are rejected.
+- **Fuzzy matching** tolerates small speech-recognition differences only after strict matching fails. Conservative, Normal, and Tolerant correspond to progressively lower thresholds. Sensitivity is unavailable when fuzzy matching is off.
 
-Because an Equals routing command contains no separate substantive request, it is
-acknowledged locally instead of causing a pointless model call.
+Strict matching always wins over fuzzy matching. More specific strict types win over broader ones, and stable rule order resolves an otherwise equal result.
 
-## Matching
+### Home Assistant sentence patterns
 
-Each rule can have several trigger phrases and supports **Equals**, **Starts with**,
-**Ends with**, and **Contains**. Matching is case-insensitive and always normalizes
-punctuation and whitespace.
+Choose **Home Assistant sentence pattern** for Hassil grammar. Supported syntax is:
 
-The default matching settings optionally add three predictable layers:
+- `[optional words]`
+- `(first|second)` alternatives
+- `{slot}` wildcard capture
 
-1. **Word-form normalization** handles conservative English forms such as
-   `light/lights` and `reminder/reminders`.
-2. **Common wording alternatives** use a small curated phrase list, including
-   `turn on/switch on`, `turn off/switch off`, `close/shut`, `television/TV`,
-   `increase/raise/turn up`, and `decrease/lower/turn down`.
-3. **Fuzzy matching** is a fallback for small speech-recognition differences. The
-   Conservative, Normal, and Tolerant labels map to progressively lower thresholds.
+For example:
 
-Most rules use the global defaults. Choose **Customize for this rule** to change word
-forms, wording alternatives, fuzzy matching, and sensitivity for one rule only.
+```text
+[please ](turn|switch) {room} lights on
+```
 
-Matching is deterministic. A strict match always wins over a fuzzy match, Equals
-wins over broader match types for the same utterance, and only one enabled rule is
-selected. Within otherwise equivalent matches, rule order is stable.
+This matches phrases such as `turn kitchen lights on` and captures `room = kitchen`. Captured slots are retained in the internal match result for future use, but this version does not substitute them into action targets or data.
 
-## Limitations and security
+Named expansion references such as `<device>` are intentionally rejected because Request Rules do not configure a named-expansion catalogue. Sentence-pattern matching is a separate exact grammar path: fuzzy matching, synonym groups, and word-form normalization do not apply.
 
-Request Rules are lightweight text matching, not semantic understanding. They do not
-use embeddings, a transformer, a general thesaurus, regex triggers, history learning,
-or automatic rule creation. Fuzzy and wording-alternative matching can broaden what
-activates a rule; use Equals and conservative matching for locks, alarms, garage-style
-covers, and other sensitive actions. The editor highlights obvious sensitive domains
-when tolerant options are active.
+## Request Rules compared with native automations
 
-Request Rules do not add PIN protection or speaker authentication. Home Assistant
-service validation still applies. While Guest Mode is active, every local action in
-the matched rule is checked against the effective per-request Guest policy before any
-action runs. Entity, area, device, and label selectors are resolved through the same
-backend authorization path used by model tools. If any action is unavailable, the
-whole sequence is rejected without calling OpenAI or revealing the restricted target.
+Use a Request Rule when:
 
-The simple action editor preserves entity targets. Use **Advanced target and action
-data** for other Home Assistant target selectors or service data; it accepts a JSON
-object containing `target` and `data` objects and rejects malformed input before save.
+- the phrase belongs specifically to this Extended OpenAI conversation agent;
+- a stable command should bypass the AI/API call;
+- the phrase should change model or reasoning routing; or
+- you want the rule and its response managed with the agent.
 
-Automatic **Suggested Local Commands** are intentionally not included. Local actions
-do store a stable canonical action signature so a future suggestion feature can
-compare successful model-executed Home Assistant actions without redesigning the rule
-format.
+Use a native Home Assistant sentence-trigger automation when:
+
+- the command should work independently of this integration or conversation agent;
+- it needs automation triggers, conditions, templates, variables, traces, or modes;
+- it should be owned alongside the rest of your Home Assistant automations; or
+- native Assist handling should take priority before text reaches an AI agent.
+
+The two approaches can coexist, but avoid giving both the same phrase unless their routing priority is intentional.
+
+## Security and limits
+
+Request Rules are not semantic understanding and do not learn from history. They do not use embeddings, a general thesaurus, automatic suggestions, PIN challenges, or speaker authentication. Use Equals or a narrow sentence pattern for locks, alarms, garage-style covers, and other sensitive actions. The editor warns about obvious sensitive action domains when tolerant text matching is active.
+
+Home Assistant service validation still applies. Guest Mode authorization uses the same backend enforcement as model-initiated Home Assistant tools and never partially executes a rejected sequence.

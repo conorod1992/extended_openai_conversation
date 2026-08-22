@@ -23,13 +23,16 @@ from custom_components.extended_openai_conversation_responses.request import (
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
     DEFAULT_MATCHING,
+    DEFAULT_WORDING_GROUPS,
     RequestRuleRuntime,
     RequestRules,
+    RequestRuleStore,
     async_evaluate_rule,
     canonical_action_signature,
     normalize_text,
     request_rule_session_id,
     validate_rule,
+    validate_wording_groups,
 )
 from homeassistant.exceptions import HomeAssistantError
 
@@ -134,6 +137,71 @@ async def test_multiple_phrases_and_curated_wording_alternatives() -> None:
     match = rules.match("Switch on the television")
     assert match is not None
     assert match.phrase == "turn on the tv"
+
+
+async def test_persisted_wording_groups_can_be_replaced_and_backed_up() -> None:
+    store = MemoryStore()
+    rules = RequestRules(store)
+    await rules.async_initialize()
+    groups = [{"canonical": "activate", "alternatives": ["power up"]}]
+    assert await rules.async_set_wording_groups(groups) == groups
+    created = local_rule(phrases=["activate kitchen"])
+    await rules.async_create(created)
+    assert rules.match("power up kitchen") is not None
+    backup = await rules.async_backup_data()
+    assert backup["wording_groups"] == groups
+
+
+def test_wording_group_validation_rejects_ambiguous_phrases() -> None:
+    with pytest.raises(ValueError, match="ambiguous duplicate"):
+        validate_wording_groups(
+            [
+                {"canonical": "turn on", "alternatives": ["switch on"]},
+                {"canonical": "activate", "alternatives": ["switch on"]},
+            ]
+        )
+
+
+async def test_missing_wording_groups_seed_existing_defaults() -> None:
+    rules = await manager(local_rule(phrases=["turn on the tv"]))
+    assert rules.snapshot()["wording_groups"] == list(DEFAULT_WORDING_GROUPS)
+    assert rules.match("switch on the television") is not None
+
+
+async def test_storage_v1_migration_seeds_wording_groups() -> None:
+    store = object.__new__(RequestRuleStore)
+    migrated = await store._async_migrate_func(
+        1, 0, {"defaults": dict(DEFAULT_MATCHING), "rules": []}
+    )
+    assert migrated["wording_groups"] == list(DEFAULT_WORDING_GROUPS)
+
+
+async def test_hassil_pattern_supports_optional_alternatives_and_slots() -> None:
+    rules = await manager(
+        local_rule(
+            phrases=["[please ](set|change) {room} lights"],
+            match_type="sentence_pattern",
+        )
+    )
+    match = rules.match("please change kitchen lights")
+    assert match is not None
+    assert match.fuzzy is False
+    assert match.slots == {"room": "kitchen"}
+
+
+async def test_hassil_sentence_pattern_bypasses_text_normalization() -> None:
+    rules = await manager(
+        local_rule(phrases=["turn on light"], match_type="sentence_pattern")
+    )
+    assert rules.match("switch on light") is None
+    assert rules.match("turn on lights") is None
+
+
+def test_hassil_sentence_pattern_rejects_named_expansions() -> None:
+    with pytest.raises(ValueError, match="named expansion rules"):
+        validate_rule(
+            local_rule(phrases=["turn <device> on"], match_type="sentence_pattern")
+        )
 
 
 async def test_disabled_rules_never_participate() -> None:
@@ -561,6 +629,14 @@ async def test_management_api_permissions_crud_and_delete_confirmation(
         "custom_components.extended_openai_conversation_responses.management_ui.async_get_request_rules",
         get_rules,
     )
+
+    async def get_service_descriptions(*args):
+        return {"light": {"turn_on": {"name": "Turn on", "fields": {}}}}
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_ui.service_helper.async_get_all_descriptions",
+        get_service_descriptions,
+    )
     base = {
         "section": "request_rules",
         "entry_id": "entry",
@@ -568,6 +644,18 @@ async def test_management_api_permissions_crud_and_delete_confirmation(
     }
     with pytest.raises(HomeAssistantError, match="Administrator"):
         await async_management_command(hass, "user", False, {**base, "action": "list"})
+    listed = await async_management_command(
+        hass, "admin", True, {**base, "action": "list"}
+    )
+    assert "light" in listed["service_catalog"]
+    groups = [{"canonical": "activate", "alternatives": ["power up"]}]
+    updated_groups = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {**base, "action": "wording_groups", "wording_groups": groups},
+    )
+    assert updated_groups == {"wording_groups": groups}
     created = await async_management_command(
         hass,
         "admin",
