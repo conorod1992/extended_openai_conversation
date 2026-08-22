@@ -314,9 +314,9 @@ export const GUIDE_TOPICS = [
         type: "list",
         items: [
           "Equals is the safest default for a complete command. Starts with, Ends with and Contains allow broader phrase placement.",
-          "Word forms and editable synonym groups provide small, predictable normalization. Fuzzy matching is only a fallback after every strict match fails.",
+          "Word forms and editable wording alternatives provide small, predictable normalization. Fuzzy matching is only a fallback after every strict match fails.",
           "Home Assistant sentence patterns use Hassil grammar: [optional words], (one|two) alternatives and wildcard slots such as {room}. Named <expansions> are not supported because Request Rules do not configure an expansion catalogue.",
-          "Sentence patterns do not use fuzzy matching, synonym groups or singularization. Captured slots are recorded with the match, but are not substituted into action data."
+          "Sentence patterns do not use fuzzy matching, wording alternatives or singularization. Captured slots are recorded with the match, but are not substituted into action data."
         ]
       },
       {
@@ -331,7 +331,7 @@ export const GUIDE_TOPICS = [
       },
       {
         type: "p",
-        text: "While Guest Mode is active, the complete local action sequence is authorized before the first action runs. If any action is unavailable, none run. Request Rules add no PIN or speaker authentication, so use strict matching for locks, alarms and other sensitive controls. Rules, defaults and synonym groups are included in per-agent backups."
+        text: "While Guest Mode is active, the complete local action sequence is authorized before the first action runs. If any action is unavailable, none run. Request Rules add no PIN or speaker authentication, so use strict matching for locks, alarms and other sensitive controls. Rules, defaults and wording alternatives are included in per-agent backups."
       }
     ],
     action: { label: "Manage Request Rules", page: "capabilities", section: "request-rules" }

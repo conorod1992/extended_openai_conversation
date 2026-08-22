@@ -8,6 +8,7 @@ const panel = {
   _query: "",
   _result: {
     defaults: {word_forms:true,wording_alternatives:true,fuzzy:false,fuzzy_threshold:90},
+    wording_groups: [{canonical:"turn on",alternatives:["switch on"]}],
     rules: [{
       id:"one",name:"Good night",enabled:true,phrases:["good night","bed time"],match_type:"equals",
       action_type:"local_action",action:{actions:[{domain:"script",service:"turn_on",target:{entity_id:["script.goodnight"]},data:{}}],success_response:"Done"},
@@ -26,6 +27,11 @@ assert.match(html, /Good night/);
 assert.match(html, /Uses default settings/);
 assert.match(html, /Create rule/);
 assert.match(html, /Fuzzy matching/);
+assert.match(html, /Wording alternatives/);
+assert.match(html, /Add different ways of saying the same thing\. Separate multiple alternatives with commas\./);
+assert.match(html, /Main phrase/);
+assert.match(html, /Other ways to say it/);
+assert.match(html, /Save wording alternatives/);
 assert.match(html, /gpt-5 · high reasoning · rest of conversation/);
 const resetHtml = renderRequestRules({...panel,_result:{...panel._result,rules:[{...panel._result.rules[1],action:{...panel._result.rules[1].action,reset:true}}]}});
 assert.match(resetHtml, /Return this conversation to configured defaults/);
