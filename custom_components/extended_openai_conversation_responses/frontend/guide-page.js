@@ -1,4 +1,42 @@
-import {GUIDE_QUICK_TASKS, GUIDE_TOPICS, MEMORY_COMPARISON} from "./guide-content.js";
+import {GUIDE_TOPICS, MEMORY_COMPARISON} from "./guide-content.js";
+
+const GUIDE_QUICK_TASKS = [
+  {title: "Keep a conversation going", text: "Make follow-up questions remember what you were just discussing.", topic: "continuity"},
+  {title: "Remember facts and preferences", text: "Store useful information so you do not have to repeat it in later conversations.", topic: "persistent-memory"},
+  {title: "Give it reference material", text: "Add manuals, notes, policies or other larger information to the Knowledge Library.", topic: "knowledge"},
+  {title: "Let visitors use it safely", text: "Use Guest Mode to limit what visitors can see, control and remember.", topic: "guest-mode"},
+];
+
+const GUIDE_TEXT_REWRITES = new Map([
+  ["Lightweight lexical retrieval matches words and related text locally. Hybrid semantic retrieval can also use embeddings to find conceptually similar memories even when the wording differs. If embeddings are unavailable, retrieval falls back to the local lexical method.", "By default, the integration finds relevant memories by matching words and phrases locally. An optional semantic mode can also find memories with a similar meaning even when different words are used. That semantic mode uses embeddings when your provider supports them; if it is unavailable, memory retrieval falls back to the local matching method."],
+  ["Create a Function Tool when you want to expose an additional capability or a specially defined action to the model. Function Tools are configured as YAML and validated by the backend before they are saved. Disabled tools remain configured but are not sent to the model and cannot run.", "Create a Function Tool when you want to give the assistant an additional capability or a specially defined action. Function Tools are configured as YAML and checked for errors before they are saved. Disabled tools remain configured but are not sent to the model and cannot run."],
+  ["A group set to Load when needed initially sends only a small catalogue entry. The model loads the group's full function definitions only if the task needs them.", "With Load when needed, the model initially sees only the group's name and description. The full function definitions are sent only if the model decides it needs that group, which can reduce repeated input-token use."],
+  ["For integration-managed continuity, the conversation timeout decides how much inactivity is allowed before the next request starts fresh. A short timeout reduces accidental carry-over; a longer timeout makes conversations easier to resume later.", "If Extended OpenAI is remembering a conversation beyond the immediate Home Assistant session, the conversation timeout decides how much inactivity is allowed before the next request starts fresh. A short timeout reduces accidental carry-over; a longer timeout makes conversations easier to resume later."],
+  ["Preview effective request is useful for inspecting the locally assembled baseline for a new request, including prompts, Home Assistant context and tool definitions. It cannot show every piece of provider-side framing or context that depends on a future real user message.", "Preview effective request shows the main prompt, Home Assistant context and tool definitions that Extended OpenAI is preparing for a new request. Some details only exist when a real message is sent, and the provider may also handle parts of the request that the preview cannot show."],
+]);
+
+function rewriteGuideText(text) {
+  return GUIDE_TEXT_REWRITES.get(text) || text;
+}
+
+function enhanceGuideTopics(topics) {
+  return topics.map((topic) => {
+    const body = (topic.body || []).map((block) => {
+      if (!block || typeof block !== "object") return block;
+      const next = {...block};
+      if (typeof next.text === "string") next.text = rewriteGuideText(next.text);
+      if (Array.isArray(next.items)) next.items = next.items.map(rewriteGuideText);
+      return next;
+    });
+    if (topic.id === "privacy") {
+      const firstSteps = body.findIndex((block) => block?.type === "steps");
+      if (firstSteps >= 0) body.splice(firstSteps, 0, {type: "heading", text: "What the assistant can access"});
+      const storedNote = body.findIndex((block) => block?.type === "note" && block.title === "Stored locally does not always mean never sent to the model");
+      if (storedNote >= 0) body.splice(storedNote, 0, {type: "heading", text: "What can be stored or sent"});
+    }
+    return {...topic, body};
+  });
+}
 
 function blockSearchText(block) {
   if (typeof block === "string") return block;
@@ -46,7 +84,7 @@ function openGuideTopic(panel, topicId) {
 
 export function renderGuide(panel) {
   const query = String(panel._guideQuery || "").trim().toLowerCase();
-  const topics = GUIDE_TOPICS.filter((topic) => !query || topicSearchText(topic).includes(query));
+  const topics = enhanceGuideTopics(GUIDE_TOPICS).filter((topic) => !query || topicSearchText(topic).includes(query));
 
   return `<style>
       .guide-quick-start{display:grid;gap:12px}
