@@ -186,7 +186,7 @@ export const HELP_METADATA = Object.freeze({
       { term: "Always available", text: "Sends full definitions on every request, matching existing behaviour." },
       { term: "Load when needed", text: "Withholds full definitions until the model requests the group; loaded groups remain available for the active conversation." },
       { term: "Function YAML", text: "spec describes the model-facing schema and function tells Extended OpenAI how to execute it. Grouping does not change this format or its validation." },
-      { term: "Enabled", text: "Uses the same saved state in the Tools page and Home Assistant enable/disable actions. Disabled is a capability boundary, not a prompt preference." },
+      { term: "Enabled", text: "Uses the same saved state in the Functions page and Home Assistant enable/disable actions. Disabled is a capability boundary, not a prompt preference." },
     ],
     keywords: "group on demand load when needed tokens catalogue yaml spec schema validate execute built in enabled disabled",
     href: `${DOCS_ROOT}/functions/overview.mdx`,

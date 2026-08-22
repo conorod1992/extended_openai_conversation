@@ -39,7 +39,7 @@ Writes are deliberately stricter. Authenticated conversations default to persona
 
 ## Management, safety, backup, and limits
 
-Open **Extended OpenAI → Memories** to search/filter by text, category, importance, or scope and edit content, importance, scope, subject, key, and freshness metadata. Advanced fields remain optional. Destructive bulk actions retain confirmation, and authenticated users cannot manipulate another user's personal scope.
+Open **Extended OpenAI → Data & Memory → Memories** to search/filter by text, category, importance, or scope and edit content, importance, scope, subject, key, and freshness metadata. Advanced fields remain optional. Destructive bulk actions retain confirmation, and authenticated users cannot manipulate another user's personal scope.
 
 Storage uses Home Assistant's private versioned `.storage` API with a 10,000-record limit per agent. Version 2 migrates existing records to normal importance and uses the prior update (or creation) time as `last_confirmed_at`. Full backup/restore round-trips the new metadata and accepts prior records; embeddings are regenerated instead of exported.
 

@@ -48,7 +48,7 @@ The schema should describe only inputs the model genuinely needs to choose.
 
 ## Optional function groups
 
-Large function collections can be organized into **Always available** and **Load when needed** groups from the sidebar Tools page. On-demand groups initially send only a compact name and description; the model loads their complete schemas through the existing tool loop when a task needs them. Function YAML remains unchanged, and ungrouped functions keep the previous always-available behaviour.
+Large function collections can be organized into **Always available** and **Load when needed** groups from **Capabilities → Functions**. On-demand groups initially send only a compact name and description; the model loads their complete schemas through the existing tool loop when a task needs them. Function YAML remains unchanged, and ungrouped functions keep the previous always-available behaviour.
 
 See [Function groups](../features/function-groups.md) for lifecycle, compatibility, UI, diagnostics, and token-use details.
 

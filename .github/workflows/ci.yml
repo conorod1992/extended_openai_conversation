@@ -104,9 +104,14 @@ jobs:
         run: |
           node --check custom_components/extended_openai_conversation_responses/frontend/agent-config-help.js
           node --check custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js
+          node --check custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js
+          node --check custom_components/extended_openai_conversation_responses/frontend/guide-content.js
+          node --check custom_components/extended_openai_conversation_responses/frontend/guide-page.js
           node --check custom_components/extended_openai_conversation_responses/frontend/management-panel.js
+          node --check custom_components/extended_openai_conversation_responses/frontend/overview-page.js
           node --check custom_components/extended_openai_conversation_responses/frontend/usage-chart.js
           node tests/frontend-help.test.mjs
+          node tests/frontend-ia.test.mjs
           node tests/function-groups-ui.test.mjs
           node tests/backup-ui.test.mjs
           node tests/guest-mode-ui.test.mjs
