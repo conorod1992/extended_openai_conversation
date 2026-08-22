@@ -2,7 +2,7 @@
 
 Request Rules examine text received by Extended OpenAI Conversation before its normal provider request. They provide deterministic local voice shortcuts and AI-routing commands without asking a model to interpret the trigger.
 
-Open **Extended OpenAI > Capabilities > Request Rules**. Rules, matching defaults, and wording synonym groups are stored locally per conversation agent and included in that agent's backup.
+Open **Extended OpenAI > Capabilities > Request Rules**. Rules, matching defaults, and wording alternatives are stored locally per conversation agent and included in that agent's backup.
 
 Request Rules only see text that Home Assistant routes to this conversation agent. If a native intent or sentence-trigger automation handles a sentence first, the rule is not involved.
 
@@ -47,7 +47,7 @@ Equals and sentence-pattern routing commands are complete commands and are ackno
 **Equals**, **Starts with**, **Ends with**, and **Contains** are case-insensitive and normalize punctuation and whitespace. Rules can inherit the defaults or customize:
 
 - **Normalize word forms** handles conservative English forms such as `light/lights`.
-- **Wording synonym groups** map editable alternatives to canonical wording. The seeded groups preserve the previous built-in behavior, such as `switch on` to `turn on` and `television` to `tv`. Groups can be added, edited, and removed. Ambiguous duplicate phrases are rejected.
+- **Wording alternatives** map different ways of saying the same thing to a main phrase. The seeded alternatives preserve the previous built-in behavior, such as `switch on` to `turn on` and `television` to `tv`. Alternatives can be added, edited, and removed. Ambiguous duplicate phrases are rejected.
 - **Fuzzy matching** tolerates small speech-recognition differences only after strict matching fails. Conservative, Normal, and Tolerant correspond to progressively lower thresholds. Sensitivity is unavailable when fuzzy matching is off.
 
 Strict matching always wins over fuzzy matching. More specific strict types win over broader ones, and stable rule order resolves an otherwise equal result.
@@ -68,7 +68,7 @@ For example:
 
 This matches phrases such as `turn kitchen lights on` and captures `room = kitchen`. Captured slots are retained in the internal match result for future use, but this version does not substitute them into action targets or data.
 
-Named expansion references such as `<device>` are intentionally rejected because Request Rules do not configure a named-expansion catalogue. Sentence-pattern matching is a separate exact grammar path: fuzzy matching, synonym groups, and word-form normalization do not apply.
+Named expansion references such as `<device>` are intentionally rejected because Request Rules do not configure a named-expansion catalogue. Sentence-pattern matching is a separate exact grammar path: fuzzy matching, wording alternatives, and word-form normalization do not apply.
 
 ## Request Rules compared with native automations
 
