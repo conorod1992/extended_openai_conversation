@@ -9,8 +9,9 @@ schedule; its sensor is for visibility and automations.
 
 ## Configure the guest policy
 
-Open **Extended OpenAI → Guest**. Guest entity access starts with Home
-Assistant's normal Assist exposure and subtracts every matching entity, domain,
+Open **Extended OpenAI → Capabilities → Guest Mode**. Fresh version 2 policies
+start with no exclusions. Guest entity access starts with Home Assistant's
+normal Assist exposure and subtracts every matching entity, domain,
 area, or label exclusion. A match in any category denies the entity from prompt
 context, discovery, reads, history, controls, and entity-scoped native tools.
 
@@ -26,7 +27,7 @@ metadata. Disabled functions remain disabled, and unsafe unscopable native
 functions are always denied. Shared-household memory has **Off**, **Read only**,
 and **Read & write** modes and defaults to Off. Personal memory is unavailable.
 
-The advanced **Enable Guest Mode controls** setting exposes the one-way
+**Allow the assistant to activate Guest Mode** exposes the one-way
 `guest_mode_restrict` model tool and defaults on for new agents. It controls only
 the availability of that restriction tool. Turning it off never cancels,
 shortens, deactivates, or weakens an active or scheduled Guest restriction.
@@ -34,15 +35,16 @@ shortens, deactivates, or weakens an active or scheduled Guest restriction.
 ### Existing configurations
 
 Agents saved with the former allow-list policy keep those exact semantics. The
-Guest page shows a conservative translated exclusion draft and a migration
-notice. Version 2 becomes active only after an administrator explicitly reviews
-and saves that draft. This prevents an old empty allow-list from becoming broad
-access. Legacy Knowledge, function, and memory grants are translated
-conservatively; a legacy write-only shared-memory combination becomes Off.
+Guest page first shows **Previous Guest Mode settings found**, with choices to
+review a conservative converted draft or start fresh after a warning. Neither
+choice changes enforcement by itself. Version 2 becomes active only after an
+administrator explicitly saves the draft. This prevents an old empty allow-list
+from becoming broad access. Legacy Knowledge, function, and memory grants are
+translated conservatively; a legacy write-only shared-memory combination becomes Off.
 
 ## Start, schedule, or end Guest Mode
 
-The **Guest** page shows status, scheduling controls, and non-sensitive resolved
+The **Guest Mode** page shows status, scheduling controls, and non-sensitive resolved
 policy counts. Administrators can activate now, replace the interval, shorten or
 extend it, make it indefinite, end it, or cancel a future schedule.
 

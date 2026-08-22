@@ -136,6 +136,7 @@ MANAGEMENT_FRONTEND_MODULES = (
     "agent-config-editor.js",
     "agent-config-help.js",
     "frontend-navigation.js",
+    "guest-mode-ui.js",
     "guide-content.js",
     "guide-page.js",
     "overview-page.js",

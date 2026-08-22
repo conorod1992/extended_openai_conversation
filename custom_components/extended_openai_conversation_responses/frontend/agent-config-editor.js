@@ -162,7 +162,7 @@ export function renderConfiguration(panel) {
   const jumps = [["general","General"],["conversation","Conversation"],["prompt","Prompt"],["capabilities","Capabilities"],["archive","Archive"],["voice","Voice"],["speech","Speech"],["context","Context"],["model","Model"],["retention","Retention"],["backup","Backup & Restore"]];
   panel._configSectionFilter = new Set(panel._configSections || jumps.map(([id]) => id));
   const visibleJumps = jumps.filter(([id]) => panel._configSectionFilter.has(id));
-  return `<div class="config-toolbar"><input id="config-search" type="search" value="${panel._e(panel._configSearchQuery || "")}" placeholder="Search settings..." aria-label="Search configuration"><div class="agent-actions"><button type="button" class="secondary" id="duplicate-agent" ${cleanOnly}>Duplicate</button><button type="button" class="secondary" id="export-agent" ${cleanOnly}>Export configuration</button><button type="button" class="secondary" id="import-agent">Import configuration</button></div></div>${panel._configDirty ? `<p class="action-help">Duplicate and Export configuration use the saved configuration. Save or revert this shared draft to enable them.</p>` : ""}
+  return `<div class="config-toolbar"><details class="agent-actions-menu"><summary aria-haspopup="menu">Agent actions</summary><div role="menu"><button type="button" class="secondary" role="menuitem" id="duplicate-agent" ${cleanOnly}>Duplicate agent</button><button type="button" class="secondary" role="menuitem" id="import-agent">Import configuration</button><button type="button" class="secondary" role="menuitem" id="export-agent" ${cleanOnly}>Export configuration</button></div></details></div>${panel._configDirty ? `<p class="action-help">Duplicate and Export configuration use the saved configuration. Save or revert this shared draft to enable them.</p>` : ""}
     ${visibleJumps.length > 1 ? `<nav class="config-jumps" aria-label="Jump to settings group">${visibleJumps.map(([id,label])=>`<a href="#config-${id}" data-jump="config-${id}">${label}</a>`).join("<span aria-hidden=\"true\">&middot;</span>")}</nav>` : ""}
     <div class="content-card config-surface">
       ${section(panel,"general","General","Choose the model and basic response behaviour.","model api tokens function calls continue",`<div class="form-grid general-grid">${field(panel,"__title","Agent name",panel._draftTitle ?? panel._result?.title ?? "")}${field(panel,"chat_model","Chat model",config.chat_model)}${select(panel,"api_mode","Provider API format",config.api_mode,choices("api_mode"),"Choose how requests are formatted for the provider. Auto is recommended unless your provider requires a specific API.",false,"api_mode")}${field(panel,"max_tokens","Maximum response length (tokens)",config.max_tokens,"number","Sets the most tokens the model may use in one response.")}${field(panel,"max_function_calls_per_conversation","Maximum tool calls per conversation",config.max_function_calls_per_conversation,"number","Stops the assistant after this many tool calls in one conversation to prevent runaway actions.")}${select(panel,"continue_conversation","Listen for a follow-up",config.continue_conversation,choices("continue_conversation"),"Choose whether Home Assistant keeps listening for an immediate reply after the assistant responds.",false,"continue_conversation")}</div>`)}
@@ -224,20 +224,6 @@ function showErrors(panel, errors = {}) {
   });
 }
 
-function applySearch(panel) {
-  const root = panel.shadowRoot;
-  const query = (panel._configSearchQuery || "").trim().toLowerCase();
-  root.querySelectorAll("[data-setting]").forEach((item) => {
-    const text = `${item.dataset.search || ""} ${item.textContent || ""}`.toLowerCase();
-    item.classList.toggle("search-dim", Boolean(query) && !text.includes(query));
-  });
-  root.querySelectorAll("[data-config-section]").forEach((item) => {
-    const own = `${item.dataset.search || ""} ${item.querySelector(".config-section-heading")?.textContent || ""}`.toLowerCase();
-    const matchedSetting = [...item.querySelectorAll("[data-setting]")].some((setting) => !setting.classList.contains("search-dim"));
-    item.classList.toggle("search-dim", Boolean(query) && !own.includes(query) && !matchedSetting);
-  });
-}
-
 function setDependent(root, key, enabled) {
   const container = root.querySelector(`[data-dependent="${key}"]`);
   if (!container) return;
@@ -289,8 +275,9 @@ export function bindConfiguration(panel) {
     if (input.id === "prompt-editor") root.querySelector("#prompt-count").textContent = `${input.value.length.toLocaleString()} characters`;
   }));
   bindRegexRules(panel);
-  root.querySelector("#config-search")?.addEventListener("input", (event) => { panel._configSearchQuery = event.target.value; applySearch(panel); });
-  applySearch(panel);
+  const actionsMenu = root.querySelector(".agent-actions-menu");
+  actionsMenu?.addEventListener("keydown", (event) => { if (event.key === "Escape") { actionsMenu.open = false; actionsMenu.querySelector("summary")?.focus(); } });
+  actionsMenu?.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => { actionsMenu.open = false; }));
   root.querySelectorAll("[data-jump]").forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); root.querySelector(`#${link.dataset.jump}`)?.scrollIntoView({behavior:"smooth",block:"start"}); }));
   root.querySelector('[data-config="chat_model"]')?.addEventListener("change", async () => {
     try {
@@ -353,7 +340,8 @@ export function bindConfiguration(panel) {
   root.querySelector("#import-agent")?.addEventListener("click", () => root.querySelector("#import-dialog")?.showModal());
   root.querySelector("#import-preview")?.addEventListener("click", async () => { try { const result=await panel._call("configuration","import_preview",{document:root.querySelector("#import-document").value}); panel._importDocument=root.querySelector("#import-document").value; root.querySelector("#import-summary").textContent=`${result.title} / ${result.summary.model} / ${result.summary.tools} tools / ${result.summary.function_groups} function groups / ${result.summary.speech_rules} speech rules`; root.querySelector("#import-apply").disabled=false; } catch(err){root.querySelector("#import-summary").textContent=err.message||String(err);root.querySelector("#import-apply").disabled=true;} });
   root.querySelector("#import-apply")?.addEventListener("click", async () => { const mode=root.querySelector('input[name="import-mode"]:checked').value; if(mode==="current"&&!await panel._confirm("Overwrite this agent?",`The saved configuration will be replaced.${panel._configDirty ? " Your unsaved shared draft will be discarded." : ""} Retained history and parent-entry credentials are not affected.`,"Overwrite"))return; try { await panel._call("configuration","import",{document:panel._importDocument,mode,confirm:mode==="current"}); root.querySelector("#import-dialog").close(); if(mode==="current")panel._clearConfigDraft(); await panel._loadAgents(panel._agentId); panel._toast(mode==="current"?"Configuration imported":"Agent created from import; your current draft is preserved"); } catch(err){panel._toast(`Unable to import: ${err.message||String(err)}`,true);} });
-  root.querySelector("#import-cancel")?.addEventListener("click",()=>root.querySelector("#import-dialog").close());
+  root.querySelector("#import-cancel")?.addEventListener("click",()=>{root.querySelector("#import-dialog").close();actionsMenu?.querySelector("summary")?.focus();});
+  root.querySelector("#import-dialog")?.addEventListener("cancel",()=>requestAnimationFrame(()=>actionsMenu?.querySelector("summary")?.focus()));
   root.querySelector("#create-backup")?.addEventListener("click", async () => {
     if(panel._configDirty)return;
     const button=root.querySelector("#create-backup"); panel._setSaving(button,true);
