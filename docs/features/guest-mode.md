@@ -1,5 +1,7 @@
 # Guest Mode
 
+Configure it from **Extended OpenAI → Capabilities → Guest Mode**.
+
 Guest Mode is a backend-enforced, per-agent privacy and safety boundary for
 visitors using a Home Assistant conversation agent. It can start now or later,
 expire at a chosen time, or remain active indefinitely. The integration owns the

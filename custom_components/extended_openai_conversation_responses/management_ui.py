@@ -135,6 +135,10 @@ MANAGEMENT_FRONTEND_MODULES = (
     "management-panel.js",
     "agent-config-editor.js",
     "agent-config-help.js",
+    "frontend-navigation.js",
+    "guide-content.js",
+    "guide-page.js",
+    "overview-page.js",
     "usage-chart.js",
 )
 
@@ -594,6 +598,17 @@ async def async_management_command(
                 guest_mode = await async_get_guest_mode(
                     hass, entry.entry_id, subentry.subentry_id
                 )
+                configured_tools = configured_function_tools_from_data(subentry.data)
+                guest_status = guest_mode.status()
+                guest_status["has_home_assistant_exclusions"] = any(
+                    subentry.data.get(key)
+                    for key in (
+                        "guest_excluded_labels",
+                        "guest_excluded_areas",
+                        "guest_excluded_domains",
+                        "guest_excluded_entities",
+                    )
+                )
                 agents.append(
                     {
                         "entry_id": entry.entry_id,
@@ -610,13 +625,21 @@ async def async_management_command(
                             subentry.data.get("knowledge_enabled", False)
                         ),
                         "knowledge_source_count": knowledge.source_count,
+                        "function_count": sum(
+                            function_tool_enabled(tool) for tool in configured_tools
+                        ),
+                        "function_group_count": len(
+                            subentry.data.get(
+                                CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS
+                            )
+                        ),
                         "archive_enabled": bool(
                             subentry.data.get(
                                 CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED
                             )
                         ),
                         "tokens_today": usage.today_summary()["total_tokens"],
-                        "guest_mode": guest_mode.status(),
+                        "guest_mode": guest_status,
                     }
                 )
         return {

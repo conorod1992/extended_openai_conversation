@@ -29,7 +29,7 @@ A function belongs to at most one group. Group membership is stored separately f
 ## Configure groups in the UI
 
 1. Open **Extended OpenAI** in the Home Assistant sidebar.
-2. Select the conversation agent and open **Tools**.
+2. Select the conversation agent and open **Capabilities → Functions**.
 3. Select **Create group**.
 4. Enter a friendly name. Review the generated stable group ID.
 5. Write a concise description that explains when the capability is useful.

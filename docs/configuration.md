@@ -4,8 +4,10 @@ Home Assistant's native integration flow now focuses on the provider connection:
 
 Configure conversation-agent behaviour from **Extended OpenAI** in the sidebar:
 
-- **Configuration** is one searchable, full-width settings surface. Its sections remain in a single vertical document, with optional jump links and responsive fields inside each section.
-- **Tools** keeps a searchable, grouped tool overview with friendly Function Group controls plus Edit, Duplicate, and Delete actions for individual YAML-defined functions.
+- **Assistant** splits common behavior into Basics, Model & responses, Conversation, Prompt & context, Voice, Speech, and Advanced subsections.
+- **Capabilities** contains Home Assistant access, the purpose-built Functions/Groups editor, and Guest Mode.
+- **Data & Memory** contains Memories, Knowledge Library, and Conversation history. **Usage & Maintenance** contains Usage, Backup & Restore, Diagnostics, and retention.
+- **Guide** provides searchable, concise orientation and links back into the relevant management subsection. The global settings search navigates directly to settings across sections.
 
 The editor writes the existing Home Assistant config subentry; there is no separate frontend store. Changes remain a local draft until Save is pressed. Voice ownership is separate from spoken-response cleanup, dependent options stay visible but disabled, and Custom replacements remain directly visible while speech processing is enabled.
 
@@ -19,11 +21,13 @@ Function Tool YAML uses a clean single-tool shape with `spec:` and `function:` a
 
 The Add Function Tool dialog includes **Insert Built-in Function**. Built-in functions are implemented directly by Extended OpenAI Conversation; selecting one inserts a complete, editable native Function Tool preset into the normal YAML editor and does not save it automatically. Already-configured native implementations are labelled in the picker.
 
-Every Function Tool is enabled by default unless its YAML contains `enabled: false`. Disabled tools stay configured, searchable, editable, duplicable, deletable, and assigned to their Function Group, but are not sent to the model and cannot execute. The card switch edits the same shared draft as the rest of the Tools page. Administrators can change the persisted state with `extended_openai_conversation_responses.enable_function_tools` and `extended_openai_conversation_responses.disable_function_tools`; these actions are intentionally not exposed to the model automatically.
+Every Function Tool is enabled by default unless its YAML contains `enabled: false`. Disabled tools stay configured, searchable, editable, duplicable, deletable, and assigned to their Function Group, but are not sent to the model and cannot execute. The card switch edits the same shared draft as the rest of the Functions page. Administrators can change the persisted state with `extended_openai_conversation_responses.enable_function_tools` and `extended_openai_conversation_responses.disable_function_tools`; these actions are intentionally not exposed to the model automatically.
 
 Function Groups are optional metadata around that unchanged YAML. Existing ungrouped functions remain **Always available**. A **Load when needed** group initially sends only its compact name and description; the model requests relevant groups through the normal tool loop and their detailed schemas remain available for the active conversation. The first use may add one provider round-trip. No separate router/classifier call, keyword matching, or embeddings are used. Deleting a group never deletes its functions. See [Function groups](features/function-groups.md).
 
-Configuration and Tools share one local draft, so moving between those pages preserves unsaved changes. Duplicate and Export are disabled until the draft is saved or reverted. Duplicate and versioned import/export copy configuration only. Parent provider credentials, memories, retained conversations, Knowledge content, and usage history are excluded. Export redaction is best effort: Function Tool definitions may still contain embedded credentials or sensitive values in arbitrary fields. Review exported files before sharing them. Import can create a new agent without discarding the current draft, or overwrite the current agent after validation and explicit confirmation that any dirty draft will be discarded.
+The settings subsections and Functions share one local draft, so moving among them preserves unsaved changes. Duplicate and Export are disabled until the draft is saved or reverted. Duplicate and versioned import/export copy configuration only. Parent provider credentials, memories, retained conversations, Knowledge content, and usage history are excluded. Export redaction is best effort: Function Tool definitions may still contain embedded credentials or sensitive values in arbitrary fields. Review exported files before sharing them. Import can create a new agent without discarding the current draft, or overwrite the current agent after validation and explicit confirmation that any dirty draft will be discarded.
+
+Legacy panel routes such as `/configuration`, `/tools`, `/guest`, `/memories`, `/knowledge`, `/conversations`, `/usage`, and `/diagnostics` continue to resolve to their corresponding new subsection.
 
 ## Backup & Restore
 
@@ -164,7 +168,7 @@ The default Functions configuration provides Home Assistant tools. Basic exposed
 
 Customize Functions when you want to give the assistant an additional tool or change the available function definitions.
 
-For agents with many functions, create Function Groups from the Tools page and choose **Load when needed** to reduce repeated schema input. Groups and assignments are preserved by agent duplication and import/export, while legacy configurations require no changes.
+For agents with many functions, create Function Groups from **Capabilities → Functions** and choose **Load when needed** to reduce repeated schema input. Groups and assignments are preserved by agent duplication and import/export, while legacy configurations require no changes.
 
 See [Custom functions](functions/index.md) and [Function groups](features/function-groups.md).
 

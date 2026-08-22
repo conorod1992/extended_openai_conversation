@@ -1,8 +1,10 @@
 import { bindConfiguration, bindTools, configurationDialogs, renderConfiguration, renderTools, restoreDialog } from "./agent-config-editor.js";
+import {NAVIGATION, pageMetadata, routeFromPath, routePath, searchSettings} from "./frontend-navigation.js";
+import {bindGuide, renderGuide} from "./guide-page.js";
+import {bindOverview, renderOverview} from "./overview-page.js";
 import { tokenBreakdown } from "./usage-chart.js";
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
-const SECTIONS = ["overview", "configuration", "tools", "guest", "usage", "conversations", "memories", "knowledge", "diagnostics"];
 const KNOWLEDGE_TITLE_LIMIT = 120;
 const KNOWLEDGE_DESCRIPTION_LIMIT = 500;
 const KNOWLEDGE_LIMIT = 100000;
@@ -11,7 +13,9 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
-    this._section = this._sectionFromPath();
+    const route = routeFromPath(window.location.pathname);
+    this._page = route.page;
+    this._subsection = route.section;
     this._data = null;
     this._result = null;
     this._busy = false;
@@ -25,6 +29,8 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._draftTitle = null;
     this._draftAgentId = null;
     this._configSearchQuery = "";
+    this._settingsSearchQuery = "";
+    this._guideQuery = "";
     this._beforeUnloadHandler = (event) => {
       if (!this._configDirty) return;
       event.preventDefault();
@@ -40,8 +46,8 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   set route(value) {
     this._route = value;
-    const section = this._sectionFromPath();
-    if (section !== this._section) this._handleRouteChange(section);
+    const route = routeFromPath(window.location.pathname);
+    if (route.page !== this._page || route.section !== this._subsection) this._handleRouteChange(route);
     else if (!this.shadowRoot.hasChildNodes()) this._render();
   }
 
@@ -74,26 +80,61 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     ));
   }
 
-  async _handleRouteChange(section) {
-    if (["configuration", "tools"].includes(this._section) && !["configuration", "tools"].includes(section)) {
+  async _handleRouteChange(route) {
+    if (this._isDraftView() && !this._isDraftView(route.page, route.section)) {
       if (this._configDirty) {
         const discard = await this._confirm("Discard unsaved changes?", "Your shared Configuration and Tools draft has not been saved.", "Discard");
         if (!discard) {
-          history.pushState({}, "", `/extended-openai/${this._section}`);
+          history.pushState({}, "", routePath(this._page, this._subsection));
           return;
         }
       }
       this._clearConfigDraft();
     }
-    this._section = section;
+    this._page = route.page;
+    this._subsection = route.section;
     this._query = "";
     this._result = null;
     await this._loadSection();
   }
 
-  _sectionFromPath() {
-    const candidate = window.location.pathname.split("/").filter(Boolean).pop();
-    return SECTIONS.includes(candidate) ? candidate : "overview";
+  _viewKey(page = this._page, subsection = this._subsection) {
+    return subsection ? `${page}/${subsection}` : page;
+  }
+
+  _isDraftView(page = this._page, subsection = this._subsection) {
+    if (this._data && !this._data.is_admin) return false;
+    return page === "assistant" ||
+      (page === "capabilities" && ["home-assistant", "functions"].includes(subsection)) ||
+      (page === "data-memory" && subsection === "conversations") ||
+      (page === "usage-maintenance" && ["backup-restore", "retention"].includes(subsection));
+  }
+
+  _configSectionsForView() {
+    return {
+      "assistant/basics": ["general"],
+      "assistant/model-responses": ["model"],
+      "assistant/conversation": ["conversation", "context"],
+      "assistant/prompt-context": ["prompt"],
+      "assistant/voice": ["voice"],
+      "assistant/speech": ["speech"],
+      "assistant/advanced": ["capabilities"],
+      "data-memory/conversations": ["archive"],
+      "usage-maintenance/backup-restore": ["backup"],
+      "usage-maintenance/retention": ["retention"],
+    }[this._viewKey()] || [];
+  }
+
+  _canAccessView(page, subsection = null) {
+    if (this._data?.is_admin !== false) return true;
+    if (page === "assistant") return false;
+    if (page === "capabilities" && subsection && subsection !== "guest-mode") return false;
+    if (page === "usage-maintenance" && ["backup-restore", "retention"].includes(subsection)) return false;
+    return true;
+  }
+
+  _visibleSubsections(page = this._page) {
+    return pageMetadata(page).sections.filter((item) => this._canAccessView(page, item.id));
   }
 
   async _call(section, action, extra = {}) {
@@ -145,7 +186,9 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._render();
     }
     try {
-      if (this._section === "overview") {
+      const view = this._viewKey();
+      this._contentData = null;
+      if (view === "overview") {
         const [usage, conversations, memories, knowledge] = await Promise.all([
           this._call("usage", "summary"),
           this._call("conversations", "settings", { scope_id: this._scopeId }),
@@ -153,35 +196,30 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
           this._call("knowledge", "list"),
         ]);
         this._result = { usage, conversations, memories, knowledge };
-      } else if (this._section === "usage") {
+      } else if (view === "usage-maintenance/usage") {
         const [summary, days, runs, retention] = await Promise.all([
           this._call("usage", "summary"), this._call("usage", "daily"),
           this._call("usage", "runs", { limit: 30 }), this._call("usage", "retention"),
         ]);
         this._result = { summary, days, runs, retention };
-      } else if (this._section === "conversations") {
+      } else if (view === "data-memory/conversations") {
         const [sessions, settings, active] = await Promise.all([
           this._call("conversations", "list", { scope_id: this._scopeId, limit: 50 }),
           this._call("conversations", "settings", { scope_id: this._scopeId }),
           this._data?.is_admin ? this._call("conversations", "active") : Promise.resolve({active: []}),
         ]);
-        this._result = { sessions, settings, active };
-      } else if (this._section === "memories") {
+        this._contentData = { sessions, settings, active };
+        if (this._data?.is_admin) await this._loadConfigDraft();
+        else this._result = this._contentData;
+      } else if (view === "data-memory/memories") {
         this._result = await this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: this._scopeId, limit: 100 });
-      } else if (this._section === "knowledge") {
+      } else if (view === "data-memory/knowledge") {
         this._result = await this._call("knowledge", "list");
-      } else if (this._section === "guest") {
+      } else if (view === "capabilities/guest-mode") {
         this._result = await this._call("guest_mode", "get");
         this._guestDraft = JSON.parse(JSON.stringify(this._result.config || {}));
-      } else if (["configuration", "tools"].includes(this._section)) {
-        if (!this._configData || this._draftAgentId !== this._agentId) {
-          this._configData = await this._call("configuration", "get");
-          this._draft = JSON.parse(JSON.stringify(this._configData.config));
-          this._draftTitle = this._configData.title;
-          this._draftAgentId = this._agentId;
-          this._setConfigDirty(false);
-        }
-        this._result = this._configData;
+      } else if (this._isDraftView()) {
+        await this._loadConfigDraft();
       } else {
         this._result = null;
       }
@@ -194,33 +232,55 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
   }
 
-  async _navigate(section) {
-    if (["configuration", "tools"].includes(this._section) && !["configuration", "tools"].includes(section)) {
+  async _loadConfigDraft() {
+    if (!this._configData || this._draftAgentId !== this._agentId) {
+      this._configData = await this._call("configuration", "get");
+      this._draft = JSON.parse(JSON.stringify(this._configData.config));
+      this._draftTitle = this._configData.title;
+      this._draftAgentId = this._agentId;
+      this._setConfigDirty(false);
+    }
+    this._result = this._configData;
+  }
+
+  async _navigate(page, subsection = null) {
+    const metadata = pageMetadata(page);
+    const targetSubsection = subsection || this._visibleSubsections(page)[0]?.id || metadata.sections[0]?.id || null;
+    if (this._isDraftView() && !this._isDraftView(page, targetSubsection)) {
       if (this._configDirty) {
         const discard = await this._confirm("Discard unsaved changes?", "Your shared Configuration and Tools draft has not been saved.", "Discard");
         if (!discard) return;
       }
       this._clearConfigDraft();
     }
-    this._section = section;
+    this._page = page;
+    this._subsection = targetSubsection;
     this._query = "";
-    history.pushState({}, "", `/extended-openai/${section}`);
+    history.pushState({}, "", routePath(page, targetSubsection));
     this._result = null;
     this._loadSection();
   }
 
   _render() {
     const agent = this._selectedAgent();
+    const navigation = NAVIGATION.filter((item) => this._canAccessView(item.id));
+    const local = this._visibleSubsections();
+    const settingsResults = searchSettings(this._settingsSearchQuery).filter((item) => this._canAccessView(item.page, item.section));
     this.shadowRoot.innerHTML = `
       <style>${this._styles()}</style>
       <div class="page-shell">
         <header>
-          <div class="page-heading"><h1>Extended OpenAI</h1><p>Configure each assistant and manage its tools, usage, conversations, memories, and knowledge.</p></div>
+          <div class="page-heading"><h1>Extended OpenAI</h1><p>Configure your assistant, capabilities, retained data, and maintenance.</p></div>
           <label class="agent-picker"><span>Conversation agent</span><select id="agent">${(this._data?.agents || []).map((a) => `<option value="${this._e(a.subentry_id)}" ${a.subentry_id === this._agentId ? "selected" : ""}>${this._e(a.title)}</option>`).join("")}</select>${agent ? `<small>${this._e(agent.provider)} · ${this._e(agent.model)}</small>` : ""}</label>
         </header>
-        <nav aria-label="Management sections">${SECTIONS.filter((s) => this._data?.is_admin || !["configuration", "tools"].includes(s)).map((s) => `<button type="button" data-section="${s}" class="${s === this._section ? "active" : ""}">${this._label(s)}</button>`).join("")}</nav>
-        ${["conversations", "memories"].includes(this._section) ? this._scopePicker() : ""}
-        <main>${!agent ? this._empty("No conversation agents configured.") : this._busy ? this._loading() : this._error ? `<div class="error" role="alert">${this._e(this._error)}</div>` : this._content(agent)}</main>
+        <label class="mobile-nav"><span>Page</span><select id="top-section-mobile">${navigation.map((item) => `<option value="${item.id}" ${item.id === this._page ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
+        <nav class="top-nav" aria-label="Management sections">${navigation.map((item) => `<button type="button" data-page="${item.id}" class="${item.id === this._page ? "active" : ""}" ${item.id === this._page ? 'aria-current="page"' : ""}>${item.label}</button>`).join("")}</nav>
+        <div class="global-search"><label><span class="sr-only">Search all settings</span><input id="settings-search" type="search" value="${this._e(this._settingsSearchQuery)}" placeholder="Search all settings" aria-label="Search all settings"></label>${this._settingsSearchQuery ? `<div class="search-results" role="listbox" aria-label="Settings search results">${settingsResults.map((item) => `<button type="button" class="settings-result" role="option" data-page="${item.page}" data-subsection="${item.section}" data-target="${item.target || ""}"><strong>${this._e(item.label)}</strong><span>${this._e(pageMetadata(item.page).label)} › ${this._e(pageMetadata(item.page).sections.find((section) => section.id === item.section)?.label || "")}</span><small>${this._e(item.description)}</small></button>`).join("") || `<p class="empty">No settings match.</p>`}</div>` : ""}</div>
+        ${["data-memory/conversations", "data-memory/memories"].includes(this._viewKey()) ? this._scopePicker() : ""}
+        <div class="section-layout ${local.length ? "has-local-nav" : ""}">
+          ${local.length ? `<aside class="local-nav" aria-label="${this._e(pageMetadata(this._page).label)} sections">${local.map((item) => `<button type="button" data-subsection="${item.id}" class="${item.id === this._subsection ? "active" : ""}" ${item.id === this._subsection ? 'aria-current="page"' : ""}>${item.label}</button>`).join("")}</aside><label class="mobile-local-nav"><span>${this._e(pageMetadata(this._page).label)} section</span><select id="local-section-mobile">${local.map((item) => `<option value="${item.id}" ${item.id === this._subsection ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>` : ""}
+          <main>${!agent ? this._empty("No conversation agents configured.") : this._busy ? this._loading() : this._error ? `<div class="error" role="alert">${this._e(this._error)}</div>` : this._content(agent)}</main>
+        </div>
       </div>
       ${this._dialogs()}
       <div id="toast" class="toast" role="status" aria-live="polite"></div>`;
@@ -230,7 +290,14 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _bindBase() {
     const root = this.shadowRoot;
-    root.querySelectorAll("nav button").forEach((button) => button.addEventListener("click", () => this._navigate(button.dataset.section)));
+    root.querySelectorAll(".top-nav button").forEach((button) => button.addEventListener("click", () => this._navigate(button.dataset.page)));
+    root.querySelectorAll(".local-nav button").forEach((button) => button.addEventListener("click", () => this._navigate(this._page, button.dataset.subsection)));
+    root.querySelector("#top-section-mobile")?.addEventListener("change", (event) => this._navigate(event.target.value));
+    root.querySelector("#local-section-mobile")?.addEventListener("change", (event) => this._navigate(this._page, event.target.value));
+    root.querySelector("#settings-search")?.addEventListener("input", (event) => { this._settingsSearchQuery = event.target.value; this._render(); requestAnimationFrame(() => { const input = this.shadowRoot.querySelector("#settings-search"); input?.focus(); input?.setSelectionRange(input.value.length, input.value.length); }); });
+    root.querySelectorAll(".settings-result").forEach((button) => button.addEventListener("click", async () => { this._pendingSettingFocus = button.dataset.target; this._settingsSearchQuery = ""; await this._navigate(button.dataset.page, button.dataset.subsection); }));
+    root.querySelectorAll(".inline-route").forEach((button) => button.addEventListener("click", () => this._navigate(button.dataset.page, button.dataset.subsection)));
+    root.querySelectorAll(".guide-topic-link").forEach((button) => button.addEventListener("click", () => { this._guideTopic = button.dataset.guideTopic; this._navigate("guide"); }));
     root.querySelector("#agent")?.addEventListener("change", async (event) => {
       if (this._configDirty) {
         const discard = await this._confirm("Discard unsaved changes?", "Your shared Configuration and Tools draft has not been saved.", "Discard");
@@ -251,15 +318,25 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _content(agent) {
-    if (this._section === "overview") return this._overview(agent);
-    if (this._section === "configuration") return renderConfiguration(this);
-    if (this._section === "tools") return renderTools(this);
-    if (this._section === "usage") return this._usage();
-    if (this._section === "conversations") return this._conversations();
-    if (this._section === "memories") return this._memories();
-    if (this._section === "knowledge") return this._knowledge();
-    if (this._section === "guest") return this._guestMode();
-    return this._diagnostics(agent);
+    const view = this._viewKey();
+    if (!this._canAccessView(this._page, this._subsection)) return this._empty("Administrator permission is required for this section.");
+    if (view === "overview") return renderOverview(this, agent);
+    if (view === "guide") return renderGuide(this);
+    if (this._page === "assistant") { this._configSections = this._configSectionsForView(); return renderConfiguration(this); }
+    if (view === "capabilities/home-assistant") return this._homeAssistant(agent);
+    if (view === "capabilities/functions") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${renderTools(this)}`;
+    if (view === "capabilities/guest-mode") return this._guestMode();
+    if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
+    if (view === "data-memory/knowledge") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
+    if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? renderConfiguration(this) : ""}`; }
+    if (view === "usage-maintenance/usage") return this._usage();
+    if (view === "usage-maintenance/diagnostics") return this._diagnostics(agent);
+    if (["usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) { this._configSections = this._configSectionsForView(); return renderConfiguration(this); }
+    return this._empty("This section is not available.");
+  }
+
+  _homeAssistant(agent) {
+    return `<section class="page-intro"><h1>Home Assistant access</h1><p>Controls which Home Assistant state and actions are available to this assistant.</p></section><section class="content-card"><div class="section-heading"><div><h2>Normal assistant access</h2><p>Entity exposure is managed by Home Assistant Assist. This integration can include exposed entity state in model context.</p></div></div><div class="metric-grid compact">${this._metric("Exposed context", this._draft?.exposed_entities_enabled ? "Included" : "Not included")}${this._metric("Assistant", agent.title)}${this._metric("Provider", agent.provider)}</div><button type="button" class="secondary inline-route" data-page="assistant" data-subsection="prompt-context">Configure exposed context</button></section><section class="notice"><strong>Guest Mode adds another boundary</strong><p>Guest Mode applies additional restrictions to the assistant's normal Home Assistant access.</p><button type="button" class="secondary inline-route" data-page="capabilities" data-subsection="guest-mode">Configure Guest Mode</button></section>`;
   }
 
   _overview(agent) {
@@ -298,16 +375,16 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     return `<section class="metric-grid compact">${this._metric("Today",today.total_tokens || 0,cachedMeta(today.cached_input_tokens))}${this._metric("This month",month.total_tokens || 0,cachedMeta(month.cached_input_tokens))}${this._metric("Lifetime",lifetime.total_tokens || 0,cachedMeta(lifetime.cached_input_tokens))}${this._metric("Latest response",latest?.total_tokens ?? "—",latest ? cachedMeta(latest.cached_input_tokens) : "")}</section>
       <section class="content-card"><div class="chart-heading"><h2>Tokens by day</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" aria-label="Daily token usage; cached input tokens are included within each day's total">${days.slice(-31).map((day) => this._usageBar(day,max)).join("") || this._empty("No completed runs yet.")}</div><p class="chart-note">Cached input tokens are a subset of total tokens, not additional usage.</p></section>
       <section class="content-card"><h2>Recent runs</h2>${this._table(["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"], (result.runs?.runs || []).map((run) => {const tokens=tokenBreakdown(run.total_tokens,run.cached_input_tokens);return [run.completed_at || "—",tokens.total,tokens.cached,tokens.uncached,run.request_count,`${run.duration_ms} ms`,run.successful ? "Success" : run.error_type || "Failed"];}))}</section>
-      ${this._data?.is_admin ? `<section class="content-card"><h2>Usage detail maintenance</h2><p>Retention is configured in the unified Configuration section.</p><div class="section-actions"><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Daily, monthly, and lifetime totals are never removed by detail pruning.</small></section>` : ""}`;
+      ${this._data?.is_admin ? `<section class="content-card"><h2>Usage detail maintenance</h2><p>Retention is available in the local Retention & maintenance subsection.</p><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Daily, monthly, and lifetime totals are never removed by detail pruning.</small></section>` : ""}`;
   }
 
   _conversations() {
-    const result = this._result || {};
+    const result = this._contentData || this._result || {};
     const settings = result.settings || {};
     const active = result.active?.active || [];
     return `${this._data?.is_admin && active.length ? `<section class="content-card"><div class="section-heading"><div><h2>Active conversations</h2><p>Recent conversations that can continue when the same user or voice device speaks again.</p></div></div><div class="list">${active.map((item) => `<article class="list-card"><div class="card-main"><h3>${this._e(item.label)}</h3><p class="meta">Last active ${this._e(this._formatDate(item.last_active))} · Expires ${this._e(this._formatDate(item.expires_at))}</p></div><div class="actions"><button type="button" class="danger end-active" data-key="${this._e(item.key)}">Start fresh next time</button></div></article>`).join("")}</div></section>` : ""}<section class="notice ${settings.archive_enabled ? "on" : ""}"><div><strong>Conversation archive ${settings.archive_enabled ? "enabled" : "disabled"}</strong><p>Saved conversations are kept for ${settings.archive_retention_days || 30} days · Assistant search is ${settings.archive_model_search_enabled ? "on" : "off"}</p></div></section>
       <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-id="${this._e(item.session_id)}"><h3>${this._e(item.title || "Untitled conversation")}</h3><p class="meta">${this._e(this._formatDate(item.last_message_at))} · ${this._e(String(item.turn_count))} turns · ${this._e(item.scope_source)}</p></div><div class="actions"><button type="button" class="secondary view-session" data-id="${this._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${this._e(item.session_id)}">Delete</button></div></article>`).join("") || this._empty("No retained conversations in this scope.")}</div></section>
-      ${this._data?.is_admin ? `<p class="help">Archive behaviour and retention are configured in the unified Configuration section.</p>` : ""}`;
+      ${this._data?.is_admin ? `<p class="help">Continuity is recent context used for follow-ups. The archive is retained history; configure its behavior below.</p>` : ""}`;
   }
 
   _memories() {
@@ -326,7 +403,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     const status = this._result?.status || {};
     const policy = this._result?.policy || {};
     const state = String(status.state || "inactive").replaceAll("_", " ");
-    return this._guestPolicyView(status, policy, state);
+    return `<section class="page-intro guest-intro"><h1>Guest Mode</h1><p>Limit what visitors can see and do when they use this assistant. Restrictions are enforced by the integration, not only by model instructions.</p><button type="button" class="guide-topic-link guide-link" data-guide-topic="guest-mode">Learn about Guest Mode</button></section>${this._guestPolicyView(status, policy, state)}`;
   }
 
   _guestPolicyView(status, policy, state) {
@@ -334,9 +411,11 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     const selector = (key, type, label) => `<label class="setting"><span>${label}</span><ha-selector data-guest-key="${key}" data-guest-selector="${type}"></ha-selector></label>`;
     const mode = (key, label, values) => `<label>${label}<select data-guest-mode="${key}">${values.map(([value,text]) => `<option value="${value}" ${config[key] === value ? "selected" : ""}>${text}</option>`).join("")}</select></label>`;
     const schedule = this._data?.is_admin ? `<section class="content-card"><div class="section-heading"><div><h2>Status & scheduling</h2><p>Trusted controls may set, shorten, cancel, or end the complete interval.</p></div></div><div class="form-grid"><label>Starts<input id="guest-start" type="datetime-local" value="${this._e(this._dateTimeLocal(status.active_from))}"></label><label>Ends<input id="guest-end" type="datetime-local" value="${this._e(this._dateTimeLocal(status.active_until))}" ${status.indefinite ? "disabled" : ""}></label></div><label class="toggle"><span>Remain active indefinitely</span><input id="guest-indefinite" type="checkbox" ${status.indefinite ? "checked" : ""}></label><div class="section-actions"><button type="button" id="guest-update">Update interval</button><button type="button" class="secondary" id="guest-now">Activate now</button><button type="button" class="danger secondary-danger" id="guest-disable">${status.scheduled ? "Cancel schedule" : "End Guest Mode"}</button></div></section>` : "";
-    const baseSelectors = `${selector("guest_excluded_entities","entity","Entities")}${selector("guest_excluded_areas","area","Areas")}${selector("guest_excluded_labels","label","Labels")}${selector("guest_excluded_domains","domain","Domains")}`;
-    const controlSelectors = `${selector("guest_control_excluded_entities","entity","Additional entities")}${selector("guest_control_excluded_areas","area","Additional areas")}${selector("guest_control_excluded_labels","label","Additional labels")}${selector("guest_control_excluded_domains","domain","Additional domains")}`;
-    const editor = this._data?.is_admin ? `<section class="content-card"><div class="section-heading"><div><h2>Guest access</h2><p>Guests start with entities normally exposed to Assist. Any exclusion match denies prompt, discovery, reads, history, and controls.</p></div></div>${this._result?.legacy_policy ? `<div class="notice"><strong>Review required before migration</strong><p>${this._e(this._result.migration_notice || "The legacy policy stays active until you save.")}</p></div>` : ""}<div class="form-grid guest-selector-grid">${baseSelectors}</div><details><summary>Separate control restrictions</summary><label class="toggle"><span>Use additional control exclusions</span><input id="guest-separate-control" type="checkbox" ${config.guest_separate_control_restrictions ? "checked" : ""}></label><p class="help">When off, control exactly matches read access. Additional exclusions only make control narrower.</p>${config.guest_separate_control_restrictions ? `<div class="form-grid guest-selector-grid">${controlSelectors}</div>` : ""}</details></section><section class="content-card"><div class="section-heading"><div><h2>Knowledge, functions & shared memory</h2><p>Personal memory and owner conversation archives are always unavailable.</p></div></div><div class="form-grid">${mode("guest_knowledge_policy","Knowledge",[["off","Off"],["on","On"],["custom","Custom"]])}${mode("guest_function_policy","Functions",[["off","Off"],["on","On"],["custom","Custom"]])}${mode("guest_shared_memory_policy","Shared memory",[["off","Off"],["read_only","Read only"],["read_write","Read & write"]])}</div>${config.guest_knowledge_policy === "custom" ? selector("guest_knowledge_source_ids","knowledge","Allowed Knowledge sources") : ""}${config.guest_function_policy === "custom" ? `${selector("guest_allowed_function_names","function","Allowed functions")}${selector("guest_allowed_group_ids","group","Allowed Function Groups")}` : ""}<details><summary>Advanced voice/model controls</summary><label class="toggle"><span>Enable Guest Mode controls</span><input id="guest-controls-enabled" type="checkbox" ${config.guest_mode_enabled ? "checked" : ""}></label><p class="help">This only exposes the assistant's one-way restriction control. Turning it off never ends or weakens an active schedule.</p></details><div class="section-actions"><button type="button" id="guest-policy-save">Save Guest policy</button></div></section>` : "";
+    const baseSelectors = `${selector("guest_excluded_labels","label","Excluded labels")}${selector("guest_excluded_areas","area","Excluded areas")}${selector("guest_excluded_domains","domain","Excluded domains")}${selector("guest_excluded_entities","entity","Excluded entities")}`;
+    const controlSelectors = `${selector("guest_control_excluded_labels","label","Additional excluded labels")}${selector("guest_control_excluded_areas","area","Additional excluded areas")}${selector("guest_control_excluded_domains","domain","Additional excluded domains")}${selector("guest_control_excluded_entities","entity","Additional excluded entities")}`;
+    const futureKnowledge = config.guest_knowledge_policy === "on" ? `<p class="help">New Knowledge sources added later will also become available to guests. Choose Custom to keep an explicit allow-list.</p>` : "";
+    const futureFunctions = config.guest_function_policy === "on" ? `<p class="help">New eligible functions added later will also become available to guests. Choose Custom to keep an explicit allow-list.</p>` : "";
+    const editor = this._data?.is_admin ? `<section class="content-card"><div class="section-heading"><div><h2>Home Assistant access</h2><p>Guests can use the Home Assistant entities normally available to this assistant, except anything excluded below.</p></div></div>${this._result?.legacy_policy ? `<div class="notice"><strong>Review required before migration</strong><p>${this._e(this._result.migration_notice || "The legacy policy stays active until you save.")}</p></div>` : ""}<div class="form-grid guest-selector-grid">${baseSelectors}</div><details><summary>Advanced: separate control restrictions</summary><label class="toggle"><span>Use separate control restrictions</span><input id="guest-separate-control" type="checkbox" ${config.guest_separate_control_restrictions ? "checked" : ""}></label><p class="help">By default, excluded entities are neither visible nor controllable. Additional exclusions can only make control narrower.</p>${config.guest_separate_control_restrictions ? `<div class="form-grid guest-selector-grid">${controlSelectors}</div>` : ""}</details></section><section class="content-card"><div class="section-heading"><div><h2>Knowledge, functions & memory</h2><p>Personal memory and owner conversation archives are always unavailable.</p></div></div><div class="form-grid">${mode("guest_knowledge_policy","Allow Knowledge Library reads",[["off","Off"],["on","On"],["custom","Custom"]])}${mode("guest_function_policy","Allow custom functions",[["off","Off"],["on","On"],["custom","Custom"]])}${mode("guest_shared_memory_policy","Shared household memory",[["off","Off"],["read_only","Read only"],["read_write","Read & write"]])}</div>${futureKnowledge}${futureFunctions}${config.guest_knowledge_policy === "custom" ? selector("guest_knowledge_source_ids","knowledge","Allowed Knowledge sources") : ""}${config.guest_function_policy === "custom" ? `${selector("guest_allowed_function_names","function","Allowed functions")}${selector("guest_allowed_group_ids","group","Allowed Function Groups")}` : ""}<details><summary>Advanced voice/model controls</summary><label class="toggle"><span>Enable Guest Mode controls</span><input id="guest-controls-enabled" type="checkbox" ${config.guest_mode_enabled ? "checked" : ""}></label><p class="help">This only exposes the assistant's one-way ability to activate or tighten Guest Mode. Turning it off never ends or weakens an active schedule.</p></details><div class="section-actions"><button type="button" id="guest-policy-save">Save Guest policy</button></div></section>` : "";
     return `<section class="content-card"><h2>Guest Mode</h2><p>Use Guest Mode when visitors can speak to or operate this assistant. It enforces a privacy boundary while preserving isolated guest follow-up context.</p></section><section class="notice ${status.currently_active ? "on" : ""}"><strong>Status: ${this._e(this._titleCase(state))}</strong><p>${status.active_from ? `Starts ${this._e(this._formatDate(status.active_from))}` : "No interval configured"}${status.active_until ? ` · Ends ${this._e(this._formatDate(status.active_until))}` : status.active_from ? " · No expiry" : ""}</p></section><section class="metric-grid compact">${this._metric("Guest-visible entities", policy.readable_entity_count ?? "—")}${this._metric("Guest-controllable entities", policy.controllable_entity_count ?? "—")}${this._metric("Guest functions", policy.configured_tool_count ?? "—")}${this._metric("Guest archive retention", "Disabled")}</section>${schedule}${editor}<section class="notice"><strong>Voice and model safety</strong><p>The assistant can only activate Guest Mode sooner or extend it. Trusted Home Assistant controls can shorten or end it. Model-visible context is fully rebuilt on the next user turn; execution restrictions tighten immediately, but context already sent to a provider cannot be removed retroactively.</p></section>`;
   }
 
@@ -394,7 +473,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _diagnostics(agent) {
-    return `<section class="metric-grid">${this._metric("Agent", agent.title)}${this._metric("Provider", agent.provider)}${this._metric("Model", agent.model)}${this._metric("Conversation archive", agent.archive_enabled ? "Enabled" : "Disabled")}${this._metric("Guest Mode", this._titleCase(String(agent.guest_mode?.state || "inactive").replaceAll("_", " ")))}</section><section class="content-card"><h2>Test provider connection</h2><p>Sends one minimal request to check the selected provider and model. It does not run Home Assistant actions.</p><button type="button" id="test-agent">Run connection test</button><pre id="test-result"></pre></section>`;
+    return `<section class="metric-grid">${this._metric("Agent", agent.title)}${this._metric("Provider", agent.provider)}${this._metric("Model", agent.model)}${this._metric("Conversation archive", agent.archive_enabled ? "Enabled" : "Disabled")}${this._metric("Guest Mode", this._titleCase(String(agent.guest_mode?.state || "inactive").replaceAll("_", " ")))}</section><section class="content-card"><h2>Test provider connection</h2><p>Sends one minimal request to check the selected provider and model. It does not run Home Assistant actions.</p><button type="button" id="test-agent">Run connection test</button><pre id="test-result" aria-live="polite"></pre><small>If the test fails, verify the provider credentials, API format, model name, and network access.</small></section>`;
   }
 
   _dialogs() {
@@ -445,9 +524,16 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     q("#guest-separate-control")?.addEventListener("change", (event) => { this._guestDraft.guest_separate_control_restrictions = event.target.checked; this._render(); });
     q("#guest-controls-enabled")?.addEventListener("change", (event) => { this._guestDraft.guest_mode_enabled = event.target.checked; });
     root.querySelectorAll("[data-guest-mode]").forEach((element) => element.addEventListener("change", () => { this._guestDraft[element.dataset.guestMode] = element.value; this._render(); }));
-    if (this._section === "guest") this._setupGuestSelectors();
-    if (this._section === "configuration") bindConfiguration(this);
-    if (this._section === "tools") bindTools(this);
+    if (this._viewKey() === "capabilities/guest-mode") this._setupGuestSelectors();
+    if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(this._viewKey())) bindConfiguration(this);
+    if (this._viewKey() === "capabilities/functions") bindTools(this);
+    if (this._viewKey() === "overview") bindOverview(this);
+    if (this._viewKey() === "guide") bindGuide(this);
+    if (this._pendingSettingFocus) {
+      const target = this._pendingSettingFocus;
+      this._pendingSettingFocus = null;
+      requestAnimationFrame(() => { const element = this.shadowRoot.querySelector(`#${target}`); element?.scrollIntoView({behavior:"smooth", block:"start"}); (element?.querySelector("input,select,textarea,button") || element)?.focus?.(); });
+    }
   }
 
   _activate(element, callback) {
@@ -659,7 +745,8 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._setSaving(button, true, "Searching…");
     try {
       const found = await this._call("conversations", "search", { scope_id: this._scopeId, query: input.value, limit: 20 });
-      this._result.sessions = { sessions: found.results.map((item) => ({ ...item, last_message_at: item.timestamp, turn_count: "matching" })) };
+      const target = this._contentData || this._result;
+      target.sessions = { sessions: found.results.map((item) => ({ ...item, last_message_at: item.timestamp, turn_count: "matching" })) };
       this._render();
     } catch (err) { this._toast(`Unable to search: ${err.message || String(err)}`, true); }
     finally { this._setSaving(button, false); }
@@ -721,8 +808,9 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _scopePicker() {
-    const hasEmpty = (this._data?.scopes || []).some((scope) => (this._section === "memories" ? scope.memory_count : scope.conversation_count) === 0 && scope.scope_type === "user" && !scope.is_current_user);
-    return `<section class="scope-bar"><label><span>${this._section === "memories" ? "Show memories available to" : "Show conversations belonging to"}</span><select id="scope">${this._scopeOptions(this._section)}</select></label>${hasEmpty ? `<label class="show-empty"><input id="show-empty-scopes" type="checkbox" ${this._showEmptyScopes ? "checked" : ""}> Show users with no ${this._section === "memories" ? "memories" : "conversations"}</label>` : ""}${this._data?.is_admin ? `<small>You can view data for all users because you are an administrator.</small>` : ""}</section>`;
+    const memories = this._viewKey() === "data-memory/memories";
+    const hasEmpty = (this._data?.scopes || []).some((scope) => (memories ? scope.memory_count : scope.conversation_count) === 0 && scope.scope_type === "user" && !scope.is_current_user);
+    return `<section class="scope-bar"><label><span>${memories ? "Show memories available to" : "Show conversations belonging to"}</span><select id="scope">${this._scopeOptions(memories ? "memories" : "conversations")}</select></label>${hasEmpty ? `<label class="show-empty"><input id="show-empty-scopes" type="checkbox" ${this._showEmptyScopes ? "checked" : ""}> Show users with no ${memories ? "memories" : "conversations"}</label>` : ""}${this._data?.is_admin ? `<small>You can view data for all users because you are an administrator.</small>` : ""}</section>`;
   }
 
   _scopeOptions(section, includeEmpty = this._showEmptyScopes, excludeLegacy = false) {
@@ -779,7 +867,10 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     button:disabled{cursor:not-allowed}.config-toolbar{margin-bottom:10px}.config-jumps{display:flex;align-items:center;gap:9px;overflow-x:auto;border:0;margin:0 0 18px;padding:7px 2px 10px;scrollbar-width:thin}.config-jumps a{color:var(--primary-color);font-size:13px;text-decoration:none;white-space:nowrap}.config-jumps a:hover{text-decoration:underline}.config-jumps span{color:var(--divider-color)}.config-surface{padding:0 30px 96px;display:block;scroll-behavior:smooth}.config-section{padding:34px 0;border-bottom:1px solid var(--divider-color);scroll-margin-top:18px;transition:opacity .15s}.config-section:last-of-type{border-bottom:0}.config-section-heading{margin-bottom:22px}.config-section-heading .eyebrow{margin:0;color:var(--primary-text-color);font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.config-section-heading>p:last-child,.subheading p{margin:6px 0 0;color:var(--secondary-text-color);line-height:1.5}.general-grid{grid-template-columns:repeat(3,minmax(180px,1fr))}.setting{display:grid;gap:7px;font-size:13px;color:var(--secondary-text-color);transition:opacity .15s}.setting-copy{display:grid;gap:4px;line-height:1.35}.setting-label-row{display:flex;align-items:center;gap:7px;min-width:0}.setting-label-row>label{display:block}.setting-label-row h2,.setting-label-row h3{min-width:0}.config-toggle{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:9px 0}.help-button{display:inline-grid;place-items:center;flex:0 0 21px;width:21px;min-width:21px;height:21px;min-height:21px;padding:0;border:1px solid var(--divider-color);border-radius:50%;background:transparent;color:var(--secondary-text-color);font-size:12px;font-weight:700;line-height:1}.help-button:hover{border-color:var(--primary-color);color:var(--primary-color);background:var(--secondary-background-color)}.help-button:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}.help-popover{position:fixed;width:min(380px,calc(100vw - 24px));max-height:min(560px,calc(100vh - 24px));margin:0;padding:0;overflow:hidden;border:1px solid var(--divider-color);border-radius:12px;box-shadow:0 12px 38px rgba(0,0,0,.3)}.help-popover::backdrop{background:rgba(0,0,0,.14)}.help-popover-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 17px;border-bottom:1px solid var(--divider-color)}.help-popover-header h2{margin:0;font-size:17px}.help-close{display:grid;place-items:center;flex:0 0 32px;width:32px;min-width:32px;height:32px;min-height:32px;padding:0;background:transparent;color:var(--secondary-text-color);font-size:22px}.help-popover-content{padding:16px 17px 18px;overflow:auto;color:var(--primary-text-color);font-size:13px;line-height:1.5}.help-popover-content p{margin:0 0 12px}.help-popover-content dl{display:grid;gap:11px;margin:0 0 14px}.help-popover-content dl div{display:grid;gap:2px}.help-popover-content dt{font-weight:700}.help-popover-content dd{margin:0;color:var(--secondary-text-color)}.help-popover-content pre{margin:12px 0;padding:10px 12px}.help-link{display:inline-block;color:var(--primary-color);font-weight:600;text-decoration:none}.help-link:hover{text-decoration:underline}.switch-control{position:relative;display:block;width:44px;height:26px;flex:0 0 44px}.switch-control input{position:absolute;inset:0;z-index:2;width:44px;height:26px;min-height:0;margin:0;opacity:0;cursor:pointer}.switch-track{display:block;width:44px;height:26px;border-radius:14px;background:var(--disabled-text-color,#9e9e9e);transition:.18s}.switch-track:after{content:"";display:block;width:20px;height:20px;margin:3px;border-radius:50%;background:var(--card-background-color);box-shadow:0 1px 3px rgba(0,0,0,.35);transition:.18s}.switch-control input:checked+.switch-track{background:var(--primary-color)}.switch-control input:checked+.switch-track:after{transform:translateX(18px)}.switch-control input:focus-visible+.switch-track{outline:2px solid var(--primary-color);outline-offset:2px}.switch-control input:disabled+.switch-track{opacity:.45}.dependent{display:grid;gap:16px;padding:6px 0 6px 20px;border-left:2px solid var(--divider-color);transition:opacity .15s}.dependent.is-disabled{opacity:.5}.mappings-setting{margin-top:22px}.mappings-editor{min-height:150px}.prompt-setting{display:block}.prompt-editor{min-height:52vh;max-height:none}.setting-group{display:grid;gap:12px;padding-top:8px}.subheading h3{font-size:15px;margin:0}.rule-headings,.rule-row{display:grid;grid-template-columns:minmax(220px,1fr) minmax(220px,1fr) auto;gap:12px}.rule-headings{padding:0 12px;color:var(--secondary-text-color);font-size:12px}.rule-row{align-items:start;border:0;border-top:1px solid var(--divider-color);border-radius:0;padding:12px 0}.rule-list{gap:0;margin:0}.mobile-label{display:none}.rule-actions{padding-top:1px;flex-wrap:nowrap}.rule-actions button{min-height:40px}.add-regex{justify-self:start}.preview-button,.section-reset{margin-top:14px}.search-dim{opacity:.24}.save-bar{margin:28px -10px -72px}.tools-surface{padding:26px}.tool-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.type-badge,.disabled-badge{display:inline-flex;padding:3px 8px;border-radius:999px;background:var(--secondary-background-color);color:var(--secondary-text-color);font-size:11px;text-transform:uppercase;letter-spacing:.04em}.disabled-badge{background:color-mix(in srgb,var(--error-color,#db4437) 12%,transparent);color:var(--error-color,#db4437);font-weight:700}.tool-card{padding:15px 17px;transition:opacity .15s}.tool-card.is-disabled{opacity:.62}.tool-card-actions{align-items:center}.tool-enabled-control{display:flex;align-items:center;gap:8px;color:var(--secondary-text-color);font-size:12px}.tools-actions{justify-content:flex-end}.tools-actions .validation{margin-right:auto}.dialog-meta{margin:5px 0 0;color:var(--secondary-text-color);font-size:12px}.tool-dialog{width:min(1180px,calc(100vw - 28px));height:min(850px,calc(100vh - 28px));max-height:calc(100vh - 28px)}.tool-dialog-body{display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:12px;height:calc(100% - 142px);max-height:none;padding:18px 22px;min-width:0}.built-in-picker{display:grid;grid-template-columns:minmax(190px,280px) minmax(240px,1fr);align-items:center;gap:6px 14px}.built-in-picker label{font-weight:700}.built-in-picker small{grid-column:1/-1;color:var(--secondary-text-color)}.tool-editor-label{height:100%;min-height:0;min-width:0;width:100%}.tool-yaml-editor{height:100%;min-height:300px;min-width:0;max-width:100%;resize:none;white-space:pre;overflow:auto;line-height:1.55}.tool-dialog .dialog-actions{margin-top:auto}.mode-row input{width:auto;min-height:auto}.mode-row label{display:flex;grid-gap:7px;align-items:center}
     .function-groups-help{margin-bottom:18px}.tool-search{display:block;margin-bottom:18px}.function-groups{display:grid;gap:18px}.function-group-card{border:1px solid var(--divider-color);border-radius:12px;padding:18px;background:var(--card-background-color)}.function-group-heading{display:flex;justify-content:space-between;align-items:start;gap:20px}.function-group-heading h3,.tool-title h4{margin:0}.function-group-heading p{margin:7px 0;color:var(--secondary-text-color);line-height:1.45}.function-group-heading code{font-size:12px;color:var(--secondary-text-color)}.availability-badge,.function-count{display:inline-flex;padding:4px 9px;border-radius:999px;background:color-mix(in srgb,var(--success-color,#0f9d58) 15%,transparent);color:var(--success-color,#0f9d58);font-size:11px;font-weight:600}.availability-badge.on-demand{background:color-mix(in srgb,var(--primary-color) 14%,transparent);color:var(--primary-color)}.function-count{background:var(--secondary-background-color);color:var(--secondary-text-color)}.function-group-card details{margin-top:14px;padding-top:10px}.function-group-card summary{min-height:40px}.function-group-card .tool-list{padding-top:10px}.group-dialog{width:min(820px,calc(100vw - 28px))}.group-dialog-body{max-height:calc(100vh - 170px)}.group-functions-fieldset{margin:0;padding-top:18px}.group-function-choices{display:grid;gap:8px;max-height:300px;overflow:auto;margin-top:12px}.group-function-choice{display:grid;grid-template-columns:auto 1fr;align-items:start;gap:11px;padding:11px;border:1px solid var(--divider-color);border-radius:9px;color:var(--primary-text-color);cursor:pointer}.group-function-choice.is-disabled{opacity:.58}.group-function-choice:hover{background:var(--secondary-background-color)}.group-function-choice input{width:18px;min-height:18px;margin-top:2px}.group-function-choice span{display:grid;gap:3px}.group-function-choice small{overflow-wrap:anywhere}
     .editor-meta-actions,.prompt-section-badges{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.advanced-context-formatting{border:1px solid var(--divider-color);border-radius:10px;padding:12px 14px}.advanced-context-formatting summary{cursor:pointer;font-weight:600}.advanced-context-formatting[open] summary{margin-bottom:12px}.prompt-preview-dialog{height:min(900px,calc(100vh - 28px))}.prompt-preview-body{grid-template-rows:auto auto minmax(260px,1fr) auto auto;max-height:none;height:calc(100% - 142px)}.request-preview-metrics{display:grid;gap:5px;padding:12px 14px;border-radius:10px;background:var(--secondary-background-color)}.request-preview-metrics span{color:var(--secondary-text-color);font-size:13px}.request-preview-sections{display:grid;align-content:start;gap:10px;min-height:0;overflow:auto}.request-preview-section{border:1px solid var(--divider-color);border-radius:10px;background:var(--card-background-color)}.request-preview-section summary{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;font-weight:600}.request-section-meta{display:flex;align-items:center;gap:8px;color:var(--secondary-text-color);font-size:12px;font-weight:400}.request-preview-output{box-sizing:border-box;width:calc(100% - 24px);min-height:240px;margin:0 12px 12px;resize:vertical;white-space:pre;overflow:auto;line-height:1.45}.prompt-preview-notes{margin:0;padding-left:20px;color:var(--secondary-text-color);font-size:12px;line-height:1.5}.prompt-preview-notes:empty{display:none}
-    @media(min-width:680px) and (max-width:1100px){.form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.general-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    .mobile-nav,.mobile-local-nav{display:none}.top-nav{overflow:visible}.global-search{position:relative;max-width:720px;margin:0 0 26px}.search-results{position:absolute;z-index:20;top:calc(100% + 6px);left:0;right:0;display:grid;max-height:min(520px,70vh);overflow:auto;padding:8px;background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.28)}.settings-result{display:grid;gap:3px;text-align:left;background:transparent;color:var(--primary-text-color);border-radius:8px}.settings-result:hover{background:var(--secondary-background-color)}.settings-result span,.settings-result small{color:var(--secondary-text-color)}.section-layout.has-local-nav{display:grid;grid-template-columns:210px minmax(0,1fr);gap:28px;align-items:start}.section-layout main{min-width:0}.local-nav{position:sticky;top:16px;display:grid;gap:4px;overflow:visible;margin:0;padding:8px;border:1px solid var(--divider-color);border-radius:12px;background:var(--card-background-color)}.local-nav button{min-height:38px;padding:9px 11px;text-align:left;border-radius:8px;border:0;white-space:normal}.local-nav button.active{border:0;background:color-mix(in srgb,var(--primary-color) 13%,transparent);font-weight:600}.page-intro{display:grid;gap:7px}.page-intro h1,.page-intro p{margin:0}.page-intro p{color:var(--secondary-text-color);line-height:1.5}.dashboard-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.dashboard-card{display:flex;justify-content:space-between;align-items:end;gap:18px;padding:22px;background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:13px}.dashboard-card h2,.dashboard-card p{margin:0}.dashboard-card strong{display:block;margin-top:12px;font-size:18px}.dashboard-card p{margin-top:7px;color:var(--secondary-text-color);line-height:1.45}.guide-search{display:block}.guide-topics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.guide-topic{margin:0;padding:17px}.guide-topic summary{display:block}.guide-topic summary span,.guide-topic summary small{display:grid;gap:6px}.guide-topic-body{padding-top:10px}.comparison-table{overflow:auto}.inline-route{margin-top:18px}.overview-warnings{display:grid;gap:12px}
+    .guest-intro+.content-card{display:none}.guide-link{justify-self:start;min-height:34px;padding:5px 0;background:transparent;color:var(--primary-color);font-weight:600}.guide-link:hover{text-decoration:underline}
+    @media(min-width:680px) and (max-width:1100px){.form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.general-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.dashboard-grid,.guide-topics{grid-template-columns:1fr}}
+    @media(max-width:760px){.top-nav,.local-nav{display:none}.mobile-nav,.mobile-local-nav{display:grid;margin-bottom:18px}.section-layout.has-local-nav{display:block}.dashboard-grid,.guide-topics{grid-template-columns:1fr}.dashboard-card{align-items:stretch;flex-direction:column}.dashboard-card button{width:100%}.global-search{max-width:none}.comparison-table table{min-width:720px}}
     @media(max-width:679px){.form-grid,.general-grid{grid-template-columns:1fr}.config-surface{padding:0 18px 92px}.config-section{padding:28px 0}.config-jumps{margin-inline:-4px}.rule-headings{display:none}.rule-row{grid-template-columns:1fr}.mobile-label{display:block}.rule-actions{padding-top:0}.save-bar{align-items:stretch;flex-direction:column;bottom:6px;margin-inline:-8px}.save-bar .actions{display:grid;grid-template-columns:1fr 1fr}.tool-dialog,.group-dialog{box-sizing:border-box;left:6px;top:6px;margin:0;width:calc(100vw - 12px);max-width:calc(100vw - 12px);height:calc(100vh - 12px);max-height:calc(100vh - 12px);overflow:hidden}.tool-dialog-body{padding:12px}.built-in-picker{grid-template-columns:1fr}.built-in-picker small{grid-column:auto}.tool-yaml-editor{min-height:0}.tools-surface{padding:18px}.tools-actions{justify-content:stretch}.tools-actions button{flex:1}.tools-actions .validation{width:100%;order:-1}.function-group-heading{display:grid}.function-group-heading .actions{display:grid;grid-template-columns:1fr 1fr}.group-dialog-body{padding:14px}.group-function-choices{max-height:34vh}.help-popover{left:8px!important;right:8px;top:auto!important;bottom:8px;width:auto;max-width:none;max-height:min(70vh,560px);border-radius:14px}}
   `; }
 }

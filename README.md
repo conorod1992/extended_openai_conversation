@@ -76,7 +76,7 @@ Copy the `extended_openai_conversation_responses` folder from `custom_components
 4. Enter your API key.
 5. Leave **Base URL** unchanged for the OpenAI API. Change it only when using a compatible provider that requires a custom endpoint.
 
-The native Home Assistant flow is intentionally limited to provider and connection setup. After the integration is added, open **Extended OpenAI** in the sidebar and choose **Configuration** for a searchable, full-width settings document covering conversation behaviour, prompts, capabilities, archive, voice identity, spoken-response cleanup, context, model options, and retention. Use **Tools** for the friendly tool list and YAML-first single-tool editor; YAML parsing and function validation remain backend-authoritative.
+The native Home Assistant flow is intentionally limited to provider and connection setup. After the integration is added, open **Extended OpenAI** in the sidebar. **Overview** links to common tasks, **Guide** explains how features differ, and focused sections organize Assistant settings, Capabilities, Data & Memory, and Usage & Maintenance. Search at the top finds settings across subsections. Function YAML parsing and validation remain backend-authoritative.
 
 Under **Prompt & context**, new agents include Home Assistant-local date/time and exposed-device state through two simple, default-on controls. Advanced formatting stays collapsed and accepts optional templates; clearing an override restores the integration-maintained format. Existing agents keep their prompt unchanged and migrate with both generated blocks off, avoiding duplicate legacy `now()` or `exposed_entities()` output.
 
@@ -132,7 +132,7 @@ Most users can start with the defaults and choose only a model. The main options
 
 See the [full configuration guide](docs/configuration.md) for details and provider-specific limitations.
 
-The Configuration and Tools pages share a local draft until it is explicitly saved or reverted. Duplicate and Export are disabled while that draft is dirty. Duplicate and import/export copy agent behaviour only: API credentials stay on the parent integration entry, and memories, archives, Knowledge content, and usage history are not copied. Export performs best-effort redaction of common credential fields, but Function Tool definitions can contain secrets in arbitrary strings, URLs, templates, commands, or provider-specific fields. Review every exported file before sharing it.
+Assistant settings, Functions, archive settings, retention, and Backup & Restore share a local draft until it is explicitly saved or reverted. Moving among those subsections preserves unsaved changes; leaving the settings area or changing agents asks before discarding them. Duplicate and Export are disabled while that draft is dirty. Duplicate and import/export copy agent behaviour only: API credentials stay on the parent integration entry, and memories, archives, Knowledge content, and usage history are not copied. Export performs best-effort redaction of common credential fields, but Function Tool definitions can contain secrets in arbitrary strings, URLs, templates, commands, or provider-specific fields. Review every exported file before sharing it.
 
 ## Key features
 
@@ -188,7 +188,7 @@ Skills provide reusable instructions, while custom functions provide new tools. 
 
 ### Function groups and on-demand tools
 
-Function groups are an optional way to reduce repeated input from large tool collections. Open **Extended OpenAI → Tools**, choose **Create group**, add a concise model-facing description, select **Always available** or **Load when needed**, and choose member functions with the searchable checklist. Existing ungrouped functions remain always available, so upgrades do not change existing agent behaviour.
+Function groups are an optional way to reduce repeated input from large tool collections. Open **Extended OpenAI → Capabilities → Functions**, choose **Create group**, add a concise model-facing description, select **Always available** or **Load when needed**, and choose member functions with the searchable checklist. Existing ungrouped functions remain always available, so upgrades do not change existing agent behaviour.
 
 For an on-demand group, normal requests contain only a compact catalogue entry such as `Reminders — Create and manage scheduled reminders`. If the current request needs it, the model calls the integration-owned `load_function_groups` tool inside the existing tool loop. The next model step includes that group's full, already-validated function schemas. There is no classifier, separate router model, keyword matching, or embedding lookup.
 
