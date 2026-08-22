@@ -158,23 +158,6 @@ def test_resolved_policy_intersects_read_and_control(hass, monkeypatch) -> None:
     assert policy.controllable_entity_ids == frozenset({"light.guest"})
     assert policy.configured_tool_names == frozenset({"safe"})
 
-    custom = resolve_guest_policy(
-        hass,
-        {
-            CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
-            CONF_GUEST_FUNCTION_POLICY: "custom",
-            CONF_GUEST_ALLOWED_GROUP_IDS: ["safe_group"],
-            "function_groups": [
-                {
-                    "id": "safe_group",
-                    "functions": ["safe", "energy"],
-                }
-            ],
-        },
-        manager,
-        tools,
-    )
-    assert custom.configured_tool_names == frozenset({"safe"})
     assert policy.personal_memory_read is False
     assert policy.shared_memory_read is True
     assert policy.shared_memory_write is False
@@ -460,6 +443,24 @@ def test_v2_function_on_still_denies_unsafe_native(hass, monkeypatch) -> None:
         tools,
     )
     assert policy.configured_tool_names == frozenset({"safe"})
+
+    custom = resolve_guest_policy(
+        hass,
+        {
+            CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
+            CONF_GUEST_FUNCTION_POLICY: "custom",
+            CONF_GUEST_ALLOWED_GROUP_IDS: ["safe_group"],
+            "function_groups": [
+                {
+                    "id": "safe_group",
+                    "functions": ["safe", "energy"],
+                }
+            ],
+        },
+        manager,
+        tools,
+    )
+    assert custom.configured_tool_names == frozenset({"safe"})
 
 
 def test_new_guest_defaults_enable_controls_with_private_capabilities() -> None:

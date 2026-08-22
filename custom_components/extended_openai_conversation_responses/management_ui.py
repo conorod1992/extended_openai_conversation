@@ -704,6 +704,7 @@ async def async_management_command(
             updates[CONF_GUEST_POLICY_VERSION] = GUEST_POLICY_VERSION
             normalized = merge_agent_config(subentry.data, updates)
             hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
+            configured_tools = configured_function_tools_from_data(normalized)
             return {
                 "config": guest_policy_editor_snapshot(
                     hass, normalized, configured_tools
@@ -1008,7 +1009,7 @@ async def async_management_command(
                     hass, entry_id, subentry_id
                 )
                 if function_groups is not None:
-                    function_groups.end(f"continuity:{key}")
+                    function_groups.end(f"continuity:{continuity_key}")
             return {"ended": int(ended)}
         archive = await async_get_archive(hass, entry_id, subentry_id)
         if action == "list":

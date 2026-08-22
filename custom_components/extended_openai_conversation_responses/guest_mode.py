@@ -749,6 +749,14 @@ def resolve_guest_selector_entity_ids(
     selected_areas = _string_set(areas)
     selected_labels = _string_set(labels)
     selected_devices = _string_set(devices)
+    if not candidates or not (
+        explicit
+        or selected_domains
+        or selected_areas
+        or selected_labels
+        or selected_devices
+    ):
+        return set()
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
     matched: set[str] = set()
