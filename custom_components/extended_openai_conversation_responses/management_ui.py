@@ -119,6 +119,7 @@ from .request import (
     canonical_json,
     format_function_tools,
 )
+from .request_rules import async_get_request_rules, rule_has_sensitive_actions
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID, user_scope
 from .skills import SkillManager
 from .speech import process_speech_text
@@ -142,6 +143,7 @@ MANAGEMENT_FRONTEND_MODULES = (
     "guide-page.js",
     "overview-page.js",
     "usage-chart.js",
+    "request-rules-ui.js",
 )
 
 
@@ -678,6 +680,33 @@ async def async_management_command(
     if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
         raise HomeAssistantError("entry_id and subentry_id are required")
     entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
+
+    if section == "request_rules":
+        _require_admin(is_admin)
+        rules = await async_get_request_rules(hass, entry_id, subentry_id)
+        if action == "list":
+            snapshot = rules.snapshot()
+            snapshot["rules"] = [
+                {**rule, "sensitive_matching_warning": rule_has_sensitive_actions(rule)}
+                for rule in snapshot["rules"]
+            ]
+            return snapshot
+        if action == "defaults":
+            return {"defaults": await rules.async_set_defaults(message.get("defaults"))}
+        if action == "create":
+            return {"rule": await rules.async_create(message.get("rule"))}
+        rule_id = message.get("rule_id")
+        if not isinstance(rule_id, str):
+            raise HomeAssistantError("rule_id is required")
+        if action == "update":
+            return {"rule": await rules.async_update(rule_id, message.get("rule"))}
+        if action == "delete":
+            if message.get("confirm") is not True:
+                raise HomeAssistantError("Explicit confirmation is required")
+            return {"deleted": await rules.async_delete(rule_id)}
+        if action == "duplicate":
+            return {"rule": await rules.async_duplicate(rule_id)}
+        raise HomeAssistantError(f"Unknown Request Rules action: {action}")
 
     if section == "guest_mode":
         manager = await async_get_guest_mode(hass, entry_id, subentry_id)
@@ -1407,6 +1436,9 @@ def asdict_or_none(value: Any) -> dict[str, Any] | None:
         vol.Optional("original_name"): str,
         vol.Optional("original_id"): str,
         vol.Optional("group_id"): str,
+        vol.Optional("rule_id"): str,
+        vol.Optional("rule"): dict,
+        vol.Optional("defaults"): dict,
         vol.Optional("enabled"): bool,
         vol.Optional("yaml"): str,
         vol.Optional("document"): vol.Any(str, dict),

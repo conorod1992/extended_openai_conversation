@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { backupSummaryLines } from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
 
 const lines = backupSummaryLines({
+  request_rules: 5,
   persistent_memories: 24,
   temporary_memories: 3,
   knowledge_sources: 11,
@@ -15,6 +16,7 @@ const lines = backupSummaryLines({
 
 assert.deepEqual(lines, [
   "Agent configuration",
+  "5 Request Rules",
   "24 persistent memories",
   "3 active temporary memories",
   "11 Knowledge sources",

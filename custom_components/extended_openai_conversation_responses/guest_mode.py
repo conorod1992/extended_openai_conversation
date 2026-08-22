@@ -8,7 +8,11 @@ import logging
 from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import (
+    device_registry as dr,
+    entity_registry as er,
+    target as target_helpers,
+)
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
@@ -790,6 +794,123 @@ def resolve_guest_selector_entity_ids(
         ):
             matched.add(entity_id)
     return matched
+
+
+def guest_arguments_allowed_runtime(
+    hass: HomeAssistant,
+    value: Any,
+    policy: GuestCapabilityPolicy,
+    *,
+    control: bool,
+    require_entity_selector: bool = False,
+) -> bool:
+    """Resolve HA selectors and require every selected entity to be guest-safe."""
+    if not policy.guest_active:
+        return True
+
+    selected: dict[str, set[str]] = {
+        "areas": set(),
+        "devices": set(),
+        "floors": set(),
+        "labels": set(),
+    }
+    explicit_entity_selector = False
+
+    def string_values(item: Any) -> set[str]:
+        values = item if isinstance(item, list) else [item]
+        return {
+            part.strip()
+            for entry in values
+            if isinstance(entry, str)
+            for part in entry.split(",")
+            if part.strip()
+        }
+
+    def collect(item: Any) -> None:
+        nonlocal explicit_entity_selector
+        if isinstance(item, Mapping):
+            for key, child in item.items():
+                normalized = str(key).lower()
+                if normalized in {
+                    "entity_id",
+                    "entity_ids",
+                    "statistic_id",
+                    "statistic_ids",
+                } and string_values(child):
+                    explicit_entity_selector = True
+                bucket = (
+                    "areas"
+                    if normalized in {"area_id", "area_ids"}
+                    else "devices"
+                    if normalized in {"device_id", "device_ids"}
+                    else "floors"
+                    if normalized in {"floor_id", "floor_ids"}
+                    else "labels"
+                    if normalized in {"label_id", "label_ids"}
+                    else None
+                )
+                if bucket is not None:
+                    selected[bucket].update(string_values(child))
+                else:
+                    collect(child)
+        elif isinstance(item, list):
+            for child in item:
+                collect(child)
+
+    collect(value)
+    if (
+        require_entity_selector
+        and not explicit_entity_selector
+        and not any(selected.values())
+    ):
+        return False
+    allows = policy.allows_entity_control if control else policy.allows_entity_read
+    if any(selected.values()):
+        # Resolve with HA's service-target rules. Assist exposure is intentionally
+        # not a candidate filter: an area, device, floor, or label can also target
+        # unexposed entities, which must fail the Guest policy check below.
+        target_selection = target_helpers.TargetSelection(
+            {
+                "area_id": list(selected["areas"]),
+                "device_id": list(selected["devices"]),
+                "floor_id": list(selected["floors"]),
+                "label_id": list(selected["labels"]),
+            }
+        )
+        referenced = target_helpers.async_extract_referenced_entity_ids(
+            hass,
+            target_selection,
+        )
+        matched = referenced.referenced | referenced.indirectly_referenced
+        if not matched or not all(allows(entity_id) for entity_id in matched):
+            return False
+
+    broad_keys = {
+        "area_id",
+        "area_ids",
+        "device_id",
+        "device_ids",
+        "floor_id",
+        "floor_ids",
+        "label_id",
+        "label_ids",
+    }
+
+    def inspect(item: Any, key: str | None = None) -> bool:
+        if isinstance(item, Mapping):
+            return all(
+                inspect(child, str(child_key).lower())
+                for child_key, child in item.items()
+                if str(child_key).lower() not in broad_keys
+            )
+        if isinstance(item, list):
+            return all(inspect(child, key) for child in item)
+        if key in {"entity_id", "entity_ids", "statistic_id", "statistic_ids"}:
+            values = string_values(item)
+            return bool(values) and all(allows(entity_id) for entity_id in values)
+        return True
+
+    return inspect(value)
 
 
 def _string_set(value: Any) -> set[str]:

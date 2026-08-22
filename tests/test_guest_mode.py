@@ -301,39 +301,108 @@ def test_execution_argument_guard_blocks_hidden_and_broad_targets() -> None:
     )
 
 
-def test_runtime_area_target_denies_if_any_resolved_entity_is_hidden(
-    hass, monkeypatch
+@pytest.mark.parametrize(
+    ("selector_key", "selector_value", "selection_attribute"),
+    [
+        ("area_id", "kitchen", "area_ids"),
+        ("device_id", "kitchen-device", "device_ids"),
+        ("label_id", "kitchen-label", "label_ids"),
+    ],
+)
+def test_runtime_broad_target_denies_if_any_ha_resolved_entity_is_forbidden(
+    hass, monkeypatch, selector_key, selector_value, selection_attribute
+) -> None:
+    entity = object.__new__(ExtendedOpenAIAgentEntity)
+    entity.hass = hass
+
+    def resolve(_hass, selection):
+        assert getattr(selection, selection_attribute) == {selector_value}
+        return SimpleNamespace(
+            referenced=set(),
+            indirectly_referenced={"light.kitchen_ceiling", "light.kitchen_cabinet"},
+        )
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.guest_mode.target_helpers.async_extract_referenced_entity_ids",
+        resolve,
+    )
+    policy = GuestCapabilityPolicy(
+        True,
+        readable_entity_ids=frozenset({"light.kitchen_ceiling"}),
+        controllable_entity_ids=frozenset({"light.kitchen_ceiling"}),
+    )
+    assert not entity._guest_arguments_allowed_runtime(
+        {selector_key: selector_value}, policy, control=True
+    )
+
+
+@pytest.mark.parametrize(
+    ("selector_key", "selector_value"),
+    [
+        ("area_id", "kitchen"),
+        ("device_id", "kitchen-device"),
+        ("label_id", "kitchen-label"),
+    ],
+)
+def test_runtime_broad_target_allows_only_when_every_resolved_entity_is_allowed(
+    hass, monkeypatch, selector_key, selector_value
 ) -> None:
     entity = object.__new__(ExtendedOpenAIAgentEntity)
     entity.hass = hass
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.conversation.get_exposed_entities",
-        lambda _hass: [
-            {"entity_id": "light.guest"},
-            {"entity_id": "lock.private"},
-        ],
-    )
-    registry_entries = {
-        "light.guest": SimpleNamespace(area_id="hall", device_id=None, labels=set()),
-        "lock.private": SimpleNamespace(area_id="hall", device_id=None, labels=set()),
-    }
-    monkeypatch.setattr(
-        er,
-        "async_get",
-        lambda _hass: SimpleNamespace(
-            async_get=lambda entity_id: registry_entries[entity_id]
+        "custom_components.extended_openai_conversation_responses.guest_mode.target_helpers.async_extract_referenced_entity_ids",
+        lambda _hass, _selection: SimpleNamespace(
+            referenced=set(),
+            indirectly_referenced={"light.one", "light.two"},
         ),
     )
-    monkeypatch.setattr(
-        dr, "async_get", lambda _hass: SimpleNamespace(async_get=lambda _id: None)
+    policy = GuestCapabilityPolicy(
+        True,
+        readable_entity_ids=frozenset({"light.one", "light.two"}),
+        controllable_entity_ids=frozenset({"light.one", "light.two"}),
     )
+    assert entity._guest_arguments_allowed_runtime(
+        {selector_key: selector_value}, policy, control=True
+    )
+
+
+def test_runtime_direct_entity_and_inactive_guest_behavior(hass, monkeypatch) -> None:
+    entity = object.__new__(ExtendedOpenAIAgentEntity)
+    entity.hass = hass
     policy = GuestCapabilityPolicy(
         True,
         readable_entity_ids=frozenset({"light.guest"}),
         controllable_entity_ids=frozenset({"light.guest"}),
     )
+    assert entity._guest_arguments_allowed_runtime(
+        {"entity_id": "light.guest"}, policy, control=True
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.guest_mode.target_helpers.async_extract_referenced_entity_ids",
+        lambda *_args: pytest.fail("inactive Guest Mode must not resolve targets"),
+    )
+    assert entity._guest_arguments_allowed_runtime(
+        {"area_id": "whole-house"},
+        GuestCapabilityPolicy.unrestricted(),
+        control=True,
+    )
+
+
+def test_runtime_broad_target_denies_when_ha_resolves_no_entities(
+    hass, monkeypatch
+) -> None:
+    entity = object.__new__(ExtendedOpenAIAgentEntity)
+    entity.hass = hass
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.guest_mode.target_helpers.async_extract_referenced_entity_ids",
+        lambda _hass, _selection: SimpleNamespace(
+            referenced=set(), indirectly_referenced=set()
+        ),
+    )
     assert not entity._guest_arguments_allowed_runtime(
-        {"area_id": "hall"}, policy, control=True
+        {"label_id": "missing-label"},
+        GuestCapabilityPolicy(True),
+        control=True,
     )
 
 
