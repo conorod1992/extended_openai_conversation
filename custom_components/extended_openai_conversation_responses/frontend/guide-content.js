@@ -300,6 +300,43 @@ export const GUIDE_TOPICS = [
     action: { label: "Manage functions", page: "capabilities", section: "functions" }
   },
   {
+    id: "request-rules",
+    title: "Request Rules",
+    summary: "Request Rules provide deterministic local voice shortcuts and per-request or per-conversation AI routing before an OpenAI call is made.",
+    terms: "request rules local command hassil sentence pattern synonym fuzzy routing model action automation voice shortcut",
+    body: [
+      {
+        type: "p",
+        text: "A Request Rule sees text only after Home Assistant routes it to this conversation agent. A local rule can run an ordered Home Assistant action sequence and answer without an OpenAI call. An AI-routing rule keeps the normal model pipeline but can change the model or reasoning effort for one request or the rest of the active conversation."
+      },
+      { type: "heading", text: "Choose the matching style" },
+      {
+        type: "list",
+        items: [
+          "Equals is the safest default for a complete command. Starts with, Ends with and Contains allow broader phrase placement.",
+          "Word forms and editable synonym groups provide small, predictable normalization. Fuzzy matching is only a fallback after every strict match fails.",
+          "Home Assistant sentence patterns use Hassil grammar: [optional words], (one|two) alternatives and wildcard slots such as {room}. Named <expansions> are not supported because Request Rules do not configure an expansion catalogue.",
+          "Sentence patterns do not use fuzzy matching, synonym groups or singularization. Captured slots are recorded with the match, but are not substituted into action data."
+        ]
+      },
+      {
+        type: "note",
+        title: "Request Rules or a native automation?",
+        text: "Use a Request Rule when the phrase belongs specifically to this conversation agent, should bypass the AI, or should change its model routing. Use a native Home Assistant sentence-trigger automation when the command should work independently of this integration, needs automation conditions, triggers or templates, or should be owned with the rest of your automations. Native handling may consume a sentence before it reaches this agent."
+      },
+      { type: "heading", text: "Actions and safety" },
+      {
+        type: "p",
+        text: "The friendly editor uses Home Assistant's entity, device and area selectors, searchable action names and service-provided fields. Advanced JSON preserves options that are not exposed by a selector. Existing target and data keys are retained when you edit a friendly field."
+      },
+      {
+        type: "p",
+        text: "While Guest Mode is active, the complete local action sequence is authorized before the first action runs. If any action is unavailable, none run. Request Rules add no PIN or speaker authentication, so use strict matching for locks, alarms and other sensitive controls. Rules, defaults and synonym groups are included in per-agent backups."
+      }
+    ],
+    action: { label: "Manage Request Rules", page: "capabilities", section: "request-rules" }
+  },
+  {
     id: "guest-mode",
     title: "Guest Mode",
     summary: "Guest Mode creates a backend-enforced visitor policy so guests can use the assistant without automatically getting the same access, memory and history as the owner.",

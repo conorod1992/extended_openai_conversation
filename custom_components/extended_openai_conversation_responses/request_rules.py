@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 import logging
 import re
@@ -12,6 +12,9 @@ from time import monotonic
 from typing import Any, cast
 import unicodedata
 from uuid import uuid4
+
+from hassil import SlotList, WildcardSlotList, is_match, parse_sentence
+from hassil.expression import Group, RuleReference, Sentence
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -34,12 +37,12 @@ from .helpers import get_model_config
 
 _LOGGER = logging.getLogger(__name__)
 
-STORAGE_VERSION = 1
+STORAGE_VERSION = 2
 STORAGE_KEY_PREFIX = "extended_openai_conversation_responses.request_rules"
 MAX_RULES = 500
 MAX_PHRASES = 25
 MAX_ACTIONS = 20
-MATCH_TYPES = ("equals", "starts_with", "ends_with", "contains")
+MATCH_TYPES = ("equals", "starts_with", "ends_with", "contains", "sentence_pattern")
 ACTION_TYPES = ("local_action", "model_routing")
 ROUTING_SCOPES = ("request", "conversation")
 DEFAULT_MATCHING = {
@@ -51,15 +54,13 @@ DEFAULT_MATCHING = {
 
 # Phrase mappings are deliberately small and directional.  Both sides normalize to
 # the same canonical wording, which keeps matching predictable and extensible.
-WORDING_ALTERNATIVES: tuple[tuple[str, str], ...] = (
-    ("switch on", "turn on"),
-    ("switch off", "turn off"),
-    ("shut", "close"),
-    ("television", "tv"),
-    ("raise", "increase"),
-    ("turn up", "increase"),
-    ("lower", "decrease"),
-    ("turn down", "decrease"),
+DEFAULT_WORDING_GROUPS: tuple[dict[str, Any], ...] = (
+    {"canonical": "turn on", "alternatives": ["switch on"]},
+    {"canonical": "turn off", "alternatives": ["switch off"]},
+    {"canonical": "close", "alternatives": ["shut"]},
+    {"canonical": "tv", "alternatives": ["television"]},
+    {"canonical": "increase", "alternatives": ["raise", "turn up"]},
+    {"canonical": "decrease", "alternatives": ["lower", "turn down"]},
 )
 SENSITIVE_DOMAINS = {"lock", "alarm_control_panel"}
 
@@ -72,6 +73,17 @@ class RuleMatch:
     phrase: str
     fuzzy: bool
     score: float
+    slots: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledPhrase:
+    """One normalized phrase or parsed Hassil sentence pattern."""
+
+    original: str
+    normalized: str | None = None
+    sentence: Sentence | None = None
+    slot_lists: dict[str, SlotList] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +99,17 @@ class RuleEvaluation:
 class RequestRuleStore(Store[dict[str, Any]]):
     """Versioned private Home Assistant storage."""
 
+    async def _async_migrate_func(
+        self, old_major_version: int, old_minor_version: int, old_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Add editable wording groups to version-one stores."""
+        if old_major_version == 1:
+            return {
+                **old_data,
+                "wording_groups": _copy_wording_groups(DEFAULT_WORDING_GROUPS),
+            }
+        raise NotImplementedError
+
 
 class RequestRules:
     """Concurrency-safe persisted rules with precomputed matcher state."""
@@ -95,8 +118,9 @@ class RequestRules:
         self._store = store
         self._rules: list[dict[str, Any]] = []
         self._defaults = dict(DEFAULT_MATCHING)
+        self._wording_groups = _copy_wording_groups(DEFAULT_WORDING_GROUPS)
         self._compiled: list[
-            tuple[dict[str, Any], dict[str, Any], list[tuple[str, str]]]
+            tuple[dict[str, Any], dict[str, Any], list[CompiledPhrase]]
         ] = []
         self._lock = asyncio.Lock()
         self._initialized = False
@@ -114,6 +138,14 @@ class RequestRules:
                     )
                 except ValueError:
                     _LOGGER.warning("Ignoring invalid stored Request Rule defaults")
+                try:
+                    self._wording_groups = validate_wording_groups(
+                        stored.get("wording_groups", DEFAULT_WORDING_GROUPS)
+                    )
+                except ValueError:
+                    _LOGGER.warning(
+                        "Ignoring invalid stored Request Rule wording groups"
+                    )
                 for raw in stored.get("rules", []):
                     try:
                         self._rules.append(validate_rule(raw))
@@ -127,6 +159,7 @@ class RequestRules:
         return {
             "storage_version": STORAGE_VERSION,
             "defaults": dict(self._defaults),
+            "wording_groups": _copy_wording_groups(self._wording_groups),
             "rules": [dict(rule) for rule in self._rules],
         }
 
@@ -139,10 +172,18 @@ class RequestRules:
         """Validate backup state without mutating the live manager."""
         if not isinstance(value, Mapping):
             raise ValueError("request_rules must be an object")
-        unknown = set(value) - {"storage_version", "defaults", "rules"}
+        unknown = set(value) - {
+            "storage_version",
+            "defaults",
+            "wording_groups",
+            "rules",
+        }
         if unknown:
             raise ValueError("unknown request_rules fields")
         defaults = validate_matching_settings(value.get("defaults", DEFAULT_MATCHING))
+        wording_groups = validate_wording_groups(
+            value.get("wording_groups", DEFAULT_WORDING_GROUPS)
+        )
         raw_rules = value.get("rules", [])
         if not isinstance(raw_rules, Sequence) or isinstance(raw_rules, str):
             raise ValueError("request_rules.rules must be a list")
@@ -151,13 +192,14 @@ class RequestRules:
         rules = [validate_rule(item) for item in raw_rules]
         if len({rule["id"] for rule in rules}) != len(rules):
             raise ValueError("duplicate Request Rule id")
-        return {"defaults": defaults, "rules": rules}
+        return {"defaults": defaults, "wording_groups": wording_groups, "rules": rules}
 
     async def async_replace_backup(self, value: Any) -> None:
         """Replace all durable state from a fully validated backup."""
         prepared = self.validate_backup_data(value)
         async with self._lock:
             self._defaults = prepared["defaults"]
+            self._wording_groups = prepared["wording_groups"]
             self._rules = prepared["rules"]
             self._sort_and_compile()
             self._initialized = True
@@ -171,6 +213,15 @@ class RequestRules:
             self._sort_and_compile()
             await self._async_save_locked()
         return dict(defaults)
+
+    async def async_set_wording_groups(self, value: Any) -> list[dict[str, Any]]:
+        """Replace the persisted wording synonym groups."""
+        groups = validate_wording_groups(value)
+        async with self._lock:
+            self._wording_groups = groups
+            self._sort_and_compile()
+            await self._async_save_locked()
+        return _copy_wording_groups(groups)
 
     async def async_create(self, value: Any) -> dict[str, Any]:
         """Create one rule."""
@@ -229,12 +280,48 @@ class RequestRules:
         """Select one deterministic winner, using fuzzy only as a fallback."""
         deterministic: list[tuple[tuple[int, int, int], RuleMatch]] = []
         fuzzy: list[tuple[tuple[float, int, int], RuleMatch]] = []
-        rank = {"equals": 4, "starts_with": 3, "ends_with": 2, "contains": 1}
+        rank = {
+            "equals": 5,
+            "sentence_pattern": 4,
+            "starts_with": 3,
+            "ends_with": 2,
+            "contains": 1,
+        }
         for rule, settings, phrases in self._compiled:
-            candidate = normalize_text(text, settings)
-            for original, phrase in phrases:
+            candidate = (
+                ""
+                if rule["match_type"] == "sentence_pattern"
+                else normalize_text(text, settings, self._wording_groups)
+            )
+            for compiled in phrases:
+                if compiled.sentence is not None:
+                    context = is_match(
+                        text,
+                        compiled.sentence,
+                        slot_lists=compiled.slot_lists,
+                        expansion_rules={},
+                    )
+                    if context is None:
+                        continue
+                    slots = {
+                        entity.name: str(entity.value).strip()
+                        for entity in context.entities
+                    }
+                    result = RuleMatch(rule, compiled.original, False, 100.0, slots)
+                    deterministic.append(
+                        (
+                            (
+                                rank[rule["match_type"]],
+                                len(compiled.original),
+                                -rule["order"],
+                            ),
+                            result,
+                        )
+                    )
+                    continue
+                phrase = cast(str, compiled.normalized)
                 if _deterministic_match(candidate, phrase, rule["match_type"]):
-                    result = RuleMatch(rule, original, False, 100.0)
+                    result = RuleMatch(rule, compiled.original, False, 100.0)
                     deterministic.append(
                         (
                             (rank[rule["match_type"]], len(phrase), -rule["order"]),
@@ -245,7 +332,7 @@ class RequestRules:
                 if settings["fuzzy"]:
                     score = _fuzzy_score(candidate, phrase, rule["match_type"])
                     if score >= settings["fuzzy_threshold"]:
-                        result = RuleMatch(rule, original, True, score)
+                        result = RuleMatch(rule, compiled.original, True, score)
                         fuzzy.append(
                             ((score, rank[rule["match_type"]], -rule["order"]), result)
                         )
@@ -272,19 +359,26 @@ class RequestRules:
                 if rule["matching_behavior"] == "defaults"
                 else rule["matching"]
             )
-            self._compiled.append(
-                (
-                    rule,
-                    settings,
-                    [
-                        (phrase, normalize_text(phrase, settings))
-                        for phrase in rule["phrases"]
-                    ],
-                )
+            phrases = (
+                [_compile_sentence_pattern(phrase) for phrase in rule["phrases"]]
+                if rule["match_type"] == "sentence_pattern"
+                else [
+                    CompiledPhrase(
+                        phrase, normalize_text(phrase, settings, self._wording_groups)
+                    )
+                    for phrase in rule["phrases"]
+                ]
             )
+            self._compiled.append((rule, settings, phrases))
 
     async def _async_save_locked(self) -> None:
-        await self._store.async_save({"defaults": self._defaults, "rules": self._rules})
+        await self._store.async_save(
+            {
+                "defaults": self._defaults,
+                "wording_groups": self._wording_groups,
+                "rules": self._rules,
+            }
+        )
 
 
 class RequestRuleRuntime:
@@ -376,6 +470,49 @@ def validate_matching_settings(value: Any) -> dict[str, Any]:
     return result
 
 
+def validate_wording_groups(value: Any) -> list[dict[str, Any]]:
+    """Validate an unambiguous, bounded synonym-group catalog."""
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError("wording_groups must be a list")
+    if len(value) > 100:
+        raise ValueError("wording_groups may contain at most 100 groups")
+    result: list[dict[str, Any]] = []
+    claimed: set[str] = set()
+    for item in value:
+        if not isinstance(item, Mapping) or set(item) != {"canonical", "alternatives"}:
+            raise ValueError("each wording group needs canonical and alternatives")
+        canonical = _clean(item["canonical"], 100, "canonical wording")
+        raw_alternatives = item["alternatives"]
+        if not isinstance(raw_alternatives, Sequence) or isinstance(
+            raw_alternatives, (str, bytes)
+        ):
+            raise ValueError("wording alternatives must be a list")
+        if not raw_alternatives or len(raw_alternatives) > 25:
+            raise ValueError("wording alternatives must contain 1 to 25 items")
+        alternatives = list(
+            dict.fromkeys(
+                _clean(item, 100, "alternative wording") for item in raw_alternatives
+            )
+        )
+        terms = [canonical, *alternatives]
+        normalized = [_basic_normalize(term) for term in terms]
+        if len(set(normalized)) != len(normalized) or claimed.intersection(normalized):
+            raise ValueError("wording groups contain an ambiguous duplicate phrase")
+        claimed.update(normalized)
+        result.append({"canonical": canonical, "alternatives": alternatives})
+    return result
+
+
+def _copy_wording_groups(value: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "canonical": str(group["canonical"]),
+            "alternatives": list(group["alternatives"]),
+        }
+        for group in value
+    ]
+
+
 def validate_rule(value: Any) -> dict[str, Any]:
     """Validate and normalize the persisted rule contract."""
     if not isinstance(value, Mapping):
@@ -406,18 +543,21 @@ def validate_rule(value: Any) -> dict[str, Any]:
     match_type = value.get("match_type", "equals")
     if match_type not in MATCH_TYPES:
         raise ValueError("unsupported match type")
+    if match_type == "sentence_pattern":
+        for phrase in phrases:
+            _compile_sentence_pattern(phrase)
     action_type = value.get("action_type", "local_action")
     if action_type not in ACTION_TYPES:
         raise ValueError("unsupported action type")
     action = _validate_action(action_type, value.get("action", {}))
     if (
         action_type == "model_routing"
-        and match_type == "equals"
+        and match_type in {"equals", "sentence_pattern"}
         and action["scope"] == "request"
         and not action["reset"]
     ):
         raise ValueError(
-            "Equals AI routing commands must apply to the rest of the conversation"
+            "Exact AI routing commands must apply to the rest of the conversation"
         )
     behavior = value.get("matching_behavior", "defaults")
     if behavior not in {"defaults", "custom"}:
@@ -622,7 +762,9 @@ async def async_evaluate_rule(
     if action["reset"]:
         runtime.reset(session_id)
         return RuleEvaluation(
-            match, rule["match_type"] == "equals", action["success_response"]
+            match,
+            rule["match_type"] in {"equals", "sentence_pattern"},
+            action["success_response"],
         )
     override = {}
     if action["model"]:
@@ -656,7 +798,7 @@ async def async_evaluate_rule(
         request_override = None
     else:
         request_override = override
-    consume = rule["match_type"] == "equals"
+    consume = rule["match_type"] in {"equals", "sentence_pattern"}
     return RuleEvaluation(
         match,
         consume,
@@ -665,20 +807,64 @@ async def async_evaluate_rule(
     )
 
 
-def normalize_text(text: str, settings: Mapping[str, Any]) -> str:
-    """Apply deterministic, conservative speech-text normalization."""
+def _basic_normalize(text: str) -> str:
+    """Normalize punctuation and spacing without semantic transformations."""
     value = unicodedata.normalize("NFKC", str(text)).casefold()
     value = value.replace("\u2019", "'").replace("-", " ")
     value = re.sub(r"[^\w\s']+", " ", value, flags=re.UNICODE)
     value = re.sub(r"\s+", " ", value).strip()
+    return value
+
+
+def normalize_text(
+    text: str,
+    settings: Mapping[str, Any],
+    wording_groups: Sequence[Mapping[str, Any]] = DEFAULT_WORDING_GROUPS,
+) -> str:
+    """Apply deterministic, conservative speech-text normalization."""
+    value = _basic_normalize(text)
     if settings.get("wording_alternatives"):
         padded = f" {value} "
-        for alternative, canonical in WORDING_ALTERNATIVES:
+        replacements = sorted(
+            (
+                (_basic_normalize(alternative), _basic_normalize(group["canonical"]))
+                for group in wording_groups
+                for alternative in group["alternatives"]
+            ),
+            key=lambda item: len(item[0]),
+            reverse=True,
+        )
+        for alternative, canonical in replacements:
             padded = padded.replace(f" {alternative} ", f" {canonical} ")
         value = padded.strip()
     if settings.get("word_forms"):
         value = " ".join(_singularize(token) for token in value.split())
     return value
+
+
+def _compile_sentence_pattern(pattern: str) -> CompiledPhrase:
+    """Parse supported Hassil syntax and configure wildcard slot capture."""
+    try:
+        sentence = parse_sentence(pattern)
+    except Exception as err:
+        raise ValueError(f"invalid sentence pattern: {err}") from err
+
+    def has_rule_reference(expression: Any) -> bool:
+        if isinstance(expression, RuleReference):
+            return True
+        if isinstance(expression, Group):
+            return any(has_rule_reference(item) for item in expression.items)
+        return False
+
+    if has_rule_reference(sentence.expression):
+        raise ValueError(
+            "named expansion rules (<name>) are not supported in Request Rules"
+        )
+    slot_lists: dict[str, SlotList] = {
+        name: WildcardSlotList(name=name)
+        for name in dict.fromkeys(sentence.list_names())
+    }
+    return CompiledPhrase(pattern, sentence=sentence, slot_lists=slot_lists)
 
 
 def _singularize(token: str) -> str:

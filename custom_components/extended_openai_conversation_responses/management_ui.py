@@ -16,6 +16,7 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import service as service_helper
 
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
@@ -686,6 +687,9 @@ async def async_management_command(
         rules = await async_get_request_rules(hass, entry_id, subentry_id)
         if action == "list":
             snapshot = rules.snapshot()
+            snapshot[
+                "service_catalog"
+            ] = await service_helper.async_get_all_descriptions(hass)
             snapshot["rules"] = [
                 {**rule, "sensitive_matching_warning": rule_has_sensitive_actions(rule)}
                 for rule in snapshot["rules"]
@@ -693,6 +697,12 @@ async def async_management_command(
             return snapshot
         if action == "defaults":
             return {"defaults": await rules.async_set_defaults(message.get("defaults"))}
+        if action == "wording_groups":
+            return {
+                "wording_groups": await rules.async_set_wording_groups(
+                    message.get("wording_groups")
+                )
+            }
         if action == "create":
             return {"rule": await rules.async_create(message.get("rule"))}
         rule_id = message.get("rule_id")
