@@ -6,12 +6,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import yaml
 
 from custom_components.extended_openai_conversation_responses.agent_config import (
     GUEST_V2_FIELDS,
     agent_config_defaults,
 )
 from custom_components.extended_openai_conversation_responses.const import (
+    CONF_FUNCTION_GROUPS,
+    CONF_FUNCTION_TOOLS,
     CONF_GUEST_EXCLUDED_DOMAINS,
     CONF_GUEST_FUNCTION_POLICY,
     CONF_GUEST_POLICY_VERSION,
@@ -309,6 +312,165 @@ async def test_function_tool_yaml_management_operations(hass) -> None:
     )
     assert execute_service["already_configured"] is True
     assert execute_service["yaml"].startswith("spec:\n")
+
+
+async def test_function_mutations_patch_latest_persisted_fields_only(hass) -> None:
+    entry, subentry = _setup_entry(hass)
+    original = {
+        "spec": {
+            "name": "original",
+            "description": "Original tool",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "native", "name": "execute_service"},
+    }
+    subentry.data.update(
+        {
+            "prompt": "latest persisted prompt",
+            "max_tokens": 901,
+            "runtime_only": {"preserved": True},
+            CONF_FUNCTION_TOOLS: yaml.safe_dump([original], sort_keys=False),
+            CONF_FUNCTION_GROUPS: [
+                {
+                    "id": "originals",
+                    "name": "Originals",
+                    "description": "Original tools",
+                    "loading_mode": "always",
+                    "functions": ["original"],
+                }
+            ],
+        }
+    )
+    base = {
+        "section": "tools",
+        "entry_id": entry.entry_id,
+        "subentry_id": subentry.subentry_id,
+    }
+
+    renamed = {
+        **original,
+        "spec": {**original["spec"], "name": "renamed"},
+    }
+    result = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {**base, "action": "save", "tool": renamed, "original_name": "original"},
+    )
+    saved = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
+    assert saved["prompt"] == "latest persisted prompt"
+    assert saved["max_tokens"] == 901
+    assert saved["runtime_only"] == {"preserved": True}
+    assert result["functions"][0]["spec"]["name"] == "renamed"
+    assert result["function_groups"][0]["functions"] == ["renamed"]
+
+    subentry.data = saved
+    created_tool = {
+        **original,
+        "spec": {**original["spec"], "name": "created"},
+    }
+    created = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {**base, "action": "save", "tool": created_tool},
+    )
+    assert [tool["spec"]["name"] for tool in created["functions"]] == [
+        "renamed",
+        "created",
+    ]
+
+    subentry.data = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
+    hass.config_entries.async_update_subentry.reset_mock()
+    toggled = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {**base, "action": "set_enabled", "name": "renamed", "enabled": False},
+    )
+    assert toggled["functions"][0]["enabled"] is False
+
+    subentry.data = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
+    hass.config_entries.async_update_subentry.reset_mock()
+    grouped = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            **base,
+            "action": "save_group",
+            "group": {
+                "id": "updated",
+                "name": "Updated",
+                "description": "Updated group",
+                "loading_mode": "on_demand",
+                "functions": ["renamed"],
+            },
+            "original_id": "originals",
+        },
+    )
+    assert grouped["function_groups"][0]["id"] == "updated"
+
+    subentry.data = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
+    created_group = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            **base,
+            "action": "save_group",
+            "group": {
+                "id": "created",
+                "name": "Created",
+                "description": "Created group",
+                "loading_mode": "always",
+                "functions": ["created"],
+            },
+        },
+    )
+    assert [group["id"] for group in created_group["function_groups"]] == [
+        "updated",
+        "created",
+    ]
+
+    subentry.data = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
+    hass.config_entries.async_update_subentry.reset_mock()
+    ungrouped = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {**base, "action": "delete_group", "group_id": "updated", "confirm": True},
+    )
+    assert [group["id"] for group in ungrouped["function_groups"]] == ["created"]
+    assert ungrouped["functions"][0]["spec"]["name"] == "renamed"
+
+    subentry.data = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
+    deleted = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {**base, "action": "delete", "name": "renamed", "confirm": True},
+    )
+    assert [tool["spec"]["name"] for tool in deleted["functions"]] == ["created"]
+    assert [group["id"] for group in deleted["function_groups"]] == ["created"]
+
+
+async def test_invalid_direct_function_mutation_persists_nothing(hass) -> None:
+    entry, subentry = _setup_entry(hass)
+    with pytest.raises(HomeAssistantError):
+        await async_management_command(
+            hass,
+            "admin",
+            True,
+            {
+                "section": "tools",
+                "action": "save",
+                "entry_id": entry.entry_id,
+                "subentry_id": subentry.subentry_id,
+                "tool": {"spec": {"name": "invalid"}},
+            },
+        )
+    hass.config_entries.async_update_subentry.assert_not_called()
 
 
 async def test_function_tool_yaml_operations_require_admin(hass) -> None:

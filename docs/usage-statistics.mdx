@@ -18,6 +18,8 @@ One Home Assistant conversation can make several API requests when the model cal
 
 The counters use only response metadata returned by the configured model provider. OpenAI-compatible providers can omit some or all usage fields. In that case, the integration still counts the request and its success or failure, while unavailable token fields remain unchanged.
 
+In the management panel, recent timestamps use the browser's locale and local timezone. Cached input is included in total tokens; it represents request content the provider can reuse and can be cheaper than uncached input when discounted caching is supported. It is not free or universally discounted.
+
 Usage is stored with Home Assistant's versioned `.storage` API separately for each conversation-agent subentry and survives restarts and integration reloads.
 
 <Warning>

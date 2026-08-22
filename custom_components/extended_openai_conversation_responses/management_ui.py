@@ -51,6 +51,7 @@ from .const import (
     CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
     CONF_FUNCTION_GROUPS,
+    CONF_FUNCTION_TOOLS,
     CONF_GUEST_MODE_ENABLED,
     CONF_GUEST_POLICY_VERSION,
     CONF_KNOWLEDGE_ENABLED,
@@ -470,6 +471,29 @@ def _validation_result(callback) -> dict[str, Any]:
     except AgentConfigError as err:
         return {"valid": False, "errors": {err.field: str(err).split(": ", 1)[-1]}}
     return {"valid": True, "errors": {}, "config": value}
+
+
+def _persist_function_configuration(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    tools: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Persist only Function Tool fields against the latest saved subentry."""
+    normalized = preserve_legacy_guest_policy(
+        subentry.data,
+        merge_agent_config(
+            subentry.data,
+            {CONF_FUNCTION_TOOLS: tools, CONF_FUNCTION_GROUPS: groups},
+        ),
+    )
+    hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
+    snapshot = agent_config_snapshot(normalized)
+    return {
+        "functions": snapshot[CONF_FUNCTION_TOOLS],
+        "function_groups": snapshot[CONF_FUNCTION_GROUPS],
+    }
 
 
 _SECRET_KEY = re.compile(
@@ -946,6 +970,127 @@ async def async_management_command(
                     }
                 )
             return result
+        tools = configured_function_tools_from_data(subentry.data)
+        groups = validate_function_groups(
+            subentry.data.get(CONF_FUNCTION_GROUPS, []), tools
+        )
+        if action == "validate_current":
+            return {"valid": True, "errors": {}}
+        if action == "save":
+            candidate = message.get("tool")
+            if not isinstance(candidate, dict):
+                raise HomeAssistantError("tool must be an object")
+            saved_tool = validate_function_tools([candidate])[0]
+            original_name = message.get("original_name")
+            if original_name is not None and not isinstance(original_name, str):
+                raise HomeAssistantError("original_name must be a string")
+            saved_name = saved_tool["spec"]["name"]
+            existing_index = next(
+                (
+                    index
+                    for index, tool in enumerate(tools)
+                    if tool["spec"]["name"] == original_name
+                ),
+                None,
+            )
+            if original_name is not None and existing_index is None:
+                raise HomeAssistantError("The Function Tool no longer exists")
+            if any(
+                tool["spec"]["name"] == saved_name and index != existing_index
+                for index, tool in enumerate(tools)
+            ):
+                raise HomeAssistantError(f"Function Tool {saved_name} already exists")
+            if existing_index is None:
+                tools.append(saved_tool)
+            else:
+                tools[existing_index] = saved_tool
+                if original_name != saved_name:
+                    groups = [
+                        {
+                            **group,
+                            "functions": [
+                                saved_name if name == original_name else name
+                                for name in group["functions"]
+                            ],
+                        }
+                        for group in groups
+                    ]
+            return _persist_function_configuration(hass, entry, subentry, tools, groups)
+        if action == "set_enabled":
+            name = message.get("name")
+            enabled = message.get("enabled")
+            if not isinstance(name, str) or not isinstance(enabled, bool):
+                raise HomeAssistantError("name and enabled are required")
+            tool = next((item for item in tools if item["spec"]["name"] == name), None)
+            if tool is None:
+                raise HomeAssistantError("The Function Tool no longer exists")
+            tool["enabled"] = enabled
+            return _persist_function_configuration(hass, entry, subentry, tools, groups)
+        if action == "delete":
+            if message.get("confirm") is not True:
+                raise HomeAssistantError("Explicit confirmation is required")
+            name = message.get("name")
+            if not isinstance(name, str):
+                raise HomeAssistantError("name is required")
+            remaining = [tool for tool in tools if tool["spec"]["name"] != name]
+            if len(remaining) == len(tools):
+                raise HomeAssistantError("The Function Tool no longer exists")
+            groups = [
+                {
+                    **group,
+                    "functions": [item for item in group["functions"] if item != name],
+                }
+                for group in groups
+            ]
+            return _persist_function_configuration(
+                hass, entry, subentry, remaining, groups
+            )
+        if action == "save_group":
+            candidate = message.get("group")
+            if not isinstance(candidate, dict):
+                raise HomeAssistantError("group must be an object")
+            candidate_functions = candidate.get("functions", [])
+            if not isinstance(candidate_functions, list) or not all(
+                isinstance(name, str) for name in candidate_functions
+            ):
+                raise HomeAssistantError("group functions must be a list of names")
+            original_id = message.get("original_id")
+            if original_id is not None and not isinstance(original_id, str):
+                raise HomeAssistantError("original_id must be a string")
+            existing = next(
+                (group for group in groups if group["id"] == original_id), None
+            )
+            if original_id is not None and existing is None:
+                raise HomeAssistantError("The Function Group no longer exists")
+            selected = set(candidate_functions)
+            remaining_groups = [
+                {
+                    **group,
+                    "functions": [
+                        name for name in group["functions"] if name not in selected
+                    ],
+                }
+                for group in groups
+                if group["id"] != original_id
+            ]
+            validated_groups = validate_function_groups(
+                [*remaining_groups, candidate], tools
+            )
+            return _persist_function_configuration(
+                hass, entry, subentry, tools, validated_groups
+            )
+        if action == "delete_group":
+            if message.get("confirm") is not True:
+                raise HomeAssistantError("Explicit confirmation is required")
+            group_id = message.get("group_id")
+            if not isinstance(group_id, str):
+                raise HomeAssistantError("group_id is required")
+            remaining = [group for group in groups if group["id"] != group_id]
+            if len(remaining) == len(groups):
+                raise HomeAssistantError("The Function Group no longer exists")
+            return _persist_function_configuration(
+                hass, entry, subentry, tools, remaining
+            )
 
     if section == "scopes" and action == "catalog":
         memory = await async_get_memory(hass, entry_id, subentry_id)
@@ -1257,6 +1402,12 @@ def asdict_or_none(value: Any) -> dict[str, Any] | None:
         vol.Optional("config"): dict,
         vol.Optional("tools"): vol.Any(str, list),
         vol.Optional("tool"): dict,
+        vol.Optional("group"): dict,
+        vol.Optional("name"): str,
+        vol.Optional("original_name"): str,
+        vol.Optional("original_id"): str,
+        vol.Optional("group_id"): str,
+        vol.Optional("enabled"): bool,
         vol.Optional("yaml"): str,
         vol.Optional("document"): vol.Any(str, dict),
         vol.Optional("sample_text"): str,
