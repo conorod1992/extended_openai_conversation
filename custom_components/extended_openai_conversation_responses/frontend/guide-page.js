@@ -1,5 +1,43 @@
 import {GUIDE_TOPICS, MEMORY_COMPARISON} from "./guide-content.js";
 
+const GUIDE_QUICK_TASKS = [
+  {title: "Keep a conversation going", text: "Make follow-up questions remember what you were just discussing.", topic: "continuity"},
+  {title: "Remember facts and preferences", text: "Store useful information so you do not have to repeat it in later conversations.", topic: "persistent-memory"},
+  {title: "Give it reference material", text: "Add manuals, notes, policies or other larger information to the Knowledge Library.", topic: "knowledge"},
+  {title: "Let visitors use it safely", text: "Use Guest Mode to limit what visitors can see, control and remember.", topic: "guest-mode"},
+];
+
+const GUIDE_TEXT_REWRITES = new Map([
+  ["Lightweight lexical retrieval matches words and related text locally. Hybrid semantic retrieval can also use embeddings to find conceptually similar memories even when the wording differs. If embeddings are unavailable, retrieval falls back to the local lexical method.", "By default, the integration finds relevant memories by matching words and phrases locally. An optional semantic mode can also find memories with a similar meaning even when different words are used. That semantic mode uses embeddings when your provider supports them; if it is unavailable, memory retrieval falls back to the local matching method."],
+  ["Create a Function Tool when you want to expose an additional capability or a specially defined action to the model. Function Tools are configured as YAML and validated by the backend before they are saved. Disabled tools remain configured but are not sent to the model and cannot run.", "Create a Function Tool when you want to give the assistant an additional capability or a specially defined action. Function Tools are configured as YAML and checked for errors before they are saved. Disabled tools remain configured but are not sent to the model and cannot run."],
+  ["A group set to Load when needed initially sends only a small catalogue entry. The model loads the group's full function definitions only if the task needs them.", "With Load when needed, the model initially sees only the group's name and description. The full function definitions are sent only if the model decides it needs that group, which can reduce repeated input-token use."],
+  ["For integration-managed continuity, the conversation timeout decides how much inactivity is allowed before the next request starts fresh. A short timeout reduces accidental carry-over; a longer timeout makes conversations easier to resume later.", "If Extended OpenAI is remembering a conversation beyond the immediate Home Assistant session, the conversation timeout decides how much inactivity is allowed before the next request starts fresh. A short timeout reduces accidental carry-over; a longer timeout makes conversations easier to resume later."],
+  ["Preview effective request is useful for inspecting the locally assembled baseline for a new request, including prompts, Home Assistant context and tool definitions. It cannot show every piece of provider-side framing or context that depends on a future real user message.", "Preview effective request shows the main prompt, Home Assistant context and tool definitions that Extended OpenAI is preparing for a new request. Some details only exist when a real message is sent, and the provider may also handle parts of the request that the preview cannot show."],
+]);
+
+function rewriteGuideText(text) {
+  return GUIDE_TEXT_REWRITES.get(text) || text;
+}
+
+function enhanceGuideTopics(topics) {
+  return topics.map((topic) => {
+    const body = (topic.body || []).map((block) => {
+      if (!block || typeof block !== "object") return block;
+      const next = {...block};
+      if (typeof next.text === "string") next.text = rewriteGuideText(next.text);
+      if (Array.isArray(next.items)) next.items = next.items.map(rewriteGuideText);
+      return next;
+    });
+    if (topic.id === "privacy") {
+      const firstSteps = body.findIndex((block) => block?.type === "steps");
+      if (firstSteps >= 0) body.splice(firstSteps, 0, {type: "heading", text: "What the assistant can access"});
+      const storedNote = body.findIndex((block) => block?.type === "note" && block.title === "Stored locally does not always mean never sent to the model");
+      if (storedNote >= 0) body.splice(storedNote, 0, {type: "heading", text: "What can be stored or sent"});
+    }
+    return {...topic, body};
+  });
+}
+
 function blockSearchText(block) {
   if (typeof block === "string") return block;
   if (!block || typeof block !== "object") return "";
@@ -32,11 +70,52 @@ function renderGuideBlock(panel, block) {
   return `<p>${panel._e(block.text || "")}</p>`;
 }
 
+function openGuideTopic(panel, topicId) {
+  const root = panel.shadowRoot;
+  const target = root.querySelector(`#guide-${CSS.escape(topicId)}`);
+  if (!target) return;
+  root.querySelectorAll(".guide-topic[open]").forEach((topic) => {
+    if (topic !== target) topic.open = false;
+  });
+  target.open = true;
+  panel._guideTopic = topicId;
+  target.scrollIntoView({behavior: "smooth", block: "start"});
+}
+
 export function renderGuide(panel) {
   const query = String(panel._guideQuery || "").trim().toLowerCase();
-  const topics = GUIDE_TOPICS.filter((topic) => !query || topicSearchText(topic).includes(query));
+  const topics = enhanceGuideTopics(GUIDE_TOPICS).filter((topic) => !query || topicSearchText(topic).includes(query));
 
-  return `<section class="page-intro"><h1>Guide</h1><p>New to Extended OpenAI, or unsure which feature you need? Start here. This Guide explains the main features in plain language and links directly to the relevant settings.</p></section>
+  return `<style>
+      .guide-quick-start{display:grid;gap:12px}
+      .guide-quick-start h2{margin:0;font-size:18px}
+      .guide-quick-start>p{margin:0;color:var(--secondary-text-color);line-height:1.5}
+      .guide-quick-tasks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:4px}
+      .guide-quick-card{display:grid;align-content:start;gap:5px;min-height:0;padding:15px 16px;text-align:left;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:10px}
+      .guide-quick-card:hover{border-color:var(--primary-color);background:var(--secondary-background-color)}
+      .guide-quick-card strong{font-size:14px}
+      .guide-quick-card small{font-weight:400;line-height:1.45;color:var(--secondary-text-color)}
+      .guide-topics{display:grid!important;grid-template-columns:1fr!important;gap:12px}
+      .guide-topic{margin:0!important;padding:0 22px!important;border-top:1px solid var(--divider-color)!important;scroll-margin-top:18px}
+      .guide-topic summary{padding:17px 0!important}
+      .guide-topic summary>span{display:grid;gap:5px}
+      .guide-topic summary small{font-weight:400;line-height:1.45}
+      .guide-topic-body{max-width:920px;padding:0 0 22px;line-height:1.6}
+      .guide-topic-body>p{margin:10px 0}
+      .guide-topic-body h3{margin:22px 0 8px;font-size:16px}
+      .guide-topic-body ul,.guide-topic-body ol{margin:10px 0;padding-left:26px}
+      .guide-topic-body li{margin:6px 0}
+      .guide-topic-body .notice{margin:16px 0}
+      .guide-topic-body .guide-action{margin-top:10px}
+      @media(max-width:950px){.guide-quick-tasks{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      @media(max-width:600px){.guide-quick-tasks{grid-template-columns:1fr}.guide-topic{padding:0 17px!important}}
+    </style>
+    <section class="page-intro"><h1>Guide</h1><p>New to Extended OpenAI, or unsure which feature you need? Start here. This Guide explains the main features in plain language and links directly to the relevant settings.</p></section>
+    <section class="content-card guide-quick-start">
+      <h2>Common things you may want to do</h2>
+      <p>Choose a goal to jump straight to the explanation.</p>
+      <div class="guide-quick-tasks">${GUIDE_QUICK_TASKS.map((item) => `<button type="button" class="guide-quick-card" data-guide-topic="${panel._e(item.topic)}"><strong>${panel._e(item.title)}</strong><small>${panel._e(item.text)}</small></button>`).join("")}</div>
+    </section>
     <label class="guide-search"><span class="sr-only">Search Guide topics</span><input id="guide-search" type="search" value="${panel._e(panel._guideQuery || "")}" placeholder="Search the Guide" aria-label="Search Guide topics"></label>
     <section class="guide-topics" aria-live="polite">${topics.map((topic) => `<details class="content-card guide-topic" id="guide-${topic.id}" ${panel._guideTopic === topic.id ? "open" : ""}><summary><span><strong>${panel._e(topic.title)}</strong><small>${panel._e(topic.summary)}</small></span></summary><div class="guide-topic-body">${(topic.body?.length ? topic.body : [{type:"p", text:topic.summary}]).map((block) => renderGuideBlock(panel, block)).join("")}<button type="button" class="secondary guide-action" data-page="${topic.action.page}" data-subsection="${topic.action.section}">${panel._e(topic.action.label)}</button></div></details>`).join("") || panel._empty("No Guide topics match your search.")}</section>
     <section class="content-card"><div class="section-heading"><div><h2>How the memory and history features differ</h2><p>These features can look similar at first. Use the smallest kind of retained data that fits what you want the assistant to remember or retrieve.</p></div></div><div class="comparison-table"><table><thead><tr><th>Feature</th><th>Best used for</th><th>How long it lasts</th><th>When the model uses it</th></tr></thead><tbody>${MEMORY_COMPARISON.map((row) => `<tr>${row.map((cell) => `<td>${panel._e(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div></section>`;
@@ -53,5 +132,24 @@ export function bindGuide(panel) {
       if (input) input.setSelectionRange(input.value.length, input.value.length);
     });
   });
+
+  root.querySelectorAll(".guide-topic").forEach((topic) => {
+    topic.addEventListener("toggle", () => {
+      const topicId = topic.id.replace(/^guide-/, "");
+      if (topic.open) {
+        panel._guideTopic = topicId;
+        root.querySelectorAll(".guide-topic[open]").forEach((other) => {
+          if (other !== topic) other.open = false;
+        });
+      } else if (panel._guideTopic === topicId) {
+        panel._guideTopic = null;
+      }
+    });
+  });
+
+  root.querySelectorAll("[data-guide-topic]").forEach((button) => {
+    button.addEventListener("click", () => openGuideTopic(panel, button.dataset.guideTopic));
+  });
+
   root.querySelectorAll(".guide-action").forEach((button) => button.addEventListener("click", () => panel._navigate(button.dataset.page, button.dataset.subsection)));
 }
