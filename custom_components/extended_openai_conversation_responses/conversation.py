@@ -103,8 +103,8 @@ from .guest_mode import (
     GuestCapabilityPolicy,
     GuestModeManager,
     async_get_guest_mode,
+    guest_arguments_allowed_runtime,
     resolve_guest_policy,
-    resolve_guest_selector_entity_ids,
 )
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
@@ -445,6 +445,8 @@ class ExtendedOpenAIAgentEntity(
                                     CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL
                                 )
                             ),
+                            request_policy,
+                            timeout_minutes,
                         )
                         if self._request_rules is not None
                         and self._request_rule_runtime is not None
@@ -472,6 +474,7 @@ class ExtendedOpenAIAgentEntity(
                         self.subentry.data,
                         rule_session_key,
                         evaluation.request_override if evaluation else None,
+                        timeout_minutes,
                     )
                     if self._request_rule_runtime is not None
                     else dict(self.subentry.data)
@@ -1186,81 +1189,8 @@ class ExtendedOpenAIAgentEntity(
         self, value: Any, policy: GuestCapabilityPolicy, *, control: bool
     ) -> bool:
         """Resolve broad HA selectors and require every matched entity to pass."""
-        selected: dict[str, set[str]] = {
-            "areas": set(),
-            "devices": set(),
-            "labels": set(),
-        }
-
-        def collect(item: Any) -> None:
-            if isinstance(item, Mapping):
-                for key, child in item.items():
-                    normalized = str(key).lower()
-                    bucket = (
-                        "areas"
-                        if normalized in {"area_id", "area_ids"}
-                        else "devices"
-                        if normalized in {"device_id", "device_ids"}
-                        else "labels"
-                        if normalized in {"label_id", "label_ids"}
-                        else None
-                    )
-                    if bucket is not None:
-                        values = child if isinstance(child, list) else [child]
-                        selected[bucket].update(
-                            part
-                            for entry in values
-                            if isinstance(entry, str)
-                            for part in entry.split(",")
-                            if part.strip()
-                        )
-                    else:
-                        collect(child)
-            elif isinstance(item, list):
-                for child in item:
-                    collect(child)
-
-        collect(value)
-        if any(selected.values()):
-            candidates = {
-                item["entity_id"]
-                for item in get_exposed_entities(self.hass)
-                if isinstance(item.get("entity_id"), str)
-            }
-            matched = resolve_guest_selector_entity_ids(
-                self.hass,
-                candidates,
-                areas=selected["areas"],
-                labels=selected["labels"],
-                devices=selected["devices"],
-            )
-            allows = (
-                policy.allows_entity_control if control else policy.allows_entity_read
-            )
-            if not matched or not all(allows(entity_id) for entity_id in matched):
-                return False
-
-        def without_broad(item: Any) -> Any:
-            if isinstance(item, Mapping):
-                return {
-                    key: without_broad(child)
-                    for key, child in item.items()
-                    if str(key).lower()
-                    not in {
-                        "area_id",
-                        "area_ids",
-                        "device_id",
-                        "device_ids",
-                        "label_id",
-                        "label_ids",
-                    }
-                }
-            if isinstance(item, list):
-                return [without_broad(child) for child in item]
-            return item
-
-        return self._guest_arguments_allowed(
-            without_broad(value), policy, control=control
+        return guest_arguments_allowed_runtime(
+            self.hass, value, policy, control=control
         )
 
     def _provider_tool_allowed(self, tool_type: str) -> bool:

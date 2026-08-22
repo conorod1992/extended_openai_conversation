@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 import logging
 import re
+from time import monotonic
 from typing import Any, cast
 import unicodedata
 from uuid import uuid4
@@ -20,7 +21,13 @@ from .const import (
     CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
     DEFAULT_CHAT_MODEL,
+    DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     REASONING_EFFORT_OPTIONS,
+)
+from .guest_mode import (
+    GUEST_MODE_UNAVAILABLE,
+    GuestCapabilityPolicy,
+    guest_arguments_allowed_runtime,
 )
 from .ha_actions import async_execute_ha_actions
 from .helpers import get_model_config
@@ -284,13 +291,42 @@ class RequestRuleRuntime:
     """Per-agent, in-memory conversation routing overrides."""
 
     def __init__(self) -> None:
-        self._conversation_overrides: dict[str, dict[str, str]] = {}
+        self._conversation_overrides: dict[str, tuple[dict[str, str], float, int]] = {}
 
-    def get(self, session_id: str) -> dict[str, str]:
-        return dict(self._conversation_overrides.get(session_id, {}))
+    def get(
+        self,
+        session_id: str,
+        timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+    ) -> dict[str, str]:
+        now = monotonic()
+        for key, (_, last_used, stored_timeout) in list(
+            self._conversation_overrides.items()
+        ):
+            if now - last_used >= max(1, stored_timeout) * 60:
+                self._conversation_overrides.pop(key, None)
+        entry = self._conversation_overrides.get(session_id)
+        if entry is None:
+            return {}
+        values, _, _ = entry
+        self._conversation_overrides[session_id] = (
+            values,
+            now,
+            max(1, timeout_minutes),
+        )
+        return dict(values)
 
-    def set(self, session_id: str, override: Mapping[str, str]) -> None:
-        self._conversation_overrides[session_id] = dict(override)
+    def set(
+        self,
+        session_id: str,
+        override: Mapping[str, str],
+        timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+    ) -> None:
+        values = {**self.get(session_id, timeout_minutes), **dict(override)}
+        self._conversation_overrides[session_id] = (
+            values,
+            monotonic(),
+            max(1, timeout_minutes),
+        )
 
     def reset(self, session_id: str) -> None:
         self._conversation_overrides.pop(session_id, None)
@@ -300,11 +336,12 @@ class RequestRuleRuntime:
         defaults: Mapping[str, Any],
         session_id: str,
         request_override: Mapping[str, str] | None = None,
+        timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     ) -> dict[str, Any]:
         """Apply documented request > conversation > configured precedence."""
         return {
             **defaults,
-            **self.get(session_id),
+            **self.get(session_id, timeout_minutes),
             **dict(request_override or {}),
         }
 
@@ -545,6 +582,8 @@ async def async_evaluate_rule(
     text: str,
     session_id: str,
     configured_model: str = DEFAULT_CHAT_MODEL,
+    guest_policy: GuestCapabilityPolicy | None = None,
+    timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
 ) -> RuleEvaluation | None:
     """Match and apply local side effects or model-routing state."""
     match = rules.match(text)
@@ -553,6 +592,26 @@ async def async_evaluate_rule(
     rule = match.rule
     action = rule["action"]
     if rule["action_type"] == "local_action":
+        policy = guest_policy or GuestCapabilityPolicy.unrestricted()
+        if policy.guest_active:
+            try:
+                allowed = all(
+                    guest_arguments_allowed_runtime(
+                        hass,
+                        configured_action,
+                        policy,
+                        control=True,
+                        require_entity_selector=True,
+                    )
+                    for configured_action in action["actions"]
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "Guest authorization failed for Request Rule %s", rule["id"]
+                )
+                allowed = False
+            if not allowed:
+                return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE)
         try:
             await async_execute_ha_actions(hass, action["actions"])
         except Exception:
@@ -571,7 +630,7 @@ async def async_evaluate_rule(
     if action["reasoning_effort"]:
         selected_model = (
             action["model"]
-            or runtime.get(session_id).get(CONF_CHAT_MODEL)
+            or runtime.get(session_id, timeout_minutes).get(CONF_CHAT_MODEL)
             or configured_model
         )
         if not get_model_config(selected_model).get("supports_reasoning_effort"):
@@ -579,8 +638,11 @@ async def async_evaluate_rule(
                 f"Model {selected_model} does not support reasoning effort"
             )
         override[CONF_REASONING_EFFORT] = action["reasoning_effort"]
-    combined_override = {**runtime.get(session_id), **override}
-    combined_model = combined_override.get(CONF_CHAT_MODEL)
+    combined_override = {
+        **runtime.get(session_id, timeout_minutes),
+        **override,
+    }
+    combined_model = combined_override.get(CONF_CHAT_MODEL, configured_model)
     if (
         combined_model
         and combined_override.get(CONF_REASONING_EFFORT)
@@ -590,7 +652,7 @@ async def async_evaluate_rule(
             f"Model {combined_model} does not support reasoning effort"
         )
     if action["scope"] == "conversation":
-        runtime.set(session_id, override)
+        runtime.set(session_id, override, timeout_minutes)
         request_override = None
     else:
         request_override = override
@@ -620,7 +682,11 @@ def normalize_text(text: str, settings: Mapping[str, Any]) -> str:
 
 
 def _singularize(token: str) -> str:
-    if len(token) <= 3 or token.endswith(("ss", "us", "is")):
+    if (
+        token in {"news", "series", "species"}
+        or len(token) <= 3
+        or token.endswith(("ss", "us", "is"))
+    ):
         return token
     if len(token) > 4 and token.endswith("ies"):
         return token[:-3] + "y"

@@ -307,7 +307,7 @@ def test_runtime_area_target_denies_if_any_resolved_entity_is_hidden(
     entity = object.__new__(ExtendedOpenAIAgentEntity)
     entity.hass = hass
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.conversation.get_exposed_entities",
+        "custom_components.extended_openai_conversation_responses.guest_mode.get_exposed_entities",
         lambda _hass: [
             {"entity_id": "light.guest"},
             {"entity_id": "lock.private"},
@@ -334,6 +334,41 @@ def test_runtime_area_target_denies_if_any_resolved_entity_is_hidden(
     )
     assert not entity._guest_arguments_allowed_runtime(
         {"area_id": "hall"}, policy, control=True
+    )
+
+
+def test_runtime_device_target_resolves_before_guest_authorization(
+    hass, monkeypatch
+) -> None:
+    entity = object.__new__(ExtendedOpenAIAgentEntity)
+    entity.hass = hass
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.guest_mode.get_exposed_entities",
+        lambda _hass: [{"entity_id": "lock.private"}],
+    )
+    monkeypatch.setattr(
+        er,
+        "async_get",
+        lambda _hass: SimpleNamespace(
+            async_get=lambda _entity_id: SimpleNamespace(
+                area_id=None, device_id="private-device", labels=set()
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        dr,
+        "async_get",
+        lambda _hass: SimpleNamespace(
+            async_get=lambda _id: SimpleNamespace(area_id=None, labels=set())
+        ),
+    )
+    policy = GuestCapabilityPolicy(
+        True,
+        readable_entity_ids=frozenset(),
+        controllable_entity_ids=frozenset(),
+    )
+    assert not entity._guest_arguments_allowed_runtime(
+        {"device_id": "private-device"}, policy, control=True
     )
 
 

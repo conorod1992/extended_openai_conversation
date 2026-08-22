@@ -11,6 +11,10 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
 )
+from custom_components.extended_openai_conversation_responses.guest_mode import (
+    GUEST_MODE_UNAVAILABLE,
+    GuestCapabilityPolicy,
+)
 from custom_components.extended_openai_conversation_responses.management_ui import (
     async_management_command,
 )
@@ -111,6 +115,7 @@ def test_normalization_is_conservative_and_predictable() -> None:
     assert normalize_text("LIGHTS, reminders!", settings) == "light reminder"
     assert normalize_text("Switch   on the television", settings) == "turn on the tv"
     assert normalize_text("turn-down lights", settings) == "decrease light"
+    assert normalize_text("news series species", settings) == "news series species"
     without_forms = {**settings, "word_forms": False}
     assert normalize_text("lights", without_forms) == "lights"
 
@@ -253,6 +258,72 @@ async def test_multiple_local_actions_and_failure_response(fail) -> None:
     assert len(services.calls) == (1 if fail else 2)
 
 
+async def test_guest_mode_prevalidates_entire_local_action_sequence() -> None:
+    rule = local_rule()
+    rule["action"]["actions"].append(
+        {
+            "domain": "lock",
+            "service": "unlock",
+            "target": {"entity_id": ["lock.private"]},
+            "data": {},
+        }
+    )
+    rules = await manager(rule)
+    services = FakeServices()
+    policy = GuestCapabilityPolicy(
+        True,
+        readable_entity_ids=frozenset({"script.goodnight"}),
+        controllable_entity_ids=frozenset({"script.goodnight"}),
+    )
+    result = await async_evaluate_rule(
+        SimpleNamespace(services=services),
+        rules,
+        RequestRuleRuntime(),
+        "good night",
+        "conversation:guest",
+        guest_policy=policy,
+    )
+    assert result is not None and result.consume
+    assert result.response == GUEST_MODE_UNAVAILABLE
+    assert services.calls == []
+
+
+async def test_guest_mode_allows_permitted_local_action_without_ai() -> None:
+    rules = await manager(local_rule())
+    services = FakeServices()
+    policy = GuestCapabilityPolicy(
+        True,
+        readable_entity_ids=frozenset({"script.goodnight"}),
+        controllable_entity_ids=frozenset({"script.goodnight"}),
+    )
+    result = await async_evaluate_rule(
+        SimpleNamespace(services=services),
+        rules,
+        RequestRuleRuntime(),
+        "good night",
+        "conversation:guest",
+        guest_policy=policy,
+    )
+    assert result is not None and result.response == "Done"
+    assert len(services.calls) == 1
+
+
+async def test_guest_mode_rejects_unscoped_local_control() -> None:
+    rule = local_rule()
+    rule["action"]["actions"][0]["target"] = {}
+    services = FakeServices()
+    result = await async_evaluate_rule(
+        SimpleNamespace(services=services),
+        await manager(rule),
+        RequestRuleRuntime(),
+        "good night",
+        "conversation:guest",
+        guest_policy=GuestCapabilityPolicy(True),
+    )
+    assert result is not None and result.response == GUEST_MODE_UNAVAILABLE
+    assert services.calls == []
+
+
 def routing_rule(*, scope="request", reset=False, match_type="starts_with"):
     return {
         "id": f"route-{scope}-{reset}",
@@ -325,6 +396,89 @@ async def test_conversation_override_precedence_reset_and_new_session() -> None:
     )
     assert reset is not None and reset.consume
     assert runtime.get("one") == {}
+
+
+async def test_conversation_overrides_compose_across_separate_rules() -> None:
+    runtime = RequestRuleRuntime()
+    model_rule = routing_rule(scope="conversation")
+    model_rule["action"]["reasoning_effort"] = None
+    reasoning_rule = routing_rule(scope="conversation")
+    reasoning_rule["action"]["model"] = None
+
+    await async_evaluate_rule(
+        SimpleNamespace(),
+        await manager(model_rule),
+        runtime,
+        "think carefully about this",
+        "one",
+    )
+    await async_evaluate_rule(
+        SimpleNamespace(),
+        await manager(reasoning_rule),
+        runtime,
+        "think carefully about this",
+        "one",
+    )
+    assert runtime.get("one") == {
+        CONF_CHAT_MODEL: "gpt-5",
+        CONF_REASONING_EFFORT: "high",
+    }
+
+    next_model = routing_rule(scope="conversation")
+    next_model["action"]["model"] = "gpt-5-mini"
+    next_model["action"]["reasoning_effort"] = None
+    await async_evaluate_rule(
+        SimpleNamespace(),
+        await manager(next_model),
+        runtime,
+        "think carefully about this",
+        "one",
+    )
+    next_reasoning = routing_rule(scope="conversation")
+    next_reasoning["action"]["model"] = None
+    next_reasoning["action"]["reasoning_effort"] = "low"
+    await async_evaluate_rule(
+        SimpleNamespace(),
+        await manager(next_reasoning),
+        runtime,
+        "think carefully about this",
+        "one",
+    )
+    assert runtime.get("one") == {
+        CONF_CHAT_MODEL: "gpt-5-mini",
+        CONF_REASONING_EFFORT: "low",
+    }
+
+
+async def test_invalid_conversation_update_is_atomic() -> None:
+    runtime = RequestRuleRuntime()
+    runtime.set("one", {CONF_CHAT_MODEL: "gpt-5", CONF_REASONING_EFFORT: "high"})
+    rule = routing_rule(scope="conversation")
+    rule["action"]["model"] = "gpt-4o"
+    rule["action"]["reasoning_effort"] = None
+    with pytest.raises(HomeAssistantError, match="does not support reasoning"):
+        await async_evaluate_rule(
+            SimpleNamespace(),
+            await manager(rule),
+            runtime,
+            "think carefully about this",
+            "one",
+        )
+    assert runtime.get("one") == {
+        CONF_CHAT_MODEL: "gpt-5",
+        CONF_REASONING_EFFORT: "high",
+    }
+
+
+def test_conversation_override_expires_after_inactivity(monkeypatch) -> None:
+    clock = iter((0.0, 0.0, 61.0))
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.monotonic",
+        lambda: next(clock),
+    )
+    runtime = RequestRuleRuntime()
+    runtime.set("one", {CONF_CHAT_MODEL: "gpt-5"}, timeout_minutes=1)
+    assert runtime.get("one", timeout_minutes=1) == {}
 
 
 def test_exact_routing_command_is_consumed_but_substantive_request_is_not() -> None:
