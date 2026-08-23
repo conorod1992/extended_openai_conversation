@@ -85,6 +85,39 @@ class TestNativeFunctionYaml:
         assert result == [{"success": True}]
         hass.services.async_call.assert_called_once()
 
+    async def test_execute_service_returns_previous_state(
+        self, hass, function, exposed_entities, llm_context, monkeypatch
+    ):
+        """Previous state from the shared execution seam reaches tool history."""
+        function_tool = prepare_function_tool_from_yaml(
+            "native_execute_service_example.yaml"
+        )
+        function_config = function_tool["function"]
+        previous_state = {"light.living_room": {"state": "on", "brightness": 92}}
+        execute = AsyncMock(return_value=previous_state)
+        monkeypatch.setattr(
+            "custom_components.extended_openai_conversation_responses.functions.native.async_call_ha_action",
+            execute,
+        )
+
+        result = await function.execute(
+            hass,
+            function_config,
+            {
+                "list": [
+                    {
+                        "domain": "light",
+                        "service": "turn_on",
+                        "service_data": {"entity_id": ["light.living_room"]},
+                    }
+                ]
+            },
+            llm_context,
+            exposed_entities,
+        )
+
+        assert result == [{"success": True, "previous_state": previous_state}]
+
     async def test_execute_service_with_delay(
         self, hass, function, exposed_entities, llm_context
     ):

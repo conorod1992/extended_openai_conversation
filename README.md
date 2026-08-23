@@ -19,6 +19,7 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 ### Better Home Assistant conversations
 
 - **Home Assistant control** — call services and control exposed devices and entities.
+- **Natural action follow-ups** — supported entity changes add a compact previous-state snapshot to conversation history, helping requests such as “undo that” restore settings more accurately. This is conversational context rather than a guaranteed general undo system; unsupported or non-reversible actions have no snapshot, and actions performed outside Extended OpenAI may not have exact prior-state details.
 - **Request Rules** — handle fast local commands without an API call, or route one request/conversation to a different model and reasoning effort.
 - **Direct processing action** — hand sentence-trigger or automation text straight to Extended OpenAI without sending it through `conversation.process` again.
 - **Protected Actions** — require backend-enforced confirmation or a locally verified PIN before selected Home Assistant actions run.
