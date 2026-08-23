@@ -346,10 +346,61 @@ export const GUIDE_TOPICS = [
       },
       {
         type: "p",
-        text: "Request Rules do not provide PIN protection or verify who is speaking. For sensitive actions such as locks or alarms, use strict matching and consider whether the action is appropriate for a voice shortcut at all. Request Rules, their default settings and their wording alternatives are included in each agent's backup."
+        text: "Protected Actions apply to local Request Rule actions too. Use confirmation or a locally verified PIN for sensitive actions such as locks, alarms or garage doors. Request Rules, Protected Action rules and the one-way PIN hash are included in each agent's private full backup."
+      },
+      {
+        type: "note",
+        title: "Test requests are real",
+        text: "The Test request box sends text through the same normal processing path as the direct process action. It can perform Home Assistant actions and is not a dry run. Automations and sentence triggers can call extended_openai_conversation_responses.process to avoid sending an intercepted phrase back through Home Assistant's conversation.process routing."
       }
     ],
     action: { label: "Manage Request Rules", page: "capabilities", section: "request-rules" }
+  },
+  {
+    id: "protected-actions",
+    title: "Protected Actions and local PINs",
+    summary: "Require a clear confirmation or a locally checked PIN before Extended OpenAI performs selected Home Assistant actions.",
+    terms: "protected actions security pin confirmation lock unlock alarm garage local verification cooldown",
+    body: [
+      {
+        type: "p",
+        text: "Protected Actions are enforced by the integration backend. The AI model may request an action, but it cannot decide whether protection is required or whether a PIN is correct. The same policy applies to model tool calls, normal conversations, direct process calls and local Request Rules."
+      },
+      { type: "heading", text: "Confirmation or PIN" },
+      {
+        type: "list",
+        items: [
+          "Ask for confirmation is useful for actions you might trigger accidentally. A short, exact reply such as yes, confirm, go ahead or do it allows the pending action; no or cancel stops it.",
+          "Require PIN verifies a 4 to 12 digit secret locally in Home Assistant. It provides a secret check, but does not identify the speaker.",
+          "Guest Mode and normal Home Assistant access are checked independently. A correct PIN never overrides an existing denial."
+        ]
+      },
+      { type: "heading", text: "Set up a local PIN" },
+      {
+        type: "steps",
+        items: [
+          "Open Capabilities → Protected Actions and choose Set PIN.",
+          "Enter the PIN twice. The entry is masked and the saved PIN is not displayed again.",
+          "Choose Add protection rule, select the Home Assistant action, and optionally narrow it to an entity, device or area.",
+          "Choose Ask for confirmation or Require PIN, then save the rule."
+        ]
+      },
+      {
+        type: "note",
+        title: "PIN privacy",
+        text: "The PIN is stored as a salted one-way hash. Configured PINs and PIN replies are not put in prompts, logs or frontend responses, and a PIN reply is handled locally without another provider request. Full backups include the hash rather than plaintext."
+      },
+      { type: "heading", text: "Speaking a PIN" },
+      {
+        type: "p",
+        text: "Say one digit at a time. The accepted words are zero/oh/o, one/won, two/too/to, three, four/for, five, six, seven, eight/ate and nine. Therefore 1234, 1 2 3 4, one two three four and one too three for are interpreted deterministically. The integration does not use fuzzy matching, an AI model or close-enough comparisons. Ambiguous phrases such as twelve thirty-four are rejected."
+      },
+      {
+        type: "p",
+        text: "A challenge expires after two minutes. Three incorrect PINs cancel it and start a one-minute cooldown. Changing a PIN, reloading the integration or restarting Home Assistant cancels pending challenges."
+      }
+    ],
+    action: { label: "Configure Protected Actions", page: "capabilities", section: "protected-actions" }
   },
   {
     id: "guest-mode",

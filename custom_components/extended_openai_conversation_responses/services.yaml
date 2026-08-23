@@ -39,6 +39,39 @@ query_image:
         number:
           min: 1
           mode: box
+process:
+  name: Process request directly
+  description: Send text through the selected Extended OpenAI agent's normal processing pipeline without re-entering Home Assistant conversation routing.
+  fields:
+    text:
+      required: true
+      example: "Turn off the kitchen light"
+      selector:
+        text:
+          multiline: true
+    agent_id:
+      description: Optional when only one Extended OpenAI conversation agent is available.
+      selector:
+        entity:
+          filter:
+            integration: extended_openai_conversation_responses
+            domain: conversation
+    conversation_id:
+      description: Optional conversation ID to continue an existing conversation.
+      selector:
+        text:
+    device_id:
+      description: Optional source device ID used for normal voice ownership and continuity rules.
+      selector:
+        text:
+    satellite_id:
+      description: Optional Assist satellite ID used for normal voice ownership and continuity rules.
+      selector:
+        text:
+    language:
+      description: Optional language code. Defaults to Home Assistant's language.
+      selector:
+        language:
 change_config:
   fields:
     config_entry:

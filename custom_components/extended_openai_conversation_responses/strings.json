@@ -231,6 +231,18 @@
         }
       }
     },
+    "process": {
+      "name": "Process request directly",
+      "description": "Sends text through the normal Extended OpenAI processing pipeline without re-entering Home Assistant conversation routing.",
+      "fields": {
+        "text": {"name": "Text", "description": "The request to process."},
+        "agent_id": {"name": "Conversation agent", "description": "Optional when only one Extended OpenAI conversation agent is available."},
+        "conversation_id": {"name": "Conversation ID", "description": "Optional existing conversation to continue."},
+        "device_id": {"name": "Device ID", "description": "Optional source device context."},
+        "satellite_id": {"name": "Satellite ID", "description": "Optional Assist satellite context."},
+        "language": {"name": "Language", "description": "Optional language code."}
+      }
+    },
     "change_config": {
       "name": "Change configuration",
       "description": "Changes the configuration of the integration.",

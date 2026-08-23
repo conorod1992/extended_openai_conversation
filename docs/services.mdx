@@ -3,7 +3,26 @@ title: "Services"
 description: "Home Assistant services provided by Extended OpenAI Conversation (Responses) for runtime configuration, vision queries, and skills management"
 ---
 
-Extended OpenAI Conversation (Responses) registers four Home Assistant services you can call from automations, scripts, or **Developer Tools → Services**.
+Extended OpenAI Conversation (Responses) registers Home Assistant actions you can call from automations, scripts, or **Developer Tools → Actions**.
+
+---
+
+## process
+
+Send text directly to an Extended OpenAI conversation agent's normal request-processing pipeline. This is useful when a sentence trigger has already intercepted a phrase and you do not want to send it back through Home Assistant's `conversation.process` routing. It does not bypass Request Rules, Guest Mode, memory, continuity, model routing, tools, Protected Actions, or response cleanup.
+
+```yaml
+action: extended_openai_conversation_responses.process
+data:
+  text: "Turn off the kitchen light"
+response_variable: result
+```
+
+`agent_id` is optional when only one Extended OpenAI conversation agent exists. `conversation_id`, `device_id`, `satellite_id`, and `language` are optional context fields. Response data contains `response`, `conversation_id`, and `handled_locally`.
+
+<Warning>
+This is real processing and may perform Home Assistant actions. It is not a dry run.
+</Warning>
 
 ---
 

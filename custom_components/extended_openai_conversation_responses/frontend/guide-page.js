@@ -5,6 +5,7 @@ const GUIDE_QUICK_TASKS = [
   {title: "Remember facts and preferences", text: "Store useful information so you do not have to repeat it in later conversations.", topic: "persistent-memory"},
   {title: "Give it reference material", text: "Add manuals, notes, policies or other larger information to the Knowledge Library.", topic: "knowledge"},
   {title: "Let visitors use it safely", text: "Use Guest Mode to limit what visitors can see, control and remember.", topic: "guest-mode"},
+  {title: "Protect sensitive actions", text: "Require confirmation or a locally verified PIN before selected actions run.", topic: "protected-actions"},
 ];
 
 const GUIDE_TEXT_REWRITES = new Map([

@@ -118,6 +118,16 @@ from .memory import (
     memory_user_id,
 )
 from .prompt import render_effective_prompt
+from .protected_actions import (
+    ProtectedActionRequired,
+    ProtectedActions,
+    ProtectionContext,
+    async_get_protected_actions,
+    reset_active_protection,
+    reset_protection_bypass,
+    set_active_protection,
+    set_protection_bypass,
+)
 from .request import assemble_integration_function_tools
 from .request_rules import (
     RequestRuleRuntime,
@@ -163,6 +173,37 @@ _ACTIVE_MEMORY_SESSION: ContextVar[tuple[str, int] | None] = ContextVar(
 _ACTIVE_GUEST_POLICY: ContextVar[GuestCapabilityPolicy | None] = ContextVar(
     "extended_openai_active_guest_policy", default=None
 )
+_PROCESS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
+    "extended_openai_process_metadata", default=None
+)
+
+
+def protected_actions_allowed_by_guest(
+    hass: HomeAssistant,
+    actions: tuple[dict[str, Any], ...],
+    policy: GuestCapabilityPolicy,
+) -> bool:
+    """Revalidate Guest Mode immediately before authorized execution."""
+    if not policy.guest_active:
+        return True
+    return all(
+        guest_arguments_allowed_runtime(
+            hass,
+            action,
+            policy,
+            control=True,
+            require_entity_selector=True,
+        )
+        for action in actions
+    )
+
+
+def redact_pin_reply(user_input: ConversationInput, chat_log: ChatLog) -> None:
+    """Remove a PIN transcript before events, continuity, archives, or provider use."""
+    placeholder = "[PIN reply handled locally]"
+    user_input.text = placeholder
+    if chat_log.content:
+        chat_log.content[-1] = conversation.UserContent(content=placeholder)
 
 
 async def async_setup_entry(
@@ -200,6 +241,7 @@ class ExtendedOpenAIAgentEntity(
     _guest_mode: GuestModeManager | None = None
     _request_rules: RequestRules | None = None
     _request_rule_runtime: RequestRuleRuntime | None = None
+    _protected_actions: ProtectedActions | None = None
 
     def __init__(self, entry: ExtendedOpenAIConfigEntry, subentry: Any) -> None:
         """Initialize the conversation agent and its streaming capability."""
@@ -273,6 +315,9 @@ class ExtendedOpenAIAgentEntity(
         self._request_rule_runtime = get_request_rule_runtime(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
+        self._protected_actions = await async_get_protected_actions(
+            self.hass, self.entry.entry_id, self.subentry.subentry_id
+        )
         if (
             self.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
             != TEMPORARY_MEMORY_OFF
@@ -323,6 +368,8 @@ class ExtendedOpenAIAgentEntity(
 
     async def async_will_remove_from_hass(self) -> None:
         """When entity will be removed from Home Assistant."""
+        if self._protected_actions is not None:
+            self._protected_actions.cancel_pending()
         conversation.async_unset_agent(self.hass, self.entry)
         remove_function_group_runtime(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
@@ -331,6 +378,21 @@ class ExtendedOpenAIAgentEntity(
 
     async def async_process(self, user_input: ConversationInput) -> ConversationResult:
         """Process a sentence."""
+        return await self._async_process(user_input)
+
+    async def async_process_direct(
+        self, user_input: ConversationInput
+    ) -> tuple[ConversationResult, dict[str, Any]]:
+        """Process through the identical pipeline while collecting safe metadata."""
+        metadata: dict[str, Any] = {"handled_locally": False}
+        token = _PROCESS_METADATA.set(metadata)
+        try:
+            return await self._async_process(user_input), dict(metadata)
+        finally:
+            _PROCESS_METADATA.reset(token)
+
+    async def _async_process(self, user_input: ConversationInput) -> ConversationResult:
+        """Shared processing pipeline for Assist and the direct process action."""
         llm_context = user_input.as_llm_context(DOMAIN)
         request_policy = self._resolve_live_guest_policy()
         guest_policy_token = _ACTIVE_GUEST_POLICY.set(request_policy)
@@ -402,6 +464,18 @@ class ExtendedOpenAIAgentEntity(
             async_get_chat_session(self.hass, resolution.conversation_id) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
         ):
+            protection_context = ProtectionContext(
+                self.entry.entry_id,
+                self.subentry.subentry_id,
+                chat_log.conversation_id,
+                getattr(getattr(llm_context, "context", None), "user_id", None),
+                source_device_id,
+                user_input.satellite_id,
+            )
+            assert self._protected_actions is not None
+            protection_token = set_active_protection(
+                self._protected_actions, protection_context
+            )
             rule_session_key = request_rule_session_id(
                 resolution.key, chat_log.conversation_id
             )
@@ -432,6 +506,39 @@ class ExtendedOpenAIAgentEntity(
                 current_user = chat_log.content[-1]
                 chat_log.content[:] = [*resolution.history, current_user]
             try:
+                challenge = await self._protected_actions.async_handle_reply(
+                    protection_context, user_input.text
+                )
+                if challenge.handled:
+                    if challenge.redact_input and chat_log.content:
+                        redact_pin_reply(user_input, chat_log)
+                    response = challenge.response
+                    if challenge.actions:
+                        live_policy = self._effective_guest_policy()
+                        if not protected_actions_allowed_by_guest(
+                            self.hass, challenge.actions, live_policy
+                        ):
+                            response = GUEST_MODE_UNAVAILABLE
+                        else:
+                            from .ha_actions import async_execute_ha_actions
+
+                            bypass_token = set_protection_bypass()
+                            try:
+                                await async_execute_ha_actions(
+                                    self.hass, challenge.actions
+                                )
+                            except Exception:
+                                _LOGGER.exception(
+                                    "Protected action failed after authorization"
+                                )
+                                response = "Sorry, that action did not work."
+                            finally:
+                                reset_protection_bypass(bypass_token)
+                    result = self._local_rule_result(user_input, chat_log, response)
+                    await self._continuity.async_record_success(
+                        resolution.key, chat_log.content
+                    )
+                    return result
                 try:
                     evaluation = (
                         await async_evaluate_rule(
@@ -453,6 +560,8 @@ class ExtendedOpenAIAgentEntity(
                         else None
                     )
                 except HomeAssistantError as err:
+                    if isinstance(err, ProtectedActionRequired):
+                        return self._local_rule_result(user_input, chat_log, err.prompt)
                     _LOGGER.warning("Request Rule routing rejected: %s", err)
                     return self._local_rule_result(
                         user_input,
@@ -520,6 +629,7 @@ class ExtendedOpenAIAgentEntity(
                         )
                     return result
             finally:
+                reset_active_protection(protection_token)
                 await self._continuity.async_release(resolution.key)
                 _ACTIVE_FUNCTION_GROUP_SESSION.reset(function_group_token)
                 _ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
@@ -581,6 +691,12 @@ class ExtendedOpenAIAgentEntity(
                 ),
                 request_options=request_options,
             )
+        except ProtectedActionRequired as err:
+            while chat_log.content and getattr(
+                chat_log.content[-1], "tool_calls", None
+            ):
+                chat_log.content.pop()
+            return self._local_rule_result(user_input, chat_log, err.prompt)
         except OpenAIError as err:
             if self._usage is not None:
                 self._usage.mark_current_run_failed(type(err).__name__)
@@ -645,6 +761,9 @@ class ExtendedOpenAIAgentEntity(
         response: str,
     ) -> ConversationResult:
         """Return a local rule response without invoking the provider."""
+        metadata = _PROCESS_METADATA.get()
+        if metadata is not None:
+            metadata["handled_locally"] = True
         chat_log.content.append(
             conversation.AssistantContent(agent_id=self.entity_id, content=response)
         )

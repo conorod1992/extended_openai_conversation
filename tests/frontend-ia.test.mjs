@@ -15,7 +15,7 @@ assert.deepEqual(NAVIGATION.find((item) => item.id === "assistant").sections.map
   "Basics", "Model & responses", "Conversation", "Prompt & context", "Voice", "Speech", "Advanced",
 ]);
 assert.deepEqual(NAVIGATION.find((item) => item.id === "capabilities").sections.map((item) => item.label), [
-  "Home Assistant", "Request Rules", "Functions", "Guest Mode",
+  "Home Assistant", "Request Rules", "Protected Actions", "Functions", "Guest Mode",
 ]);
 assert.ok(NAVIGATION.flatMap((item) => item.sections).every((item) => item.description));
 

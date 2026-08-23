@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import re
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import voluptuous as vol
 import yaml
@@ -14,9 +14,9 @@ import yaml
 from homeassistant.components import panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigSubentry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import service as service_helper
+from homeassistant.helpers import entity_registry as er, service as service_helper
 
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
@@ -113,6 +113,7 @@ from .memory import (
     memory_enabled,
 )
 from .prompt import render_effective_prompt
+from .protected_actions import async_get_protected_actions
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
     assemble_integration_function_tools,
@@ -145,6 +146,7 @@ MANAGEMENT_FRONTEND_MODULES = (
     "overview-page.js",
     "usage-chart.js",
     "request-rules-ui.js",
+    "protected-actions-ui.js",
 )
 
 
@@ -695,6 +697,33 @@ async def async_management_command(
                 for rule in snapshot["rules"]
             ]
             return snapshot
+        if action == "test":
+            text = message.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise HomeAssistantError("Test request text is required")
+            registry_entry = next(
+                (
+                    item
+                    for item in er.async_get(hass).entities.values()
+                    if item.config_entry_id == entry_id
+                    and item.config_subentry_id == subentry_id
+                    and item.domain == "conversation"
+                ),
+                None,
+            )
+            if registry_entry is None:
+                raise HomeAssistantError("Conversation agent entity is not available")
+            return cast(
+                dict[str, Any],
+                await hass.services.async_call(
+                    DOMAIN,
+                    "process",
+                    {"text": text.strip(), "agent_id": registry_entry.entity_id},
+                    blocking=True,
+                    context=Context(user_id=user_id),
+                    return_response=True,
+                ),
+            )
         if action == "defaults":
             return {"defaults": await rules.async_set_defaults(message.get("defaults"))}
         if action == "wording_groups":
@@ -718,16 +747,56 @@ async def async_management_command(
             return {"rule": await rules.async_duplicate(rule_id)}
         raise HomeAssistantError(f"Unknown Request Rules action: {action}")
 
+    if section == "protected_actions":
+        _require_admin(is_admin)
+        protected_manager = await async_get_protected_actions(
+            hass, entry_id, subentry_id
+        )
+        if action == "get":
+            snapshot = protected_manager.snapshot()
+            snapshot[
+                "service_catalog"
+            ] = await service_helper.async_get_all_descriptions(hass)
+            return snapshot
+        if action == "set_pin":
+            pin = message.get("pin")
+            pin_repeat = message.get("pin_repeat")
+            if not isinstance(pin, str) or pin != pin_repeat:
+                raise HomeAssistantError("PIN entries do not match")
+            await protected_manager.async_set_pin(pin)
+            return {"pin_configured": True}
+        if action == "remove_pin":
+            if message.get("confirm") is not True:
+                raise HomeAssistantError("Explicit confirmation is required")
+            await protected_manager.async_remove_pin()
+            return {"pin_configured": False}
+        if action == "create":
+            return {"rule": await protected_manager.async_create(message.get("rule"))}
+        rule_id = message.get("rule_id")
+        if not isinstance(rule_id, str):
+            raise HomeAssistantError("rule_id is required")
+        if action == "update":
+            return {
+                "rule": await protected_manager.async_update(
+                    rule_id, message.get("rule")
+                )
+            }
+        if action == "delete":
+            if message.get("confirm") is not True:
+                raise HomeAssistantError("Explicit confirmation is required")
+            return {"deleted": await protected_manager.async_delete(rule_id)}
+        raise HomeAssistantError(f"Unknown Protected Actions operation: {action}")
+
     if section == "guest_mode":
-        manager = await async_get_guest_mode(hass, entry_id, subentry_id)
+        guest_manager = await async_get_guest_mode(hass, entry_id, subentry_id)
         if action == "get":
             configured_tools = configured_function_tools_from_data(subentry.data)
             policy = resolve_guest_policy(
-                hass, subentry.data, manager, configured_tools
+                hass, subentry.data, guest_manager, configured_tools
             )
             if not is_admin:
                 return {
-                    "status": manager.status(),
+                    "status": guest_manager.status(),
                     "policy": policy.as_diagnostics(),
                 }
             library = await async_get_knowledge(hass, entry_id, subentry_id)
@@ -735,7 +804,7 @@ async def async_management_command(
                 subentry.data.get(CONF_FUNCTION_GROUPS, []), configured_tools
             )
             return {
-                "status": manager.status(),
+                "status": guest_manager.status(),
                 "policy": policy.as_diagnostics(),
                 "config": guest_policy_editor_snapshot(
                     hass, subentry.data, configured_tools
@@ -799,14 +868,14 @@ async def async_management_command(
             }
         if action == "update":
             return {
-                "status": await manager.async_update_trusted(
+                "status": await guest_manager.async_update_trusted(
                     active_from=message.get("active_from"),
                     active_until=message.get("active_until"),
                     indefinite=message.get("indefinite") is True,
                 )
             }
         if action == "disable":
-            return {"status": await manager.async_disable_trusted()}
+            return {"status": await guest_manager.async_disable_trusted()}
 
     if section == "backup":
         _require_admin(is_admin)
@@ -1448,6 +1517,9 @@ def asdict_or_none(value: Any) -> dict[str, Any] | None:
         vol.Optional("group_id"): str,
         vol.Optional("rule_id"): str,
         vol.Optional("rule"): dict,
+        vol.Optional("pin"): str,
+        vol.Optional("pin_repeat"): str,
+        vol.Optional("text"): str,
         vol.Optional("defaults"): dict,
         vol.Optional("enabled"): bool,
         vol.Optional("yaml"): str,

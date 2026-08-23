@@ -5,6 +5,7 @@ import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview} from "./overview-page.js";
 import {formatUsageTimestamp, tokenBreakdown} from "./usage-chart.js";
 import {bindRequestRules, renderRequestRules, requestRulesDialog} from "./request-rules-ui.js";
+import {bindProtectedActions, protectedActionsDialogs, renderProtectedActions} from "./protected-actions-ui.js";
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
 const KNOWLEDGE_TITLE_LIMIT = 120;
@@ -226,6 +227,8 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
         }
       } else if (view === "capabilities/request-rules") {
         this._result = await this._call("request_rules", "list");
+      } else if (view === "capabilities/protected-actions") {
+        this._result = await this._call("protected_actions", "get");
       } else if (this._isDraftView()) {
         await this._loadConfigDraft();
       } else {
@@ -334,6 +337,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._page === "assistant") { this._configSections = this._configSectionsForView(); return renderConfiguration(this); }
     if (view === "capabilities/home-assistant") return this._homeAssistant(agent);
     if (view === "capabilities/request-rules") return renderRequestRules(this);
+    if (view === "capabilities/protected-actions") return renderProtectedActions(this);
     if (view === "capabilities/functions") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${renderTools(this)}`;
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
@@ -512,7 +516,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
       <dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>
       <dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope">${this._scopeOptions("memories", true, true)}</select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>
       <dialog id="confirm-dialog" class="editor-dialog confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-header"><h2 id="confirm-title">Confirm</h2></div><div class="dialog-body"><p id="confirm-message"></p></div><div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">Cancel</button><button type="button" class="danger" id="confirm-accept">Confirm</button></div></dialog>
-      ${requestRulesDialog(this)}${configurationDialogs(this)}${restoreDialog(this)}`;
+      ${requestRulesDialog(this)}${protectedActionsDialogs(this)}${configurationDialogs(this)}${restoreDialog(this)}`;
   }
 
   _bindActions() {
@@ -560,6 +564,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(this._viewKey())) bindConfiguration(this);
     if (this._viewKey() === "capabilities/functions") bindTools(this);
     if (this._viewKey() === "capabilities/request-rules") bindRequestRules(this);
+    if (this._viewKey() === "capabilities/protected-actions") bindProtectedActions(this);
     if (this._viewKey() === "overview") bindOverview(this);
     if (this._viewKey() === "guide") bindGuide(this);
     if (this._pendingSettingFocus) {

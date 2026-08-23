@@ -83,6 +83,8 @@ export function backupSummaryLines(summary = {}) {
   return [
     "Agent configuration",
     `${Number(summary.request_rules || 0)} Request Rules`,
+    `${Number(summary.protected_action_rules || 0)} Protected Action rules`,
+    `Local PIN ${summary.protected_actions_pin_configured ? "hash included" : "not configured"}`,
     `${Number(summary.persistent_memories || 0)} persistent memories`,
     `${Number(summary.temporary_memories || 0)} active temporary memories`,
     `${Number(summary.knowledge_sources || 0)} Knowledge sources`,
