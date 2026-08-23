@@ -1,6 +1,7 @@
 """Services for the extended openai conversation component."""
 
 import base64
+from collections.abc import Mapping
 import logging
 import mimetypes
 from pathlib import Path
@@ -10,6 +11,8 @@ from urllib.parse import urlparse
 from openai._exceptions import OpenAIError
 import voluptuous as vol
 
+from homeassistant.components import conversation
+from homeassistant.components.conversation import ConversationInput
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import (
     HomeAssistant,
@@ -52,6 +55,7 @@ from .const import (
     SERVICE_MEMORY_CLEAR,
     SERVICE_MEMORY_DELETE,
     SERVICE_MEMORY_LIST,
+    SERVICE_PROCESS,
     SERVICE_QUERY_IMAGE,
     SERVICE_RELOAD_SKILLS,
 )
@@ -151,6 +155,21 @@ GUEST_MODE_UPDATE_SCHEMA = vol.Schema(
 )
 
 GUEST_MODE_DISABLE_SCHEMA = vol.Schema({**MEMORY_AGENT_FIELDS})
+
+PROCESS_SCHEMA = vol.Schema(
+    {
+        vol.Required("text"): cv.string,
+        vol.Optional("agent_id"): selector.EntitySelector(
+            {
+                "filter": {"integration": DOMAIN, "domain": "conversation"},
+            }
+        ),
+        vol.Optional("conversation_id"): cv.string,
+        vol.Optional("device_id"): cv.string,
+        vol.Optional("satellite_id"): cv.string,
+        vol.Optional("language"): cv.string,
+    }
+)
 
 _LOGGER = logging.getLogger(__package__)
 
@@ -527,6 +546,67 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         except ValueError as err:
             raise HomeAssistantError(str(err)) from err
 
+    def _process_agent(agent_id: str | None):
+        if agent_id:
+            agent = conversation.async_get_agent(hass, agent_id)
+            if agent is None or not hasattr(agent, "async_process_direct"):
+                raise HomeAssistantError("Extended OpenAI conversation agent not found")
+            return agent
+        registry = er.async_get(hass)
+        agents = []
+        for registry_entry in registry.entities.values():
+            if (
+                registry_entry.platform == DOMAIN
+                and registry_entry.domain == "conversation"
+            ):
+                agent = conversation.async_get_agent(hass, registry_entry.entity_id)
+                if agent is not None and hasattr(agent, "async_process_direct"):
+                    agents.append(agent)
+        if not agents:
+            raise HomeAssistantError(
+                "No Extended OpenAI conversation agent is available"
+            )
+        if len(agents) > 1:
+            raise HomeAssistantError(
+                "Choose a conversation agent when more than one is configured"
+            )
+        return agents[0]
+
+    async def process(call: ServiceCall) -> ServiceResponse:
+        """Send text directly through an Extended OpenAI entity's normal pipeline."""
+        if not call.data["text"].strip():
+            raise HomeAssistantError("Request text cannot be empty")
+        agent = _process_agent(call.data.get("agent_id"))
+        agent_id = getattr(agent, "entity_id", call.data.get("agent_id") or "")
+        user_input = ConversationInput(
+            text=call.data["text"],
+            context=call.context,
+            conversation_id=call.data.get("conversation_id"),
+            device_id=call.data.get("device_id"),
+            satellite_id=call.data.get("satellite_id"),
+            language=call.data.get("language", hass.config.language),
+            agent_id=agent_id,
+        )
+        try:
+            result, metadata = await agent.async_process_direct(user_input)
+        except Exception as err:
+            if isinstance(err, HomeAssistantError):
+                raise
+            raise HomeAssistantError(
+                f"Extended OpenAI could not process the request: {err}"
+            ) from err
+        speech = getattr(result.response, "speech", {}) or {}
+        response_text = ""
+        if isinstance(speech, Mapping):
+            plain = speech.get("plain", {})
+            if isinstance(plain, Mapping):
+                response_text = str(plain.get("speech", ""))
+        return {
+            "response": response_text,
+            "conversation_id": result.conversation_id,
+            "handled_locally": bool(metadata.get("handled_locally")),
+        }
+
     async def guest_mode_disable(call: ServiceCall) -> ServiceResponse:
         """End or cancel Guest Mode from a trusted HA action."""
         await _async_require_service_admin(hass, call)
@@ -535,6 +615,14 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         )
         manager = await async_get_guest_mode(hass, entry_id, subentry_id)
         return cast(ServiceResponse, await manager.async_disable_trusted())
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PROCESS,
+        process,
+        schema=PROCESS_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
 
     hass.services.async_register(
         DOMAIN,

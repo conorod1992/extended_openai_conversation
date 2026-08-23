@@ -601,6 +601,7 @@ SERVICE_ENABLE_FUNCTION_TOOLS = "enable_function_tools"
 SERVICE_DISABLE_FUNCTION_TOOLS = "disable_function_tools"
 SERVICE_GUEST_MODE_UPDATE = "guest_mode_update"
 SERVICE_GUEST_MODE_DISABLE = "guest_mode_disable"
+SERVICE_PROCESS = "process"
 
 # Integration-owned UI and storage
 MEMORY_PANEL_URL = "extended-openai-memory"

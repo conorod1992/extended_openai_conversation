@@ -20,6 +20,8 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 
 - **Home Assistant control** — call services and control exposed devices and entities.
 - **Request Rules** — handle fast local commands without an API call, or route one request/conversation to a different model and reasoning effort.
+- **Direct processing action** — hand sentence-trigger or automation text straight to Extended OpenAI without sending it through `conversation.process` again.
+- **Protected Actions** — require backend-enforced confirmation or a locally verified PIN before selected Home Assistant actions run.
 - **History access** — answer questions using Home Assistant entity history.
 - **Persistent memory** — conversation-start lexical or embedding-assisted retrieval, personal plus shared-household reads, importance, canonical keys, and reliable upserts, while preserving Off, Manual, and Automatic modes.
 - **Knowledge Library** — keep large per-agent reference sources local and retrieve only relevant excerpts on demand.
@@ -29,7 +31,7 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 
 ### Extensible and observable
 
-- **Per-agent Backup & Restore** — create a private recovery or migration backup containing configuration, Request Rules, memories, Knowledge sources, archived conversations, Guest Mode schedule, and usage history, then inspect and explicitly restore it with replacement semantics.
+- **Per-agent Backup & Restore** — create a private recovery or migration backup containing configuration, Request Rules, Protected Action rules and the one-way PIN hash, memories, Knowledge sources, archived conversations, Guest Mode schedule, and usage history, then inspect and explicitly restore it with replacement semantics.
 
 - **Web Search** — let compatible OpenAI Responses models retrieve current information when needed.
 - **Skills** — load reusable instruction sets per conversation agent.
@@ -221,6 +223,27 @@ Invalid expressions are rejected when configuration is saved and skipped defensi
 Each conversation-agent device can expose a disabled-by-default diagnostic Usage sensor with real provider-reported request and token counts. **Test agent** performs local checks plus at most one minimal model request without executing Home Assistant device or service actions.
 
 [Read the usage guide](docs/features/usage-statistics.md)
+
+### Direct processing action
+
+Most users should keep using Assist normally. Automations and sentence triggers can call `extended_openai_conversation_responses.process` to enter the selected agent's normal processing pipeline without re-entering Home Assistant's outer `conversation.process` routing. Request Rules, Guest Mode, memory, continuity, model routing, tools, Protected Actions, and response cleanup still apply.
+
+```yaml
+action: extended_openai_conversation_responses.process
+data:
+  text: "Turn off the kitchen light"
+response_variable: result
+```
+
+When more than one Extended OpenAI agent exists, select `agent_id`. Optional `conversation_id`, `device_id`, `satellite_id`, and `language` fields preserve available context. Response data contains `response`, `conversation_id`, and `handled_locally`. The Request Rules page also has a **Test request** box that uses this real path; testing can perform Home Assistant actions and is not a dry run.
+
+### Protected Actions
+
+Open **Extended OpenAI → Capabilities → Protected Actions**. **Ask for confirmation** helps prevent accidents. **Require PIN** blocks execution until the configured PIN is spoken or entered correctly. PIN verification is deterministic and local to Home Assistant: the PIN is stored as a salted one-way PBKDF2 hash, and neither the configured PIN nor a PIN reply is sent to the AI provider.
+
+Rules can protect any Home Assistant domain/action and optionally narrow it to an entity, device, or area. Examples include `lock.unlock` → PIN, `alarm_control_panel.alarm_disarm` → PIN, `homeassistant.restart` → Confirmation, and `cover.open_cover` for a garage door → PIN. The same enforcement seam covers model tool calls, local Request Rules, normal conversations, and the direct process action.
+
+During a PIN challenge, say digits individually. Numeric text and spoken digits normalize deterministically: `zero`/`oh`/`o`, `one`/`won`, `two`/`too`/`to`, `three`, `four`/`for`, `five`, `six`, `seven`, `eight`/`ate`, and `nine`. Thus `1 2 3 4`, `one two three four`, and `one too three for` match the same PIN. Ambiguous phrases such as `twelve thirty-four` are rejected. Three failed attempts cancel the challenge and start a 60-second cooldown; challenges expire after two minutes. A PIN authorizes only an otherwise-permitted action and never overrides Guest Mode or normal Home Assistant access. Restarts and reloads discard pending challenges. Full backups include only the PIN hash, never plaintext.
 
 ## Provider compatibility
 

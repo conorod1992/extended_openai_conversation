@@ -4,6 +4,8 @@ import { backupSummaryLines } from "../custom_components/extended_openai_convers
 
 const lines = backupSummaryLines({
   request_rules: 5,
+  protected_action_rules: 3,
+  protected_actions_pin_configured: true,
   persistent_memories: 24,
   temporary_memories: 3,
   knowledge_sources: 11,
@@ -17,6 +19,8 @@ const lines = backupSummaryLines({
 assert.deepEqual(lines, [
   "Agent configuration",
   "5 Request Rules",
+  "3 Protected Action rules",
+  "Local PIN hash included",
   "24 persistent memories",
   "3 active temporary memories",
   "11 Knowledge sources",
