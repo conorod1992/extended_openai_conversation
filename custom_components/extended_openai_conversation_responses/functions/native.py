@@ -102,13 +102,16 @@ class NativeFunction(Function):
         self.validate_entity_ids(hass, entity_id or [], exposed_entities)
 
         try:
-            await async_call_ha_action(
+            previous_state = await async_call_ha_action(
                 hass,
                 domain,
                 service,
                 data=service_data,
             )
-            return {"success": True}
+            result: dict[str, Any] = {"success": True}
+            if previous_state:
+                result["previous_state"] = previous_state
+            return result
         except ProtectedActionRequired:
             raise
         except HomeAssistantError as e:
