@@ -576,9 +576,7 @@ def validate_rule(value: Any) -> dict[str, Any]:
     referenced_slots = _referenced_slots(action)
     unknown_slots = referenced_slots - set(slot_names)
     if unknown_slots:
-        raise ValueError(
-            "unknown captured value: " + ", ".join(sorted(unknown_slots))
-        )
+        raise ValueError("unknown captured value: " + ", ".join(sorted(unknown_slots)))
     if (
         action_type == "model_routing"
         and match_type in {"equals", "sentence_pattern"}
@@ -719,7 +717,9 @@ def _validate_local_action(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping) and value.get("type") == "function":
         unknown = set(value) - {"type", "function", "arguments"}
         if unknown:
-            raise ValueError("unknown function action fields: " + ", ".join(sorted(unknown)))
+            raise ValueError(
+                "unknown function action fields: " + ", ".join(sorted(unknown))
+            )
         function_name = _clean(value.get("function"), 120, "function")
         arguments = value.get("arguments", {})
         if not isinstance(arguments, Mapping):
@@ -1054,9 +1054,11 @@ def _compile_basic_slot_pattern(pattern: str) -> re.Pattern[str]:
                     result += f"(?:{compile_part(inner)})?"
                 else:
                     alternatives = inner.split("|")
-                    result += "(?:" + "|".join(
-                        compile_part(item) for item in alternatives
-                    ) + ")"
+                    result += (
+                        "(?:"
+                        + "|".join(compile_part(item) for item in alternatives)
+                        + ")"
+                    )
                 index = end + 1
                 continue
             if char.isspace():

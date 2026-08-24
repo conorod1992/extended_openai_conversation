@@ -572,9 +572,7 @@ def _validate_request_rule_functions(
     """Reject new rule references that are not currently selectable."""
     rule = validate_rule(value)
     available = {
-        tool["spec"]["name"]
-        for tool in configured_tools
-        if function_tool_enabled(tool)
+        tool["spec"]["name"] for tool in configured_tools if function_tool_enabled(tool)
     }
     missing = {
         action["function"]
@@ -590,7 +588,9 @@ def _validate_request_rule_functions(
         if action.get("type") != "function" or action["function"] not in by_name:
             continue
         parameters = by_name[action["function"]]["spec"].get("parameters", {})
-        required = parameters.get("required", []) if isinstance(parameters, dict) else []
+        required = (
+            parameters.get("required", []) if isinstance(parameters, dict) else []
+        )
         missing_inputs = set(required) - set(action.get("arguments", {}))
         if missing_inputs:
             raise HomeAssistantError(

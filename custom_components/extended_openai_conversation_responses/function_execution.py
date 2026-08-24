@@ -19,7 +19,9 @@ def validate_function_arguments(
     if not isinstance(properties, Mapping):
         raise HomeAssistantError("Function input properties are invalid")
     required = schema.get("required", [])
-    if not isinstance(required, list) or not all(isinstance(item, str) for item in required):
+    if not isinstance(required, list) or not all(
+        isinstance(item, str) for item in required
+    ):
         raise HomeAssistantError("Function required inputs are invalid")
     missing = [name for name in required if name not in arguments]
     if missing:

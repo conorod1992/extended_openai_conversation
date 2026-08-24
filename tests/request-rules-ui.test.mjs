@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
-import {friendlyFieldChange, friendlyFieldChangesForService, mergeActionEditorValue, mergeFriendlyActionValue, parseAdvancedActionConfig, renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
+import {friendlyFieldChange, friendlyFieldChangesForService, mergeActionEditorValue, mergeFriendlyActionValue, parseAdvancedActionConfig, refreshRequestRuleSlotSelectors, renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const panel = {
@@ -51,6 +51,28 @@ const bindingSource = await readFile(new URL("../custom_components/extended_open
 assert.match(bindingSource, /Value from request/);
 assert.match(bindingSource, /function_catalog/);
 assert.match(bindingSource, /Captured values:/);
+
+const makeSlotSelect = (value) => ({
+  value,
+  options: [],
+  refreshes: 0,
+  ownerDocument: {createElement: () => ({value:"",textContent:""})},
+  replaceChildren(...options) { this.options = options; },
+  _refreshSlotBinding() { this.refreshes += 1; },
+});
+const haSlot = makeSlotSelect("item"), functionSlot = makeSlotSelect("");
+const slotRoot = {querySelectorAll: () => [haSlot, functionSlot]};
+refreshRequestRuleSlotSelectors(slotRoot, ["item", "product"]);
+assert.equal(haSlot.value, "item");
+assert.equal(functionSlot.value, "");
+assert.deepEqual(functionSlot.options.map((option) => option.value), ["", "item", "product"]);
+refreshRequestRuleSlotSelectors(slotRoot, ["product"]);
+assert.equal(haSlot.value, "");
+assert.equal(functionSlot.value, "");
+assert.equal(haSlot.refreshes, 2);
+functionSlot.value = "product";
+refreshRequestRuleSlotSelectors(slotRoot, ["product", "list_name"]);
+assert.equal(functionSlot.value, "product");
 assert.match(requestRulesDialog(panel), /Rest of this conversation/);
 assert.match(requestRulesDialog(panel), /without asking the AI model/);
 assert.match(requestRulesDialog(panel), /Home Assistant sentence pattern/);
