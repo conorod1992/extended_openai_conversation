@@ -217,6 +217,61 @@ async def test_multiword_multiple_slots_and_sentence_variants() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("pattern", "matches", "near_miss"),
+    [
+        (
+            "[please ]remember {fact}",
+            [
+                (
+                    "please remember the blue recycling bin is Tuesday",
+                    {"fact": "the blue recycling bin is Tuesday"},
+                ),
+                ("remember buy oat milk", {"fact": "buy oat milk"}),
+            ],
+            "please recall the blue recycling bin is Tuesday",
+        ),
+        (
+            "(turn|switch) {room} lights on",
+            [
+                (
+                    "switch upstairs guest room lights on",
+                    {"room": "upstairs guest room"},
+                ),
+                ("turn kitchen lights on", {"room": "kitchen"}),
+            ],
+            "toggle upstairs guest room lights on",
+        ),
+        (
+            "[please ](add|put) {item} (to|on) {list_name}",
+            [
+                (
+                    "please put semi skimmed milk on weekly shopping list",
+                    {
+                        "item": "semi skimmed milk",
+                        "list_name": "weekly shopping list",
+                    },
+                ),
+                (
+                    "add oat milk to groceries",
+                    {"item": "oat milk", "list_name": "groceries"},
+                ),
+            ],
+            "please place semi skimmed milk on weekly shopping list",
+        ),
+    ],
+)
+async def test_supported_sentence_pattern_combinations_with_slots(
+    pattern, matches, near_miss
+) -> None:
+    rules = await manager(local_rule(phrases=[pattern], match_type="sentence_pattern"))
+    for text, expected_slots in matches:
+        match = rules.match(text)
+        assert match is not None
+        assert match.slots == expected_slots
+    assert rules.match(near_miss) is None
+
+
 def test_unknown_slot_reference_and_mismatched_variants_are_rejected() -> None:
     rule = local_rule(phrases=["Remember {fact}"], match_type="sentence_pattern")
     rule["action"]["success_response"] = "Saved {missing}"
@@ -417,7 +472,9 @@ async def test_slots_resolve_in_action_data_response_and_multiple_actions() -> N
     )
 
 
-async def test_direct_function_action_fixed_and_slot_arguments_without_provider() -> None:
+async def test_direct_function_action_fixed_and_slot_arguments_without_provider() -> (
+    None
+):
     rule = local_rule(
         phrases=["Add {item} to {list_name}"], match_type="sentence_pattern"
     )
@@ -520,9 +577,7 @@ def test_shared_function_argument_validation_common_schema_types() -> None:
     with pytest.raises(HomeAssistantError, match="Missing required"):
         validate_function_arguments(spec, {"text": "hello"})
     with pytest.raises(HomeAssistantError, match="one of its choices"):
-        validate_function_arguments(
-            spec, {"text": "hello", "count": 1, "mode": "bad"}
-        )
+        validate_function_arguments(spec, {"text": "hello", "count": 1, "mode": "bad"})
 
 
 async def test_guest_mode_prevalidates_entire_local_action_sequence(

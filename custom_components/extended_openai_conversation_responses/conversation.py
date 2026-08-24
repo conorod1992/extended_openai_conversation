@@ -554,8 +554,10 @@ class ExtendedOpenAIAgentEntity(
                             ),
                             request_policy,
                             timeout_minutes,
-                            lambda name, arguments: self._async_execute_request_rule_function(
-                                name, arguments, llm_context
+                            lambda name, arguments: (
+                                self._async_execute_request_rule_function(
+                                    name, arguments, llm_context
+                                )
                             ),
                         )
                         if self._request_rules is not None
