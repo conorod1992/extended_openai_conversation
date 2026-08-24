@@ -121,7 +121,11 @@ from .request import (
     canonical_json,
     format_function_tools,
 )
-from .request_rules import async_get_request_rules, rule_has_sensitive_actions
+from .request_rules import (
+    async_get_request_rules,
+    rule_has_sensitive_actions,
+    validate_rule,
+)
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID, user_scope
 from .skills import SkillManager
 from .speech import process_speech_text
@@ -562,6 +566,39 @@ def _parse_import_document(value: Any) -> dict[str, Any]:
     }
 
 
+def _validate_request_rule_functions(
+    value: Any, configured_tools: list[dict[str, Any]]
+) -> None:
+    """Reject new rule references that are not currently selectable."""
+    rule = validate_rule(value)
+    available = {
+        tool["spec"]["name"]
+        for tool in configured_tools
+        if function_tool_enabled(tool)
+    }
+    missing = {
+        action["function"]
+        for action in rule.get("action", {}).get("actions", [])
+        if action.get("type") == "function" and action["function"] not in available
+    }
+    if missing:
+        raise HomeAssistantError(
+            "Function Tool is unavailable or disabled: " + ", ".join(sorted(missing))
+        )
+    by_name = {tool["spec"]["name"]: tool for tool in configured_tools}
+    for action in rule.get("action", {}).get("actions", []):
+        if action.get("type") != "function" or action["function"] not in by_name:
+            continue
+        parameters = by_name[action["function"]]["spec"].get("parameters", {})
+        required = parameters.get("required", []) if isinstance(parameters, dict) else []
+        missing_inputs = set(required) - set(action.get("arguments", {}))
+        if missing_inputs:
+            raise HomeAssistantError(
+                f"Function Tool `{action['function']}` needs input: "
+                + ", ".join(sorted(missing_inputs))
+            )
+
+
 async def _scope_catalog(
     hass: HomeAssistant,
     user_id: str,
@@ -696,6 +733,22 @@ async def async_management_command(
                 {**rule, "sensitive_matching_warning": rule_has_sensitive_actions(rule)}
                 for rule in snapshot["rules"]
             ]
+            configured_tools = (
+                configured_function_tools_from_data(subentry.data)
+                if hasattr(subentry, "data")
+                else []
+            )
+            snapshot["function_catalog"] = [
+                {
+                    "name": tool["spec"]["name"],
+                    "description": tool["spec"].get("description", ""),
+                    "parameters": tool["spec"].get(
+                        "parameters", {"type": "object", "properties": {}}
+                    ),
+                }
+                for tool in configured_tools
+                if function_tool_enabled(tool)
+            ]
             return snapshot
         if action == "test":
             text = message.get("text")
@@ -733,11 +786,23 @@ async def async_management_command(
                 )
             }
         if action == "create":
+            _validate_request_rule_functions(
+                message.get("rule"),
+                configured_function_tools_from_data(subentry.data)
+                if hasattr(subentry, "data")
+                else [],
+            )
             return {"rule": await rules.async_create(message.get("rule"))}
         rule_id = message.get("rule_id")
         if not isinstance(rule_id, str):
             raise HomeAssistantError("rule_id is required")
         if action == "update":
+            _validate_request_rule_functions(
+                message.get("rule"),
+                configured_function_tools_from_data(subentry.data)
+                if hasattr(subentry, "data")
+                else [],
+            )
             return {"rule": await rules.async_update(rule_id, message.get("rule"))}
         if action == "delete":
             if message.get("confirm") is not True:

@@ -63,6 +63,7 @@ from .context import (
     select_summary_history,
 )
 from .exceptions import FunctionNotFound, ParseArgumentsFailed, TokenLengthExceededError
+from .function_execution import validate_function_arguments
 from .functions import get_function
 from .helpers import get_api_mode, get_model_config
 from .request import (
@@ -1078,7 +1079,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         exposed_entities: list[dict[str, Any]],
     ) -> conversation.ToolResultContent:
         """Execute a custom function."""
-        arguments: dict[str, Any] = tool_input.tool_args
+        arguments = validate_function_arguments(
+            function_tool.get("spec", {}), tool_input.tool_args
+        )
         function_config = function_tool["function"]
         function = get_function(function_config["type"])
 

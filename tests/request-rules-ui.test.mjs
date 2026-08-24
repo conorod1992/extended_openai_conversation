@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {readFile} from "node:fs/promises";
 
 import {friendlyFieldChange, friendlyFieldChangesForService, mergeActionEditorValue, mergeFriendlyActionValue, parseAdvancedActionConfig, renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
 
@@ -43,9 +44,15 @@ assert.match(html, /gpt-5 · high reasoning · rest of conversation/);
 const resetHtml = renderRequestRules({...panel,_result:{...panel._result,rules:[{...panel._result.rules[1],action:{...panel._result.rules[1].action,reset:true}}]}});
 assert.match(resetHtml, /Return this conversation to configured defaults/);
 assert.doesNotMatch(resetHtml, /high reasoning/);
-assert.match(requestRulesDialog(panel), /One phrase per line/);
+assert.match(requestRulesDialog(panel), /Alternatives must use the same variable names/);
+assert.match(requestRulesDialog(panel), /Variable values let part of the request change each time/);
+assert.match(requestRulesDialog(panel), /Add ExtendedOpenAI function/);
+const bindingSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js", import.meta.url), "utf8");
+assert.match(bindingSource, /Value from request/);
+assert.match(bindingSource, /function_catalog/);
+assert.match(bindingSource, /Captured values:/);
 assert.match(requestRulesDialog(panel), /Rest of this conversation/);
-assert.match(requestRulesDialog(panel), /entire sequence before any action runs/);
+assert.match(requestRulesDialog(panel), /without asking the AI model/);
 assert.match(requestRulesDialog(panel), /Home Assistant sentence pattern/);
 assert.match(requestRulesDialog(panel), /Named expansions/);
 assert.match(requestRulesDialog(panel), /1\. What will you say\?/);

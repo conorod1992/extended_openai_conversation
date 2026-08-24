@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 import logging
@@ -34,17 +34,19 @@ from .guest_mode import (
 )
 from .ha_actions import async_execute_ha_actions
 from .helpers import get_model_config
-from .protected_actions import ProtectedActionRequired
+from .protected_actions import ProtectedActionRequired, async_require_protection
 
 _LOGGER = logging.getLogger(__name__)
 
-STORAGE_VERSION = 2
+STORAGE_VERSION = 3
 STORAGE_KEY_PREFIX = "extended_openai_conversation_responses.request_rules"
 MAX_RULES = 500
 MAX_PHRASES = 25
 MAX_ACTIONS = 20
 MATCH_TYPES = ("equals", "starts_with", "ends_with", "contains", "sentence_pattern")
 ACTION_TYPES = ("local_action", "model_routing")
+SLOT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+SLOT_REFERENCE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]{0,63})\}")
 ROUTING_SCOPES = ("request", "conversation")
 DEFAULT_MATCHING = {
     "word_forms": True,
@@ -85,6 +87,7 @@ class CompiledPhrase:
     normalized: str | None = None
     sentence: Sentence | None = None
     slot_lists: dict[str, SlotList] = field(default_factory=dict)
+    slot_pattern: re.Pattern[str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,12 +106,14 @@ class RequestRuleStore(Store[dict[str, Any]]):
     async def _async_migrate_func(
         self, old_major_version: int, old_minor_version: int, old_data: dict[str, Any]
     ) -> dict[str, Any]:
-        """Add editable wording groups to version-one stores."""
+        """Migrate additive Request Rule storage changes."""
         if old_major_version == 1:
             return {
                 **old_data,
                 "wording_groups": _copy_wording_groups(DEFAULT_WORDING_GROUPS),
             }
+        if old_major_version == 2:
+            return old_data
         raise NotImplementedError
 
 
@@ -296,18 +301,27 @@ class RequestRules:
             )
             for compiled in phrases:
                 if compiled.sentence is not None:
-                    context = is_match(
-                        text,
-                        compiled.sentence,
-                        slot_lists=compiled.slot_lists,
-                        expansion_rules={},
-                    )
-                    if context is None:
-                        continue
-                    slots = {
-                        entity.name: str(entity.value).strip()
-                        for entity in context.entities
-                    }
+                    if compiled.slot_pattern is not None:
+                        slot_match = compiled.slot_pattern.fullmatch(text)
+                        if slot_match is None:
+                            continue
+                        slots = {
+                            name: value.strip()
+                            for name, value in slot_match.groupdict().items()
+                        }
+                    else:
+                        context = is_match(
+                            text,
+                            compiled.sentence,
+                            slot_lists=compiled.slot_lists,
+                            expansion_rules={},
+                        )
+                        if context is None:
+                            continue
+                        slots = {
+                            entity.name: str(entity.value).strip()
+                            for entity in context.entities
+                        }
                     result = RuleMatch(rule, compiled.original, False, 100.0, slots)
                     deterministic.append(
                         (
@@ -529,6 +543,7 @@ def validate_rule(value: Any) -> dict[str, Any]:
         "matching_behavior",
         "matching",
         "order",
+        "slots",
     }
     unknown = set(value) - allowed
     if unknown:
@@ -545,12 +560,25 @@ def validate_rule(value: Any) -> dict[str, Any]:
     if match_type not in MATCH_TYPES:
         raise ValueError("unsupported match type")
     if match_type == "sentence_pattern":
-        for phrase in phrases:
-            _compile_sentence_pattern(phrase)
+        compiled_phrases = [_compile_sentence_pattern(phrase) for phrase in phrases]
+        phrase_slots = [set(item.slot_lists) for item in compiled_phrases]
+        if any(names != phrase_slots[0] for names in phrase_slots[1:]):
+            raise ValueError("all sentence variants must capture the same slots")
+        slot_names = sorted(phrase_slots[0])
+    else:
+        slot_names = []
+        if any(SLOT_REFERENCE.search(phrase) for phrase in phrases):
+            raise ValueError("variable values require Home Assistant sentence matching")
     action_type = value.get("action_type", "local_action")
     if action_type not in ACTION_TYPES:
         raise ValueError("unsupported action type")
     action = _validate_action(action_type, value.get("action", {}))
+    referenced_slots = _referenced_slots(action)
+    unknown_slots = referenced_slots - set(slot_names)
+    if unknown_slots:
+        raise ValueError(
+            "unknown captured value: " + ", ".join(sorted(unknown_slots))
+        )
     if (
         action_type == "model_routing"
         and match_type in {"equals", "sentence_pattern"}
@@ -581,6 +609,7 @@ def validate_rule(value: Any) -> dict[str, Any]:
         "matching_behavior": behavior,
         "matching": matching,
         "order": order,
+        "slots": [{"name": name} for name in slot_names],
     }
 
 
@@ -604,7 +633,7 @@ def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
             raise ValueError("actions must be a list")
         if not actions_value or len(actions_value) > MAX_ACTIONS:
             raise ValueError(f"actions must contain 1 to {MAX_ACTIONS} items")
-        actions = [_validate_ha_action(item) for item in actions_value]
+        actions = [_validate_local_action(item) for item in actions_value]
         return {
             "actions": actions,
             "success_response": _clean(
@@ -685,19 +714,121 @@ def _validate_ha_action(value: Any) -> dict[str, Any]:
     return result
 
 
+def _validate_local_action(value: Any) -> dict[str, Any]:
+    """Validate one HA or configured-function action in an ordered rule."""
+    if isinstance(value, Mapping) and value.get("type") == "function":
+        unknown = set(value) - {"type", "function", "arguments"}
+        if unknown:
+            raise ValueError("unknown function action fields: " + ", ".join(sorted(unknown)))
+        function_name = _clean(value.get("function"), 120, "function")
+        arguments = value.get("arguments", {})
+        if not isinstance(arguments, Mapping):
+            raise ValueError("function arguments must be an object")
+        normalized_arguments: dict[str, Any] = {}
+        for name, binding in arguments.items():
+            if not isinstance(name, str) or not SLOT_NAME.fullmatch(name):
+                raise ValueError("function argument names must be simple identifiers")
+            if not isinstance(binding, Mapping):
+                normalized_arguments[name] = {"source": "fixed", "value": binding}
+                continue
+            source = binding.get("source", "fixed")
+            if source == "slot":
+                if set(binding) != {"source", "slot"}:
+                    raise ValueError("slot arguments need only source and slot")
+                slot = binding.get("slot")
+                if not isinstance(slot, str) or not SLOT_NAME.fullmatch(slot):
+                    raise ValueError("slot argument must name a captured value")
+                normalized_arguments[name] = {"source": "slot", "slot": slot}
+            elif source == "fixed":
+                if set(binding) - {"source", "value"}:
+                    raise ValueError("fixed arguments need only source and value")
+                normalized_arguments[name] = {
+                    "source": "fixed",
+                    "value": binding.get("value"),
+                }
+            else:
+                raise ValueError("function argument source must be fixed or slot")
+        return {
+            "type": "function",
+            "function": function_name,
+            "arguments": normalized_arguments,
+        }
+    if isinstance(value, Mapping) and value.get("type") == "home_assistant":
+        value = {key: item for key, item in value.items() if key != "type"}
+    return _validate_ha_action(value)
+
+
+def _referenced_slots(value: Any) -> set[str]:
+    """Collect deterministic slot references from a persisted rule value."""
+    if isinstance(value, str):
+        return set(SLOT_REFERENCE.findall(value))
+    if isinstance(value, Mapping):
+        if value.get("source") == "slot" and isinstance(value.get("slot"), str):
+            return {str(value["slot"])}
+        if value.get("value_from") == "slot" and isinstance(value.get("slot"), str):
+            return {str(value["slot"])}
+        result: set[str] = set()
+        for item in value.values():
+            result.update(_referenced_slots(item))
+        return result
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        result = set()
+        for item in value:
+            result.update(_referenced_slots(item))
+        return result
+    return set()
+
+
+def resolve_slot_values(value: Any, slots: Mapping[str, str]) -> Any:
+    """Resolve safe slot references recursively without evaluating templates."""
+    if isinstance(value, str):
+        return SLOT_REFERENCE.sub(lambda match: slots[match.group(1)], value)
+    if isinstance(value, Mapping):
+        if set(value) == {"value_from", "slot"} and value.get("value_from") == "slot":
+            return slots[str(value["slot"])]
+        return {key: resolve_slot_values(item, slots) for key, item in value.items()}
+    if isinstance(value, list):
+        return [resolve_slot_values(item, slots) for item in value]
+    return value
+
+
+def resolve_function_arguments(
+    arguments: Mapping[str, Mapping[str, Any]], slots: Mapping[str, str]
+) -> dict[str, Any]:
+    """Resolve fixed and request-backed function arguments."""
+    return {
+        name: (
+            slots[str(binding["slot"])]
+            if binding.get("source") == "slot"
+            else binding.get("value")
+        )
+        for name, binding in arguments.items()
+    }
+
+
 def canonical_action_signature(actions: Sequence[Mapping[str, Any]]) -> str:
     """Stable action identity for future Suggested Local Commands comparisons."""
     import json
 
-    normalized = [
-        {
-            "domain": action["domain"],
-            "service": action["service"],
-            "target": action.get("target", {}),
-            "data": action.get("data", {}),
-        }
-        for action in actions
-    ]
+    normalized = []
+    for action in actions:
+        if action.get("type") == "function":
+            normalized.append(
+                {
+                    "type": "function",
+                    "function": action["function"],
+                    "arguments": action.get("arguments", {}),
+                }
+            )
+        else:
+            normalized.append(
+                {
+                    "domain": action["domain"],
+                    "service": action["service"],
+                    "target": action.get("target", {}),
+                    "data": action.get("data", {}),
+                }
+            )
     return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
 
 
@@ -725,6 +856,7 @@ async def async_evaluate_rule(
     configured_model: str = DEFAULT_CHAT_MODEL,
     guest_policy: GuestCapabilityPolicy | None = None,
     timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+    function_executor: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
 ) -> RuleEvaluation | None:
     """Match and apply local side effects or model-routing state."""
     match = rules.match(text)
@@ -734,6 +866,11 @@ async def async_evaluate_rule(
     action = rule["action"]
     if rule["action_type"] == "local_action":
         policy = guest_policy or GuestCapabilityPolicy.unrestricted()
+        resolved_actions = [
+            resolve_slot_values(configured_action, match.slots)
+            for configured_action in action["actions"]
+            if configured_action.get("type") != "function"
+        ]
         if policy.guest_active:
             try:
                 allowed = all(
@@ -744,7 +881,7 @@ async def async_evaluate_rule(
                         control=True,
                         require_entity_selector=True,
                     )
-                    for configured_action in action["actions"]
+                    for configured_action in resolved_actions
                 )
             except Exception:
                 _LOGGER.exception(
@@ -754,13 +891,33 @@ async def async_evaluate_rule(
             if not allowed:
                 return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE)
         try:
-            await async_execute_ha_actions(hass, action["actions"])
+            await async_require_protection(resolved_actions)
+            for configured_action in action["actions"]:
+                if configured_action.get("type") == "function":
+                    if function_executor is None:
+                        raise HomeAssistantError("Function actions are unavailable")
+                    await function_executor(
+                        configured_action["function"],
+                        resolve_function_arguments(
+                            configured_action["arguments"], match.slots
+                        ),
+                    )
+                else:
+                    await async_execute_ha_actions(
+                        hass, [resolve_slot_values(configured_action, match.slots)]
+                    )
         except ProtectedActionRequired:
             raise
         except Exception:
             _LOGGER.exception("Request Rule local action failed for %s", rule["id"])
-            return RuleEvaluation(match, True, action["failure_response"])
-        return RuleEvaluation(match, True, action["success_response"])
+            return RuleEvaluation(
+                match,
+                True,
+                resolve_slot_values(action["failure_response"], match.slots),
+            )
+        return RuleEvaluation(
+            match, True, resolve_slot_values(action["success_response"], match.slots)
+        )
 
     if action["reset"]:
         runtime.reset(session_id)
@@ -867,7 +1024,51 @@ def _compile_sentence_pattern(pattern: str) -> CompiledPhrase:
         name: WildcardSlotList(name=name)
         for name in dict.fromkeys(sentence.list_names())
     }
-    return CompiledPhrase(pattern, sentence=sentence, slot_lists=slot_lists)
+    return CompiledPhrase(
+        pattern,
+        sentence=sentence,
+        slot_lists=slot_lists,
+        slot_pattern=_compile_basic_slot_pattern(pattern) if slot_lists else None,
+    )
+
+
+def _compile_basic_slot_pattern(pattern: str) -> re.Pattern[str]:
+    """Compile the supported Hassil subset with non-greedy named captures."""
+
+    def compile_part(value: str) -> str:
+        result = ""
+        index = 0
+        while index < len(value):
+            char = value[index]
+            if char in "[{(":
+                closing = {"[": "]", "{": "}", "(": ")"}[char]
+                end = value.find(closing, index + 1)
+                if end < 0:
+                    raise ValueError("invalid sentence pattern")
+                inner = value[index + 1 : end]
+                if char == "{":
+                    if not SLOT_NAME.fullmatch(inner):
+                        raise ValueError("invalid captured value name")
+                    result += f"(?P<{inner}>.+?)"
+                elif char == "[":
+                    result += f"(?:{compile_part(inner)})?"
+                else:
+                    alternatives = inner.split("|")
+                    result += "(?:" + "|".join(
+                        compile_part(item) for item in alternatives
+                    ) + ")"
+                index = end + 1
+                continue
+            if char.isspace():
+                while index + 1 < len(value) and value[index + 1].isspace():
+                    index += 1
+                result += r"\s+"
+            else:
+                result += re.escape(char)
+            index += 1
+        return result
+
+    return re.compile(r"\s*" + compile_part(pattern) + r"\s*", re.IGNORECASE)
 
 
 def _singularize(token: str) -> str:

@@ -554,6 +554,9 @@ class ExtendedOpenAIAgentEntity(
                             ),
                             request_policy,
                             timeout_minutes,
+                            lambda name, arguments: self._async_execute_request_rule_function(
+                                name, arguments, llm_context
+                            ),
                         )
                         if self._request_rules is not None
                         and self._request_rule_runtime is not None
@@ -568,6 +571,13 @@ class ExtendedOpenAIAgentEntity(
                         chat_log,
                         f"Sorry, this Request Rule cannot be used: {err}",
                     )
+                metadata = _PROCESS_METADATA.get()
+                if metadata is not None and evaluation is not None:
+                    metadata["matched_rule"] = {
+                        "id": evaluation.match.rule["id"],
+                        "name": evaluation.match.rule["name"],
+                    }
+                    metadata["captured_values"] = dict(evaluation.match.slots)
                 if evaluation is not None and evaluation.consume:
                     result = self._local_rule_result(
                         user_input,
@@ -783,6 +793,40 @@ class ExtendedOpenAIAgentEntity(
             conversation_id=chat_log.conversation_id,
             continue_conversation=False,
         )
+
+    async def _async_execute_request_rule_function(
+        self,
+        function_name: str,
+        arguments: dict[str, Any],
+        llm_context: llm.LLMContext | None,
+    ) -> Any:
+        """Execute a configured function through the model-tool security seam."""
+        current_tools = self._get_configured_function_tools()
+        function_tool = next(
+            (
+                tool
+                for tool in current_tools
+                if tool.get("spec", {}).get("name") == function_name
+            ),
+            None,
+        )
+        if function_tool is None:
+            raise HomeAssistantError(f"Function Tool `{function_name}` is unavailable")
+        result = await self._execute_function_tool(
+            function_tool,
+            llm.ToolInput(
+                id="request_rule",
+                tool_name=function_name,
+                tool_args=arguments,
+                external=True,
+            ),
+            llm_context,
+            self._get_exposed_entities(),
+        )
+        result_text = str(result.tool_result.get("result", ""))
+        if GUEST_MODE_UNAVAILABLE in result_text:
+            raise HomeAssistantError(GUEST_MODE_UNAVAILABLE)
+        return result
 
     def _build_system_prompt(
         self,

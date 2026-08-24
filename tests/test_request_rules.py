@@ -11,6 +11,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
 )
+from custom_components.extended_openai_conversation_responses.function_execution import (
+    validate_function_arguments,
+)
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GUEST_MODE_UNAVAILABLE,
     GuestCapabilityPolicy,
@@ -176,6 +179,12 @@ async def test_storage_v1_migration_seeds_wording_groups() -> None:
     assert migrated["wording_groups"] == list(DEFAULT_WORDING_GROUPS)
 
 
+async def test_storage_v2_migration_is_additive() -> None:
+    store = object.__new__(RequestRuleStore)
+    old = {"defaults": dict(DEFAULT_MATCHING), "rules": [local_rule()]}
+    assert await store._async_migrate_func(2, 0, old) == old
+
+
 async def test_hassil_pattern_supports_optional_alternatives_and_slots() -> None:
     rules = await manager(
         local_rule(
@@ -187,6 +196,36 @@ async def test_hassil_pattern_supports_optional_alternatives_and_slots() -> None
     assert match is not None
     assert match.fuzzy is False
     assert match.slots == {"room": "kitchen"}
+
+
+async def test_multiword_multiple_slots_and_sentence_variants() -> None:
+    rules = await manager(
+        local_rule(
+            phrases=["Add {item} to {list_name}", "Put {item} on {list_name}"],
+            match_type="sentence_pattern",
+        )
+    )
+    first = rules.match("Add semi skimmed milk to weekly shopping")
+    second = rules.match("Put oat milk on weekend list")
+    assert first is not None and first.slots == {
+        "item": "semi skimmed milk",
+        "list_name": "weekly shopping",
+    }
+    assert second is not None and second.slots == {
+        "item": "oat milk",
+        "list_name": "weekend list",
+    }
+
+
+def test_unknown_slot_reference_and_mismatched_variants_are_rejected() -> None:
+    rule = local_rule(phrases=["Remember {fact}"], match_type="sentence_pattern")
+    rule["action"]["success_response"] = "Saved {missing}"
+    with pytest.raises(ValueError, match="unknown captured value: missing"):
+        validate_rule(rule)
+    rule["action"]["success_response"] = "Saved"
+    rule["phrases"] = ["Remember {fact}", "Save {item}"]
+    with pytest.raises(ValueError, match="same slots"):
+        validate_rule(rule)
 
 
 async def test_hassil_sentence_pattern_bypasses_text_normalization() -> None:
@@ -281,6 +320,25 @@ async def test_crud_duplicate_and_persistence_round_trip() -> None:
     assert store.saves >= 4
 
 
+async def test_slot_function_rule_persistence_round_trip() -> None:
+    store = MemoryStore()
+    rules = RequestRules(store)
+    await rules.async_initialize()
+    rule = local_rule(phrases=["Remember {fact}"], match_type="sentence_pattern")
+    rule["action"]["actions"] = [
+        {
+            "type": "function",
+            "function": "remember",
+            "arguments": {"fact": {"source": "slot", "slot": "fact"}},
+        }
+    ]
+    created = await rules.async_create(rule)
+    assert created["slots"] == [{"name": "fact"}]
+    reloaded = RequestRules(store)
+    await reloaded.async_initialize()
+    assert reloaded.snapshot()["rules"][0] == created
+
+
 async def test_backward_compatibility_ignores_invalid_stored_rules() -> None:
     rules = RequestRules(
         MemoryStore({"rules": [{"old": "unsupported"}], "defaults": {"bad": True}})
@@ -324,6 +382,147 @@ async def test_multiple_local_actions_and_failure_response(fail) -> None:
     assert result is not None and result.consume
     assert result.response == ("Failed safely" if fail else "Done")
     assert len(services.calls) == (1 if fail else 2)
+
+
+async def test_slots_resolve_in_action_data_response_and_multiple_actions() -> None:
+    rule = local_rule(phrases=["Remember {fact}"], match_type="sentence_pattern")
+    rule["action"]["actions"] = [
+        {
+            "domain": "input_text",
+            "service": "set_value",
+            "target": {"entity_id": "input_text.memory"},
+            "data": {"value": {"value_from": "slot", "slot": "fact"}},
+        },
+        {
+            "domain": "notify",
+            "service": "send_message",
+            "target": {},
+            "data": {"message": "Remembered {fact}"},
+        },
+    ]
+    rule["action"]["success_response"] = "I will remember {fact}."
+    services = FakeServices()
+    result = await async_evaluate_rule(
+        SimpleNamespace(services=services),
+        await manager(rule),
+        RequestRuleRuntime(),
+        "Remember buy oat milk tomorrow",
+        "conversation:slots",
+    )
+    assert result is not None
+    assert result.response == "I will remember buy oat milk tomorrow."
+    assert services.calls[0][2]["service_data"]["value"] == "buy oat milk tomorrow"
+    assert services.calls[1][2]["service_data"]["message"] == (
+        "Remembered buy oat milk tomorrow"
+    )
+
+
+async def test_direct_function_action_fixed_and_slot_arguments_without_provider() -> None:
+    rule = local_rule(
+        phrases=["Add {item} to {list_name}"], match_type="sentence_pattern"
+    )
+    rule["action"]["actions"] = [
+        {
+            "type": "function",
+            "function": "add_list_item",
+            "arguments": {
+                "item": {"source": "slot", "slot": "item"},
+                "list": {"source": "fixed", "value": "Shopping"},
+                "spoken_list": {"source": "slot", "slot": "list_name"},
+            },
+        }
+    ]
+    calls = []
+
+    async def execute(name, arguments):
+        calls.append((name, arguments))
+        return "ok"
+
+    result = await async_evaluate_rule(
+        SimpleNamespace(),
+        await manager(rule),
+        RequestRuleRuntime(),
+        "Add semi skimmed milk to weekly groceries",
+        "conversation:function",
+        function_executor=execute,
+    )
+    assert result is not None and result.response == "Done"
+    assert calls == [
+        (
+            "add_list_item",
+            {
+                "item": "semi skimmed milk",
+                "list": "Shopping",
+                "spoken_list": "weekly groceries",
+            },
+        )
+    ]
+
+
+async def test_direct_function_error_uses_local_failure_response() -> None:
+    rule = local_rule(phrases=["Remember {fact}"], match_type="sentence_pattern")
+    rule["action"]["actions"] = [
+        {
+            "type": "function",
+            "function": "remember",
+            "arguments": {"fact": {"source": "slot", "slot": "fact"}},
+        }
+    ]
+
+    async def fail(_name, _arguments):
+        raise HomeAssistantError("function failed")
+
+    result = await async_evaluate_rule(
+        SimpleNamespace(),
+        await manager(rule),
+        RequestRuleRuntime(),
+        "Remember the blue bin is Tuesday",
+        "conversation:function-error",
+        function_executor=fail,
+    )
+    assert result is not None and result.response == "Failed safely"
+
+
+def test_shared_function_argument_validation_common_schema_types() -> None:
+    spec = {
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "count": {"type": "integer"},
+                "ratio": {"type": "number"},
+                "enabled": {"type": "boolean"},
+                "mode": {"type": "string", "enum": ["one", "two"]},
+                "items": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["text", "count"],
+            "additionalProperties": False,
+        }
+    }
+    assert validate_function_arguments(
+        spec,
+        {
+            "text": "hello",
+            "count": "2",
+            "ratio": "1.5",
+            "enabled": "true",
+            "mode": "one",
+            "items": "milk, bread",
+        },
+    ) == {
+        "text": "hello",
+        "count": 2,
+        "ratio": 1.5,
+        "enabled": True,
+        "mode": "one",
+        "items": ["milk", "bread"],
+    }
+    with pytest.raises(HomeAssistantError, match="Missing required"):
+        validate_function_arguments(spec, {"text": "hello"})
+    with pytest.raises(HomeAssistantError, match="one of its choices"):
+        validate_function_arguments(
+            spec, {"text": "hello", "count": 1, "mode": "bad"}
+        )
 
 
 async def test_guest_mode_prevalidates_entire_local_action_sequence(
