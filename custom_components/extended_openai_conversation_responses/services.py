@@ -601,11 +601,15 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             plain = speech.get("plain", {})
             if isinstance(plain, Mapping):
                 response_text = str(plain.get("speech", ""))
-        return {
+        response: dict[str, Any] = {
             "response": response_text,
             "conversation_id": result.conversation_id,
             "handled_locally": bool(metadata.get("handled_locally")),
         }
+        if metadata.get("matched_rule") is not None:
+            response["matched_rule"] = metadata["matched_rule"]
+            response["captured_values"] = metadata.get("captured_values", {})
+        return response
 
     async def guest_mode_disable(call: ServiceCall) -> ServiceResponse:
         """End or cancel Guest Mode from a trusted HA action."""

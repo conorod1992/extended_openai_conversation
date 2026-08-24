@@ -17,7 +17,7 @@ The editor follows the way a command is usually designed:
 
 ## Local commands
 
-A **Local command** runs one or more Home Assistant actions in order and does not make an OpenAI/API call. Select an action by its `domain.action` name, then choose an entity, device, or area through Home Assistant's native selectors. Fields published by the selected service, such as brightness, temperature, media, or a select option, appear as friendly controls when Home Assistant provides selector metadata.
+A **Local command** runs one or more Home Assistant actions or enabled ExtendedOpenAI functions in order and does not make an OpenAI/API call. Select an action by its `domain.action` name, then choose an entity, device, or area through Home Assistant's native selectors. Fields published by the selected service, such as brightness, temperature, media, or a select option, appear as friendly controls when Home Assistant provides selector metadata.
 
 Existing `target` and `data` values are preserved when a rule is edited. **Advanced JSON** is a lossless fallback for service data or target keys that the friendly editor does not expose.
 
@@ -66,7 +66,13 @@ For example:
 [please ](turn|switch) {room} lights on
 ```
 
-This matches phrases such as `turn kitchen lights on` and captures `room = kitchen`. Captured slots are retained in the internal match result for future use, but this version does not substitute them into action targets or data.
+This matches phrases such as `turn kitchen lights on` and captures `room = kitchen`. Choose **Value from request** for supported action/function fields, or include `{room}` in the local response. Text substitution is deterministic and does not execute Jinja.
+
+## Function actions
+
+A rule can call an enabled Function Tool directly without sending the request to the AI provider. The function selector comes from the current agent's configured tools. Selecting one shows common string, number, integer, boolean, enum, and simple-array inputs from its existing schema. Each input can be a fixed value or a captured request value.
+
+For example, use `Show {entity_id} attributes`, select the existing `get_attributes` function, and set `entity_id` to **Value from request → entity_id**. Direct execution uses the same implementation, argument validation, current enabled state, Guest Mode policy, and entity-access checks as a model-initiated call.
 
 Named expansion references such as `<device>` are intentionally rejected because Request Rules do not configure a named-expansion catalogue. Sentence-pattern matching is a separate exact grammar path: fuzzy matching, wording alternatives, and word-form normalization do not apply.
 

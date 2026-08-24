@@ -238,6 +238,12 @@ response_variable: result
 
 When more than one Extended OpenAI agent exists, select `agent_id`. Optional `conversation_id`, `device_id`, `satellite_id`, and `language` fields preserve available context. Response data contains `response`, `conversation_id`, and `handled_locally`. The Request Rules page also has a **Test request** box that uses this real path; testing can perform Home Assistant actions and is not a dry run.
 
+### Request Rule variable values and functions
+
+Use a Home Assistant sentence pattern such as `Add {item} to my shopping list` to capture the changing part of a request. Here `{item}` is a variable value: saying “Add semi skimmed milk to my shopping list” captures `item` as `semi skimmed milk`. Choose **Value from request** in supported Home Assistant action or function fields, or include `{item}` in the local success/failure response. Substitution is deterministic and local; Request Rules do not run Jinja or ask the model to interpret values.
+
+A local Request Rule can also call any enabled Function Tool directly, without an AI/provider request. For example, select the existing `get_attributes` function for `Show {entity_id} attributes`, then set its `entity_id` input to **Value from request → entity_id**. Selecting a function automatically shows its common string, number, integer, boolean, enum, and simple-array inputs. Each input can use a fixed value or a captured request value. Execution uses the same function implementation, input validation, Guest Mode policy, entity exposure, and security checks as a model tool call.
+
 ### Protected Actions
 
 Open **Extended OpenAI → Capabilities → Protected Actions**. **Ask for confirmation** helps prevent accidents. **Require PIN** blocks execution until the configured PIN is spoken or entered correctly. PIN verification is deterministic and local to Home Assistant: the PIN is stored as a salted one-way PBKDF2 hash, and neither the configured PIN nor a PIN reply is sent to the AI provider.

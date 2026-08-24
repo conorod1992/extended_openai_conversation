@@ -326,7 +326,7 @@ export const GUIDE_TOPICS = [
           "Word forms and editable wording alternatives let Extended OpenAI accept small, predictable wording differences. Fuzzy matching is a final fallback that can accept a slightly imperfect match, but it is only tried if no stricter rule matched first.",
           "Home Assistant sentence patterns are for more flexible command shapes. They use Home Assistant's Hassil sentence format: square brackets such as [please] mean optional words, brackets such as (on|off) mean one of several choices, and slots such as {room} can capture part of the sentence.",
           "Named Hassil expansions written like <expansion> are not supported here because Request Rules do not have their own expansion catalogue.",
-          "Sentence-pattern rules do not also use fuzzy matching, wording alternatives or automatic singular/plural handling. Any captured slots are recorded as part of the match, but they are not automatically inserted into the Home Assistant action data."
+          "Sentence-pattern rules do not also use fuzzy matching, wording alternatives or automatic singular/plural handling. A variable such as {item} captures the words in that part of the request and can be reused in action fields or the local response."
         ]
       },
       {
@@ -338,6 +338,16 @@ export const GUIDE_TOPICS = [
       {
         type: "p",
         text: "The normal editor helps you choose Home Assistant entities, devices, areas and actions using familiar selectors and searchable action names. It also shows any fields provided by the selected Home Assistant action. Advanced JSON is available for options that the normal editor does not expose. If you edit an existing action using the friendly editor, existing target and data values that it does not replace are kept."
+      },
+      { type: "heading", text: "Variable values" },
+      {
+        type: "p",
+        text: "Write a sentence pattern such as Add {item} to my shopping list. The words in place of {item} are captured locally and can be selected as Value from request in supported action fields, or included as {item} in the rule response. The Test request box shows the captured values. No AI model or Jinja template is used to extract or substitute them."
+      },
+      { type: "heading", text: "Calling a function directly" },
+      {
+        type: "p",
+        text: "A local rule can call an enabled ExtendedOpenAI Function Tool directly without asking the AI model first. For example, choose get_attributes for Show {entity_id} attributes and set entity_id to Value from request. Selecting a function shows its supported string, number, integer, boolean, choice and simple-list inputs. Each input can use a fixed value or a value captured from the request. Normal function validation, Guest Mode and entity-access rules still apply."
       },
       { type: "heading", text: "Safety" },
       {
