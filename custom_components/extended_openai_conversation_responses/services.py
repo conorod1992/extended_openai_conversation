@@ -47,6 +47,7 @@ from .const import (
     GITHUB_REPO_OWNER,
     GITHUB_SKILLS_BRANCH,
     GITHUB_SKILLS_PATH,
+    SERVICE_CALL_FUNCTION,
     SERVICE_DISABLE_FUNCTION_TOOLS,
     SERVICE_DOWNLOAD_SKILL,
     SERVICE_ENABLE_FUNCTION_TOOLS,
@@ -62,6 +63,7 @@ from .const import (
 from .guest_mode import async_get_guest_mode
 from .helpers import get_api_mode, get_authenticated_client, get_token_param_for_model
 from .memory import async_get_memory, memory_as_dict, memory_user_id
+from .request_rules import async_call_active_function
 
 QUERY_IMAGE_SCHEMA = vol.Schema(
     {
@@ -97,6 +99,12 @@ CHANGE_CONFIG_SCHEMA = vol.Schema(
 )
 
 RELOAD_SKILLS_SCHEMA = vol.Schema({})
+CALL_FUNCTION_SCHEMA = vol.Schema(
+    {
+        vol.Required("function"): cv.string,
+        vol.Optional("arguments", default=dict): dict,
+    }
+)
 
 DOWNLOAD_SKILL_SCHEMA = vol.Schema(
     {
@@ -620,12 +628,29 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         manager = await async_get_guest_mode(hass, entry_id, subentry_id)
         return cast(ServiceResponse, await manager.async_disable_trusted())
 
+    async def call_function(call: ServiceCall) -> ServiceResponse:
+        """Bridge a native HA script action into the active configured function."""
+        result = await async_call_active_function(
+            call.data["function"], call.data.get("arguments", {})
+        )
+        if hasattr(result, "tool_result"):
+            result = result.tool_result
+        return cast(ServiceResponse, {"result": result})
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_PROCESS,
         process,
         schema=PROCESS_SCHEMA,
         supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CALL_FUNCTION,
+        call_function,
+        schema=CALL_FUNCTION_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )
 
     hass.services.async_register(

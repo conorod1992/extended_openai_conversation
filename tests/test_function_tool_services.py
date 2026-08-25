@@ -1,12 +1,14 @@
 """Tests for administrator Function Tool state actions."""
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 import yaml
 
 from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
+    SERVICE_CALL_FUNCTION,
     SERVICE_DISABLE_FUNCTION_TOOLS,
     SERVICE_ENABLE_FUNCTION_TOOLS,
 )
@@ -93,3 +95,24 @@ async def test_enable_disable_actions_update_one_or_multiple_tools(
                 },
             )
         )
+
+
+async def test_call_function_action_uses_request_scoped_bridge(
+    hass, monkeypatch
+) -> None:
+    execute = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.services.async_call_active_function",
+        execute,
+    )
+    await async_setup_services(hass, {})
+    handler = next(
+        call.args[2]
+        for call in hass.services.async_register.call_args_list
+        if call.args[:2] == (DOMAIN, SERVICE_CALL_FUNCTION)
+    )
+    result = await handler(
+        SimpleNamespace(data={"function": "remember", "arguments": {"fact": "Tuesday"}})
+    )
+    assert result == {"result": {"ok": True}}
+    execute.assert_awaited_once_with("remember", {"fact": "Tuesday"})

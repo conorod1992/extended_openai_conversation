@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 import logging
@@ -16,8 +17,10 @@ from uuid import uuid4
 from hassil import SlotList, WildcardSlotList, is_match, parse_sentence
 from hassil.expression import Group, RuleReference, Sentence
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.script import Script, async_validate_actions_config
 from homeassistant.helpers.storage import Store
 
 from .const import (
@@ -25,27 +28,32 @@ from .const import (
     CONF_REASONING_EFFORT,
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+    DOMAIN,
     REASONING_EFFORT_OPTIONS,
+    SERVICE_CALL_FUNCTION,
 )
 from .guest_mode import (
     GUEST_MODE_UNAVAILABLE,
     GuestCapabilityPolicy,
+    GuestModeDenied,
     guest_arguments_allowed_runtime,
 )
-from .ha_actions import async_execute_ha_actions
 from .helpers import get_model_config
 
 _LOGGER = logging.getLogger(__name__)
 
-STORAGE_VERSION = 3
+STORAGE_VERSION = 4
 STORAGE_KEY_PREFIX = "extended_openai_conversation_responses.request_rules"
 MAX_RULES = 500
 MAX_PHRASES = 25
 MAX_ACTIONS = 20
+MAX_SCRIPT_NODES = 500
+MAX_SCRIPT_DEPTH = 12
 MATCH_TYPES = ("equals", "starts_with", "ends_with", "contains", "sentence_pattern")
 ACTION_TYPES = ("local_action", "model_routing")
 SLOT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
-SLOT_REFERENCE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]{0,63})\}")
+SLOT_REFERENCE = re.compile(r"(?<!\{)\{([A-Za-z_][A-Za-z0-9_]{0,63})\}(?!\})")
+JINJA_SLOT_REFERENCE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]{0,63})\s*\}\}")
 ROUTING_SCOPES = ("request", "conversation")
 DEFAULT_MATCHING = {
     "word_forms": True,
@@ -65,6 +73,10 @@ DEFAULT_WORDING_GROUPS: tuple[dict[str, Any], ...] = (
     {"canonical": "decrease", "alternatives": ["lower", "turn down"]},
 )
 SENSITIVE_DOMAINS = {"lock", "alarm_control_panel"}
+RequestRuleFunctionExecutor = Callable[[str, dict[str, Any]], Awaitable[Any]]
+_ACTIVE_FUNCTION_EXECUTOR: ContextVar[RequestRuleFunctionExecutor | None] = ContextVar(
+    "request_rule_function_executor", default=None
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +123,7 @@ class RequestRuleStore(Store[dict[str, Any]]):
                 **old_data,
                 "wording_groups": _copy_wording_groups(DEFAULT_WORDING_GROUPS),
             }
-        if old_major_version == 2:
+        if old_major_version in {2, 3}:
             return old_data
         raise NotImplementedError
 
@@ -136,6 +148,7 @@ class RequestRules:
             if self._initialized:
                 return
             stored = await self._store.async_load()
+            migrated = False
             if isinstance(stored, Mapping):
                 try:
                     self._defaults = validate_matching_settings(
@@ -153,10 +166,14 @@ class RequestRules:
                     )
                 for raw in stored.get("rules", []):
                     try:
-                        self._rules.append(validate_rule(raw))
+                        validated = validate_rule(raw)
+                        self._rules.append(validated)
+                        migrated = migrated or validated != raw
                     except ValueError as err:
                         _LOGGER.warning("Ignoring invalid stored Request Rule: %s", err)
             self._sort_and_compile()
+            if migrated:
+                await self._async_save_locked()
             self._initialized = True
 
     def snapshot(self) -> dict[str, Any]:
@@ -571,8 +588,9 @@ def validate_rule(value: Any) -> dict[str, Any]:
     action_type = value.get("action_type", "local_action")
     if action_type not in ACTION_TYPES:
         raise ValueError("unsupported action type")
-    action = _validate_action(action_type, value.get("action", {}))
-    referenced_slots = _referenced_slots(action)
+    raw_action = value.get("action", {})
+    action = _validate_action(action_type, raw_action)
+    referenced_slots = _referenced_slots(action) | _legacy_action_slots(raw_action)
     unknown_slots = referenced_slots - set(slot_names)
     if unknown_slots:
         raise ValueError("unknown captured value: " + ", ".join(sorted(unknown_slots)))
@@ -630,7 +648,7 @@ def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
             raise ValueError("actions must be a list")
         if not actions_value or len(actions_value) > MAX_ACTIONS:
             raise ValueError(f"actions must contain 1 to {MAX_ACTIONS} items")
-        actions = [_validate_local_action(item) for item in actions_value]
+        actions = _validate_script_sequence(actions_value)
         return {
             "actions": actions,
             "success_response": _clean(
@@ -695,10 +713,9 @@ def _validate_ha_action(value: Any) -> dict[str, Any]:
     domain = _clean(value.get("domain"), 64, "domain")
     service = _clean(value.get("service"), 64, "service")
     result = {
-        "domain": domain,
-        "service": service,
-        "target": dict(value.get("target") or {}),
-        "data": dict(value.get("data") or {}),
+        "action": f"{domain}.{service}",
+        "target": _migrate_slot_templates(dict(value.get("target") or {})),
+        "data": _migrate_slot_templates(dict(value.get("data") or {})),
     }
     if not re.fullmatch(r"[a-z0-9_]+", domain) or not re.fullmatch(
         r"[a-z0-9_]+", service
@@ -712,7 +729,7 @@ def _validate_ha_action(value: Any) -> dict[str, Any]:
 
 
 def _validate_local_action(value: Any) -> dict[str, Any]:
-    """Validate one HA or configured-function action in an ordered rule."""
+    """Migrate one legacy HA or configured-function action to native syntax."""
     if isinstance(value, Mapping) and value.get("type") == "function":
         unknown = set(value) - {"type", "function", "arguments"}
         if unknown:
@@ -728,7 +745,7 @@ def _validate_local_action(value: Any) -> dict[str, Any]:
             if not isinstance(name, str) or not SLOT_NAME.fullmatch(name):
                 raise ValueError("function argument names must be simple identifiers")
             if not isinstance(binding, Mapping):
-                normalized_arguments[name] = {"source": "fixed", "value": binding}
+                normalized_arguments[name] = _migrate_slot_templates(binding)
                 continue
             source = binding.get("source", "fixed")
             if source == "slot":
@@ -737,24 +754,109 @@ def _validate_local_action(value: Any) -> dict[str, Any]:
                 slot = binding.get("slot")
                 if not isinstance(slot, str) or not SLOT_NAME.fullmatch(slot):
                     raise ValueError("slot argument must name a captured value")
-                normalized_arguments[name] = {"source": "slot", "slot": slot}
+                normalized_arguments[name] = f"{{{{ {slot} }}}}"
             elif source == "fixed":
                 if set(binding) - {"source", "value"}:
                     raise ValueError("fixed arguments need only source and value")
-                normalized_arguments[name] = {
-                    "source": "fixed",
-                    "value": binding.get("value"),
-                }
+                normalized_arguments[name] = _migrate_slot_templates(
+                    binding.get("value")
+                )
             else:
                 raise ValueError("function argument source must be fixed or slot")
         return {
-            "type": "function",
-            "function": function_name,
-            "arguments": normalized_arguments,
+            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            "data": {
+                "function": function_name,
+                "arguments": normalized_arguments,
+            },
         }
     if isinstance(value, Mapping) and value.get("type") == "home_assistant":
         value = {key: item for key, item in value.items() if key != "type"}
     return _validate_ha_action(value)
+
+
+def _migrate_slot_templates(value: Any) -> Any:
+    """Translate legacy braces into Home Assistant script templates."""
+    if isinstance(value, str):
+        return SLOT_REFERENCE.sub(lambda match: f"{{{{ {match.group(1)} }}}}", value)
+    if isinstance(value, Mapping):
+        if set(value) == {"value_from", "slot"} and value.get("value_from") == "slot":
+            return f"{{{{ {value['slot']} }}}}"
+        return {key: _migrate_slot_templates(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_migrate_slot_templates(item) for item in value]
+    return value
+
+
+def _legacy_action_slots(value: Any) -> set[str]:
+    """Collect slot references only from recognizably legacy local actions."""
+    if not isinstance(value, Mapping):
+        return set()
+    actions = value.get("actions", [])
+    if not isinstance(actions, Sequence) or isinstance(actions, str):
+        return set()
+    result: set[str] = set()
+    for action in actions:
+        if not isinstance(action, Mapping) or not (
+            "domain" in action or action.get("type") in {"function", "home_assistant"}
+        ):
+            continue
+        result.update(_referenced_slots(action))
+    return result
+
+
+def _validate_script_sequence(value: Sequence[Any]) -> list[dict[str, Any]]:
+    """Validate native HA script syntax and enforce conservative size bounds."""
+    migrated = [
+        _validate_local_action(item)
+        if isinstance(item, Mapping)
+        and ("domain" in item or item.get("type") in {"function", "home_assistant"})
+        else item
+        for item in value
+    ]
+    _validate_script_complexity(migrated)
+    try:
+        cv.SCRIPT_SCHEMA(_mask_script_templates(migrated))
+    except Exception as err:
+        raise ValueError(f"invalid Home Assistant action sequence: {err}") from err
+    return cast(list[dict[str, Any]], migrated)
+
+
+def _mask_script_templates(value: Any, *, key: str | None = None) -> Any:
+    """Permit context-free schema validation while preserving stored templates."""
+    if isinstance(value, str) and ("{{" in value or "{%" in value or "{#" in value):
+        return (
+            "homeassistant.update_entity"
+            if key in {"action", "service"}
+            else "request_rule_template"
+        )
+    if isinstance(value, Mapping):
+        return {
+            item_key: _mask_script_templates(item, key=str(item_key))
+            for item_key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_mask_script_templates(item) for item in value]
+    return value
+
+
+def _validate_script_complexity(value: Any, *, depth: int = 0) -> int:
+    if depth > MAX_SCRIPT_DEPTH:
+        raise ValueError(f"action sequence exceeds maximum depth {MAX_SCRIPT_DEPTH}")
+    if isinstance(value, Mapping):
+        total = 1 + sum(
+            _validate_script_complexity(item, depth=depth + 1)
+            for item in value.values()
+        )
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        total = 1 + sum(
+            _validate_script_complexity(item, depth=depth + 1) for item in value
+        )
+    else:
+        total = 1
+    if total > MAX_SCRIPT_NODES:
+        raise ValueError(f"action sequence exceeds {MAX_SCRIPT_NODES} nodes")
+    return total
 
 
 def _referenced_slots(value: Any) -> set[str]:
@@ -809,26 +911,7 @@ def canonical_action_signature(actions: Sequence[Mapping[str, Any]]) -> str:
     """Stable action identity for future Suggested Local Commands comparisons."""
     import json
 
-    normalized = []
-    for action in actions:
-        if action.get("type") == "function":
-            normalized.append(
-                {
-                    "type": "function",
-                    "function": action["function"],
-                    "arguments": action.get("arguments", {}),
-                }
-            )
-        else:
-            normalized.append(
-                {
-                    "domain": action["domain"],
-                    "service": action["service"],
-                    "target": action.get("target", {}),
-                    "data": action.get("data", {}),
-                }
-            )
-    return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+    return json.dumps(actions, sort_keys=True, separators=(",", ":"))
 
 
 def rule_has_sensitive_actions(rule: Mapping[str, Any]) -> bool:
@@ -837,13 +920,92 @@ def rule_has_sensitive_actions(rule: Mapping[str, Any]) -> bool:
         return False
     actions = cast(Mapping[str, Any], rule.get("action", {})).get("actions", [])
     for action in actions:
-        domain = action.get("domain")
-        service = str(action.get("service", "")).casefold()
+        service_name = str(action.get("action", action.get("service", "")))
+        domain, _, service = service_name.casefold().partition(".")
         if domain in SENSITIVE_DOMAINS or (
             domain == "cover" and any(term in service for term in ("open", "close"))
         ):
             return True
     return False
+
+
+async def async_call_active_function(function: str, arguments: Any) -> Any:
+    """Execute an integration function in the active Request Rule context."""
+    executor = _ACTIVE_FUNCTION_EXECUTOR.get()
+    if executor is None:
+        raise HomeAssistantError(
+            "This action is only available while a Request Rule is running"
+        )
+    if not isinstance(arguments, Mapping):
+        raise HomeAssistantError("Function arguments must be an object")
+    return await executor(function, dict(arguments))
+
+
+def _resolve_guest_slot_templates(value: Any, slots: Mapping[str, str]) -> Any:
+    """Resolve only captured-value templates for Guest Mode preauthorization."""
+    if isinstance(value, str):
+        rendered = JINJA_SLOT_REFERENCE.sub(lambda match: slots[match.group(1)], value)
+        if "{{" in rendered or "{%" in rendered or "{#" in rendered:
+            raise GuestModeDenied(GUEST_MODE_UNAVAILABLE)
+        return rendered
+    if isinstance(value, Mapping):
+        return {
+            key: _resolve_guest_slot_templates(item, slots)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_resolve_guest_slot_templates(item, slots) for item in value]
+    return value
+
+
+def _guest_script_allowed(
+    hass: HomeAssistant,
+    sequence: Sequence[Mapping[str, Any]],
+    policy: GuestCapabilityPolicy,
+) -> bool:
+    """Preauthorize every static service action across all native branches."""
+    for item in sequence:
+        action_name = item.get("action", item.get("service"))
+        if action_name is not None:
+            if not isinstance(action_name, str):
+                return False
+            if action_name == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}":
+                continue
+            if not guest_arguments_allowed_runtime(
+                hass,
+                item,
+                policy,
+                control=True,
+                require_entity_selector=True,
+            ):
+                return False
+        elif any(key in item for key in ("device_id", "event", "event_type")):
+            # Device and event actions do not provide an entity-scoped boundary.
+            return False
+        for nested in item.values():
+            if (
+                isinstance(nested, list)
+                and nested
+                and all(isinstance(child, Mapping) for child in nested)
+            ):
+                if not _guest_script_allowed(
+                    hass, cast(Sequence[Mapping[str, Any]], nested), policy
+                ):
+                    return False
+            elif isinstance(nested, Mapping):
+                for candidate in nested.values():
+                    if (
+                        isinstance(candidate, list)
+                        and candidate
+                        and all(isinstance(child, Mapping) for child in candidate)
+                        and not _guest_script_allowed(
+                            hass,
+                            cast(Sequence[Mapping[str, Any]], candidate),
+                            policy,
+                        )
+                    ):
+                        return False
+    return True
 
 
 async def async_evaluate_rule(
@@ -856,6 +1018,7 @@ async def async_evaluate_rule(
     guest_policy: GuestCapabilityPolicy | None = None,
     timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     function_executor: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
+    context: Context | None = None,
 ) -> RuleEvaluation | None:
     """Match and apply local side effects or model-routing state."""
     match = rules.match(text)
@@ -865,23 +1028,12 @@ async def async_evaluate_rule(
     action = rule["action"]
     if rule["action_type"] == "local_action":
         policy = guest_policy or GuestCapabilityPolicy.unrestricted()
-        resolved_actions = [
-            resolve_slot_values(configured_action, match.slots)
-            for configured_action in action["actions"]
-            if configured_action.get("type") != "function"
-        ]
         if policy.guest_active:
             try:
-                allowed = all(
-                    guest_arguments_allowed_runtime(
-                        hass,
-                        configured_action,
-                        policy,
-                        control=True,
-                        require_entity_selector=True,
-                    )
-                    for configured_action in resolved_actions
+                guest_actions = _resolve_guest_slot_templates(
+                    action["actions"], match.slots
                 )
+                allowed = _guest_script_allowed(hass, guest_actions, policy)
             except Exception:
                 _LOGGER.exception(
                     "Guest authorization failed for Request Rule %s", rule["id"]
@@ -890,20 +1042,31 @@ async def async_evaluate_rule(
             if not allowed:
                 return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE)
         try:
-            for configured_action in action["actions"]:
-                if configured_action.get("type") == "function":
-                    if function_executor is None:
-                        raise HomeAssistantError("Function actions are unavailable")
-                    await function_executor(
-                        configured_action["function"],
-                        resolve_function_arguments(
-                            configured_action["arguments"], match.slots
-                        ),
-                    )
-                else:
-                    await async_execute_ha_actions(
-                        hass, [resolve_slot_values(configured_action, match.slots)]
-                    )
+            schema_actions = cv.SCRIPT_SCHEMA(action["actions"])
+            validated_actions = await async_validate_actions_config(
+                hass, schema_actions
+            )
+            script = Script(
+                hass,
+                validated_actions,
+                f"Request Rule {rule['id']}",
+                DOMAIN,
+                log_exceptions=False,
+            )
+            token = _ACTIVE_FUNCTION_EXECUTOR.set(function_executor)
+            try:
+                await script.async_run(
+                    {
+                        **match.slots,
+                        "request": {"slots": dict(match.slots)},
+                    },
+                    context,
+                )
+            finally:
+                _ACTIVE_FUNCTION_EXECUTOR.reset(token)
+                await script.async_unload()
+        except GuestModeDenied:
+            return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE)
         except Exception:
             _LOGGER.exception("Request Rule local action failed for %s", rule["id"])
             return RuleEvaluation(

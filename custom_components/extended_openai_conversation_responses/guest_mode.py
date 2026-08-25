@@ -8,6 +8,7 @@ import logging
 from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import (
     device_registry as dr,
     entity_registry as er,
@@ -57,6 +58,7 @@ _LOGGER = logging.getLogger(__name__)
 GUEST_MODE_STORAGE_VERSION = 1
 GUEST_MODE_STORAGE_PREFIX = f"{DOMAIN}.guest_mode"
 GUEST_MODE_UNAVAILABLE = "This capability is unavailable in Guest Mode."
+EXECUTION_FAILED = "The requested action could not be completed."
 GUEST_MODE_PROMPT = """
 ## Guest Mode
 Guest Mode is active. You have access only to capabilities explicitly permitted
@@ -66,6 +68,28 @@ Mode. Do not reveal what the owner normally has access to.
 """
 
 _MANAGERS = f"{DOMAIN}.guest_mode_managers"
+
+
+class GuestModeDenied(HomeAssistantError):
+    """Raised when Guest Mode policy denies an otherwise valid action."""
+
+
+def guest_mode_denial_result() -> dict[str, str]:
+    """Return the stable, model-visible Guest Mode denial result."""
+    return {
+        "status": "denied",
+        "reason": "guest_mode",
+        "error": GUEST_MODE_UNAVAILABLE,
+    }
+
+
+def execution_failure_result() -> dict[str, str]:
+    """Return a generic result without leaking private exception details."""
+    return {
+        "status": "error",
+        "reason": "execution_failed",
+        "error": EXECUTION_FAILED,
+    }
 
 
 @dataclass(slots=True, frozen=True)

@@ -60,7 +60,7 @@ export function renderRequestRules(panel) {
   return `${renderRequestRulesLegacy(panel).replace("Most rules inherit these defaults. Strict matches always win over fuzzy matches.", "These settings apply to rules unless a rule has its own custom matching settings. Normal matches are always preferred before fuzzy matching is tried.")}<section class="content-card"><h2>Test a request</h2><p>Send text through this agent's real processing path, just like the <code>extended_openai_conversation_responses.process</code> action.</p><div class="notice"><strong>Testing a request can perform Home Assistant actions.</strong><p>This is a real request, not a dry run.</p></div><div class="search-row"><input id="rule-test-text" type="text" placeholder="Turn off the kitchen light" aria-label="Request to test"><button type="button" id="rule-test">Process request</button></div><pre id="rule-test-result" aria-live="polite"></pre></section>`;
 }
 
-export function requestRulesDialog() {
+function requestRulesDialogLegacy() {
   return `<dialog id="rule-dialog" class="editor-dialog wide request-rule-dialog" aria-labelledby="rule-dialog-title"><form id="rule-form"><div class="dialog-header"><h2 id="rule-dialog-title">Create Request Rule</h2><button type="button" class="icon rule-close" aria-label="Close">×</button></div><div class="dialog-body"><div class="form-grid"><label>Rule name<input id="rule-name" required maxlength="120" placeholder="Shopping list"></label><label class="toggle"><span>Enabled</span><input id="rule-enabled-edit" type="checkbox" checked></label></div><section><h3>1. What will you say?</h3><label>Trigger phrases or patterns<textarea id="rule-phrases" required placeholder="Add {item} to my shopping list"></textarea><small>Put each alternative on a new line. Alternatives must use the same variable names.</small></label><div id="rule-slot-help" class="notice" hidden><strong>Variable values</strong><p>Variable values let part of the request change each time. You can use the captured value in actions or responses.</p><p id="rule-slot-list"></p></div><label>How should it match?<select id="rule-match"><option value="equals">Equals</option><option value="starts_with">Starts with</option><option value="ends_with">Ends with</option><option value="contains">Contains</option><option value="sentence_pattern">Home Assistant sentence pattern</option></select></label><div id="sentence-pattern-help" class="notice" hidden><strong>Sentence-pattern syntax</strong><p>Use <code>[optional words]</code>, <code>(one|two)</code>, and variable values such as <code>{room}</code>. Named expansions such as <code>&lt;name&gt;</code> are not supported.</p></div></section><section><h3>2. What should happen?</h3><label>Behaviour<select id="rule-action-type"><option value="local_action">Run actions locally</option><option value="model_routing">Route through AI with different settings</option></select></label><div id="rule-local-config"><p class="help">Home Assistant actions and enabled ExtendedOpenAI functions run in order without asking the AI model.</p><datalist id="rule-service-list"></datalist><div id="rule-actions"></div><div class="section-actions"><button type="button" class="secondary" id="rule-action-add">Add Home Assistant action</button><button type="button" class="secondary" id="rule-function-add">Add ExtendedOpenAI function</button></div></div><div id="rule-routing-config" hidden><div class="form-grid"><label>Model<input id="rule-model" placeholder="gpt-5-mini"></label><label>Reasoning effort<select id="rule-reasoning"><option value="">Keep current</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label><label>Scope<select id="rule-scope"><option value="request">This request only</option><option value="conversation">Rest of this conversation</option></select></label><label class="toggle"><span>Reset to configured defaults</span><input id="rule-reset" type="checkbox"></label></div></div></section><section><h3>3. What should the assistant say?</h3><div id="rule-local-responses" class="form-grid"><label>Success response<input id="rule-success" value="Done"><small>You can include a captured value such as <code>{item}</code>.</small></label><label>Failure response<input id="rule-failure" value="Sorry, that did not work"></label></div><label id="rule-routing-response" hidden>Acknowledgement<input id="rule-routing-success" value="Updated"></label></section><details id="rule-advanced" class="advanced-context-formatting"><summary>Advanced matching and action configuration</summary><label>Matching behaviour<select id="rule-matching-behavior"><option value="defaults">Use default settings</option><option value="custom">Customize for this rule</option></select></label>${matchingControls("rule", {word_forms:true,wording_alternatives:true,fuzzy:false,fuzzy_threshold:90}, true)}<p class="help">Sentence patterns always use Hassil grammar matching, so these controls do not apply. Advanced Home Assistant JSON can use <code>{slot}</code> in text values.</p></details><div id="rule-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" class="secondary rule-close">Cancel</button><button type="submit" id="rule-save">Save rule</button></div></form></dialog>`;
 }
 
@@ -147,7 +147,7 @@ function setupActionRow(panel, row) {
 
 const setFuzzyState = (root, prefix) => { const toggle = root.querySelector(`#${prefix}-fuzzy`), select = root.querySelector(`#${prefix}-threshold`); if (!toggle || !select) return; select.disabled = !toggle.checked; select.closest(".fuzzy-sensitivity")?.classList.toggle("is-disabled", !toggle.checked); };
 
-export function bindRequestRules(panel) {
+function bindRequestRulesLegacy(panel) {
   const root = panel.shadowRoot, q = (selector) => root.querySelector(selector), result = panel._result || {}, rules = result.rules || [];
   const refresh = () => { const local = q("#rule-action-type").value === "local_action", grammar = q("#rule-match").value === "sentence_pattern", slots = capturedSlotNames(q("#rule-phrases").value); refreshRequestRuleSlotSelectors(root, slots); q("#rule-local-config").hidden = !local; q("#rule-routing-config").hidden = local; q("#rule-local-responses").hidden = !local; q("#rule-routing-response").hidden = local; q("#sentence-pattern-help").hidden = !grammar; q("#rule-slot-help").hidden = !slots.length; q("#rule-slot-list").textContent = slots.length ? `Captured values: ${slots.join(", ")}` : ""; q("#rule-matching-behavior").disabled = grammar; q("#rule-matching-controls").hidden = grammar || q("#rule-matching-behavior").value !== "custom"; if (slots.length) q("#rule-match").value = "sentence_pattern"; if (!local && ["equals","sentence_pattern"].includes(q("#rule-match").value)) q("#rule-scope").value = "conversation"; };
   const open = (id = null) => {
@@ -180,4 +180,106 @@ export function bindRequestRules(panel) {
   const bindRemove = () => root.querySelectorAll(".wording-remove").forEach((button) => button.onclick = () => button.closest(".wording-group").remove()); bindRemove(); q("#wording-add")?.addEventListener("click", () => { const wrapper = document.createElement("div"); wrapper.className = "wording-group"; wrapper.innerHTML = `<label>Main phrase<input class="wording-canonical" maxlength="100"></label><label>Other ways to say it<input class="wording-alternatives" placeholder="Comma-separated alternatives"></label><button type="button" class="icon wording-remove" aria-label="Remove wording alternative">×</button>`; q("#wording-groups").append(wrapper); bindRemove(); }); q("#wording-save")?.addEventListener("click", async () => { const wording_groups = [...root.querySelectorAll(".wording-group")].map((row) => ({canonical:row.querySelector(".wording-canonical").value.trim(),alternatives:row.querySelector(".wording-alternatives").value.split(",").map((item) => item.trim()).filter(Boolean)})); await panel._call("request_rules", "wording_groups", {wording_groups}); await panel._loadSection(); });
   q("#rule-action-add")?.addEventListener("click", () => { const row = actionRow(panel); q("#rule-actions").append(row); setupActionRow(panel, row); }); q("#rule-function-add")?.addEventListener("click", () => q("#rule-actions").append(functionActionRow(panel))); q("#rule-action-type")?.addEventListener("change", refresh); q("#rule-match")?.addEventListener("change", refresh); q("#rule-phrases")?.addEventListener("input", refresh); q("#rule-matching-behavior")?.addEventListener("change", refresh); root.querySelectorAll(".rule-close").forEach((button) => button.addEventListener("click", () => q("#rule-dialog").close()));
   q("#rule-form")?.addEventListener("submit", async (event) => { event.preventDefault(); try { const actionType = q("#rule-action-type").value; const actions = [...q("#rule-actions").children].map((row) => { if (row.classList.contains("function-action-row")) return readFunctionAction(row); const [domain, service] = row.querySelector(".ha-service-picker").value.trim().split(".", 2); if (!domain || !service) throw new Error("Choose an action in domain.action format."); return mergeFriendlyActionValue({domain,service},row.querySelector(".ha-target-kind").value,row._targetValue,row.querySelector(".ha-advanced").value,row.dataset.originalTargetKind,row._originalTargetValue,row._friendlyDataChanges); }); const rule = {name:q("#rule-name").value,enabled:q("#rule-enabled-edit").checked,phrases:q("#rule-phrases").value.split("\n").map((item) => item.trim()).filter(Boolean),match_type:q("#rule-match").value,action_type:actionType,action:actionType === "local_action" ? {actions,success_response:q("#rule-success").value,failure_response:q("#rule-failure").value} : {model:q("#rule-model").value,reasoning_effort:q("#rule-reasoning").value,scope:q("#rule-scope").value,reset:q("#rule-reset").checked,success_response:q("#rule-routing-success").value},matching_behavior:q("#rule-matching-behavior").value,matching:{word_forms:q("#rule-word-forms").checked,wording_alternatives:q("#rule-wording").checked,fuzzy:q("#rule-fuzzy").checked,fuzzy_threshold:sensitivityValue(q("#rule-threshold").value)},order:rules.find((item) => item.id === panel._editingRuleId)?.order ?? rules.length}; await panel._call("request_rules", panel._editingRuleId ? "update" : "create", {...(panel._editingRuleId ? {rule_id:panel._editingRuleId} : {}),rule}); q("#rule-dialog").close(); await panel._loadSection(); } catch (err) { q("#rule-error").textContent = err.message || String(err); } });
+}
+
+export function requestRulesDialog() {
+  return requestRulesDialogLegacy().replace(
+    /<div id="rule-local-config">[\s\S]*?<div id="rule-routing-config"/,
+    `<div id="rule-local-config"><p class="help">Build a native Home Assistant action sequence that runs locally without asking the AI model. Conditions, delays, choose, repeat, parallel, and templates use the same editor and syntax as scripts and automations.</p><ha-selector id="rule-action-sequence"></ha-selector><div id="rule-action-slot-help" class="notice" hidden><strong>Captured values in actions</strong><p id="rule-action-slot-list"></p><p>Use a captured value as a script variable, for example <code>{{ item }}</code>. The same values are also available under <code>request.slots</code>.</p><p>To call an enabled configured function, add <code>extended_openai_conversation_responses.call_function</code> and provide its name and arguments.</p></div></div><div id="rule-routing-config"`,
+  );
+}
+
+export function bindRequestRules(panel) {
+  const root = panel.shadowRoot;
+  const q = (selector) => root.querySelector(selector);
+  const result = panel._result || {};
+  const rules = result.rules || [];
+  const actionSelector = q("#rule-action-sequence");
+  if (!actionSelector) return;
+  actionSelector.hass = panel.hass;
+  actionSelector.selector = {action:{}};
+  actionSelector.value = [];
+  actionSelector.addEventListener("value-changed", (event) => {
+    actionSelector.value = event.detail.value || [];
+  });
+
+  const refresh = () => {
+    const local = q("#rule-action-type").value === "local_action";
+    const grammar = q("#rule-match").value === "sentence_pattern";
+    const slots = capturedSlotNames(q("#rule-phrases").value);
+    q("#rule-local-config").hidden = !local;
+    q("#rule-routing-config").hidden = local;
+    q("#rule-local-responses").hidden = !local;
+    q("#rule-routing-response").hidden = local;
+    q("#sentence-pattern-help").hidden = !grammar;
+    q("#rule-slot-help").hidden = !slots.length;
+    q("#rule-slot-list").textContent = slots.length ? `Captured values: ${slots.join(", ")}` : "";
+    q("#rule-action-slot-help").hidden = !slots.length;
+    q("#rule-action-slot-list").textContent = slots.length ? slots.map((name) => `{{ ${name} }}`).join(", ") : "";
+    q("#rule-matching-behavior").disabled = grammar;
+    q("#rule-matching-controls").hidden = grammar || q("#rule-matching-behavior").value !== "custom";
+    if (slots.length) q("#rule-match").value = "sentence_pattern";
+    if (!local && ["equals", "sentence_pattern"].includes(q("#rule-match").value)) q("#rule-scope").value = "conversation";
+  };
+
+  const open = (id = null) => {
+    const rule = rules.find((item) => item.id === id);
+    panel._editingRuleId = id;
+    q("#rule-dialog-title").textContent = rule ? "Edit Request Rule" : "Create Request Rule";
+    q("#rule-name").value = rule?.name || "";
+    q("#rule-enabled-edit").checked = rule?.enabled ?? true;
+    q("#rule-phrases").value = (rule?.phrases || []).join("\n");
+    q("#rule-match").value = rule?.match_type || "equals";
+    q("#rule-action-type").value = rule?.action_type || "local_action";
+    q("#rule-success").value = rule?.action?.success_response || "Done";
+    q("#rule-failure").value = rule?.action?.failure_response || "Sorry, that did not work";
+    q("#rule-model").value = rule?.action?.model || "";
+    q("#rule-reasoning").value = rule?.action?.reasoning_effort || "";
+    q("#rule-scope").value = rule?.action?.scope || "request";
+    q("#rule-reset").checked = rule?.action?.reset || false;
+    q("#rule-routing-success").value = rule?.action?.success_response || "Updated";
+    q("#rule-matching-behavior").value = rule?.matching_behavior || "defaults";
+    q("#rule-word-forms").checked = rule?.matching?.word_forms ?? true;
+    q("#rule-wording").checked = rule?.matching?.wording_alternatives ?? true;
+    q("#rule-fuzzy").checked = rule?.matching?.fuzzy ?? false;
+    q("#rule-threshold").value = sensitivityLabel(rule?.matching?.fuzzy_threshold ?? 90);
+    actionSelector.value = rule?.action?.actions || [{action:"script.turn_on", target:{}}];
+    refresh();
+    setFuzzyState(root, "rule");
+    q("#rule-error").textContent = "";
+    q("#rule-dialog").showModal();
+  };
+
+  q("#rule-add")?.addEventListener("click", () => open());
+  q("#rule-empty-add")?.addEventListener("click", () => open());
+  q("#rule-search")?.addEventListener("input", (event) => { panel._query = event.target.value; panel._render(); });
+  root.querySelectorAll(".rule-edit").forEach((button) => button.addEventListener("click", () => open(button.dataset.id)));
+  root.querySelectorAll(".rule-duplicate").forEach((button) => button.addEventListener("click", async () => { await panel._call("request_rules", "duplicate", {rule_id:button.dataset.id}); await panel._loadSection(); }));
+  root.querySelectorAll(".rule-delete").forEach((button) => button.addEventListener("click", async () => { if (!await panel._confirm("Delete Request Rule?", "This cannot be undone.", "Delete")) return; await panel._call("request_rules", "delete", {rule_id:button.dataset.id, confirm:true}); await panel._loadSection(); }));
+  root.querySelectorAll(".rule-enabled").forEach((input) => input.addEventListener("change", async () => { const rule = rules.find((item) => item.id === input.dataset.id); await panel._call("request_rules", "update", {rule_id:rule.id, rule:{...rule, enabled:input.checked, sensitive_matching_warning:undefined}}); await panel._loadSection(true); }));
+  q("#rules-default-fuzzy")?.addEventListener("change", () => setFuzzyState(root, "rules-default"));
+  q("#rule-fuzzy")?.addEventListener("change", () => setFuzzyState(root, "rule"));
+  setFuzzyState(root, "rules-default");
+  q("#rules-default-save")?.addEventListener("click", async () => { await panel._call("request_rules", "defaults", {defaults:{word_forms:q("#rules-default-word-forms").checked, wording_alternatives:q("#rules-default-wording").checked, fuzzy:q("#rules-default-fuzzy").checked, fuzzy_threshold:sensitivityValue(q("#rules-default-threshold").value)}}); await panel._loadSection(); });
+  q("#rule-test")?.addEventListener("click", async () => { const output = q("#rule-test-result"), text = q("#rule-test-text").value.trim(); if (!text) return; output.textContent = "Processing…"; try { const response = await panel._call("request_rules", "test", {text}), captured = Object.entries(response.captured_values || {}); output.textContent = `${response.response || "(No response text)"}\nConversation ID: ${response.conversation_id || "—"}\nPath: ${response.handled_locally ? "Handled locally" : "AI provider"}${response.matched_rule ? `\nMatched rule: ${response.matched_rule.name}` : ""}${captured.length ? `\nCaptured values:\n${captured.map(([name,value]) => `${name} → ${value}`).join("\n")}` : ""}`; } catch (err) { output.textContent = err.message || String(err); } });
+  const bindRemove = () => root.querySelectorAll(".wording-remove").forEach((button) => button.onclick = () => button.closest(".wording-group").remove());
+  bindRemove();
+  q("#wording-add")?.addEventListener("click", () => { const wrapper = document.createElement("div"); wrapper.className = "wording-group"; wrapper.innerHTML = `<label>Main phrase<input class="wording-canonical" maxlength="100"></label><label>Other ways to say it<input class="wording-alternatives" placeholder="Comma-separated alternatives"></label><button type="button" class="icon wording-remove" aria-label="Remove wording alternative">×</button>`; q("#wording-groups").append(wrapper); bindRemove(); });
+  q("#wording-save")?.addEventListener("click", async () => { const wording_groups = [...root.querySelectorAll(".wording-group")].map((row) => ({canonical:row.querySelector(".wording-canonical").value.trim(), alternatives:row.querySelector(".wording-alternatives").value.split(",").map((item) => item.trim()).filter(Boolean)})); await panel._call("request_rules", "wording_groups", {wording_groups}); await panel._loadSection(); });
+  q("#rule-action-type")?.addEventListener("change", refresh);
+  q("#rule-match")?.addEventListener("change", refresh);
+  q("#rule-phrases")?.addEventListener("input", refresh);
+  q("#rule-matching-behavior")?.addEventListener("change", refresh);
+  root.querySelectorAll(".rule-close").forEach((button) => button.addEventListener("click", () => q("#rule-dialog").close()));
+  q("#rule-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const actionType = q("#rule-action-type").value;
+      const actions = actionSelector.value || [];
+      const rule = {name:q("#rule-name").value, enabled:q("#rule-enabled-edit").checked, phrases:q("#rule-phrases").value.split("\n").map((item) => item.trim()).filter(Boolean), match_type:q("#rule-match").value, action_type:actionType, action:actionType === "local_action" ? {actions, success_response:q("#rule-success").value, failure_response:q("#rule-failure").value} : {model:q("#rule-model").value, reasoning_effort:q("#rule-reasoning").value, scope:q("#rule-scope").value, reset:q("#rule-reset").checked, success_response:q("#rule-routing-success").value}, matching_behavior:q("#rule-matching-behavior").value, matching:{word_forms:q("#rule-word-forms").checked, wording_alternatives:q("#rule-wording").checked, fuzzy:q("#rule-fuzzy").checked, fuzzy_threshold:sensitivityValue(q("#rule-threshold").value)}, order:rules.find((item) => item.id === panel._editingRuleId)?.order ?? rules.length};
+      await panel._call("request_rules", panel._editingRuleId ? "update" : "create", {...(panel._editingRuleId ? {rule_id:panel._editingRuleId} : {}), rule});
+      q("#rule-dialog").close();
+      await panel._loadSection();
+    } catch (err) { q("#rule-error").textContent = err.message || String(err); }
+  });
 }

@@ -104,11 +104,15 @@ from .functions.security import (
     contains_indirect_service_call,
 )
 from .guest_mode import (
+    EXECUTION_FAILED,
     GUEST_MODE_UNAVAILABLE,
     GuestCapabilityPolicy,
+    GuestModeDenied,
     GuestModeManager,
     async_get_guest_mode,
+    execution_failure_result,
     guest_arguments_allowed_runtime,
+    guest_mode_denial_result,
     resolve_guest_policy,
 )
 from .helpers import get_exposed_entities
@@ -475,6 +479,7 @@ class ExtendedOpenAIAgentEntity(
                                     name, arguments, llm_context
                                 )
                             ),
+                            context=user_input.context,
                         )
                         if self._request_rules is not None
                         and self._request_rule_runtime is not None
@@ -732,9 +737,18 @@ class ExtendedOpenAIAgentEntity(
             llm_context,
             self._get_exposed_entities(),
         )
-        result_text = str(result.tool_result.get("result", ""))
-        if GUEST_MODE_UNAVAILABLE in result_text:
-            raise HomeAssistantError(GUEST_MODE_UNAVAILABLE)
+        result_value = result.tool_result.get("result", "")
+        try:
+            outcome = json.loads(result_value) if isinstance(result_value, str) else {}
+        except json.JSONDecodeError:
+            outcome = {}
+        if outcome.get("status") == "denied" and outcome.get("reason") == "guest_mode":
+            raise GuestModeDenied(GUEST_MODE_UNAVAILABLE)
+        if (
+            outcome.get("status") == "error"
+            and outcome.get("reason") == "execution_failed"
+        ):
+            raise HomeAssistantError(EXECUTION_FAILED)
         return result
 
     def _build_system_prompt(
@@ -1061,7 +1075,7 @@ class ExtendedOpenAIAgentEntity(
                 if policy.guest_active:
                     return self._tool_result(
                         tool_input,
-                        {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                        guest_mode_denial_result(),
                     )
                 raise FunctionNotFound(str(tool_name))
             if policy.guest_active and (
@@ -1074,7 +1088,7 @@ class ExtendedOpenAIAgentEntity(
             ):
                 return self._tool_result(
                     tool_input,
-                    {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                    guest_mode_denial_result(),
                 )
             if policy.guest_active:
                 current_groups = validate_function_groups(
@@ -1091,7 +1105,7 @@ class ExtendedOpenAIAgentEntity(
                 }:
                     return self._tool_result(
                         tool_input,
-                        {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                        guest_mode_denial_result(),
                     )
             if not function_tool_enabled(function_tool) or not function_tool_enabled(
                 current_tool
@@ -1103,21 +1117,21 @@ class ExtendedOpenAIAgentEntity(
                 if control and contains_indirect_service_call(tool_input.tool_args):
                     return self._tool_result(
                         tool_input,
-                        {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                        guest_mode_denial_result(),
                     )
                 if not self._guest_arguments_allowed_runtime(
                     tool_input.tool_args, policy, control=control
                 ):
                     return self._tool_result(
                         tool_input,
-                        {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                        guest_mode_denial_result(),
                     )
                 if control and not self._guest_arguments_allowed_runtime(
                     current_tool.get("function", {}), policy, control=True
                 ):
                     return self._tool_result(
                         tool_input,
-                        {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                        guest_mode_denial_result(),
                     )
                 guest_entities = self._filter_guest_entities(
                     get_exposed_entities(self.hass), control=control
@@ -1128,10 +1142,10 @@ class ExtendedOpenAIAgentEntity(
                 )
             except Exception:
                 if policy.guest_active:
-                    _LOGGER.warning("Guest tool execution was denied or failed")
+                    _LOGGER.warning("Guest-permitted tool execution failed")
                     return self._tool_result(
                         tool_input,
-                        {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                        execution_failure_result(),
                     )
                 raise
 

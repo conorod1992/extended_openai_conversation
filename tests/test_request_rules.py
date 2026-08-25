@@ -10,6 +10,8 @@ import pytest
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
+    DOMAIN,
+    SERVICE_CALL_FUNCTION,
 )
 from custom_components.extended_openai_conversation_responses.function_execution import (
     validate_function_arguments,
@@ -30,6 +32,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     RequestRuleRuntime,
     RequestRules,
     RequestRuleStore,
+    async_call_active_function,
     async_evaluate_rule,
     canonical_action_signature,
     normalize_text,
@@ -389,9 +392,87 @@ async def test_slot_function_rule_persistence_round_trip() -> None:
     ]
     created = await rules.async_create(rule)
     assert created["slots"] == [{"name": "fact"}]
+    assert created["action"]["actions"] == [
+        {
+            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            "data": {
+                "function": "remember",
+                "arguments": {"fact": "{{ fact }}"},
+            },
+        }
+    ]
     reloaded = RequestRules(store)
     await reloaded.async_initialize()
     assert reloaded.snapshot()["rules"][0] == created
+
+
+async def test_legacy_flat_action_is_persisted_as_native_action() -> None:
+    legacy = local_rule()
+    store = MemoryStore({"defaults": dict(DEFAULT_MATCHING), "rules": [legacy]})
+    rules = RequestRules(store)
+    await rules.async_initialize()
+    assert store.saves == 1
+    assert store.data["rules"][0]["action"]["actions"][0] == {
+        "action": "script.turn_on",
+        "target": {"entity_id": ["script.goodnight"]},
+        "data": {},
+    }
+
+
+def test_native_script_constructs_and_templates_validate() -> None:
+    rule = local_rule(phrases=["Set lights to {level}"], match_type="sentence_pattern")
+    rule["action"]["actions"] = [
+        {
+            "choose": [
+                {
+                    "conditions": [
+                        {
+                            "condition": "state",
+                            "entity_id": "binary_sensor.home",
+                            "state": "on",
+                        }
+                    ],
+                    "sequence": [
+                        {
+                            "action": "light.turn_on",
+                            "target": {"entity_id": "light.lamp"},
+                            "data": {"brightness_pct": "{{ level }}"},
+                        }
+                    ],
+                }
+            ],
+            "default": [{"delay": {"seconds": 1}}],
+        }
+    ]
+    validated = validate_rule(rule)
+    assert validated["action"]["actions"] == rule["action"]["actions"]
+    assert validated["slots"] == [{"name": "level"}]
+
+
+def test_native_script_variable_is_not_a_captured_request_slot() -> None:
+    rule = local_rule()
+    rule["action"]["actions"] = [
+        {"variables": {"level": 50}},
+        {
+            "action": "light.turn_on",
+            "data": {"brightness_pct": "{{ level }}"},
+        },
+    ]
+    validated = validate_rule(rule)
+    assert validated["slots"] == []
+    assert validated["action"]["actions"] == rule["action"]["actions"]
+
+
+def test_native_compact_jinja_round_trips_without_legacy_rewriting() -> None:
+    rule = local_rule()
+    rule["action"]["actions"] = [
+        {
+            "action": "notify.send_message",
+            "data": {"message": "{{item}}"},
+        }
+    ]
+    validated = validate_rule(rule)
+    assert validated["action"]["actions"][0]["data"]["message"] == "{{item}}"
 
 
 async def test_backward_compatibility_ignores_invalid_stored_rules() -> None:
@@ -417,8 +498,66 @@ class FakeServices:
             raise HomeAssistantError("boom")
 
 
+@pytest.fixture(autouse=True)
+def fake_ha_script(monkeypatch):
+    """Keep these unit tests focused while preserving the production Script seam."""
+
+    async def render(value, variables):
+        if hasattr(value, "async_render"):
+            return value.async_render(variables, parse_result=False)
+        if isinstance(value, str):
+            for name, item in variables.items():
+                value = value.replace(f"{{{{ {name} }}}}", str(item))
+            return value
+        if isinstance(value, dict):
+            return {key: await render(item, variables) for key, item in value.items()}
+        if isinstance(value, list):
+            return [await render(item, variables) for item in value]
+        return value
+
+    class FakeScript:
+        def __init__(self, hass, sequence, *_args, **_kwargs):
+            self.hass = hass
+            self.sequence = sequence
+
+        async def async_run(self, variables, _context=None):
+            for action in self.sequence:
+                if "variables" in action:
+                    script_variables = action["variables"]
+                    if hasattr(script_variables, "async_simple_render"):
+                        variables.update(
+                            script_variables.async_simple_render(variables)
+                        )
+                    else:
+                        variables.update(await render(script_variables, variables))
+                    continue
+                service_name = action["action"]
+                data = await render(action.get("data", {}), variables)
+                if service_name == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}":
+                    await async_call_active_function(
+                        data["function"], data["arguments"]
+                    )
+                    continue
+                domain, service = service_name.split(".", 1)
+                await self.hass.services.async_call(
+                    domain,
+                    service,
+                    target=await render(action.get("target", {}), variables),
+                    service_data=data,
+                    blocking=True,
+                )
+
+        async def async_unload(self):
+            return None
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.Script",
+        FakeScript,
+    )
+
+
 @pytest.mark.parametrize("fail", [False, True])
-async def test_multiple_local_actions_and_failure_response(fail) -> None:
+async def test_multiple_local_actions_and_failure_response(fail, hass) -> None:
     rule = local_rule()
     rule["action"]["actions"].append(
         {
@@ -430,7 +569,7 @@ async def test_multiple_local_actions_and_failure_response(fail) -> None:
     )
     rules = await manager(rule)
     services = FakeServices(fail=fail)
-    hass = SimpleNamespace(services=services)
+    hass.services = services
     result = await async_evaluate_rule(
         hass, rules, RequestRuleRuntime(), "good night", "conversation:one"
     )
@@ -439,7 +578,7 @@ async def test_multiple_local_actions_and_failure_response(fail) -> None:
     assert len(services.calls) == (1 if fail else 2)
 
 
-async def test_slots_resolve_in_action_data_response_and_multiple_actions() -> None:
+async def test_slots_resolve_in_action_data_response_and_multiple_actions(hass) -> None:
     rule = local_rule(phrases=["Remember {fact}"], match_type="sentence_pattern")
     rule["action"]["actions"] = [
         {
@@ -457,8 +596,9 @@ async def test_slots_resolve_in_action_data_response_and_multiple_actions() -> N
     ]
     rule["action"]["success_response"] = "I will remember {fact}."
     services = FakeServices()
+    hass.services = services
     result = await async_evaluate_rule(
-        SimpleNamespace(services=services),
+        hass,
         await manager(rule),
         RequestRuleRuntime(),
         "Remember buy oat milk tomorrow",
@@ -472,9 +612,49 @@ async def test_slots_resolve_in_action_data_response_and_multiple_actions() -> N
     )
 
 
-async def test_direct_function_action_fixed_and_slot_arguments_without_provider() -> (
-    None
-):
+async def test_native_template_uses_captured_slot_alongside_script_variable(
+    hass,
+) -> None:
+    rule = local_rule(
+        phrases=["Set brightness to {level}"], match_type="sentence_pattern"
+    )
+    rule["action"]["actions"] = [
+        {"variables": {"transition": 1}},
+        {
+            "action": "light.turn_on",
+            "target": {"entity_id": "light.lamp"},
+            "data": {
+                "brightness_pct": "{{ level }}",
+                "transition": "{{ transition }}",
+            },
+        },
+    ]
+    services = FakeServices()
+    hass.services = services
+    result = await async_evaluate_rule(
+        hass,
+        await manager(rule),
+        RequestRuleRuntime(),
+        "Set brightness to 60",
+        "conversation:native-slot",
+    )
+    assert result is not None and result.response == "Done"
+    assert services.calls == [
+        (
+            "light",
+            "turn_on",
+            {
+                "target": {"entity_id": ["light.lamp"]},
+                "service_data": {"brightness_pct": "60", "transition": "1"},
+                "blocking": True,
+            },
+        )
+    ]
+
+
+async def test_direct_function_action_fixed_and_slot_arguments_without_provider(
+    hass,
+) -> None:
     rule = local_rule(
         phrases=["Add {item} to {list_name}"], match_type="sentence_pattern"
     )
@@ -496,7 +676,7 @@ async def test_direct_function_action_fixed_and_slot_arguments_without_provider(
         return "ok"
 
     result = await async_evaluate_rule(
-        SimpleNamespace(),
+        hass,
         await manager(rule),
         RequestRuleRuntime(),
         "Add semi skimmed milk to weekly groceries",
@@ -516,7 +696,7 @@ async def test_direct_function_action_fixed_and_slot_arguments_without_provider(
     ]
 
 
-async def test_direct_function_error_uses_local_failure_response() -> None:
+async def test_direct_function_error_uses_local_failure_response(hass) -> None:
     rule = local_rule(phrases=["Remember {fact}"], match_type="sentence_pattern")
     rule["action"]["actions"] = [
         {
@@ -530,7 +710,7 @@ async def test_direct_function_error_uses_local_failure_response() -> None:
         raise HomeAssistantError("function failed")
 
     result = await async_evaluate_rule(
-        SimpleNamespace(),
+        hass,
         await manager(rule),
         RequestRuleRuntime(),
         "Remember the blue bin is Tuesday",
@@ -621,16 +801,17 @@ async def test_guest_mode_prevalidates_entire_local_action_sequence(
     assert services.calls == []
 
 
-async def test_guest_mode_allows_permitted_local_action_without_ai() -> None:
+async def test_guest_mode_allows_permitted_local_action_without_ai(hass) -> None:
     rules = await manager(local_rule())
     services = FakeServices()
+    hass.services = services
     policy = GuestCapabilityPolicy(
         True,
         readable_entity_ids=frozenset({"script.goodnight"}),
         controllable_entity_ids=frozenset({"script.goodnight"}),
     )
     result = await async_evaluate_rule(
-        SimpleNamespace(services=services),
+        hass,
         rules,
         RequestRuleRuntime(),
         "good night",
