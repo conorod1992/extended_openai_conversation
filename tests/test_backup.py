@@ -253,6 +253,38 @@ def test_version_two_backup_migrates_with_empty_request_rules() -> None:
     assert prepared.request_rules["rules"] == []
 
 
+def test_version_four_backup_ignores_only_retired_section() -> None:
+    legacy = _document()
+    legacy["version"] = 4
+    legacy["protected_actions"] = {
+        "storage_version": 1,
+        "pin_hash": None,
+        "rules": [],
+    }
+
+    prepared = inspect_backup(legacy, "agent-new")
+
+    assert prepared.request_rules["rules"] == []
+    assert "protected_actions" not in prepared.summary()
+
+
+def test_version_four_backup_rejects_unknown_top_level_section() -> None:
+    legacy = _document()
+    legacy["version"] = 4
+    legacy["unexpected_section"] = {"value": "not allowed"}
+
+    with pytest.raises(BackupError, match="incomplete or corrupted"):
+        inspect_backup(legacy, "agent-new")
+
+
+def test_current_backup_rejects_retired_or_unknown_top_level_sections() -> None:
+    current = _document()
+    current["protected_actions"] = {"rules": []}
+
+    with pytest.raises(BackupError, match="incomplete or corrupted"):
+        inspect_backup(current, "agent-new")
+
+
 def test_backup_secret_redaction_preserves_schema_property_names() -> None:
     safe = _safe_configuration(
         {

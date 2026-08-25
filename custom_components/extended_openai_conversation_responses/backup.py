@@ -223,10 +223,10 @@ def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
     }
     required = expected | ({"request_rules"} if version >= 3 else set())
     allowed = required | ({"guest_mode"} if version >= 2 else set())
-    # Version 4 contained one retired feature section. Ignore that legacy payload
-    # while still rejecting backups with multiple unexpected sections.
+    # Version 4 contained one retired feature section. Ignore only that legacy
+    # payload while retaining strict validation for every other top-level section.
     unexpected = set(value) - allowed
-    if version == 4 and len(unexpected) == 1:
+    if version == 4 and unexpected == {"protected_actions"}:
         allowed |= unexpected
     if not required.issubset(value) or not set(value).issubset(allowed):
         raise BackupError("The backup is incomplete or corrupted")
