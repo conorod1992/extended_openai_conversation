@@ -34,7 +34,6 @@ from .guest_mode import (
 )
 from .ha_actions import async_execute_ha_actions
 from .helpers import get_model_config
-from .protected_actions import ProtectedActionRequired, async_require_protection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -891,7 +890,6 @@ async def async_evaluate_rule(
             if not allowed:
                 return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE)
         try:
-            await async_require_protection(resolved_actions)
             for configured_action in action["actions"]:
                 if configured_action.get("type") == "function":
                     if function_executor is None:
@@ -906,8 +904,6 @@ async def async_evaluate_rule(
                     await async_execute_ha_actions(
                         hass, [resolve_slot_values(configured_action, match.slots)]
                     )
-        except ProtectedActionRequired:
-            raise
         except Exception:
             _LOGGER.exception("Request Rule local action failed for %s", rule["id"])
             return RuleEvaluation(

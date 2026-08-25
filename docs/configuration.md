@@ -5,7 +5,7 @@ Home Assistant's native integration flow now focuses on the provider connection:
 Configure conversation-agent behaviour from **Extended OpenAI** in the sidebar:
 
 - **Assistant** splits common behavior into Basics, Model & responses, Conversation, Prompt & context, Voice, Speech, and Advanced subsections.
-- **Capabilities** contains Home Assistant access, Request Rules, Protected Actions, the purpose-built Functions/Groups editor, and Guest Mode.
+- **Capabilities** contains Home Assistant access, Request Rules, the purpose-built Functions/Groups editor, and Guest Mode.
 - **Data & Memory** contains Memories, Knowledge Library, and Conversation history. **Usage & Maintenance** contains Usage, Backup & Restore, Diagnostics, and retention.
 - **Guide** provides searchable, concise orientation and links back into the relevant management subsection. The global settings search navigates directly to settings across sections.
 
@@ -39,7 +39,7 @@ Legacy panel routes such as `/configuration`, `/tools`, `/guest`, `/memories`, `
 
 ## Backup & Restore
 
-**Export configuration** remains the lightweight, reusable agent-configuration format. The separate **Backup & Restore** section creates a private recovery or migration backup for one conversation agent. A full backup contains the normalized saved configuration, Request Rules, Protected Action rules and the salted one-way PIN hash, persistent memories, active temporary memories with their original absolute expiry, canonical Knowledge source text and metadata, retained archive sessions and turns, the Guest Mode schedule, plus lifetime, daily, request, and run usage data. Plaintext PINs, provider API keys, OAuth tokens, parent config-entry credentials, in-flight conversations or challenges, loaded Function Groups, caches, locks, and other runtime state are excluded.
+**Export configuration** remains the lightweight, reusable agent-configuration format. The separate **Backup & Restore** section creates a private recovery or migration backup for one conversation agent. A full backup contains the normalized saved configuration, Request Rules, persistent memories, active temporary memories with their original absolute expiry, canonical Knowledge source text and metadata, retained archive sessions and turns, the Guest Mode schedule, plus lifetime, daily, request, and run usage data. Provider API keys, OAuth tokens, parent config-entry credentials, in-flight conversations, loaded Function Groups, caches, locks, and other runtime state are excluded.
 
 Restore first validates the format and every category, drops temporary memories that have expired since the backup was created, and shows a summary. **Restore everything** then replaces the selected agent's existing durable state; it does not merge or add usage totals. Knowledge source data is restored and its derived local search index is rebuilt. If a storage write fails, the integration attempts to restore the pre-restore snapshot. Full backups can contain prompts, private memories, Knowledge content, archived conversations, and usage metadata, so store them securely. Reconnect or re-enter provider credentials separately when migrating to another Home Assistant installation.
 
@@ -163,14 +163,6 @@ archives remain unavailable. **Allow the assistant to activate Guest Mode** only
 exposes the model's one-way restriction tool; turning it off does not end,
 shorten, or weaken an active or scheduled restriction. See
 [Guest Mode](features/guest-mode.md).
-
-## Protected Actions
-
-Use **Capabilities → Protected Actions** to add an extra backend check before selected Home Assistant actions run. Choose **Ask for confirmation** to prevent accidental execution, or **Require PIN** for local secret verification. Set, change, and remove the masked PIN from the same page. A PIN-protected rule cannot be saved until a PIN is configured, and the PIN cannot be removed while PIN rules remain.
-
-Rules select a Home Assistant domain/action and may optionally select an entity, device, or area. Protection is applied to model tool calls and local Request Rules through the same execution seam. Guest Mode remains authoritative: a correct PIN cannot authorize something Guest Mode or normal permissions forbid.
-
-PIN replies are handled before Request Rules or provider calls and are never sent to the model. Say one digit at a time. The accepted words are `zero`/`oh`/`o`, `one`/`won`, `two`/`too`/`to`, `three`, `four`/`for`, `five`, `six`, `seven`, `eight`/`ate`, and `nine`; ambiguous number phrases are rejected. Three failures cancel the challenge and impose a one-minute cooldown. Challenges expire after two minutes and are discarded on integration reload or Home Assistant restart.
 
 ## Direct processing action
 

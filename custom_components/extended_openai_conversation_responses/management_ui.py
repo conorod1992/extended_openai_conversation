@@ -94,6 +94,7 @@ from .continuity import ConversationContinuity, async_get_continuity
 from .conversation_archive import async_get_archive
 from .function_groups import assemble_function_tools, get_function_group_runtime
 from .functions import FUNCTIONS
+from .functions.security import FunctionSecurity, classify_tool
 from .guest_mode import (
     async_get_guest_mode,
     guest_policy_editor_snapshot,
@@ -113,7 +114,6 @@ from .memory import (
     memory_enabled,
 )
 from .prompt import render_effective_prompt
-from .protected_actions import async_get_protected_actions
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
     assemble_integration_function_tools,
@@ -150,7 +150,6 @@ MANAGEMENT_FRONTEND_MODULES = (
     "overview-page.js",
     "usage-chart.js",
     "request-rules-ui.js",
-    "protected-actions-ui.js",
 )
 
 
@@ -809,42 +808,6 @@ async def async_management_command(
             return {"rule": await rules.async_duplicate(rule_id)}
         raise HomeAssistantError(f"Unknown Request Rules action: {action}")
 
-    if section == "protected_actions":
-        _require_admin(is_admin)
-        protected_manager = await async_get_protected_actions(
-            hass, entry_id, subentry_id
-        )
-        if action == "get":
-            return protected_manager.snapshot()
-        if action == "set_pin":
-            pin = message.get("pin")
-            pin_repeat = message.get("pin_repeat")
-            if not isinstance(pin, str) or pin != pin_repeat:
-                raise HomeAssistantError("PIN entries do not match")
-            await protected_manager.async_set_pin(pin)
-            return {"pin_configured": True}
-        if action == "remove_pin":
-            if message.get("confirm") is not True:
-                raise HomeAssistantError("Explicit confirmation is required")
-            await protected_manager.async_remove_pin()
-            return {"pin_configured": False}
-        if action == "create":
-            return {"rule": await protected_manager.async_create(message.get("rule"))}
-        rule_id = message.get("rule_id")
-        if not isinstance(rule_id, str):
-            raise HomeAssistantError("rule_id is required")
-        if action == "update":
-            return {
-                "rule": await protected_manager.async_update(
-                    rule_id, message.get("rule")
-                )
-            }
-        if action == "delete":
-            if message.get("confirm") is not True:
-                raise HomeAssistantError("Explicit confirmation is required")
-            return {"deleted": await protected_manager.async_delete(rule_id)}
-        raise HomeAssistantError(f"Unknown Protected Actions operation: {action}")
-
     if section == "guest_mode":
         guest_manager = await async_get_guest_mode(hass, entry_id, subentry_id)
         if action == "get":
@@ -883,10 +846,8 @@ async def async_management_command(
                         "name": tool["spec"]["name"],
                         "description": tool["spec"].get("description", ""),
                         "enabled": function_tool_enabled(tool),
-                        "unsafe_in_guest_mode": tool.get("function", {}).get("type")
-                        == "native"
-                        and tool.get("function", {}).get("name")
-                        in {"add_automation", "get_energy", "get_user_from_user_id"},
+                        "unsafe_in_guest_mode": classify_tool(tool)
+                        > FunctionSecurity.CONTROL,
                     }
                     for tool in configured_tools
                 ],

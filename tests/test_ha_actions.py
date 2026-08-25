@@ -11,9 +11,6 @@ from custom_components.extended_openai_conversation_responses.ha_actions import 
     async_call_ha_action,
     serialize_reversible_state,
 )
-from custom_components.extended_openai_conversation_responses.protected_actions import (
-    ProtectedActionRequired,
-)
 from homeassistant.core import State
 
 
@@ -255,7 +252,7 @@ async def test_non_reversible_actions_do_not_read_state(
     resolver.assert_not_called()
 
 
-async def test_capture_happens_after_authorization_and_immediately_before_call(
+async def test_capture_happens_immediately_before_call(
     monkeypatch,
 ) -> None:
     events: list[str] = []
@@ -263,13 +260,6 @@ async def test_capture_happens_after_authorization_and_immediately_before_call(
         {"lock.front_door": _state("lock.front_door", "locked")}, events
     )
 
-    async def authorize(_actions) -> None:
-        events.append("authorize")
-
-    monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.ha_actions.async_require_protection",
-        authorize,
-    )
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.ha_actions.target_helpers.async_extract_referenced_entity_ids",
         lambda _hass, _selection: SimpleNamespace(
@@ -285,29 +275,4 @@ async def test_capture_happens_after_authorization_and_immediately_before_call(
     )
 
     assert result == {"lock.front_door": {"state": "locked"}}
-    assert events == ["authorize", "capture:lock.front_door", "execute"]
-
-
-async def test_challenge_creation_does_not_capture_state(monkeypatch) -> None:
-    events: list[str] = []
-    hass = _hass_with_states(
-        {"lock.front_door": _state("lock.front_door", "locked")}, events
-    )
-
-    async def challenge(_actions) -> None:
-        events.append("challenge")
-        raise ProtectedActionRequired("Confirm")
-
-    monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.ha_actions.async_require_protection",
-        challenge,
-    )
-
-    with pytest.raises(ProtectedActionRequired):
-        await async_call_ha_action(
-            hass,
-            "lock",
-            "unlock",
-            target={"entity_id": "lock.front_door"},
-        )
-    assert events == ["challenge"]
+    assert events == ["capture:lock.front_door", "execute"]

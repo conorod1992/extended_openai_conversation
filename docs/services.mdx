@@ -9,7 +9,7 @@ Extended OpenAI Conversation (Responses) registers Home Assistant actions you ca
 
 ## process
 
-Send text directly to an Extended OpenAI conversation agent's normal request-processing pipeline. This is useful when a sentence trigger has already intercepted a phrase and you do not want to send it back through Home Assistant's `conversation.process` routing. It does not bypass Request Rules, Guest Mode, memory, continuity, model routing, tools, Protected Actions, or response cleanup.
+Send text directly to an Extended OpenAI conversation agent's normal request-processing pipeline. This is useful when a sentence trigger has already intercepted a phrase and you do not want to send it back through Home Assistant's `conversation.process` routing. It does not bypass Request Rules, Guest Mode, memory, continuity, model routing, tools, or response cleanup.
 
 ```yaml
 action: extended_openai_conversation_responses.process

@@ -17,10 +17,9 @@ globalThis.HTMLElement = class {
 };
 globalThis.customElements = {define() {}};
 
-const [{ExtendedOpenAIManagementPanel}, {bindRequestRules}, {bindProtectedActions}] = await Promise.all([
+const [{ExtendedOpenAIManagementPanel}, {bindRequestRules}] = await Promise.all([
   import("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js"),
   import("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js"),
-  import("../custom_components/extended_openai_conversation_responses/frontend/protected-actions-ui.js"),
 ]);
 
 const agents = [
@@ -213,23 +212,15 @@ function panelFor(page = "assistant", subsection = "basics") {
   };
   const panel = {shadowRoot, _result:{rules:[]}, _serviceCatalog:null};
   bindRequestRules(panel);
-  bindProtectedActions(panel);
   bindRequestRules(panel);
-  bindProtectedActions(panel);
   assert.equal(shadowRootListeners, 0);
 }
 
 const management = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
 const requestRules = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js", import.meta.url), "utf8");
-const protectedActions = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/protected-actions-ui.js", import.meta.url), "utf8");
 assert.match(management, /_loadServiceCatalog\(\)/);
 assert.match(requestRules, /panel\._loadServiceCatalog\(\)/);
-assert.match(protectedActions, /panel\._loadServiceCatalog\(\)/);
 assert.doesNotMatch(requestRules, /result\.service_catalog/);
-assert.doesNotMatch(protectedActions, /result\.service_catalog/);
 assert.doesNotMatch(requestRules, /root\.addEventListener\("click"/);
-assert.doesNotMatch(protectedActions, /root\.addEventListener\("click"/);
 assert.match(requestRules, /#rule-add"\)\?\.addEventListener\("click", \(\) => openWithServiceCatalog\(\)/);
-assert.match(protectedActions, /#protected-add"\)\?\.addEventListener\("click", \(\) => openWithServiceCatalog\(\)/);
 assert.match(requestRules, /!dialog\.isConnected \|\| !dialog\.open/);
-assert.match(protectedActions, /!dialog\.isConnected \|\| !dialog\.open/);

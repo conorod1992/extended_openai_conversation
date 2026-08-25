@@ -13,7 +13,6 @@ export const NAVIGATION = [
   {id: "capabilities", label: "Capabilities", path: "/extended-openai/capabilities/home-assistant", sections: [
     {id: "home-assistant", label: "Home Assistant", description: "Review normal Home Assistant state and action access."},
     {id: "request-rules", label: "Request Rules", description: "Create fast local commands and route AI requests by phrase."},
-    {id: "protected-actions", label: "Protected Actions", description: "Require confirmation or a locally checked PIN for selected actions."},
     {id: "functions", label: "Functions", description: "Manage custom Function Tools and on-demand groups."},
     {id: "guest-mode", label: "Guest Mode", description: "Limit what visitors can see, use, and remember."},
   ]},
@@ -55,7 +54,6 @@ export const SETTINGS_INDEX = [
   {label: "Memory and Knowledge settings", description: "Configure retrieval and available data capabilities.", terms: "memory temporary embeddings knowledge web search skills", page: "assistant", section: "advanced", target: "config-capabilities"},
   {label: "Function Tools & Groups", description: "Manage functions, grouping, and loading modes.", terms: "tools functions yaml", page: "capabilities", section: "functions"},
   {label: "Request Rules", description: "Fast local voice commands and model routing.", terms: "phrases matching fuzzy synonyms local commands model reasoning", page: "capabilities", section: "request-rules"},
-  {label: "Protected Actions", description: "Confirmation and local PIN checks for selected Home Assistant actions.", terms: "security pin confirmation lock alarm garage", page: "capabilities", section: "protected-actions"},
   {label: "Guest Mode", description: "Schedule visitor restrictions and select excluded access.", terms: "guest labels areas domains entities knowledge functions", page: "capabilities", section: "guest-mode"},
   {label: "Conversation archive", description: "Retained history and archive search settings.", terms: "archive history retention session", page: "data-memory", section: "conversations", target: "config-archive"},
   {label: "Usage retention", description: "Retention for detailed requests and runs.", terms: "usage cleanup maintenance", page: "usage-maintenance", section: "retention", target: "config-retention"},

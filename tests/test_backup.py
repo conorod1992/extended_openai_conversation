@@ -206,11 +206,6 @@ def _document() -> dict:
             },
             "rules": [],
         },
-        "protected_actions": {
-            "storage_version": 1,
-            "pin_hash": None,
-            "rules": [],
-        },
     }
 
 
@@ -236,7 +231,6 @@ def test_full_backup_validation_preserves_durable_categories_and_expiry() -> Non
     assert prepared.usage_runs[0].agent_subentry_id == "agent-new"
     assert prepared.summary()["knowledge_sources"] == 1
     assert prepared.summary()["request_rules"] == 0
-    assert prepared.summary()["protected_action_rules"] == 0
 
 
 def test_backup_rejects_malformed_and_newer_versions() -> None:
@@ -255,9 +249,40 @@ def test_version_two_backup_migrates_with_empty_request_rules() -> None:
     legacy = _document()
     legacy["version"] = 2
     legacy.pop("request_rules")
-    legacy.pop("protected_actions")
     prepared = inspect_backup(legacy, "agent-new")
     assert prepared.request_rules["rules"] == []
+
+
+def test_version_four_backup_ignores_only_retired_section() -> None:
+    legacy = _document()
+    legacy["version"] = 4
+    legacy["protected_actions"] = {
+        "storage_version": 1,
+        "pin_hash": None,
+        "rules": [],
+    }
+
+    prepared = inspect_backup(legacy, "agent-new")
+
+    assert prepared.request_rules["rules"] == []
+    assert "protected_actions" not in prepared.summary()
+
+
+def test_version_four_backup_rejects_unknown_top_level_section() -> None:
+    legacy = _document()
+    legacy["version"] = 4
+    legacy["unexpected_section"] = {"value": "not allowed"}
+
+    with pytest.raises(BackupError, match="incomplete or corrupted"):
+        inspect_backup(legacy, "agent-new")
+
+
+def test_current_backup_rejects_retired_or_unknown_top_level_sections() -> None:
+    current = _document()
+    current["protected_actions"] = {"rules": []}
+
+    with pytest.raises(BackupError, match="incomplete or corrupted"):
+        inspect_backup(current, "agent-new")
 
 
 def test_backup_secret_redaction_preserves_schema_property_names() -> None:
@@ -298,7 +323,6 @@ async def test_create_full_backup_contains_only_durable_safe_state(
         ("async_get_archive", "archive"),
         ("async_get_usage", "usage"),
         ("async_get_request_rules", "request_rules"),
-        ("async_get_protected_actions", "protected_actions"),
     ):
         monkeypatch.setattr(
             f"custom_components.extended_openai_conversation_responses.backup.{getter}",

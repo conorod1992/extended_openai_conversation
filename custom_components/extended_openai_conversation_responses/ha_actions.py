@@ -16,12 +16,6 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import ServiceNotFound
 from homeassistant.helpers import target as target_helpers
 
-from .protected_actions import (
-    async_require_protection,
-    reset_protection_bypass,
-    set_protection_bypass,
-)
-
 
 async def async_call_ha_action(
     hass: HomeAssistant,
@@ -37,13 +31,6 @@ async def async_call_ha_action(
     Both model-driven native service calls and administrator-configured local
     Request Rules pass through this backend-enforced policy seam.
     """
-    action = {
-        "domain": domain,
-        "service": service,
-        "data": data or {},
-        "target": target or {},
-    }
-    await async_require_protection([action])
     return await _async_call_ha_action_unchecked(
         hass, domain, service, data=data, target=target, blocking=blocking
     )
@@ -75,23 +62,18 @@ async def async_execute_ha_actions(
     hass: HomeAssistant, actions: Sequence[Mapping[str, Any]]
 ) -> list[dict[str, dict[str, Any]]]:
     """Execute a validated sequence, stopping at the first failure."""
-    await async_require_protection(actions)
     results: list[dict[str, dict[str, Any]]] = []
-    token = set_protection_bypass()
-    try:
-        for action in actions:
-            results.append(
-                await _async_call_ha_action_unchecked(
-                    hass,
-                    str(action["domain"]),
-                    str(action["service"]),
-                    data=action.get("data", {}),
-                    target=action.get("target", {}),
-                    blocking=True,
-                )
+    for action in actions:
+        results.append(
+            await _async_call_ha_action_unchecked(
+                hass,
+                str(action["domain"]),
+                str(action["service"]),
+                data=action.get("data", {}),
+                target=action.get("target", {}),
+                blocking=True,
             )
-    finally:
-        reset_protection_bypass(token)
+        )
     return results
 
 

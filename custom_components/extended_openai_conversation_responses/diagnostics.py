@@ -39,7 +39,6 @@ from .function_groups import get_function_group_runtime
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
 from .knowledge import async_get_knowledge
 from .memory import async_get_memory, get_memory_mode
-from .protected_actions import async_get_protected_actions
 from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
 
@@ -126,13 +125,6 @@ async def async_get_config_entry_diagnostics(
             }
         except Exception as err:
             diagnostics["function_group_configuration_error"] = type(err).__name__
-        try:
-            protected_actions = await async_get_protected_actions(
-                hass, entry.entry_id, subentry.subentry_id
-            )
-            diagnostics["protected_actions"] = protected_actions.diagnostics()
-        except Exception as err:
-            diagnostics["protected_actions_storage_error"] = type(err).__name__
         try:
             temporary = await async_get_temporary_memory(
                 hass, entry.entry_id, subentry.subentry_id
