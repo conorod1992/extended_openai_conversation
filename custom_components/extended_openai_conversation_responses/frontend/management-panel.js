@@ -12,7 +12,7 @@ const KNOWLEDGE_TITLE_LIMIT = 120;
 const KNOWLEDGE_DESCRIPTION_LIMIT = 500;
 const KNOWLEDGE_LIMIT = 100000;
 
-class ExtendedOpenAIManagementPanel extends HTMLElement {
+export class ExtendedOpenAIManagementPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
@@ -31,6 +31,12 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._draft = null;
     this._draftTitle = null;
     this._draftAgentId = null;
+    this._sectionCache = new Map();
+    this._scopeCatalogCache = new Map();
+    this._baseScopes = [];
+    this._serviceCatalog = null;
+    this._serviceCatalogPromise = null;
+    this._loadToken = 0;
     this._configSearchQuery = "";
     this._settingsSearchQuery = "";
     this._guideQuery = "";
@@ -143,24 +149,75 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _call(section, action, extra = {}) {
     if (!this._hass) return null;
     const agent = this._selectedAgent();
-    return this._hass.callWS({
+    const result = await this._hass.callWS({
       type: WS_TYPE,
       section,
       action,
       ...(agent ? { entry_id: agent.entry_id, subentry_id: agent.subentry_id } : {}),
       ...extra,
     });
+    this._invalidateAfterMutation(agent?.subentry_id, section, action);
+    return result;
+  }
+
+  _invalidateAfterMutation(agentId, section, action) {
+    const mutations = {
+      request_rules: new Set(["defaults", "wording_groups", "create", "update", "delete", "duplicate"]),
+      protected_actions: new Set(["set_pin", "remove_pin", "create", "update", "delete"]),
+      knowledge: new Set(["create", "update", "delete"]),
+      memories: new Set(["add", "update", "delete", "temporary_delete", "reassign_legacy"]),
+      conversations: new Set(["delete"]),
+    };
+    if (!agentId || !mutations[section]?.has(action)) return;
+    const prefix = `${agentId}|`;
+    const view = {request_rules:"capabilities/request-rules", protected_actions:"capabilities/protected-actions", knowledge:"data-memory/knowledge"}[section];
+    for (const key of this._sectionCache.keys()) {
+      if (key.startsWith(prefix) && (view ? key === `${prefix}${view}` : key.includes("|data-memory/memories|"))) this._sectionCache.delete(key);
+    }
+    if (["memories", "conversations"].includes(section)) this._scopeCatalogCache.delete(agentId);
+  }
+
+  _sectionCacheKey(view = this._viewKey()) {
+    const agentId = this._agentId;
+    if (!agentId) return null;
+    if (["capabilities/request-rules", "capabilities/protected-actions", "data-memory/knowledge"].includes(view)) return `${agentId}|${view}`;
+    if (view === "data-memory/memories") return `${agentId}|${view}|${this._scopeId}|${this._memoryKind}`;
+    return null;
+  }
+
+  _applyScopes(scopes) {
+    this._data.scopes = scopes || [];
+    const current = this._data.scopes.find((scope) => scope.is_current_user);
+    if (!this._data.scopes.some((scope) => scope.scope_id === this._scopeId)) {
+      this._scopeId = current?.scope_id || this._data.scopes[0]?.scope_id;
+    }
+  }
+
+  async _loadServiceCatalog() {
+    if (this._serviceCatalog) return this._serviceCatalog;
+    if (!this._serviceCatalogPromise) {
+      this._serviceCatalogPromise = this._call("service_catalog", "get")
+        .then((response) => {
+          this._serviceCatalog = response?.services || {};
+          return this._serviceCatalog;
+        })
+        .finally(() => { this._serviceCatalogPromise = null; });
+    }
+    return this._serviceCatalogPromise;
   }
 
   async _loadAgents(selectedId = null) {
     try {
+      const previousAgentId = this._agentId;
       this._data = await this._hass.callWS({ type: WS_TYPE, action: "agents" });
+      this._baseScopes = this._data.scopes || [];
       const saved = localStorage.getItem("extended-openai-agent");
       const agents = this._data.agents || [];
       const preferred = selectedId || saved;
       this._agentId = agents.some((item) => item.subentry_id === preferred) ? preferred : agents[0]?.subentry_id;
       if (this._agentId) localStorage.setItem("extended-openai-agent", this._agentId);
-      await this._loadScopes();
+      if (previousAgentId !== this._agentId) this._scopeId = null;
+      this._applyScopes(this._scopeCatalogCache.get(this._agentId) || this._baseScopes);
       await this._loadSection();
     } catch (err) {
       this._error = err.message || String(err);
@@ -170,12 +227,15 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _loadScopes() {
     if (!this._selectedAgent()) return;
-    const response = await this._call("scopes", "catalog");
-    this._data.scopes = response.scopes || [];
-    const current = this._data.scopes.find((scope) => scope.is_current_user);
-    if (!this._data.scopes.some((scope) => scope.scope_id === this._scopeId)) {
-      this._scopeId = current?.scope_id || this._data.scopes[0]?.scope_id;
+    const agentId = this._agentId;
+    if (this._scopeCatalogCache.has(agentId)) {
+      this._applyScopes(this._scopeCatalogCache.get(agentId));
+      return;
     }
+    const response = await this._call("scopes", "catalog");
+    const scopes = response.scopes || [];
+    this._scopeCatalogCache.set(agentId, scopes);
+    if (agentId === this._agentId) this._applyScopes(scopes);
   }
 
   _selectedAgent() {
@@ -184,71 +244,107 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _loadSection(silent = false) {
     if (!this._selectedAgent()) return this._render();
+    const view = this._viewKey();
+    const loadToken = ++this._loadToken;
+    const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules"].includes(view);
+    if (configOnly && this._configData && this._draftAgentId === this._agentId) {
+      this._contentData = null;
+      this._result = this._configData;
+      this._error = null;
+      this._busy = false;
+      this._render();
+      return;
+    }
+    const needsScopes = ["data-memory/memories", "data-memory/conversations"].includes(view);
+    let cacheKey = this._sectionCacheKey(view);
+    if ((!needsScopes || this._scopeCatalogCache.has(this._agentId)) && cacheKey && this._sectionCache.has(cacheKey)) {
+      this._contentData = null;
+      this._result = this._sectionCache.get(cacheKey);
+      this._error = null;
+      this._busy = false;
+      this._render();
+      return;
+    }
     if (!silent) {
       this._busy = true;
       this._render();
     }
     try {
-      const view = this._viewKey();
-      this._contentData = null;
-      if (view === "overview") {
+      if (needsScopes) await this._loadScopes();
+      if (loadToken !== this._loadToken) return;
+      cacheKey = this._sectionCacheKey(view);
+      let result;
+      let contentData = null;
+      if (cacheKey && this._sectionCache.has(cacheKey)) {
+        result = this._sectionCache.get(cacheKey);
+      } else if (view === "overview") {
         const [usage, conversations, memories, knowledge] = await Promise.all([
           this._call("usage", "summary"),
           this._call("conversations", "settings", { scope_id: this._scopeId }),
           this._call("memories", "list", { scope_id: this._scopeId, limit: 5 }),
           this._call("knowledge", "list"),
         ]);
-        this._result = { usage, conversations, memories, knowledge };
+        result = { usage, conversations, memories, knowledge };
       } else if (view === "usage-maintenance/usage") {
         const [summary, days, runs, retention] = await Promise.all([
           this._call("usage", "summary"), this._call("usage", "daily"),
           this._call("usage", "runs", { limit: 30 }), this._call("usage", "retention"),
         ]);
-        this._result = { summary, days, runs, retention };
+        result = { summary, days, runs, retention };
       } else if (view === "data-memory/conversations") {
         const [sessions, settings, active] = await Promise.all([
           this._call("conversations", "list", { scope_id: this._scopeId, limit: 50 }),
           this._call("conversations", "settings", { scope_id: this._scopeId }),
           this._data?.is_admin ? this._call("conversations", "active") : Promise.resolve({active: []}),
         ]);
-        this._contentData = { sessions, settings, active };
+        contentData = { sessions, settings, active };
         if (this._data?.is_admin) await this._loadConfigDraft();
-        else this._result = this._contentData;
+        else result = contentData;
       } else if (view === "data-memory/memories") {
-        this._result = await this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: this._scopeId, limit: 100 });
+        result = await this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: this._scopeId, limit: 100 });
       } else if (view === "data-memory/knowledge") {
-        this._result = await this._call("knowledge", "list");
+        result = await this._call("knowledge", "list");
       } else if (view === "capabilities/guest-mode") {
-        this._result = await this._call("guest_mode", "get");
-        this._guestDraft = JSON.parse(JSON.stringify(this._result.config || {}));
-        if (!this._result.legacy_policy) {
+        result = await this._call("guest_mode", "get");
+        this._guestDraft = JSON.parse(JSON.stringify(result.config || {}));
+        if (!result.legacy_policy) {
           this._guestMigrationReview = false;
           this._guestStartingFresh = false;
         }
       } else if (view === "capabilities/request-rules") {
-        this._result = await this._call("request_rules", "list");
+        result = await this._call("request_rules", "list");
       } else if (view === "capabilities/protected-actions") {
-        this._result = await this._call("protected_actions", "get");
+        result = await this._call("protected_actions", "get");
       } else if (this._isDraftView()) {
         await this._loadConfigDraft();
+        result = this._configData;
       } else {
-        this._result = null;
+        result = null;
       }
+      if (loadToken !== this._loadToken) return;
+      this._contentData = contentData;
+      if (!(this._isDraftView() && view === "data-memory/conversations" && this._data?.is_admin)) this._result = result;
+      if (cacheKey && result !== undefined) this._sectionCache.set(cacheKey, result);
       this._error = null;
     } catch (err) {
-      this._error = err.message || String(err);
+      if (loadToken === this._loadToken) this._error = err.message || String(err);
     } finally {
-      this._busy = false;
-      this._render();
+      if (loadToken === this._loadToken) {
+        this._busy = false;
+        this._render();
+      }
     }
   }
 
   async _loadConfigDraft() {
     if (!this._configData || this._draftAgentId !== this._agentId) {
-      this._configData = await this._call("configuration", "get");
-      this._draft = JSON.parse(JSON.stringify(this._configData.config));
-      this._draftTitle = this._configData.title;
-      this._draftAgentId = this._agentId;
+      const agentId = this._agentId;
+      const configData = await this._call("configuration", "get");
+      if (agentId !== this._agentId) return;
+      this._configData = configData;
+      this._draft = JSON.parse(JSON.stringify(configData.config));
+      this._draftTitle = configData.title;
+      this._draftAgentId = agentId;
       this._setConfigDirty(false);
     }
     this._result = this._configData;
@@ -269,7 +365,7 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._query = "";
     history.pushState({}, "", routePath(page, targetSubsection));
     this._result = null;
-    this._loadSection();
+    await this._loadSection();
   }
 
   _render() {
@@ -318,8 +414,9 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
       this._agentId = event.target.value;
       localStorage.setItem("extended-openai-agent", this._agentId);
+      this._clearConfigDraft();
       this._scopeId = null;
-      await this._loadScopes();
+      this._applyScopes(this._scopeCatalogCache.get(this._agentId) || this._baseScopes);
       await this._loadSection();
     });
     root.querySelector("#scope")?.addEventListener("change", (event) => { this._scopeId = event.target.value; this._loadSection(); });
@@ -798,7 +895,6 @@ class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _refreshAfterMutation() {
-    await this._loadScopes();
     await this._loadSection(true);
   }
 

@@ -884,7 +884,11 @@ async def test_management_api_permissions_crud_and_delete_confirmation(
         get_rules,
     )
 
+    service_catalog_calls = 0
+
     async def get_service_descriptions(*args):
+        nonlocal service_catalog_calls
+        service_catalog_calls += 1
         return {"light": {"turn_on": {"name": "Turn on", "fields": {}}}}
 
     monkeypatch.setattr(
@@ -901,7 +905,42 @@ async def test_management_api_permissions_crud_and_delete_confirmation(
     listed = await async_management_command(
         hass, "admin", True, {**base, "action": "list"}
     )
-    assert "light" in listed["service_catalog"]
+    assert "service_catalog" not in listed
+    assert service_catalog_calls == 0
+
+    protected = SimpleNamespace(snapshot=lambda: {"rules": [], "pin_configured": False})
+
+    async def get_protected(*args):
+        return protected
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_ui.async_get_protected_actions",
+        get_protected,
+    )
+    protected_result = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {**base, "section": "protected_actions", "action": "get"},
+    )
+    assert "service_catalog" not in protected_result
+    assert service_catalog_calls == 0
+
+    with pytest.raises(HomeAssistantError, match="Administrator"):
+        await async_management_command(
+            hass,
+            "user",
+            False,
+            {**base, "section": "service_catalog", "action": "get"},
+        )
+    service_catalog = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {**base, "section": "service_catalog", "action": "get"},
+    )
+    assert "light" in service_catalog["services"]
+    assert service_catalog_calls == 1
     groups = [{"canonical": "activate", "alternatives": ["power up"]}]
     updated_groups = await async_management_command(
         hass,
