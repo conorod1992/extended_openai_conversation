@@ -726,9 +726,6 @@ async def async_management_command(
         rules = await async_get_request_rules(hass, entry_id, subentry_id)
         if action == "list":
             snapshot = rules.snapshot()
-            snapshot[
-                "service_catalog"
-            ] = await service_helper.async_get_all_descriptions(hass)
             snapshot["rules"] = [
                 {**rule, "sensitive_matching_warning": rule_has_sensitive_actions(rule)}
                 for rule in snapshot["rules"]
@@ -818,11 +815,7 @@ async def async_management_command(
             hass, entry_id, subentry_id
         )
         if action == "get":
-            snapshot = protected_manager.snapshot()
-            snapshot[
-                "service_catalog"
-            ] = await service_helper.async_get_all_descriptions(hass)
-            return snapshot
+            return protected_manager.snapshot()
         if action == "set_pin":
             pin = message.get("pin")
             pin_repeat = message.get("pin_repeat")
@@ -1277,6 +1270,10 @@ async def async_management_command(
                 archive.scope_counts(),
             )
         }
+
+    if section == "service_catalog" and action == "get":
+        _require_admin(is_admin)
+        return {"services": await service_helper.async_get_all_descriptions(hass)}
 
     if section == "diagnostics" and action == "test_agent":
         return (await async_test_agent(hass, entry, subentry)).as_dict()

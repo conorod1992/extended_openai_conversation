@@ -110,6 +110,7 @@ jobs:
           node --check custom_components/extended_openai_conversation_responses/frontend/guide-page.js
           node --check custom_components/extended_openai_conversation_responses/frontend/management-panel.js
           node --check custom_components/extended_openai_conversation_responses/frontend/overview-page.js
+          node --check custom_components/extended_openai_conversation_responses/frontend/protected-actions-ui.js
           node --check custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js
           node --check custom_components/extended_openai_conversation_responses/frontend/usage-chart.js
           node tests/frontend-help.test.mjs
@@ -117,7 +118,9 @@ jobs:
           node tests/function-groups-ui.test.mjs
           node tests/backup-ui.test.mjs
           node tests/guest-mode-ui.test.mjs
+          node tests/management-performance-ui.test.mjs
           node tests/prompt-preview-ui.test.mjs
+          node tests/protected-actions-ui.test.mjs
           node tests/request-rules-ui.test.mjs
           node tests/usage-chart.test.mjs
 
