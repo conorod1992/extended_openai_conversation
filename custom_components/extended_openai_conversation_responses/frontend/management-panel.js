@@ -33,6 +33,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._draftAgentId = null;
     this._sectionCache = new Map();
     this._scopeCatalogCache = new Map();
+    this._scopeCatalogVisitKey = null;
     this._baseScopes = [];
     this._serviceCatalog = null;
     this._serviceCatalogPromise = null;
@@ -172,7 +173,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const prefix = `${agentId}|`;
     const view = {request_rules:"capabilities/request-rules", protected_actions:"capabilities/protected-actions", knowledge:"data-memory/knowledge"}[section];
     if (view) this._sectionCache.delete(`${prefix}${view}`);
-    if (["memories", "conversations"].includes(section)) this._scopeCatalogCache.delete(agentId);
+    if (["memories", "conversations"].includes(section)) {
+      for (const key of this._scopeCatalogCache.keys()) {
+        if (key.startsWith(prefix)) this._scopeCatalogCache.delete(key);
+      }
+      if (this._scopeCatalogVisitKey?.startsWith(prefix)) this._scopeCatalogVisitKey = null;
+    }
   }
 
   _sectionCacheKey(view = this._viewKey()) {
@@ -180,6 +186,20 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!agentId) return null;
     if (["capabilities/request-rules", "capabilities/protected-actions", "data-memory/knowledge"].includes(view)) return `${agentId}|${view}`;
     return null;
+  }
+
+  _scopeCatalogKey(view = this._viewKey(), agentId = this._agentId) {
+    if (!agentId || !["data-memory/memories", "data-memory/conversations"].includes(view)) return null;
+    return `${agentId}|${view}`;
+  }
+
+  _prepareScopeCatalogVisit(view) {
+    const key = this._scopeCatalogKey(view);
+    if (key !== this._scopeCatalogVisitKey) {
+      this._scopeCatalogCache.clear();
+      this._scopeCatalogVisitKey = key;
+    }
+    return key;
   }
 
   _applyScopes(scopes) {
@@ -214,7 +234,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._agentId = agents.some((item) => item.subentry_id === preferred) ? preferred : agents[0]?.subentry_id;
       if (this._agentId) localStorage.setItem("extended-openai-agent", this._agentId);
       if (previousAgentId !== this._agentId) this._scopeId = null;
-      this._applyScopes(this._scopeCatalogCache.get(this._agentId) || this._baseScopes);
+      this._applyScopes(this._scopeCatalogCache.get(this._scopeCatalogKey()) || this._baseScopes);
       await this._loadSection();
     } catch (err) {
       this._error = err.message || String(err);
@@ -222,17 +242,18 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
   }
 
-  async _loadScopes() {
-    if (!this._selectedAgent()) return;
+  async _loadScopes(scopeCatalogKey) {
+    if (!this._selectedAgent() || !scopeCatalogKey) return;
     const agentId = this._agentId;
-    if (this._scopeCatalogCache.has(agentId)) {
-      this._applyScopes(this._scopeCatalogCache.get(agentId));
+    if (this._scopeCatalogCache.has(scopeCatalogKey)) {
+      this._applyScopes(this._scopeCatalogCache.get(scopeCatalogKey));
       return;
     }
     const response = await this._call("scopes", "catalog");
     const scopes = response.scopes || [];
-    this._scopeCatalogCache.set(agentId, scopes);
-    if (agentId === this._agentId) this._applyScopes(scopes);
+    if (scopeCatalogKey !== this._scopeCatalogVisitKey || agentId !== this._agentId) return;
+    this._scopeCatalogCache.set(scopeCatalogKey, scopes);
+    this._applyScopes(scopes);
   }
 
   _selectedAgent() {
@@ -243,6 +264,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!this._selectedAgent()) return this._render();
     const view = this._viewKey();
     const loadToken = ++this._loadToken;
+    const scopeCatalogKey = this._prepareScopeCatalogVisit(view);
     const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules"].includes(view);
     if (configOnly && this._configData && this._draftAgentId === this._agentId) {
       this._contentData = null;
@@ -254,7 +276,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     const needsScopes = ["data-memory/memories", "data-memory/conversations"].includes(view);
     let cacheKey = this._sectionCacheKey(view);
-    if ((!needsScopes || this._scopeCatalogCache.has(this._agentId)) && cacheKey && this._sectionCache.has(cacheKey)) {
+    if ((!needsScopes || this._scopeCatalogCache.has(scopeCatalogKey)) && cacheKey && this._sectionCache.has(cacheKey)) {
       this._contentData = null;
       this._result = this._sectionCache.get(cacheKey);
       this._error = null;
@@ -267,7 +289,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._render();
     }
     try {
-      if (needsScopes) await this._loadScopes();
+      if (needsScopes) await this._loadScopes(scopeCatalogKey);
       if (loadToken !== this._loadToken) return;
       cacheKey = this._sectionCacheKey(view);
       let result;
@@ -413,7 +435,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       localStorage.setItem("extended-openai-agent", this._agentId);
       this._clearConfigDraft();
       this._scopeId = null;
-      this._applyScopes(this._scopeCatalogCache.get(this._agentId) || this._baseScopes);
+      this._applyScopes(this._scopeCatalogCache.get(this._scopeCatalogKey()) || this._baseScopes);
       await this._loadSection();
     });
     root.querySelector("#scope")?.addEventListener("change", (event) => { this._scopeId = event.target.value; this._loadSection(); });

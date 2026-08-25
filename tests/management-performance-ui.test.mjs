@@ -109,11 +109,19 @@ function panelFor(page = "assistant", subsection = "basics") {
     ["temporary_list", "shared"],
   ]);
 
+  panel._page = "guide";
+  panel._subsection = null;
+  await panel._loadSection();
+  panel._page = "data-memory";
+  panel._subsection = "memories";
+  await panel._loadSection();
+  assert.deepEqual(calls.slice(5).map((call) => call.section), ["scopes", "memories"]);
+
   panel._agentId = "agent-b";
   panel._scopeId = "user:current";
   panel._applyScopes(initialScopes);
   await panel._loadSection();
-  assert.deepEqual(calls.slice(5).map((call) => [call.section, call.subentry_id]), [
+  assert.deepEqual(calls.slice(7).map((call) => [call.section, call.subentry_id]), [
     ["scopes", "agent-b"],
     ["memories", "agent-b"],
   ]);
@@ -135,11 +143,36 @@ function panelFor(page = "assistant", subsection = "basics") {
   assert.equal(panel._sectionCache.has("agent-a|data-memory/knowledge"), false);
   assert.equal(panel._sectionCache.has("agent-b|data-memory/knowledge"), true);
 
-  panel._scopeCatalogCache.set("agent-a", initialScopes);
-  panel._scopeCatalogCache.set("agent-b", initialScopes);
+  panel._scopeCatalogCache.set("agent-a|data-memory/memories", initialScopes);
+  panel._scopeCatalogCache.set("agent-b|data-memory/memories", initialScopes);
+  panel._scopeCatalogVisitKey = "agent-a|data-memory/memories";
   panel._invalidateAfterMutation("agent-a", "memories", "delete");
-  assert.equal(panel._scopeCatalogCache.has("agent-a"), false);
-  assert.equal(panel._scopeCatalogCache.has("agent-b"), true);
+  assert.equal(panel._scopeCatalogCache.has("agent-a|data-memory/memories"), false);
+  assert.equal(panel._scopeCatalogCache.has("agent-b|data-memory/memories"), true);
+  assert.equal(panel._scopeCatalogVisitKey, null);
+}
+
+{
+  const panel = panelFor("data-memory", "conversations");
+  panel._data.is_admin = false;
+  const calls = [];
+  panel._hass = {callWS: async (message) => {
+    calls.push(message);
+    if (message.section === "scopes") return {scopes:initialScopes};
+    if (message.section === "conversations") return {sessions:[], settings:{}};
+    return {};
+  }};
+  await panel._loadSection();
+  await panel._loadSection();
+  assert.equal(calls.filter((call) => call.section === "scopes").length, 1);
+
+  panel._page = "guide";
+  panel._subsection = null;
+  await panel._loadSection();
+  panel._page = "data-memory";
+  panel._subsection = "conversations";
+  await panel._loadSection();
+  assert.equal(calls.filter((call) => call.section === "scopes").length, 2);
 }
 
 {
