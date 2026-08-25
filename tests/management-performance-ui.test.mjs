@@ -221,5 +221,6 @@ const requestRules = await readFile(new URL("../custom_components/extended_opena
 assert.match(management, /_loadServiceCatalog\(\)/);
 assert.doesNotMatch(requestRules, /result\.service_catalog/);
 assert.doesNotMatch(requestRules, /root\.addEventListener\("click"/);
-assert.match(requestRules, /id="rule-action-sequence"/);
+assert.match(requestRules, /id="rule-action-sequence-host"/);
+assert.doesNotMatch(requestRules, /<ha-selector id="rule-action-sequence"/);
 assert.match(requestRules, /selector = \{action:\{\}\}/);

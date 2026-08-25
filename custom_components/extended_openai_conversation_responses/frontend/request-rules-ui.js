@@ -185,8 +185,28 @@ function bindRequestRulesLegacy(panel) {
 export function requestRulesDialog() {
   return requestRulesDialogLegacy().replace(
     /<div id="rule-local-config">[\s\S]*?<div id="rule-routing-config"/,
-    `<div id="rule-local-config"><p class="help">Build a native Home Assistant action sequence that runs locally without asking the AI model. Conditions, delays, choose, repeat, parallel, and templates use the same editor and syntax as scripts and automations.</p><ha-selector id="rule-action-sequence"></ha-selector><div id="rule-action-slot-help" class="notice" hidden><strong>Captured values in actions</strong><p id="rule-action-slot-list"></p><p>Use a captured value as a script variable, for example <code>{{ item }}</code>. The same values are also available under <code>request.slots</code>.</p><p>To call an enabled configured function, add <code>extended_openai_conversation_responses.call_function</code> and provide its name and arguments.</p></div></div><div id="rule-routing-config"`,
+    `<div id="rule-local-config"><p class="help">Build a native Home Assistant action sequence that runs locally without asking the AI model. Conditions, delays, choose, repeat, parallel, and templates use the same editor and syntax as scripts and automations.</p><div id="rule-action-sequence-host"></div><div id="rule-action-slot-help" class="notice" hidden><strong>Captured values in actions</strong><p id="rule-action-slot-list"></p><p>Use a captured value as a script variable, for example <code>{{ item }}</code>. The same values are also available under <code>request.slots</code>.</p><p>To call an enabled configured function, add <code>extended_openai_conversation_responses.call_function</code> and provide its name and arguments.</p></div></div><div id="rule-routing-config"`,
   );
+}
+
+export function createRequestRuleActionSelector(panel, host) {
+  const actionSelector = host.ownerDocument.createElement("ha-selector");
+  actionSelector.hass = panel._hass;
+  actionSelector.selector = {action:{}};
+  actionSelector.value = [];
+  actionSelector.addEventListener("value-changed", (event) => {
+    actionSelector.value = event.detail.value || [];
+  });
+  host.replaceChildren(actionSelector);
+  return actionSelector;
+}
+
+export function loadRequestRuleActions(actionSelector, rule) {
+  actionSelector.value = rule?.action?.actions || [{action:"script.turn_on", target:{}}];
+}
+
+export function readRequestRuleActions(actionSelector) {
+  return actionSelector.value || [];
 }
 
 export function bindRequestRules(panel) {
@@ -194,14 +214,9 @@ export function bindRequestRules(panel) {
   const q = (selector) => root.querySelector(selector);
   const result = panel._result || {};
   const rules = result.rules || [];
-  const actionSelector = q("#rule-action-sequence");
-  if (!actionSelector) return;
-  actionSelector.hass = panel.hass;
-  actionSelector.selector = {action:{}};
-  actionSelector.value = [];
-  actionSelector.addEventListener("value-changed", (event) => {
-    actionSelector.value = event.detail.value || [];
-  });
+  const actionSelectorHost = q("#rule-action-sequence-host");
+  if (!actionSelectorHost) return;
+  const actionSelector = createRequestRuleActionSelector(panel, actionSelectorHost);
 
   const refresh = () => {
     const local = q("#rule-action-type").value === "local_action";
@@ -243,7 +258,7 @@ export function bindRequestRules(panel) {
     q("#rule-wording").checked = rule?.matching?.wording_alternatives ?? true;
     q("#rule-fuzzy").checked = rule?.matching?.fuzzy ?? false;
     q("#rule-threshold").value = sensitivityLabel(rule?.matching?.fuzzy_threshold ?? 90);
-    actionSelector.value = rule?.action?.actions || [{action:"script.turn_on", target:{}}];
+    loadRequestRuleActions(actionSelector, rule);
     refresh();
     setFuzzyState(root, "rule");
     q("#rule-error").textContent = "";
@@ -275,7 +290,7 @@ export function bindRequestRules(panel) {
     event.preventDefault();
     try {
       const actionType = q("#rule-action-type").value;
-      const actions = actionSelector.value || [];
+      const actions = readRequestRuleActions(actionSelector);
       const rule = {name:q("#rule-name").value, enabled:q("#rule-enabled-edit").checked, phrases:q("#rule-phrases").value.split("\n").map((item) => item.trim()).filter(Boolean), match_type:q("#rule-match").value, action_type:actionType, action:actionType === "local_action" ? {actions, success_response:q("#rule-success").value, failure_response:q("#rule-failure").value} : {model:q("#rule-model").value, reasoning_effort:q("#rule-reasoning").value, scope:q("#rule-scope").value, reset:q("#rule-reset").checked, success_response:q("#rule-routing-success").value}, matching_behavior:q("#rule-matching-behavior").value, matching:{word_forms:q("#rule-word-forms").checked, wording_alternatives:q("#rule-wording").checked, fuzzy:q("#rule-fuzzy").checked, fuzzy_threshold:sensitivityValue(q("#rule-threshold").value)}, order:rules.find((item) => item.id === panel._editingRuleId)?.order ?? rules.length};
       await panel._call("request_rules", panel._editingRuleId ? "update" : "create", {...(panel._editingRuleId ? {rule_id:panel._editingRuleId} : {}), rule});
       q("#rule-dialog").close();
