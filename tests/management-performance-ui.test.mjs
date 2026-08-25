@@ -219,8 +219,7 @@ function panelFor(page = "assistant", subsection = "basics") {
 const management = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
 const requestRules = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js", import.meta.url), "utf8");
 assert.match(management, /_loadServiceCatalog\(\)/);
-assert.match(requestRules, /panel\._loadServiceCatalog\(\)/);
 assert.doesNotMatch(requestRules, /result\.service_catalog/);
 assert.doesNotMatch(requestRules, /root\.addEventListener\("click"/);
-assert.match(requestRules, /#rule-add"\)\?\.addEventListener\("click", \(\) => openWithServiceCatalog\(\)/);
-assert.match(requestRules, /!dialog\.isConnected \|\| !dialog\.open/);
+assert.match(requestRules, /id="rule-action-sequence"/);
+assert.match(requestRules, /selector = \{action:\{\}\}/);

@@ -19,9 +19,13 @@ from custom_components.extended_openai_conversation_responses.functions.security
     contains_indirect_service_call,
 )
 from custom_components.extended_openai_conversation_responses.guest_mode import (
+    EXECUTION_FAILED,
+    GUEST_MODE_UNAVAILABLE,
     GuestCapabilityPolicy,
+    GuestModeDenied,
     guest_arguments_allowed_runtime,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def test_composite_recursively_inherits_strongest_classification() -> None:
@@ -221,7 +225,9 @@ async def test_static_script_target_is_checked_again_at_execution(monkeypatch) -
 
     tool["function"]["sequence"][0]["target"] = {"entity_id": "lock.private"}
     denied = await entity._execute_function_tool(tool, tool_input, None, [])
-    assert json.loads(denied.tool_result["result"])["status"] == "unavailable"
+    outcome = json.loads(denied.tool_result["result"])
+    assert outcome["status"] == "denied"
+    assert outcome["reason"] == "guest_mode"
     execute.assert_awaited_once()
 
 
@@ -272,8 +278,95 @@ async def test_direct_scoped_control_obeys_execution_target_policy(monkeypatch) 
         id="call-denied",
     )
     denied = await entity._execute_function_tool(tool, denied_input, None, [])
-    assert json.loads(denied.tool_result["result"])["status"] == "unavailable"
+    outcome = json.loads(denied.tool_result["result"])
+    assert outcome["status"] == "denied"
+    assert outcome["reason"] == "guest_mode"
     execute.assert_awaited_once()
+
+
+async def test_guest_permitted_execution_failure_is_generic(monkeypatch) -> None:
+    tool = {
+        "spec": {
+            "name": "control",
+            "description": "Control Home Assistant",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "native", "name": "execute_service"},
+    }
+    policy = GuestCapabilityPolicy(
+        True,
+        readable_entity_ids=frozenset({"light.guest"}),
+        controllable_entity_ids=frozenset({"light.guest"}),
+        configured_tool_names=frozenset({"control"}),
+    )
+    entity = _execution_entity(tool, policy)
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.conversation.get_exposed_entities",
+        lambda _hass: [],
+    )
+    monkeypatch.setattr(
+        ExtendedOpenAIBaseLLMEntity,
+        "_execute_function_tool",
+        AsyncMock(side_effect=RuntimeError("private device detail")),
+    )
+    result = await entity._execute_function_tool(
+        tool,
+        SimpleNamespace(
+            tool_name="control",
+            tool_args={
+                "domain": "light",
+                "service": "turn_on",
+                "service_data": {"entity_id": "light.guest"},
+            },
+            id="call-failed",
+        ),
+        None,
+        [],
+    )
+    outcome = json.loads(result.tool_result["result"])
+    assert outcome == {
+        "status": "error",
+        "reason": "execution_failed",
+        "error": "The requested action could not be completed.",
+    }
+    assert "private device detail" not in result.tool_result["result"]
+
+
+@pytest.mark.parametrize(
+    ("outcome", "error_type", "message"),
+    [
+        (
+            {
+                "status": "denied",
+                "reason": "guest_mode",
+                "error": GUEST_MODE_UNAVAILABLE,
+            },
+            GuestModeDenied,
+            GUEST_MODE_UNAVAILABLE,
+        ),
+        (
+            {
+                "status": "error",
+                "reason": "execution_failed",
+                "error": "This capability is unavailable in Guest Mode.",
+            },
+            HomeAssistantError,
+            EXECUTION_FAILED,
+        ),
+    ],
+)
+async def test_request_rule_function_uses_structured_outcome(
+    outcome, error_type, message
+) -> None:
+    tool = {"spec": {"name": "control"}}
+    entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
+    entity._get_configured_function_tools = lambda: [tool]
+    entity._get_exposed_entities = lambda: []
+    entity._execute_function_tool = AsyncMock(
+        return_value=SimpleNamespace(tool_result={"result": json.dumps(outcome)})
+    )
+    with pytest.raises(error_type, match=message):
+        await entity._async_execute_request_rule_function("control", {}, None)
 
 
 @pytest.mark.parametrize("domain", ["script", "automation", "scene"])
@@ -312,5 +405,7 @@ async def test_indirect_wrapper_is_rejected_at_execution(
         None,
         [],
     )
-    assert json.loads(denied.tool_result["result"])["status"] == "unavailable"
+    outcome = json.loads(denied.tool_result["result"])
+    assert outcome["status"] == "denied"
+    assert outcome["reason"] == "guest_mode"
     execute.assert_not_awaited()

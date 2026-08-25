@@ -39,6 +39,19 @@ query_image:
         number:
           min: 1
           mode: box
+call_function:
+  name: Call configured function
+  description: Call an enabled Extended OpenAI configured function from a Request Rule action sequence.
+  fields:
+    function:
+      required: true
+      description: Exact configured Function Tool name.
+      selector:
+        text:
+    arguments:
+      description: Function arguments. Request Rule captured values are available as templates such as {{ item }}.
+      selector:
+        object:
 process:
   name: Process request directly
   description: Send text through the selected Extended OpenAI agent's normal processing pipeline without re-entering Home Assistant conversation routing.
