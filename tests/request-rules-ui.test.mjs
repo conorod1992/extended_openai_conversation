@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
-import {friendlyFieldChange, friendlyFieldChangesForService, mergeActionEditorValue, mergeFriendlyActionValue, parseAdvancedActionConfig, refreshRequestRuleSlotSelectors, renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
+import {createRequestRuleActionSelector, friendlyFieldChange, friendlyFieldChangesForService, loadRequestRuleActions, mergeActionEditorValue, mergeFriendlyActionValue, parseAdvancedActionConfig, readRequestRuleActions, refreshRequestRuleSlotSelectors, renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const panel = {
@@ -46,7 +46,8 @@ assert.match(resetHtml, /Return this conversation to configured defaults/);
 assert.doesNotMatch(resetHtml, /high reasoning/);
 assert.match(requestRulesDialog(panel), /Alternatives must use the same variable names/);
 assert.match(requestRulesDialog(panel), /Variable values let part of the request change each time/);
-assert.match(requestRulesDialog(panel), /id="rule-action-sequence"/);
+assert.match(requestRulesDialog(panel), /id="rule-action-sequence-host"/);
+assert.doesNotMatch(requestRulesDialog(panel), /<ha-selector/);
 assert.match(requestRulesDialog(panel), /Conditions, delays, choose, repeat, parallel/);
 assert.match(requestRulesDialog(panel), /extended_openai_conversation_responses\.call_function/);
 assert.match(requestRulesDialog(panel), /\{\{ item \}\}/);
@@ -55,6 +56,48 @@ assert.match(bindingSource, /Value from request/);
 assert.match(bindingSource, /function_catalog/);
 assert.match(bindingSource, /Captured values:/);
 assert.match(bindingSource, /selector = \{action:\{\}\}/);
+
+{
+  const hass = {localize: () => "localized"};
+  const assignments = [];
+  let connected = false;
+  let valueChanged;
+  const actionSelector = {
+    set hass(value) { assignments.push(["hass", connected]); this._hass = value; },
+    get hass() { return this._hass; },
+    set selector(value) { assignments.push(["selector", connected]); this._selector = value; },
+    get selector() { return this._selector; },
+    set value(value) { assignments.push(["value", connected]); this._value = value; },
+    get value() { return this._value; },
+    addEventListener(type, listener) {
+      assert.equal(type, "value-changed");
+      assignments.push(["listener", connected]);
+      valueChanged = listener;
+    },
+  };
+  const host = {
+    ownerDocument: {createElement: (tagName) => {
+      assert.equal(tagName, "ha-selector");
+      return actionSelector;
+    }},
+    replaceChildren(child) {
+      assert.equal(child, actionSelector);
+      connected = true;
+    },
+  };
+  assert.equal(createRequestRuleActionSelector({_hass:hass}, host), actionSelector);
+  assert.equal(actionSelector.hass, hass);
+  assert.deepEqual(actionSelector.selector, {action:{}});
+  assert.deepEqual(actionSelector.value, []);
+  assert.deepEqual(assignments, [["hass",false],["selector",false],["value",false],["listener",false]]);
+
+  const existingActions = [{action:"light.turn_on",data:{brightness_pct:50}}];
+  loadRequestRuleActions(actionSelector, {action:{actions:existingActions}});
+  assert.equal(actionSelector.value, existingActions);
+  const editedActions = [{delay:1}];
+  valueChanged({detail:{value:editedActions}});
+  assert.equal(readRequestRuleActions(actionSelector), editedActions);
+}
 
 const makeSlotSelect = (value) => ({
   value,
