@@ -72,25 +72,26 @@ const {ExtendedOpenAIManagementPanel} = await import("../custom_components/exten
 
 const guestPanel = new ExtendedOpenAIManagementPanel();
 guestPanel._data = {is_admin:true};
-guestPanel._result = {config:{}};
+guestPanel._page = "capabilities";
+guestPanel._subsection = "guest-mode";
 
-const inactive = guestPanel._guestPolicyView({state:"inactive"}, {}, "inactive");
+guestPanel._result = {config:{}, policy:{}, status:{state:"inactive", currently_active:false, scheduled:false, active_from:null, active_until:null}};
+const inactive = guestPanel._content({});
 assert.match(inactive, /Guest Mode activation/);
 assert.match(inactive, /Inactive · No interval configured/);
+assert.match(inactive, /id="guest-start"/);
+assert.match(inactive, /id="guest-end"/);
 assert.match(inactive, /id="guest-now">Activate now/);
 assert.match(inactive, /class="secondary" id="guest-update">Update interval/);
 assert.doesNotMatch(inactive, /id="guest-disable"/);
+assert.doesNotMatch(guestPanel._styles(), /\.guest-intro\+\.content-card\{display:none\}/);
 
-const scheduled = guestPanel._guestPolicyView({state:"scheduled", scheduled:true, active_from:"2026-08-26T10:00:00Z"}, {}, "scheduled");
+guestPanel._result = {config:{}, policy:{}, status:{state:"scheduled", currently_active:false, scheduled:true, active_from:"2026-08-26T10:00:00Z", active_until:null}};
+const scheduled = guestPanel._content({});
 assert.match(scheduled, /Scheduled · Starts/);
 assert.match(scheduled, /id="guest-update">Update interval/);
 assert.match(scheduled, /id="guest-now">Activate now/);
 assert.match(scheduled, /id="guest-disable">Cancel schedule/);
-
-const active = guestPanel._guestPolicyView({state:"active", currently_active:true, active_from:"2026-08-25T10:00:00Z"}, {}, "active");
-assert.match(active, /Active · Starts/);
-assert.match(active, /id="guest-update">Update interval/);
-assert.match(active, /id="guest-disable">End Guest Mode/);
 
 const legacyDraft = {guest_excluded_entities:["light.private"], guest_mode_enabled:false, unrelated:"kept"};
 const freshDraft = freshGuestPolicyDraft(legacyDraft);
