@@ -411,7 +411,7 @@ export const GUIDE_TOPICS = [
       },
       {
         type: "p",
-        text: "For safety, the AI model only has one-way control over Guest Mode: it may make Guest Mode start sooner or remain active for longer, but it cannot shorten, cancel or disable it. Only trusted Home Assistant controls can reduce or end the restriction."
+        text: "The assistant can enable or extend Guest Mode, but cannot shorten or disable it. Administrators and Home Assistant automations can change or end Guest Mode."
       },
       {
         type: "p",
