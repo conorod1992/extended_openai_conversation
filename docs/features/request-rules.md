@@ -96,6 +96,6 @@ The two approaches can coexist, but avoid giving both the same phrase unless the
 
 ## Security and limits
 
-Request Rules are not semantic understanding and do not learn from history. They do not use embeddings, a general thesaurus, automatic suggestions, or speaker authentication. Use Equals or a narrow sentence pattern for locks, alarms, garage-style covers, and other sensitive actions. Configure **Protected Actions** separately when a matching local action should require confirmation or a locally verified PIN. The editor warns about obvious sensitive action domains when tolerant text matching is active.
+Request Rules are not semantic understanding and do not learn from history. They do not use embeddings, a general thesaurus, automatic suggestions, or speaker authentication. Use Equals or a narrow sentence pattern for locks, alarms, garage-style covers, and other sensitive actions. The editor warns about obvious sensitive action domains when tolerant text matching is active.
 
 Home Assistant service validation still applies. Guest Mode authorization uses the same backend enforcement as model-initiated Home Assistant tools and never partially executes a rejected sequence.

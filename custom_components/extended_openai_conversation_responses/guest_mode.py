@@ -49,6 +49,7 @@ from .const import (
     DOMAIN,
     GUEST_POLICY_VERSION,
 )
+from .functions.security import FunctionSecurity, classify_tool
 from .helpers import get_exposed_entities
 
 _LOGGER = logging.getLogger(__name__)
@@ -443,7 +444,6 @@ def _resolve_legacy_policy(
         if isinstance(groups, Sequence) and not isinstance(groups, (str, bytes))
         else {}
     )
-    unscopable_native = {"add_automation", "get_energy", "get_user_from_user_id"}
     guest_tools = frozenset(
         str(tool.get("spec", {}).get("name"))
         for tool in configured_tools
@@ -455,10 +455,7 @@ def _resolve_legacy_policy(
             or membership[str(tool.get("spec", {}).get("name"))].get("guest_allowed")
             is True
         )
-        and not (
-            tool.get("function", {}).get("type") == "native"
-            and tool.get("function", {}).get("name") in unscopable_native
-        )
+        and classify_tool(tool) <= FunctionSecurity.CONTROL
     )
     return GuestCapabilityPolicy(
         True,
@@ -537,7 +534,7 @@ def _resolve_exclusion_policy(
     guest_tools = {
         name
         for name in guest_tools
-        if not _is_unscopable_native(configured_by_name[name])
+        if classify_tool(configured_by_name[name]) <= FunctionSecurity.CONTROL
     }
 
     knowledge_policy = options.get(CONF_GUEST_KNOWLEDGE_POLICY, "off")
@@ -564,14 +561,6 @@ def _resolve_exclusion_policy(
         skills=False,
         web_search=False,
         private_capabilities=False,
-    )
-
-
-def _is_unscopable_native(tool: Mapping[str, Any]) -> bool:
-    return bool(
-        tool.get("function", {}).get("type") == "native"
-        and tool.get("function", {}).get("name")
-        in {"add_automation", "get_energy", "get_user_from_user_id"}
     )
 
 

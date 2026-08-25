@@ -5,7 +5,6 @@ import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview} from "./overview-page.js";
 import {formatUsageTimestamp, tokenBreakdown} from "./usage-chart.js";
 import {bindRequestRules, renderRequestRules, requestRulesDialog} from "./request-rules-ui.js";
-import {bindProtectedActions, protectedActionsDialogs, renderProtectedActions} from "./protected-actions-ui.js";
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
 const KNOWLEDGE_TITLE_LIMIT = 120;
@@ -164,14 +163,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _invalidateAfterMutation(agentId, section, action) {
     const mutations = {
       request_rules: new Set(["defaults", "wording_groups", "create", "update", "delete", "duplicate"]),
-      protected_actions: new Set(["set_pin", "remove_pin", "create", "update", "delete"]),
       knowledge: new Set(["create", "update", "delete"]),
       memories: new Set(["add", "update", "delete", "temporary_delete", "reassign_legacy"]),
       conversations: new Set(["delete"]),
     };
     if (!agentId || !mutations[section]?.has(action)) return;
     const prefix = `${agentId}|`;
-    const view = {request_rules:"capabilities/request-rules", protected_actions:"capabilities/protected-actions", knowledge:"data-memory/knowledge"}[section];
+    const view = {request_rules:"capabilities/request-rules", knowledge:"data-memory/knowledge"}[section];
     if (view) this._sectionCache.delete(`${prefix}${view}`);
     if (["memories", "conversations"].includes(section)) {
       for (const key of this._scopeCatalogCache.keys()) {
@@ -184,7 +182,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _sectionCacheKey(view = this._viewKey()) {
     const agentId = this._agentId;
     if (!agentId) return null;
-    if (["capabilities/request-rules", "capabilities/protected-actions", "data-memory/knowledge"].includes(view)) return `${agentId}|${view}`;
+    if (["capabilities/request-rules", "data-memory/knowledge"].includes(view)) return `${agentId}|${view}`;
     return null;
   }
 
@@ -332,8 +330,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         }
       } else if (view === "capabilities/request-rules") {
         result = await this._call("request_rules", "list");
-      } else if (view === "capabilities/protected-actions") {
-        result = await this._call("protected_actions", "get");
       } else if (this._isDraftView()) {
         await this._loadConfigDraft();
         result = this._configData;
@@ -453,7 +449,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._page === "assistant") { this._configSections = this._configSectionsForView(); return renderConfiguration(this); }
     if (view === "capabilities/home-assistant") return this._homeAssistant(agent);
     if (view === "capabilities/request-rules") return renderRequestRules(this);
-    if (view === "capabilities/protected-actions") return renderProtectedActions(this);
     if (view === "capabilities/functions") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${renderTools(this)}`;
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
@@ -554,7 +549,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const futureFunctions = "";
     const legacyNotice = this._result?.legacy_policy && !this._guestMigrationReview ? `<section class="notice legacy-migration"><strong>Previous Guest Mode settings found</strong><p>Your old Guest Mode rules used an allow-list. We have kept an equivalent restrictive draft so the upgrade does not accidentally give guests more access. The old policy remains enforced until you save.</p><div class="section-actions"><button type="button" id="guest-review-converted">Review converted settings</button><button type="button" class="secondary" id="guest-start-fresh">Start fresh with new defaults</button></div></section>` : "";
     const editor = this._data?.is_admin && (!this._result?.legacy_policy || this._guestMigrationReview) ? `<section class="content-card"><div class="section-heading"><div><h2>Home Assistant exclusions</h2><p>Guests can use entities normally available to this assistant, except those excluded here.</p></div></div><p class="help"><strong>Tip:</strong> Labels are usually the easiest way to manage Guest access. For example, create a <code>Guest restricted</code> label in Home Assistant and apply it to anything private or sensitive.</p><div class="guest-managers">${baseSelectors}</div><details class="guest-advanced"><summary>Advanced</summary><label class="toggle"><span>Make some visible entities read-only</span><input id="guest-separate-control" type="checkbox" ${config.guest_separate_control_restrictions ? "checked" : ""}></label><p class="help">Normally, anything a guest can see can also be controlled if the assistant is allowed to control it. Turn this on if you want guests to see some entities but not change them.</p>${config.guest_separate_control_restrictions ? `<div class="guest-managers">${controlSelectors}</div>` : ""}</details></section><section class="content-card"><div class="section-heading"><div><h2>Knowledge, functions & memory</h2><p>Personal memory and owner conversation archives are always unavailable.</p></div></div><div class="form-grid">${mode("guest_knowledge_policy","Allow Knowledge Library reads",[["off","Off"],["on","On"],["custom","Custom"]])}${mode("guest_function_policy","Allow custom functions",[["off","Off"],["on","On"],["custom","Custom"]])}${mode("guest_shared_memory_policy","Shared household memory",[["off","Off"],["read_only","Read only"],["read_write","Read & write"]])}</div>${futureKnowledge}${futureFunctions}${config.guest_knowledge_policy === "on" ? `<p class="help">All current Knowledge sources are available to guests. New sources added later will also be included. Choose Custom if you want a fixed list.</p>` : ""}${config.guest_function_policy === "on" ? `<p class="help">All eligible enabled functions are available to guests. New eligible functions added later will also be included. Choose Custom if you want a fixed list.</p>` : ""}${config.guest_knowledge_policy === "custom" ? selector("guest_knowledge_source_ids","knowledge","Allowed Knowledge sources") : ""}${config.guest_function_policy === "custom" ? `${selector("guest_allowed_function_names","function","Allowed functions")}${selector("guest_allowed_group_ids","group","Allowed Function Groups")}` : ""}</section><section class="content-card"><div class="section-heading"><div><h2>Assistant permission</h2><p>This permission is separate from Guest Mode status and trusted Home Assistant actions.</p></div></div><details class="guest-advanced"><summary>Advanced</summary><label class="toggle"><span>Allow the assistant to activate Guest Mode</span><input id="guest-controls-enabled" type="checkbox" ${config.guest_mode_enabled ? "checked" : ""}></label><p class="help">Lets the assistant activate Guest Mode, start it earlier, or extend it. The assistant can never shorten or disable Guest Mode. Turning this off never ends or weakens an active restriction.</p></details><div class="section-actions"><button type="button" id="guest-policy-save">Save Guest policy</button></div></section>` : "";
-    return `<section class="notice ${status.currently_active ? "on" : ""}"><strong>Guest Mode status: ${this._e(this._titleCase(state))}</strong><p>${status.active_from ? `Starts ${this._e(this._formatDate(status.active_from))}` : "No interval configured"}${status.active_until ? ` · Ends ${this._e(this._formatDate(status.active_until))}` : status.active_from ? " · No expiry" : ""}</p></section><section class="metric-grid compact">${this._metric("Guest-visible entities", policy.readable_entity_count ?? "—")}${this._metric("Guest-controllable entities", policy.controllable_entity_count ?? "—")}${this._metric("Guest functions", policy.configured_tool_count ?? "—")}${this._metric("Guest archive retention", "Disabled")}</section>${schedule}${legacyNotice}${editor}<section class="notice"><strong>Voice and model safety</strong><p>The assistant can only activate Guest Mode sooner or extend it. Trusted Home Assistant controls can shorten or end it. Model-visible context is fully rebuilt on the next user turn; execution restrictions tighten immediately, but context already sent to a provider cannot be removed retroactively.</p></section>`;
+    return `<section class="notice ${status.currently_active ? "on" : ""}"><strong>Guest Mode status: ${this._e(this._titleCase(state))}</strong><p>${status.active_from ? `Starts ${this._e(this._formatDate(status.active_from))}` : "No interval configured"}${status.active_until ? ` · Ends ${this._e(this._formatDate(status.active_until))}` : status.active_from ? " · No expiry" : ""}</p></section><section class="metric-grid compact">${this._metric("Guest-visible entities", policy.readable_entity_count ?? "—")}${this._metric("Guest-controllable entities", policy.controllable_entity_count ?? "—")}${this._metric("Guest functions", policy.configured_tool_count ?? "—")}${this._metric("Guest archive retention", "Disabled")}</section>${schedule}${legacyNotice}${editor}<section class="notice"><strong>Voice and model safety</strong><p>The assistant can only activate Guest Mode sooner or extend it. Trusted Home Assistant controls can shorten or end it. Model-visible context is fully rebuilt on the next user turn; execution restrictions tighten immediately, but context already sent to a provider cannot be removed retroactively.</p></section><details class="content-card"><summary><strong>Capability safety</strong></summary><p>Guest permissions are enforced by Extended OpenAI. Custom, composite, or script capabilities are unavailable when their side effects cannot be safely limited to guest-approved entities. This is intentional.</p></details>`;
   }
 
   _setupGuestSelectors() {
@@ -632,7 +627,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       <dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>
       <dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope">${this._scopeOptions("memories", true, true)}</select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>
       <dialog id="confirm-dialog" class="editor-dialog confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-header"><h2 id="confirm-title">Confirm</h2></div><div class="dialog-body"><p id="confirm-message"></p></div><div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">Cancel</button><button type="button" class="danger" id="confirm-accept">Confirm</button></div></dialog>
-      ${requestRulesDialog(this)}${protectedActionsDialogs(this)}${configurationDialogs(this)}${restoreDialog(this)}`;
+      ${requestRulesDialog(this)}${configurationDialogs(this)}${restoreDialog(this)}`;
   }
 
   _bindActions() {
@@ -680,7 +675,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(this._viewKey())) bindConfiguration(this);
     if (this._viewKey() === "capabilities/functions") bindTools(this);
     if (this._viewKey() === "capabilities/request-rules") bindRequestRules(this);
-    if (this._viewKey() === "capabilities/protected-actions") bindProtectedActions(this);
     if (this._viewKey() === "overview") bindOverview(this);
     if (this._viewKey() === "guide") bindGuide(this);
     if (this._pendingSettingFocus) {

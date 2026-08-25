@@ -155,8 +155,15 @@ def test_resolved_policy_intersects_read_and_control(hass, monkeypatch) -> None:
         CONF_GUEST_KNOWLEDGE_ENABLED: True,
     }
     tools = [
-        {"guest_allowed": True, "spec": {"name": "safe"}},
-        {"spec": {"name": "owner_only"}},
+        {
+            "guest_allowed": True,
+            "spec": {"name": "safe"},
+            "function": {"type": "native", "name": "get_history"},
+        },
+        {
+            "spec": {"name": "owner_only"},
+            "function": {"type": "native", "name": "get_history"},
+        },
     ]
     policy = resolve_guest_policy(hass, options, manager, tools)
 
@@ -506,6 +513,25 @@ def test_v2_function_on_still_denies_unsafe_native(hass, monkeypatch) -> None:
         {
             "spec": {"name": "energy"},
             "function": {"type": "native", "name": "get_energy"},
+        },
+        {
+            "spec": {"name": "unsafe_composite"},
+            "function": {
+                "type": "composite",
+                "sequence": [{"type": "native", "name": "add_automation"}],
+            },
+        },
+        {
+            "spec": {"name": "dynamic_script"},
+            "function": {
+                "type": "script",
+                "sequence": [
+                    {
+                        "service": "{{ service_name }}",
+                        "target": {"entity_id": "lock.front"},
+                    }
+                ],
+            },
         },
     ]
     policy = resolve_guest_policy(

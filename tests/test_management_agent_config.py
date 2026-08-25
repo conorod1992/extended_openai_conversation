@@ -166,6 +166,91 @@ async def test_guest_policy_requires_explicit_central_save(hass, monkeypatch) ->
     assert saved[CONF_GUEST_EXCLUDED_DOMAINS] == ["lock"]
 
 
+async def test_guest_management_marks_unscopable_functions_unsafe(
+    hass, monkeypatch
+) -> None:
+    _entry, subentry = _setup_entry(hass)
+    subentry.data[CONF_GUEST_POLICY_VERSION] = GUEST_POLICY_VERSION
+    subentry.data[CONF_GUEST_FUNCTION_POLICY] = "on"
+    subentry.data[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+        [
+            {
+                "spec": {
+                    "name": "scoped_control",
+                    "description": "Scoped control",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                "function": {"type": "native", "name": "execute_service"},
+            },
+            {
+                "spec": {
+                    "name": "automation_builder",
+                    "description": "Build automation",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                "function": {"type": "native", "name": "add_automation"},
+            },
+            {
+                "spec": {
+                    "name": "dynamic_script",
+                    "description": "Dynamic script",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                "function": {
+                    "type": "script",
+                    "sequence": [
+                        {
+                            "service": "{{ service_name }}",
+                            "target": {"entity_id": "light.guest"},
+                        }
+                    ],
+                },
+            },
+        ]
+    )
+    manager = SimpleNamespace(
+        is_active=lambda: True,
+        status=lambda: {
+            "state": "active",
+            "currently_active": True,
+            "active_from": None,
+            "active_until": None,
+        },
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_ui.async_get_guest_mode",
+        AsyncMock(return_value=manager),
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_ui.async_get_knowledge",
+        AsyncMock(return_value=SimpleNamespace(async_list=AsyncMock(return_value=[]))),
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_ui.get_exposed_entities",
+        lambda _hass: [],
+    )
+
+    result = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "guest_mode",
+            "action": "get",
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+        },
+    )
+    safety = {
+        item["name"]: item["unsafe_in_guest_mode"] for item in result["functions"]
+    }
+    assert safety == {
+        "scoped_control": False,
+        "automation_builder": True,
+        "dynamic_script": True,
+    }
+
+
 async def test_configuration_validation_returns_field_errors(hass) -> None:
     _setup_entry(hass)
     result = await async_management_command(

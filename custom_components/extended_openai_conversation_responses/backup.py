@@ -35,7 +35,6 @@ from .conversation_archive import (
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
 from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
 from .memory import MemoryRecord, PersistentMemory, async_get_memory
-from .protected_actions import ProtectedActions, async_get_protected_actions
 from .request_rules import RequestRules, async_get_request_rules
 from .temporary_memory import (
     TemporaryMemory,
@@ -45,7 +44,7 @@ from .temporary_memory import (
 from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
 
 BACKUP_FORMAT = "extended_openai_conversation_backup"
-BACKUP_VERSION = 4
+BACKUP_VERSION = 5
 MAX_BACKUP_BYTES = 16 * 1024 * 1024
 _BACKUP_LOCKS = f"{DOMAIN}.backup_locks"
 _LOGGER = logging.getLogger(__name__)
@@ -78,7 +77,6 @@ class PreparedRestore:
     usage_runs: list[UsageRun]
     guest_mode_schedule: GuestModeSchedule | None
     request_rules: dict[str, Any]
-    protected_actions: dict[str, Any]
     created_at: str
     integration_version: str
 
@@ -94,10 +92,6 @@ class PreparedRestore:
             "usage_runs": len(self.usage_runs),
             "guest_mode_scheduled": self.guest_mode_schedule is not None,
             "request_rules": len(self.request_rules["rules"]),
-            "protected_action_rules": len(self.protected_actions["rules"]),
-            "protected_actions_pin_configured": bool(
-                self.protected_actions.get("pin_hash")
-            ),
             "created_at": self.created_at,
             "integration_version": self.integration_version,
         }
@@ -145,7 +139,6 @@ async def async_create_backup(
             usage,
             guest_mode,
             request_rules,
-            protected_actions,
         ) = await _managers(hass, entry.entry_id, subentry.subentry_id)
         config_snapshot = preserve_legacy_guest_policy(
             dict(subentry.data), agent_config_snapshot(subentry.data)
@@ -170,7 +163,6 @@ async def async_create_backup(
             "request_rules": _safe_configuration(
                 await request_rules.async_backup_data()
             ),
-            "protected_actions": await protected_actions.async_backup_data(),
         }
         serialized = json.dumps(document, indent=2, ensure_ascii=False)
         if len(serialized.encode("utf-8")) > MAX_BACKUP_BYTES:
@@ -211,7 +203,7 @@ def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
     if value.get("format") != BACKUP_FORMAT:
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
     version = value.get("version")
-    if version not in {1, 2, 3, BACKUP_VERSION}:
+    if version not in {1, 2, 3, 4, BACKUP_VERSION}:
         if isinstance(version, int) and version > BACKUP_VERSION:
             raise BackupError(
                 "This backup was created using a newer unsupported backup format"
@@ -230,9 +222,12 @@ def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
         "usage",
     }
     required = expected | ({"request_rules"} if version >= 3 else set())
-    if version >= 4:
-        required.add("protected_actions")
     allowed = required | ({"guest_mode"} if version >= 2 else set())
+    # Version 4 contained one retired feature section. Ignore that legacy payload
+    # while still rejecting backups with multiple unexpected sections.
+    unexpected = set(value) - allowed
+    if version == 4 and len(unexpected) == 1:
+        allowed |= unexpected
     if not required.issubset(value) or not set(value).issubset(allowed):
         raise BackupError("The backup is incomplete or corrupted")
     created_at = value["created_at"]
@@ -285,9 +280,6 @@ def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
         request_rules = RequestRules.validate_backup_data(
             value.get("request_rules", {"defaults": {}, "rules": []})
         )
-        protected_actions = ProtectedActions.validate_backup_data(
-            value.get("protected_actions", {"rules": [], "pin_hash": None})
-        )
     except (TypeError, ValueError) as err:
         raise BackupError(f"The backup is incomplete or corrupted: {err}") from err
     return PreparedRestore(
@@ -304,7 +296,6 @@ def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
         usage_runs,
         guest_mode_schedule,
         request_rules,
-        protected_actions,
         created_at,
         integration_version,
     )
@@ -349,7 +340,6 @@ async def _managers(hass: HomeAssistant, entry_id: str, subentry_id: str):
         await async_get_usage(hass, entry_id, subentry_id),
         await async_get_guest_mode(hass, entry_id, subentry_id),
         await async_get_request_rules(hass, entry_id, subentry_id),
-        await async_get_protected_actions(hass, entry_id, subentry_id),
     )
 
 
@@ -364,7 +354,6 @@ async def _snapshot_for_restore(
         usage,
         guest_mode,
         request_rules,
-        protected_actions,
     ) = managers
     archive_sessions, archive_turns = ConversationArchive.validate_backup_data(
         await archive.async_backup_data(), subentry.subentry_id
@@ -379,9 +368,6 @@ async def _snapshot_for_restore(
     )
     request_rule_backup = RequestRules.validate_backup_data(
         await request_rules.async_backup_data()
-    )
-    protected_action_backup = ProtectedActions.validate_backup_data(
-        await protected_actions.async_backup_data()
     )
     return PreparedRestore(
         subentry.title,
@@ -399,7 +385,6 @@ async def _snapshot_for_restore(
         usage_runs,
         guest_mode_schedule,
         request_rule_backup,
-        protected_action_backup,
         dt_util.utcnow().isoformat(),
         _integration_version(),
     )
@@ -414,7 +399,6 @@ async def _apply_restore(managers: tuple[Any, ...], prepared: PreparedRestore) -
         usage,
         guest_mode,
         request_rules,
-        protected_actions,
     ) = managers
     usage.request_retention_days = int(
         prepared.config.get(
@@ -440,4 +424,3 @@ async def _apply_restore(managers: tuple[Any, ...], prepared: PreparedRestore) -
     )
     await guest_mode.async_replace_backup(prepared.guest_mode_schedule)
     await request_rules.async_replace_backup(prepared.request_rules)
-    await protected_actions.async_replace_backup(prepared.protected_actions)

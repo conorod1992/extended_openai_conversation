@@ -206,11 +206,6 @@ def _document() -> dict:
             },
             "rules": [],
         },
-        "protected_actions": {
-            "storage_version": 1,
-            "pin_hash": None,
-            "rules": [],
-        },
     }
 
 
@@ -236,7 +231,6 @@ def test_full_backup_validation_preserves_durable_categories_and_expiry() -> Non
     assert prepared.usage_runs[0].agent_subentry_id == "agent-new"
     assert prepared.summary()["knowledge_sources"] == 1
     assert prepared.summary()["request_rules"] == 0
-    assert prepared.summary()["protected_action_rules"] == 0
 
 
 def test_backup_rejects_malformed_and_newer_versions() -> None:
@@ -255,7 +249,6 @@ def test_version_two_backup_migrates_with_empty_request_rules() -> None:
     legacy = _document()
     legacy["version"] = 2
     legacy.pop("request_rules")
-    legacy.pop("protected_actions")
     prepared = inspect_backup(legacy, "agent-new")
     assert prepared.request_rules["rules"] == []
 
@@ -298,7 +291,6 @@ async def test_create_full_backup_contains_only_durable_safe_state(
         ("async_get_archive", "archive"),
         ("async_get_usage", "usage"),
         ("async_get_request_rules", "request_rules"),
-        ("async_get_protected_actions", "protected_actions"),
     ):
         monkeypatch.setattr(
             f"custom_components.extended_openai_conversation_responses.backup.{getter}",

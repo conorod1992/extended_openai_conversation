@@ -908,24 +908,6 @@ async def test_management_api_permissions_crud_and_delete_confirmation(
     assert "service_catalog" not in listed
     assert service_catalog_calls == 0
 
-    protected = SimpleNamespace(snapshot=lambda: {"rules": [], "pin_configured": False})
-
-    async def get_protected(*args):
-        return protected
-
-    monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_ui.async_get_protected_actions",
-        get_protected,
-    )
-    protected_result = await async_management_command(
-        hass,
-        "admin",
-        True,
-        {**base, "section": "protected_actions", "action": "get"},
-    )
-    assert "service_catalog" not in protected_result
-    assert service_catalog_calls == 0
-
     with pytest.raises(HomeAssistantError, match="Administrator"):
         await async_management_command(
             hass,

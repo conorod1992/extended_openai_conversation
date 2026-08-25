@@ -23,7 +23,6 @@ import homeassistant.util.dt as dt_util
 from ..const import EVENT_AUTOMATION_REGISTERED
 from ..exceptions import CallServiceError, NativeNotFound
 from ..ha_actions import async_call_ha_action
-from ..protected_actions import ProtectedActionRequired
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -112,8 +111,6 @@ class NativeFunction(Function):
             if previous_state:
                 result["previous_state"] = previous_state
             return result
-        except ProtectedActionRequired:
-            raise
         except HomeAssistantError as e:
             _LOGGER.error(e)
             return {"error": str(e)}
