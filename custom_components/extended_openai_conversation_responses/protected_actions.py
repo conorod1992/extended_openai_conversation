@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import target as target_helpers
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
@@ -34,6 +35,7 @@ MAX_PIN_ATTEMPTS = 3
 PIN_COOLDOWN_SECONDS = 60
 PBKDF2_ITERATIONS = 310_000
 MAX_RULES = 200
+MAX_PIN_SOURCES = 512
 
 CONFIRM_PHRASES = frozenset({"yes", "confirm", "go ahead", "do it"})
 CANCEL_PHRASES = frozenset({"no", "cancel", "never mind"})
@@ -75,6 +77,17 @@ class ProtectionContext:
             self.entry_id,
             self.subentry_id,
             self.conversation_id,
+            self.user_id or "",
+            self.device_id or "",
+            self.satellite_id or "",
+        )
+
+    @property
+    def source_key(self) -> tuple[str, ...]:
+        """Stable trusted source identity used only for PIN rate limiting."""
+        return (
+            self.entry_id,
+            self.subentry_id,
             self.user_id or "",
             self.device_id or "",
             self.satellite_id or "",
@@ -160,12 +173,16 @@ class ProtectedActionStore(Store[dict[str, Any]]):
 class ProtectedActions:
     """Persisted protection rules plus ephemeral, fail-closed challenges."""
 
-    def __init__(self, store: ProtectedActionStore) -> None:
+    def __init__(
+        self, store: ProtectedActionStore, hass: HomeAssistant | None = None
+    ) -> None:
         self._store = store
+        self._hass = hass
         self._rules: list[dict[str, Any]] = []
         self._pin_hash: str | None = None
         self._pending: dict[tuple[str, ...], PendingChallenge] = {}
         self._cooldowns: dict[tuple[str, ...], float] = {}
+        self._pin_failures: dict[tuple[str, ...], tuple[int, float]] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
 
@@ -211,6 +228,7 @@ class ProtectedActions:
         """Fail closed when an entity is reloaded or removed."""
         self._pending.clear()
         self._cooldowns.clear()
+        self._pin_failures.clear()
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Back up the one-way PIN representation, never plaintext."""
@@ -248,6 +266,7 @@ class ProtectedActions:
             self._rules = prepared["rules"]
             self._pending.clear()
             self._cooldowns.clear()
+            self._pin_failures.clear()
             self._sort()
             self._initialized = True
             await self._async_save_locked()
@@ -261,6 +280,7 @@ class ProtectedActions:
             self._pin_hash = pin_hash
             self._pending.clear()
             self._cooldowns.clear()
+            self._pin_failures.clear()
             await self._async_save_locked()
 
     async def async_remove_pin(self) -> None:
@@ -270,6 +290,7 @@ class ProtectedActions:
             self._pin_hash = None
             self._pending.clear()
             self._cooldowns.clear()
+            self._pin_failures.clear()
             await self._async_save_locked()
 
     async def async_create(self, value: Any) -> dict[str, Any]:
@@ -297,6 +318,7 @@ class ProtectedActions:
             self._rules[index] = rule
             self._pending.clear()
             self._cooldowns.clear()
+            self._pin_failures.clear()
             self._sort()
             await self._async_save_locked()
         return dict(rule)
@@ -306,6 +328,7 @@ class ProtectedActions:
             del self._rules[self._index(rule_id)]
             self._pending.clear()
             self._cooldowns.clear()
+            self._pin_failures.clear()
             await self._async_save_locked()
         return True
 
@@ -321,11 +344,28 @@ class ProtectedActions:
     ) -> None:
         """Create a challenge while the manager lock is held."""
         prepared = [_copy_action(action) for action in actions]
+        resolved_actions = [
+            _resolve_target_entity_ids(self._hass, action) for action in prepared
+        ]
+        resolved_rules = {
+            rule["id"]: {
+                key: _resolve_target_entity_ids(self._hass, {key: rule.get(key, [])})
+                for key in ("entity_id", "device_id", "area_id")
+            }
+            for rule in self._rules
+            if rule["enabled"]
+        }
         matches = [
             (rule, action)
-            for action in prepared
+            for action, resolved in zip(prepared, resolved_actions, strict=True)
             for rule in self._rules
-            if rule["enabled"] and action_matches_rule(action, rule)
+            if rule["enabled"]
+            and action_matches_rule(
+                action,
+                rule,
+                resolved_entity_ids=resolved,
+                resolved_rule_entities=resolved_rules[rule["id"]],
+            )
         ]
         if not matches:
             return
@@ -339,6 +379,7 @@ class ProtectedActions:
         )
         protection = rule["protection"]
         key = context.key
+        source_key = context.source_key
         now = monotonic()
         self._prune(now)
         if protection == PROTECTION_PIN:
@@ -347,7 +388,7 @@ class ProtectedActions:
                 raise ProtectedActionRequired(
                     "This action requires a PIN, but no PIN is configured."
                 )
-            if self._cooldowns.get(key, 0) > now:
+            if self._cooldowns.get(source_key, 0) > now:
                 raise ProtectedActionRequired(
                     "Too many PIN attempts. Please wait before trying again."
                 )
@@ -416,14 +457,22 @@ class ProtectedActions:
         accepted = await _async_verify_pin(entered, self._pin_hash)
         if accepted:
             self._pending.pop(context.key, None)
-            self._cooldowns.pop(context.key, None)
+            self._cooldowns.pop(context.source_key, None)
+            self._pin_failures.pop(context.source_key, None)
             _LOGGER.info("PIN challenge result: accepted")
             return ChallengeReply(True, "Done.", tuple(pending.actions), True)
         pending.failed_attempts += 1
+        source_key = context.source_key
+        previous_attempts, last_failure = self._pin_failures.get(source_key, (0, now))
+        if now - last_failure >= PIN_COOLDOWN_SECONDS:
+            previous_attempts = 0
+        source_attempts = previous_attempts + 1
+        self._pin_failures[source_key] = (source_attempts, now)
+        self._bound_pin_sources()
         _LOGGER.info("PIN challenge result: failed")
-        if pending.failed_attempts >= MAX_PIN_ATTEMPTS:
+        if source_attempts >= MAX_PIN_ATTEMPTS:
             self._pending.pop(context.key, None)
-            self._cooldowns[context.key] = now + PIN_COOLDOWN_SECONDS
+            self._cooldowns[source_key] = now + PIN_COOLDOWN_SECONDS
             return ChallengeReply(
                 True,
                 "That PIN was not accepted. Please wait before trying again.",
@@ -437,6 +486,28 @@ class ProtectedActions:
                 self._pending.pop(key, None)
         for key, expires_at in list(self._cooldowns.items()):
             if expires_at <= now:
+                self._cooldowns.pop(key, None)
+                self._pin_failures.pop(key, None)
+        for key, (_attempts, last_failure) in list(self._pin_failures.items()):
+            if (
+                key not in self._cooldowns
+                and last_failure + PIN_COOLDOWN_SECONDS <= now
+            ):
+                self._pin_failures.pop(key, None)
+
+    def _bound_pin_sources(self) -> None:
+        """Keep source-scoped ephemeral authentication state bounded."""
+        overflow = len(self._pin_failures) - MAX_PIN_SOURCES
+        if overflow <= 0:
+            return
+        oldest = sorted(self._pin_failures, key=lambda key: self._pin_failures[key][1])
+        for key in oldest[:overflow]:
+            if self._cooldowns.get(key, 0) <= monotonic():
+                self._pin_failures.pop(key, None)
+        overflow = len(self._pin_failures) - MAX_PIN_SOURCES
+        if overflow > 0:
+            for key in oldest[:overflow]:
+                self._pin_failures.pop(key, None)
                 self._cooldowns.pop(key, None)
 
     def _ensure_pin(self, rule: Mapping[str, Any]) -> None:
@@ -525,7 +596,13 @@ def validate_protection_rule(value: Any) -> dict[str, Any]:
     return rule
 
 
-def action_matches_rule(action: Mapping[str, Any], rule: Mapping[str, Any]) -> bool:
+def action_matches_rule(
+    action: Mapping[str, Any],
+    rule: Mapping[str, Any],
+    *,
+    resolved_entity_ids: set[str] | None = None,
+    resolved_rule_entities: Mapping[str, set[str]] | None = None,
+) -> bool:
     if str(action.get("domain", "")).casefold() != rule["domain"]:
         return False
     if str(action.get("service", "")).casefold() != rule["service"]:
@@ -537,9 +614,45 @@ def action_matches_rule(action: Mapping[str, Any], rule: Mapping[str, Any]) -> b
     target = {**data, **selected_target}
     for key in ("entity_id", "device_id", "area_id"):
         expected = set(rule.get(key, []))
-        if expected and not expected.intersection(_values(target.get(key))):
+        if not expected:
+            continue
+        literal_match = bool(expected.intersection(_values(target.get(key))))
+        entity_match = bool(
+            resolved_entity_ids
+            and resolved_rule_entities
+            and resolved_entity_ids.intersection(resolved_rule_entities.get(key, set()))
+        )
+        if not literal_match and not entity_match:
             return False
     return True
+
+
+def _resolve_target_entity_ids(
+    hass: HomeAssistant | None, value: Mapping[str, Any]
+) -> set[str]:
+    """Resolve supported HA selectors to affected entities, retaining literals."""
+    raw_data = value.get("data")
+    raw_target = value.get("target")
+    data = dict(raw_data) if isinstance(raw_data, Mapping) else {}
+    target = dict(raw_target) if isinstance(raw_target, Mapping) else {}
+    if not data and not target:
+        target = dict(value)
+    selection_data = {
+        key: ({**data, **target}).get(key)
+        for key in ("entity_id", "device_id", "area_id", "floor_id", "label_id")
+        if ({**data, **target}).get(key) not in (None, "", [])
+    }
+    entities = _values(selection_data.get("entity_id"))
+    if hass is None or not selection_data:
+        return entities
+    try:
+        referenced = target_helpers.async_extract_referenced_entity_ids(
+            hass, target_helpers.TargetSelection(selection_data)
+        )
+    except HomeAssistantError, KeyError, TypeError, ValueError:
+        _LOGGER.debug("Unable to resolve Protected Action target selectors")
+        return entities
+    return entities | set(referenced.referenced) | set(referenced.indirectly_referenced)
 
 
 def _copy_action(action: Mapping[str, Any]) -> dict[str, Any]:
@@ -636,7 +749,8 @@ async def async_get_protected_actions(
                 STORAGE_VERSION,
                 f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}",
                 private=True,
-            )
+            ),
+            hass,
         )
         managers[manager_key] = manager
     await manager.async_initialize()

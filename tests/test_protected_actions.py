@@ -46,8 +46,8 @@ class MemoryStore:
         self.data = data
 
 
-async def protected_manager(rule=None, pin=None) -> ProtectedActions:
-    result = ProtectedActions(MemoryStore())
+async def protected_manager(rule=None, pin=None, hass=None) -> ProtectedActions:
+    result = ProtectedActions(MemoryStore(), hass)
     await result.async_initialize()
     if pin:
         await result.async_set_pin(pin)
@@ -263,6 +263,50 @@ async def test_pin_failure_limit_and_cooldown() -> None:
         reset_active_protection(token)
 
 
+async def test_pin_cooldown_survives_fresh_conversation_from_same_source() -> None:
+    manager = await protected_manager(rule("pin"), pin="1234")
+    first = context(conversation_id="conversation-a")
+    await _start_challenge(manager, first)
+    for _attempt in range(MAX_PIN_ATTEMPTS):
+        result = await manager.async_handle_reply(first, "9 9 9 9")
+    assert "wait" in result.response.lower()
+
+    with pytest.raises(ProtectedActionRequired, match="wait"):
+        await manager.async_require(
+            context(conversation_id="conversation-b"),
+            [{"domain": "lock", "service": "unlock"}],
+        )
+
+    with pytest.raises(ProtectedActionRequired, match="say your PIN"):
+        await manager.async_require(
+            context(conversation_id="conversation-c", device_id="other-device"),
+            [{"domain": "lock", "service": "unlock"}],
+        )
+
+
+async def test_successful_pin_resets_source_failure_state() -> None:
+    manager = await protected_manager(rule("pin"), pin="1234")
+    identity = context(conversation_id="conversation-a")
+    await _start_challenge(manager, identity)
+    for _attempt in range(MAX_PIN_ATTEMPTS - 1):
+        failed = await manager.async_handle_reply(identity, "9 9 9 9")
+        assert failed.response == "That PIN was not accepted."
+    accepted = await manager.async_handle_reply(identity, "1 2 3 4")
+    assert accepted.actions
+
+    fresh = context(conversation_id="conversation-b")
+    await _start_challenge(manager, fresh)
+    failed = await manager.async_handle_reply(fresh, "9 9 9 9")
+    assert failed.response == "That PIN was not accepted."
+
+
+async def _start_challenge(
+    manager: ProtectedActions, identity: ProtectionContext
+) -> None:
+    with pytest.raises(ProtectedActionRequired, match="say your PIN"):
+        await manager.async_require(identity, [{"domain": "lock", "service": "unlock"}])
+
+
 async def test_pin_values_are_not_logged(caplog) -> None:
     manager = await protected_manager(rule("pin"), pin="2468")
     identity = context()
@@ -310,6 +354,104 @@ def test_optional_target_matching() -> None:
             "target": {"entity_id": "lock.back_door"},
         },
         target_rule,
+    )
+
+
+@pytest.mark.parametrize(
+    ("target", "rule_target"),
+    [
+        ({"entity_id": "lock.front_door"}, {"entity_id": ["lock.front_door"]}),
+        ({"device_id": "front-device"}, {"entity_id": ["lock.front_door"]}),
+        ({"area_id": "entry"}, {"entity_id": ["lock.front_door"]}),
+        ({"label_id": "outside"}, {"entity_id": ["lock.front_door"]}),
+        ({"floor_id": "ground"}, {"entity_id": ["lock.front_door"]}),
+        ({"entity_id": "lock.front_door"}, {"device_id": ["front-device"]}),
+        ({"entity_id": "lock.front_door"}, {"area_id": ["entry"]}),
+    ],
+)
+async def test_protected_targets_match_across_ha_selector_forms(
+    hass, monkeypatch, target, rule_target
+) -> None:
+    _mock_target_resolution(monkeypatch)
+    manager = await protected_manager(rule(**rule_target), hass=hass)
+    with pytest.raises(ProtectedActionRequired):
+        await manager.async_require(
+            context(),
+            [{"domain": "lock", "service": "unlock", "target": target}],
+        )
+
+
+async def test_mixed_resolved_target_matches_but_unrelated_target_does_not(
+    hass, monkeypatch
+) -> None:
+    _mock_target_resolution(monkeypatch)
+    manager = await protected_manager(rule(entity_id=["lock.front_door"]), hass=hass)
+    with pytest.raises(ProtectedActionRequired):
+        await manager.async_require(
+            context(),
+            [
+                {
+                    "domain": "lock",
+                    "service": "unlock",
+                    "target": {"area_id": "entry"},
+                }
+            ],
+        )
+    await manager.async_require(
+        context(conversation_id="unrelated"),
+        [
+            {
+                "domain": "lock",
+                "service": "unlock",
+                "target": {"device_id": "back-device"},
+            }
+        ],
+    )
+
+
+async def test_selector_resolution_preserves_strongest_matching_rule(
+    hass, monkeypatch
+) -> None:
+    _mock_target_resolution(monkeypatch)
+    manager = await protected_manager(pin="1234", hass=hass)
+    await manager.async_create(rule("confirmation", area_id=["entry"], name="Area"))
+    pin_rule = await manager.async_create(
+        rule("pin", entity_id=["lock.front_door"], name="Door")
+    )
+    with pytest.raises(ProtectedActionRequired, match="PIN"):
+        await manager.async_require(
+            context(),
+            [
+                {
+                    "domain": "lock",
+                    "service": "unlock",
+                    "target": {"area_id": "entry"},
+                }
+            ],
+        )
+    assert manager._pending[context().key].rule_id == pin_rule["id"]
+
+
+def _mock_target_resolution(monkeypatch) -> None:
+    selector_entities = {
+        "front-device": {"lock.front_door"},
+        "back-device": {"lock.back_door"},
+        "entry": {"lock.front_door", "lock.entry_side"},
+        "outside": {"lock.front_door"},
+        "ground": {"lock.front_door", "lock.back_door"},
+    }
+
+    def resolve(_hass, selection):
+        direct = set(getattr(selection, "entity_ids", set()))
+        indirect = set()
+        for attribute in ("device_ids", "area_ids", "label_ids", "floor_ids"):
+            for selector in getattr(selection, attribute, set()):
+                indirect.update(selector_entities.get(selector, set()))
+        return SimpleNamespace(referenced=direct, indirectly_referenced=indirect)
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.protected_actions.target_helpers.async_extract_referenced_entity_ids",
+        resolve,
     )
 
 

@@ -19,6 +19,9 @@ test("Protected Actions empty state explains confirmation, PIN, privacy, and exa
     "PIN checking happens locally",
     "never sent to OpenAI",
     "Confirmation is not authentication",
+    "Protection boundary",
+    "cannot always check one by one",
+    "Protect the wrapper itself",
     "lock.unlock",
     "homeassistant.restart",
   ]) assert.match(html, new RegExp(copy.replace(".", "\\."), "i"));

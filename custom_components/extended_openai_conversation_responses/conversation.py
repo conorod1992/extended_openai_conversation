@@ -98,6 +98,11 @@ from .function_groups import (
     remove_function_group_runtime,
     reset_function_group_runtime,
 )
+from .functions.security import (
+    FunctionSecurity,
+    classify_tool,
+    contains_indirect_service_call,
+)
 from .guest_mode import (
     GUEST_MODE_UNAVAILABLE,
     GuestCapabilityPolicy,
@@ -1193,8 +1198,20 @@ class ExtendedOpenAIAgentEntity(
             guest_entities = exposed_entities
             if policy.guest_active:
                 control = self._is_control_tool(current_tool)
+                if control and contains_indirect_service_call(tool_input.tool_args):
+                    return self._tool_result(
+                        tool_input,
+                        {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                    )
                 if not self._guest_arguments_allowed_runtime(
                     tool_input.tool_args, policy, control=control
+                ):
+                    return self._tool_result(
+                        tool_input,
+                        {"status": "unavailable", "error": GUEST_MODE_UNAVAILABLE},
+                    )
+                if control and not self._guest_arguments_allowed_runtime(
+                    current_tool.get("function", {}), policy, control=True
                 ):
                     return self._tool_result(
                         tool_input,
@@ -1304,22 +1321,12 @@ class ExtendedOpenAIAgentEntity(
 
     @staticmethod
     def _is_control_tool(tool: Mapping[str, Any]) -> bool:
-        function = tool.get("function", {})
-        return function.get("type") == "native" and function.get("name") in {
-            "execute_service",
-            "execute_service_single",
-            "add_automation",
-        }
+        return classify_tool(tool) == FunctionSecurity.CONTROL
 
     @staticmethod
     def _is_guest_unscopable_tool(tool: Mapping[str, Any]) -> bool:
-        """Deny native operations whose results or effects cannot be entity-scoped."""
-        function = tool.get("function", {})
-        return function.get("type") == "native" and function.get("name") in {
-            "add_automation",
-            "get_energy",
-            "get_user_from_user_id",
-        }
+        """Deny configured operations that cannot be entity-scoped reliably."""
+        return classify_tool(tool) > FunctionSecurity.CONTROL
 
     @staticmethod
     def _guest_arguments_allowed(

@@ -94,6 +94,7 @@ from .continuity import ConversationContinuity, async_get_continuity
 from .conversation_archive import async_get_archive
 from .function_groups import assemble_function_tools, get_function_group_runtime
 from .functions import FUNCTIONS
+from .functions.security import FunctionSecurity, classify_tool
 from .guest_mode import (
     async_get_guest_mode,
     guest_policy_editor_snapshot,
@@ -890,10 +891,8 @@ async def async_management_command(
                         "name": tool["spec"]["name"],
                         "description": tool["spec"].get("description", ""),
                         "enabled": function_tool_enabled(tool),
-                        "unsafe_in_guest_mode": tool.get("function", {}).get("type")
-                        == "native"
-                        and tool.get("function", {}).get("name")
-                        in {"add_automation", "get_energy", "get_user_from_user_id"},
+                        "unsafe_in_guest_mode": classify_tool(tool)
+                        > FunctionSecurity.CONTROL,
                     }
                     for tool in configured_tools
                 ],
