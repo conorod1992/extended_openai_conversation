@@ -52,7 +52,7 @@ MAX_SCRIPT_DEPTH = 12
 MATCH_TYPES = ("equals", "starts_with", "ends_with", "contains", "sentence_pattern")
 ACTION_TYPES = ("local_action", "model_routing")
 SLOT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
-SLOT_REFERENCE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]{0,63})\}")
+SLOT_REFERENCE = re.compile(r"(?<!\{)\{([A-Za-z_][A-Za-z0-9_]{0,63})\}(?!\})")
 JINJA_SLOT_REFERENCE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]{0,63})\s*\}\}")
 ROUTING_SCOPES = ("request", "conversation")
 DEFAULT_MATCHING = {
@@ -588,8 +588,9 @@ def validate_rule(value: Any) -> dict[str, Any]:
     action_type = value.get("action_type", "local_action")
     if action_type not in ACTION_TYPES:
         raise ValueError("unsupported action type")
-    action = _validate_action(action_type, value.get("action", {}))
-    referenced_slots = _referenced_slots(action)
+    raw_action = value.get("action", {})
+    action = _validate_action(action_type, raw_action)
+    referenced_slots = _referenced_slots(action) | _legacy_action_slots(raw_action)
     unknown_slots = referenced_slots - set(slot_names)
     if unknown_slots:
         raise ValueError("unknown captured value: " + ", ".join(sorted(unknown_slots)))
@@ -787,13 +788,30 @@ def _migrate_slot_templates(value: Any) -> Any:
     return value
 
 
+def _legacy_action_slots(value: Any) -> set[str]:
+    """Collect slot references only from recognizably legacy local actions."""
+    if not isinstance(value, Mapping):
+        return set()
+    actions = value.get("actions", [])
+    if not isinstance(actions, Sequence) or isinstance(actions, str):
+        return set()
+    result: set[str] = set()
+    for action in actions:
+        if not isinstance(action, Mapping) or not (
+            "domain" in action or action.get("type") in {"function", "home_assistant"}
+        ):
+            continue
+        result.update(_referenced_slots(action))
+    return result
+
+
 def _validate_script_sequence(value: Sequence[Any]) -> list[dict[str, Any]]:
     """Validate native HA script syntax and enforce conservative size bounds."""
     migrated = [
         _validate_local_action(item)
         if isinstance(item, Mapping)
         and ("domain" in item or item.get("type") in {"function", "home_assistant"})
-        else _migrate_slot_templates(item)
+        else item
         for item in value
     ]
     _validate_script_complexity(migrated)
@@ -844,9 +862,7 @@ def _validate_script_complexity(value: Any, *, depth: int = 0) -> int:
 def _referenced_slots(value: Any) -> set[str]:
     """Collect deterministic slot references from a persisted rule value."""
     if isinstance(value, str):
-        return set(SLOT_REFERENCE.findall(value)) | set(
-            JINJA_SLOT_REFERENCE.findall(value)
-        )
+        return set(SLOT_REFERENCE.findall(value))
     if isinstance(value, Mapping):
         if value.get("source") == "slot" and isinstance(value.get("slot"), str):
             return {str(value["slot"])}

@@ -449,6 +449,32 @@ def test_native_script_constructs_and_templates_validate() -> None:
     assert validated["slots"] == [{"name": "level"}]
 
 
+def test_native_script_variable_is_not_a_captured_request_slot() -> None:
+    rule = local_rule()
+    rule["action"]["actions"] = [
+        {"variables": {"level": 50}},
+        {
+            "action": "light.turn_on",
+            "data": {"brightness_pct": "{{ level }}"},
+        },
+    ]
+    validated = validate_rule(rule)
+    assert validated["slots"] == []
+    assert validated["action"]["actions"] == rule["action"]["actions"]
+
+
+def test_native_compact_jinja_round_trips_without_legacy_rewriting() -> None:
+    rule = local_rule()
+    rule["action"]["actions"] = [
+        {
+            "action": "notify.send_message",
+            "data": {"message": "{{item}}"},
+        }
+    ]
+    validated = validate_rule(rule)
+    assert validated["action"]["actions"][0]["data"]["message"] == "{{item}}"
+
+
 async def test_backward_compatibility_ignores_invalid_stored_rules() -> None:
     rules = RequestRules(
         MemoryStore({"rules": [{"old": "unsupported"}], "defaults": {"bad": True}})
@@ -496,6 +522,15 @@ def fake_ha_script(monkeypatch):
 
         async def async_run(self, variables, _context=None):
             for action in self.sequence:
+                if "variables" in action:
+                    script_variables = action["variables"]
+                    if hasattr(script_variables, "async_simple_render"):
+                        variables.update(
+                            script_variables.async_simple_render(variables)
+                        )
+                    else:
+                        variables.update(await render(script_variables, variables))
+                    continue
                 service_name = action["action"]
                 data = await render(action.get("data", {}), variables)
                 if service_name == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}":
@@ -575,6 +610,46 @@ async def test_slots_resolve_in_action_data_response_and_multiple_actions(hass) 
     assert services.calls[1][2]["service_data"]["message"] == (
         "Remembered buy oat milk tomorrow"
     )
+
+
+async def test_native_template_uses_captured_slot_alongside_script_variable(
+    hass,
+) -> None:
+    rule = local_rule(
+        phrases=["Set brightness to {level}"], match_type="sentence_pattern"
+    )
+    rule["action"]["actions"] = [
+        {"variables": {"transition": 1}},
+        {
+            "action": "light.turn_on",
+            "target": {"entity_id": "light.lamp"},
+            "data": {
+                "brightness_pct": "{{ level }}",
+                "transition": "{{ transition }}",
+            },
+        },
+    ]
+    services = FakeServices()
+    hass.services = services
+    result = await async_evaluate_rule(
+        hass,
+        await manager(rule),
+        RequestRuleRuntime(),
+        "Set brightness to 60",
+        "conversation:native-slot",
+    )
+    assert result is not None and result.response == "Done"
+    assert services.calls == [
+        (
+            "light",
+            "turn_on",
+            {
+                "target": {"entity_id": ["light.lamp"]},
+                "service_data": {"brightness_pct": "60", "transition": "1"},
+                "blocking": True,
+            },
+        )
+    ]
 
 
 async def test_direct_function_action_fixed_and_slot_arguments_without_provider(
