@@ -149,35 +149,32 @@ const setFuzzyState = (root, prefix) => { const toggle = root.querySelector(`#${
 
 export function bindRequestRules(panel) {
   const root = panel.shadowRoot, q = (selector) => root.querySelector(selector), result = panel._result || {}, rules = result.rules || [];
-  root.addEventListener("click", async (event) => {
-    const trigger = event.target.closest("#rule-add, #rule-empty-add, .rule-edit");
-    if (!trigger || panel._serviceCatalog) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    open(trigger.dataset.id || null);
-    const dialog = q("#rule-dialog"), save = q("#rule-save"), add = q("#rule-action-add"), error = q("#rule-error");
-    save.disabled = true;
-    add.disabled = true;
-    error.textContent = "Loading Home Assistant actions…";
-    try {
-      const catalog = await panel._loadServiceCatalog();
-      if (!dialog.open) return;
-      const entries = Object.entries(catalog).flatMap(([domain, services]) => Object.entries(services).map(([service, description]) => ({domain, service, description})));
-      q("#rule-service-list").replaceChildren(...entries.map(({domain, service, description}) => { const option = document.createElement("option"); option.value = `${domain}.${service}`; option.label = description.name || option.value; return option; }));
-      q("#rule-actions").querySelectorAll(".ha-action-row").forEach((row) => setupActionRow(panel, row));
-      error.textContent = "";
-      save.disabled = false;
-      add.disabled = false;
-    } catch (err) {
-      if (dialog.open) error.textContent = `Unable to load Home Assistant actions: ${err.message || String(err)}`;
-    }
-  }, true);
   const refresh = () => { const local = q("#rule-action-type").value === "local_action", grammar = q("#rule-match").value === "sentence_pattern", slots = capturedSlotNames(q("#rule-phrases").value); refreshRequestRuleSlotSelectors(root, slots); q("#rule-local-config").hidden = !local; q("#rule-routing-config").hidden = local; q("#rule-local-responses").hidden = !local; q("#rule-routing-response").hidden = local; q("#sentence-pattern-help").hidden = !grammar; q("#rule-slot-help").hidden = !slots.length; q("#rule-slot-list").textContent = slots.length ? `Captured values: ${slots.join(", ")}` : ""; q("#rule-matching-behavior").disabled = grammar; q("#rule-matching-controls").hidden = grammar || q("#rule-matching-behavior").value !== "custom"; if (slots.length) q("#rule-match").value = "sentence_pattern"; if (!local && ["equals","sentence_pattern"].includes(q("#rule-match").value)) q("#rule-scope").value = "conversation"; };
   const open = (id = null) => {
     const rule = rules.find((item) => item.id === id); panel._editingRuleId = id; q("#rule-dialog-title").textContent = rule ? "Edit Request Rule" : "Create Request Rule"; q("#rule-name").value = rule?.name || ""; q("#rule-enabled-edit").checked = rule?.enabled ?? true; q("#rule-phrases").value = (rule?.phrases || []).join("\n"); q("#rule-match").value = rule?.match_type || "equals"; q("#rule-action-type").value = rule?.action_type || "local_action"; q("#rule-success").value = rule?.action?.success_response || "Done"; q("#rule-failure").value = rule?.action?.failure_response || "Sorry, that did not work"; q("#rule-model").value = rule?.action?.model || ""; q("#rule-reasoning").value = rule?.action?.reasoning_effort || ""; q("#rule-scope").value = rule?.action?.scope || "request"; q("#rule-reset").checked = rule?.action?.reset || false; q("#rule-routing-success").value = rule?.action?.success_response || "Updated"; q("#rule-matching-behavior").value = rule?.matching_behavior || "defaults"; q("#rule-word-forms").checked = rule?.matching?.word_forms ?? true; q("#rule-wording").checked = rule?.matching?.wording_alternatives ?? true; q("#rule-fuzzy").checked = rule?.matching?.fuzzy ?? false; q("#rule-threshold").value = sensitivityLabel(rule?.matching?.fuzzy_threshold ?? 90); q("#rule-actions").replaceChildren(...(rule?.action?.actions || [{domain:"script",service:"turn_on",target:{}}]).map((item) => item.type === "function" ? functionActionRow(panel, item) : actionRow(panel, item))); q("#rule-actions").querySelectorAll(".ha-action-row").forEach((row) => setupActionRow(panel, row)); refresh(); setFuzzyState(root, "rule"); q("#rule-error").textContent = ""; q("#rule-dialog").showModal();
   };
-  const entries = Object.entries(panel._serviceCatalog || {}).flatMap(([domain, services]) => Object.entries(services).map(([service, description]) => ({domain,service,description}))); q("#rule-service-list")?.replaceChildren(...entries.map(({domain,service,description}) => { const option = document.createElement("option"); option.value = `${domain}.${service}`; option.label = description.name || option.value; return option; }));
-  q("#rule-add")?.addEventListener("click", () => open()); q("#rule-empty-add")?.addEventListener("click", () => open()); q("#rule-search")?.addEventListener("input", (event) => { panel._query = event.target.value; panel._render(); }); root.querySelectorAll(".rule-edit").forEach((button) => button.addEventListener("click", () => open(button.dataset.id))); root.querySelectorAll(".rule-duplicate").forEach((button) => button.addEventListener("click", async () => { await panel._call("request_rules", "duplicate", {rule_id:button.dataset.id}); await panel._loadSection(); })); root.querySelectorAll(".rule-delete").forEach((button) => button.addEventListener("click", async () => { if (!await panel._confirm("Delete Request Rule?", "This cannot be undone.", "Delete")) return; await panel._call("request_rules", "delete", {rule_id:button.dataset.id,confirm:true}); await panel._loadSection(); })); root.querySelectorAll(".rule-enabled").forEach((input) => input.addEventListener("change", async () => { const rule = rules.find((item) => item.id === input.dataset.id); await panel._call("request_rules", "update", {rule_id:rule.id,rule:{...rule,enabled:input.checked,sensitive_matching_warning:undefined}}); await panel._loadSection(true); }));
+  const populateServiceCatalog = (catalog) => { const entries = Object.entries(catalog || {}).flatMap(([domain, services]) => Object.entries(services).map(([service, description]) => ({domain,service,description}))); q("#rule-service-list")?.replaceChildren(...entries.map(({domain,service,description}) => { const option = document.createElement("option"); option.value = `${domain}.${service}`; option.label = description.name || option.value; return option; })); };
+  const openWithServiceCatalog = (id = null) => {
+    open(id);
+    if (panel._serviceCatalog) return;
+    const loadToken = (panel._ruleCatalogLoadToken || 0) + 1, dialog = q("#rule-dialog"), save = q("#rule-save"), add = q("#rule-action-add"), error = q("#rule-error");
+    panel._ruleCatalogLoadToken = loadToken;
+    save.disabled = true;
+    add.disabled = true;
+    error.textContent = "Loading Home Assistant actions…";
+    panel._loadServiceCatalog().then((catalog) => {
+      if (panel._ruleCatalogLoadToken !== loadToken || !dialog.isConnected || !dialog.open) return;
+      populateServiceCatalog(catalog);
+      q("#rule-actions").querySelectorAll(".ha-action-row").forEach((row) => setupActionRow(panel, row));
+      error.textContent = "";
+      save.disabled = false;
+      add.disabled = false;
+    }, (err) => {
+      if (panel._ruleCatalogLoadToken === loadToken && dialog.isConnected && dialog.open) error.textContent = `Unable to load Home Assistant actions: ${err.message || String(err)}`;
+    });
+  };
+  populateServiceCatalog(panel._serviceCatalog);
+  q("#rule-add")?.addEventListener("click", () => openWithServiceCatalog()); q("#rule-empty-add")?.addEventListener("click", () => openWithServiceCatalog()); q("#rule-search")?.addEventListener("input", (event) => { panel._query = event.target.value; panel._render(); }); root.querySelectorAll(".rule-edit").forEach((button) => button.addEventListener("click", () => openWithServiceCatalog(button.dataset.id))); root.querySelectorAll(".rule-duplicate").forEach((button) => button.addEventListener("click", async () => { await panel._call("request_rules", "duplicate", {rule_id:button.dataset.id}); await panel._loadSection(); })); root.querySelectorAll(".rule-delete").forEach((button) => button.addEventListener("click", async () => { if (!await panel._confirm("Delete Request Rule?", "This cannot be undone.", "Delete")) return; await panel._call("request_rules", "delete", {rule_id:button.dataset.id,confirm:true}); await panel._loadSection(); })); root.querySelectorAll(".rule-enabled").forEach((input) => input.addEventListener("change", async () => { const rule = rules.find((item) => item.id === input.dataset.id); await panel._call("request_rules", "update", {rule_id:rule.id,rule:{...rule,enabled:input.checked,sensitive_matching_warning:undefined}}); await panel._loadSection(true); }));
   q("#rules-default-fuzzy")?.addEventListener("change", () => setFuzzyState(root, "rules-default")); q("#rule-fuzzy")?.addEventListener("change", () => setFuzzyState(root, "rule")); setFuzzyState(root, "rules-default"); q("#rules-default-save")?.addEventListener("click", async () => { await panel._call("request_rules", "defaults", {defaults:{word_forms:q("#rules-default-word-forms").checked,wording_alternatives:q("#rules-default-wording").checked,fuzzy:q("#rules-default-fuzzy").checked,fuzzy_threshold:sensitivityValue(q("#rules-default-threshold").value)}}); await panel._loadSection(); });
   q("#rule-test")?.addEventListener("click", async () => { const output = q("#rule-test-result"), text = q("#rule-test-text").value.trim(); if (!text) return; output.textContent = "Processing…"; try { const response = await panel._call("request_rules", "test", {text}), captured = Object.entries(response.captured_values || {}); output.textContent = `${response.response || "(No response text)"}\nConversation ID: ${response.conversation_id || "—"}\nPath: ${response.handled_locally ? "Handled locally" : "AI provider"}${response.matched_rule ? `\nMatched rule: ${response.matched_rule.name}` : ""}${captured.length ? `\nCaptured values:\n${captured.map(([name,value]) => `${name} → ${value}`).join("\n")}` : ""}`; } catch (err) { output.textContent = err.message || String(err); } });
   const bindRemove = () => root.querySelectorAll(".wording-remove").forEach((button) => button.onclick = () => button.closest(".wording-group").remove()); bindRemove(); q("#wording-add")?.addEventListener("click", () => { const wrapper = document.createElement("div"); wrapper.className = "wording-group"; wrapper.innerHTML = `<label>Main phrase<input class="wording-canonical" maxlength="100"></label><label>Other ways to say it<input class="wording-alternatives" placeholder="Comma-separated alternatives"></label><button type="button" class="icon wording-remove" aria-label="Remove wording alternative">×</button>`; q("#wording-groups").append(wrapper); bindRemove(); }); q("#wording-save")?.addEventListener("click", async () => { const wording_groups = [...root.querySelectorAll(".wording-group")].map((row) => ({canonical:row.querySelector(".wording-canonical").value.trim(),alternatives:row.querySelector(".wording-alternatives").value.split(",").map((item) => item.trim()).filter(Boolean)})); await panel._call("request_rules", "wording_groups", {wording_groups}); await panel._loadSection(); });

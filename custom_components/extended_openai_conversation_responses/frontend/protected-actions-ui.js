@@ -21,26 +21,6 @@ export function protectedActionsDialogs() {
 export function bindProtectedActions(panel) {
   const root = panel.shadowRoot, q = (selector) => root.querySelector(selector);
   const result = panel._result || {}, rules = result.rules || [];
-  root.addEventListener("click", async (event) => {
-    const trigger = event.target.closest("#protected-add, #protected-empty-add, .protected-edit");
-    if (!trigger || panel._serviceCatalog) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    open(trigger.dataset.id || null);
-    const dialog = q("#protected-dialog"), save = q('#protected-form button[type="submit"]'), error = q("#protected-error");
-    save.disabled = true;
-    error.textContent = "Loading Home Assistant actions…";
-    try {
-      const catalog = await panel._loadServiceCatalog();
-      if (!dialog.open) return;
-      const entries = Object.entries(catalog).flatMap(([domain, services]) => Object.entries(services).map(([service, description]) => ({domain, service, description})));
-      q("#protected-service-list").replaceChildren(...entries.map(({domain, service, description}) => { const option = document.createElement("option"); option.value = `${domain}.${service}`; option.label = description.name || option.value; return option; }));
-      error.textContent = "";
-      save.disabled = false;
-    } catch (err) {
-      if (dialog.open) error.textContent = `Unable to load Home Assistant actions: ${err.message || String(err)}`;
-    }
-  }, true);
   const selector = q("#protected-target");
   const configureTarget = () => {
     const kind = q("#protected-target-kind").value;
@@ -62,10 +42,26 @@ export function bindProtectedActions(panel) {
     q("#protected-target-kind").value = target.kind;
     q("#protected-error").textContent = ""; configureTarget(); showPinGuidance(); q("#protected-dialog").showModal();
   };
-  const entries = Object.entries(panel._serviceCatalog || {}).flatMap(([domain, services]) => Object.entries(services).map(([service, description]) => ({domain,service,description})));
-  q("#protected-service-list")?.replaceChildren(...entries.map(({domain,service,description}) => { const option = document.createElement("option"); option.value = `${domain}.${service}`; option.label = description.name || option.value; return option; }));
-  q("#protected-add")?.addEventListener("click", () => open()); q("#protected-empty-add")?.addEventListener("click", () => open());
-  root.querySelectorAll(".protected-edit").forEach((button) => button.addEventListener("click", () => open(button.dataset.id)));
+  const populateServiceCatalog = (catalog) => { const entries = Object.entries(catalog || {}).flatMap(([domain, services]) => Object.entries(services).map(([service, description]) => ({domain,service,description}))); q("#protected-service-list")?.replaceChildren(...entries.map(({domain,service,description}) => { const option = document.createElement("option"); option.value = `${domain}.${service}`; option.label = description.name || option.value; return option; })); };
+  const openWithServiceCatalog = (id = null) => {
+    open(id);
+    if (panel._serviceCatalog) return;
+    const loadToken = (panel._protectedCatalogLoadToken || 0) + 1, dialog = q("#protected-dialog"), save = q('#protected-form button[type="submit"]'), error = q("#protected-error");
+    panel._protectedCatalogLoadToken = loadToken;
+    save.disabled = true;
+    error.textContent = "Loading Home Assistant actions…";
+    panel._loadServiceCatalog().then((catalog) => {
+      if (panel._protectedCatalogLoadToken !== loadToken || !dialog.isConnected || !dialog.open) return;
+      populateServiceCatalog(catalog);
+      error.textContent = "";
+      save.disabled = false;
+    }, (err) => {
+      if (panel._protectedCatalogLoadToken === loadToken && dialog.isConnected && dialog.open) error.textContent = `Unable to load Home Assistant actions: ${err.message || String(err)}`;
+    });
+  };
+  populateServiceCatalog(panel._serviceCatalog);
+  q("#protected-add")?.addEventListener("click", () => openWithServiceCatalog()); q("#protected-empty-add")?.addEventListener("click", () => openWithServiceCatalog());
+  root.querySelectorAll(".protected-edit").forEach((button) => button.addEventListener("click", () => openWithServiceCatalog(button.dataset.id)));
   root.querySelectorAll(".protected-delete").forEach((button) => button.addEventListener("click", async () => { if (!await panel._confirm("Delete protection rule?", "The action will run normally after this rule is removed.", "Delete")) return; await panel._call("protected_actions", "delete", {rule_id:button.dataset.id,confirm:true}); await panel._loadSection(); }));
   root.querySelectorAll(".protected-enabled").forEach((input) => input.addEventListener("change", async () => { const rule = rules.find((item) => item.id === input.dataset.id); await panel._call("protected_actions", "update", {rule_id:rule.id,rule:{...rule,enabled:input.checked}}); await panel._loadSection(true); }));
   q("#protected-target-kind")?.addEventListener("change", () => { panel._protectedTarget = []; configureTarget(); }); selector?.addEventListener("value-changed", (event) => { panel._protectedTarget = event.detail.value || []; });

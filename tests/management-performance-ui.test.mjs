@@ -17,7 +17,11 @@ globalThis.HTMLElement = class {
 };
 globalThis.customElements = {define() {}};
 
-const {ExtendedOpenAIManagementPanel} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js");
+const [{ExtendedOpenAIManagementPanel}, {bindRequestRules}, {bindProtectedActions}] = await Promise.all([
+  import("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js"),
+  import("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js"),
+  import("../custom_components/extended_openai_conversation_responses/frontend/protected-actions-ui.js"),
+]);
 
 const agents = [
   {entry_id:"entry-a", subentry_id:"agent-a", title:"A"},
@@ -80,10 +84,11 @@ function panelFor(page = "assistant", subsection = "basics") {
 
 {
   const panel = panelFor("data-memory", "memories");
+  assert.equal(panel._sectionCacheKey(), null);
   const calls = [];
   panel._hass = {callWS: async (message) => {
     calls.push(message);
-    if (message.section === "scopes") return {scopes:[{...initialScopes[0], memory_count:1, conversation_count:0}]};
+    if (message.section === "scopes") return {scopes:[{...initialScopes[0], memory_count:1, conversation_count:0}, {scope_id:"shared", scope_type:"shared", display_name:"Shared", memory_count:0, conversation_count:0}]};
     if (message.section === "memories") return {memories:[{memory_id:`memory-${message.subentry_id}`}]};
     return {};
   }};
@@ -91,18 +96,28 @@ function panelFor(page = "assistant", subsection = "basics") {
   assert.deepEqual(calls.map((call) => call.section), ["scopes", "memories"]);
   panel.renderStates = [];
   await panel._loadSection();
-  assert.equal(calls.length, 2);
-  assert.deepEqual(panel.renderStates, [false]);
+  assert.deepEqual(calls.map((call) => call.section), ["scopes", "memories", "memories"]);
+  assert.deepEqual(panel.renderStates, [true, false]);
+
+  panel._memoryKind = "temporary";
+  await panel._loadSection();
+  panel._scopeId = "shared";
+  await panel._loadSection();
+  assert.deepEqual(calls.map((call) => call.section), ["scopes", "memories", "memories", "memories", "memories"]);
+  assert.deepEqual(calls.slice(3, 5).map((call) => [call.action, call.scope_id]), [
+    ["temporary_list", "user:current"],
+    ["temporary_list", "shared"],
+  ]);
 
   panel._agentId = "agent-b";
   panel._scopeId = "user:current";
   panel._applyScopes(initialScopes);
   await panel._loadSection();
-  assert.deepEqual(calls.slice(2).map((call) => [call.section, call.subentry_id]), [
+  assert.deepEqual(calls.slice(5).map((call) => [call.section, call.subentry_id]), [
     ["scopes", "agent-b"],
     ["memories", "agent-b"],
   ]);
-  assert.equal(panel._sectionCache.size, 2);
+  assert.equal(panel._sectionCache.size, 0);
 }
 
 {
@@ -120,14 +135,9 @@ function panelFor(page = "assistant", subsection = "basics") {
   assert.equal(panel._sectionCache.has("agent-a|data-memory/knowledge"), false);
   assert.equal(panel._sectionCache.has("agent-b|data-memory/knowledge"), true);
 
-  panel._sectionCache.set("agent-a|data-memory/memories|user:one|persistent", {memories:[]});
-  panel._sectionCache.set("agent-a|data-memory/memories|shared|temporary", {memories:[]});
-  panel._sectionCache.set("agent-b|data-memory/memories|user:two|persistent", {memories:[]});
   panel._scopeCatalogCache.set("agent-a", initialScopes);
   panel._scopeCatalogCache.set("agent-b", initialScopes);
   panel._invalidateAfterMutation("agent-a", "memories", "delete");
-  assert.equal([...panel._sectionCache.keys()].some((key) => key.startsWith("agent-a|data-memory/memories|")), false);
-  assert.equal(panel._sectionCache.has("agent-b|data-memory/memories|user:two|persistent"), true);
   assert.equal(panel._scopeCatalogCache.has("agent-a"), false);
   assert.equal(panel._scopeCatalogCache.has("agent-b"), true);
 }
@@ -161,6 +171,21 @@ function panelFor(page = "assistant", subsection = "basics") {
   assert.equal(calls, 1);
 }
 
+{
+  let shadowRootListeners = 0;
+  const shadowRoot = {
+    addEventListener() { shadowRootListeners += 1; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  };
+  const panel = {shadowRoot, _result:{rules:[]}, _serviceCatalog:null};
+  bindRequestRules(panel);
+  bindProtectedActions(panel);
+  bindRequestRules(panel);
+  bindProtectedActions(panel);
+  assert.equal(shadowRootListeners, 0);
+}
+
 const management = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
 const requestRules = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js", import.meta.url), "utf8");
 const protectedActions = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/protected-actions-ui.js", import.meta.url), "utf8");
@@ -169,3 +194,9 @@ assert.match(requestRules, /panel\._loadServiceCatalog\(\)/);
 assert.match(protectedActions, /panel\._loadServiceCatalog\(\)/);
 assert.doesNotMatch(requestRules, /result\.service_catalog/);
 assert.doesNotMatch(protectedActions, /result\.service_catalog/);
+assert.doesNotMatch(requestRules, /root\.addEventListener\("click"/);
+assert.doesNotMatch(protectedActions, /root\.addEventListener\("click"/);
+assert.match(requestRules, /#rule-add"\)\?\.addEventListener\("click", \(\) => openWithServiceCatalog\(\)/);
+assert.match(protectedActions, /#protected-add"\)\?\.addEventListener\("click", \(\) => openWithServiceCatalog\(\)/);
+assert.match(requestRules, /!dialog\.isConnected \|\| !dialog\.open/);
+assert.match(protectedActions, /!dialog\.isConnected \|\| !dialog\.open/);

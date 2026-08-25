@@ -171,9 +171,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!agentId || !mutations[section]?.has(action)) return;
     const prefix = `${agentId}|`;
     const view = {request_rules:"capabilities/request-rules", protected_actions:"capabilities/protected-actions", knowledge:"data-memory/knowledge"}[section];
-    for (const key of this._sectionCache.keys()) {
-      if (key.startsWith(prefix) && (view ? key === `${prefix}${view}` : key.includes("|data-memory/memories|"))) this._sectionCache.delete(key);
-    }
+    if (view) this._sectionCache.delete(`${prefix}${view}`);
     if (["memories", "conversations"].includes(section)) this._scopeCatalogCache.delete(agentId);
   }
 
@@ -181,7 +179,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const agentId = this._agentId;
     if (!agentId) return null;
     if (["capabilities/request-rules", "capabilities/protected-actions", "data-memory/knowledge"].includes(view)) return `${agentId}|${view}`;
-    if (view === "data-memory/memories") return `${agentId}|${view}|${this._scopeId}|${this._memoryKind}`;
     return null;
   }
 
