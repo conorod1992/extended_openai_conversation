@@ -10,6 +10,10 @@ const editor = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url),
   "utf8",
 );
+const guide = await readFile(
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/guide-content.js", import.meta.url),
+  "utf8",
+);
 
 assert.match(panel, /capabilities\/guest-mode/);
 assert.match(panel, /guest_mode", "update"/);
@@ -48,11 +52,45 @@ assert.match(panel, /All current Knowledge sources are available to guests. New 
 assert.match(panel, /All eligible enabled functions are available to guests. New eligible functions added later will also be included/);
 assert.match(panel, /filter\(\(item\) => !item\.unsafe_in_guest_mode\)/);
 assert.match(panel, /The assistant can never shorten or disable Guest Mode/);
+assert.doesNotMatch(panel, /Trusted actions|trusted Home Assistant actions|trusted controls/i);
+assert.match(panel, /Guest Mode activation/);
+assert.match(panel, /The assistant can enable or extend Guest Mode, but cannot shorten or disable it\. Administrators and Home Assistant automations can change or end Guest Mode\./);
+assert.match(guide, /The assistant can enable or extend Guest Mode, but cannot shorten or disable it\. Administrators and Home Assistant automations can change or end Guest Mode\./);
+assert.doesNotMatch(guide, /trusted Home Assistant controls/i);
 assert.match(panel, /<summary>Advanced<\/summary><label class="toggle"><span>Allow the assistant to activate Guest Mode/);
 assert.match(panel, /top:50%/);
 assert.match(panel, /translateY\(-50%\)/);
 assert.doesNotMatch(editor, /Guest Mode policy/);
 assert.doesNotMatch(editor, /group-guest-allowed/);
+
+globalThis.window = {location:{pathname:"/extended-openai/capabilities/guest-mode"}, addEventListener() {}, removeEventListener() {}};
+globalThis.history = {pushState() {}};
+globalThis.localStorage = {getItem() { return null; }, setItem() {}};
+globalThis.HTMLElement = class { attachShadow() { this.shadowRoot = {hasChildNodes: () => false}; } };
+globalThis.customElements = {define() {}};
+const {ExtendedOpenAIManagementPanel} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js");
+
+const guestPanel = new ExtendedOpenAIManagementPanel();
+guestPanel._data = {is_admin:true};
+guestPanel._result = {config:{}};
+
+const inactive = guestPanel._guestPolicyView({state:"inactive"}, {}, "inactive");
+assert.match(inactive, /Guest Mode activation/);
+assert.match(inactive, /Inactive · No interval configured/);
+assert.match(inactive, /id="guest-now">Activate now/);
+assert.match(inactive, /class="secondary" id="guest-update">Update interval/);
+assert.doesNotMatch(inactive, /id="guest-disable"/);
+
+const scheduled = guestPanel._guestPolicyView({state:"scheduled", scheduled:true, active_from:"2026-08-26T10:00:00Z"}, {}, "scheduled");
+assert.match(scheduled, /Scheduled · Starts/);
+assert.match(scheduled, /id="guest-update">Update interval/);
+assert.match(scheduled, /id="guest-now">Activate now/);
+assert.match(scheduled, /id="guest-disable">Cancel schedule/);
+
+const active = guestPanel._guestPolicyView({state:"active", currently_active:true, active_from:"2026-08-25T10:00:00Z"}, {}, "active");
+assert.match(active, /Active · Starts/);
+assert.match(active, /id="guest-update">Update interval/);
+assert.match(active, /id="guest-disable">End Guest Mode/);
 
 const legacyDraft = {guest_excluded_entities:["light.private"], guest_mode_enabled:false, unrelated:"kept"};
 const freshDraft = freshGuestPolicyDraft(legacyDraft);
