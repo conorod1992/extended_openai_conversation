@@ -21,6 +21,8 @@ class FakeArchiveStorage:
         self.partitions = {}
         self.metadata_save_count = 0
         self.fail_metadata_on = None
+        self.partition_save_count = 0
+        self.fail_partition_on = None
 
     async def async_load_metadata(self):
         return deepcopy(self.metadata)
@@ -35,6 +37,9 @@ class FakeArchiveStorage:
         return deepcopy(self.partitions.get(partition))
 
     async def async_save_partition(self, partition, data):
+        self.partition_save_count += 1
+        if self.partition_save_count == self.fail_partition_on:
+            raise OSError("partition write failed")
         self.partitions[partition] = deepcopy(data)
 
 
@@ -301,6 +306,40 @@ async def test_interrupted_private_commit_cannot_resurrect_content() -> None:
     assert restarted.stats()["turn_count"] == 0
     with pytest.raises(ValueError, match="not found"):
         await restarted.async_get("user:alice", session.session_id)
+
+
+async def test_partition_write_failure_recovers_private_state_on_restart() -> None:
+    storage = FakeArchiveStorage()
+    archive = ConversationArchive(storage, "agent-1")
+    await archive.async_initialize()
+    session = await archive.async_begin_session(
+        "key",
+        user_scope("alice", source="test"),
+        "conversation",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    await archive.async_record_turn(
+        session.session_id,
+        run_id="run",
+        user_text="secret",
+        assistant_text="reply",
+        successful=True,
+    )
+    storage.fail_partition_on = storage.partition_save_count + 1
+
+    with pytest.raises(OSError, match="partition write failed"):
+        await archive.async_make_private(session.session_id)
+
+    assert "pending_partitions" in storage.metadata
+    restarted = ConversationArchive(storage, "agent-1")
+    await restarted.async_initialize()
+
+    assert restarted.stats()["turn_count"] == 0
+    with pytest.raises(ValueError, match="not found"):
+        await restarted.async_get("user:alice", session.session_id)
+    assert "pending_partitions" not in storage.metadata
 
 
 @pytest.mark.parametrize(
