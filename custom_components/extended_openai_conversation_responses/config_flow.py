@@ -245,6 +245,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for OpenAI Conversation."""
 
     VERSION = CONFIG_ENTRY_VERSION
+    _reauth_entry: ConfigEntry | None = None
 
     @staticmethod
     @callback
@@ -294,6 +295,41 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+        )
+
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
+        """Prompt for a replacement credential while preserving provider settings."""
+        self._reauth_entry = self.hass.config_entries.async_get_entry(
+            self.context["entry_id"]
+        )
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Validate and store a replacement API credential."""
+        if self._reauth_entry is None:
+            return self.async_abort(reason="reauth_failed")
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            updated = {**self._reauth_entry.data, **user_input}
+            try:
+                await validate_input(self.hass, updated)
+            except APIConnectionError:
+                errors["base"] = "cannot_connect"
+            except AuthenticationError:
+                errors["base"] = "invalid_auth"
+            except Exception:
+                _LOGGER.exception("Unexpected exception during reauthentication")
+                errors["base"] = "unknown"
+            else:
+                return self.async_update_reload_and_abort(
+                    self._reauth_entry, data=updated
+                )
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
+            errors=errors,
         )
 
     @classmethod

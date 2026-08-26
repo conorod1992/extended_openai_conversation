@@ -32,6 +32,7 @@ from .const import (
     DEFAULT_MEMORY_ENABLED,
     DEFAULT_MEMORY_RETRIEVAL_MODE,
     DEFAULT_TEMPORARY_MEMORY,
+    SUBSYSTEM_STATUS_KEY,
 )
 from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
@@ -90,6 +91,12 @@ async def async_get_config_entry_diagnostics(
                 CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY
             ),
         }
+        subsystem_status = hass.data.get(SUBSYSTEM_STATUS_KEY, {}).get(
+            (entry.entry_id, subentry.subentry_id), {}
+        )
+        diagnostics["optional_subsystems"] = {
+            key: dict(value) for key, value in subsystem_status.items()
+        }
         diagnostics.update(
             async_get_continuity(hass, entry.entry_id, subentry.subentry_id).stats()
         )
@@ -126,6 +133,8 @@ async def async_get_config_entry_diagnostics(
         except Exception as err:
             diagnostics["function_group_configuration_error"] = type(err).__name__
         try:
+            if subsystem_status.get("temporary_memory", {}).get("status") == "failed":
+                raise RuntimeError("disabled after initialization failure")
             temporary = await async_get_temporary_memory(
                 hass, entry.entry_id, subentry.subentry_id
             )
@@ -133,11 +142,15 @@ async def async_get_config_entry_diagnostics(
         except Exception as err:
             diagnostics["temporary_memory_storage_error"] = type(err).__name__
         try:
+            if subsystem_status.get("persistent_memory", {}).get("status") == "failed":
+                raise RuntimeError("disabled after initialization failure")
             memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
             diagnostics.update(memory.stats())
         except Exception as err:
             diagnostics["storage_error"] = type(err).__name__
         try:
+            if subsystem_status.get("knowledge", {}).get("status") == "failed":
+                raise RuntimeError("disabled after initialization failure")
             knowledge = await async_get_knowledge(
                 hass, entry.entry_id, subentry.subentry_id
             )
@@ -145,6 +158,8 @@ async def async_get_config_entry_diagnostics(
         except Exception as err:
             diagnostics["knowledge_storage_error"] = type(err).__name__
         try:
+            if subsystem_status.get("archive", {}).get("status") == "failed":
+                raise RuntimeError("disabled after initialization failure")
             archive = await async_get_archive(
                 hass, entry.entry_id, subentry.subentry_id
             )

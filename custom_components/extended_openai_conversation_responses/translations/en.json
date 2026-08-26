@@ -16,6 +16,13 @@
                     "skip_authentication": "Skip Authentication",
                     "api_provider": "Api Provider"
                 }
+            },
+            "reauth_confirm": {
+                "title": "Reauthenticate Extended OpenAI",
+                "description": "Enter a valid API key. Existing provider and endpoint settings will be preserved.",
+                "data": {
+                    "api_key": "API key"
+                }
             }
         }
     },

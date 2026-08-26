@@ -186,6 +186,7 @@ def assemble_integration_function_tools(
     memory_scope_available: bool,
     temporary_scope_available: bool,
     knowledge_available: bool,
+    archive_available: bool = True,
     guest_policy: GuestCapabilityPolicy | None = None,
 ) -> list[dict[str, Any]]:
     """Assemble non-configured tools from the same feature/scope decisions."""
@@ -230,7 +231,8 @@ def assemble_integration_function_tools(
             )
         result.extend(temporary_memory_tools())
     if (
-        options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+        archive_available
+        and options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
         and guest_policy.archive_access
     ):
         configured_archive_tools = archive_tools()

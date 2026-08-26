@@ -183,7 +183,20 @@ jobs:
             "xmltodict==${{ needs.prepare.outputs.xmltodict-version }}" \
             "beautifulsoup4==${{ needs.prepare.outputs.beautifulsoup4-version }}" \
             "lxml==${{ needs.prepare.outputs.lxml-version }}"
+
+      - name: Install stable HA test harness
+        if: matrix.home-assistant == 'stable'
+        run: |
           pip install -r requirements_test.txt
+
+      - name: Install HA dev test dependencies
+        if: matrix.home-assistant == 'dev'
+        run: |
+          # The latest pytest-homeassistant-custom-component release pins stable HA
+          # and imports an event-loop policy removed on HA dev. Run the full suite
+          # without only that incompatible plugin until upstream supports HA dev.
+          grep -v '^pytest-homeassistant-custom-component' requirements_test.txt > "${RUNNER_TEMP}/requirements_test_ha_dev.txt"
+          pip install -r "${RUNNER_TEMP}/requirements_test_ha_dev.txt"
 
       - name: Install Home Assistant stable
         if: matrix.home-assistant == 'stable'
@@ -194,6 +207,11 @@ jobs:
         if: matrix.home-assistant == 'dev'
         run: |
           pip install --upgrade git+https://github.com/home-assistant/core.git@dev
+
+      - name: Verify resolved test environment
+        run: |
+          pip check
+          python -c "from importlib.metadata import version; print('homeassistant=' + version('homeassistant'))"
 
       - name: Run tests
         env:

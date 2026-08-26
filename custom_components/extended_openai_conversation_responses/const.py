@@ -1,6 +1,7 @@
 """Constants for the Extended OpenAI Conversation (Responses) integration."""
 
 DOMAIN = "extended_openai_conversation_responses"
+SUBSYSTEM_STATUS_KEY = f"{DOMAIN}.subsystem_status"
 CONFIG_ENTRY_VERSION = 8
 AGENT_CONFIG_EXPORT_VERSION = 1
 DEFAULT_NAME = "Extended OpenAI Conversation (Responses)"

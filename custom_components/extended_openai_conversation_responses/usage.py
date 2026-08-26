@@ -9,6 +9,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timedelta
+import logging
 import time
 from typing import Any, Protocol
 from uuid import uuid4
@@ -27,6 +28,7 @@ STORAGE_VERSION = 2
 STORAGE_KEY_PREFIX = f"{DOMAIN}.usage"
 _USAGE_MANAGERS = f"{DOMAIN}.usage_managers"
 MAX_RECENT_LIMIT = 200
+_LOGGER = logging.getLogger(__name__)
 
 
 class UsageStorage(Protocol):
@@ -352,9 +354,11 @@ class UsageManager:
                             details=dict(usage.details),
                         )
                     )
-            await self._async_save_totals()
+            await self._async_save_safely("request totals", self._async_save_totals)
             if self._detail_storage is not None and run is not None:
-                await self._async_save_details()
+                await self._async_save_safely(
+                    "request details", self._async_save_details
+                )
             self._notify()
 
     async def _async_finalize_run(self, run: UsageRun) -> None:
@@ -378,11 +382,15 @@ class UsageManager:
             day_key = dt_util.now().date().isoformat()
             day = self.daily.setdefault(day_key, _empty_day(day_key))
             _add_run_to_day(day, run)
-            await self._async_save_totals()
-            if self._daily_storage is not None:
-                await self._daily_storage.async_save({"days": self.daily})
+            await self._async_save_safely("run totals", self._async_save_totals)
+            daily_storage = self._daily_storage
+            if daily_storage is not None:
+                await self._async_save_safely(
+                    "daily run totals",
+                    lambda: daily_storage.async_save({"days": self.daily}),
+                )
             if self._detail_storage is not None:
-                await self._async_save_details()
+                await self._async_save_safely("run details", self._async_save_details)
             self._notify()
 
     async def async_prune_details(self, *, save: bool = True) -> dict[str, int]:
@@ -615,9 +623,22 @@ class UsageManager:
                 }
             )
 
+    async def _async_save_safely(self, label: str, save: Callable[[], Any]) -> None:
+        """Persist telemetry without changing the outcome of a completed request."""
+        try:
+            await save()
+        except Exception:
+            _LOGGER.exception(
+                "Unable to persist usage %s; in-memory accounting remains current",
+                label,
+            )
+
     def _notify(self) -> None:
         for listener in tuple(self._listeners):
-            listener()
+            try:
+                listener()
+            except Exception:
+                _LOGGER.exception("Usage listener failed after accounting update")
 
 
 def _validate_counter_mapping(data: dict[str, Any], keys: set[str]) -> None:

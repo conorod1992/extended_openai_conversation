@@ -35,6 +35,11 @@ class FakeStorage:
         self.data = deepcopy(data)
 
 
+class FailingStorage(FakeStorage):
+    async def async_save(self, data):
+        raise OSError("disk full")
+
+
 async def _manager(storage: FakeStorage | None = None) -> UsageManager:
     manager = UsageManager(storage or FakeStorage())
     await manager.async_initialize()
@@ -229,3 +234,24 @@ async def test_exception_run_is_finalized_without_request_metadata() -> None:
     assert run.error_type == "RuntimeError"
     assert run.request_count == 0
     assert manager.totals.conversation_count == 1
+
+
+async def test_persistence_failure_keeps_successful_request_and_run_in_memory(
+    caplog,
+) -> None:
+    manager = UsageManager(
+        FailingStorage(), FailingStorage(), FailingStorage(), agent_subentry_id="agent"
+    )
+    await manager.async_initialize()
+
+    async with manager.async_run() as run:
+        await manager.async_record_request(
+            successful=True,
+            usage=RequestUsage(input_tokens=3, output_tokens=2, total_tokens=5),
+        )
+
+    assert run.successful is True
+    assert manager.totals.api_request_count == 1
+    assert manager.totals.conversation_count == 1
+    assert manager.totals.total_tokens == 5
+    assert "Unable to persist usage" in caplog.text

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from contextvars import ContextVar
 import json
@@ -66,6 +67,7 @@ from .const import (
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DEFAULT_FUNCTION_GROUPS,
+    DEFAULT_KNOWLEDGE_ENABLED,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_MEMORY_EMBEDDING_MODEL,
     DEFAULT_MEMORY_RETRIEVAL_MODE,
@@ -80,6 +82,7 @@ from .const import (
     MEMORY_RETRIEVAL_HYBRID,
     SHARED_MEMORY_AUTOMATIC,
     SHARED_MEMORY_DISABLED,
+    SUBSYSTEM_STATUS_KEY,
     TEMPORARY_MEMORY_OFF,
 )
 from .continuity import (
@@ -270,9 +273,6 @@ class ExtendedOpenAIAgentEntity(
             )
         )
         await self._usage.async_prune_details()
-        self._archive = await async_get_archive(
-            self.hass, self.entry.entry_id, self.subentry.subentry_id
-        )
         self._continuity = async_get_continuity(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
@@ -285,32 +285,44 @@ class ExtendedOpenAIAgentEntity(
         self._request_rule_runtime = get_request_rule_runtime(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
-        if (
+        temporary_configured = (
             self.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
             != TEMPORARY_MEMORY_OFF
-        ):
+        )
+        self._set_subsystem_status("temporary_memory", temporary_configured)
+        if temporary_configured:
             try:
                 self._temporary_memory = await async_get_temporary_memory(
                     self.hass, self.entry.entry_id, self.subentry.subentry_id
                 )
-            except Exception:
+            except Exception as err:
+                self._set_subsystem_status("temporary_memory", True, err)
                 _LOGGER.exception("Unable to initialize temporary memory")
-        await self._archive.async_prune(
-            int(
-                self.subentry.data.get(
-                    CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
-                )
-            )
-        )
+            else:
+                self._set_subsystem_status("temporary_memory", True, healthy=True)
 
+        archive_configured = bool(
+            self.subentry.data.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+        )
+        await self._async_initialize_archive(archive_configured)
+
+        knowledge_configured = bool(
+            self.subentry.data.get(CONF_KNOWLEDGE_ENABLED, DEFAULT_KNOWLEDGE_ENABLED)
+        )
+        self._set_subsystem_status("knowledge", knowledge_configured)
         try:
             self._knowledge = await async_get_knowledge(
                 self.hass, self.entry.entry_id, self.subentry.subentry_id
             )
-        except Exception:
+        except Exception as err:
+            self._set_subsystem_status("knowledge", knowledge_configured, err)
             _LOGGER.exception("Unable to initialize Knowledge Library")
+        else:
+            self._set_subsystem_status("knowledge", knowledge_configured, healthy=True)
 
-        if memory_enabled(self.subentry.data):
+        memory_configured = memory_enabled(self.subentry.data)
+        self._set_subsystem_status("persistent_memory", memory_configured)
+        if memory_configured:
             try:
                 self._memory = await async_get_memory(
                     self.hass, self.entry.entry_id, self.subentry.subentry_id
@@ -330,8 +342,54 @@ class ExtendedOpenAIAgentEntity(
                             )
                         ),
                     )
-            except Exception:
+            except Exception as err:
+                self._set_subsystem_status("persistent_memory", True, err)
                 _LOGGER.exception("Unable to initialize persistent memory")
+            else:
+                self._set_subsystem_status("persistent_memory", True, healthy=True)
+
+    async def _async_initialize_archive(self, configured: bool) -> None:
+        """Initialize archive storage without taking the conversation agent down."""
+        self._set_subsystem_status("archive", configured)
+        try:
+            self._archive = await async_get_archive(
+                self.hass, self.entry.entry_id, self.subentry.subentry_id
+            )
+            await self._archive.async_prune(
+                int(
+                    self.subentry.data.get(
+                        CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+                    )
+                )
+            )
+        except Exception as err:
+            self._archive = None
+            self._set_subsystem_status("archive", configured, err)
+            _LOGGER.exception(
+                "Unable to initialize conversation archive; archive features are unavailable"
+            )
+        else:
+            self._set_subsystem_status("archive", configured, healthy=True)
+
+    def _set_subsystem_status(
+        self,
+        subsystem: str,
+        configured: bool,
+        error: Exception | None = None,
+        *,
+        healthy: bool = False,
+    ) -> None:
+        """Publish a non-sensitive runtime status for diagnostics."""
+        statuses = self.hass.data.setdefault(SUBSYSTEM_STATUS_KEY, {})
+        agent = statuses.setdefault(
+            (self.entry.entry_id, self.subentry.subentry_id), {}
+        )
+        state = "disabled" if not configured else "healthy" if healthy else "failed"
+        agent[subsystem] = {
+            "configured": configured,
+            "status": state,
+            **({"error_type": type(error).__name__} if error is not None else {}),
+        }
 
     async def async_will_remove_from_hass(self) -> None:
         """When entity will be removed from Home Assistant."""
@@ -380,16 +438,49 @@ class ExtendedOpenAIAgentEntity(
         )
         source_device_id = source_device_id or scope.device_id
         assert self._continuity is not None
-        resolution = await self._continuity.async_resolve(
-            continuity_mode,
-            scope,
-            source_device_id,
-            user_input.conversation_id,
-            timeout_minutes,
-            namespace=(
-                GUEST_CONTINUITY_NAMESPACE if request_policy.guest_active else None
-            ),
-        )
+        try:
+            resolution = await self._continuity.async_resolve(
+                continuity_mode,
+                scope,
+                source_device_id,
+                user_input.conversation_id,
+                timeout_minutes,
+                namespace=(
+                    GUEST_CONTINUITY_NAMESPACE if request_policy.guest_active else None
+                ),
+            )
+        except BaseException:
+            _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
+            raise
+        try:
+            return await self._async_process_claimed(
+                user_input,
+                llm_context,
+                request_policy,
+                scope,
+                source_device_id,
+                timeout_minutes,
+                resolution,
+            )
+        finally:
+            try:
+                await asyncio.shield(self._continuity.async_release(resolution.key))
+            finally:
+                _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
+
+    async def _async_process_claimed(
+        self,
+        user_input: ConversationInput,
+        llm_context: Any,
+        request_policy: GuestCapabilityPolicy,
+        scope: ResolvedDataScope,
+        source_device_id: str | None,
+        timeout_minutes: int,
+        resolution: Any,
+    ) -> ConversationResult:
+        """Process a request after continuity ownership has been claimed."""
+        continuity = self._continuity
+        assert continuity is not None
         user_input.conversation_id = resolution.conversation_id
         context_id = getattr(getattr(llm_context, "context", None), "id", None)
         session_key = (
@@ -500,15 +591,14 @@ class ExtendedOpenAIAgentEntity(
                     }
                     metadata["captured_values"] = dict(evaluation.match.slots)
                 if evaluation is not None and evaluation.consume:
-                    result = self._local_rule_result(
+                    return await self._async_complete_local_rule(
                         user_input,
                         chat_log,
                         evaluation.response or "Done",
+                        archive_session,
+                        resolution.key,
+                        source_device_id,
                     )
-                    await self._continuity.async_record_success(
-                        resolution.key, chat_log.content
-                    )
-                    return result
                 request_options = (
                     self._request_rule_runtime.effective_options(
                         self.subentry.data,
@@ -526,7 +616,7 @@ class ExtendedOpenAIAgentEntity(
                     if chat_log.content and isinstance(
                         chat_log.content[-1], conversation.AssistantContent
                     ):
-                        await self._continuity.async_record_success(
+                        await continuity.async_record_success(
                             resolution.key, chat_log.content
                         )
                     return result
@@ -537,36 +627,24 @@ class ExtendedOpenAIAgentEntity(
                     result = await self._async_handle_message(
                         user_input, chat_log, request_options
                     )
-                    if (
-                        self._archive is not None
-                        and archive_session is not None
-                        and self._effective_guest_policy().archive_retention
-                    ):
-                        assistant_text = ""
-                        if chat_log.content and isinstance(
-                            chat_log.content[-1], conversation.AssistantContent
-                        ):
-                            assistant_text = chat_log.content[-1].content or ""
-                        await self._archive.async_record_turn(
-                            archive_session.session_id,
-                            run_id=run.run_id,
-                            user_text=user_input.text,
-                            assistant_text=assistant_text,
-                            successful=run.successful,
-                        )
+                    await self._async_archive_turn(
+                        archive_session,
+                        run.run_id,
+                        user_input,
+                        chat_log,
+                        successful=run.successful,
+                    )
                     if run.successful:
-                        await self._continuity.async_record_success(
+                        await continuity.async_record_success(
                             resolution.key, chat_log.content
                         )
                     return result
             finally:
-                await self._continuity.async_release(resolution.key)
                 _ACTIVE_FUNCTION_GROUP_SESSION.reset(function_group_token)
                 _ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
                 _ACTIVE_ARCHIVE.reset(archive_token)
                 _ACTIVE_MEMORY_SESSION.reset(memory_session_token)
                 _ACTIVE_SCOPE.reset(scope_token)
-                _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
 
     async def _async_handle_message(
         self,
@@ -630,6 +708,9 @@ class ExtendedOpenAIAgentEntity(
                 intent.IntentResponseErrorCode.UNKNOWN,
                 f"Sorry, I had a problem talking to OpenAI: {err}",
             )
+            self._fire_conversation_finished(
+                user_input, chat_log, status="error", error_type=type(err).__name__
+            )
             return conversation.ConversationResult(
                 response=intent_response, conversation_id=user_input.conversation_id
             )
@@ -642,19 +723,15 @@ class ExtendedOpenAIAgentEntity(
                 intent.IntentResponseErrorCode.UNKNOWN,
                 f"Something went wrong: {err}",
             )
+            self._fire_conversation_finished(
+                user_input, chat_log, status="error", error_type=type(err).__name__
+            )
             return conversation.ConversationResult(
                 response=intent_response, conversation_id=user_input.conversation_id
             )
 
         # Fire conversation finished event
-        self.hass.bus.async_fire(
-            EVENT_CONVERSATION_FINISHED,
-            {
-                "user_input": user_input,
-                "messages": [c.as_dict() for c in chat_log.content],
-                "agent_id": self.subentry.subentry_id,
-            },
-        )
+        self._fire_conversation_finished(user_input, chat_log, status="success")
 
         # Build response from chat log
         intent_response = intent.IntentResponse(language=user_input.language)
@@ -691,14 +768,8 @@ class ExtendedOpenAIAgentEntity(
         chat_log.content.append(
             conversation.AssistantContent(agent_id=self.entity_id, content=response)
         )
-        self.hass.bus.async_fire(
-            EVENT_CONVERSATION_FINISHED,
-            {
-                "user_input": user_input,
-                "messages": [content.as_dict() for content in chat_log.content],
-                "agent_id": self.subentry.subentry_id,
-                "handled_locally": True,
-            },
+        self._fire_conversation_finished(
+            user_input, chat_log, status="local", handled_locally=True
         )
         intent_response = intent.IntentResponse(language=user_input.language)
         intent_response.async_set_speech(response)
@@ -707,6 +778,98 @@ class ExtendedOpenAIAgentEntity(
             conversation_id=chat_log.conversation_id,
             continue_conversation=False,
         )
+
+    def _fire_conversation_finished(
+        self,
+        user_input: ConversationInput,
+        chat_log: ChatLog,
+        *,
+        status: str,
+        handled_locally: bool = False,
+        error_type: str | None = None,
+    ) -> None:
+        """Emit exactly one completion event with backward-compatible fields."""
+        payload: dict[str, Any] = {
+            "user_input": user_input,
+            "messages": [content.as_dict() for content in chat_log.content],
+            "agent_id": self.subentry.subentry_id,
+            "status": status,
+        }
+        if handled_locally:
+            payload["handled_locally"] = True
+        if error_type is not None:
+            payload["error_type"] = error_type
+        self.hass.bus.async_fire(EVENT_CONVERSATION_FINISHED, payload)
+
+    async def _async_archive_turn(
+        self,
+        archive_session: ArchiveSession | None,
+        run_id: str | None,
+        user_input: ConversationInput,
+        chat_log: ChatLog,
+        *,
+        successful: bool,
+    ) -> None:
+        """Archive a completed turn without changing its user-facing outcome."""
+        if (
+            self._archive is None
+            or archive_session is None
+            or not self._effective_guest_policy().archive_retention
+        ):
+            return
+        assistant_text = ""
+        if chat_log.content and isinstance(
+            chat_log.content[-1], conversation.AssistantContent
+        ):
+            assistant_text = chat_log.content[-1].content or ""
+        try:
+            await self._archive.async_record_turn(
+                archive_session.session_id,
+                run_id=run_id,
+                user_text=user_input.text,
+                assistant_text=assistant_text,
+                successful=successful,
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Unable to persist completed conversation turn to the archive"
+            )
+
+    async def _async_complete_local_rule(
+        self,
+        user_input: ConversationInput,
+        chat_log: ChatLog,
+        response: str,
+        archive_session: ArchiveSession | None,
+        continuity_key: str | None,
+        source_device_id: str | None,
+    ) -> ConversationResult:
+        """Finalize a locally consumed rule as a zero-provider-request run."""
+        if self._usage is not None:
+            async with self._usage.async_run(
+                home_assistant_conversation_id=user_input.conversation_id,
+                source_device_id=source_device_id,
+            ) as run:
+                result = self._local_rule_result(user_input, chat_log, response)
+                await self._async_archive_turn(
+                    archive_session,
+                    run.run_id,
+                    user_input,
+                    chat_log,
+                    successful=True,
+                )
+        else:
+            result = self._local_rule_result(user_input, chat_log, response)
+            await self._async_archive_turn(
+                archive_session,
+                None,
+                user_input,
+                chat_log,
+                successful=True,
+            )
+        assert self._continuity is not None
+        await self._continuity.async_record_success(continuity_key, chat_log.content)
+        return result
 
     async def _async_execute_request_rule_function(
         self,
@@ -954,6 +1117,7 @@ class ExtendedOpenAIAgentEntity(
                         and _ACTIVE_TEMPORARY_SCOPE.get() is not None
                     ),
                     knowledge_available=self._knowledge_available,
+                    archive_available=self._archive is not None,
                     guest_policy=policy,
                 )
             )
