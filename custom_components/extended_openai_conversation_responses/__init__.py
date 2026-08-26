@@ -10,7 +10,7 @@ from openai._exceptions import AuthenticationError, OpenAIError
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
@@ -121,8 +121,7 @@ async def async_setup_entry(
             api_provider=entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
         )
     except AuthenticationError as err:
-        _LOGGER.error("Invalid API key: %s", err)
-        return False
+        raise ConfigEntryAuthFailed("API credentials are invalid or expired") from err
     except OpenAIError as err:
         raise ConfigEntryNotReady(err) from err
 

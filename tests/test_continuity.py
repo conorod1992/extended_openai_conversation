@@ -96,6 +96,7 @@ async def test_inactivity_and_success_reset_timer() -> None:
     first = await manager.async_resolve(
         CONVERSATION_CONTINUITY_USER, scope, None, None, 30
     )
+    await manager.async_release(first.key)
     manager._sessions[first.key].last_active = dt_util.utcnow() - timedelta(minutes=31)
     expired = await manager.async_resolve(
         CONVERSATION_CONTINUITY_USER, scope, None, None, 30
@@ -123,6 +124,23 @@ async def test_overlapping_requests_do_not_share_mutable_chat_log() -> None:
     )
     assert overlapping.key is None
     assert overlapping.conversation_id != first.conversation_id
+
+
+async def test_in_flight_session_is_not_pruned_until_released() -> None:
+    manager = ConversationContinuity("agent")
+    scope = user_scope("alice", source="test")
+    active = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, scope, None, None, 1
+    )
+    assert active.key is not None
+    manager._sessions[active.key].last_active = dt_util.utcnow() - timedelta(minutes=2)
+
+    await manager.async_list(1)
+    assert active.key in manager._sessions
+
+    await manager.async_release(active.key)
+    await manager.async_list(1)
+    assert active.key not in manager._sessions
 
 
 async def test_consecutive_guest_turns_resume_guest_history() -> None:

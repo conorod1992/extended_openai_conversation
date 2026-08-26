@@ -136,6 +136,7 @@ class ConversationArchive:
         self._turns: dict[str, list[ArchiveTurn]] = defaultdict(list)
         self._active: dict[str, str] = {}
         self._partitions: set[str] = set()
+        self._pending_partitions: set[str] = set()
         self._lock = asyncio.Lock()
         self._initialized = False
 
@@ -144,6 +145,26 @@ class ConversationArchive:
             if self._initialized:
                 return
             data = await self._storage.async_load_metadata() or {}
+            pending = data.get("pending_partitions")
+            if pending is not None:
+                # Metadata is the transaction marker. Complete any interrupted
+                # cross-store write before exposing archive state after restart.
+                if not isinstance(pending, dict) or any(
+                    not isinstance(partition, str)
+                    or re.fullmatch(r"\d{4}-\d{2}", partition) is None
+                    or not isinstance(payload, dict)
+                    or not isinstance(payload.get("turns"), list)
+                    for partition, payload in pending.items()
+                ):
+                    raise ValueError("conversation archive transaction is corrupted")
+                for partition, payload in sorted(pending.items()):
+                    await self._storage.async_save_partition(partition, payload)
+                data = {
+                    key: value
+                    for key, value in data.items()
+                    if key != "pending_partitions"
+                }
+                await self._storage.async_save_metadata(data)
             for raw in data.get("sessions", []):
                 try:
                     session = ArchiveSession(**raw)
@@ -259,8 +280,7 @@ class ConversationArchive:
             )
             partition = timestamp[:7]
             self._partitions.add(partition)
-            await self._async_save_partition_locked(partition)
-            await self._async_save_metadata_locked()
+            await self._async_commit_partitions_locked({partition})
             return turn
 
     async def async_make_private(self, session_id: str) -> dict[str, Any]:
@@ -271,8 +291,7 @@ class ConversationArchive:
             self._sessions[session_id] = ArchiveSession(
                 **{**asdict(session), "turn_count": 0, "retention_state": "private"}
             )
-            await self._async_save_all_partitions_locked()
-            await self._async_save_metadata_locked()
+            await self._async_commit_partitions_locked(set(self._partitions))
             return {
                 "private_mode_enabled": True,
                 "session_id": session_id,
@@ -412,8 +431,7 @@ class ConversationArchive:
             self._active = {
                 key: value for key, value in self._active.items() if value != session_id
             }
-            await self._async_save_all_partitions_locked()
-            await self._async_save_metadata_locked()
+            await self._async_commit_partitions_locked(set(self._partitions))
             return {"deleted_sessions": 1, "deleted_turns": deleted_turns}
 
     async def async_clear_scope(
@@ -437,8 +455,7 @@ class ConversationArchive:
                 for key, value in self._active.items()
                 if value not in target_set
             }
-            await self._async_save_all_partitions_locked()
-            await self._async_save_metadata_locked()
+            await self._async_commit_partitions_locked(set(self._partitions))
             return {"deleted_sessions": len(targets), "deleted_turns": deleted_turns}
 
     async def async_delete_selected(
@@ -464,8 +481,7 @@ class ConversationArchive:
                 for key, value in self._active.items()
                 if value not in targets
             }
-            await self._async_save_all_partitions_locked()
-            await self._async_save_metadata_locked()
+            await self._async_commit_partitions_locked(set(self._partitions))
             return {"deleted_sessions": len(targets), "deleted_turns": deleted_turns}
 
     async def async_delete_date_range(
@@ -510,8 +526,7 @@ class ConversationArchive:
             )
             for session_id in targets:
                 del self._sessions[session_id]
-            await self._async_save_all_partitions_locked()
-            await self._async_save_metadata_locked()
+            await self._async_commit_partitions_locked(set(self._partitions))
             return {"deleted_sessions": len(targets), "deleted_turns": deleted_turns}
 
     def active_session(self, session_key: str) -> ArchiveSession | None:
@@ -669,10 +684,9 @@ class ConversationArchive:
                 self._turns[turn.session_id].append(turn)
             self._active.clear()
             self._partitions = {turn.timestamp[:7] for turn in turns}
-            for partition in sorted(old_partitions - self._partitions):
-                await self._storage.async_save_partition(partition, {"turns": []})
-            await self._async_save_all_partitions_locked()
-            await self._async_save_metadata_locked()
+            await self._async_commit_partitions_locked(
+                old_partitions | self._partitions
+            )
 
     def _require_session(self, session_id: str) -> ArchiveSession:
         session = self._sessions.get(session_id)
@@ -687,33 +701,56 @@ class ConversationArchive:
         return session
 
     async def _async_save_metadata_locked(self) -> None:
+        await self._storage.async_save_metadata(self._metadata_payload_locked())
+
+    def _metadata_payload_locked(
+        self, pending_partitions: dict[str, dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         persisted_sessions = {
             session.session_id: session
             for session in self._sessions.values()
             if session.retention_state != "unretained"
         }
-        await self._storage.async_save_metadata(
-            {
-                "sessions": [
-                    asdict(session) for session in persisted_sessions.values()
-                ],
-                "active": {
-                    key: value
-                    for key, value in self._active.items()
-                    if value in persisted_sessions
-                },
-                "partitions": sorted(self._partitions),
-            }
-        )
+        payload: dict[str, Any] = {
+            "sessions": [asdict(session) for session in persisted_sessions.values()],
+            "active": {
+                key: value
+                for key, value in self._active.items()
+                if value in persisted_sessions
+            },
+            "partitions": sorted(self._partitions),
+        }
+        if pending_partitions is not None:
+            payload["pending_partitions"] = pending_partitions
+        return payload
 
     async def _async_save_partition_locked(self, partition: str) -> None:
+        await self._storage.async_save_partition(
+            partition, self._partition_payload_locked(partition)
+        )
+
+    def _partition_payload_locked(self, partition: str) -> dict[str, Any]:
         turns = [
             asdict(turn)
             for session_turns in self._turns.values()
             for turn in session_turns
             if turn.timestamp.startswith(partition)
         ]
-        await self._storage.async_save_partition(partition, {"turns": turns})
+        return {"turns": turns}
+
+    async def _async_commit_partitions_locked(self, partitions: set[str]) -> None:
+        """Commit metadata and partition changes with a restart-safe journal."""
+        partitions |= self._pending_partitions
+        pending = {
+            partition: self._partition_payload_locked(partition)
+            for partition in sorted(partitions)
+        }
+        await self._storage.async_save_metadata(self._metadata_payload_locked(pending))
+        self._pending_partitions = set(partitions)
+        for partition, payload in pending.items():
+            await self._storage.async_save_partition(partition, payload)
+        await self._async_save_metadata_locked()
+        self._pending_partitions.clear()
 
     async def _async_save_all_partitions_locked(self) -> None:
         for partition in sorted(self._partitions):

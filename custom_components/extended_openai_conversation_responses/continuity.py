@@ -280,7 +280,7 @@ class ConversationContinuity:
 
     def _prune_locked(self, cutoff: Any) -> None:
         for key, session in list(self._sessions.items()):
-            if session.last_active < cutoff:
+            if not session.in_flight and session.last_active < cutoff:
                 del self._sessions[key]
                 self._memory_bundles.pop(f"continuity:{key}", None)
 

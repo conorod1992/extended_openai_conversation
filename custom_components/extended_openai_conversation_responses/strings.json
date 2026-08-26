@@ -11,6 +11,13 @@
           "skip_authentication": "[%key:common::config_flow::data::skip_authentication%]",
           "api_provider": "[%key:common::config_flow::data::api_provider%]"
         }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate Extended OpenAI",
+        "description": "Enter a valid API key. Existing provider and endpoint settings will be preserved.",
+        "data": {
+          "api_key": "[%key:common::config_flow::data::api_key%]"
+        }
       }
     },
     "error": {
