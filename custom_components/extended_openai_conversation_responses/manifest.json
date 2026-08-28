@@ -8,6 +8,7 @@
   "dependencies": [
     "ai_task",
     "assist_pipeline",
+    "assist_satellite",
     "conversation",
     "energy",
     "history",
