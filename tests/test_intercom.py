@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import intercom
 from custom_components.extended_openai_conversation_responses.intercom import (
     BroadcastMessage,
     Delivery,
@@ -59,15 +60,7 @@ async def test_busy_satellite_is_queued_without_announce(hass, monkeypatch) -> N
     manager = IntercomManager(hass)
     monkeypatch.setattr(manager, "resolve_targets", lambda **kwargs: ["assist_satellite.kitchen"])
     monkeypatch.setattr(manager, "_schedule_drain", lambda _entity_id: None)
-    monkeypatch.setattr(
-        hass.states,
-        "get",
-        lambda entity_id: (
-            SimpleNamespace(state="responding")
-            if entity_id == "assist_satellite.kitchen"
-            else None
-        ),
-    )
+    hass.states.get.return_value = SimpleNamespace(state="responding")
     call = AsyncMock()
     monkeypatch.setattr(hass.services, "async_call", call)
 
@@ -83,15 +76,7 @@ async def test_idle_satellite_delivers_after_stability_check(hass, monkeypatch) 
     manager = IntercomManager(hass)
     monkeypatch.setattr(manager, "resolve_targets", lambda **kwargs: ["assist_satellite.kitchen"])
     monkeypatch.setattr(manager, "_schedule_drain", lambda _entity_id: None)
-    monkeypatch.setattr(
-        hass.states,
-        "get",
-        lambda entity_id: (
-            SimpleNamespace(state="idle")
-            if entity_id == "assist_satellite.kitchen"
-            else None
-        ),
-    )
+    hass.states.get.return_value = SimpleNamespace(state="idle")
     call = AsyncMock()
     monkeypatch.setattr(hass.services, "async_call", call)
 
@@ -132,3 +117,57 @@ def test_expire_removes_pending_delivery(hass) -> None:
 
     assert item.deliveries["assist_satellite.kitchen"].status == "expired"
     assert "assist_satellite.kitchen" not in manager._queues
+
+
+def test_expire_cleans_queued_delivery_missing_from_history(hass) -> None:
+    manager = IntercomManager(hass)
+    from datetime import UTC, datetime, timedelta
+
+    item = BroadcastMessage(
+        id="evicted-message",
+        message="Test",
+        created_at=datetime.now(UTC).isoformat(),
+        expires_at=datetime.now(UTC) + timedelta(seconds=30),
+        source="test",
+        origin_entity_id=None,
+        origin_device_id=None,
+        targets=["assist_satellite.kitchen"],
+        deliveries={"assist_satellite.kitchen": Delivery("assist_satellite.kitchen", "queued_busy")},
+    )
+    manager._queues["assist_satellite.kitchen"] = deque([item])
+
+    manager._expire("evicted-message")
+
+    assert item.deliveries["assist_satellite.kitchen"].status == "expired"
+    assert "assist_satellite.kitchen" not in manager._queues
+
+
+def test_state_listener_refreshes_when_satellites_change(hass, monkeypatch) -> None:
+    tracked: list[list[str]] = []
+    unsubscribed: list[bool] = []
+
+    def fake_track(_hass, entity_ids, _callback):
+        tracked.append(list(entity_ids))
+
+        def unsubscribe() -> None:
+            unsubscribed.append(True)
+
+        return unsubscribe
+
+    monkeypatch.setattr(intercom, "async_track_state_change_event", fake_track)
+    hass.states.async_all.return_value = [
+        SimpleNamespace(entity_id="assist_satellite.kitchen")
+    ]
+    manager = IntercomManager(hass)
+
+    hass.states.async_all.return_value = [
+        SimpleNamespace(entity_id="assist_satellite.kitchen"),
+        SimpleNamespace(entity_id="assist_satellite.bedroom"),
+    ]
+    manager._refresh_state_listener()
+
+    assert tracked == [
+        ["assist_satellite.kitchen"],
+        ["assist_satellite.bedroom", "assist_satellite.kitchen"],
+    ]
+    assert unsubscribed == [True]
