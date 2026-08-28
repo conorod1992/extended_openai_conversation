@@ -103,7 +103,7 @@ class IntercomManager:
         self._queues: dict[str, deque[BroadcastMessage]] = {}
         self._draining: set[str] = set()
         self._tracked_entities: set[str] = set()
-        self._unsub_state = None
+        self._unsub_state: Any = None
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._enabled = False
         self._loaded = False
@@ -398,13 +398,13 @@ class IntercomManager:
                 if item.id != message_id:
                     retained.append(item)
                     continue
-                delivery = item.deliveries.get(entity_id)
-                if delivery is not None and delivery.status not in {
+                queued_delivery = item.deliveries.get(entity_id)
+                if queued_delivery is not None and queued_delivery.status not in {
                     "delivered",
                     "failed",
                     "expired",
                 }:
-                    delivery.set("expired")
+                    queued_delivery.set("expired")
             if retained:
                 self._queues[entity_id] = retained
             else:
