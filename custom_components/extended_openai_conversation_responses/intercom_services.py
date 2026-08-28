@@ -1,4 +1,4 @@
-"""Home Assistant actions for targeted intercom announcements."""
+"""Home Assistant actions for targeted Broadcast announcements."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
 from .intercom import DEFAULT_TTL_SECONDS, async_get_intercom
-from .intercom_panel import async_setup_intercom_panel
+from .intercom_panel import async_setup_broadcast_api
 
 SERVICE_BROADCAST = "broadcast"
 
@@ -43,8 +43,8 @@ BROADCAST_SCHEMA = vol.Schema(
 
 
 async def async_setup_intercom_services(hass: HomeAssistant) -> None:
-    """Register the intercom action and typed-send panel once."""
-    await async_setup_intercom_panel(hass)
+    """Register the Broadcast action and frontend API once."""
+    await async_setup_broadcast_api(hass)
     if hass.services.has_service(DOMAIN, SERVICE_BROADCAST):
         return
 

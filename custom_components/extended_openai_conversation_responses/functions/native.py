@@ -51,8 +51,8 @@ class NativeFunction(Function):
             return await self.execute_service_single(
                 hass, function_config, arguments, llm_context, exposed_entities
             )
-        if name == "send_intercom_message":
-            return await self.send_intercom_message(
+        if name == "send_broadcast":
+            return await self.send_broadcast(
                 hass, function_config, arguments, llm_context, exposed_entities
             )
         if name == "add_automation":
@@ -78,7 +78,7 @@ class NativeFunction(Function):
 
         raise NativeNotFound(name)
 
-    async def send_intercom_message(
+    async def send_broadcast(
         self,
         hass: HomeAssistant,
         function_config: dict[str, Any],
@@ -94,11 +94,13 @@ class NativeFunction(Function):
         if destination:
             resolved = manager.resolve_named_target(str(destination))
             if resolved is None:
-                raise HomeAssistantError(f"Unknown intercom destination: {destination}")
+                raise HomeAssistantError(
+                    f"Unknown Broadcast destination: {destination}"
+                )
             resolved.pop("name", None)
             target.update(resolved)
         if not whole_home and not destination:
-            raise HomeAssistantError("Choose an intercom destination or whole_home")
+            raise HomeAssistantError("Choose a Broadcast destination or whole_home")
         origin_device_id = (
             getattr(llm_context, "device_id", None) if llm_context is not None else None
         )

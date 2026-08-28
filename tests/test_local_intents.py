@@ -10,6 +10,7 @@ import pytest
 from homeassistant.components import conversation
 from homeassistant.helpers import intent as ha_intent
 
+from custom_components.extended_openai_conversation_responses import local_intents
 from custom_components.extended_openai_conversation_responses.local_intents import (
     CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
     CONF_LOCAL_INTENT_EXCLUSIONS,
@@ -147,6 +148,64 @@ async def test_excluded_match_falls_through(
     assert result is None
 
 
+@pytest.mark.asyncio
+async def test_unresolved_targeted_broadcast_blocks_greedy_whole_home_intent(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def no_targeted_match(*args, **kwargs):
+        return None
+
+    async def fake_handle(hass, user_input, chat_log, *, intent_filter=None):
+        assert intent_filter is not None
+        assert intent_filter(_recognize("HassBroadcast"))
+        assert not intent_filter(_recognize("HassTurnOn"))
+        return None
+
+    monkeypatch.setattr(local_intents, "_async_try_targeted_broadcast", no_targeted_match)
+    monkeypatch.setattr(
+        local_intents, "is_targeted_broadcast_request", lambda _text: True
+    )
+    monkeypatch.setattr(conversation, "async_handle_intents", fake_handle)
+
+    result = await async_try_handle_local_intent(
+        hass,
+        cast(Any, SimpleNamespace(text="Broadcast to Granny's room that dinner is ready")),
+        cast(Any, SimpleNamespace()),
+        {CONF_LOCAL_INTENTS_ENABLED: True},
+        guest_active=False,
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_disabled_broadcast_does_not_run_targeted_local_route(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = SimpleNamespace(enabled=False)
+
+    async def fake_get_manager(_hass):
+        return manager
+
+    async def fake_handle(hass, user_input, chat_log, *, intent_filter=None):
+        assert intent_filter is not None
+        assert intent_filter(_recognize("HassBroadcast"))
+        return None
+
+    monkeypatch.setattr(local_intents, "async_get_intercom", fake_get_manager)
+    monkeypatch.setattr(conversation, "async_handle_intents", fake_handle)
+
+    result = await async_try_handle_local_intent(
+        hass,
+        cast(Any, SimpleNamespace(text="Broadcast to kitchen that dinner is ready")),
+        cast(Any, SimpleNamespace()),
+        {CONF_LOCAL_INTENTS_ENABLED: True},
+        guest_active=False,
+    )
+
+    assert result is None
+
+
 def test_registered_intent_catalog_is_live_and_keeps_saved_missing_choices(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -168,8 +227,6 @@ def test_registered_intent_catalog_is_live_and_keeps_saved_missing_choices(
 def test_pipeline_conflicts_are_limited_to_this_agent(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from custom_components.extended_openai_conversation_responses import local_intents
-
     monkeypatch.setattr(
         local_intents,
         "_conversation_entity_id",

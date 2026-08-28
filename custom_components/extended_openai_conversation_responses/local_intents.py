@@ -14,7 +14,11 @@ from homeassistant.components.conversation import ChatLog, ConversationInput
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er, intent as ha_intent
 
-from .intercom import async_get_intercom, parse_targeted_broadcast
+from .intercom import (
+    async_get_intercom,
+    is_targeted_broadcast_request,
+    parse_targeted_broadcast,
+)
 
 CONF_LOCAL_INTENTS_ENABLED = "local_intents_enabled"
 CONF_LOCAL_INTENT_EXCLUSIONS = "local_intent_exclusions"
@@ -93,6 +97,8 @@ async def _async_try_targeted_broadcast(
     if not isinstance(text, str) or not text.strip():
         return None
     manager = await async_get_intercom(hass)
+    if not manager.enabled:
+        return None
     parsed = parse_targeted_broadcast(text, manager)
     if parsed is None:
         return None
@@ -135,6 +141,11 @@ async def async_try_handle_local_intent(
     if targeted is not None:
         return targeted
 
+    text = getattr(user_input, "text", None)
+    block_whole_home_broadcast = isinstance(
+        text, str
+    ) and is_targeted_broadcast_request(text)
+
     handle_intents = getattr(conversation, "async_handle_intents", None)
     if handle_intents is None:
         return None
@@ -151,6 +162,8 @@ async def async_try_handle_local_intent(
     def intent_filter(result: RecognizeResult) -> bool:
         """Return True when Home Assistant should reject this local intent match."""
         nonlocal accepted_intent
+        if block_whole_home_broadcast and result.intent.name == "HassBroadcast":
+            return True
         if not should_handle_locally(result, excluded, delayed_commands_to_ai):
             return True
         accepted_intent = result.intent.name

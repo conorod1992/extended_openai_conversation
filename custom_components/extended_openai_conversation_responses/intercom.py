@@ -21,9 +21,12 @@ from homeassistant.helpers import (
     label_registry as lr,
 )
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
+from homeassistant.helpers.storage import Store
 
 DOMAIN = "extended_openai_conversation_responses"
 DATA_KEY = f"{DOMAIN}.intercom"
+STORAGE_KEY = f"{DOMAIN}.broadcast"
+STORAGE_VERSION = 1
 HISTORY_LIMIT = 50
 DEFAULT_TTL_SECONDS = 120
 IDLE_STABILITY_SECONDS = 0.5
@@ -78,6 +81,19 @@ class BroadcastMessage:
         }
 
 
+def _aliases(value: Any) -> list[str]:
+    """Return normalized Home Assistant aliases from registry entries."""
+    aliases = getattr(value, "aliases", ()) or ()
+    return sorted(
+        {
+            alias.strip()
+            for alias in aliases
+            if isinstance(alias, str) and alias.strip()
+        },
+        key=str.casefold,
+    )
+
+
 class IntercomManager:
     """Resolve destinations and serialize announcements per Assist satellite."""
 
@@ -86,14 +102,60 @@ class IntercomManager:
         self._history: deque[BroadcastMessage] = deque(maxlen=HISTORY_LIMIT)
         self._queues: dict[str, deque[BroadcastMessage]] = {}
         self._draining: set[str] = set()
-        self._unsub_state = async_track_state_change_event(
-            hass, self._satellite_entity_ids(), self._async_state_changed
-        )
+        self._tracked_entities: set[str] = set()
+        self._unsub_state: Any = None
+        self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        self._enabled = False
+        self._loaded = False
+        self._refresh_state_listener()
+
+    async def async_initialize(self) -> None:
+        """Load persisted broadcast settings once."""
+        if self._loaded:
+            return
+        stored = await self._store.async_load()
+        self._enabled = bool(stored.get("enabled", False)) if stored else False
+        self._loaded = True
+
+    @property
+    def enabled(self) -> bool:
+        """Return whether Extended OpenAI Broadcast is enabled."""
+        return self._enabled
+
+    async def async_set_enabled(self, enabled: bool) -> None:
+        """Persist the Broadcast master switch and stop pending deliveries when off."""
+        self._enabled = bool(enabled)
+        self._loaded = True
+        if not self._enabled:
+            for queue in self._queues.values():
+                for item in queue:
+                    for delivery in item.deliveries.values():
+                        if delivery.status not in {"delivered", "failed", "expired"}:
+                            delivery.set("expired", "broadcast_disabled")
+                queue.clear()
+            self._queues.clear()
+        await self._store.async_save({"enabled": self._enabled})
 
     def _satellite_entity_ids(self) -> list[str]:
         return [
             state.entity_id for state in self.hass.states.async_all("assist_satellite")
         ]
+
+    @callback
+    def _refresh_state_listener(self) -> None:
+        entity_ids = set(self._satellite_entity_ids())
+        if entity_ids == self._tracked_entities:
+            return
+        if self._unsub_state is not None:
+            self._unsub_state()
+        self._tracked_entities = entity_ids
+        self._unsub_state = (
+            async_track_state_change_event(
+                self.hass, sorted(entity_ids), self._async_state_changed
+            )
+            if entity_ids
+            else None
+        )
 
     def _state_announce_capable(self, state: State | None) -> bool:
         if state is None:
@@ -157,6 +219,7 @@ class IntercomManager:
         origin_entity_id: str | None = None,
         origin_device_id: str | None = None,
     ) -> list[str]:
+        self._refresh_state_listener()
         entities = set(entity_ids or [])
         devices = set(device_ids or [])
         areas = set(area_ids or [])
@@ -202,6 +265,10 @@ class IntercomManager:
         source: str = "manual",
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
     ) -> dict[str, Any]:
+        if not self._enabled:
+            raise HomeAssistantError(
+                "Broadcast is disabled. Enable it from the Extended OpenAI Overview."
+            )
         text = message.strip()
         if not text:
             raise HomeAssistantError("Broadcast message cannot be empty")
@@ -262,6 +329,10 @@ class IntercomManager:
             while queue:
                 item = queue[0]
                 delivery = item.deliveries[entity_id]
+                if not self._enabled:
+                    delivery.set("expired", "broadcast_disabled")
+                    queue.popleft()
+                    continue
                 if datetime.now(UTC) >= item.expires_at:
                     delivery.set("expired")
                     queue.popleft()
@@ -272,6 +343,11 @@ class IntercomManager:
                     return
                 delivery.set("waiting_idle")
                 await asyncio.sleep(IDLE_STABILITY_SECONDS)
+                if not self._enabled:
+                    delivery.set("expired", "broadcast_disabled")
+                    if queue and queue[0] is item:
+                        queue.popleft()
+                    continue
                 state = self.hass.states.get(entity_id)
                 if state is None or state.state != "idle":
                     delivery.set("queued_busy")
@@ -308,21 +384,31 @@ class IntercomManager:
 
     @callback
     def _expire(self, message_id: str) -> None:
-        for item in self._history:
-            if item.id != message_id:
-                continue
-            for entity_id, delivery in item.deliveries.items():
-                if delivery.status in {"delivered", "failed", "expired"}:
+        history_item = next(
+            (item for item in self._history if item.id == message_id), None
+        )
+        if history_item is not None:
+            for delivery in history_item.deliveries.values():
+                if delivery.status not in {"delivered", "failed", "expired"}:
+                    delivery.set("expired")
+
+        for entity_id, queue in list(self._queues.items()):
+            retained: deque[BroadcastMessage] = deque()
+            for item in queue:
+                if item.id != message_id:
+                    retained.append(item)
                     continue
-                delivery.set("expired")
-                queue = self._queues.get(entity_id)
-                if queue:
-                    self._queues[entity_id] = deque(
-                        message for message in queue if message.id != message_id
-                    )
-                    if not self._queues[entity_id]:
-                        self._queues.pop(entity_id, None)
-            break
+                queued_delivery = item.deliveries.get(entity_id)
+                if queued_delivery is not None and queued_delivery.status not in {
+                    "delivered",
+                    "failed",
+                    "expired",
+                }:
+                    queued_delivery.set("expired")
+            if retained:
+                self._queues[entity_id] = retained
+            else:
+                self._queues.pop(entity_id, None)
 
     def history(self) -> list[dict[str, Any]]:
         return [item.as_dict() for item in self._history]
@@ -332,6 +418,7 @@ class IntercomManager:
         floors = fr.async_get(self.hass)
         labels = lr.async_get(self.hass)
         devices = dr.async_get(self.hass)
+        entity_registry = er.async_get(self.hass)
         satellites = []
         relevant_area_ids: set[str] = set()
         relevant_device_ids: set[str] = set()
@@ -340,7 +427,7 @@ class IntercomManager:
         for state in self.hass.states.async_all("assist_satellite"):
             if not self._state_announce_capable(state):
                 continue
-            entity = er.async_get(self.hass).async_get(state.entity_id)
+            entity = entity_registry.async_get(state.entity_id)
             area_id = self._entity_area_id(state.entity_id)
             device_id = entity.device_id if entity else None
             area = areas.async_get_area(area_id) if area_id else None
@@ -360,6 +447,7 @@ class IntercomManager:
                 {
                     "id": state.entity_id,
                     "name": state.attributes.get(ATTR_FRIENDLY_NAME, state.entity_id),
+                    "aliases": _aliases(entity),
                     "state": state.state,
                     "area_id": area_id,
                     "device_id": device_id,
@@ -371,7 +459,7 @@ class IntercomManager:
             ),
             "areas": sorted(
                 [
-                    {"id": item.id, "name": item.name}
+                    {"id": item.id, "name": item.name, "aliases": _aliases(item)}
                     for item in areas.async_list_areas()
                     if item.id in relevant_area_ids
                 ],
@@ -379,7 +467,11 @@ class IntercomManager:
             ),
             "floors": sorted(
                 [
-                    {"id": item.floor_id, "name": item.name}
+                    {
+                        "id": item.floor_id,
+                        "name": item.name,
+                        "aliases": _aliases(item),
+                    }
                     for item in floors.async_list_floors()
                     if item.floor_id in relevant_floor_ids
                 ],
@@ -387,7 +479,11 @@ class IntercomManager:
             ),
             "labels": sorted(
                 [
-                    {"id": item.label_id, "name": item.name}
+                    {
+                        "id": item.label_id,
+                        "name": item.name,
+                        "aliases": _aliases(item),
+                    }
                     for item in labels.async_list_labels()
                     if item.label_id in relevant_label_ids
                 ],
@@ -395,7 +491,11 @@ class IntercomManager:
             ),
             "devices": sorted(
                 [
-                    {"id": item.id, "name": item.name_by_user or item.name}
+                    {
+                        "id": item.id,
+                        "name": item.name_by_user or item.name,
+                        "aliases": _aliases(item),
+                    }
                     for item in (
                         devices.async_get(device_id)
                         for device_id in relevant_device_ids
@@ -409,7 +509,7 @@ class IntercomManager:
     def resolve_named_target(self, name: str) -> dict[str, Any] | None:
         wanted = re.sub(r"\s+", " ", name.strip().casefold())
         catalog = self.catalog()
-        aliases = {
+        whole_home_aliases = {
             "everyone",
             "everywhere",
             "whole home",
@@ -417,7 +517,7 @@ class IntercomManager:
             "all devices",
             "all speakers",
         }
-        if wanted in aliases:
+        if wanted in whole_home_aliases:
             return {"whole_home": True, "name": name.strip()}
         singular = {
             "satellites": "entity_ids",
@@ -428,8 +528,16 @@ class IntercomManager:
         }
         for group, target_field in singular.items():
             for item in catalog[group]:
-                item_name = re.sub(r"\s+", " ", str(item["name"]).casefold())
-                if wanted in {item_name, f"the {item_name}"}:
+                names = [str(item["name"]), *(item.get("aliases") or [])]
+                normalized_names = {
+                    re.sub(r"\s+", " ", candidate.strip().casefold())
+                    for candidate in names
+                    if candidate.strip()
+                }
+                accepted = normalized_names | {
+                    f"the {candidate}" for candidate in normalized_names
+                }
+                if wanted in accepted:
                     return {
                         target_field: [item["id"]],
                         "name": item["name"],
@@ -442,7 +550,20 @@ async def async_get_intercom(hass: HomeAssistant) -> IntercomManager:
     if manager is None:
         manager = IntercomManager(hass)
         hass.data[DATA_KEY] = manager
+    await manager.async_initialize()
     return manager
+
+
+def is_targeted_broadcast_request(text: str) -> bool:
+    """Return whether wording claims a specific broadcast destination."""
+    value = re.sub(r"\s+", " ", text.strip())
+    return any(
+        re.match(pattern, value, flags=re.IGNORECASE)
+        for pattern in (
+            r"^(?:broadcast|announce|send)(?: a message)? to .+$",
+            r"^tell .+$",
+        )
+    )
 
 
 def parse_targeted_broadcast(
@@ -465,9 +586,10 @@ def parse_targeted_broadcast(
     catalog = manager.catalog()
     candidates = [
         *(
-            str(item["name"])
+            candidate
             for group in ("satellites", "devices", "areas", "floors", "labels")
             for item in catalog[group]
+            for candidate in [str(item["name"]), *(item.get("aliases") or [])]
         ),
         "everyone",
         "everywhere",
