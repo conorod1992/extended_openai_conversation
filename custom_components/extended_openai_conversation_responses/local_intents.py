@@ -163,12 +163,16 @@ def _conversation_entity_id(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> str | None:
     """Resolve the conversation entity belonging to one agent subentry."""
-    for item in er.async_get(hass).entities.values():
-        if (
-            item.config_entry_id == entry_id
-            and item.config_subentry_id == subentry_id
-            and item.domain == "conversation"
-        ):
+    registry = er.async_get(hass)
+    try:
+        entries = er.async_entries_for_config_entry(registry, entry_id)
+    except AttributeError:
+        # Some test/minimal HA contexts create the registry before its backing
+        # entity collection is loaded. The warning is diagnostic-only, so fail
+        # closed and omit it rather than breaking configuration management.
+        return None
+    for item in entries:
+        if item.config_subentry_id == subentry_id and item.domain == "conversation":
             return item.entity_id
     return None
 
