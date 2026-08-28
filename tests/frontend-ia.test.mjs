@@ -73,7 +73,12 @@ assert.match(overviewHtml, /Review recommended/);
 assert.match(overviewHtml, /data-page="capabilities"/);
 
 const panel = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
-const editor = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
+const editor = (
+  await Promise.all([
+    "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js",
+    "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js",
+  ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
+).join("\n");
 const overview = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page.js", import.meta.url), "utf8");
 const homeAssistant = panel.slice(panel.indexOf("  _homeAssistant("), panel.indexOf("  _overview("));
 assert.match(panel, /top-section-mobile/);
