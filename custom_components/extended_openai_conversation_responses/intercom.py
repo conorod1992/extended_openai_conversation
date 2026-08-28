@@ -86,14 +86,30 @@ class IntercomManager:
         self._history: deque[BroadcastMessage] = deque(maxlen=HISTORY_LIMIT)
         self._queues: dict[str, deque[BroadcastMessage]] = {}
         self._draining: set[str] = set()
-        self._unsub_state = async_track_state_change_event(
-            hass, self._satellite_entity_ids(), self._async_state_changed
-        )
+        self._tracked_entities: set[str] = set()
+        self._unsub_state = None
+        self._refresh_state_listener()
 
     def _satellite_entity_ids(self) -> list[str]:
         return [
             state.entity_id for state in self.hass.states.async_all("assist_satellite")
         ]
+
+    @callback
+    def _refresh_state_listener(self) -> None:
+        entity_ids = set(self._satellite_entity_ids())
+        if entity_ids == self._tracked_entities:
+            return
+        if self._unsub_state is not None:
+            self._unsub_state()
+        self._tracked_entities = entity_ids
+        self._unsub_state = (
+            async_track_state_change_event(
+                self.hass, sorted(entity_ids), self._async_state_changed
+            )
+            if entity_ids
+            else None
+        )
 
     def _state_announce_capable(self, state: State | None) -> bool:
         if state is None:
@@ -157,6 +173,7 @@ class IntercomManager:
         origin_entity_id: str | None = None,
         origin_device_id: str | None = None,
     ) -> list[str]:
+        self._refresh_state_listener()
         entities = set(entity_ids or [])
         devices = set(device_ids or [])
         areas = set(area_ids or [])
@@ -308,21 +325,31 @@ class IntercomManager:
 
     @callback
     def _expire(self, message_id: str) -> None:
-        for item in self._history:
-            if item.id != message_id:
-                continue
-            for entity_id, delivery in item.deliveries.items():
-                if delivery.status in {"delivered", "failed", "expired"}:
+        history_item = next(
+            (item for item in self._history if item.id == message_id), None
+        )
+        if history_item is not None:
+            for delivery in history_item.deliveries.values():
+                if delivery.status not in {"delivered", "failed", "expired"}:
+                    delivery.set("expired")
+
+        for entity_id, queue in list(self._queues.items()):
+            retained: deque[BroadcastMessage] = deque()
+            for item in queue:
+                if item.id != message_id:
+                    retained.append(item)
                     continue
-                delivery.set("expired")
-                queue = self._queues.get(entity_id)
-                if queue:
-                    self._queues[entity_id] = deque(
-                        message for message in queue if message.id != message_id
-                    )
-                    if not self._queues[entity_id]:
-                        self._queues.pop(entity_id, None)
-            break
+                delivery = item.deliveries.get(entity_id)
+                if delivery is not None and delivery.status not in {
+                    "delivered",
+                    "failed",
+                    "expired",
+                }:
+                    delivery.set("expired")
+            if retained:
+                self._queues[entity_id] = retained
+            else:
+                self._queues.pop(entity_id, None)
 
     def history(self) -> list[dict[str, Any]]:
         return [item.as_dict() for item in self._history]
@@ -443,6 +470,18 @@ async def async_get_intercom(hass: HomeAssistant) -> IntercomManager:
         manager = IntercomManager(hass)
         hass.data[DATA_KEY] = manager
     return manager
+
+
+def is_targeted_broadcast_request(text: str) -> bool:
+    """Return whether wording claims a specific intercom destination."""
+    value = re.sub(r"\s+", " ", text.strip())
+    return any(
+        re.match(pattern, value, flags=re.IGNORECASE)
+        for pattern in (
+            r"^(?:broadcast|announce|send)(?: a message)? to .+$",
+            r"^tell .+$",
+        )
+    )
 
 
 def parse_targeted_broadcast(
