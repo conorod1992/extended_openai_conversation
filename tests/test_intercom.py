@@ -123,6 +123,34 @@ async def test_disabling_broadcast_clears_pending_deliveries(hass) -> None:
 
 
 @pytest.mark.asyncio
+async def test_disabling_broadcast_preserves_in_flight_delivery(hass) -> None:
+    manager = IntercomManager(hass)
+    manager._enabled = True
+    manager._store.async_save = AsyncMock()
+    item = BroadcastMessage(
+        id="in-flight-message",
+        message="Test",
+        created_at="2026-08-28T16:00:00+00:00",
+        expires_at=intercom.datetime.now(intercom.UTC) + intercom.timedelta(seconds=30),
+        source="test",
+        origin_entity_id=None,
+        origin_device_id=None,
+        targets=["assist_satellite.kitchen"],
+        deliveries={
+            "assist_satellite.kitchen": Delivery(
+                "assist_satellite.kitchen", "delivering"
+            )
+        },
+    )
+    manager._queues["assist_satellite.kitchen"] = deque([item])
+
+    await manager.async_set_enabled(False)
+
+    assert item.deliveries["assist_satellite.kitchen"].status == "delivering"
+    assert list(manager._queues["assist_satellite.kitchen"]) == [item]
+
+
+@pytest.mark.asyncio
 async def test_busy_satellite_is_queued_without_announce(hass, monkeypatch) -> None:
     manager = IntercomManager(hass)
     manager._enabled = True
@@ -164,6 +192,37 @@ async def test_idle_satellite_delivers_after_stability_check(hass, monkeypatch) 
     assert result["id"] == manager.history()[0]["id"]
 
 
+@pytest.mark.asyncio
+async def test_expiry_during_idle_stability_wait_prevents_delivery(
+    hass, monkeypatch
+) -> None:
+    manager = IntercomManager(hass)
+    manager._enabled = True
+    monkeypatch.setattr(manager, "resolve_targets", lambda **kwargs: ["assist_satellite.kitchen"])
+    monkeypatch.setattr(manager, "_schedule_drain", lambda _entity_id: None)
+    hass.states.get.return_value = SimpleNamespace(state="idle")
+    call = AsyncMock()
+    monkeypatch.setattr(hass.services, "async_call", call)
+
+    result = await manager.async_send(
+        "Dinner is ready", entity_ids=["assist_satellite.kitchen"]
+    )
+
+    async def expire_during_sleep(_seconds):
+        manager._expire(result["id"])
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.intercom.asyncio.sleep",
+        expire_during_sleep,
+    )
+
+    await manager._async_drain("assist_satellite.kitchen")
+
+    call.assert_not_awaited()
+    assert manager.history()[0]["deliveries"]["assist_satellite.kitchen"]["status"] == "expired"
+    assert "assist_satellite.kitchen" not in manager._queues
+
+
 def test_expire_removes_pending_delivery(hass) -> None:
     manager = IntercomManager(hass)
     from datetime import UTC, datetime, timedelta
@@ -186,6 +245,34 @@ def test_expire_removes_pending_delivery(hass) -> None:
 
     assert item.deliveries["assist_satellite.kitchen"].status == "expired"
     assert "assist_satellite.kitchen" not in manager._queues
+
+
+def test_expire_preserves_in_flight_delivery(hass) -> None:
+    manager = IntercomManager(hass)
+    from datetime import UTC, datetime, timedelta
+
+    item = BroadcastMessage(
+        id="in-flight-message",
+        message="Test",
+        created_at=datetime.now(UTC).isoformat(),
+        expires_at=datetime.now(UTC) + timedelta(seconds=30),
+        source="test",
+        origin_entity_id=None,
+        origin_device_id=None,
+        targets=["assist_satellite.kitchen"],
+        deliveries={
+            "assist_satellite.kitchen": Delivery(
+                "assist_satellite.kitchen", "delivering"
+            )
+        },
+    )
+    manager._history.appendleft(item)
+    manager._queues["assist_satellite.kitchen"] = deque([item])
+
+    manager._expire("in-flight-message")
+
+    assert item.deliveries["assist_satellite.kitchen"].status == "delivering"
+    assert list(manager._queues["assist_satellite.kitchen"]) == [item]
 
 
 def test_expire_cleans_queued_delivery_missing_from_history(hass) -> None:
