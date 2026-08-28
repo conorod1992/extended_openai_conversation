@@ -50,7 +50,9 @@ async def websocket_intercom(
         whole_home = msg.get("whole_home") is True
         entity_ids = [str(item) for item in msg.get("entity_ids", [])]
         if not whole_home and not entity_ids:
-            raise HomeAssistantError("Choose at least one Assist satellite or Whole home")
+            raise HomeAssistantError(
+                "Choose at least one Assist satellite or Whole home"
+            )
         result = await manager.async_send(
             message,
             whole_home=whole_home,
