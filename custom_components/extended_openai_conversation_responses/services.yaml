@@ -1,6 +1,6 @@
 broadcast:
-  name: Broadcast intercom message
-  description: Send a TTS announcement to selected Assist satellites without interrupting busy voice sessions.
+  name: Broadcast spoken message
+  description: Send a TTS announcement to selected Assist satellites without interrupting busy voice sessions. Broadcast must be enabled from Extended OpenAI first.
   fields:
     message:
       name: Message
