@@ -138,9 +138,9 @@ class IntercomManager:
                         continue
                     if delivery.status not in {"delivered", "failed", "expired"}:
                         delivery.set("expired", "broadcast_disabled")
-                if retained:
-                    self._queues[entity_id] = retained
-                else:
+                queue.clear()
+                queue.extend(retained)
+                if not queue:
                     self._queues.pop(entity_id, None)
         await self._store.async_save({"enabled": self._enabled})
 
@@ -353,6 +353,9 @@ class IntercomManager:
                 await asyncio.sleep(IDLE_STABILITY_SECONDS)
                 if not queue or queue[0] is not item:
                     continue
+                if delivery.status == "expired":
+                    queue.popleft()
+                    continue
                 if not self._enabled:
                     delivery.set("expired", "broadcast_disabled")
                     queue.popleft()
@@ -425,9 +428,9 @@ class IntercomManager:
                     continue
                 if queued_delivery.status not in {"delivered", "failed", "expired"}:
                     queued_delivery.set("expired")
-            if retained:
-                self._queues[entity_id] = retained
-            else:
+            queue.clear()
+            queue.extend(retained)
+            if not queue:
                 self._queues.pop(entity_id, None)
 
     def history(self) -> list[dict[str, Any]]:
