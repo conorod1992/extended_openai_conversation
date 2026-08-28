@@ -7,10 +7,11 @@ from typing import Any, cast
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
-from homeassistant.helpers import config_validation as cv, selector
+from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
 from .intercom import DEFAULT_TTL_SECONDS, async_get_intercom
+from .intercom_panel import async_setup_intercom_panel
 
 SERVICE_BROADCAST = "broadcast"
 
@@ -37,7 +38,8 @@ BROADCAST_SCHEMA = vol.Schema(
 
 
 async def async_setup_intercom_services(hass: HomeAssistant) -> None:
-    """Register the intercom action once."""
+    """Register the intercom action and typed-send panel once."""
+    await async_setup_intercom_panel(hass)
     if hass.services.has_service(DOMAIN, SERVICE_BROADCAST):
         return
 
