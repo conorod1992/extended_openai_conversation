@@ -89,19 +89,24 @@ async def _async_try_targeted_broadcast(
     hass: HomeAssistant, user_input: ConversationInput
 ) -> LocalIntentResult | None:
     """Handle explicit targeted broadcast wording before HA's whole-home intent."""
+    text = getattr(user_input, "text", None)
+    if not isinstance(text, str) or not text.strip():
+        return None
     manager = await async_get_intercom(hass)
-    parsed = parse_targeted_broadcast(user_input.text, manager)
+    parsed = parse_targeted_broadcast(text, manager)
     if parsed is None:
         return None
     target, message = parsed
     await manager.async_send(
         message,
         **target,
-        origin_entity_id=user_input.satellite_id,
-        origin_device_id=user_input.device_id,
+        origin_entity_id=getattr(user_input, "satellite_id", None),
+        origin_device_id=getattr(user_input, "device_id", None),
         source="local_voice",
     )
-    response = ha_intent.IntentResponse(language=user_input.language)
+    response = ha_intent.IntentResponse(
+        language=getattr(user_input, "language", None) or "en"
+    )
     response.async_set_speech("Broadcast queued.")
     return LocalIntentResult(response=response, intent_name="ExtendedBroadcast")
 
