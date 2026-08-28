@@ -116,11 +116,12 @@ async def async_try_handle_local_intent(
     accepted_intent: str | None = None
 
     def intent_filter(result: RecognizeResult) -> bool:
+        """Return True when Home Assistant should reject this local intent match."""
         nonlocal accepted_intent
         if not should_handle_locally(result, excluded, delayed_commands_to_ai):
-            return False
+            return True
         accepted_intent = result.intent.name
-        return True
+        return False
 
     response = await handle_intents(
         hass,
