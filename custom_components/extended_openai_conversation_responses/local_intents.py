@@ -14,6 +14,8 @@ from homeassistant.components.conversation import ChatLog, ConversationInput
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er, intent as ha_intent
 
+from .intercom import async_get_intercom, parse_targeted_broadcast
+
 CONF_LOCAL_INTENTS_ENABLED = "local_intents_enabled"
 CONF_LOCAL_INTENT_EXCLUSIONS = "local_intent_exclusions"
 CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI = "local_intent_delayed_commands_to_ai"
@@ -83,6 +85,33 @@ def should_handle_locally(
     )
 
 
+async def _async_try_targeted_broadcast(
+    hass: HomeAssistant, user_input: ConversationInput
+) -> LocalIntentResult | None:
+    """Handle explicit targeted broadcast wording before HA's whole-home intent."""
+    manager = await async_get_intercom(hass)
+    parsed = parse_targeted_broadcast(user_input.text, manager)
+    if parsed is None:
+        return None
+    target, message = parsed
+    result = await manager.async_send(
+        message,
+        **target,
+        origin_entity_id=user_input.satellite_id,
+        origin_device_id=user_input.device_id,
+        source="local_voice",
+    )
+    delivered = sum(
+        item["status"] in {"queued_idle", "waiting_idle", "delivering", "delivered"}
+        for item in result["deliveries"].values()
+    )
+    response = ha_intent.IntentResponse(language=user_input.language)
+    response.async_set_speech(
+        "Broadcast queued." if delivered else "I couldn't find an available broadcast target."
+    )
+    return LocalIntentResult(response=response, intent_name="ExtendedBroadcast")
+
+
 async def async_try_handle_local_intent(
     hass: HomeAssistant,
     user_input: ConversationInput,
@@ -91,7 +120,7 @@ async def async_try_handle_local_intent(
     *,
     guest_active: bool,
 ) -> LocalIntentResult | None:
-    """Try Home Assistant's registered intents, returning None when nothing matches."""
+    """Try integration local routing then Home Assistant registered intents."""
     if not options.get(CONF_LOCAL_INTENTS_ENABLED, DEFAULT_LOCAL_INTENTS_ENABLED):
         return None
 
@@ -99,6 +128,13 @@ async def async_try_handle_local_intent(
     # Guest Mode policy. Keep Guest Mode on the existing policy-enforced model path.
     if guest_active:
         return None
+
+    # HA's HassBroadcast only has a message slot and broadcasts to every other
+    # satellite. Resolve explicit area/device/floor/label wording first so a command
+    # like "broadcast to the kitchen..." is deterministic and provider-free.
+    targeted = await _async_try_targeted_broadcast(hass, user_input)
+    if targeted is not None:
+        return targeted
 
     handle_intents = getattr(conversation, "async_handle_intents", None)
     if handle_intents is None:
@@ -167,9 +203,6 @@ def _conversation_entity_id(
     try:
         entries = er.async_entries_for_config_entry(registry, entry_id)
     except AttributeError:
-        # Some test/minimal HA contexts create the registry before its backing
-        # entity collection is loaded. The warning is diagnostic-only, so fail
-        # closed and omit it rather than breaking configuration management.
         return None
     for item in entries:
         if item.config_subentry_id == subentry_id and item.domain == "conversation":
@@ -193,7 +226,7 @@ def conflicting_assist_pipelines(
         return []
     try:
         pipelines = _get_assist_pipelines(hass)
-    except ImportError, KeyError, RuntimeError:
+    except (ImportError, KeyError, RuntimeError):
         return []
     return [
         {"id": pipeline.id, "name": pipeline.name}
