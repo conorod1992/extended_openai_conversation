@@ -115,7 +115,7 @@ def test_function_tool_enabled_defaults_and_boolean_validation() -> None:
 def test_built_in_catalogue_presets_are_valid_and_marks_used_native_tools() -> None:
     configured = _native_tool()
     catalog = built_in_function_catalog([configured])
-    assert len(catalog) == 7
+    assert len(catalog) == 8
     assert all(validate_function_tools([preset["tool"]]) for preset in catalog)
     execute_service = next(
         preset for preset in catalog if preset["implementation"] == "execute_service"
