@@ -56,7 +56,7 @@ const LOCAL_HANDLING_GUIDE_TOPIC = {
       text: "Leave local handling off if you prefer every non-Request-Rule command to follow the normal Extended OpenAI path. Turning it on does not stop you using AI for anything Home Assistant cannot match locally."
     }
   ],
-  action: { label: "Configure local handling", page: "assistant", section: "local" }
+  action: { label: "Configure local handling", page: "assistant", section: "conversation" }
 };
 
 const GUIDE_TOPICS_WITH_LOCAL_HANDLING = (() => {
