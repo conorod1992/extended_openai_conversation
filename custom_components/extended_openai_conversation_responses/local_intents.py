@@ -94,23 +94,15 @@ async def _async_try_targeted_broadcast(
     if parsed is None:
         return None
     target, message = parsed
-    result = await manager.async_send(
+    await manager.async_send(
         message,
         **target,
         origin_entity_id=user_input.satellite_id,
         origin_device_id=user_input.device_id,
         source="local_voice",
     )
-    delivered = sum(
-        item["status"] in {"queued_idle", "waiting_idle", "delivering", "delivered"}
-        for item in result["deliveries"].values()
-    )
     response = ha_intent.IntentResponse(language=user_input.language)
-    response.async_set_speech(
-        "Broadcast queued."
-        if delivered
-        else "I couldn't find an available broadcast target."
-    )
+    response.async_set_speech("Broadcast queued.")
     return LocalIntentResult(response=response, intent_name="ExtendedBroadcast")
 
 
