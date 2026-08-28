@@ -107,7 +107,9 @@ async def _async_try_targeted_broadcast(
     )
     response = ha_intent.IntentResponse(language=user_input.language)
     response.async_set_speech(
-        "Broadcast queued." if delivered else "I couldn't find an available broadcast target."
+        "Broadcast queued."
+        if delivered
+        else "I couldn't find an available broadcast target."
     )
     return LocalIntentResult(response=response, intent_name="ExtendedBroadcast")
 
@@ -226,7 +228,7 @@ def conflicting_assist_pipelines(
         return []
     try:
         pipelines = _get_assist_pipelines(hass)
-    except (ImportError, KeyError, RuntimeError):
+    except ImportError, KeyError, RuntimeError:
         return []
     return [
         {"id": pipeline.id, "name": pipeline.name}
