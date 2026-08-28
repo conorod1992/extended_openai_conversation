@@ -98,7 +98,7 @@ def _register_split_frontend_modules() -> None:
     modules = tuple(
         dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
     )
-    setattr(_management_ui, "MANAGEMENT_FRONTEND_MODULES", modules)
+    setattr(_management_ui, "MANAGEMENT_FRONTEND_MODULES", modules)  # noqa: B010
 
 
 _register_split_frontend_modules()
