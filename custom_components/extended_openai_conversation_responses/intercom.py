@@ -92,8 +92,7 @@ class IntercomManager:
 
     def _satellite_entity_ids(self) -> list[str]:
         return [
-            state.entity_id
-            for state in self.hass.states.async_all("assist_satellite")
+            state.entity_id for state in self.hass.states.async_all("assist_satellite")
         ]
 
     def _state_announce_capable(self, state: State | None) -> bool:
@@ -360,9 +359,7 @@ class IntercomManager:
             satellites.append(
                 {
                     "id": state.entity_id,
-                    "name": state.attributes.get(
-                        ATTR_FRIENDLY_NAME, state.entity_id
-                    ),
+                    "name": state.attributes.get(ATTR_FRIENDLY_NAME, state.entity_id),
                     "state": state.state,
                     "area_id": area_id,
                     "device_id": device_id,
