@@ -1,3 +1,61 @@
+broadcast:
+  name: Broadcast intercom message
+  description: Send a TTS announcement to selected Assist satellites without interrupting busy voice sessions.
+  fields:
+    message:
+      name: Message
+      description: Text to announce.
+      required: true
+      selector:
+        text:
+          multiline: true
+    whole_home:
+      name: Whole home
+      description: Send to every announcement-capable Assist satellite except the origin.
+      default: false
+      selector:
+        boolean:
+    entity_id:
+      name: Assist satellites
+      description: One or more Assist satellite entities.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: assist_satellite
+    device_id:
+      name: Devices
+      description: Devices whose Assist satellites should receive the announcement.
+      selector:
+        device:
+          multiple: true
+    area_id:
+      name: Areas
+      description: Areas whose Assist satellites should receive the announcement.
+      selector:
+        area:
+          multiple: true
+    floor_id:
+      name: Floors
+      description: Floors whose Assist satellites should receive the announcement.
+      selector:
+        floor:
+          multiple: true
+    label_id:
+      name: Labels
+      description: Labels whose Assist satellites should receive the announcement.
+      selector:
+        label:
+          multiple: true
+    ttl_seconds:
+      name: Queue expiry
+      description: Maximum number of seconds a busy satellite may wait for delivery.
+      default: 120
+      selector:
+        number:
+          min: 5
+          max: 3600
+          mode: box
 query_image:
   fields:
     config_entry:
