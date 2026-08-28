@@ -176,8 +176,8 @@ def test_pipeline_conflicts_are_limited_to_this_agent(
         lambda hass, entry_id, subentry_id: "conversation.extended_openai",
     )
     monkeypatch.setattr(
-        local_intents.assist_pipeline,
-        "async_get_pipelines",
+        local_intents,
+        "_get_assist_pipelines",
         lambda hass: [
             SimpleNamespace(
                 id="one",
