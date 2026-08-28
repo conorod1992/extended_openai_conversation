@@ -97,6 +97,8 @@ async def _async_try_targeted_broadcast(
     if not isinstance(text, str) or not text.strip():
         return None
     manager = await async_get_intercom(hass)
+    if not manager.enabled:
+        return None
     parsed = parse_targeted_broadcast(text, manager)
     if parsed is None:
         return None
