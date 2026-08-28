@@ -76,13 +76,11 @@ def should_handle_locally(
     intent_name = result.intent.name
     if intent_name in excluded_intents:
         return False
-    if (
+    return not (
         delayed_commands_to_ai
         and intent_name == ha_intent.INTENT_START_TIMER
         and _has_conversation_command(result)
-    ):
-        return False
-    return True
+    )
 
 
 async def async_try_handle_local_intent(
