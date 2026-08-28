@@ -94,7 +94,9 @@ class NativeFunction(Function):
         if destination:
             resolved = manager.resolve_named_target(str(destination))
             if resolved is None:
-                raise HomeAssistantError(f"Unknown Broadcast destination: {destination}")
+                raise HomeAssistantError(
+                    f"Unknown Broadcast destination: {destination}"
+                )
             resolved.pop("name", None)
             target.update(resolved)
         if not whole_home and not destination:
