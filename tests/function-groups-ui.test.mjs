@@ -92,7 +92,12 @@ const many = {
 };
 assert.equal(categorizeFunctionTools(many).alwaysAvailable.length, 100);
 
-const editorSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
+const editorSource = (
+  await Promise.all([
+    "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js",
+    "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js",
+  ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
+).join("\n");
 assert.match(editorSource, /insertAdjacentHTML\("beforebegin", saveBar\(panel\)\)/, "the bar should appear as soon as a clean configuration becomes dirty");
 assert.match(editorSource, /#revert-config[\s\S]*?_setConfigDirty\(false\); panel\._render\(\)/, "reverting should clear dirty state and remove the bar");
 assert.match(editorSource, /_toast\("Configuration saved"\)/, "saving should use a transient success toast");
