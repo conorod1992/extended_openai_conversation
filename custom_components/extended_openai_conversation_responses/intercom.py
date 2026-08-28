@@ -104,9 +104,7 @@ class IntercomManager:
         self._draining: set[str] = set()
         self._tracked_entities: set[str] = set()
         self._unsub_state = None
-        self._store: Store[dict[str, Any]] = Store(
-            hass, STORAGE_VERSION, STORAGE_KEY
-        )
+        self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._enabled = False
         self._loaded = False
         self._refresh_state_listener()
