@@ -90,6 +90,39 @@ async def test_disabled_broadcast_rejects_send(hass) -> None:
 
 
 @pytest.mark.asyncio
+async def test_disabling_broadcast_clears_pending_deliveries(hass) -> None:
+    manager = IntercomManager(hass)
+    manager._enabled = True
+    save = AsyncMock()
+    manager._store.async_save = save
+    item = BroadcastMessage(
+        id="pending-message",
+        message="Test",
+        created_at="2026-08-28T16:00:00+00:00",
+        expires_at=intercom.datetime.now(intercom.UTC) + intercom.timedelta(seconds=30),
+        source="test",
+        origin_entity_id=None,
+        origin_device_id=None,
+        targets=["assist_satellite.kitchen"],
+        deliveries={
+            "assist_satellite.kitchen": Delivery(
+                "assist_satellite.kitchen", "queued_busy"
+            )
+        },
+    )
+    manager._history.appendleft(item)
+    manager._queues["assist_satellite.kitchen"] = deque([item])
+
+    await manager.async_set_enabled(False)
+
+    assert not manager.enabled
+    assert manager._queues == {}
+    assert item.deliveries["assist_satellite.kitchen"].status == "expired"
+    assert item.deliveries["assist_satellite.kitchen"].detail == "broadcast_disabled"
+    save.assert_awaited_once_with({"enabled": False})
+
+
+@pytest.mark.asyncio
 async def test_busy_satellite_is_queued_without_announce(hass, monkeypatch) -> None:
     manager = IntercomManager(hass)
     manager._enabled = True
