@@ -14,6 +14,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
+from . import management_ui as _management_ui
 from .const import (
     CONF_API_PROVIDER,
     CONF_API_VERSION,
@@ -83,7 +84,6 @@ from .const import (
 )
 from .helpers import get_authenticated_client
 from .intercom_services import async_setup_intercom_services
-from . import management_ui as _management_ui
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
 from .services import async_setup_services
