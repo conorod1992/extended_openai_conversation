@@ -106,6 +106,7 @@ from .knowledge import (
     get_loaded_knowledge,
     knowledge_source_as_dict,
 )
+from .local_intents import CONF_LOCAL_INTENT_EXCLUSIONS, local_handling_snapshot
 from .memory import (
     ANONYMOUS_USER_ID,
     async_get_memory,
@@ -925,6 +926,12 @@ async def async_management_command(
                 "options": agent_config_options(),
                 "model_capabilities": model_capabilities(config[CONF_CHAT_MODEL]),
                 "function_types": sorted(FUNCTIONS),
+                "local_handling": local_handling_snapshot(
+                    hass,
+                    entry_id,
+                    subentry_id,
+                    config.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
+                ),
             }
         if action == "validate":
             updates = message.get("config", {})
@@ -966,6 +973,12 @@ async def async_management_command(
                 "title": title.strip() if isinstance(title, str) else subentry.title,
                 "config": snapshot,
                 "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
+                "local_handling": local_handling_snapshot(
+                    hass,
+                    entry_id,
+                    subentry_id,
+                    snapshot.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
+                ),
             }
         if action == "duplicate":
             _require_admin(is_admin)

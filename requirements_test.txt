@@ -7,6 +7,10 @@
 # - conversation: hassil, home-assistant-intents
 # - rest: xmltodict
 # - scrape: beautifulsoup4, lxml
+# The HA wheel does not install integration-level requirements itself. Current
+# conversation imports gazetteer_matcher at module import time, so the test
+# environment needs the requirement declared by HA's conversation manifest.
+gazetteer-matcher==1.0.0
 
 # Testing frameworks
 pytest>=8.0.0

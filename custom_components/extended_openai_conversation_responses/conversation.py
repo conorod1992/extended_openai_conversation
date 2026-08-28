@@ -120,6 +120,7 @@ from .guest_mode import (
 )
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
+from .local_intents import LocalIntentResult, async_try_handle_local_intent
 from .memory import (
     MemoryRecord,
     PersistentMemory,
@@ -609,9 +610,24 @@ class ExtendedOpenAIAgentEntity(
                     if self._request_rule_runtime is not None
                     else dict(self.subentry.data)
                 )
+                local_intent = (
+                    await async_try_handle_local_intent(
+                        self.hass,
+                        user_input,
+                        chat_log,
+                        request_options,
+                        guest_active=request_policy.guest_active,
+                    )
+                    if evaluation is None
+                    else None
+                )
                 if self._usage is None:
-                    result = await self._async_handle_message(
-                        user_input, chat_log, request_options
+                    result = (
+                        self._local_intent_result(user_input, chat_log, local_intent)
+                        if local_intent is not None
+                        else await self._async_handle_message(
+                            user_input, chat_log, request_options
+                        )
                     )
                     if chat_log.content and isinstance(
                         chat_log.content[-1], conversation.AssistantContent
@@ -624,8 +640,12 @@ class ExtendedOpenAIAgentEntity(
                     home_assistant_conversation_id=user_input.conversation_id,
                     source_device_id=source_device_id,
                 ) as run:
-                    result = await self._async_handle_message(
-                        user_input, chat_log, request_options
+                    result = (
+                        self._local_intent_result(user_input, chat_log, local_intent)
+                        if local_intent is not None
+                        else await self._async_handle_message(
+                            user_input, chat_log, request_options
+                        )
                     )
                     await self._async_archive_turn(
                         archive_session,
@@ -775,6 +795,33 @@ class ExtendedOpenAIAgentEntity(
         intent_response.async_set_speech(response)
         return ConversationResult(
             response=intent_response,
+            conversation_id=chat_log.conversation_id,
+            continue_conversation=False,
+        )
+
+    def _local_intent_result(
+        self,
+        user_input: ConversationInput,
+        chat_log: ChatLog,
+        local_intent: LocalIntentResult,
+    ) -> ConversationResult:
+        """Return Home Assistant's original local intent response without a provider call."""
+        metadata = _PROCESS_METADATA.get()
+        if metadata is not None:
+            metadata["handled_locally"] = True
+            metadata["matched_intent"] = local_intent.intent_name
+        speech = local_intent.response.speech.get("plain", {}).get("speech", "")
+        chat_log.content.append(
+            conversation.AssistantContent(
+                agent_id=conversation.HOME_ASSISTANT_AGENT,
+                content=speech,
+            )
+        )
+        self._fire_conversation_finished(
+            user_input, chat_log, status="local", handled_locally=True
+        )
+        return ConversationResult(
+            response=local_intent.response,
             conversation_id=chat_log.conversation_id,
             continue_conversation=False,
         )
