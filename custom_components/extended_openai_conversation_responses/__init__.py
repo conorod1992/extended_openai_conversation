@@ -14,6 +14,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
+from . import management_ui as _management_ui
 from .const import (
     CONF_API_PROVIDER,
     CONF_API_VERSION,
@@ -89,6 +90,18 @@ from .services import async_setup_services
 from .template import async_setup_templates, async_unload_templates
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _register_split_frontend_modules() -> None:
+    """Add implementation modules used by the management frontend wrappers."""
+    extras = ("agent-config-editor-base.js", "guide-page-base.js")
+    modules = tuple(
+        dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
+    )
+    setattr(_management_ui, "MANAGEMENT_FRONTEND_MODULES", modules)  # noqa: B010
+
+
+_register_split_frontend_modules()
 
 PLATFORMS = [Platform.AI_TASK, Platform.CONVERSATION, Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
