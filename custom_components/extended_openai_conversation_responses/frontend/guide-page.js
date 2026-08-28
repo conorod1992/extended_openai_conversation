@@ -7,6 +7,65 @@ const GUIDE_QUICK_TASKS = [
   {title: "Let visitors use it safely", text: "Use Guest Mode to limit what visitors can see, control and remember.", topic: "guest-mode"},
 ];
 
+const LOCAL_HANDLING_GUIDE_TOPIC = {
+  id: "local-handling",
+  title: "Local handling: use Home Assistant before AI",
+  summary: "Let Home Assistant handle simple built-in commands without an AI request, while anything it cannot handle continues to Extended OpenAI normally.",
+  terms: "local handling home assistant intents built in commands no ai request prefer local handling delayed command timer request rules exceptions",
+  body: [
+    {
+      type: "p",
+      text: "Local handling is an optional shortcut for commands that Home Assistant already understands on its own. It can make simple requests faster and avoid an unnecessary AI request, without replacing the AI for more flexible or complicated language."
+    },
+    { type: "heading", text: "What happens when you speak" },
+    {
+      type: "steps",
+      items: [
+        "Request Rules get the first chance to handle or route the request.",
+        "If no Request Rule matched, Extended OpenAI can ask Home Assistant whether the request is one of its built-in commands.",
+        "If Home Assistant has a clear local match, it handles the command and returns its normal response without calling the AI provider.",
+        "If Home Assistant does not have a suitable match, the request continues through Extended OpenAI and the AI model as normal."
+      ]
+    },
+    {
+      type: "p",
+      text: "Typical local matches include straightforward requests such as turning devices on or off, checking a device state, asking for the current time or date, and managing timers. The exact list comes from the Home Assistant version you are running, so newly added Home Assistant command types can appear automatically."
+    },
+    { type: "heading", text: "Choose which commands should still use AI" },
+    {
+      type: "p",
+      text: "The Local handling settings show the command types Home Assistant currently provides. Select any command type under Always send these command types to AI if you want that kind of request to skip the local shortcut. The friendly name is shown first; the technical Hass... name is included only as a reference."
+    },
+    {
+      type: "note",
+      title: "Delayed device commands are a special case",
+      text: "Home Assistant uses its timer command for both ordinary timers and commands such as “turn off the lights in 20 minutes”. The delayed-device option lets those future device actions continue to your AI or Function Tool path while normal requests such as “set a 20 minute timer” can still be handled locally."
+    },
+    { type: "heading", text: "Check your Assist pipeline too" },
+    {
+      type: "p",
+      text: "Home Assistant Assist has its own Prefer local handling option. If that is enabled on a pipeline using this agent, Home Assistant may complete a command before it ever reaches Extended OpenAI. The settings page warns you about affected pipelines. Turn Home Assistant's pipeline option off if you want Extended OpenAI to control the order and apply its command-type exceptions."
+    },
+    {
+      type: "note",
+      title: "Guest Mode keeps its existing safeguards",
+      text: "When Guest Mode is active, this shortcut is deliberately skipped. Guest requests continue through the existing Extended OpenAI policy checks instead of bypassing them through Home Assistant's general local intent path."
+    },
+    {
+      type: "p",
+      text: "Leave local handling off if you prefer every non-Request-Rule command to follow the normal Extended OpenAI path. Turning it on does not stop you using AI for anything Home Assistant cannot match locally."
+    }
+  ],
+  action: { label: "Configure local handling", page: "assistant", section: "local" }
+};
+
+const GUIDE_TOPICS_WITH_LOCAL_HANDLING = (() => {
+  const topics = [...GUIDE_TOPICS];
+  const requestRulesIndex = topics.findIndex((topic) => topic.id === "request-rules");
+  topics.splice(requestRulesIndex >= 0 ? requestRulesIndex + 1 : 0, 0, LOCAL_HANDLING_GUIDE_TOPIC);
+  return topics;
+})();
+
 const GUIDE_TEXT_REWRITES = new Map([
   ["Lightweight lexical retrieval matches words and related text locally. Hybrid semantic retrieval can also use embeddings to find conceptually similar memories even when the wording differs. If embeddings are unavailable, retrieval falls back to the local lexical method.", "By default, the integration finds relevant memories by matching words and phrases locally. An optional semantic mode can also find memories with a similar meaning even when different words are used. That semantic mode uses embeddings when your provider supports them; if it is unavailable, memory retrieval falls back to the local matching method."],
   ["Create a Function Tool when you want to expose an additional capability or a specially defined action to the model. Function Tools are configured as YAML and validated by the backend before they are saved. Disabled tools remain configured but are not sent to the model and cannot run.", "Create a Function Tool when you want to give the assistant an additional capability or a specially defined action. Function Tools are configured as YAML and checked for errors before they are saved. Disabled tools remain configured but are not sent to the model and cannot run."],
@@ -84,7 +143,7 @@ function openGuideTopic(panel, topicId) {
 
 export function renderGuide(panel) {
   const query = String(panel._guideQuery || "").trim().toLowerCase();
-  const topics = enhanceGuideTopics(GUIDE_TOPICS).filter((topic) => !query || topicSearchText(topic).includes(query));
+  const topics = enhanceGuideTopics(GUIDE_TOPICS_WITH_LOCAL_HANDLING).filter((topic) => !query || topicSearchText(topic).includes(query));
 
   return `<style>
       .guide-quick-start{display:grid;gap:12px}
