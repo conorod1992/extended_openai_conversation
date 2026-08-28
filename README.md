@@ -32,6 +32,7 @@ Optional features can add much more:
 - **Knowledge Library** — give an agent larger reference material that it can search when needed.
 - **Request Rules** — handle selected requests locally without calling the AI provider, or route requests to different models.
 - **Local handling** — let Home Assistant handle simple built-in commands before an AI request, while more complex requests continue to the normal AI path.
+- **Broadcast** — send one-way spoken messages to selected Assist satellites or the whole home, without interrupting satellites that are currently busy.
 - **Voice follow-ups** — control whether Assist keeps listening after a reply.
 - **Guest Mode** — restrict what visitors can access and keep guest conversations separate.
 - **Conversation archive** — optionally keep searchable conversation history locally.
@@ -54,6 +55,8 @@ You will need:
 - a Home Assistant Assist pipeline if you want to use it as a conversation agent
 
 If you want the assistant to know about or control Home Assistant entities, those entities also need to be **exposed to Assist**.
+
+Broadcast is different: Assist Satellite entities used as Broadcast destinations do **not** need to be exposed to Assist. The integration discovers announcement-capable Assist satellites directly from Home Assistant.
 
 HACS is the easiest installation method, although manual installation is also supported.
 
@@ -118,7 +121,7 @@ The interface is split into sections for:
 - data and memory
 - usage and maintenance
 
-There is also an **Overview** page for common tasks and a **Guide** that explains the major features.
+There is also an **Overview** page for common tasks and a **Guide** that explains the major features. The optional Broadcast controls are also on the Overview page, so Broadcast does not add a second Home Assistant sidebar item.
 
 For a first setup, you can usually leave most settings at their defaults.
 
@@ -152,7 +155,7 @@ or:
 
 > Turn off the kitchen light.
 
-Once that works, you can enable additional features such as Web Search, memory, Request Rules, local handling, or custom functions as needed.
+Once that works, you can enable additional features such as Web Search, memory, Request Rules, local handling, Broadcast, or custom functions as needed.
 
 For a fuller walkthrough, see [First setup](docs/getting-started/setup.md).
 
@@ -181,6 +184,7 @@ Most users can begin with the defaults and change only what they actually need.
 | **API mode** | Auto | Automatically chooses the appropriate supported API mode. |
 | **Continue conversation** | HA Default | Uses Home Assistant's normal voice follow-up behaviour. |
 | **Local handling** | Off | Optionally lets Home Assistant complete simple built-in commands before an AI request. |
+| **Broadcast** | Off | Enables one-way spoken messages to selected Assist satellites or the whole home. |
 | **Web Search** | Off | Lets compatible OpenAI Responses models search the web when needed. |
 | **Memory mode** | Off | Enables persistent memory in Manual or Automatic mode. |
 | **Knowledge Library** | Off | Lets an agent search longer reference material stored locally. |
@@ -224,6 +228,28 @@ There is also a separate option for **delayed device commands**. Home Assistant 
 > Home Assistant Assist also has its own **Prefer local handling** pipeline setting. If that is enabled, Home Assistant may complete a command before it reaches Extended OpenAI at all. The Extended OpenAI settings page warns when a pipeline using the current agent is configured this way. Turn the pipeline option off if you want Extended OpenAI to control the order and apply its command-type exceptions.
 
 When Guest Mode is active, this shortcut is deliberately skipped so guest requests continue through Extended OpenAI's existing policy checks.
+
+### Broadcast
+
+Broadcast is an optional, one-way way to send a spoken message to Assist satellites around the home. It is disabled by default and can be enabled from **Extended OpenAI → Overview**.
+
+From the Overview you can type a message, select one or more Assist satellites, or choose **Whole home**. The same delivery system is also available to voice requests, the optional **Send broadcast** Function Tool, and the `extended_openai_conversation_responses.broadcast` Home Assistant action.
+
+When local handling is enabled, explicit targeted phrases can be handled without an AI request. Examples include:
+
+> Broadcast to kitchen that dinner is ready.
+
+> Tell bedroom I'll be up in five minutes.
+
+> Announce to upstairs saying the dog needs to go out.
+
+Targets can be Assist satellites, devices, areas, floors, or labels. Local matching uses the normal Home Assistant names and any aliases available on those registry entries. Common whole-home wording such as “everyone”, “everywhere”, “whole home”, and “all speakers” is also understood.
+
+Assist Satellite entities do **not** need to be exposed to Assist for Broadcast. The integration discovers announcement-capable Assist satellites directly and calls Home Assistant's Assist Satellite announcement action itself.
+
+If a target satellite is listening, processing, or speaking, Broadcast queues that target instead of intentionally interrupting the active voice session. Each target is handled separately and queued messages expire after a bounded wait rather than remaining pending forever.
+
+Broadcast is intentionally one-way in this release. There is no reply thread, live two-way conversation, or recorded-voice mode.
 
 ### Web Search
 
