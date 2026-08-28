@@ -58,12 +58,13 @@ def test_targeted_parser_supports_whole_home(monkeypatch) -> None:
 async def test_busy_satellite_is_queued_without_announce(hass, monkeypatch) -> None:
     manager = IntercomManager(hass)
     monkeypatch.setattr(manager, "resolve_targets", lambda **kwargs: ["assist_satellite.kitchen"])
+    monkeypatch.setattr(manager, "_schedule_drain", lambda _entity_id: None)
     hass.states.async_set("assist_satellite.kitchen", "responding")
     call = AsyncMock()
     monkeypatch.setattr(hass.services, "async_call", call)
 
     result = await manager.async_send("Dinner is ready", entity_ids=["assist_satellite.kitchen"])
-    await hass.async_block_till_done()
+    await manager._async_drain("assist_satellite.kitchen")
 
     assert result["deliveries"]["assist_satellite.kitchen"]["status"] == "queued_busy"
     call.assert_not_awaited()
@@ -73,6 +74,7 @@ async def test_busy_satellite_is_queued_without_announce(hass, monkeypatch) -> N
 async def test_idle_satellite_delivers_after_stability_check(hass, monkeypatch) -> None:
     manager = IntercomManager(hass)
     monkeypatch.setattr(manager, "resolve_targets", lambda **kwargs: ["assist_satellite.kitchen"])
+    monkeypatch.setattr(manager, "_schedule_drain", lambda _entity_id: None)
     hass.states.async_set("assist_satellite.kitchen", "idle")
     call = AsyncMock()
     monkeypatch.setattr(hass.services, "async_call", call)
@@ -85,7 +87,7 @@ async def test_idle_satellite_delivers_after_stability_check(hass, monkeypatch) 
         no_sleep,
     )
     result = await manager.async_send("Dinner is ready", entity_ids=["assist_satellite.kitchen"])
-    await hass.async_block_till_done()
+    await manager._async_drain("assist_satellite.kitchen")
 
     call.assert_awaited_once()
     assert manager.history()[0]["deliveries"]["assist_satellite.kitchen"]["status"] == "delivered"
