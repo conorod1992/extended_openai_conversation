@@ -10,7 +10,6 @@ import re
 from typing import Any
 from uuid import uuid4
 
-from homeassistant.components.assist_satellite import AssistSatelliteEntityFeature
 from homeassistant.const import ATTR_FRIENDLY_NAME, ATTR_SUPPORTED_FEATURES
 from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -28,6 +27,9 @@ DATA_KEY = f"{DOMAIN}.intercom"
 HISTORY_LIMIT = 50
 DEFAULT_TTL_SECONDS = 120
 IDLE_STABILITY_SECONDS = 0.5
+# Matches Home Assistant's AssistSatelliteEntityFeature.ANNOUNCE without importing
+# the Assist Satellite entity module (which eagerly imports the TTS/media stack).
+ANNOUNCE_FEATURE = 1
 
 
 @dataclass(slots=True)
@@ -98,7 +100,7 @@ class IntercomManager:
         if state is None:
             return False
         features = int(state.attributes.get(ATTR_SUPPORTED_FEATURES, 0) or 0)
-        return bool(features & AssistSatelliteEntityFeature.ANNOUNCE)
+        return bool(features & ANNOUNCE_FEATURE)
 
     def _entity_area_id(self, entity_id: str) -> str | None:
         entity = er.async_get(self.hass).async_get(entity_id)
@@ -240,11 +242,12 @@ class IntercomManager:
                 item.deliveries[entity_id].set("queued_busy")
             self._queues.setdefault(entity_id, deque()).append(item)
             self._schedule_drain(entity_id)
-        async_call_later(
-            self.hass,
-            bounded_ttl,
-            lambda _now, message_id=item.id: self._expire(message_id),
-        )
+
+        @callback
+        def expire_message(_now: datetime) -> None:
+            self._expire(item.id)
+
+        async_call_later(self.hass, bounded_ttl, expire_message)
         return item.as_dict()
 
     @callback
