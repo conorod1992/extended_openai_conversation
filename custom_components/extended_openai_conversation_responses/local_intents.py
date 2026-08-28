@@ -140,9 +140,9 @@ async def async_try_handle_local_intent(
         return targeted
 
     text = getattr(user_input, "text", None)
-    block_whole_home_broadcast = isinstance(text, str) and is_targeted_broadcast_request(
-        text
-    )
+    block_whole_home_broadcast = isinstance(
+        text, str
+    ) and is_targeted_broadcast_request(text)
 
     handle_intents = getattr(conversation, "async_handle_intents", None)
     if handle_intents is None:
