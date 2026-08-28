@@ -59,7 +59,15 @@ async def test_busy_satellite_is_queued_without_announce(hass, monkeypatch) -> N
     manager = IntercomManager(hass)
     monkeypatch.setattr(manager, "resolve_targets", lambda **kwargs: ["assist_satellite.kitchen"])
     monkeypatch.setattr(manager, "_schedule_drain", lambda _entity_id: None)
-    hass.states.async_set("assist_satellite.kitchen", "responding")
+    monkeypatch.setattr(
+        hass.states,
+        "get",
+        lambda entity_id: (
+            SimpleNamespace(state="responding")
+            if entity_id == "assist_satellite.kitchen"
+            else None
+        ),
+    )
     call = AsyncMock()
     monkeypatch.setattr(hass.services, "async_call", call)
 
@@ -75,7 +83,15 @@ async def test_idle_satellite_delivers_after_stability_check(hass, monkeypatch) 
     manager = IntercomManager(hass)
     monkeypatch.setattr(manager, "resolve_targets", lambda **kwargs: ["assist_satellite.kitchen"])
     monkeypatch.setattr(manager, "_schedule_drain", lambda _entity_id: None)
-    hass.states.async_set("assist_satellite.kitchen", "idle")
+    monkeypatch.setattr(
+        hass.states,
+        "get",
+        lambda entity_id: (
+            SimpleNamespace(state="idle")
+            if entity_id == "assist_satellite.kitchen"
+            else None
+        ),
+    )
     call = AsyncMock()
     monkeypatch.setattr(hass.services, "async_call", call)
 
