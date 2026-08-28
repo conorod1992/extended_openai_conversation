@@ -544,7 +544,6 @@ async function saveFunctionGroup(panel) {
 export function bindTools(panel) {
   const root=panel.shadowRoot;
   bindHelp(panel);
-  bindSaveBar(panel);
   root.querySelector("#add-tool")?.addEventListener("click",()=>openTool(panel));
   root.querySelector("#add-group")?.addEventListener("click",()=>openFunctionGroup(panel));
   root.querySelectorAll(".edit-group").forEach((button)=>button.addEventListener("click",()=>openFunctionGroup(panel,button.dataset.groupId)));
