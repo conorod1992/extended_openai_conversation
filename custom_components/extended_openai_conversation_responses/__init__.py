@@ -91,13 +91,16 @@ from .template import async_setup_templates, async_unload_templates
 
 _LOGGER = logging.getLogger(__name__)
 
-# The large configuration and Guide modules are split into a small presentation
-# layer plus their existing implementation. Keep both implementation modules on
-# the same authenticated static-file allowlist as the rest of the management UI.
-_management_ui.MANAGEMENT_FRONTEND_MODULES += (
-    "agent-config-editor-base.js",
-    "guide-page-base.js",
-)
+
+def _register_split_frontend_modules() -> None:
+    """Add implementation modules used by the management frontend wrappers."""
+    extras = ("agent-config-editor-base.js", "guide-page-base.js")
+    _management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(
+        dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
+    )
+
+
+_register_split_frontend_modules()
 
 PLATFORMS = [Platform.AI_TASK, Platform.CONVERSATION, Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
