@@ -221,7 +221,7 @@ function readConfig(panel) {
     if (key === "__title" || key === "prompt") return;
     let value = input.dataset.type === "boolean" ? input.checked : input.value;
     if (input.dataset.type === "number") value = Number(value);
-    if (key === "skills" || key.startsWith("guest_readable_") || key.startsWith("guest_controllable_")) value = String(value).split(", ").map(item => item.trim()).filter(Boolean);
+    if (key === "skills" || key.startsWith("guest_readable_") || key.startsWith("guest_controllable_")) value = String(value).split(",").map(item => item.trim()).filter(Boolean);
     config[key] = value;
   });
   config.prompt = root.querySelector("#prompt-editor")?.value ?? config.prompt;
@@ -544,6 +544,7 @@ async function saveFunctionGroup(panel) {
 export function bindTools(panel) {
   const root=panel.shadowRoot;
   bindHelp(panel);
+  bindSaveBar(panel);
   root.querySelector("#add-tool")?.addEventListener("click",()=>openTool(panel));
   root.querySelector("#add-group")?.addEventListener("click",()=>openFunctionGroup(panel));
   root.querySelectorAll(".edit-group").forEach((button)=>button.addEventListener("click",()=>openFunctionGroup(panel,button.dataset.groupId)));
