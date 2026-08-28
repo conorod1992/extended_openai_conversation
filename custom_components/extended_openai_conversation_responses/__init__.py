@@ -83,12 +83,21 @@ from .const import (
 )
 from .helpers import get_authenticated_client
 from .intercom_services import async_setup_intercom_services
+from . import management_ui as _management_ui
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
 from .services import async_setup_services
 from .template import async_setup_templates, async_unload_templates
 
 _LOGGER = logging.getLogger(__name__)
+
+# The large configuration and Guide modules are split into a small presentation
+# layer plus their existing implementation. Keep both implementation modules on
+# the same authenticated static-file allowlist as the rest of the management UI.
+_management_ui.MANAGEMENT_FRONTEND_MODULES += (
+    "agent-config-editor-base.js",
+    "guide-page-base.js",
+)
 
 PLATFORMS = [Platform.AI_TASK, Platform.CONVERSATION, Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
