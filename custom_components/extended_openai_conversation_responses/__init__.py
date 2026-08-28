@@ -82,6 +82,7 @@ from .const import (
     MEMORY_MODE_OFF,
 )
 from .helpers import get_authenticated_client
+from .intercom_services import async_setup_intercom_services
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
 from .services import async_setup_services
@@ -99,6 +100,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Extended OpenAI Conversation (Responses)."""
     await async_migrate_integration(hass)
     await async_setup_services(hass, config)
+    await async_setup_intercom_services(hass)
     await async_setup_management_ui(hass)
     return True
 
@@ -148,7 +150,6 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_migrate_integration(hass: HomeAssistant) -> None:
     """Migrate integration entry structure."""
 
-    # Make sure we get enabled config entries first
     entries = sorted(
         hass.config_entries.async_entries(DOMAIN),
         key=lambda e: e.disabled_by is not None,
@@ -238,9 +239,6 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 CONF_GUEST_CONTROLLABLE_LABELS,
             ):
                 data.setdefault(guest_selector, [])
-            # Existing prompts are preserved byte-for-byte and may already embed
-            # now() or exposed_entities(). Keep new generated context disabled for
-            # migrated agents so migration cannot duplicate arbitrary templates.
             data.setdefault(CONF_CURRENT_DATETIME_ENABLED, False)
             data.setdefault(
                 CONF_CURRENT_DATETIME_TEMPLATE, DEFAULT_CURRENT_DATETIME_TEMPLATE

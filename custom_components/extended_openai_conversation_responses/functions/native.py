@@ -23,6 +23,7 @@ import homeassistant.util.dt as dt_util
 from ..const import EVENT_AUTOMATION_REGISTERED
 from ..exceptions import CallServiceError, NativeNotFound
 from ..ha_actions import async_call_ha_action
+from ..intercom import async_get_intercom
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -50,6 +51,10 @@ class NativeFunction(Function):
             return await self.execute_service_single(
                 hass, function_config, arguments, llm_context, exposed_entities
             )
+        if name == "send_intercom_message":
+            return await self.send_intercom_message(
+                hass, function_config, arguments, llm_context, exposed_entities
+            )
         if name == "add_automation":
             return await self.add_automation(
                 hass, function_config, arguments, llm_context, exposed_entities
@@ -72,6 +77,43 @@ class NativeFunction(Function):
             )
 
         raise NativeNotFound(name)
+
+    async def send_intercom_message(
+        self,
+        hass: HomeAssistant,
+        function_config: dict[str, Any],
+        arguments: dict[str, Any],
+        llm_context: llm.LLMContext | None,
+        exposed_entities: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Send a targeted or whole-home Assist Satellite announcement."""
+        manager = await async_get_intercom(hass)
+        destination = arguments.get("destination")
+        whole_home = bool(arguments.get("whole_home", False))
+        target: dict[str, Any] = {"whole_home": whole_home}
+        if destination:
+            resolved = manager.resolve_named_target(str(destination))
+            if resolved is None:
+                raise HomeAssistantError(f"Unknown intercom destination: {destination}")
+            resolved.pop("name", None)
+            target.update(resolved)
+        if not whole_home and not destination:
+            raise HomeAssistantError("Choose an intercom destination or whole_home")
+        origin_device_id = (
+            getattr(llm_context, "device_id", None) if llm_context is not None else None
+        )
+        result = await manager.async_send(
+            str(arguments.get("message", "")),
+            **target,
+            origin_device_id=origin_device_id,
+            source="llm_tool",
+        )
+        return {
+            "success": True,
+            "message_id": result["id"],
+            "targets": result["targets"],
+            "deliveries": result["deliveries"],
+        }
 
     async def execute_service_single(
         self,
@@ -226,7 +268,6 @@ class NativeFunction(Function):
         energy_manager: energy.data.EnergyManager = await energy.async_get_manager(hass)
         if energy_manager.data is None:
             return {}
-        # energy_manager.data is EnergyPreferences which is a TypedDict (already a dict)
         return dict(energy_manager.data)
 
     async def get_user_from_user_id(
