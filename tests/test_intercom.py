@@ -1,4 +1,4 @@
-"""Tests for targeted intercom broadcasts."""
+"""Tests for targeted Broadcast announcements."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import intercom
 from custom_components.extended_openai_conversation_responses.intercom import (
@@ -22,7 +24,7 @@ def test_targeted_parser_resolves_named_destination(monkeypatch) -> None:
     manager.catalog = lambda: {
         "satellites": [],
         "devices": [],
-        "areas": [{"id": "kitchen", "name": "Kitchen"}],
+        "areas": [{"id": "kitchen", "name": "Kitchen", "aliases": []}],
         "floors": [],
         "labels": [],
     }
@@ -36,6 +38,28 @@ def test_targeted_parser_resolves_named_destination(monkeypatch) -> None:
         "Broadcast to kitchen that dinner is ready", manager
     ) == ({"area_ids": ["kitchen"]}, "dinner is ready")
     assert parse_targeted_broadcast("What time is dinner?", manager) is None
+
+
+def test_targeted_parser_checks_aliases(monkeypatch) -> None:
+    manager = SimpleNamespace()
+    manager.catalog = lambda: {
+        "satellites": [],
+        "devices": [],
+        "areas": [
+            {"id": "kitchen", "name": "Kitchen", "aliases": ["Cooking area"]}
+        ],
+        "floors": [],
+        "labels": [],
+    }
+    manager.resolve_named_target = lambda name: (
+        {"area_ids": ["kitchen"], "name": "Kitchen"}
+        if name.casefold() == "cooking area"
+        else None
+    )
+
+    assert parse_targeted_broadcast(
+        "Tell cooking area dinner is ready", manager
+    ) == ({"area_ids": ["kitchen"]}, "dinner is ready")
 
 
 def test_targeted_parser_supports_whole_home(monkeypatch) -> None:
@@ -56,8 +80,19 @@ def test_targeted_parser_supports_whole_home(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_disabled_broadcast_rejects_send(hass) -> None:
+    manager = IntercomManager(hass)
+
+    with pytest.raises(HomeAssistantError, match="Broadcast is disabled"):
+        await manager.async_send(
+            "Dinner is ready", entity_ids=["assist_satellite.kitchen"]
+        )
+
+
+@pytest.mark.asyncio
 async def test_busy_satellite_is_queued_without_announce(hass, monkeypatch) -> None:
     manager = IntercomManager(hass)
+    manager._enabled = True
     monkeypatch.setattr(manager, "resolve_targets", lambda **kwargs: ["assist_satellite.kitchen"])
     monkeypatch.setattr(manager, "_schedule_drain", lambda _entity_id: None)
     hass.states.get.return_value = SimpleNamespace(state="responding")
@@ -74,6 +109,7 @@ async def test_busy_satellite_is_queued_without_announce(hass, monkeypatch) -> N
 @pytest.mark.asyncio
 async def test_idle_satellite_delivers_after_stability_check(hass, monkeypatch) -> None:
     manager = IntercomManager(hass)
+    manager._enabled = True
     monkeypatch.setattr(manager, "resolve_targets", lambda **kwargs: ["assist_satellite.kitchen"])
     monkeypatch.setattr(manager, "_schedule_drain", lambda _entity_id: None)
     hass.states.get.return_value = SimpleNamespace(state="idle")
