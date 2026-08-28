@@ -2,7 +2,7 @@
 
 Bring a more capable AI conversation agent to Home Assistant.
 
-Extended OpenAI Conversation connects Home Assistant Assist to the OpenAI API (or a compatible provider) and adds features such as device control, conversation memory, web search, request rules, custom tools, voice follow-ups, a knowledge library, guest controls, and more.
+Extended OpenAI Conversation connects Home Assistant Assist to the OpenAI API (or a compatible provider) and adds features such as device control, conversation memory, web search, request rules, local Home Assistant handling, custom tools, voice follow-ups, a knowledge library, guest controls, and more.
 
 You can start with a simple setup and leave the advanced features alone until you need them.
 
@@ -31,6 +31,7 @@ Optional features can add much more:
 - **Persistent Memory** — let the assistant remember useful facts between conversations.
 - **Knowledge Library** — give an agent larger reference material that it can search when needed.
 - **Request Rules** — handle selected requests locally without calling the AI provider, or route requests to different models.
+- **Local handling** — let Home Assistant handle simple built-in commands before an AI request, while more complex requests continue to the normal AI path.
 - **Voice follow-ups** — control whether Assist keeps listening after a reply.
 - **Guest Mode** — restrict what visitors can access and keep guest conversations separate.
 - **Conversation archive** — optionally keep searchable conversation history locally.
@@ -151,7 +152,7 @@ or:
 
 > Turn off the kitchen light.
 
-Once that works, you can enable additional features such as Web Search, memory, Request Rules, or custom functions as needed.
+Once that works, you can enable additional features such as Web Search, memory, Request Rules, local handling, or custom functions as needed.
 
 For a fuller walkthrough, see [First setup](docs/getting-started/setup.md).
 
@@ -179,6 +180,7 @@ Most users can begin with the defaults and change only what they actually need.
 | **Completion Model** | `gpt-5-mini` | Selects the model used by the configured provider. |
 | **API mode** | Auto | Automatically chooses the appropriate supported API mode. |
 | **Continue conversation** | HA Default | Uses Home Assistant's normal voice follow-up behaviour. |
+| **Local handling** | Off | Optionally lets Home Assistant complete simple built-in commands before an AI request. |
 | **Web Search** | Off | Lets compatible OpenAI Responses models search the web when needed. |
 | **Memory mode** | Off | Enables persistent memory in Manual or Automatic mode. |
 | **Knowledge Library** | Off | Lets an agent search longer reference material stored locally. |
@@ -201,6 +203,27 @@ This is enough for normal requests such as turning lights on or off, changing su
 For supported entity changes, the integration can also keep a small snapshot of the previous state in the conversation so follow-up requests such as “undo that” can sometimes restore the previous setting.
 
 This is not a universal undo system. Actions that are not reversible, are not supported by the snapshot system, or happened outside Extended OpenAI may not have enough information to be undone accurately.
+
+### Local handling
+
+Local handling is an optional shortcut for commands that Home Assistant already understands on its own.
+
+When it is enabled, the order is:
+
+1. **Request Rules** get the first chance to handle or route the request.
+2. Home Assistant can handle a clear built-in command locally.
+3. Anything that was not handled locally continues through Extended OpenAI and the AI model normally.
+
+This means a simple request such as “turn off the kitchen light”, “what time is it?”, or “set a 20 minute timer” can be completed without an AI API request when Home Assistant has a matching built-in command. A more flexible request that Home Assistant does not understand still reaches the AI as usual.
+
+The settings page shows the command types currently provided by your Home Assistant version. You can choose any command types that should **always continue to AI** instead of using the local shortcut.
+
+There is also a separate option for **delayed device commands**. Home Assistant uses its timer command for both ordinary timers and requests such as “turn off the lights in 20 minutes”. You can keep normal timers local while sending delayed device actions to the normal AI / Function Tool path.
+
+> [!TIP]
+> Home Assistant Assist also has its own **Prefer local handling** pipeline setting. If that is enabled, Home Assistant may complete a command before it reaches Extended OpenAI at all. The Extended OpenAI settings page warns when a pipeline using the current agent is configured this way. Turn the pipeline option off if you want Extended OpenAI to control the order and apply its command-type exceptions.
+
+When Guest Mode is active, this shortcut is deliberately skipped so guest requests continue through Extended OpenAI's existing policy checks.
 
 ### Web Search
 
@@ -400,7 +423,7 @@ When multiple Extended OpenAI agents exist, you can also specify `agent_id`.
 
 The action supports additional context fields such as `conversation_id`, `device_id`, `satellite_id`, and `language`.
 
-Request Rules, Guest Mode, memory, tools, model routing, conversation continuity, and response cleanup still apply.
+Request Rules, local handling, Guest Mode, memory, tools, model routing, conversation continuity, and response cleanup still apply.
 
 > [!WARNING]
 > The Request Rules **Test request** feature uses the real processing path. It can perform Home Assistant actions and is not a dry run.
