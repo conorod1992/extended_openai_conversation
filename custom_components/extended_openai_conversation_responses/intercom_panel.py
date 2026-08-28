@@ -1,37 +1,34 @@
-"""Small authenticated frontend/API for sending typed intercom messages."""
+"""Authenticated WebSocket API for the Broadcast frontend."""
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.components import panel_custom, websocket_api
-from homeassistant.components.http import StaticPathConfig
+from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .intercom import async_get_intercom
 
-WS_INTERCOM = f"{DOMAIN}/intercom"
-PANEL_URL = "extended-openai-intercom"
-PANEL_TITLE = "Intercom"
-_SETUP_KEY = f"{DOMAIN}.intercom_panel_setup"
+WS_BROADCAST = f"{DOMAIN}/broadcast"
+_SETUP_KEY = f"{DOMAIN}.broadcast_api_setup"
 
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): WS_INTERCOM,
-        vol.Required("action"): vol.In(["snapshot", "send"]),
+        vol.Required("type"): WS_BROADCAST,
+        vol.Required("action"): vol.In(["snapshot", "send", "set_enabled"]),
         vol.Optional("message"): str,
         vol.Optional("whole_home"): bool,
         vol.Optional("entity_ids"): [str],
+        vol.Optional("enabled"): bool,
     }
 )
 @websocket_api.async_response
-async def websocket_intercom(
+async def websocket_broadcast(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
@@ -41,8 +38,24 @@ async def websocket_intercom(
         if msg["action"] == "snapshot":
             connection.send_result(
                 msg["id"],
-                {"catalog": manager.catalog(), "history": manager.history()},
+                {
+                    "enabled": manager.enabled,
+                    "can_manage": connection.user.is_admin,
+                    "catalog": manager.catalog(),
+                    "history": manager.history(),
+                },
             )
+            return
+        if msg["action"] == "set_enabled":
+            if not connection.user.is_admin:
+                raise HomeAssistantError(
+                    "Administrator permission is required to change Broadcast settings"
+                )
+            enabled = msg.get("enabled")
+            if not isinstance(enabled, bool):
+                raise HomeAssistantError("enabled must be true or false")
+            await manager.async_set_enabled(enabled)
+            connection.send_result(msg["id"], {"enabled": manager.enabled})
             return
         message = str(msg.get("message", "")).strip()
         if not message:
@@ -64,28 +77,9 @@ async def websocket_intercom(
         connection.send_error(msg["id"], "invalid_request", str(err))
 
 
-async def async_setup_intercom_panel(hass: HomeAssistant) -> None:
-    """Register the typed intercom panel once."""
+async def async_setup_broadcast_api(hass: HomeAssistant) -> None:
+    """Register the typed Broadcast API once."""
     if hass.data.get(_SETUP_KEY):
         return
     hass.data[_SETUP_KEY] = True
-    frontend_path = Path(__file__).parent / "frontend" / "intercom-panel.js"
-    await hass.http.async_register_static_paths(
-        [
-            StaticPathConfig(
-                f"/{DOMAIN}/intercom-panel.js",
-                str(frontend_path),
-                cache_headers=False,
-            )
-        ]
-    )
-    websocket_api.async_register_command(hass, websocket_intercom)
-    await panel_custom.async_register_panel(
-        hass,
-        webcomponent_name="extended-openai-intercom-panel",
-        frontend_url_path=PANEL_URL,
-        module_url=f"/{DOMAIN}/intercom-panel.js",
-        sidebar_title=PANEL_TITLE,
-        sidebar_icon="mdi:bullhorn-outline",
-        require_admin=False,
-    )
+    websocket_api.async_register_command(hass, websocket_broadcast)
