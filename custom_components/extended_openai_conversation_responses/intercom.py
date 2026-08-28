@@ -89,7 +89,10 @@ class IntercomManager:
         )
 
     def _satellite_entity_ids(self) -> list[str]:
-        return [state.entity_id for state in self.hass.states.async_all("assist_satellite")]
+        return [
+            state.entity_id
+            for state in self.hass.states.async_all("assist_satellite")
+        ]
 
     def _state_announce_capable(self, state: State | None) -> bool:
         if state is None:
@@ -151,15 +154,24 @@ class IntercomManager:
         floor_ids: list[str] | None = None,
         label_ids: list[str] | None = None,
         origin_entity_id: str | None = None,
+        origin_device_id: str | None = None,
     ) -> list[str]:
         entities = set(entity_ids or [])
         devices = set(device_ids or [])
         areas = set(area_ids or [])
         floors = set(floor_ids or [])
         labels = set(label_ids or [])
+        registry = er.async_get(self.hass)
         result = []
         for state in self.hass.states.async_all("assist_satellite"):
             if state.entity_id == origin_entity_id:
+                continue
+            registry_entry = registry.async_get(state.entity_id)
+            if (
+                origin_device_id
+                and registry_entry is not None
+                and registry_entry.device_id == origin_device_id
+            ):
                 continue
             if not self._state_announce_capable(state):
                 continue
@@ -200,15 +212,19 @@ class IntercomManager:
             floor_ids=floor_ids,
             label_ids=label_ids,
             origin_entity_id=origin_entity_id,
+            origin_device_id=origin_device_id,
         )
         if not targets:
-            raise HomeAssistantError("No matching announcement-capable Assist satellites found")
+            raise HomeAssistantError(
+                "No matching announcement-capable Assist satellites found"
+            )
         now = datetime.now(UTC)
+        bounded_ttl = max(5, min(ttl_seconds, 3600))
         item = BroadcastMessage(
             id=uuid4().hex,
             message=text,
             created_at=now.isoformat(),
-            expires_at=now + timedelta(seconds=max(5, min(ttl_seconds, 3600))),
+            expires_at=now + timedelta(seconds=bounded_ttl),
             source=source,
             origin_entity_id=origin_entity_id,
             origin_device_id=origin_device_id,
@@ -226,7 +242,7 @@ class IntercomManager:
             self._schedule_drain(entity_id)
         async_call_later(
             self.hass,
-            max(5, min(ttl_seconds, 3600)),
+            bounded_ttl,
             lambda _now, message_id=item.id: self._expire(message_id),
         )
         return item.as_dict()
@@ -281,7 +297,11 @@ class IntercomManager:
     def _async_state_changed(self, event: Event[Any]) -> None:
         entity_id = event.data.get("entity_id")
         new_state = event.data.get("new_state")
-        if entity_id in self._queues and new_state is not None and new_state.state == "idle":
+        if (
+            entity_id in self._queues
+            and new_state is not None
+            and new_state.state == "idle"
+        ):
             self._schedule_drain(entity_id)
 
     @callback
@@ -295,7 +315,9 @@ class IntercomManager:
                 delivery.set("expired")
                 queue = self._queues.get(entity_id)
                 if queue:
-                    self._queues[entity_id] = deque(m for m in queue if m.id != message_id)
+                    self._queues[entity_id] = deque(
+                        message for message in queue if message.id != message_id
+                    )
                     if not self._queues[entity_id]:
                         self._queues.pop(entity_id, None)
             break
@@ -332,49 +354,86 @@ class IntercomManager:
                 relevant_label_ids.update(area.labels)
             if device_id and (device := devices.async_get(device_id)):
                 relevant_label_ids.update(device.labels)
-            satellites.append({
-                "id": state.entity_id,
-                "name": state.attributes.get(ATTR_FRIENDLY_NAME, state.entity_id),
-                "state": state.state,
-                "area_id": area_id,
-                "device_id": device_id,
-            })
+            satellites.append(
+                {
+                    "id": state.entity_id,
+                    "name": state.attributes.get(
+                        ATTR_FRIENDLY_NAME, state.entity_id
+                    ),
+                    "state": state.state,
+                    "area_id": area_id,
+                    "device_id": device_id,
+                }
+            )
         return {
-            "satellites": sorted(satellites, key=lambda x: str(x["name"]).casefold()),
+            "satellites": sorted(
+                satellites, key=lambda item: str(item["name"]).casefold()
+            ),
             "areas": sorted(
-                [{"id": item.id, "name": item.name} for item in areas.async_list_areas() if item.id in relevant_area_ids],
-                key=lambda x: x["name"].casefold(),
+                [
+                    {"id": item.id, "name": item.name}
+                    for item in areas.async_list_areas()
+                    if item.id in relevant_area_ids
+                ],
+                key=lambda item: item["name"].casefold(),
             ),
             "floors": sorted(
-                [{"id": item.floor_id, "name": item.name} for item in floors.async_list_floors() if item.floor_id in relevant_floor_ids],
-                key=lambda x: x["name"].casefold(),
+                [
+                    {"id": item.floor_id, "name": item.name}
+                    for item in floors.async_list_floors()
+                    if item.floor_id in relevant_floor_ids
+                ],
+                key=lambda item: item["name"].casefold(),
             ),
             "labels": sorted(
-                [{"id": item.label_id, "name": item.name} for item in labels.async_list_labels() if item.label_id in relevant_label_ids],
-                key=lambda x: x["name"].casefold(),
+                [
+                    {"id": item.label_id, "name": item.name}
+                    for item in labels.async_list_labels()
+                    if item.label_id in relevant_label_ids
+                ],
+                key=lambda item: item["name"].casefold(),
             ),
             "devices": sorted(
                 [
                     {"id": item.id, "name": item.name_by_user or item.name}
-                    for item in (devices.async_get(device_id) for device_id in relevant_device_ids)
+                    for item in (
+                        devices.async_get(device_id)
+                        for device_id in relevant_device_ids
+                    )
                     if item is not None
                 ],
-                key=lambda x: str(x["name"]).casefold(),
+                key=lambda item: str(item["name"]).casefold(),
             ),
         }
 
     def resolve_named_target(self, name: str) -> dict[str, Any] | None:
         wanted = re.sub(r"\s+", " ", name.strip().casefold())
         catalog = self.catalog()
-        aliases = {"everyone", "everywhere", "whole home", "the whole house", "all devices", "all speakers"}
+        aliases = {
+            "everyone",
+            "everywhere",
+            "whole home",
+            "the whole house",
+            "all devices",
+            "all speakers",
+        }
         if wanted in aliases:
             return {"whole_home": True, "name": name.strip()}
-        singular = {"satellites": "entity_ids", "devices": "device_ids", "areas": "area_ids", "floors": "floor_ids", "labels": "label_ids"}
-        for group, field in singular.items():
+        singular = {
+            "satellites": "entity_ids",
+            "devices": "device_ids",
+            "areas": "area_ids",
+            "floors": "floor_ids",
+            "labels": "label_ids",
+        }
+        for group, target_field in singular.items():
             for item in catalog[group]:
                 item_name = re.sub(r"\s+", " ", str(item["name"]).casefold())
                 if wanted in {item_name, f"the {item_name}"}:
-                    return {field: [item["id"]], "name": item["name"]}
+                    return {
+                        target_field: [item["id"]],
+                        "name": item["name"],
+                    }
         return None
 
 
@@ -386,7 +445,9 @@ async def async_get_intercom(hass: HomeAssistant) -> IntercomManager:
     return manager
 
 
-def parse_targeted_broadcast(text: str, manager: IntercomManager) -> tuple[dict[str, Any], str] | None:
+def parse_targeted_broadcast(
+    text: str, manager: IntercomManager
+) -> tuple[dict[str, Any], str] | None:
     """Parse deliberately explicit targeted broadcast wording without an LLM call."""
     value = re.sub(r"\s+", " ", text.strip())
     patterns = (
@@ -403,8 +464,17 @@ def parse_targeted_broadcast(text: str, manager: IntercomManager) -> tuple[dict[
         return None
     catalog = manager.catalog()
     candidates = [
-        *(str(item["name"]) for group in ("satellites", "devices", "areas", "floors", "labels") for item in catalog[group]),
-        "everyone", "everywhere", "whole home", "the whole house", "all devices", "all speakers",
+        *(
+            str(item["name"])
+            for group in ("satellites", "devices", "areas", "floors", "labels")
+            for item in catalog[group]
+        ),
+        "everyone",
+        "everywhere",
+        "whole home",
+        "the whole house",
+        "all devices",
+        "all speakers",
     ]
     for candidate in sorted(set(candidates), key=len, reverse=True):
         target = manager.resolve_named_target(candidate)
