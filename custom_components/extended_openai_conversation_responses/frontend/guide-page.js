@@ -2,6 +2,7 @@ import {GUIDE_TOPICS, MEMORY_COMPARISON} from "./guide-content.js";
 
 const GUIDE_QUICK_TASKS = [
   {title: "Keep a conversation going", text: "Make follow-up questions remember what you were just discussing.", topic: "continuity"},
+  {title: "Broadcast a message", text: "Send a one-way spoken message to selected Assist satellites or the whole home.", topic: "broadcast"},
   {title: "Remember facts and preferences", text: "Store useful information so you do not have to repeat it in later conversations.", topic: "persistent-memory"},
   {title: "Give it reference material", text: "Add manuals, notes, policies or other larger information to the Knowledge Library.", topic: "knowledge"},
   {title: "Let visitors use it safely", text: "Use Guest Mode to limit what visitors can see, control and remember.", topic: "guest-mode"},
@@ -59,10 +60,63 @@ const LOCAL_HANDLING_GUIDE_TOPIC = {
   action: { label: "Configure local handling", page: "assistant", section: "conversation" }
 };
 
-const GUIDE_TOPICS_WITH_LOCAL_HANDLING = (() => {
+const BROADCAST_GUIDE_TOPIC = {
+  id: "broadcast",
+  title: "Broadcast spoken messages around the home",
+  summary: "Broadcast sends one-way spoken messages to selected Assist satellites or the whole home, with busy satellites queued until they are free.",
+  terms: "broadcast announce tell message satellite room area floor label whole home speaker queue alias one way",
+  body: [
+    {
+      type: "p",
+      text: "Broadcast is an optional one-way messaging feature. Enable it from the Extended OpenAI Overview, then you can type a message there or send one through voice, a Function Tool, or the Home Assistant Broadcast action."
+    },
+    { type: "heading", text: "Choose where the message goes" },
+    {
+      type: "list",
+      items: [
+        "Select one or more Assist satellites directly from the Overview.",
+        "Use an Assist satellite, device, area, floor, or label name in a voice or AI request.",
+        "Choose Whole home to send to every announcement-capable Assist satellite except the satellite that originated the request."
+      ]
+    },
+    {
+      type: "p",
+      text: "Local destination matching also checks Home Assistant aliases when they are available. For example, an area called Kitchen can also be addressed by an alias you have given that area."
+    },
+    {
+      type: "note",
+      title: "Broadcast destinations do not need to be exposed to Assist",
+      text: "The Assist Satellite entities themselves do not need to be exposed to Assist. Extended OpenAI discovers announcement-capable Assist satellites directly from Home Assistant and sends the announcement to them itself."
+    },
+    { type: "heading", text: "Voice phrases that can stay local" },
+    {
+      type: "p",
+      text: "When Extended OpenAI local handling is enabled, clear targeted wording can be resolved without an AI request. Examples include “Broadcast to kitchen that dinner is ready”, “Tell bedroom I'll be up in five”, and “Announce to upstairs saying the dog needs to go out”."
+    },
+    {
+      type: "p",
+      text: "If wording clearly looks like a targeted Broadcast request but the destination cannot be resolved, Extended OpenAI prevents Home Assistant's broad whole-home Broadcast intent from swallowing the request. The request can then continue to the normal AI path instead of accidentally announcing the destination words everywhere."
+    },
+    { type: "heading", text: "Busy satellites are not deliberately interrupted" },
+    {
+      type: "p",
+      text: "If a destination satellite is listening, processing, or speaking, the message waits in that satellite's queue. Each destination is handled independently, so an idle room can receive the message while another room waits. Queued messages expire after a bounded wait rather than remaining pending forever."
+    },
+    {
+      type: "note",
+      title: "One-way by design",
+      text: "This release does not add reply threads, a live two-way conversation, or recorded-voice Broadcast. Those are deliberately outside the current feature."
+    }
+  ],
+  action: { label: "Open Broadcast", page: "overview", section: "" }
+};
+
+const GUIDE_TOPICS_WITH_EXTENSIONS = (() => {
   const topics = [...GUIDE_TOPICS];
   const requestRulesIndex = topics.findIndex((topic) => topic.id === "request-rules");
-  topics.splice(requestRulesIndex >= 0 ? requestRulesIndex + 1 : 0, 0, LOCAL_HANDLING_GUIDE_TOPIC);
+  const localIndex = requestRulesIndex >= 0 ? requestRulesIndex + 1 : 0;
+  topics.splice(localIndex, 0, LOCAL_HANDLING_GUIDE_TOPIC);
+  topics.splice(localIndex + 1, 0, BROADCAST_GUIDE_TOPIC);
   return topics;
 })();
 
@@ -143,7 +197,7 @@ function openGuideTopic(panel, topicId) {
 
 export function renderGuide(panel) {
   const query = String(panel._guideQuery || "").trim().toLowerCase();
-  const topics = enhanceGuideTopics(GUIDE_TOPICS_WITH_LOCAL_HANDLING).filter((topic) => !query || topicSearchText(topic).includes(query));
+  const topics = enhanceGuideTopics(GUIDE_TOPICS_WITH_EXTENSIONS).filter((topic) => !query || topicSearchText(topic).includes(query));
 
   return `<style>
       .guide-quick-start{display:grid;gap:12px}
