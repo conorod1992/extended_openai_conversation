@@ -47,9 +47,9 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
         ["automation_config"],
     ),
     _preset(
-        "Send intercom message",
-        "send_intercom_message",
-        "Send a spoken announcement to an Assist Satellite destination or the whole home. Use a natural Home Assistant area, device, floor, label, or satellite name as destination. Busy satellites are queued rather than interrupted.",
+        "Send broadcast",
+        "send_broadcast",
+        "Send a spoken Broadcast announcement to an Assist Satellite destination or the whole home. Use a natural Home Assistant area, device, floor, label, or satellite name as destination. Busy satellites are queued rather than interrupted.",
         {
             "message": {
                 "type": "string",
