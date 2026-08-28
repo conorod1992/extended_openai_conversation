@@ -129,7 +129,9 @@ async def async_try_handle_local_intent(
     )
     if response is None:
         return None
-    return LocalIntentResult(response=response, intent_name=accepted_intent or "unknown")
+    return LocalIntentResult(
+        response=response, intent_name=accepted_intent or "unknown"
+    )
 
 
 def registered_intent_catalog(
@@ -143,9 +145,7 @@ def registered_intent_catalog(
         and handler.intent_type
     }
     all_names = registered | {
-        name
-        for name in configured_exclusions
-        if isinstance(name, str) and name.strip()
+        name for name in configured_exclusions if isinstance(name, str) and name.strip()
     }
     return [
         {
@@ -153,7 +153,9 @@ def registered_intent_catalog(
             "label": _friendly_intent_name(name),
             "available": name in registered,
         }
-        for name in sorted(all_names, key=lambda item: (_friendly_intent_name(item), item))
+        for name in sorted(
+            all_names, key=lambda item: (_friendly_intent_name(item), item)
+        )
     ]
 
 
@@ -180,7 +182,7 @@ def conflicting_assist_pipelines(
         return []
     try:
         pipelines = assist_pipeline.async_get_pipelines(hass)
-    except (KeyError, RuntimeError):
+    except KeyError, RuntimeError:
         return []
     return [
         {"id": pipeline.id, "name": pipeline.name}
