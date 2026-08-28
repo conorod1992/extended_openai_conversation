@@ -188,6 +188,7 @@ export function renderConfiguration(panel) {
   const timeoutControl = `<div class="setting" data-field="conversation_timeout_minutes" data-setting data-search="${panel._e(settingSearch("Conversation timeout", "Starts a fresh conversation after this much inactivity.", "conversation_timeout_minutes", "conversation_timeout"))}">${labelRow(panel,"Conversation timeout","conversation_timeout_minutes","conversation_timeout")}<select id="conversation-timeout-preset" ${continuity ? "" : "disabled"}>${timeoutChoices.map((item) => option(panel,String(item.value),timeoutPreset,item.label)).join("")}${option(panel,"custom",timeoutPreset,"Custom")}</select><input id="config-conversation_timeout_minutes" data-config="conversation_timeout_minutes" data-type="number" type="number" min="1" max="1440" value="${panel._e(config.conversation_timeout_minutes)}" ${continuity && timeoutPreset === "custom" ? "" : "hidden"} ${continuity ? "" : "disabled"}><small>Starts a fresh conversation after this much inactivity.</small><span class="field-error" data-error="conversation_timeout_minutes"></span></div>`;
   const jumps = [["general","General"],["conversation","Conversation"],["local","Local handling"],["prompt","Prompt"],["capabilities","Capabilities"],["archive","Archive"],["voice","Voice"],["speech","Speech"],["context","Context"],["model","Model"],["retention","Retention"],["backup","Backup & Restore"]];
   panel._configSectionFilter = new Set(panel._configSections || jumps.map(([id]) => id));
+  if (panel._configSectionFilter.has("conversation")) panel._configSectionFilter.add("local");
   const visibleJumps = jumps.filter(([id]) => panel._configSectionFilter.has(id));
   return `<div class="config-toolbar"><details class="agent-actions-menu"><summary aria-haspopup="menu">Agent actions</summary><div role="menu"><button type="button" class="secondary" role="menuitem" id="duplicate-agent" ${cleanOnly}>Duplicate agent</button><button type="button" class="secondary" role="menuitem" id="import-agent">Import configuration</button><button type="button" class="secondary" role="menuitem" id="export-agent" ${cleanOnly}>Export configuration</button></div></details></div>${panel._configDirty ? `<p class="action-help">Duplicate and Export configuration use the saved configuration. Save or revert your settings changes to enable them.</p>` : ""}
     ${visibleJumps.length > 1 ? `<nav class="config-jumps" aria-label="Jump to settings group">${visibleJumps.map(([id,label])=>`<a href="#config-${id}" data-jump="config-${id}">${label}</a>`).join("<span aria-hidden=\"true\">&middot;</span>")}</nav>` : ""}
@@ -220,11 +221,11 @@ function readConfig(panel) {
     if (key === "__title" || key === "prompt") return;
     let value = input.dataset.type === "boolean" ? input.checked : input.value;
     if (input.dataset.type === "number") value = Number(value);
-    if (key === "skills" || key.startsWith("guest_readable_") || key.startsWith("guest_controllable_")) value = String(value).split(",").map(item => item.trim()).filter(Boolean);
+    if (key === "skills" || key.startsWith("guest_readable_") || key.startsWith("guest_controllable_")) value = String(value).split(", ").map(item => item.trim()).filter(Boolean);
     config[key] = value;
   });
   config.prompt = root.querySelector("#prompt-editor")?.value ?? config.prompt;
-  config.local_intent_exclusions = [...root.querySelectorAll("[data-local-intent-exclusion]:checked")].map((input) => input.value);
+  if (root.querySelector("#local-intent-list")) config.local_intent_exclusions = [...root.querySelectorAll("[data-local-intent-exclusion]:checked")].map((input) => input.value);
   if (root.querySelector("#regex-rules")) config.speech_regex_replacements = [...root.querySelectorAll(".rule-row")].map((row) => ({pattern: row.querySelector(".regex-pattern").value, replacement: row.querySelector(".regex-replacement").value}));
   const voiceMappings = root.querySelector("#voice-mappings");
   if (voiceMappings) {
