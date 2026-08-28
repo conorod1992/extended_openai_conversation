@@ -95,9 +95,10 @@ _LOGGER = logging.getLogger(__name__)
 def _register_split_frontend_modules() -> None:
     """Add implementation modules used by the management frontend wrappers."""
     extras = ("agent-config-editor-base.js", "guide-page-base.js")
-    _management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(
+    modules = tuple(
         dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
     )
+    setattr(_management_ui, "MANAGEMENT_FRONTEND_MODULES", modules)
 
 
 _register_split_frontend_modules()
