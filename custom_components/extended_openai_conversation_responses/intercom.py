@@ -127,13 +127,21 @@ class IntercomManager:
         self._enabled = bool(enabled)
         self._loaded = True
         if not self._enabled:
-            for queue in self._queues.values():
+            for entity_id, queue in list(self._queues.items()):
+                retained: deque[BroadcastMessage] = deque()
                 for item in queue:
-                    for delivery in item.deliveries.values():
-                        if delivery.status not in {"delivered", "failed", "expired"}:
-                            delivery.set("expired", "broadcast_disabled")
-                queue.clear()
-            self._queues.clear()
+                    delivery = item.deliveries.get(entity_id)
+                    if delivery is None:
+                        continue
+                    if delivery.status == "delivering":
+                        retained.append(item)
+                        continue
+                    if delivery.status not in {"delivered", "failed", "expired"}:
+                        delivery.set("expired", "broadcast_disabled")
+                if retained:
+                    self._queues[entity_id] = retained
+                else:
+                    self._queues.pop(entity_id, None)
         await self._store.async_save({"enabled": self._enabled})
 
     def _satellite_entity_ids(self) -> list[str]:
@@ -343,10 +351,15 @@ class IntercomManager:
                     return
                 delivery.set("waiting_idle")
                 await asyncio.sleep(IDLE_STABILITY_SECONDS)
+                if not queue or queue[0] is not item:
+                    continue
                 if not self._enabled:
                     delivery.set("expired", "broadcast_disabled")
-                    if queue and queue[0] is item:
-                        queue.popleft()
+                    queue.popleft()
+                    continue
+                if datetime.now(UTC) >= item.expires_at:
+                    delivery.set("expired")
+                    queue.popleft()
                     continue
                 state = self.hass.states.get(entity_id)
                 if state is None or state.state != "idle":
@@ -365,7 +378,8 @@ class IntercomManager:
                     delivery.set("failed", type(err).__name__)
                 else:
                     delivery.set("delivered")
-                queue.popleft()
+                if queue and queue[0] is item:
+                    queue.popleft()
             if queue is not None and not queue:
                 self._queues.pop(entity_id, None)
         finally:
@@ -389,7 +403,12 @@ class IntercomManager:
         )
         if history_item is not None:
             for delivery in history_item.deliveries.values():
-                if delivery.status not in {"delivered", "failed", "expired"}:
+                if delivery.status not in {
+                    "delivered",
+                    "delivering",
+                    "failed",
+                    "expired",
+                }:
                     delivery.set("expired")
 
         for entity_id, queue in list(self._queues.items()):
@@ -399,11 +418,12 @@ class IntercomManager:
                     retained.append(item)
                     continue
                 queued_delivery = item.deliveries.get(entity_id)
-                if queued_delivery is not None and queued_delivery.status not in {
-                    "delivered",
-                    "failed",
-                    "expired",
-                }:
+                if queued_delivery is None:
+                    continue
+                if queued_delivery.status == "delivering":
+                    retained.append(item)
+                    continue
+                if queued_delivery.status not in {"delivered", "failed", "expired"}:
                     queued_delivery.set("expired")
             if retained:
                 self._queues[entity_id] = retained
