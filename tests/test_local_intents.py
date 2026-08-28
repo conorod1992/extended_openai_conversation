@@ -178,6 +178,34 @@ async def test_unresolved_targeted_broadcast_blocks_greedy_whole_home_intent(
     assert result is None
 
 
+@pytest.mark.asyncio
+async def test_disabled_broadcast_does_not_run_targeted_local_route(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = SimpleNamespace(enabled=False)
+
+    async def fake_get_manager(_hass):
+        return manager
+
+    async def fake_handle(hass, user_input, chat_log, *, intent_filter=None):
+        assert intent_filter is not None
+        assert intent_filter(_recognize("HassBroadcast"))
+        return None
+
+    monkeypatch.setattr(local_intents, "async_get_intercom", fake_get_manager)
+    monkeypatch.setattr(conversation, "async_handle_intents", fake_handle)
+
+    result = await async_try_handle_local_intent(
+        hass,
+        cast(Any, SimpleNamespace(text="Broadcast to kitchen that dinner is ready")),
+        cast(Any, SimpleNamespace()),
+        {CONF_LOCAL_INTENTS_ENABLED: True},
+        guest_active=False,
+    )
+
+    assert result is None
+
+
 def test_registered_intent_catalog_is_live_and_keeps_saved_missing_choices(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
