@@ -99,12 +99,9 @@ class NativeFunction(Function):
             target.update(resolved)
         if not whole_home and not destination:
             raise HomeAssistantError("Choose an intercom destination or whole_home")
-        origin_entity_id = None
-        origin_device_id = None
-        if llm_context is not None:
-            origin_device_id = getattr(llm_context, "device_id", None)
-            context = getattr(llm_context, "context", None)
-            origin_entity_id = getattr(context, "origin_event", None)
+        origin_device_id = (
+            getattr(llm_context, "device_id", None) if llm_context is not None else None
+        )
         result = await manager.async_send(
             str(arguments.get("message", "")),
             **target,
