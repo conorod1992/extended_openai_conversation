@@ -125,9 +125,17 @@ class IntercomManager:
         return self._enabled
 
     async def async_set_enabled(self, enabled: bool) -> None:
-        """Persist the Broadcast master switch."""
+        """Persist the Broadcast master switch and stop pending deliveries when off."""
         self._enabled = bool(enabled)
         self._loaded = True
+        if not self._enabled:
+            for queue in self._queues.values():
+                for item in queue:
+                    for delivery in item.deliveries.values():
+                        if delivery.status not in {"delivered", "failed", "expired"}:
+                            delivery.set("expired", "broadcast_disabled")
+                queue.clear()
+            self._queues.clear()
         await self._store.async_save({"enabled": self._enabled})
 
     def _satellite_entity_ids(self) -> list[str]:
@@ -323,6 +331,10 @@ class IntercomManager:
             while queue:
                 item = queue[0]
                 delivery = item.deliveries[entity_id]
+                if not self._enabled:
+                    delivery.set("expired", "broadcast_disabled")
+                    queue.popleft()
+                    continue
                 if datetime.now(UTC) >= item.expires_at:
                     delivery.set("expired")
                     queue.popleft()
@@ -333,6 +345,11 @@ class IntercomManager:
                     return
                 delivery.set("waiting_idle")
                 await asyncio.sleep(IDLE_STABILITY_SECONDS)
+                if not self._enabled:
+                    delivery.set("expired", "broadcast_disabled")
+                    if queue and queue[0] is item:
+                        queue.popleft()
+                    continue
                 state = self.hass.states.get(entity_id)
                 if state is None or state.state != "idle":
                     delivery.set("queued_busy")
