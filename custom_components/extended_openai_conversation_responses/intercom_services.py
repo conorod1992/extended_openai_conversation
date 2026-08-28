@@ -6,7 +6,12 @@ from typing import Any, cast
 
 import voluptuous as vol
 
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+)
 from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
