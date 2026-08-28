@@ -9,7 +9,7 @@ from typing import Any
 
 from hassil.recognize import RecognizeResult
 
-from homeassistant.components import assist_pipeline, conversation
+from homeassistant.components import conversation
 from homeassistant.components.conversation import ChatLog, ConversationInput
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er, intent as ha_intent
@@ -173,6 +173,13 @@ def _conversation_entity_id(
     return None
 
 
+def _get_assist_pipelines(hass: HomeAssistant) -> list[Any]:
+    """Load Assist pipeline state only when the diagnostics snapshot needs it."""
+    from homeassistant.components import assist_pipeline
+
+    return list(assist_pipeline.async_get_pipelines(hass))
+
+
 def conflicting_assist_pipelines(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> list[dict[str, str]]:
@@ -181,8 +188,8 @@ def conflicting_assist_pipelines(
     if entity_id is None:
         return []
     try:
-        pipelines = assist_pipeline.async_get_pipelines(hass)
-    except KeyError, RuntimeError:
+        pipelines = _get_assist_pipelines(hass)
+    except ImportError, KeyError, RuntimeError:
         return []
     return [
         {"id": pipeline.id, "name": pipeline.name}
