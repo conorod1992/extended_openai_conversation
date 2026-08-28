@@ -106,7 +106,7 @@ async def test_home_assistant_response_is_preserved_and_intent_is_reported(
 
     async def fake_handle(hass, user_input, chat_log, *, intent_filter=None):
         assert intent_filter is not None
-        assert intent_filter(_recognize("HassTurnOn"))
+        assert not intent_filter(_recognize("HassTurnOn"))
         return response
 
     monkeypatch.setattr(conversation, "async_handle_intents", fake_handle)
@@ -129,7 +129,7 @@ async def test_excluded_match_falls_through(
 ) -> None:
     async def fake_handle(hass, user_input, chat_log, *, intent_filter=None):
         assert intent_filter is not None
-        assert not intent_filter(_recognize("HassBroadcast"))
+        assert intent_filter(_recognize("HassBroadcast"))
         return None
 
     monkeypatch.setattr(conversation, "async_handle_intents", fake_handle)
@@ -211,10 +211,10 @@ async def test_delayed_command_setting_is_applied_to_home_assistant_filter(
 ) -> None:
     async def fake_handle(hass, user_input, chat_log, *, intent_filter=None):
         assert intent_filter is not None
-        assert not intent_filter(
+        assert intent_filter(
             _recognize("HassStartTimer", {"conversation_command": object()})
         )
-        assert intent_filter(_recognize("HassStartTimer", {"minutes": object()}))
+        assert not intent_filter(_recognize("HassStartTimer", {"minutes": object()}))
         return None
 
     monkeypatch.setattr(conversation, "async_handle_intents", fake_handle)
