@@ -14,13 +14,12 @@ const allowedFields = new Set([
   "keywords",
   "href",
 ]);
-const editorSource = await readFile(
-  new URL(
+const editorSource = (
+  await Promise.all([
     "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js",
-    import.meta.url,
-  ),
-  "utf8",
-);
+    "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js",
+  ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
+).join("\n");
 
 assert.ok(Object.keys(HELP_METADATA).length > 0, "help metadata must not be empty");
 for (const [key, entry] of Object.entries(HELP_METADATA)) {
