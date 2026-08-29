@@ -3,13 +3,24 @@ import {NAVIGATION, pageMetadata, routeFromPath, routePath, searchSettings, shou
 import {freshGuestPolicyDraft} from "./guest-mode-ui.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview} from "./overview-page.js";
-import {formatUsageTimestamp, tokenBreakdown} from "./usage-chart.js";
+import {formatUsageNumber, formatUsageTimestamp, tokenBreakdown} from "./usage-chart.js";
 import {bindRequestRules, renderRequestRules, requestRulesDialog} from "./request-rules-ui.js";
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
 const KNOWLEDGE_TITLE_LIMIT = 120;
 const KNOWLEDGE_DESCRIPTION_LIMIT = 500;
 const KNOWLEDGE_LIMIT = 100000;
+
+function settledSectionResult(entries, settled) {
+  const result = {};
+  const load_errors = [];
+  entries.forEach(([key, label], index) => {
+    const item = settled[index];
+    if (item.status === "fulfilled") result[key] = item.value;
+    else load_errors.push({key, label, message: item.reason?.message || String(item.reason || "Unknown error")});
+  });
+  return {...result, load_errors};
+}
 
 export class ExtendedOpenAIManagementPanel extends HTMLElement {
   constructor() {
@@ -295,19 +306,21 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (cacheKey && this._sectionCache.has(cacheKey)) {
         result = this._sectionCache.get(cacheKey);
       } else if (view === "overview") {
-        const [usage, conversations, memories, knowledge] = await Promise.all([
+        const entries = [["usage", "Usage"], ["conversations", "Conversation settings"], ["memories", "Memory"], ["knowledge", "Knowledge"]];
+        const settled = await Promise.allSettled([
           this._call("usage", "summary"),
           this._call("conversations", "settings", { scope_id: this._scopeId }),
           this._call("memories", "list", { scope_id: this._scopeId, limit: 5 }),
           this._call("knowledge", "list"),
         ]);
-        result = { usage, conversations, memories, knowledge };
+        result = settledSectionResult(entries, settled);
       } else if (view === "usage-maintenance/usage") {
-        const [summary, days, runs, retention] = await Promise.all([
+        const entries = [["summary", "Usage summary"], ["days", "Daily usage"], ["runs", "Recent runs"], ["retention", "Usage retention"]];
+        const settled = await Promise.allSettled([
           this._call("usage", "summary"), this._call("usage", "daily"),
           this._call("usage", "runs", { limit: 30 }), this._call("usage", "retention"),
         ]);
-        result = { summary, days, runs, retention };
+        result = settledSectionResult(entries, settled);
       } else if (view === "data-memory/conversations") {
         const [sessions, settings, active] = await Promise.all([
           this._call("conversations", "list", { scope_id: this._scopeId, limit: 50 }),
@@ -473,8 +486,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       ${this._metric("Tokens this month", usage.month?.total_tokens ?? 0)}
       ${this._metric("Lifetime tokens", usage.lifetime?.total_tokens ?? 0)}
       ${this._metric("Latest response", usage.latest?.total_tokens ?? "—", "tokens")}
-      ${this._metric("Memories", this._titleCase(agent.memory_mode), `${agent.memory_count} memories`)}
-      ${this._metric("Knowledge", agent.knowledge_enabled ? "Enabled" : "Disabled", `${agent.knowledge_source_count} sources`)}
+      ${this._metric("Memories", this._titleCase(agent.memory_mode), `${formatUsageNumber(agent.memory_count)} memories`)}
+      ${this._metric("Knowledge", agent.knowledge_enabled ? "Enabled" : "Disabled", `${formatUsageNumber(agent.knowledge_source_count)} sources`)}
       ${this._metric("Conversation archive", agent.archive_enabled ? "Enabled" : "Disabled")}
       ${this._metric("Guest Mode", this._titleCase(String(agent.guest_mode?.state || "inactive").replaceAll("_", " ")))}
     </section>`;
@@ -485,7 +498,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const height = Math.max(2, total / max * 100);
     const cachedShare = total ? cached / total * 100 : 0;
     const uncachedShare = total ? uncached / total * 100 : 0;
-    const details = `${day.date} · ${total.toLocaleString()} total · ${cached.toLocaleString()} cached input · ${uncached.toLocaleString()} uncached`;
+    const details = `${day.date} · ${formatUsageNumber(total)} total · ${formatUsageNumber(cached)} cached input · ${formatUsageNumber(uncached)} uncached`;
     return `<span class="chart-column" tabindex="0" aria-label="${this._e(details)}" data-tooltip="${this._e(details)}" style="height:${height}%"><span class="chart-segment cached" style="height:${cachedShare}%"></span><span class="chart-segment uncached" style="height:${uncachedShare}%"></span></span>`;
   }
 
@@ -497,13 +510,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const month = result.summary?.month || {};
     const lifetime = result.summary?.lifetime || {};
     const latest = result.summary?.latest || null;
-    const cachedMeta = (value) => `${Number(value || 0).toLocaleString()} cached input`;
+    const cachedMeta = (value) => `${formatUsageNumber(value || 0)} cached input`;
+    const loadWarnings = (result.load_errors || []).map((issue) => `<div class="notice"><strong>${this._e(issue.label)} unavailable</strong><p>${this._e(issue.message)} Other usage information is still shown where available.</p></div>`).join("");
     const recentRows = (result.runs?.runs || []).map((run) => {
       const tokens = tokenBreakdown(run.total_tokens,run.cached_input_tokens);
-      const completed = formatUsageTimestamp(run.completed_at);
-      return `<tr><td><time datetime="${this._e(completed.datetime)}" title="${this._e(completed.datetime)}">${this._e(completed.display)}</time></td><td>${tokens.total}</td><td>${tokens.cached}</td><td>${tokens.uncached}</td><td>${this._e(run.request_count)}</td><td>${this._e(`${run.duration_ms} ms`)}</td><td>${this._e(run.successful ? "Success" : run.error_type || "Failed")}</td></tr>`;
+      const completed = formatUsageTimestamp(run.completed_at, undefined, this._hass?.config?.time_zone);
+      return `<tr><td><time datetime="${this._e(completed.datetime)}" title="${this._e(completed.datetime)}">${this._e(completed.display)}</time></td><td>${formatUsageNumber(tokens.total)}</td><td>${formatUsageNumber(tokens.cached)}</td><td>${formatUsageNumber(tokens.uncached)}</td><td>${formatUsageNumber(run.request_count)}</td><td>${this._e(`${formatUsageNumber(run.duration_ms)} ms`)}</td><td>${this._e(run.successful ? "Success" : run.error_type || "Failed")}</td></tr>`;
     }).join("");
-    return `<section class="metric-grid compact">${this._metric("Today",today.total_tokens || 0,cachedMeta(today.cached_input_tokens))}${this._metric("This month",month.total_tokens || 0,cachedMeta(month.cached_input_tokens))}${this._metric("Lifetime",lifetime.total_tokens || 0,cachedMeta(lifetime.cached_input_tokens))}${this._metric("Latest response",latest?.total_tokens ?? "—",latest ? cachedMeta(latest.cached_input_tokens) : "")}</section>
+    return `${loadWarnings}<section class="metric-grid compact">${this._metric("Today",today.total_tokens || 0,cachedMeta(today.cached_input_tokens))}${this._metric("This month",month.total_tokens || 0,cachedMeta(month.cached_input_tokens))}${this._metric("Lifetime",lifetime.total_tokens || 0,cachedMeta(lifetime.cached_input_tokens))}${this._metric("Latest response",latest?.total_tokens ?? "—",latest ? cachedMeta(latest.cached_input_tokens) : "")}</section>
       <section class="content-card"><div class="chart-heading"><h2>Tokens by day</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" aria-label="Daily token usage; cached input tokens are included within each day's total">${days.slice(-31).map((day) => this._usageBar(day,max)).join("") || this._empty("No completed runs yet.")}</div><p class="chart-note"><strong>Cached input</strong> is request content the provider has seen before and can reuse. It is included in the total token count, but cached input is usually cheaper than uncached input when the provider supports discounted caching.</p></section>
       <section class="content-card"><h2>Recent runs</h2><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody>${recentRows}</tbody></table></div></section>
       ${this._data?.is_admin ? `<section class="content-card"><h2>Usage detail maintenance</h2><p>Retention is available in the local Retention & maintenance subsection.</p><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Daily, monthly, and lifetime totals are never removed by detail pruning.</small></section>` : ""}`;
@@ -527,7 +541,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _knowledge() {
     const sources = this._result?.sources || [];
     const items = this._filtered(sources, (source) => `${source.title} ${source.description}`);
-    return `<section class="content-card"><div class="section-heading"><div><h2>Knowledge Library</h2><p>${sources.length} source${sources.length === 1 ? "" : "s"} stored locally for on-demand search.</p></div><button type="button" id="add-source">+ Add source</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${items.map((source) => `<article class="list-card"><div class="card-main clickable edit-source" tabindex="0" role="button" data-id="${this._e(source.source_id)}"><h3>${this._e(source.title)}</h3><p class="description">${this._e(source.description || "No description")}</p><p class="meta">${Number(source.character_count || 0).toLocaleString()} characters · Updated ${this._e(this._formatDate(source.updated_at))}</p></div><div class="actions"><button type="button" class="secondary source-edit-button" data-id="${this._e(source.source_id)}">Edit</button><button type="button" class="danger delete-source" data-id="${this._e(source.source_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No sources match this filter." : "No Knowledge sources yet. Add one to make reference information available on demand.")}</div></section>`;
+    return `<section class="content-card"><div class="section-heading"><div><h2>Knowledge Library</h2><p>${formatUsageNumber(sources.length)} source${sources.length === 1 ? "" : "s"} stored locally for on-demand search.</p></div><button type="button" id="add-source">+ Add source</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${items.map((source) => `<article class="list-card"><div class="card-main clickable edit-source" tabindex="0" role="button" data-id="${this._e(source.source_id)}"><h3>${this._e(source.title)}</h3><p class="description">${this._e(source.description || "No description")}</p><p class="meta">${formatUsageNumber(source.character_count || 0)} characters · Updated ${this._e(this._formatDate(source.updated_at))}</p></div><div class="actions"><button type="button" class="secondary source-edit-button" data-id="${this._e(source.source_id)}">Edit</button><button type="button" class="danger delete-source" data-id="${this._e(source.source_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No sources match this filter." : "No Knowledge sources yet. Add one to make reference information available on demand.")}</div></section>`;
   }
 
   _guestMode() {
@@ -540,7 +554,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _guestPolicyView(status, policy, state) {
     const config = this._guestDraft || this._result?.config || {};
     const selector = (key, type, label) => `<label class="setting"><span>${label}</span><ha-selector data-guest-key="${key}" data-guest-selector="${type}"></ha-selector></label>`;
-    const manager = (key, type, label, description) => `<details class="guest-manager"><summary><span><strong>${label}</strong><small>${(config[key] || []).length} excluded · ${description}</small></span><span class="manage-label">Manage</span></summary><div class="guest-manager-body">${selector(key,type,`Choose ${label.toLowerCase()}`)}</div></details>`;
+    const manager = (key, type, label, description) => `<details class="guest-manager"><summary><span><strong>${label}</strong><small>${formatUsageNumber((config[key] || []).length)} excluded · ${description}</small></span><span class="manage-label">Manage</span></summary><div class="guest-manager-body">${selector(key,type,`Choose ${label.toLowerCase()}`)}</div></details>`;
     const mode = (key, label, values) => `<label>${label}<select data-guest-mode="${key}">${values.map(([value,text]) => `<option value="${value}" ${config[key] === value ? "selected" : ""}>${text}</option>`).join("")}</select></label>`;
     const intervalSummary = status.active_from ? `Starts ${this._e(this._formatDate(status.active_from))}${status.active_until ? ` · Ends ${this._e(this._formatDate(status.active_until))}` : " · No expiry"}` : "No interval configured";
     const hasInterval = Boolean(status.currently_active || status.scheduled || status.active_from || status.active_until);
@@ -878,7 +892,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const result = await this._call("memories", "reassign_legacy", { scope_id: "__anonymous__", target_scope_id: target, memory_ids: [this._reassignMemoryId] });
       this.shadowRoot.querySelector("#reassign-dialog").close();
       await this._refreshAfterMutation();
-      this._toast(`Reassigned ${result.reassigned} memory record${result.reassigned === 1 ? "" : "s"}`);
+      this._toast(`Reassigned ${formatUsageNumber(result.reassigned)} memory record${result.reassigned === 1 ? "" : "s"}`);
     } catch (err) { this._toast(`Unable to reassign memory: ${err.message || String(err)}`, true); }
   }
 
@@ -944,7 +958,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _updateKnowledgeCounter() {
     const length = this.shadowRoot.querySelector("#knowledge-content")?.value.length || 0;
-    this.shadowRoot.querySelector("#knowledge-counter").textContent = `${length.toLocaleString()} / ${KNOWLEDGE_LIMIT.toLocaleString()} characters`;
+    this.shadowRoot.querySelector("#knowledge-counter").textContent = `${formatUsageNumber(length)} / ${formatUsageNumber(KNOWLEDGE_LIMIT)} characters`;
   }
 
   _toast(message, error = false) {
@@ -973,7 +987,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       return populated || a.display_name.localeCompare(b.display_name);
     });
     const visible = scopes.filter((scope) => scope.scope_id === this._scopeId || scope.is_current_user || scope[key] > 0 || scope.scope_type !== "user" || includeEmpty);
-    return visible.map((scope) => `<option value="${this._e(scope.scope_id)}" ${scope.scope_id === this._scopeId ? "selected" : ""}>${this._e(scope.display_name)} (${Number(scope[key] || 0).toLocaleString()})${scope.is_current_user ? " · You" : ""}</option>`).join("");
+    return visible.map((scope) => `<option value="${this._e(scope.scope_id)}" ${scope.scope_id === this._scopeId ? "selected" : ""}>${this._e(scope.display_name)} (${formatUsageNumber(scope[key] || 0)})${scope.is_current_user ? " · You" : ""}</option>`).join("");
   }
 
   _filtered(items, value) {
@@ -981,10 +995,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return query ? items.filter((item) => value(item).toLocaleLowerCase().includes(query)) : items;
   }
 
-  _retentionOptions(selected) { return [0,7,30,90,180,365].map((value) => `<option value="${value}" ${value === selected ? "selected" : ""}>${value ? `${value} days` : "Disabled"}</option>`).join(""); }
-  _metric(title, value, detail = "") { return `<article class="metric"><span>${this._e(title)}</span><strong>${this._e(String(value))}</strong>${detail ? `<small>${this._e(String(detail))}</small>` : ""}</article>`; }
+  _retentionOptions(selected) { return [0,7,30,90,180,365].map((value) => `<option value="${value}" ${value === selected ? "selected" : ""}>${value ? `${formatUsageNumber(value)} days` : "Disabled"}</option>`).join(""); }
+  _metric(title, value, detail = "") { const display = typeof value === "number" && Number.isFinite(value) ? formatUsageNumber(value) : String(value); return `<article class="metric"><span>${this._e(title)}</span><strong>${this._e(display)}</strong>${detail ? `<small>${this._e(String(detail))}</small>` : ""}</article>`; }
   _toggle(id, label, checked) { return `<label class="toggle"><span>${this._e(label)}</span><input id="${id}" type="checkbox" role="switch" ${checked ? "checked" : ""}></label>`; }
-  _table(headers, rows) { return `<div class="table"><table><thead><tr>${headers.map((header) => `<th>${this._e(header)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((value) => `<td>${this._e(String(value))}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`; }
+  _table(headers, rows) { return `<div class="table"><table><thead><tr>${headers.map((header) => `<th>${this._e(header)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((value) => `<td>${this._e(typeof value === "number" && Number.isFinite(value) ? formatUsageNumber(value) : String(value))}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`; }
   _loading() { return `<div class="loading" role="status"><span class="spinner"></span>Loading…</div>`; }
   _empty(message) { return `<div class="empty">${this._e(message)}</div>`; }
   _label(value) { return value[0].toUpperCase() + value.slice(1); }
