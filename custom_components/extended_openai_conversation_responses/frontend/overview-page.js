@@ -125,6 +125,8 @@ async function loadBroadcast(panel) {
   try {
     const snapshot = await panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"});
     if (!panel.shadowRoot.querySelector("#broadcast-card")) return;
+    const available = new Set((snapshot.catalog?.satellites || []).map((satellite) => satellite.id));
+    panel._broadcastSelected = new Set([...(panel._broadcastSelected || new Set())].filter((entityId) => available.has(entityId)));
     host.innerHTML = broadcastMarkup(panel, snapshot);
     bindBroadcastControls(panel, snapshot);
   } catch (err) {
@@ -139,6 +141,9 @@ export function renderOverview(panel, agent) {
   const guest = agent.guest_mode || {};
   const warnings = [];
   if (["active", "active_indefinitely"].includes(guest.state) && !guest.has_home_assistant_exclusions) warnings.push("Guest Mode is active without configured Home Assistant exclusions.");
+  for (const issue of result.load_errors || []) warnings.push(`${issue.label} could not be loaded. Other overview information is still available.`);
+  const memoryCount = Number(agent.memory_count || 0).toLocaleString();
+  const knowledgeCount = Number(agent.knowledge_source_count || 0).toLocaleString();
   return `<style>
       .broadcast-toggle-row{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:14px 0;border-bottom:1px solid var(--divider-color)}
       .broadcast-toggle-row p{margin:4px 0 0;color:var(--secondary-text-color);line-height:1.45}
@@ -166,11 +171,11 @@ export function renderOverview(panel, agent) {
     ${warnings.length ? `<section class="overview-warnings" aria-label="Actionable warnings">${warnings.map((warning) => `<div class="notice"><strong>Review recommended</strong><p>${panel._e(warning)}</p></div>`).join("")}</section>` : ""}
     <section class="dashboard-grid" aria-label="Assistant overview">
       ${card(panel,"Assistant",`${agent.provider} · ${agent.model}`,"Model, responses, conversation behavior, prompt, and voice.","assistant","basics","Configure")}
-      ${card(panel,"Capabilities",`${agent.function_count || 0} functions · ${agent.function_group_count || 0} groups`,"Home Assistant access, custom functions, and visitor restrictions.","capabilities","home-assistant","Manage")}
-      ${card(panel,"Memory & Knowledge",panel._titleCase(agent.memory_mode),`${agent.memory_count} memories · ${agent.knowledge_source_count} Knowledge sources`,"data-memory","memories","Manage")}
-      ${card(panel,"Conversation history",agent.archive_enabled ? "Archive enabled" : "Archive disabled",`Retention: ${conversations.archive_retention_days || 30} days`,"data-memory","conversations","View")}
+      ${card(panel,"Capabilities",`${Number(agent.function_count || 0).toLocaleString()} functions · ${Number(agent.function_group_count || 0).toLocaleString()} groups`,"Home Assistant access, custom functions, and visitor restrictions.","capabilities","home-assistant","Manage")}
+      ${card(panel,"Memory & Knowledge",panel._titleCase(agent.memory_mode),`${memoryCount} memories · ${knowledgeCount} Knowledge sources`,"data-memory","memories","Manage")}
+      ${card(panel,"Conversation history",agent.archive_enabled ? "Archive enabled" : "Archive disabled",result.load_errors?.some((issue) => issue.key === "conversations") ? "Retention unavailable" : `Retention: ${conversations.archive_retention_days || 30} days`,"data-memory","conversations","View")}
       ${card(panel,"Guest Mode",panel._titleCase(String(guest.state || "inactive").replaceAll("_"," ")),"Integration-enforced visitor access and data restrictions.","capabilities","guest-mode","Configure")}
-      ${card(panel,"Usage",`${Number(usage.today?.total_tokens || 0).toLocaleString()} tokens today`,`${Number(usage.month?.total_tokens || 0).toLocaleString()} this month`,"usage-maintenance","usage","View")}
+      ${card(panel,"Usage",result.load_errors?.some((issue) => issue.key === "usage") ? "Usage unavailable" : `${Number(usage.today?.total_tokens || 0).toLocaleString()} tokens today`,result.load_errors?.some((issue) => issue.key === "usage") ? "Usage summary could not be loaded." : `${Number(usage.month?.total_tokens || 0).toLocaleString()} this month`,"usage-maintenance","usage","View")}
     </section>
     <section id="broadcast-card" class="content-card" aria-label="Broadcast">${broadcastMarkup(panel, null)}</section>`;
 }
