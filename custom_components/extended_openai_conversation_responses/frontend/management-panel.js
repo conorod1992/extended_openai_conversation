@@ -505,6 +505,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _usage() {
     const result = this._result || {};
     const days = result.days?.days || [];
+    const chartDays = days.slice(-31);
     const max = Math.max(1, ...days.map((day) => day.total_tokens));
     const today = result.summary?.today || {};
     const month = result.summary?.month || {};
@@ -512,13 +513,21 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const latest = result.summary?.latest || null;
     const cachedMeta = (value) => `${formatUsageNumber(value || 0)} cached input`;
     const loadWarnings = (result.load_errors || []).map((issue) => `<div class="notice"><strong>${this._e(issue.label)} unavailable</strong><p>${this._e(issue.message)} Other usage information is still shown where available.</p></div>`).join("");
+    const dayLabel = (day) => {
+      const value = String(day?.date || "");
+      const date = new Date(`${value}T12:00:00`);
+      if (!value || Number.isNaN(date.getTime())) return value;
+      try { return new Intl.DateTimeFormat(undefined, {month:"short", day:"numeric", timeZone:this._hass?.config?.time_zone}).format(date); }
+      catch (_) { return value; }
+    };
+    const chartAxis = chartDays.length ? `<div class="chart-axis" aria-hidden="true"><span>${this._e(dayLabel(chartDays[0]))}</span><span>${this._e(dayLabel(chartDays[Math.floor((chartDays.length - 1) / 2)]))}</span><span>${this._e(dayLabel(chartDays[chartDays.length - 1]))}</span></div>` : "";
     const recentRows = (result.runs?.runs || []).map((run) => {
       const tokens = tokenBreakdown(run.total_tokens,run.cached_input_tokens);
       const completed = formatUsageTimestamp(run.completed_at, undefined, this._hass?.config?.time_zone);
       return `<tr><td><time datetime="${this._e(completed.datetime)}" title="${this._e(completed.datetime)}">${this._e(completed.display)}</time></td><td>${formatUsageNumber(tokens.total)}</td><td>${formatUsageNumber(tokens.cached)}</td><td>${formatUsageNumber(tokens.uncached)}</td><td>${formatUsageNumber(run.request_count)}</td><td>${this._e(`${formatUsageNumber(run.duration_ms)} ms`)}</td><td>${this._e(run.successful ? "Success" : run.error_type || "Failed")}</td></tr>`;
     }).join("");
     return `${loadWarnings}<section class="metric-grid compact">${this._metric("Today",today.total_tokens || 0,cachedMeta(today.cached_input_tokens))}${this._metric("This month",month.total_tokens || 0,cachedMeta(month.cached_input_tokens))}${this._metric("Lifetime",lifetime.total_tokens || 0,cachedMeta(lifetime.cached_input_tokens))}${this._metric("Latest response",latest?.total_tokens ?? "—",latest ? cachedMeta(latest.cached_input_tokens) : "")}</section>
-      <section class="content-card"><div class="chart-heading"><h2>Tokens by day</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" aria-label="Daily token usage; cached input tokens are included within each day's total">${days.slice(-31).map((day) => this._usageBar(day,max)).join("") || this._empty("No completed runs yet.")}</div><p class="chart-note"><strong>Cached input</strong> is request content the provider has seen before and can reuse. It is included in the total token count, but cached input is usually cheaper than uncached input when the provider supports discounted caching.</p></section>
+      <section class="content-card"><div class="chart-heading"><h2>Tokens by day</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" aria-label="Daily token usage; cached input tokens are included within each day's total">${chartDays.map((day) => this._usageBar(day,max)).join("") || this._empty("No completed runs yet.")}</div>${chartAxis}<p class="chart-note"><strong>Cached input</strong> is request content the provider has seen before and can reuse. It is included in the total token count, but cached input is usually cheaper than uncached input when the provider supports discounted caching.</p></section>
       <section class="content-card"><h2>Recent runs</h2><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody>${recentRows}</tbody></table></div></section>
       ${this._data?.is_admin ? `<section class="content-card"><h2>Usage detail maintenance</h2><p>Retention is available in the local Retention & maintenance subsection.</p><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Daily, monthly, and lifetime totals are never removed by detail pruning.</small></section>` : ""}`;
   }
@@ -1042,6 +1051,18 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     @media(max-width:760px){.section-selector{grid-template-columns:1fr;gap:7px}.section-selector p{margin:0}.agent-actions-menu,.agent-actions-menu>summary{width:100%}.agent-actions-menu>div{left:0;right:0}}
     .matching-setting{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;min-width:0;padding:10px 0}.matching-copy{display:grid;gap:4px;min-width:0;line-height:1.4}.matching-title{color:var(--primary-text-color);font-weight:600}.matching-copy small{line-height:1.45}.matching-setting>input{flex:0 0 42px;width:42px;min-height:24px;margin-top:2px}.matching-control{flex:0 0 min(180px,42%);min-width:120px}.matching-control select{min-height:38px}.fuzzy-sensitivity.is-disabled .matching-copy{opacity:.65}
     @media(max-width:679px){.matching-settings,.ha-service-fields{grid-template-columns:1fr}.matching-setting{gap:12px}.matching-control{flex-basis:min(150px,42%);min-width:110px}.wording-group{grid-template-columns:1fr auto}.wording-group label:nth-child(2){grid-column:1/-1}}
+    :host{font-size:14px;line-height:1.45;background:color-mix(in srgb,var(--secondary-background-color) 42%,var(--primary-background-color))}
+    label,.setting{font-size:14px}
+    .content-card,.metric,.scope-bar{border-color:color-mix(in srgb,var(--divider-color) 74%,var(--secondary-text-color))}
+    .content-card,.metric{box-shadow:0 1px 2px rgba(0,0,0,.035)}
+    .metric{background:color-mix(in srgb,var(--secondary-background-color) 18%,var(--card-background-color))}
+    .meta,.validation,.counter,.action-help,.dialog-meta,.chart-note,.chart-legend,.request-section-meta,.prompt-preview-notes{font-size:13px}
+    .setting,.help-popover-content{font-size:14px}
+    .config-jumps a{font-size:14px}
+    .rule-headings{font-size:13px}
+    .chart-column:hover:after,.chart-column:focus-visible:after{font-size:12px}
+    .chart-axis{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:7px;color:var(--secondary-text-color);font-size:13px}
+    .chart-axis span:nth-child(2){text-align:center}.chart-axis span:last-child{text-align:right}
   `; }
 }
 
