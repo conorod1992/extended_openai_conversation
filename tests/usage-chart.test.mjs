@@ -24,6 +24,6 @@ assert.match(panelSource, /<time datetime=/);
 assert.match(panelSource, /Cached input<\/strong> is request content the provider has seen before and can reuse/);
 assert.match(panelSource, /included in the total token count/);
 assert.match(panelSource, /usually cheaper than uncached input when the provider supports discounted caching/);
-assert.match(panelSource, /this\._hass\?\.config\?\.time_zone/);
+assert.match(panelSource, /formatUsageTimestamp\(run\.completed_at, undefined, this\._hass\?\.config\?\.time_zone\)/);
 assert.match(panelSource, /formatUsageNumber\(tokens\.total\)/);
 assert.match(panelSource, /Promise\.allSettled/);
