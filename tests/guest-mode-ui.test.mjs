@@ -44,7 +44,7 @@ assert.match(panel, /Start fresh/);
 assert.match(panel, /old policy remains enforced until you save/i);
 assert.match(panel, /Labels are usually the easiest way to manage Guest access/);
 assert.match(panel, /Normally, anything a guest can see can also be controlled/);
-assert.match(panel, /\(config\[key\] \|\| \[\]\)\.length} excluded/);
+assert.match(panel, /formatUsageNumber\(\(config\[key\] \|\| \[\]\)\.length\)} excluded/);
 assert.match(panel, /class="guest-manager"/);
 assert.match(panel, /class="manage-label">Manage/);
 assert.match(panel, /config\.guest_separate_control_restrictions \? `<div class="guest-managers">/);
