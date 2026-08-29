@@ -23,7 +23,11 @@ No sensor is created per day, model, request, or transcript session. Updates are
 
 Open **Extended OpenAI → Usage & Maintenance → Usage** to see daily token charts, input/output/cached/reasoning splits, run counts, recent runs, request details, and provider/model/API-mode breakdowns. There are no costs or prices.
 
-Recent-run timestamps are displayed in the browser's locale and local timezone, while the exact provider timestamp remains available on the semantic time element. **Cached input** is request content the provider has seen before and can reuse. It remains part of total tokens rather than additional usage, and may cost less than uncached input when the provider supports discounted caching.
+The **Usage diagnostics** section summarizes the same visible daily window as the chart. It highlights cache reuse, run and provider-request success rates, average provider requests per run, average run duration, token mix, tool-call and web-search activity, and token distribution by model, provider, and API mode. This makes it easier to spot repeated provider calls, unexpectedly slow turns, poor cache reuse, or a model/API route accounting for most token use.
+
+Recent failed runs are called out separately. When retained request detail exists, **View requests** shows the individual provider calls in that run, including stage, provider, model, API mode, token counts, cache/reasoning metadata, duration, requested tool-call count, web-search use, and success/error state. This detail remains content-free.
+
+Recent-run timestamps are displayed in Home Assistant's configured timezone using the browser's locale, while the exact provider timestamp remains available on the semantic time element. **Cached input** is request content the provider has seen before and can reuse. It remains part of total tokens rather than additional usage, and may cost less than uncached input when the provider supports discounted caching.
 
 Detailed request and run records are content-free. They never contain prompts, replies, tool arguments, tool results, memories, knowledge text, attachments, provider payloads, web-search bodies, or hidden reasoning.
 

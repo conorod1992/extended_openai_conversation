@@ -67,7 +67,7 @@ globalThis.window = {location:{pathname:"/extended-openai/capabilities/guest-mod
 globalThis.history = {pushState() {}};
 globalThis.localStorage = {getItem() { return null; }, setItem() {}};
 globalThis.HTMLElement = class { attachShadow() { this.shadowRoot = {hasChildNodes: () => false}; } };
-globalThis.customElements = {define() {}};
+globalThis.customElements = {define() {}, get() { return null; }, whenDefined() { return Promise.resolve(); }};
 const {ExtendedOpenAIManagementPanel} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js");
 
 const guestPanel = new ExtendedOpenAIManagementPanel();
