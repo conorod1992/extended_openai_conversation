@@ -1,7 +1,7 @@
 const WS_BROADCAST = "extended_openai_conversation_responses/broadcast";
 
-function card(panel, title, status, detail, page, section, action) {
-  return `<article class="dashboard-card"><div><h2>${panel._e(title)}</h2><strong>${panel._e(String(status))}</strong><p>${panel._e(detail)}</p></div><button type="button" class="secondary dashboard-action" data-page="${page}" data-subsection="${section}">${action}</button></article>`;
+function card(panel, title, status, detail, page, section, action, icon, tone = "neutral") {
+  return `<article class="dashboard-card dashboard-tone-${tone}"><div class="dashboard-card-main"><span class="dashboard-icon" aria-hidden="true"><ha-icon icon="${panel._e(icon)}"></ha-icon></span><div><h2>${panel._e(title)}</h2><strong>${panel._e(String(status))}</strong><p>${panel._e(detail)}</p></div></div><button type="button" class="secondary dashboard-action" data-page="${page}" data-subsection="${section}">${action}</button></article>`;
 }
 
 function statusLabel(status) {
@@ -28,10 +28,10 @@ function broadcastMarkup(panel, snapshot) {
   const canManage = snapshot.can_manage === true;
   const history = snapshot.history || [];
   return `
-    <div class="section-heading"><div><h2>Broadcast</h2><p>Send a one-way spoken message to selected Assist satellites or the whole home. Busy satellites wait until they are idle instead of interrupting an active voice session.</p></div></div>
+    <div class="section-heading broadcast-heading"><div><span class="section-kicker"><ha-icon icon="mdi:bullhorn-outline"></ha-icon> Home messaging</span><h2>Broadcast</h2><p>Send a one-way spoken message to selected Assist satellites or the whole home. Busy satellites wait until they are idle instead of interrupting an active voice session.</p></div></div>
     <div class="broadcast-toggle-row">
       <div><strong>Enable Broadcast</strong><p>${enabled ? "Broadcast is available to voice requests, Function Tools, automations, and this page." : "Broadcast is off. No Extended OpenAI broadcast will be sent until an administrator enables it."}</p></div>
-      ${canManage ? `<label class="switch-control" for="broadcast-enabled"><input id="broadcast-enabled" type="checkbox" role="switch" aria-label="Enable Broadcast" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label>` : `<strong>${enabled ? "On" : "Off"}</strong>`}
+      ${canManage ? `<label class="switch-control" for="broadcast-enabled"><input id="broadcast-enabled" type="checkbox" role="switch" aria-label="Enable Broadcast" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label>` : `<strong class="status-pill ${enabled ? "status-on" : "status-off"}">${enabled ? "On" : "Off"}</strong>`}
     </div>
     ${enabled ? `
       <div class="broadcast-compose">
@@ -144,9 +144,23 @@ export function renderOverview(panel, agent) {
   for (const issue of result.load_errors || []) warnings.push(`${issue.label} could not be loaded. Other overview information is still available.`);
   const memoryCount = Number(agent.memory_count || 0).toLocaleString();
   const knowledgeCount = Number(agent.knowledge_source_count || 0).toLocaleString();
+  const archiveTone = agent.archive_enabled ? "positive" : "neutral";
+  const guestTone = ["active", "active_indefinitely", "scheduled"].includes(guest.state) ? "warning" : "neutral";
   return `<style>
-      .broadcast-toggle-row{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:14px 0;border-bottom:1px solid var(--divider-color)}
+      .dashboard-card-main{display:flex;align-items:flex-start;gap:15px;min-width:0}
+      .dashboard-icon{display:grid;place-items:center;flex:0 0 42px;width:42px;height:42px;border-radius:11px;background:color-mix(in srgb,var(--primary-color) 10%,var(--card-background-color));color:var(--primary-color)}
+      .dashboard-icon ha-icon{--mdc-icon-size:23px}
+      .dashboard-card{background:color-mix(in srgb,var(--secondary-background-color) 34%,var(--card-background-color));border-color:color-mix(in srgb,var(--divider-color) 72%,var(--secondary-text-color));box-shadow:0 1px 2px rgba(0,0,0,.04)}
+      .dashboard-card:hover{border-color:color-mix(in srgb,var(--primary-color) 40%,var(--divider-color));box-shadow:0 3px 10px rgba(0,0,0,.07)}
+      .dashboard-tone-positive .dashboard-icon{color:var(--success-color,#0f9d58);background:color-mix(in srgb,var(--success-color,#0f9d58) 10%,var(--card-background-color))}
+      .dashboard-tone-warning .dashboard-icon{color:var(--warning-color,#b26a00);background:color-mix(in srgb,var(--warning-color,#f9ab00) 12%,var(--card-background-color))}
+      .dashboard-card h2{font-size:18px}.dashboard-card strong{font-size:19px;line-height:1.35}.dashboard-card p{font-size:14px}
+      .section-kicker{display:flex;align-items:center;gap:7px;margin-bottom:7px;color:var(--primary-color);font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.045em}
+      .section-kicker ha-icon{--mdc-icon-size:18px}
+      #broadcast-card{background:color-mix(in srgb,var(--secondary-background-color) 20%,var(--card-background-color));border-color:color-mix(in srgb,var(--divider-color) 72%,var(--secondary-text-color))}
+      .broadcast-toggle-row{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:16px 0;border-bottom:1px solid var(--divider-color)}
       .broadcast-toggle-row p{margin:4px 0 0;color:var(--secondary-text-color);line-height:1.45}
+      .status-pill{padding:5px 10px;border-radius:999px;background:var(--secondary-background-color);font-size:13px}.status-on{color:var(--success-color,#0f9d58)}
       .broadcast-compose{display:grid;gap:18px;margin-top:18px}
       .broadcast-message>span,.broadcast-destination legend{display:block;font-weight:600;margin-bottom:8px}
       .broadcast-message textarea{box-sizing:border-box;width:100%;resize:vertical;padding:10px 12px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color);font:inherit}
@@ -165,17 +179,17 @@ export function renderOverview(panel, agent) {
       .broadcast-history-item{display:grid;gap:8px;padding:12px 0;border-top:1px solid var(--divider-color)}
       .broadcast-history-item>div{display:flex;justify-content:space-between;gap:14px}.broadcast-history-item small{color:var(--secondary-text-color)}
       .broadcast-history-item ul{list-style:none;padding:0;margin:0;display:grid;gap:4px}.broadcast-history-item li{display:flex;justify-content:space-between;gap:12px}
-      @media (max-width:700px){.broadcast-mode-options{grid-template-columns:1fr}.broadcast-actions{justify-content:stretch}.broadcast-actions button{flex:1}}
+      @media (max-width:700px){.broadcast-mode-options{grid-template-columns:1fr}.broadcast-actions{justify-content:stretch}.broadcast-actions button{flex:1}.dashboard-card-main{gap:12px}}
     </style>
     <section class="page-intro"><h1>${panel._e(agent.title)}</h1><p>Your assistant at a glance. Open a card to change or inspect that area.</p></section>
     ${warnings.length ? `<section class="overview-warnings" aria-label="Actionable warnings">${warnings.map((warning) => `<div class="notice"><strong>Review recommended</strong><p>${panel._e(warning)}</p></div>`).join("")}</section>` : ""}
     <section class="dashboard-grid" aria-label="Assistant overview">
-      ${card(panel,"Assistant",`${agent.provider} · ${agent.model}`,"Model, responses, conversation behavior, prompt, and voice.","assistant","basics","Configure")}
-      ${card(panel,"Capabilities",`${Number(agent.function_count || 0).toLocaleString()} functions · ${Number(agent.function_group_count || 0).toLocaleString()} groups`,"Home Assistant access, custom functions, and visitor restrictions.","capabilities","home-assistant","Manage")}
-      ${card(panel,"Memory & Knowledge",panel._titleCase(agent.memory_mode),`${memoryCount} memories · ${knowledgeCount} Knowledge sources`,"data-memory","memories","Manage")}
-      ${card(panel,"Conversation history",agent.archive_enabled ? "Archive enabled" : "Archive disabled",result.load_errors?.some((issue) => issue.key === "conversations") ? "Retention unavailable" : `Retention: ${conversations.archive_retention_days || 30} days`,"data-memory","conversations","View")}
-      ${card(panel,"Guest Mode",panel._titleCase(String(guest.state || "inactive").replaceAll("_"," ")),"Integration-enforced visitor access and data restrictions.","capabilities","guest-mode","Configure")}
-      ${card(panel,"Usage",result.load_errors?.some((issue) => issue.key === "usage") ? "Usage unavailable" : `${Number(usage.today?.total_tokens || 0).toLocaleString()} tokens today`,result.load_errors?.some((issue) => issue.key === "usage") ? "Usage summary could not be loaded." : `${Number(usage.month?.total_tokens || 0).toLocaleString()} this month`,"usage-maintenance","usage","View")}
+      ${card(panel,"Assistant",`${agent.provider} · ${agent.model}`,"Model, responses, conversation behavior, prompt, and voice.","assistant","basics","Configure","mdi:robot-outline")}
+      ${card(panel,"Capabilities",`${Number(agent.function_count || 0).toLocaleString()} functions · ${Number(agent.function_group_count || 0).toLocaleString()} groups`,"Home Assistant access, custom functions, and visitor restrictions.","capabilities","home-assistant","Manage","mdi:tools")}
+      ${card(panel,"Memory & Knowledge",panel._titleCase(agent.memory_mode),`${memoryCount} memories · ${knowledgeCount} Knowledge sources`,"data-memory","memories","Manage","mdi:brain")}
+      ${card(panel,"Conversation history",agent.archive_enabled ? "Archive enabled" : "Archive disabled",result.load_errors?.some((issue) => issue.key === "conversations") ? "Retention unavailable" : `Retention: ${conversations.archive_retention_days || 30} days`,"data-memory","conversations","View","mdi:message-text-clock-outline",archiveTone)}
+      ${card(panel,"Guest Mode",panel._titleCase(String(guest.state || "inactive").replaceAll("_"," ")),"Integration-enforced visitor access and data restrictions.","capabilities","guest-mode","Configure","mdi:account-lock-outline",guestTone)}
+      ${card(panel,"Usage",result.load_errors?.some((issue) => issue.key === "usage") ? "Usage unavailable" : `${Number(usage.today?.total_tokens || 0).toLocaleString()} tokens today`,result.load_errors?.some((issue) => issue.key === "usage") ? "Usage summary could not be loaded." : `${Number(usage.month?.total_tokens || 0).toLocaleString()} this month`,"usage-maintenance","usage","View","mdi:chart-line")}
     </section>
     <section id="broadcast-card" class="content-card" aria-label="Broadcast">${broadcastMarkup(panel, null)}</section>`;
 }
