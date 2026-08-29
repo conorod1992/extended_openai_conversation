@@ -62,15 +62,26 @@ assert.match(guideHtml, /Guest Mode/);
 assert.doesNotMatch(guideHtml, /Choosing a model\/provider/);
 assert.match(guideHtml, /Configure Guest Mode/);
 
+const overviewAgent = {title:"Kitchen",provider:"OpenAI",model:"gpt-test",function_count:3,function_group_count:2,memory_mode:"hybrid",memory_count:4,knowledge_source_count:2,archive_enabled:true,guest_mode:{state:"active",has_home_assistant_exclusions:false}};
 const overviewPanel = {
   _result:{usage:{today:{total_tokens:12},month:{total_tokens:34}},conversations:{archive_retention_days:30}},
   _e:escape,
   _titleCase:(value) => value,
 };
-const overviewHtml = renderOverview(overviewPanel, {title:"Kitchen",provider:"OpenAI",model:"gpt-test",function_count:3,memory_mode:"hybrid",memory_count:4,knowledge_source_count:2,archive_enabled:true,guest_mode:{state:"active",has_home_assistant_exclusions:false}});
+const overviewHtml = renderOverview(overviewPanel, overviewAgent);
 for (const label of ["Assistant", "Capabilities", "Memory &amp; Knowledge", "Conversation history", "Guest Mode", "Usage"]) assert.match(overviewHtml, new RegExp(label));
 assert.match(overviewHtml, /Review recommended/);
 assert.match(overviewHtml, /data-page="capabilities"/);
+
+const partialOverviewPanel = {
+  _result:{usage:{today:{total_tokens:1234},month:{total_tokens:5678}},conversations:{archive_retention_days:30},load_errors:[{key:"knowledge",label:"Knowledge",message:"offline"}]},
+  _e:escape,
+  _titleCase:(value) => value,
+};
+const partialOverviewHtml = renderOverview(partialOverviewPanel, {...overviewAgent, guest_mode:{state:"inactive",has_home_assistant_exclusions:true}});
+assert.match(partialOverviewHtml, /Knowledge could not be loaded/);
+assert.match(partialOverviewHtml, /1,234 tokens today/);
+assert.match(partialOverviewHtml, /5,678 this month/);
 
 const panel = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
 const editor = (
@@ -95,6 +106,8 @@ assert.match(homeAssistant, /Include exposed entity states in the prompt/);
 assert.match(homeAssistant, /Turning this off does not necessarily prevent the assistant from using exposed entities/);
 assert.match(homeAssistant, /Configure exposed entity context/);
 assert.match(overview, /dashboard-action/);
+assert.match(overview, /panel\._broadcastSelected = new Set/);
+assert.match(overview, /available\.has\(entityId\)/);
 assert.match(editor, /panel\._configSectionFilter/);
 assert.match(editor, /if \(root\.querySelector\("#regex-rules"\)\)/);
 assert.match(editor, /if \(voiceMappings\)/);
