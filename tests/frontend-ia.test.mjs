@@ -61,6 +61,9 @@ const guideHtml = renderGuide(guidePanel);
 assert.match(guideHtml, /Guest Mode/);
 assert.doesNotMatch(guideHtml, /Choosing a model\/provider/);
 assert.match(guideHtml, /Configure Guest Mode/);
+assert.match(guideHtml, /class="guide-groups"/);
+assert.match(guideHtml, /Privacy &amp; access/);
+assert.match(guideHtml, /guide-quick-icon/);
 
 const overviewAgent = {title:"Kitchen",provider:"OpenAI",model:"gpt-test",function_count:3,function_group_count:2,memory_mode:"hybrid",memory_count:4,knowledge_source_count:2,archive_enabled:true,guest_mode:{state:"active",has_home_assistant_exclusions:false}};
 const overviewPanel = {
@@ -72,6 +75,9 @@ const overviewHtml = renderOverview(overviewPanel, overviewAgent);
 for (const label of ["Assistant", "Capabilities", "Memory &amp; Knowledge", "Conversation history", "Guest Mode", "Usage"]) assert.match(overviewHtml, new RegExp(label));
 assert.match(overviewHtml, /Review recommended/);
 assert.match(overviewHtml, /data-page="capabilities"/);
+assert.match(overviewHtml, /dashboard-icon/);
+assert.match(overviewHtml, /mdi:robot-outline/);
+assert.match(overviewHtml, /dashboard-tone-warning/);
 
 const partialOverviewPanel = {
   _result:{usage:{today:{total_tokens:1234},month:{total_tokens:5678}},conversations:{archive_retention_days:30},load_errors:[{key:"knowledge",label:"Knowledge",message:"offline"}]},
@@ -98,6 +104,10 @@ assert.doesNotMatch(panel, /local-section-mobile/);
 assert.doesNotMatch(panel, /<aside class="local-nav"/);
 assert.match(panel, /aria-current="page"/);
 assert.match(panel, /settings-result/);
+assert.match(panel, /class="chart-axis"/);
+assert.match(panel, /chartDays/);
+assert.match(panel, /font-size:14px;line-height:1\.45/);
+assert.match(panel, /background:color-mix\(in srgb,var\(--secondary-background-color\) 42%,var\(--primary-background-color\)\)/);
 assert.doesNotMatch(homeAssistant, /this\._metric\("Assistant", agent\.title\)/);
 assert.doesNotMatch(homeAssistant, /this\._metric\("Provider", agent\.provider\)/);
 assert.doesNotMatch(homeAssistant, /this\._metric\("Exposed context"/);
