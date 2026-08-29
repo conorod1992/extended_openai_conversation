@@ -59,7 +59,7 @@ export function summarizeUsageDiagnostics(days = []) {
     mergeBreakdown(summary.model_breakdown, day?.model_breakdown);
     mergeBreakdown(summary.api_mode_breakdown, day?.api_mode_breakdown);
   }
-  summary.cache_percent = summary.input_tokens ? summary.cached_input_tokens / summary.input_tokens * 100 : null;
+  summary.cache_percent = summary.input_tokens ? Math.min(100, summary.cached_input_tokens / summary.input_tokens * 100) : null;
   summary.run_success_percent = summary.run_count ? summary.successful_run_count / summary.run_count * 100 : null;
   summary.request_success_percent = summary.api_request_count ? summary.successful_request_count / summary.api_request_count * 100 : null;
   summary.average_tokens_per_run = summary.run_count ? summary.total_tokens / summary.run_count : 0;
@@ -104,13 +104,13 @@ export function renderUsageDiagnostics(panel, result = {}) {
   const summary = summarizeUsageDiagnostics(visibleDays);
   const recentRuns = result.runs?.runs || [];
   const failedRuns = recentRuns.filter((run) => run.successful === false).slice(0, 5);
+  const recentLocalRuns = recentRuns.filter((run) => tokenCount(run.request_count) === 0).length;
   const windowLabel = visibleDays.length
     ? `${visibleDays[0].date} to ${visibleDays[visibleDays.length - 1].date}`
     : "No daily usage recorded yet";
   const cacheDetail = summary.input_tokens
     ? `${formatUsageNumber(summary.cached_input_tokens)} of ${formatUsageNumber(summary.input_tokens)} input tokens`
     : "No provider-reported input tokens";
-  const localRuns = Math.max(0, summary.run_count - summary.api_request_count);
 
   return `<style>
       .usage-diagnostics{display:grid;gap:22px}
@@ -152,7 +152,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
           <div class="usage-fact"><span>Provider requests</span><strong>${formatUsageNumber(summary.api_request_count)}</strong></div>
           <div class="usage-fact"><span>Tool calls</span><strong>${formatUsageNumber(summary.tool_call_count)}</strong></div>
           <div class="usage-fact"><span>Web-search runs</span><strong>${formatUsageNumber(summary.web_search_run_count)}</strong></div>
-          <div class="usage-fact"><span>Runs with no provider request</span><strong>${formatUsageNumber(localRuns)}</strong></div>
+          <div class="usage-fact"><span>Recent zero-request runs</span><strong>${formatUsageNumber(recentLocalRuns)}</strong></div>
           <div class="usage-fact"><span>Failed provider requests</span><strong>${formatUsageNumber(summary.failed_request_count)}</strong></div>
         </div></section>
       </div>
@@ -165,7 +165,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
         const completed = formatUsageTimestamp(run.completed_at, undefined, panel._hass?.config?.time_zone);
         return `<div class="usage-failure"><div><p><strong>${panel._e(run.error_type || "Failed")}</strong></p><small>${panel._e(completed.display)} · ${formatUsageNumber(run.request_count)} request${run.request_count === 1 ? "" : "s"} · ${panel._e(formatDuration(run.duration_ms))}</small></div><button type="button" class="usage-run-details" data-usage-run-id="${panel._e(run.run_id)}">View requests</button></div>`;
       }).join("")}</div>` : `<p class="usage-diagnostic-empty">No failed runs are present in the retained recent-run details.</p>`}</section>
-      <p class="help">The diagnostics use the same visible daily window as the chart. They show provider-reported usage only; they do not estimate API cost or expose prompt, response, tool-argument, or reasoning content.</p>
+      <p class="help">The diagnostics use the same visible daily window as the chart. “Recent zero-request runs” uses the retained recent-run list and can include requests handled locally without a provider call. Figures show provider-reported usage only; they do not estimate API cost or expose prompt, response, tool-argument, or reasoning content.</p>
     </section>`;
 }
 
