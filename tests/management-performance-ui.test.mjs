@@ -15,7 +15,12 @@ globalThis.localStorage = {
 globalThis.HTMLElement = class {
   attachShadow() { this.shadowRoot = {hasChildNodes: () => false}; }
 };
-globalThis.customElements = {define() {}};
+let definedPanel;
+globalThis.customElements = {
+  define(_name, constructor) { definedPanel = constructor; },
+  get() { return definedPanel; },
+  whenDefined() { return Promise.resolve(); },
+};
 
 const [{ExtendedOpenAIManagementPanel}, {bindRequestRules}] = await Promise.all([
   import("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js"),
