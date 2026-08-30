@@ -106,8 +106,10 @@ def _validate_type(name: str, value: Any, expected: Any) -> Any:
         if expected not in _JSON_TYPES:
             raise _schema_error(f"unsupported type `{expected}`")
         return _validate_expected_type(name, value, expected)
-    if not isinstance(expected, list) or not expected or not all(
-        isinstance(item, str) and item in _JSON_TYPES for item in expected
+    if (
+        not isinstance(expected, list)
+        or not expected
+        or not all(isinstance(item, str) and item in _JSON_TYPES for item in expected)
     ):
         raise _schema_error("type must be a JSON type or non-empty list of JSON types")
 
@@ -277,16 +279,16 @@ def _validate_value(name: str, value: Any, schema: Mapping[str, Any]) -> Any:
             try:
                 matches = re.search(pattern, value) is not None
             except re.error as err:
-                raise _schema_error(
-                    f"invalid pattern for `{name or 'input'}`"
-                ) from err
+                raise _schema_error(f"invalid pattern for `{name or 'input'}`") from err
             if not matches:
                 raise HomeAssistantError(
                     f"Function input `{name or 'input'}` does not match its required pattern"
                 )
-    elif expected_types.intersection({"number", "integer"}) and isinstance(
-        value, (int, float)
-    ) and not isinstance(value, bool):
+    elif (
+        expected_types.intersection({"number", "integer"})
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+    ):
         _validate_number_constraints(name, value, schema)
 
     choices = schema.get("enum")
