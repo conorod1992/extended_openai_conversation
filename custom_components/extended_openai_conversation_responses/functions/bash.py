@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import logging
 import os
 from pathlib import Path
@@ -184,10 +185,8 @@ class BashFunction(Function):
             except TimeoutError:
                 if process.returncode is None:
                     if os.name == "posix":
-                        try:
+                        with suppress(ProcessLookupError):
                             os.killpg(process.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
                     else:
                         process.kill()
                 # Reap the process after termination so timed-out children do not
