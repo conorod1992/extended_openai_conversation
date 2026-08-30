@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import sqlite3
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -71,7 +71,7 @@ async def test_authenticated_read_exposure_intersects_ha_permissions(hass) -> No
         lambda entity_id, policy: policy == POLICY_READ
         and entity_id == "light.allowed"
     )
-    hass.auth.async_get_users.return_value = [user]
+    hass.auth.async_get_users = AsyncMock(return_value=[user])
     await async_setup_ha_permissions(hass)
     set_active_ha_context(Context(user_id="restricted"))
     try:
