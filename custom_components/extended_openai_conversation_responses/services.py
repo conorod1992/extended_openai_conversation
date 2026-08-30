@@ -5,8 +5,11 @@ from collections.abc import Mapping
 import logging
 import mimetypes
 from pathlib import Path
+import re
+import shutil
 from typing import Any, cast
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from openai._exceptions import OpenAIError
 import voluptuous as vol
@@ -180,6 +183,7 @@ PROCESS_SCHEMA = vol.Schema(
 )
 
 _LOGGER = logging.getLogger(__package__)
+_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 
 def resolve_memory_agent(
@@ -254,6 +258,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
     async def query_image(call: ServiceCall) -> ServiceResponse:
         """Query an image."""
+        await _async_require_service_admin(hass, call)
         try:
             model = call.data["model"]
             api_mode = get_api_mode(call.data[CONF_API_MODE], model)
@@ -262,7 +267,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             ]
 
             entry = hass.config_entries.async_get_entry(call.data["config_entry"])
-            if entry is None:
+            if entry is None or entry.domain != DOMAIN:
                 raise HomeAssistantError("Config entry not found")
 
             client = entry.runtime_data
@@ -284,7 +289,12 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                         ],
                     }
                 ]
-                _LOGGER.info("Prompt for %s using %s: %s", model, api_mode, messages)
+                _LOGGER.debug(
+                    "Querying %s using %s with %d image(s)",
+                    model,
+                    api_mode,
+                    len(image_params),
+                )
                 response = await client.responses.create(
                     model=model,
                     input=messages,
@@ -304,7 +314,12 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                         ],
                     }
                 ]
-                _LOGGER.info("Prompt for %s using %s: %s", model, api_mode, messages)
+                _LOGGER.debug(
+                    "Querying %s using %s with %d image(s)",
+                    model,
+                    api_mode,
+                    len(image_params),
+                )
                 token_param = get_token_param_for_model(model)
                 token_kwargs = {token_param: call.data["max_tokens"]}
                 response = await client.chat.completions.create(
@@ -313,7 +328,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                     **token_kwargs,
                 )
             response_dict: dict = response.model_dump()
-            _LOGGER.info("Response %s", response_dict)
+            _LOGGER.debug("Image query completed using %s", model)
         except OpenAIError as err:
             raise HomeAssistantError(f"Error generating image: {err}") from err
 
@@ -321,6 +336,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
     async def change_config(call: ServiceCall) -> None:
         """Change configuration."""
+        await _async_require_service_admin(hass, call)
         entry_id = call.data["config_entry"]
         entry = hass.config_entries.async_get_entry(entry_id)
         if not entry or entry.domain != DOMAIN:
@@ -344,7 +360,11 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         new_data = entry.data.copy()
         new_data.update(updates)
 
-        _LOGGER.debug("Updating config entry %s with %s", entry_id, new_data)
+        _LOGGER.debug(
+            "Updating config entry %s fields: %s",
+            entry_id,
+            ", ".join(sorted(updates)),
+        )
 
         base_url = new_data.get(CONF_BASE_URL)
         if base_url == DEFAULT_CONF_BASE_URL:
@@ -369,6 +389,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
     async def reload_skills(call: ServiceCall) -> ServiceResponse:
         """Reload skills from the user skill directory."""
+        await _async_require_service_admin(hass, call)
         from .skills import SkillManager
 
         skill_manager = await SkillManager.async_get_instance(hass)
@@ -380,12 +401,18 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
     async def download_skill(call: ServiceCall) -> ServiceResponse:
         """Download a skill from the GitHub repository."""
+        await _async_require_service_admin(hass, call)
         from .skills import SkillManager
 
-        skill_name = call.data["skill_name"]
+        skill_name = call.data["skill_name"].strip()
+        if _SKILL_NAME_RE.fullmatch(skill_name) is None:
+            raise HomeAssistantError(
+                "Skill name may contain only letters, numbers, underscores, and hyphens"
+            )
+
         session = async_get_clientsession(hass)
 
-        # Fetch skill directory contents from GitHub API
+        # Fetch skill directory contents from GitHub API.
         api_url = (
             f"https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}"
             f"/contents/{GITHUB_SKILLS_PATH}/{skill_name}"
@@ -393,6 +420,14 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         )
 
         downloaded_files: list[str] = []
+
+        def _safe_child(base: Path, name: str) -> Path:
+            """Resolve a downloaded child without allowing path traversal."""
+            root = base.resolve()
+            child = (root / name).resolve()
+            if child != root and not child.is_relative_to(root):
+                raise HomeAssistantError("Downloaded skill contains an unsafe path")
+            return child
 
         async def _download_directory(url: str, local_dir: Path) -> None:
             """Recursively download a directory from GitHub."""
@@ -413,46 +448,112 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 )
 
             for item in items:
-                item_path = local_dir / item["name"]
-                if item["type"] == "file":
-                    # Download file content
-                    async with session.get(item["download_url"]) as file_resp:
+                if not isinstance(item, Mapping):
+                    raise HomeAssistantError("Unexpected item in GitHub skill response")
+                item_name = item.get("name")
+                item_type = item.get("type")
+                if not isinstance(item_name, str):
+                    raise HomeAssistantError("GitHub skill item has no valid name")
+                item_path = _safe_child(local_dir, item_name)
+                if item_type == "file":
+                    download_url = item.get("download_url")
+                    if not isinstance(download_url, str):
+                        raise HomeAssistantError(
+                            f"No download URL for `{item.get('path', item_name)}`"
+                        )
+                    async with session.get(download_url) as file_resp:
                         if file_resp.status != 200:
                             raise HomeAssistantError(
-                                f"Failed to download `{item['path']}`"
+                                f"Failed to download `{item.get('path', item_name)}`"
                             )
                         content = await file_resp.read()
 
                     await hass.async_add_executor_job(
                         _write_file_sync, item_path, content
                     )
-                    downloaded_files.append(str(item["path"]))
-                elif item["type"] == "dir":
-                    # Recurse into subdirectory
-                    await _download_directory(item["url"], item_path)
+                    downloaded_files.append(str(item.get("path", item_name)))
+                elif item_type == "dir":
+                    child_url = item.get("url")
+                    if not isinstance(child_url, str):
+                        raise HomeAssistantError(
+                            f"No API URL for `{item.get('path', item_name)}`"
+                        )
+                    await _download_directory(child_url, item_path)
 
         def _write_file_sync(file_path: Path, content: bytes) -> None:
             """Write file content to disk (run in executor)."""
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(content)
 
-        # Determine target directory
-        skill_manager = await SkillManager.async_get_instance(hass)
-        target_dir = skill_manager.user_skills_dir / skill_name
+        def _prepare_staging(root: Path, staging: Path) -> None:
+            root.mkdir(parents=True, exist_ok=True)
+            if staging.exists():
+                shutil.rmtree(staging)
+            staging.mkdir(parents=True)
 
-        _LOGGER.info("Downloading skill `%s` to %s", skill_name, target_dir)
+        def _activate_staging(staging: Path, target: Path, backup: Path) -> bool:
+            if backup.exists():
+                shutil.rmtree(backup)
+            had_existing = target.exists()
+            if had_existing:
+                target.rename(backup)
+            try:
+                staging.rename(target)
+            except Exception:
+                if had_existing and backup.exists() and not target.exists():
+                    backup.rename(target)
+                raise
+            return had_existing
+
+        def _rollback_activation(target: Path, backup: Path, had_existing: bool) -> None:
+            if target.exists():
+                shutil.rmtree(target)
+            if had_existing and backup.exists():
+                backup.rename(target)
+
+        def _cleanup_path(path: Path) -> None:
+            if path.exists():
+                shutil.rmtree(path)
+
+        skill_manager = await SkillManager.async_get_instance(hass)
+        skills_root = skill_manager.user_skills_dir.resolve()
+        target_dir = (skills_root / skill_name).resolve()
+        if target_dir == skills_root or not target_dir.is_relative_to(skills_root):
+            raise HomeAssistantError("Skill target directory is unsafe")
+
+        nonce = uuid4().hex
+        staging_dir = skills_root / f".{skill_name}.tmp-{nonce}"
+        backup_dir = skills_root / f".{skill_name}.bak-{nonce}"
+        await hass.async_add_executor_job(_prepare_staging, skills_root, staging_dir)
+
+        _LOGGER.info("Downloading skill `%s`", skill_name)
 
         try:
-            await _download_directory(api_url, target_dir)
+            await _download_directory(api_url, staging_dir)
+            if not (staging_dir / "SKILL.md").is_file():
+                raise HomeAssistantError(
+                    f"Downloaded skill `{skill_name}` does not contain SKILL.md"
+                )
+            had_existing = await hass.async_add_executor_job(
+                _activate_staging, staging_dir, target_dir, backup_dir
+            )
+            try:
+                await skill_manager.async_load_skills()
+            except Exception:
+                await hass.async_add_executor_job(
+                    _rollback_activation, target_dir, backup_dir, had_existing
+                )
+                await skill_manager.async_load_skills()
+                raise
+            await hass.async_add_executor_job(_cleanup_path, backup_dir)
         except HomeAssistantError:
+            await hass.async_add_executor_job(_cleanup_path, staging_dir)
             raise
         except Exception as err:
+            await hass.async_add_executor_job(_cleanup_path, staging_dir)
             raise HomeAssistantError(
                 f"Failed to download skill `{skill_name}`: {err}"
             ) from err
-
-        # Reload skills after download
-        await skill_manager.async_load_skills()
 
         _LOGGER.info(
             "Successfully downloaded skill `%s` (%d files)",
@@ -741,10 +842,11 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
 def to_image_param(hass: HomeAssistant, image: dict) -> dict:
     """Convert url to base64 encoded image if local."""
-    url = image["url"]
+    result = dict(image)
+    url = result["url"]
 
     if urlparse(url).scheme in cv.EXTERNAL_URL_PROTOCOL_SCHEMA_LIST:
-        return image
+        return result
 
     if not hass.config.is_allowed_path(url):
         raise HomeAssistantError(
@@ -758,8 +860,8 @@ def to_image_param(hass: HomeAssistant, image: dict) -> dict:
     if mime_type is None or not mime_type.startswith("image"):
         raise HomeAssistantError(f"`{url}` is not an image")
 
-    image["url"] = f"data:{mime_type};base64,{encode_image(url)}"
-    return image
+    result["url"] = f"data:{mime_type};base64,{encode_image(url)}"
+    return result
 
 
 def encode_image(image_path: str) -> str:
