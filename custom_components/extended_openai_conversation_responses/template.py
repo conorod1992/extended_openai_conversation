@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.template import TemplateEnvironment
 
 from .const import DEFAULT_WORKING_DIRECTORY, DOMAIN
+from .delayed_tools import async_setup_delayed_tools
 from .helpers import get_exposed_entities
 from .skills import SkillManager
 
@@ -28,6 +29,10 @@ TEMPLATE_SKILL_DIR = "skill_dir"
 
 async def async_setup_templates(hass: HomeAssistant) -> bool:
     """Set up template functions for Extended OpenAI Conversation (Responses)."""
+    # This setup point runs after conversation entities have been forwarded and is
+    # integration-global, making it a safe place to recover durable delayed calls.
+    await async_setup_delayed_tools(hass)
+
     hass.data.setdefault(DOMAIN, {})
     if hass.data[DOMAIN].get(DATA_TEMPLATE_MANAGER):
         return True
