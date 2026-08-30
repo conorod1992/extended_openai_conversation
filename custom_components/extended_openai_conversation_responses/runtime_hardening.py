@@ -28,10 +28,7 @@ def bounded_tool_result_text(value: Any) -> str:
     text = value if isinstance(value, str) else str(value)
     if len(text) <= MAX_MODEL_TOOL_RESULT_CHARACTERS:
         return text
-    suffix = (
-        f"\n{_TOOL_RESULT_TRUNCATION_LABEL} "
-        f"original_characters={len(text)}"
-    )
+    suffix = f"\n{_TOOL_RESULT_TRUNCATION_LABEL} original_characters={len(text)}"
     return text[: max(0, MAX_MODEL_TOOL_RESULT_CHARACTERS - len(suffix))] + suffix
 
 
@@ -236,8 +233,10 @@ def _install_guest_mode_hardening() -> None:
                             manager.hass, candidate.active_until, "active_until"
                         )
                     schedule = candidate
-                except (TypeError, ValueError):
-                    _LOGGER.warning("Ignoring malformed Guest Mode state", exc_info=True)
+                except TypeError, ValueError:
+                    _LOGGER.warning(
+                        "Ignoring malformed Guest Mode state", exc_info=True
+                    )
             manager._schedule = schedule
             manager._initialized = True
 
