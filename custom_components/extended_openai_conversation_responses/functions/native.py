@@ -97,7 +97,9 @@ def _append_automation_atomic(
         try:
             current = yaml.safe_load(existing_text)
         except yaml.YAMLError as err:
-            raise HomeAssistantError(f"Existing automations YAML is invalid: {err}") from err
+            raise HomeAssistantError(
+                f"Existing automations YAML is invalid: {err}"
+            ) from err
         if not isinstance(current, list):
             raise HomeAssistantError("Existing automations YAML must contain a list")
     else:
