@@ -174,9 +174,7 @@ class DelayedToolManager:
                 await self._store.async_save(self._storage_payload(recovered))
             self._records = recovered
 
-            self.hass.bus.async_listen_once(
-                EVENT_HOMEASSISTANT_STOP, self._handle_stop
-            )
+            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self._handle_stop)
             running = self.hass.state == CoreState.running
             if not running:
                 self.hass.bus.async_listen_once(
@@ -264,7 +262,9 @@ class DelayedToolManager:
                     await asyncio.sleep(_AGENT_RETRY_SECONDS)
                     continue
                 await asyncio.sleep(
-                    max(0.0, (dt_util.as_utc(due_at) - dt_util.utcnow()).total_seconds())
+                    max(
+                        0.0, (dt_util.as_utc(due_at) - dt_util.utcnow()).total_seconds()
+                    )
                 )
                 retry = await self._async_execute_due(call_id)
                 if not retry:
@@ -283,9 +283,7 @@ class DelayedToolManager:
 
         entry = self.hass.config_entries.async_get_entry(record.entry_id)
         if entry is None or entry.disabled_by is not None:
-            return not await self._async_discard(
-                call_id, "config entry is unavailable"
-            )
+            return not await self._async_discard(call_id, "config entry is unavailable")
         subentry = entry.subentries.get(record.subentry_id)
         if subentry is None or subentry.subentry_type != "conversation":
             return not await self._async_discard(
