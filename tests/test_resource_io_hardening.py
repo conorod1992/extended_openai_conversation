@@ -48,16 +48,24 @@ async def test_sqlite_single_empty_and_row_limit_are_safe(
     import sqlite3
 
     db_path = tmp_path / "bounded.db"
-    with sqlite3.connect(db_path) as conn:
+    conn = sqlite3.connect(db_path)
+    try:
         conn.execute("CREATE TABLE sample (value INTEGER)")
         conn.executemany("INSERT INTO sample VALUES (?)", [(1,), (2,), (3,)])
+        conn.commit()
+    finally:
+        conn.close()
 
     function = SqliteFunction()
     base_config = {"type": "sqlite", "db_url": f"file:{db_path}"}
 
     empty = await function.execute(
         hass,
-        {**base_config, "query": "SELECT value FROM sample WHERE value = 99", "single": True},
+        {
+            **base_config,
+            "query": "SELECT value FROM sample WHERE value = 99",
+            "single": True,
+        },
         {},
         None,
         [],
@@ -73,7 +81,7 @@ async def test_sqlite_single_empty_and_row_limit_are_safe(
             [],
         )
 
-    with pytest.raises(HomeAssistantError, match="did not return any columns"):
+    with pytest.raises(HomeAssistantError, match="not authorized"):
         await function.execute(
             hass,
             {**base_config, "query": "BEGIN"},

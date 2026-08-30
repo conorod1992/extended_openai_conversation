@@ -12,9 +12,11 @@ from homeassistant.const import (
     ATTR_FLOOR_ID,
     ATTR_LABEL_ID,
 )
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import Context, HomeAssistant, State
 from homeassistant.exceptions import ServiceNotFound
 from homeassistant.helpers import target as target_helpers
+
+from .ha_permissions import async_require_control_permission, get_active_ha_context
 
 
 async def async_call_ha_action(
@@ -25,14 +27,24 @@ async def async_call_ha_action(
     data: Mapping[str, Any] | None = None,
     target: Mapping[str, Any] | None = None,
     blocking: bool = False,
+    context: Context | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Call one HA action through the integration's common authorization seam.
 
     Both model-driven native service calls and administrator-configured local
     Request Rules pass through this backend-enforced policy seam.
     """
+    context = context or get_active_ha_context()
+    entity_ids = _resolve_target_entity_ids(hass, data, target)
+    await async_require_control_permission(hass, entity_ids, context=context)
     return await _async_call_ha_action_unchecked(
-        hass, domain, service, data=data, target=target, blocking=blocking
+        hass,
+        domain,
+        service,
+        data=data,
+        target=target,
+        blocking=blocking,
+        context=context,
     )
 
 
@@ -44,6 +56,7 @@ async def _async_call_ha_action_unchecked(
     data: Mapping[str, Any] | None = None,
     target: Mapping[str, Any] | None = None,
     blocking: bool = False,
+    context: Context | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Call an action after the caller completed policy enforcement."""
     if not hass.services.has_service(domain, service):
@@ -54,24 +67,30 @@ async def _async_call_ha_action_unchecked(
         kwargs["target"] = dict(target)
     if blocking:
         kwargs["blocking"] = True
+    if context is not None:
+        kwargs["context"] = context
     await hass.services.async_call(domain=domain, service=service, **kwargs)
     return previous_state
 
 
 async def async_execute_ha_actions(
-    hass: HomeAssistant, actions: Sequence[Mapping[str, Any]]
+    hass: HomeAssistant,
+    actions: Sequence[Mapping[str, Any]],
+    *,
+    context: Context | None = None,
 ) -> list[dict[str, dict[str, Any]]]:
-    """Execute a validated sequence, stopping at the first failure."""
+    """Execute an authorized sequence, stopping at the first failure."""
     results: list[dict[str, dict[str, Any]]] = []
     for action in actions:
         results.append(
-            await _async_call_ha_action_unchecked(
+            await async_call_ha_action(
                 hass,
                 str(action["domain"]),
                 str(action["service"]),
                 data=action.get("data", {}),
                 target=action.get("target", {}),
                 blocking=True,
+                context=context,
             )
         )
     return results
@@ -221,13 +240,7 @@ def _capture_previous_state(
         return {}
     if not hasattr(hass, "states"):
         return {}
-    selection = _target_selection(data, target)
-    if not selection:
-        return {}
-    referenced = target_helpers.async_extract_referenced_entity_ids(
-        hass, target_helpers.TargetSelection(selection)
-    )
-    entity_ids = referenced.referenced | referenced.indirectly_referenced
+    entity_ids = _resolve_target_entity_ids(hass, data, target)
     result: dict[str, dict[str, Any]] = {}
     for entity_id in sorted(entity_ids):
         entity_domain = entity_id.partition(".")[0]
@@ -240,6 +253,21 @@ def _capture_previous_state(
         if serialized is not None:
             result[entity_id] = serialized
     return result
+
+
+def _resolve_target_entity_ids(
+    hass: HomeAssistant,
+    data: Mapping[str, Any] | None,
+    target: Mapping[str, Any] | None,
+) -> set[str]:
+    """Resolve direct and indirect entity selectors for authorization."""
+    selection = _target_selection(data, target)
+    if not selection:
+        return set()
+    referenced = target_helpers.async_extract_referenced_entity_ids(
+        hass, target_helpers.TargetSelection(selection)
+    )
+    return set(referenced.referenced | referenced.indirectly_referenced)
 
 
 def _target_selection(

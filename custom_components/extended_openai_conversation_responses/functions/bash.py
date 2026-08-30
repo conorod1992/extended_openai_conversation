@@ -1,4 +1,4 @@
-"""Bash tool for shell command execution."""
+"""Bash tool for explicitly trusted shell command execution."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class BashFunction(Function):
-    """Execute shell commands with security controls."""
+    """Execute explicitly trusted shell commands with defensive guardrails only."""
 
     def get_working_dir(self, hass: HomeAssistant) -> Path:
         """Get the default working directory for bash operations."""
@@ -38,6 +38,10 @@ class BashFunction(Function):
         schema = vol.Schema(
             {
                 vol.Required("command"): cv.template,
+                # Arbitrary shell execution cannot be sandboxed by lexical command
+                # inspection. Requiring a positive acknowledgement makes Bash opt-in
+                # even for legacy Function Tool definitions that were implicitly on.
+                vol.Optional("allow_unsafe_shell", default=False): bool,
                 vol.Optional("cwd"): cv.template,
                 vol.Optional("restrict_to_workspace", default=True): bool,
                 vol.Optional("allow_patterns"): vol.All(cv.ensure_list, [str]),
@@ -57,15 +61,20 @@ class BashFunction(Function):
         restrict_to_workspace: bool,
         allow_patterns: list[str] | None = None,
     ) -> None:
-        """Validate command against security policies."""
+        """Apply best-effort defensive checks; this is not a shell sandbox."""
         cwd_path = Path(cwd).resolve()
 
-        # Deny patterns check
+        # Deny patterns check. These reduce accidental damage only; shell syntax can
+        # construct equivalent commands dynamically, so they are never authorization.
         for pattern in SHELL_DENY_PATTERNS:
             if re.search(pattern, command, re.IGNORECASE):
                 raise ValueError(
-                    f"Command blocked by security policy: matches pattern '{pattern}'"
+                    f"Command blocked by defensive policy: matches pattern '{pattern}'"
                 )
+        # Catch common reordered recursive-rm flags as defence-in-depth. This is
+        # deliberately not presented as comprehensive shell parsing.
+        if re.search(r"\brm\s+-[A-Za-z]*r[A-Za-z]*", command, re.IGNORECASE):
+            raise ValueError("Command blocked by defensive policy: recursive rm")
 
         # Allow patterns check
         if allow_patterns:
@@ -115,7 +124,7 @@ class BashFunction(Function):
 
                 if not self._is_within(p, cwd_path):
                     raise ValueError(
-                        f"Command blocked by safety guard (path '{raw}' outside working dir).\nSet 'restrict_to_workspace: false' to allow command outside working directory."
+                        f"Command blocked by defensive path guard (path '{raw}' outside working dir).\nSet 'restrict_to_workspace: false' to permit literal paths outside the working directory."
                     )
 
     async def execute(
@@ -126,7 +135,16 @@ class BashFunction(Function):
         llm_context: llm.LLMContext | None,
         exposed_entities,
     ):
-        """Execute shell command with security controls."""
+        """Execute an explicitly enabled shell command."""
+        if function_config.get("allow_unsafe_shell") is not True:
+            return {
+                "error": (
+                    "Bash execution is disabled. Set allow_unsafe_shell: true in "
+                    "the Function Tool configuration to explicitly allow arbitrary "
+                    "shell commands with Home Assistant's OS privileges."
+                )
+            }
+
         command_template = function_config.get("command")
         command = command_template.async_render(arguments, parse_result=False)
 

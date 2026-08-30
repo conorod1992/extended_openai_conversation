@@ -269,7 +269,9 @@ async def test_preview_matches_production_builder_without_user_or_history(
     assert preview["prompt"] == production
     assert "not serialized" not in preview["prompt"]
     assert any("conversation history are excluded" in note for note in preview["notes"])
-    assert preview["function_group_savings"]["characters"] == 0
+    # The security boundary withholds the legacy/default Bash schema until explicit
+    # acknowledgement, so the effective request is smaller than the raw configured set.
+    assert preview["function_group_savings"]["characters"] > 0
 
 
 async def test_preview_reads_temporary_context_without_mutation(

@@ -85,6 +85,7 @@ class TestBashFunctionYaml:
 
             function_config = {
                 "type": "bash",
+                "allow_unsafe_shell": True,
                 "command": Template(cmd, hass),
             }
             arguments = {}
@@ -104,6 +105,7 @@ class TestBashFunctionYaml:
 
         function_config = {
             "type": "bash",
+            "allow_unsafe_shell": True,
             "command": Template("cat ../../../etc/passwd", hass),
         }
         arguments = {}

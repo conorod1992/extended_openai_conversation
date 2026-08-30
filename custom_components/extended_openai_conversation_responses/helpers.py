@@ -27,6 +27,7 @@ from .const import (
     MODEL_CONFIG_PATTERNS,
     MODEL_TOKEN_PARAMETER_SUPPORT,
 )
+from .ha_permissions import filter_entities_for_active_user
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ def get_model_config(model: str) -> dict[str, bool]:
 
 
 def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:
-    """Get exposed entities."""
+    """Get Assist-exposed entities the authenticated caller may read."""
     states = [
         state
         for state in hass.states.async_all()
@@ -93,7 +94,7 @@ def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:
                 "aliases": aliases,
             }
         )
-    return exposed_entities
+    return filter_entities_for_active_user(hass, exposed_entities)
 
 
 def normalize_entity_aliases(aliases: Any) -> list[str]:
