@@ -34,26 +34,30 @@ def get_rest_data(
     hass: HomeAssistant, rest_config: dict[str, Any], arguments: dict[str, Any]
 ) -> rest.data.RestData:
     """Create RestData from config with template rendering."""
-    rest_config.setdefault(CONF_METHOD, rest.const.DEFAULT_METHOD)
-    rest_config.setdefault(CONF_VERIFY_SSL, rest.const.DEFAULT_VERIFY_SSL)
-    rest_config.setdefault(CONF_TIMEOUT, rest.data.DEFAULT_TIMEOUT)
-    rest_config.setdefault(rest.const.CONF_ENCODING, rest.const.DEFAULT_ENCODING)
+    # Runtime function configs contain Home Assistant Template objects, which are not
+    # deepcopy-safe. A shallow copy is sufficient because this helper only replaces
+    # top-level REST keys and must never mutate the reusable function configuration.
+    rendered_config = dict(rest_config)
+    rendered_config.setdefault(CONF_METHOD, rest.const.DEFAULT_METHOD)
+    rendered_config.setdefault(CONF_VERIFY_SSL, rest.const.DEFAULT_VERIFY_SSL)
+    rendered_config.setdefault(CONF_TIMEOUT, rest.data.DEFAULT_TIMEOUT)
+    rendered_config.setdefault(rest.const.CONF_ENCODING, rest.const.DEFAULT_ENCODING)
 
-    resource_template: Template | None = rest_config.get(CONF_RESOURCE_TEMPLATE)
+    resource_template: Template | None = rendered_config.get(CONF_RESOURCE_TEMPLATE)
     if resource_template is not None:
-        rest_config.pop(CONF_RESOURCE_TEMPLATE)
-        rest_config[CONF_RESOURCE] = resource_template.async_render(
+        rendered_config.pop(CONF_RESOURCE_TEMPLATE)
+        rendered_config[CONF_RESOURCE] = resource_template.async_render(
             arguments, parse_result=False
         )
 
-    payload_template: Template | None = rest_config.get(CONF_PAYLOAD_TEMPLATE)
+    payload_template: Template | None = rendered_config.get(CONF_PAYLOAD_TEMPLATE)
     if payload_template is not None:
-        rest_config.pop(CONF_PAYLOAD_TEMPLATE)
-        rest_config[CONF_PAYLOAD] = payload_template.async_render(
+        rendered_config.pop(CONF_PAYLOAD_TEMPLATE)
+        rendered_config[CONF_PAYLOAD] = payload_template.async_render(
             arguments, parse_result=False
         )
 
-    return rest.create_rest_data_from_config(hass, rest_config)
+    return rest.create_rest_data_from_config(hass, rendered_config)
 
 
 class RestFunction(Function):
