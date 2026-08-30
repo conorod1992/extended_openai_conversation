@@ -86,6 +86,12 @@ def exposed_entities() -> list:
             "state": "22.5",
             "aliases": ["temp"],
         },
+        {
+            "entity_id": "sensor.humidity",
+            "name": "Humidity",
+            "state": "45",
+            "aliases": [],
+        },
     ]
 
 
