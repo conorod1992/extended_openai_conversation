@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import timedelta
 import logging
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import voluptuous as vol
@@ -113,7 +113,7 @@ class DelayedToolCall:
 def _delay_as_timedelta(value: Any) -> timedelta:
     """Normalize the same time-period shapes accepted by Home Assistant scripts."""
     try:
-        delay = cv.time_period(value)
+        delay = cast(timedelta, cv.time_period(value))
     except (TypeError, ValueError, vol.Invalid) as err:
         raise HomeAssistantError(f"Invalid Function Tool delay: {err}") from err
     if delay.total_seconds() < 0:
@@ -460,8 +460,10 @@ class DelayedToolManager:
 async def async_setup_delayed_tools(hass: HomeAssistant) -> DelayedToolManager:
     """Set up the shared scheduler and install the internal entity execution hook."""
     domain_data = hass.data.setdefault(DOMAIN, {})
-    manager = domain_data.get(DATA_DELAYED_TOOL_MANAGER)
-    if manager is None:
+    existing = domain_data.get(DATA_DELAYED_TOOL_MANAGER)
+    if isinstance(existing, DelayedToolManager):
+        manager = existing
+    else:
         manager = DelayedToolManager(hass)
         domain_data[DATA_DELAYED_TOOL_MANAGER] = manager
     await manager.async_setup()
