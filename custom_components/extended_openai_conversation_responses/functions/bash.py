@@ -71,6 +71,10 @@ class BashFunction(Function):
                 raise ValueError(
                     f"Command blocked by defensive policy: matches pattern '{pattern}'"
                 )
+        # Catch common reordered recursive-rm flags as defence-in-depth. This is
+        # deliberately not presented as comprehensive shell parsing.
+        if re.search(r"\brm\s+-[A-Za-z]*r[A-Za-z]*", command, re.IGNORECASE):
+            raise ValueError("Command blocked by defensive policy: recursive rm")
 
         # Allow patterns check
         if allow_patterns:
@@ -204,9 +208,7 @@ class BashFunction(Function):
                 return {"error": f"Command timed out after {timeout:g} seconds"}
 
             stdout_text = stdout.decode("utf-8", errors="replace")
-            stderr_text = stdout.decode("utf-8", errors="replace") if False else (
-                stderr.decode("utf-8", errors="replace") if stderr else ""
-            )
+            stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
 
             if len(stdout_text) > SHELL_OUTPUT_LIMIT:
                 stdout_text = (
