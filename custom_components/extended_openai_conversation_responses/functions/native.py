@@ -29,7 +29,7 @@ from homeassistant.helpers import llm, target as target_helpers
 import homeassistant.util.dt as dt_util
 
 from ..const import DOMAIN, EVENT_AUTOMATION_REGISTERED
-from ..exceptions import CallServiceError, NativeNotFound
+from ..exceptions import CallServiceError, EntityNotExposed, NativeNotFound
 from ..ha_actions import async_call_ha_action
 from ..intercom import async_get_intercom
 from .base import Function
@@ -43,6 +43,7 @@ _INDIRECT_TARGET_KEYS = (
     ATTR_LABEL_ID,
 )
 _AUTOMATION_WRITE_LOCK_KEY = f"{DOMAIN}.automation_write_lock"
+_MAX_STATISTIC_IDS = 100
 
 
 def _parse_automation_config(raw_config: str) -> dict[str, Any]:
@@ -455,7 +456,38 @@ class NativeFunction(Function):
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        statistic_ids = arguments.get("statistic_ids", [])
+        raw_statistic_ids = arguments.get("statistic_ids")
+        if (
+            not isinstance(raw_statistic_ids, list)
+            or not raw_statistic_ids
+            or any(not isinstance(item, str) or not item for item in raw_statistic_ids)
+        ):
+            raise HomeAssistantError("statistic_ids must be a non-empty list of IDs")
+        if len(raw_statistic_ids) > _MAX_STATISTIC_IDS:
+            raise HomeAssistantError(
+                f"statistic_ids may contain at most {_MAX_STATISTIC_IDS} IDs"
+            )
+
+        # Recorder uses '<domain>:<statistic>' for integration-owned/external
+        # statistic IDs. All other IDs are entity-backed and must remain inside
+        # the same Assist/HA READ exposure boundary as current state/history.
+        exposed_entity_ids = {
+            str(entity["entity_id"])
+            for entity in exposed_entities
+            if isinstance(entity.get("entity_id"), str)
+        }
+        unexposed = sorted(
+            {
+                statistic_id
+                for statistic_id in raw_statistic_ids
+                if not recorder.statistics.valid_statistic_id(statistic_id)
+                and statistic_id not in exposed_entity_ids
+            }
+        )
+        if unexposed:
+            raise EntityNotExposed(", ".join(unexposed))
+
+        statistic_ids = set(raw_statistic_ids)
         start_time_parsed = dt_util.parse_datetime(arguments["start_time"])
         end_time_parsed = dt_util.parse_datetime(arguments["end_time"])
         if start_time_parsed is None or end_time_parsed is None:
