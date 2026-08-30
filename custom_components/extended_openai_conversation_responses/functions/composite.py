@@ -7,6 +7,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, llm
 
 from .base import Function
@@ -19,7 +20,9 @@ class CompositeFunction(Function):
             vol.Schema(
                 {
                     vol.Required("sequence"): vol.All(
-                        cv.ensure_list, [self.function_schema]
+                        cv.ensure_list,
+                        vol.Length(min=1),
+                        [self.function_schema],
                     )
                 }
             )
@@ -48,7 +51,13 @@ class CompositeFunction(Function):
         from . import get_function
 
         sequence = function_config["sequence"]
+        if not sequence:
+            raise HomeAssistantError(
+                "Composite function sequence must contain at least one function"
+            )
+
         new_arguments = arguments.copy()
+        result: Any = None
 
         for next_function_config in sequence:
             next_function = get_function(next_function_config["type"])
