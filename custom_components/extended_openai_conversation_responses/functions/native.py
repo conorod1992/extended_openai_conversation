@@ -23,13 +23,13 @@ from homeassistant.const import (
     ATTR_LABEL_ID,
     SERVICE_RELOAD,
 )
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import HomeAssistant, State, valid_entity_id
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import llm, target as target_helpers
 import homeassistant.util.dt as dt_util
 
 from ..const import DOMAIN, EVENT_AUTOMATION_REGISTERED
-from ..exceptions import CallServiceError, NativeNotFound
+from ..exceptions import CallServiceError, EntityNotExposed, NativeNotFound
 from ..ha_actions import async_call_ha_action
 from ..intercom import async_get_intercom
 from .base import Function
@@ -43,6 +43,39 @@ _INDIRECT_TARGET_KEYS = (
     ATTR_LABEL_ID,
 )
 _AUTOMATION_WRITE_LOCK_KEY = f"{DOMAIN}.automation_write_lock"
+_MAX_STATISTIC_IDS = 100
+
+
+def _exposed_entity_ids(exposed_entities: list[dict[str, Any]]) -> set[str]:
+    """Return the entity IDs available to the current Assist/HA user scope."""
+    return {
+        str(entity["entity_id"])
+        for entity in exposed_entities
+        if isinstance(entity.get("entity_id"), str)
+    }
+
+
+def _energy_entity_ids(value: Any) -> set[str]:
+    """Collect entity IDs only from Energy fields that reference entities/stats."""
+    result: set[str] = set()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if (
+                isinstance(item, str)
+                and (
+                    key.startswith("entity_")
+                    or key.startswith("stat_")
+                    or key == "included_in_stat"
+                )
+                and valid_entity_id(item)
+            ):
+                result.add(item)
+            elif isinstance(item, (dict, list, tuple)):
+                result.update(_energy_entity_ids(item))
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            result.update(_energy_entity_ids(item))
+    return result
 
 
 def _parse_automation_config(raw_config: str) -> dict[str, Any]:
@@ -423,7 +456,18 @@ class NativeFunction(Function):
         energy_manager: energy.data.EnergyManager = await energy.async_get_manager(hass)
         if energy_manager.data is None:
             return {}
-        return dict(energy_manager.data)
+        data = dict(energy_manager.data)
+        hidden_entity_ids = _energy_entity_ids(data) - _exposed_entity_ids(
+            exposed_entities
+        )
+        if hidden_entity_ids:
+            # Do not include the identifiers in the error: the entire purpose of
+            # this boundary is to avoid disclosing hidden entities to the model.
+            raise HomeAssistantError(
+                "Energy configuration references Home Assistant entities that are "
+                "not exposed to Assist"
+            )
+        return data
 
     async def get_user_from_user_id(
         self,
@@ -455,7 +499,34 @@ class NativeFunction(Function):
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        statistic_ids = arguments.get("statistic_ids", [])
+        raw_statistic_ids = arguments.get("statistic_ids")
+        if (
+            not isinstance(raw_statistic_ids, list)
+            or not raw_statistic_ids
+            or any(not isinstance(item, str) or not item for item in raw_statistic_ids)
+        ):
+            raise HomeAssistantError("statistic_ids must be a non-empty list of IDs")
+        if len(raw_statistic_ids) > _MAX_STATISTIC_IDS:
+            raise HomeAssistantError(
+                f"statistic_ids may contain at most {_MAX_STATISTIC_IDS} IDs"
+            )
+
+        # Recorder uses '<domain>:<statistic>' for integration-owned/external
+        # statistic IDs. All other IDs are entity-backed and must remain inside
+        # the same Assist/HA READ exposure boundary as current state/history.
+        exposed_entity_ids = _exposed_entity_ids(exposed_entities)
+        unexposed = sorted(
+            {
+                statistic_id
+                for statistic_id in raw_statistic_ids
+                if not recorder.statistics.valid_statistic_id(statistic_id)
+                and statistic_id not in exposed_entity_ids
+            }
+        )
+        if unexposed:
+            raise EntityNotExposed(", ".join(unexposed))
+
+        statistic_ids = set(raw_statistic_ids)
         start_time_parsed = dt_util.parse_datetime(arguments["start_time"])
         end_time_parsed = dt_util.parse_datetime(arguments["end_time"])
         if start_time_parsed is None or end_time_parsed is None:

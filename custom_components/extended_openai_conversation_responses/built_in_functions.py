@@ -150,7 +150,9 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
             "statistic_ids": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Statistic IDs to retrieve.",
+                "minItems": 1,
+                "maxItems": 100,
+                "description": "Statistic IDs to retrieve. Entity-backed IDs must be exposed to Assist; external integration statistics are also supported.",
             },
             "start_time": {"type": "string", "description": "ISO 8601 start time."},
             "end_time": {"type": "string", "description": "ISO 8601 end time."},
@@ -161,7 +163,7 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
             "units": {"type": "object"},
             "types": {"type": "array", "items": {"type": "string"}},
         },
-        ["start_time", "end_time"],
+        ["statistic_ids", "start_time", "end_time"],
     ),
     _preset(
         "Get current user",
