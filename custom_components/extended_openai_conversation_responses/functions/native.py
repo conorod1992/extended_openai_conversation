@@ -55,21 +55,27 @@ def _exposed_entity_ids(exposed_entities: list[dict[str, Any]]) -> set[str]:
     }
 
 
-def _entity_ids_in_value(value: Any) -> set[str]:
-    """Collect entity-shaped strings without treating external statistic IDs as entities."""
-    if isinstance(value, str):
-        return {value} if valid_entity_id(value) else set()
+def _energy_entity_ids(value: Any) -> set[str]:
+    """Collect entity IDs only from Energy fields that reference entities/stats."""
+    result: set[str] = set()
     if isinstance(value, dict):
-        result: set[str] = set()
-        for item in value.values():
-            result.update(_entity_ids_in_value(item))
-        return result
-    if isinstance(value, (list, tuple)):
-        result = set()
+        for key, item in value.items():
+            if (
+                isinstance(item, str)
+                and (
+                    key.startswith("entity_")
+                    or key.startswith("stat_")
+                    or key == "included_in_stat"
+                )
+                and valid_entity_id(item)
+            ):
+                result.add(item)
+            elif isinstance(item, (dict, list, tuple)):
+                result.update(_energy_entity_ids(item))
+    elif isinstance(value, (list, tuple)):
         for item in value:
-            result.update(_entity_ids_in_value(item))
-        return result
-    return set()
+            result.update(_energy_entity_ids(item))
+    return result
 
 
 def _parse_automation_config(raw_config: str) -> dict[str, Any]:
@@ -451,7 +457,7 @@ class NativeFunction(Function):
         if energy_manager.data is None:
             return {}
         data = dict(energy_manager.data)
-        hidden_entity_ids = _entity_ids_in_value(data) - _exposed_entity_ids(
+        hidden_entity_ids = _energy_entity_ids(data) - _exposed_entity_ids(
             exposed_entities
         )
         if hidden_entity_ids:
