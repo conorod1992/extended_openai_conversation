@@ -67,6 +67,7 @@ from .guest_mode import async_get_guest_mode
 from .helpers import get_api_mode, get_authenticated_client, get_token_param_for_model
 from .memory import async_get_memory, memory_as_dict, memory_user_id
 from .request_rules import async_call_active_function
+from .resource_limits import MAX_ATTACHMENT_COUNT, bounded_local_file_size
 
 QUERY_IMAGE_SCHEMA = vol.Schema(
     {
@@ -80,7 +81,11 @@ QUERY_IMAGE_SCHEMA = vol.Schema(
             [mode["key"] for mode in API_MODE_OPTIONS]
         ),
         vol.Required("prompt"): cv.string,
-        vol.Required("images"): vol.All(cv.ensure_list, [{"url": cv.string}]),
+        vol.Required("images"): vol.All(
+            cv.ensure_list,
+            vol.Length(min=1, max=MAX_ATTACHMENT_COUNT),
+            [{"url": cv.string}],
+        ),
         vol.Optional("max_tokens", default=300): cv.positive_int,
     }
 )
@@ -262,9 +267,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         try:
             model = call.data["model"]
             api_mode = get_api_mode(call.data[CONF_API_MODE], model)
-            image_params = [
-                to_image_param(hass, image) for image in call.data["images"]
-            ]
+            image_params = await hass.async_add_executor_job(
+                prepare_image_params, hass, call.data["images"]
+            )
 
             entry = hass.config_entries.async_get_entry(call.data["config_entry"])
             if entry is None or entry.domain != DOMAIN:
@@ -842,13 +847,15 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
     )
 
 
-def to_image_param(hass: HomeAssistant, image: dict) -> dict:
-    """Convert url to base64 encoded image if local."""
+def _convert_image_param(
+    hass: HomeAssistant, image: dict, total_bytes: int
+) -> tuple[dict, int]:
+    """Convert one local image to a bounded data URL, or preserve a remote URL."""
     result = dict(image)
     url = result["url"]
 
     if urlparse(url).scheme in cv.EXTERNAL_URL_PROTOCOL_SCHEMA_LIST:
-        return result
+        return result, 0
 
     if not hass.config.is_allowed_path(url):
         raise HomeAssistantError(
@@ -856,14 +863,41 @@ def to_image_param(hass: HomeAssistant, image: dict) -> dict:
             "`allowlist_external_dirs` may need to be adjusted in "
             "`configuration.yaml`"
         )
-    if not Path(url).exists():
+
+    path = Path(url)
+    if not path.exists():
         raise HomeAssistantError(f"`{url}` does not exist")
+    if not path.is_file():
+        raise HomeAssistantError(f"`{url}` is not a file")
+
     mime_type, _ = mimetypes.guess_type(url)
     if mime_type is None or not mime_type.startswith("image"):
         raise HomeAssistantError(f"`{url}` is not an image")
 
+    size = bounded_local_file_size(path, total_bytes)
     result["url"] = f"data:{mime_type};base64,{encode_image(url)}"
-    return result
+    return result, size
+
+
+def prepare_image_params(hass: HomeAssistant, images: list[dict]) -> list[dict]:
+    """Prepare a bounded set of image parameters outside the event loop."""
+    if len(images) > MAX_ATTACHMENT_COUNT:
+        raise HomeAssistantError(
+            f"At most {MAX_ATTACHMENT_COUNT} images can be sent in one request"
+        )
+
+    prepared: list[dict] = []
+    total_bytes = 0
+    for image in images:
+        converted, size = _convert_image_param(hass, image, total_bytes)
+        total_bytes += size
+        prepared.append(converted)
+    return prepared
+
+
+def to_image_param(hass: HomeAssistant, image: dict) -> dict:
+    """Convert a single URL to a bounded base64 encoded image if local."""
+    return _convert_image_param(hass, image, 0)[0]
 
 
 def encode_image(image_path: str) -> str:
