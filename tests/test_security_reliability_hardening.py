@@ -8,7 +8,6 @@ import pytest
 
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import config_validation as cv
 
 from custom_components.extended_openai_conversation_responses.exceptions import (
     EntityNotExposed,
@@ -55,8 +54,8 @@ async def test_bash_custom_cwd_is_workspace_root(hass, tmp_path: Path) -> None:
     config = function.validate_schema(
         {
             "type": "bash",
-            "command": cv.template("pwd"),
-            "cwd": cv.template(str(custom_workspace)),
+            "command": "pwd",
+            "cwd": str(custom_workspace),
             "restrict_to_workspace": True,
         }
     )
@@ -73,7 +72,7 @@ async def test_template_entity_ids_must_be_exposed(hass) -> None:
     config = function.validate_schema(
         {
             "type": "template",
-            "value_template": cv.template("{{ states[entity_id[0]].state }}"),
+            "value_template": "{{ states[entity_id[0]].state }}",
         }
     )
 
