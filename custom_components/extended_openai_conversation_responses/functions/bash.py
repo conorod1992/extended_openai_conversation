@@ -73,9 +73,10 @@ class BashFunction(Function):
             if not any(re.search(p, lower) for p in allow_patterns):
                 raise ValueError("Command blocked: not in allowlist")
 
-        # Path restriction check when restrict_to_workspace is enabled. This is a
-        # defensive path guard, not an OS sandbox: arbitrary executable code can
-        # construct paths dynamically, so callers must still treat Bash as trusted.
+        # Path restriction check when restrict_to_workspace is enabled. The
+        # configured cwd is the workspace root. This is a defensive path guard,
+        # not an OS sandbox: arbitrary executable code can construct paths
+        # dynamically, so callers must still treat Bash as trusted.
         if restrict_to_workspace:
             # Block path traversal patterns.
             if "../" in command or "..\\" in command:
@@ -126,26 +127,23 @@ class BashFunction(Function):
         exposed_entities,
     ):
         """Execute shell command with security controls."""
-        # Render command template
         command_template = function_config.get("command")
         command = command_template.async_render(arguments, parse_result=False)
 
-        workspace = self.get_working_dir(hass).resolve()
+        default_workspace = self.get_working_dir(hass).resolve()
 
-        # Render cwd template if provided. Relative cwd values are relative to the
-        # tool workspace, rather than Home Assistant's process working directory.
+        # A configured cwd intentionally defines a custom workspace root. Relative
+        # values remain relative to the integration's default workspace.
         cwd_template = function_config.get("cwd")
         if cwd_template:
             cwd = Path(cwd_template.async_render(arguments, parse_result=False))
             if not cwd.is_absolute():
-                cwd = workspace / cwd
+                cwd = default_workspace / cwd
         else:
-            cwd = workspace
+            cwd = default_workspace
         cwd = cwd.resolve()
 
         restrict_to_workspace = function_config.get("restrict_to_workspace", True)
-        if restrict_to_workspace and not self._is_within(cwd, workspace):
-            return {"error": "Working directory is outside the Bash workspace"}
 
         raw_timeout = arguments.get("timeout", SHELL_TIMEOUT)
         try:
@@ -158,7 +156,6 @@ class BashFunction(Function):
 
         allow_patterns = function_config.get("allow_patterns", [])
 
-        # Security validation
         try:
             self._guard_command(
                 command,
@@ -189,16 +186,12 @@ class BashFunction(Function):
                             os.killpg(process.pid, signal.SIGKILL)
                     else:
                         process.kill()
-                # Reap the process after termination so timed-out children do not
-                # become zombies. communicate() returns promptly after SIGKILL.
                 await process.communicate()
                 return {"error": f"Command timed out after {timeout:g} seconds"}
 
-            # Decode output with truncation
             stdout_text = stdout.decode("utf-8", errors="replace")
             stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
 
-            # Truncate output if too large
             if len(stdout_text) > SHELL_OUTPUT_LIMIT:
                 stdout_text = (
                     stdout_text[:SHELL_OUTPUT_LIMIT]
