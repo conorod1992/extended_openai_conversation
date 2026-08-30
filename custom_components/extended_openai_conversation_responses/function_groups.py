@@ -110,6 +110,18 @@ def remove_function_group_runtime(hass: Any, entry_id: str, subentry_id: str) ->
     managers.pop((entry_id, subentry_id), None)
 
 
+def _function_tool_available(tool: dict[str, Any]) -> bool:
+    """Return whether a configured tool may be presented for execution."""
+    if not function_tool_enabled(tool):
+        return False
+    function_config = tool.get("function", {})
+    if function_config.get("type") == "bash":
+        # Bash is arbitrary process execution, not a sandboxed filesystem helper.
+        # Legacy definitions remain unavailable until explicitly acknowledged.
+        return function_config.get("allow_unsafe_shell") is True
+    return True
+
+
 def build_loader_tool(groups: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the compact integration-owned group catalogue tool."""
     group_ids = [group["id"] for group in groups]
@@ -158,7 +170,7 @@ def assemble_function_tools(
     }
     loaded_group_ids.intersection_update(current_on_demand_ids)
 
-    enabled_tools = [tool for tool in configured_tools if function_tool_enabled(tool)]
+    enabled_tools = [tool for tool in configured_tools if _function_tool_available(tool)]
     enabled_names = {tool["spec"]["name"] for tool in enabled_tools}
     effective: list[dict[str, Any]] = []
     for tool in enabled_tools:
@@ -208,7 +220,7 @@ def load_function_groups(
     enabled_names = {
         tool["spec"]["name"]
         for tool in configured_tools or []
-        if function_tool_enabled(tool)
+        if _function_tool_available(tool)
     }
     on_demand = {
         group["id"]: group
