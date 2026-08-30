@@ -71,7 +71,9 @@ def _read_only_authorizer(
     _trigger: str | None,
 ) -> int:
     """Reject SQLite operations outside the tool's read-only contract."""
-    return sqlite3.SQLITE_DENY if action in _DENIED_SQLITE_ACTIONS else sqlite3.SQLITE_OK
+    return (
+        sqlite3.SQLITE_DENY if action in _DENIED_SQLITE_ACTIONS else sqlite3.SQLITE_OK
+    )
 
 
 def _read_only_sqlite_uri(db_url: str) -> str:
