@@ -23,7 +23,7 @@ from homeassistant.const import (
     ATTR_LABEL_ID,
     SERVICE_RELOAD,
 )
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import HomeAssistant, State, valid_entity_id
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import llm, target as target_helpers
 import homeassistant.util.dt as dt_util
@@ -44,6 +44,32 @@ _INDIRECT_TARGET_KEYS = (
 )
 _AUTOMATION_WRITE_LOCK_KEY = f"{DOMAIN}.automation_write_lock"
 _MAX_STATISTIC_IDS = 100
+
+
+def _exposed_entity_ids(exposed_entities: list[dict[str, Any]]) -> set[str]:
+    """Return the entity IDs available to the current Assist/HA user scope."""
+    return {
+        str(entity["entity_id"])
+        for entity in exposed_entities
+        if isinstance(entity.get("entity_id"), str)
+    }
+
+
+def _entity_ids_in_value(value: Any) -> set[str]:
+    """Collect entity-shaped strings without treating external statistic IDs as entities."""
+    if isinstance(value, str):
+        return {value} if valid_entity_id(value) else set()
+    if isinstance(value, dict):
+        result: set[str] = set()
+        for item in value.values():
+            result.update(_entity_ids_in_value(item))
+        return result
+    if isinstance(value, (list, tuple)):
+        result = set()
+        for item in value:
+            result.update(_entity_ids_in_value(item))
+        return result
+    return set()
 
 
 def _parse_automation_config(raw_config: str) -> dict[str, Any]:
@@ -424,7 +450,18 @@ class NativeFunction(Function):
         energy_manager: energy.data.EnergyManager = await energy.async_get_manager(hass)
         if energy_manager.data is None:
             return {}
-        return dict(energy_manager.data)
+        data = dict(energy_manager.data)
+        hidden_entity_ids = _entity_ids_in_value(data) - _exposed_entity_ids(
+            exposed_entities
+        )
+        if hidden_entity_ids:
+            # Do not include the identifiers in the error: the entire purpose of
+            # this boundary is to avoid disclosing hidden entities to the model.
+            raise HomeAssistantError(
+                "Energy configuration references Home Assistant entities that are "
+                "not exposed to Assist"
+            )
+        return data
 
     async def get_user_from_user_id(
         self,
@@ -471,11 +508,7 @@ class NativeFunction(Function):
         # Recorder uses '<domain>:<statistic>' for integration-owned/external
         # statistic IDs. All other IDs are entity-backed and must remain inside
         # the same Assist/HA READ exposure boundary as current state/history.
-        exposed_entity_ids = {
-            str(entity["entity_id"])
-            for entity in exposed_entities
-            if isinstance(entity.get("entity_id"), str)
-        }
+        exposed_entity_ids = _exposed_entity_ids(exposed_entities)
         unexposed = sorted(
             {
                 statistic_id
