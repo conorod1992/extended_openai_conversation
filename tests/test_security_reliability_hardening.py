@@ -54,6 +54,7 @@ async def test_bash_custom_cwd_is_workspace_root(hass, tmp_path: Path) -> None:
     config = function.validate_schema(
         {
             "type": "bash",
+            "allow_unsafe_shell": True,
             "command": "pwd",
             "cwd": str(custom_workspace),
             "restrict_to_workspace": True,
