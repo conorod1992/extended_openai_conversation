@@ -250,12 +250,15 @@ def _convert_content_to_responses_param(
             if native_type in {"reasoning", "web_search_call", "message"}:
                 items.append(_serialize_response_item(native))
 
-        if content.content and native_type != "message":
+        has_attachments = isinstance(content, conversation.UserContent) and bool(
+            getattr(content, "attachments", None)
+        )
+        if (content.content or has_attachments) and native_type != "message":
             items.append(
                 {
                     "type": "message",
                     "role": content.role,
-                    "content": content.content,
+                    "content": content.content or "",
                 }
             )
 
@@ -818,16 +821,38 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             return prepared
 
         attachments = await self.hass.async_add_executor_job(prepare_attachments)
-        last_message = messages[-1]
-        text_content = last_message["content"]
+        last_message = next(
+            (
+                message
+                for message in reversed(messages)
+                if isinstance(message, dict) and message.get("role") == "user"
+            ),
+            None,
+        )
+        if last_message is None:
+            last_message = {
+                **({"type": "message"} if api_mode == API_MODE_RESPONSES else {}),
+                "role": "user",
+                "content": "",
+            }
+            messages.append(last_message)
+
+        text_content = last_message.get("content", "")
+        if not isinstance(text_content, str):
+            raise HomeAssistantError("Unable to attach files to non-text user content")
+
         if api_mode == API_MODE_RESPONSES:
             last_message["content"] = [
-                {"type": "input_text", "text": text_content},
+                *(
+                    [{"type": "input_text", "text": text_content}]
+                    if text_content
+                    else []
+                ),
                 *attachments,
             ]
         else:
             last_message["content"] = [
-                {"type": "text", "text": text_content},
+                *([{"type": "text", "text": text_content}] if text_content else []),
                 *attachments,
             ]
 
