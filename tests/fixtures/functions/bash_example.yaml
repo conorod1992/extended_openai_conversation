@@ -7,6 +7,7 @@
       required: []
   function:
     type: bash
+    allow_unsafe_shell: true
     command: "ls -la"
 
 - spec:
@@ -18,6 +19,7 @@
       required: []
   function:
     type: bash
+    allow_unsafe_shell: true
     command: "ls -la /root"
 
 - spec:
@@ -29,6 +31,7 @@
       required: []
   function:
     type: bash
+    allow_unsafe_shell: true
     command: "ls -la /root"
     restrict_to_workspace: false
 
@@ -41,6 +44,7 @@
       required: []
   function:
     type: bash
+    allow_unsafe_shell: true
     command: "pwd"
 
 - spec:
@@ -52,6 +56,7 @@
       required: []
   function:
     type: bash
+    allow_unsafe_shell: true
     command: "pwd"
     allow_patterns:
     - "^ls "
@@ -66,6 +71,7 @@
       required: []
   function:
     type: bash
+    allow_unsafe_shell: true
     command: "rm -rf ."
 
 - spec:
@@ -77,6 +83,7 @@
       required: []
   function:
     type: bash
+    allow_unsafe_shell: true
     command: "chmod -R 777 ."
 
 - spec:
@@ -88,6 +95,7 @@
       required: []
   function:
     type: bash
+    allow_unsafe_shell: true
     command: "dd if=/dev/zero of=/dev/sda"
 
 - spec:
@@ -99,6 +107,7 @@
       required: []
   function:
     type: bash
+    allow_unsafe_shell: true
     command: "cat ../../../etc/passwd"
 
 # 위험한 명령어 예시
@@ -120,6 +129,7 @@
       - filename
   function:
     type: bash
+    allow_unsafe_shell: true
     command: "cat {{ filename }}"
     cwd: "{{ directory }}"
     restrict_to_workspace: false
@@ -133,4 +143,5 @@
       required: []
   function:
     type: bash
+    allow_unsafe_shell: true
     command: "python3 -c \"print('A' * 20000)\""
