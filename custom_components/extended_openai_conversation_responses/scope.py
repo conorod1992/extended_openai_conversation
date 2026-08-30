@@ -17,6 +17,7 @@ from .const import (
     VOICE_POLICY_DEVICE_MAPPING,
     VOICE_POLICY_SHARED,
 )
+from .ha_permissions import set_active_ha_context
 
 LEGACY_ANONYMOUS_SCOPE_ID = "__anonymous__"
 SHARED_HOUSEHOLD_SCOPE_ID = "shared:household"
@@ -108,6 +109,8 @@ def resolve_data_scope(context: Any, options: Mapping[str, Any]) -> ResolvedData
     ``LLMContext``.  No presence, room, Bluetooth, camera, or other guessed identity
     is consulted here.  Callers must retain this result for the whole session.
     """
+    ha_context = getattr(context, "context", None)
+    set_active_ha_context(ha_context)
     device_id = _device_id(context)
     if user_id := _context_user_id(context):
         return user_scope(user_id, source="authenticated_user", device_id=device_id)
