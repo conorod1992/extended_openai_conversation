@@ -27,29 +27,44 @@ TEMPLATE_WORKING_DIRECTORY = "working_directory"
 TEMPLATE_SKILL_DIR = "skill_dir"
 
 
-async def async_setup_templates(hass: HomeAssistant) -> bool:
-    """Set up template functions for Extended OpenAI Conversation (Responses)."""
+async def async_setup_templates(hass: HomeAssistant, entry_id: str) -> bool:
+    """Set up template functions for one loaded config entry."""
     # This setup point runs after conversation entities have been forwarded and is
     # integration-global, making it a safe place to recover durable delayed calls.
     await async_setup_delayed_tools(hass)
 
-    hass.data.setdefault(DOMAIN, {})
-    if hass.data[DOMAIN].get(DATA_TEMPLATE_MANAGER):
-        return True
-
-    manager = ExtendedOpenAITemplateManager(hass)
-    hass.data[DOMAIN][DATA_TEMPLATE_MANAGER] = manager
-    await manager.async_setup()
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    manager = domain_data.get(DATA_TEMPLATE_MANAGER)
+    if manager is None:
+        manager = ExtendedOpenAITemplateManager(hass)
+        # Publish the manager before setup. The setup coroutine does not yield, so
+        # another entry cannot observe a half-installed patch, while an exception
+        # can still remove this exact instance below.
+        domain_data[DATA_TEMPLATE_MANAGER] = manager
+        try:
+            await manager.async_setup()
+        except Exception:
+            if domain_data.get(DATA_TEMPLATE_MANAGER) is manager:
+                domain_data.pop(DATA_TEMPLATE_MANAGER, None)
+            raise
+    manager.acquire(entry_id)
     return True
 
 
-async def async_unload_templates(hass: HomeAssistant) -> bool:
-    """Unload template functions for Extended OpenAI Conversation (Responses)."""
-    if len(hass.config_entries.async_entries(DOMAIN)) == 1:
-        manager = hass.data.get(DOMAIN, {}).get(DATA_TEMPLATE_MANAGER)
-        if manager:
-            await manager.async_on_unload()
-            hass.data[DOMAIN].pop(DATA_TEMPLATE_MANAGER, None)
+async def async_unload_templates(hass: HomeAssistant, entry_id: str) -> bool:
+    """Release template functions after one config entry fully unloaded."""
+    domain_data = hass.data.get(DOMAIN, {})
+    manager = domain_data.get(DATA_TEMPLATE_MANAGER)
+    if manager is None:
+        return True
+
+    manager.release(entry_id)
+    if manager.in_use:
+        return True
+
+    await manager.async_on_unload()
+    if domain_data.get(DATA_TEMPLATE_MANAGER) is manager:
+        domain_data.pop(DATA_TEMPLATE_MANAGER, None)
     return True
 
 
@@ -65,6 +80,20 @@ class ExtendedOpenAITemplateManager:
             TEMPLATE_SKILL_DIR: self._get_skill_dir,
         }
         self._original_init = None
+        self._entry_ids: set[str] = set()
+
+    @property
+    def in_use(self) -> bool:
+        """Return whether any successfully loaded config entry still needs globals."""
+        return bool(self._entry_ids)
+
+    def acquire(self, entry_id: str) -> None:
+        """Track one config entry that completed platform and template setup."""
+        self._entry_ids.add(entry_id)
+
+    def release(self, entry_id: str) -> None:
+        """Release one config entry only after its platform unload succeeded."""
+        self._entry_ids.discard(entry_id)
 
     def _get_exposed_entities(self) -> list[dict[str, Any]]:
         return get_exposed_entities(self.hass)
@@ -98,6 +127,8 @@ class ExtendedOpenAITemplateManager:
 
     async def async_setup(self) -> None:
         """Set up the template functions."""
+        if self._original_init is not None:
+            return
         _LOGGER.debug(
             "Setting up Extended OpenAI Conversation (Responses) template functions"
         )
@@ -133,6 +164,7 @@ class ExtendedOpenAITemplateManager:
             "Tearing down Extended OpenAI Conversation (Responses) template functions"
         )
 
+        self._entry_ids.clear()
         if self._original_init:
             TemplateEnvironment.__init__ = self._original_init  # type: ignore[unreachable]
             self._original_init = None

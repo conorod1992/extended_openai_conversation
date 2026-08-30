@@ -86,6 +86,8 @@ from .helpers import get_authenticated_client
 from .intercom_services import async_setup_intercom_services
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
+from .openai_compat import apply_openai_compatibility
+from .persistence_hardening import install_persistence_transactions
 from .services import async_setup_services
 from .template import async_setup_templates, async_unload_templates
 
@@ -111,6 +113,8 @@ type ExtendedOpenAIConfigEntry = ConfigEntry[AsyncClient]
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Extended OpenAI Conversation (Responses)."""
+    apply_openai_compatibility()
+    install_persistence_transactions()
     await async_migrate_integration(hass)
     await async_setup_services(hass, config)
     await async_setup_intercom_services(hass)
@@ -143,16 +147,22 @@ async def async_setup_entry(
     entry.runtime_data = client
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    try:
+        await async_setup_templates(hass, entry.entry_id)
+    except Exception:
+        await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        raise
     entry.async_on_unload(entry.add_update_listener(update_listener))
-
-    await async_setup_templates(hass)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload OpenAI."""
-    await async_unload_templates(hass)
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not unloaded:
+        return False
+    await async_unload_templates(hass, entry.entry_id)
+    return True
 
 
 async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
