@@ -133,6 +133,7 @@ class DelayedToolManager:
         self._records: dict[str, DelayedToolCall] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
+        self._setup_lock = asyncio.Lock()
         self._started = False
         self._setup_complete = False
 
@@ -140,41 +141,50 @@ class DelayedToolManager:
         """Load persisted calls and arm recovery once Home Assistant is running."""
         if self._setup_complete:
             return
-        self._setup_complete = True
+        async with self._setup_lock:
+            if self._setup_complete:
+                return
 
-        raw_data = await self._store.async_load() or {}
-        raw_calls = raw_data.get("calls", []) if isinstance(raw_data, dict) else []
-        dirty = not isinstance(raw_calls, list)
-        recovered: dict[str, DelayedToolCall] = {}
-        for raw in raw_calls if isinstance(raw_calls, list) else []:
-            try:
-                record = DelayedToolCall.from_dict(raw)
-            except ValueError as err:
-                dirty = True
-                _LOGGER.warning("Ignoring invalid persisted delayed Function Tool: %s", err)
-                continue
-            if record.status == _EXECUTING:
-                # A previous process persisted the execution boundary before invoking
-                # the tool. Replaying it could duplicate a real-world side effect.
-                dirty = True
-                _LOGGER.warning(
-                    "Not replaying interrupted delayed Function Tool `%s`; its prior "
-                    "execution outcome is indeterminate",
-                    record.tool_name,
-                )
-                continue
-            recovered[record.call_id] = record
-        self._records = recovered
-        if dirty:
-            await self._store.async_save(self._storage_payload(recovered))
+            raw_data = await self._store.async_load() or {}
+            raw_calls = raw_data.get("calls", []) if isinstance(raw_data, dict) else []
+            dirty = not isinstance(raw_calls, list)
+            recovered: dict[str, DelayedToolCall] = {}
+            for raw in raw_calls if isinstance(raw_calls, list) else []:
+                try:
+                    record = DelayedToolCall.from_dict(raw)
+                except ValueError as err:
+                    dirty = True
+                    _LOGGER.warning(
+                        "Ignoring invalid persisted delayed Function Tool: %s", err
+                    )
+                    continue
+                if record.status == _EXECUTING:
+                    # A previous process persisted the execution boundary before
+                    # invoking the tool. Replaying it could duplicate a side effect.
+                    dirty = True
+                    _LOGGER.warning(
+                        "Not replaying interrupted delayed Function Tool `%s`; its "
+                        "prior execution outcome is indeterminate",
+                        record.tool_name,
+                    )
+                    continue
+                recovered[record.call_id] = record
 
-        self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self._handle_stop)
-        if self.hass.state == CoreState.running:
-            self._handle_started()
-        else:
+            if dirty:
+                await self._store.async_save(self._storage_payload(recovered))
+            self._records = recovered
+
             self.hass.bus.async_listen_once(
-                EVENT_HOMEASSISTANT_STARTED, self._handle_started
+                EVENT_HOMEASSISTANT_STOP, self._handle_stop
             )
+            running = self.hass.state == CoreState.running
+            if not running:
+                self.hass.bus.async_listen_once(
+                    EVENT_HOMEASSISTANT_STARTED, self._handle_started
+                )
+            self._setup_complete = True
+            if running:
+                self._handle_started()
 
     async def async_schedule(
         self,
@@ -241,7 +251,7 @@ class DelayedToolManager:
         )
 
     async def _async_wait_and_execute(self, call_id: str) -> None:
-        """Wait until due, retry transient entity reloads, then execute once."""
+        """Wait until due, retry transient state failures, then execute once."""
         try:
             while self._started:
                 record = self._records.get(call_id)
@@ -249,8 +259,10 @@ class DelayedToolManager:
                     return
                 due_at = dt_util.parse_datetime(record.due_at)
                 if due_at is None:
-                    await self._async_discard(call_id, "invalid due timestamp")
-                    return
+                    if await self._async_discard(call_id, "invalid due timestamp"):
+                        return
+                    await asyncio.sleep(_AGENT_RETRY_SECONDS)
+                    continue
                 await asyncio.sleep(
                     max(0.0, (dt_util.as_utc(due_at) - dt_util.utcnow()).total_seconds())
                 )
@@ -271,12 +283,14 @@ class DelayedToolManager:
 
         entry = self.hass.config_entries.async_get_entry(record.entry_id)
         if entry is None or entry.disabled_by is not None:
-            await self._async_discard(call_id, "config entry is unavailable")
-            return False
+            return not await self._async_discard(
+                call_id, "config entry is unavailable"
+            )
         subentry = entry.subentries.get(record.subentry_id)
         if subentry is None or subentry.subentry_type != "conversation":
-            await self._async_discard(call_id, "conversation agent is unavailable")
-            return False
+            return not await self._async_discard(
+                call_id, "conversation agent is unavailable"
+            )
 
         try:
             current_tools = configured_function_tools_from_data(subentry.data)
@@ -285,8 +299,9 @@ class DelayedToolManager:
                 "Unable to validate live Function Tools for delayed `%s`",
                 record.tool_name,
             )
-            await self._async_discard(call_id, "live Function Tool configuration is invalid")
-            return False
+            return not await self._async_discard(
+                call_id, "live Function Tool configuration is invalid"
+            )
         current_tool = next(
             (
                 tool
@@ -296,14 +311,16 @@ class DelayedToolManager:
             None,
         )
         if current_tool is None or not function_tool_enabled(current_tool):
-            await self._async_discard(call_id, "Function Tool was removed or disabled")
-            return False
+            return not await self._async_discard(
+                call_id, "Function Tool was removed or disabled"
+            )
 
         if record.user_id is not None:
             user = await self.hass.auth.async_get_user(record.user_id)
             if user is None or getattr(user, "is_active", True) is not True:
-                await self._async_discard(call_id, "originating user is no longer active")
-                return False
+                return not await self._async_discard(
+                    call_id, "originating user is no longer active"
+                )
 
         agent = self._resolve_agent(record.entry_id, record.subentry_id)
         if agent is None:
@@ -350,10 +367,9 @@ class DelayedToolManager:
     async def _async_retry_agent(self, record: DelayedToolCall) -> bool:
         """Retry a transient agent reload without losing the persisted call."""
         if record.retry_count >= _MAX_AGENT_RETRIES:
-            await self._async_discard(
+            return not await self._async_discard(
                 record.call_id, "conversation agent did not become available"
             )
-            return False
         updated = replace(record, retry_count=record.retry_count + 1)
         try:
             await self._async_replace_record(updated)
@@ -391,11 +407,11 @@ class DelayedToolManager:
             await self._store.async_save(self._storage_payload(updated))
             self._records = updated
 
-    async def _async_discard(self, call_id: str, reason: str) -> None:
-        """Persist cancellation when current authorization no longer permits a call."""
+    async def _async_discard(self, call_id: str, reason: str) -> bool:
+        """Persist cancellation, returning whether the pending call was removed."""
         record = self._records.get(call_id)
         if record is None:
-            return
+            return True
         try:
             async with self._lock:
                 updated = dict(self._records)
@@ -407,10 +423,11 @@ class DelayedToolManager:
                 "Unable to persist cancellation for delayed Function Tool `%s`",
                 record.tool_name,
             )
-            return
+            return False
         _LOGGER.info(
             "Cancelled delayed Function Tool `%s`: %s", record.tool_name, reason
         )
+        return True
 
     async def _async_finalize(self, call_id: str) -> None:
         """Remove an executed call without ever making it eligible for replay again."""
@@ -447,7 +464,7 @@ async def async_setup_delayed_tools(hass: HomeAssistant) -> DelayedToolManager:
     if manager is None:
         manager = DelayedToolManager(hass)
         domain_data[DATA_DELAYED_TOOL_MANAGER] = manager
-        await manager.async_setup()
+    await manager.async_setup()
     _install_execution_hook()
     return manager
 
@@ -513,5 +530,5 @@ def _install_execution_hook() -> None:
             tool_result={"result": "Scheduled"},
         )
 
-    setattr(execute_function_tool, "_extended_openai_delayed_hook", True)
+    execute_function_tool._extended_openai_delayed_hook = True  # type: ignore[attr-defined]
     ExtendedOpenAIBaseLLMEntity._execute_function_tool = execute_function_tool  # type: ignore[method-assign,assignment]
