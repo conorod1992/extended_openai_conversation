@@ -1,4 +1,4 @@
-"""Shared resource limits for local files sent to model providers."""
+"""Shared resource limits for data handled by model-facing tools."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from homeassistant.exceptions import HomeAssistantError
 MAX_ATTACHMENT_COUNT = 10
 MAX_LOCAL_ATTACHMENT_BYTES = 20 * 1024 * 1024
 MAX_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024
+MAX_REMOTE_RESPONSE_BYTES = 10 * 1024 * 1024
 
 
 def _validate_size(path: Path, size: int, total_bytes: int) -> None:
