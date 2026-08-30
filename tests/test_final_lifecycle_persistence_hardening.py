@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import openai
 import pytest
+
+from homeassistant.util import dt as dt_util
 
 from custom_components.extended_openai_conversation_responses import async_unload_entry
 from custom_components.extended_openai_conversation_responses.knowledge import (
@@ -86,7 +89,7 @@ async def test_knowledge_save_failure_rolls_back_source_and_index() -> None:
     storage.fail_saves = True
     with pytest.raises(RuntimeError, match="simulated Store failure"):
         await manager.async_update(
-            source.source_id, content="Boiler pressure should be 9.9 bar."
+            source.source_id, content="Boiler marker zirconium."
         )
 
     restored = await manager.async_get(source.source_id)
@@ -94,7 +97,7 @@ async def test_knowledge_save_failure_rolls_back_source_and_index() -> None:
     assert [item.source_id for item in await manager.async_search("1.2 bar")] == [
         source.source_id
     ]
-    assert await manager.async_search("9.9 bar") == []
+    assert await manager.async_search("zirconium") == []
 
 
 async def test_temporary_memory_save_failure_rolls_back_record() -> None:
@@ -106,7 +109,7 @@ async def test_temporary_memory_save_failure_rolls_back_record() -> None:
     created = await manager.async_add(
         "user-1",
         "The parcel is by the door.",
-        "2099-01-01T12:00:00+00:00",
+        (dt_util.utcnow() + timedelta(days=30)).isoformat(),
         "errand",
     )
     memory_id = created["memory"]["memory_id"]
