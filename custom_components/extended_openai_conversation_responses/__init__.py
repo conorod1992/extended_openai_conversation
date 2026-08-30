@@ -82,6 +82,7 @@ from .const import (
     MEMORY_MODE_AUTOMATIC,
     MEMORY_MODE_OFF,
 )
+from .ha_permissions import async_setup_ha_permissions
 from .helpers import get_authenticated_client
 from .intercom_services import async_setup_intercom_services
 from .management_ui import async_setup_management_ui
@@ -116,6 +117,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     apply_openai_compatibility()
     install_persistence_transactions()
     await async_migrate_integration(hass)
+    await async_setup_ha_permissions(hass)
     await async_setup_services(hass, config)
     await async_setup_intercom_services(hass)
     await async_setup_management_ui(hass)
