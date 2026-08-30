@@ -166,12 +166,13 @@ async def test_energy_configuration_rejects_hidden_entity_ids(
 async def test_energy_configuration_keeps_external_statistics_supported(
     hass, exposed_entities, monkeypatch
 ) -> None:
-    """External recorder statistics in energy preferences do not require entity exposure."""
+    """External stats and entity-shaped display names do not require exposure."""
     function = NativeFunction()
     data = {
         "energy_sources": [
             {
                 "type": "solar",
+                "name": "grid.main",
                 "stat_energy_from": "solaredge:production",
                 "config_entry_solar_forecast": ["opaque-config-entry-id"],
             }
