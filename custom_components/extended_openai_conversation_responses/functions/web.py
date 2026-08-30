@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Any
+from typing import Any, cast
 
+import aiohttp
 from bs4 import BeautifulSoup
 import voluptuous as vol
 
@@ -21,19 +23,108 @@ from homeassistant.const import (
     CONF_VERIFY_SSL,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, llm
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.template import Template
 
 from ..const import CONF_PAYLOAD_TEMPLATE
+from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
 
 
+class _BoundedResponse:
+    """Proxy one aiohttp response while bounding body materialization."""
+
+    def __init__(self, response: aiohttp.ClientResponse, max_bytes: int) -> None:
+        self._response = response
+        self._max_bytes = max_bytes
+        self._body: bytes | None = None
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._response, name)
+
+    async def read(self) -> bytes:
+        """Read at most the configured response-body limit."""
+        if self._body is not None:
+            return self._body
+
+        content_length = self._response.content_length
+        if content_length is not None and content_length > self._max_bytes:
+            raise HomeAssistantError(
+                "Remote response exceeds the configured safety limit of "
+                f"{self._max_bytes} bytes"
+            )
+
+        try:
+            body = await self._response.content.readexactly(self._max_bytes + 1)
+        except asyncio.IncompleteReadError as err:
+            body = err.partial
+
+        if len(body) > self._max_bytes:
+            raise HomeAssistantError(
+                "Remote response exceeds the configured safety limit of "
+                f"{self._max_bytes} bytes"
+            )
+
+        self._body = body
+        return body
+
+    async def text(self, encoding: str | None = None, errors: str = "strict") -> str:
+        """Decode the same bounded body that aiohttp would expose as text."""
+        body = await self.read()
+        selected_encoding = encoding or self._response.charset or "utf-8"
+        return body.decode(selected_encoding, errors=errors)
+
+
+class _BoundedRequestContext:
+    """Wrap aiohttp's request context and expose a bounded response proxy."""
+
+    def __init__(self, request_context: Any, max_bytes: int) -> None:
+        self._request_context = request_context
+        self._max_bytes = max_bytes
+
+    async def __aenter__(self) -> _BoundedResponse:
+        response = await self._request_context.__aenter__()
+        return _BoundedResponse(response, self._max_bytes)
+
+    async def __aexit__(self, *args: Any) -> Any:
+        return await self._request_context.__aexit__(*args)
+
+
+class _BoundedClientSession:
+    """Delegate to HA's shared aiohttp session with bounded response reads."""
+
+    def __init__(self, session: aiohttp.ClientSession, max_bytes: int) -> None:
+        self._session = session
+        self._max_bytes = max_bytes
+
+    def request(self, *args: Any, **kwargs: Any) -> _BoundedRequestContext:
+        return _BoundedRequestContext(
+            self._session.request(*args, **kwargs), self._max_bytes
+        )
+
+
+def _install_bounded_session(
+    hass: HomeAssistant, rest_data: rest.data.RestData
+) -> None:
+    """Make HA RestData use a bounded proxy around its normal shared session."""
+    session = async_get_clientsession(
+        hass,
+        verify_ssl=rest_data._verify_ssl,
+        ssl_cipher=rest_data._ssl_cipher_list,
+    )
+    rest_data._session = cast(
+        Any, _BoundedClientSession(session, MAX_REMOTE_RESPONSE_BYTES)
+    )
+
+
 def get_rest_data(
     hass: HomeAssistant, rest_config: dict[str, Any], arguments: dict[str, Any]
 ) -> rest.data.RestData:
-    """Create RestData from config with template rendering."""
+    """Create RestData from config with template rendering and bounded reads."""
     # Runtime function configs contain Home Assistant Template objects, which are not
     # deepcopy-safe. A shallow copy is sufficient because this helper only replaces
     # top-level REST keys and must never mutate the reusable function configuration.
@@ -57,7 +148,10 @@ def get_rest_data(
             arguments, parse_result=False
         )
 
-    return rest.create_rest_data_from_config(hass, rendered_config)
+    rest_data = rest.create_rest_data_from_config(hass, rendered_config)
+    if isinstance(rest_data, rest.data.RestData):
+        _install_bounded_session(hass, rest_data)
+    return rest_data
 
 
 class RestFunction(Function):
