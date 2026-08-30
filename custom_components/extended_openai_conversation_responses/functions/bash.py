@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import logging
+import os
 from pathlib import Path
 import re
+import signal
 
 import voluptuous as vol
 
@@ -42,6 +45,11 @@ class BashFunction(Function):
         )
         super().__init__(schema)
 
+    @staticmethod
+    def _is_within(path: Path, root: Path) -> bool:
+        """Return whether path is root or lies beneath root by path components."""
+        return path == root or path.is_relative_to(root)
+
     def _guard_command(
         self,
         command: str,
@@ -50,6 +58,8 @@ class BashFunction(Function):
         allow_patterns: list[str] | None = None,
     ) -> None:
         """Validate command against security policies."""
+        cwd_path = Path(cwd).resolve()
+
         # Deny patterns check
         for pattern in SHELL_DENY_PATTERNS:
             if re.search(pattern, command, re.IGNORECASE):
@@ -63,13 +73,37 @@ class BashFunction(Function):
             if not any(re.search(p, lower) for p in allow_patterns):
                 raise ValueError("Command blocked: not in allowlist")
 
-        # Path restriction check when restrict_to_workspace is enabled
+        # Path restriction check when restrict_to_workspace is enabled. The
+        # configured cwd is the workspace root. This is a defensive path guard,
+        # not an OS sandbox: arbitrary executable code can construct paths
+        # dynamically, so callers must still treat Bash as trusted.
         if restrict_to_workspace:
-            # Block path traversal patterns
+            # Block path traversal patterns.
             if "../" in command or "..\\" in command:
                 raise ValueError("Command blocked: path traversal detected")
 
-            # Extract and validate paths in command
+            # Block directory changes that would escape the configured cwd even when
+            # the command uses the bare `cd ..` form rather than a ../ path token.
+            for match in re.finditer(
+                r"(?:^|[;&|]\s*)cd\s+([^\s;&|]+)", command, re.IGNORECASE
+            ):
+                raw_target = match.group(1).strip("\"'")
+                if not raw_target or raw_target == ".":
+                    continue
+                if any(token in raw_target for token in ("$", "`", "$(`")):
+                    raise ValueError(
+                        "Command blocked: dynamic cd target cannot be verified"
+                    )
+                cd_target = Path(raw_target)
+                if not cd_target.is_absolute():
+                    cd_target = cwd_path / cd_target
+                cd_target = cd_target.resolve()
+                if not self._is_within(cd_target, cwd_path):
+                    raise ValueError(
+                        "Command blocked: cd target is outside working directory"
+                    )
+
+            # Extract and validate literal absolute paths in command text.
             win_paths = re.findall(r"[A-Za-z]:\\[^\\\"\' ]+", command)
             posix_paths = re.findall(r"(?<!\w)/[^\s\"\']+", command)
 
@@ -79,7 +113,7 @@ class BashFunction(Function):
                 except Exception:
                     continue
 
-                if cwd not in p.parents and p != cwd:
+                if not self._is_within(p, cwd_path):
                     raise ValueError(
                         f"Command blocked by safety guard (path '{raw}' outside working dir).\nSet 'restrict_to_workspace: false' to allow command outside working directory."
                     )
@@ -93,22 +127,35 @@ class BashFunction(Function):
         exposed_entities,
     ):
         """Execute shell command with security controls."""
-        # Render command template
         command_template = function_config.get("command")
         command = command_template.async_render(arguments, parse_result=False)
 
-        # Render cwd template if provided
+        default_workspace = self.get_working_dir(hass).resolve()
+
+        # A configured cwd intentionally defines a custom workspace root. Relative
+        # values remain relative to the integration's default workspace.
         cwd_template = function_config.get("cwd")
         if cwd_template:
             cwd = Path(cwd_template.async_render(arguments, parse_result=False))
+            if not cwd.is_absolute():
+                cwd = default_workspace / cwd
         else:
-            cwd = self.get_working_dir(hass)
+            cwd = default_workspace
+        cwd = cwd.resolve()
 
-        timeout = arguments.get("timeout", SHELL_TIMEOUT)
         restrict_to_workspace = function_config.get("restrict_to_workspace", True)
+
+        raw_timeout = arguments.get("timeout", SHELL_TIMEOUT)
+        try:
+            timeout = float(raw_timeout)
+        except TypeError, ValueError:
+            return {"error": "Timeout must be a number"}
+        if timeout <= 0:
+            return {"error": "Timeout must be greater than zero"}
+        timeout = min(timeout, float(SHELL_TIMEOUT))
+
         allow_patterns = function_config.get("allow_patterns", [])
 
-        # Security validation
         try:
             self._guard_command(
                 command,
@@ -125,6 +172,7 @@ class BashFunction(Function):
                 cwd=str(cwd),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                start_new_session=os.name == "posix",
             )
 
             try:
@@ -132,14 +180,18 @@ class BashFunction(Function):
                     process.communicate(), timeout=timeout
                 )
             except TimeoutError:
-                process.kill()
-                return {"error": f"Command timed out after {timeout} seconds"}
+                if process.returncode is None:
+                    if os.name == "posix":
+                        with suppress(ProcessLookupError):
+                            os.killpg(process.pid, signal.SIGKILL)
+                    else:
+                        process.kill()
+                await process.communicate()
+                return {"error": f"Command timed out after {timeout:g} seconds"}
 
-            # Decode output with truncation
             stdout_text = stdout.decode("utf-8", errors="replace")
             stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
 
-            # Truncate output if too large
             if len(stdout_text) > SHELL_OUTPUT_LIMIT:
                 stdout_text = (
                     stdout_text[:SHELL_OUTPUT_LIMIT]

@@ -14,10 +14,16 @@ import yaml
 from homeassistant.components import automation, energy, recorder
 from homeassistant.components.recorder import history as recorder_history
 from homeassistant.config import AUTOMATION_CONFIG_PATH
-from homeassistant.const import SERVICE_RELOAD
+from homeassistant.const import (
+    ATTR_AREA_ID,
+    ATTR_DEVICE_ID,
+    ATTR_FLOOR_ID,
+    ATTR_LABEL_ID,
+    SERVICE_RELOAD,
+)
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
-from homeassistant.helpers import llm
+from homeassistant.helpers import llm, target as target_helpers
 import homeassistant.util.dt as dt_util
 
 from ..const import EVENT_AUTOMATION_REGISTERED
@@ -27,6 +33,13 @@ from ..intercom import async_get_intercom
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
+
+_INDIRECT_TARGET_KEYS = (
+    ATTR_DEVICE_ID,
+    ATTR_AREA_ID,
+    ATTR_FLOOR_ID,
+    ATTR_LABEL_ID,
+)
 
 
 class NativeFunction(Function):
@@ -117,6 +130,31 @@ class NativeFunction(Function):
             "deliveries": result["deliveries"],
         }
 
+    def validate_service_targets(
+        self,
+        hass: HomeAssistant,
+        service_data: dict[str, Any],
+        exposed_entities: list[dict[str, Any]],
+    ) -> None:
+        """Resolve indirect HA targets and enforce the exposed-entity boundary."""
+        selection = {
+            key: service_data[key]
+            for key in _INDIRECT_TARGET_KEYS
+            if service_data.get(key) is not None
+        }
+        if not selection:
+            return
+
+        referenced = target_helpers.async_extract_referenced_entity_ids(
+            hass, target_helpers.TargetSelection(selection)
+        )
+        entity_ids = sorted(referenced.referenced | referenced.indirectly_referenced)
+        if not entity_ids:
+            raise HomeAssistantError(
+                "Service target does not resolve to any Home Assistant entities"
+            )
+        self.validate_entity_ids(hass, entity_ids, exposed_entities)
+
     async def execute_service_single(
         self,
         hass: HomeAssistant,
@@ -127,22 +165,36 @@ class NativeFunction(Function):
     ) -> dict[str, Any]:
         domain = service_argument["domain"]
         service = service_argument["service"]
-        service_data = service_argument.get(
+        raw_service_data = service_argument.get(
             "service_data", service_argument.get("data", {})
         )
+        service_data = dict(raw_service_data)
         entity_id = service_data.get("entity_id", service_argument.get("entity_id"))
         area_id = service_data.get("area_id")
         device_id = service_data.get("device_id")
+        floor_id = service_data.get("floor_id")
+        label_id = service_data.get("label_id")
 
         if isinstance(entity_id, str):
-            entity_id = [e.strip() for e in entity_id.split(",")]
-        service_data["entity_id"] = entity_id
+            entity_id = [e.strip() for e in entity_id.split(",") if e.strip()]
+        if entity_id is not None:
+            service_data["entity_id"] = entity_id
 
-        if entity_id is None and area_id is None and device_id is None:
+        if (
+            entity_id is None
+            and area_id is None
+            and device_id is None
+            and floor_id is None
+            and label_id is None
+        ):
             raise CallServiceError(domain, service, service_data)
         if not hass.services.has_service(domain, service):
             raise ServiceNotFound(domain, service)
+
+        # Explicit entity IDs use the existing policy check. Resolve only indirect
+        # area/device/floor/label targets so those selectors cannot bypass it.
         self.validate_entity_ids(hass, entity_id or [], exposed_entities)
+        self.validate_service_targets(hass, service_data, exposed_entities)
 
         try:
             previous_state = await async_call_ha_action(

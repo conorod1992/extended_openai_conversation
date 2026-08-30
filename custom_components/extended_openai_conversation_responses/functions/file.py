@@ -18,6 +18,7 @@ from ..const import (
     DEFAULT_WORKING_DIRECTORY,
     FILE_READ_SIZE_LIMIT,
 )
+from ..skills import SkillManager
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,12 +54,13 @@ class FileFunction(Function):
         workdir = self.get_working_dir(hass)
         target = self.to_absolute_path(hass, path, workdir).resolve()
 
-        # Check against allowed directories (already resolved to absolute paths)
+        # Resolve both sides and use a real path-component containment check.
+        # String prefixes are unsafe here: /config/workspace_backup starts with
+        # /config/workspace but is not inside it.
         allowed = False
         for allow_dir in allow_dirs:
             allowed_path = Path(allow_dir).resolve()
-
-            if str(target).startswith(str(allowed_path)):
+            if target == allowed_path or target.is_relative_to(allowed_path):
                 allowed = True
                 break
 
@@ -74,14 +76,17 @@ class FileFunction(Function):
         hass: HomeAssistant,
         allow_dirs: list[Template],
         arguments: dict[str, Any],
+        *,
+        include_defaults: bool = True,
     ) -> list[str]:
         """Render allow_dir templates."""
-        # Always include default allowed directories (resolved to absolute paths)
-        all_allow_dirs = [
-            str(self.to_absolute_path(hass, d)) for d in DEFAULT_ALLOWED_DIRS
-        ]
+        all_allow_dirs = (
+            [str(self.to_absolute_path(hass, d)) for d in DEFAULT_ALLOWED_DIRS]
+            if include_defaults
+            else []
+        )
 
-        # Add custom allow_dir if specified
+        # Add custom allow_dir if specified.
         if allow_dirs:
             template_arguments = {
                 "config_dir": hass.config.config_dir,
@@ -105,6 +110,7 @@ class ReadFileFunction(FileFunction):
             {
                 vol.Required("path"): cv.template,
                 vol.Optional("allow_dir"): vol.All(cv.ensure_list, [cv.template]),
+                vol.Optional("restrict_to_allow_dir", default=False): bool,
             }
         )
         super().__init__(schema)
@@ -120,9 +126,27 @@ class ReadFileFunction(FileFunction):
         """Read file contents."""
         path_template = function_config.get("path")
         path_str = path_template.async_render(arguments, parse_result=False)
-        allow_dirs = self._render_allow_dirs(
-            hass, function_config.get("allow_dir", []), arguments
-        )
+
+        # The built-in load_skill tool predates strict per-tool allow directories.
+        # Detect that template and bind it to the resolved skill directory so a
+        # relative file such as ../other_skill/SKILL.md cannot cross skill roots.
+        template_source = str(getattr(path_template, "template", ""))
+        if "extended_openai.skill_dir" in template_source:
+            manager = SkillManager._instance
+            skill_name = arguments.get("name")
+            skill = manager.get_skill(str(skill_name)) if manager is not None else None
+            if skill is None:
+                return {"error": f"Skill not found: {skill_name}"}
+            allow_dirs = [str(skill.path.parent.resolve())]
+        else:
+            allow_dirs = self._render_allow_dirs(
+                hass,
+                function_config.get("allow_dir", []),
+                arguments,
+                include_defaults=not function_config.get(
+                    "restrict_to_allow_dir", False
+                ),
+            )
 
         try:
             target_path = self._resolve_path(hass, path_str, allow_dirs)
