@@ -24,10 +24,7 @@ def apply_openai_compatibility() -> None:
     if _PATCHED or getattr(openai, "__version__", None) != _OPENAI_245:
         return
 
-    from openai.types.responses.response_usage import (
-        InputTokensDetails,
-        ResponseUsage,
-    )
+    from openai.types.responses.response_usage import InputTokensDetails, ResponseUsage
 
     field = InputTokensDetails.model_fields.get("cache_write_tokens")
     if field is None or not field.is_required():
