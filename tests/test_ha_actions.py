@@ -236,8 +236,13 @@ async def test_multiple_entities_are_captured_before_execution(monkeypatch) -> N
 async def test_non_reversible_actions_do_not_read_state(
     monkeypatch, domain: str, service: str, entity_id: str
 ) -> None:
-    hass = _hass_with_states({entity_id: _state(entity_id, "on")})
-    resolver = MagicMock()
+    events: list[str] = []
+    hass = _hass_with_states({entity_id: _state(entity_id, "on")}, events)
+    resolver = MagicMock(
+        return_value=SimpleNamespace(
+            referenced={entity_id}, indirectly_referenced=set()
+        )
+    )
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.ha_actions.target_helpers.async_extract_referenced_entity_ids",
         resolver,
@@ -249,7 +254,8 @@ async def test_non_reversible_actions_do_not_read_state(
         )
         == {}
     )
-    resolver.assert_not_called()
+    resolver.assert_called_once()
+    assert events == ["execute"]
 
 
 async def test_capture_happens_immediately_before_call(
