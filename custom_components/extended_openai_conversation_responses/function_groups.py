@@ -170,7 +170,9 @@ def assemble_function_tools(
     }
     loaded_group_ids.intersection_update(current_on_demand_ids)
 
-    enabled_tools = [tool for tool in configured_tools if _function_tool_available(tool)]
+    enabled_tools = [
+        tool for tool in configured_tools if _function_tool_available(tool)
+    ]
     enabled_names = {tool["spec"]["name"] for tool in enabled_tools}
     effective: list[dict[str, Any]] = []
     for tool in enabled_tools:
