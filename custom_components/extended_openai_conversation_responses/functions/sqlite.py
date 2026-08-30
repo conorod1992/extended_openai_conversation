@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 import sqlite3
 from typing import Any
 from urllib import parse
@@ -22,12 +23,86 @@ _LOGGER = logging.getLogger(__name__)
 _DEFAULT_MAX_ROWS = 1000
 _MAX_MAX_ROWS = 10000
 
+# mode=ro protects the primary database file, but SQLite statements such as ATTACH
+# and VACUUM INTO can still have filesystem side effects. Reject every authorizer
+# opcode capable of changing database or schema state as a second, statement-level
+# boundary. PRAGMA is denied too because some pragmas mutate connection/database state.
+_DENIED_SQLITE_ACTIONS = frozenset(
+    action
+    for action in (
+        sqlite3.SQLITE_INSERT,
+        sqlite3.SQLITE_UPDATE,
+        sqlite3.SQLITE_DELETE,
+        sqlite3.SQLITE_CREATE_INDEX,
+        sqlite3.SQLITE_CREATE_TABLE,
+        sqlite3.SQLITE_CREATE_TEMP_INDEX,
+        sqlite3.SQLITE_CREATE_TEMP_TABLE,
+        sqlite3.SQLITE_CREATE_TEMP_TRIGGER,
+        sqlite3.SQLITE_CREATE_TEMP_VIEW,
+        sqlite3.SQLITE_CREATE_TRIGGER,
+        sqlite3.SQLITE_CREATE_VIEW,
+        sqlite3.SQLITE_CREATE_VTABLE,
+        sqlite3.SQLITE_DROP_INDEX,
+        sqlite3.SQLITE_DROP_TABLE,
+        sqlite3.SQLITE_DROP_TEMP_INDEX,
+        sqlite3.SQLITE_DROP_TEMP_TABLE,
+        sqlite3.SQLITE_DROP_TEMP_TRIGGER,
+        sqlite3.SQLITE_DROP_TEMP_VIEW,
+        sqlite3.SQLITE_DROP_TRIGGER,
+        sqlite3.SQLITE_DROP_VIEW,
+        sqlite3.SQLITE_DROP_VTABLE,
+        sqlite3.SQLITE_ALTER_TABLE,
+        sqlite3.SQLITE_REINDEX,
+        sqlite3.SQLITE_ANALYZE,
+        sqlite3.SQLITE_ATTACH,
+        sqlite3.SQLITE_DETACH,
+        sqlite3.SQLITE_PRAGMA,
+        sqlite3.SQLITE_TRANSACTION,
+        sqlite3.SQLITE_SAVEPOINT,
+    )
+)
+
+
+def _read_only_authorizer(
+    action: int,
+    _arg1: str | None,
+    _arg2: str | None,
+    _database: str | None,
+    _trigger: str | None,
+) -> int:
+    """Reject SQLite operations outside the tool's read-only contract."""
+    return sqlite3.SQLITE_DENY if action in _DENIED_SQLITE_ACTIONS else sqlite3.SQLITE_OK
+
+
+def _read_only_sqlite_uri(db_url: str) -> str:
+    """Normalize a SQLite path or file URI and force mode=ro."""
+    if db_url == ":memory:":
+        raise HomeAssistantError("SQLite in-memory databases are not supported")
+
+    if db_url.startswith("file:"):
+        uri = db_url
+    else:
+        uri = Path(db_url).expanduser().resolve().as_uri()
+
+    scheme, netloc, path, query_string, fragment = parse.urlsplit(uri)
+    if scheme != "file":
+        raise HomeAssistantError("SQLite db_url must be a filesystem path or file: URI")
+    query_params = parse.parse_qs(query_string, keep_blank_values=True)
+    query_params["mode"] = ["ro"]
+    new_query_string = parse.urlencode(query_params, doseq=True)
+    return parse.urlunsplit((scheme, netloc, path, new_query_string, fragment))
+
 
 def _execute_sqlite_query(
     db_url: str, query: str, single: bool, max_rows: int
 ) -> dict[str, Any] | list[dict[str, Any]]:
     """Execute a bounded read-only SQLite query outside the event loop."""
-    with sqlite3.connect(db_url, uri=True) as conn:
+    conn = sqlite3.connect(db_url, uri=True)
+    try:
+        # Set the built-in read-only guard before installing the authorizer because
+        # the authorizer deliberately rejects user-issued PRAGMA statements.
+        conn.execute("PRAGMA query_only = ON")
+        conn.set_authorizer(_read_only_authorizer)
         cursor = conn.execute(query)
         if cursor.description is None:
             raise HomeAssistantError("SQLite query did not return any columns")
@@ -48,6 +123,8 @@ def _execute_sqlite_query(
         return [
             {name: val for name, val in zip(names, row, strict=False)} for row in rows
         ]
+    finally:
+        conn.close()
 
 
 class SqliteFunction(Function):
@@ -89,16 +166,10 @@ class SqliteFunction(Function):
 
     def get_default_db_url(self, hass: HomeAssistant) -> str:
         db_file_path = os.path.join(hass.config.config_dir, recorder.DEFAULT_DB_FILE)
-        return f"file:{db_file_path}?mode=ro"
+        return _read_only_sqlite_uri(db_file_path)
 
     def set_url_read_only(self, url: str) -> str:
-        scheme, netloc, path, query_string, fragment = parse.urlsplit(url)
-        query_params = parse.parse_qs(query_string)
-
-        query_params["mode"] = ["ro"]
-        new_query_string = parse.urlencode(query_params, doseq=True)
-
-        return parse.urlunsplit((scheme, netloc, path, new_query_string, fragment))
+        return _read_only_sqlite_uri(url)
 
     async def execute(
         self,
