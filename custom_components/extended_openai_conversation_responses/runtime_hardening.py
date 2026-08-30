@@ -8,7 +8,7 @@ from dataclasses import asdict
 import logging
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
 
@@ -273,7 +273,7 @@ def _install_guest_mode_hardening() -> None:
             await manager._store.async_save({"schedule": None})
             manager._schedule = None
             manager._notify()
-            return manager.status()
+            return cast(dict[str, Any], manager.status())
 
     async def async_replace_backup(manager: Any, schedule: Any) -> None:
         lock = _manager_lock(manager, "_extended_openai_guest_state_lock")
