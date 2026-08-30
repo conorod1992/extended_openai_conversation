@@ -17,7 +17,6 @@ from homeassistant.config import AUTOMATION_CONFIG_PATH
 from homeassistant.const import (
     ATTR_AREA_ID,
     ATTR_DEVICE_ID,
-    ATTR_ENTITY_ID,
     ATTR_FLOOR_ID,
     ATTR_LABEL_ID,
     SERVICE_RELOAD,
@@ -35,8 +34,7 @@ from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
 
-_TARGET_KEYS = (
-    ATTR_ENTITY_ID,
+_INDIRECT_TARGET_KEYS = (
     ATTR_DEVICE_ID,
     ATTR_AREA_ID,
     ATTR_FLOOR_ID,
@@ -72,10 +70,6 @@ class NativeFunction(Function):
             )
         if name == "add_automation":
             return await self.add_automation(
-                hass, function_config, arguments, llm_context, exposed_entities
-            )
-        if name == "get_attributes":
-            return await self.get_attributes(
                 hass, function_config, arguments, llm_context, exposed_entities
             )
         if name == "get_history":
@@ -142,10 +136,10 @@ class NativeFunction(Function):
         service_data: dict[str, Any],
         exposed_entities: list[dict[str, Any]],
     ) -> None:
-        """Resolve every HA target form and enforce the exposed-entity boundary."""
+        """Resolve indirect HA targets and enforce the exposed-entity boundary."""
         selection = {
             key: service_data[key]
-            for key in _TARGET_KEYS
+            for key in _INDIRECT_TARGET_KEYS
             if service_data.get(key) is not None
         }
         if not selection:
@@ -197,9 +191,8 @@ class NativeFunction(Function):
         if not hass.services.has_service(domain, service):
             raise ServiceNotFound(domain, service)
 
-        # Validate explicit entity IDs as before, then resolve area/device/floor/label
-        # targets to their concrete entities so indirect targets cannot bypass the
-        # exposed-entity policy.
+        # Explicit entity IDs use the existing policy check. Resolve only indirect
+        # area/device/floor/label targets so those selectors cannot bypass it.
         self.validate_entity_ids(hass, entity_id or [], exposed_entities)
         self.validate_service_targets(hass, service_data, exposed_entities)
 
@@ -277,27 +270,6 @@ class NativeFunction(Function):
             {"automation_config": config, "raw_config": raw_config},
         )
         return "Success"
-
-    async def get_attributes(
-        self,
-        hass: HomeAssistant,
-        function_config: dict[str, Any],
-        arguments: dict[str, Any],
-        llm_context: llm.LLMContext | None,
-        exposed_entities: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Return attributes only for entities exposed to the conversation agent."""
-        entity_ids = arguments.get("entity_id", [])
-        if isinstance(entity_ids, str):
-            entity_ids = [item.strip() for item in entity_ids.split(",") if item.strip()]
-        self.validate_entity_ids(hass, entity_ids, exposed_entities)
-        return [
-            {
-                "entity": entity_id,
-                "attributes": dict(hass.states[entity_id].attributes),
-            }
-            for entity_id in entity_ids
-        ]
 
     async def get_history(
         self,
