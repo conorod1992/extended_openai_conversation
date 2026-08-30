@@ -109,7 +109,15 @@ async def async_require_control_permission(
 
     targets = sorted(set(entity_ids))
     if not targets:
-        return context
+        # Some entity-domain services interpret an omitted/empty target as "all".
+        # Only users whose CONTROL policy already covers every entity can safely
+        # authorize an action that cannot be resolved to concrete entity IDs.
+        if user.is_admin or user.permissions.access_all_entities(POLICY_CONTROL):
+            return context
+        raise HomeAssistantError(
+            "Home Assistant user cannot authorize an action without a resolvable "
+            "entity target"
+        )
     denied = [
         entity_id
         for entity_id in targets
