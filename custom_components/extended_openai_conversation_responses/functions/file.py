@@ -18,6 +18,7 @@ from ..const import (
     DEFAULT_WORKING_DIRECTORY,
     FILE_READ_SIZE_LIMIT,
 )
+from ..skills import SkillManager
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -125,12 +126,27 @@ class ReadFileFunction(FileFunction):
         """Read file contents."""
         path_template = function_config.get("path")
         path_str = path_template.async_render(arguments, parse_result=False)
-        allow_dirs = self._render_allow_dirs(
-            hass,
-            function_config.get("allow_dir", []),
-            arguments,
-            include_defaults=not function_config.get("restrict_to_allow_dir", False),
-        )
+
+        # The built-in load_skill tool predates strict per-tool allow directories.
+        # Detect that template and bind it to the resolved skill directory so a
+        # relative file such as ../other_skill/SKILL.md cannot cross skill roots.
+        template_source = str(getattr(path_template, "template", ""))
+        if "extended_openai.skill_dir" in template_source:
+            manager = SkillManager._instance
+            skill_name = arguments.get("name")
+            skill = manager.get_skill(str(skill_name)) if manager is not None else None
+            if skill is None:
+                return {"error": f"Skill not found: {skill_name}"}
+            allow_dirs = [str(skill.path.parent.resolve())]
+        else:
+            allow_dirs = self._render_allow_dirs(
+                hass,
+                function_config.get("allow_dir", []),
+                arguments,
+                include_defaults=not function_config.get(
+                    "restrict_to_allow_dir", False
+                ),
+            )
 
         try:
             target_path = self._resolve_path(hass, path_str, allow_dirs)
