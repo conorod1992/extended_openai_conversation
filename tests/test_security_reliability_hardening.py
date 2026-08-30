@@ -47,23 +47,24 @@ def test_bash_rejects_bare_parent_cd(tmp_path: Path) -> None:
         function._guard_command("cd .. && pwd", workspace, True)
 
 
-async def test_bash_rejects_cwd_outside_workspace(hass, tmp_path: Path) -> None:
-    """restrict_to_workspace must validate cwd itself before spawning a shell."""
+async def test_bash_custom_cwd_is_workspace_root(hass, tmp_path: Path) -> None:
+    """A configured cwd remains a supported custom restricted workspace root."""
     function = BashFunction()
-    outside = tmp_path / "outside"
-    outside.mkdir()
+    custom_workspace = tmp_path / "custom_workspace"
+    custom_workspace.mkdir()
     config = function.validate_schema(
         {
             "type": "bash",
             "command": cv.template("pwd"),
-            "cwd": cv.template(str(outside)),
+            "cwd": cv.template(str(custom_workspace)),
             "restrict_to_workspace": True,
         }
     )
 
     result = await function.execute(hass, config, {}, None, [])
 
-    assert result == {"error": "Working directory is outside the Bash workspace"}
+    assert result["exit_code"] == 0
+    assert Path(result["stdout"].strip()).resolve() == custom_workspace.resolve()
 
 
 async def test_template_entity_ids_must_be_exposed(hass) -> None:
