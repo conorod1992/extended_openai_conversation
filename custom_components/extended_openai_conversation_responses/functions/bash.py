@@ -150,7 +150,7 @@ class BashFunction(Function):
         raw_timeout = arguments.get("timeout", SHELL_TIMEOUT)
         try:
             timeout = float(raw_timeout)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return {"error": "Timeout must be a number"}
         if timeout <= 0:
             return {"error": "Timeout must be greater than zero"}
