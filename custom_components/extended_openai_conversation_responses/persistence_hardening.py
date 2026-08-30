@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from typing import Any
 
 from .knowledge import KnowledgeLibrary
 from .memory import PersistentMemory
+from .request_rules import DEFAULT_MATCHING, DEFAULT_WORDING_GROUPS, RequestRules
+from .runtime_hardening import install_runtime_hardening
 from .temporary_memory import TemporaryMemory
 
 _COMMITTED_STATE = "_extended_openai_committed_state"
@@ -39,6 +42,13 @@ def install_persistence_transactions() -> None:
         _restore_temporary_memory,
         _reset_temporary_memory,
     )
+    _install_manager_guard(
+        RequestRules,
+        _snapshot_request_rules,
+        _restore_request_rules,
+        _reset_request_rules,
+    )
+    install_runtime_hardening()
 
 
 def _install_manager_guard(
@@ -145,6 +155,32 @@ def _restore_temporary_memory(manager: Any, snapshot: dict[str, Any]) -> None:
 def _reset_temporary_memory(manager: Any) -> None:
     manager._records.clear()
     manager.expired_pruned = 0
+    manager._initialized = False
+    if hasattr(manager, _COMMITTED_STATE):
+        delattr(manager, _COMMITTED_STATE)
+
+
+def _snapshot_request_rules(manager: Any) -> dict[str, Any]:
+    """Capture the exact last committed Request Rule configuration."""
+    return {
+        "defaults": deepcopy(manager._defaults),
+        "wording_groups": deepcopy(manager._wording_groups),
+        "rules": deepcopy(manager._rules),
+    }
+
+
+def _restore_request_rules(manager: Any, snapshot: dict[str, Any]) -> None:
+    manager._defaults = deepcopy(snapshot["defaults"])
+    manager._wording_groups = deepcopy(snapshot["wording_groups"])
+    manager._rules = deepcopy(snapshot["rules"])
+    manager._sort_and_compile()
+
+
+def _reset_request_rules(manager: Any) -> None:
+    manager._defaults = dict(DEFAULT_MATCHING)
+    manager._wording_groups = deepcopy(list(DEFAULT_WORDING_GROUPS))
+    manager._rules = []
+    manager._compiled = []
     manager._initialized = False
     if hasattr(manager, _COMMITTED_STATE):
         delattr(manager, _COMMITTED_STATE)
