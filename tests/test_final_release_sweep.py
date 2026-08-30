@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -134,6 +135,55 @@ async def test_statistics_selection_has_a_runtime_upper_bound(
             None,
             exposed_entities,
         )
+
+
+async def test_energy_configuration_rejects_hidden_entity_ids(
+    hass, exposed_entities, monkeypatch
+) -> None:
+    """Energy preferences cannot disclose entity IDs hidden from Assist."""
+    function = NativeFunction()
+    manager = SimpleNamespace(
+        data={
+            "energy_sources": [
+                {
+                    "type": "grid",
+                    "stat_energy_from": "sensor.secret_energy",
+                    "stat_cost": "utility:cost",
+                }
+            ],
+            "device_consumption": [],
+        }
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.functions.native.energy.async_get_manager",
+        AsyncMock(return_value=manager),
+    )
+
+    with pytest.raises(HomeAssistantError, match="not exposed to Assist"):
+        await function.get_energy(hass, {}, {}, None, exposed_entities)
+
+
+async def test_energy_configuration_keeps_external_statistics_supported(
+    hass, exposed_entities, monkeypatch
+) -> None:
+    """External recorder statistics in energy preferences do not require entity exposure."""
+    function = NativeFunction()
+    data = {
+        "energy_sources": [
+            {
+                "type": "solar",
+                "stat_energy_from": "solaredge:production",
+                "config_entry_solar_forecast": ["opaque-config-entry-id"],
+            }
+        ],
+        "device_consumption": [],
+    }
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.functions.native.energy.async_get_manager",
+        AsyncMock(return_value=SimpleNamespace(data=data)),
+    )
+
+    assert await function.get_energy(hass, {}, {}, None, exposed_entities) == data
 
 
 def test_builtin_statistics_schema_requires_bounded_ids() -> None:
