@@ -24,8 +24,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
-from homeassistant.helpers import llm
-from homeassistant.helpers import target as target_helpers
+from homeassistant.helpers import llm, target as target_helpers
 import homeassistant.util.dt as dt_util
 
 from ..const import EVENT_AUTOMATION_REGISTERED
