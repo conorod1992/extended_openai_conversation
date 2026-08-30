@@ -72,9 +72,7 @@ class _BoundedResponse:
         self._body = body
         return body
 
-    async def text(
-        self, encoding: str | None = None, errors: str = "strict"
-    ) -> str:
+    async def text(self, encoding: str | None = None, errors: str = "strict") -> str:
         """Decode the same bounded body that aiohttp would expose as text."""
         body = await self.read()
         selected_encoding = encoding or self._response.charset or "utf-8"
