@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 import logging
 import os
-import time
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import voluptuous as vol
 import yaml
@@ -26,7 +28,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import llm, target as target_helpers
 import homeassistant.util.dt as dt_util
 
-from ..const import EVENT_AUTOMATION_REGISTERED
+from ..const import DOMAIN, EVENT_AUTOMATION_REGISTERED
 from ..exceptions import CallServiceError, NativeNotFound
 from ..ha_actions import async_call_ha_action
 from ..intercom import async_get_intercom
@@ -40,6 +42,99 @@ _INDIRECT_TARGET_KEYS = (
     ATTR_FLOOR_ID,
     ATTR_LABEL_ID,
 )
+_AUTOMATION_WRITE_LOCK_KEY = f"{DOMAIN}.automation_write_lock"
+
+
+def _parse_automation_config(raw_config: str) -> dict[str, Any]:
+    """Parse exactly one automation and assign an integration-owned unique ID."""
+    try:
+        parsed = yaml.safe_load(raw_config)
+    except yaml.YAMLError as err:
+        raise HomeAssistantError(f"Automation YAML is invalid: {err}") from err
+
+    if isinstance(parsed, list):
+        if len(parsed) != 1 or not isinstance(parsed[0], dict):
+            raise HomeAssistantError(
+                "automation_config must contain exactly one automation"
+            )
+        config = dict(parsed[0])
+    elif isinstance(parsed, dict):
+        config = dict(parsed)
+    else:
+        raise HomeAssistantError("automation_config must contain one YAML mapping")
+
+    # IDs are integration-owned so concurrent or model-supplied values cannot collide
+    # with another automation created by this tool.
+    config["id"] = uuid4().hex
+    return config
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Atomically replace a text file while preserving its existing mode."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode if path.exists() else None
+    temp_path = path.with_name(f".{path.name}.tmp-{uuid4().hex}")
+    try:
+        with temp_path.open("w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if mode is not None:
+            os.chmod(temp_path, mode)
+        os.replace(temp_path, path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
+def _append_automation_atomic(
+    path: Path, config: dict[str, Any]
+) -> tuple[str | None, str]:
+    """Append one automation using an atomic whole-file replacement."""
+    previous = path.read_text(encoding="utf-8") if path.exists() else None
+    existing_text = previous or ""
+    if existing_text.strip():
+        try:
+            current = yaml.safe_load(existing_text)
+        except yaml.YAMLError as err:
+            raise HomeAssistantError(
+                f"Existing automations YAML is invalid: {err}"
+            ) from err
+        if not isinstance(current, list):
+            raise HomeAssistantError("Existing automations YAML must contain a list")
+    else:
+        current = []
+
+    raw_config = yaml.safe_dump([config], allow_unicode=True, sort_keys=False)
+    if not current:
+        updated = raw_config
+    else:
+        prefix = existing_text
+        if not prefix.endswith("\n"):
+            prefix += "\n"
+        updated = prefix + raw_config
+        try:
+            combined = yaml.safe_load(updated)
+        except yaml.YAMLError:
+            combined = None
+        if not isinstance(combined, list) or len(combined) != len(current) + 1:
+            # Non-standard flow-style list: correctness is more important than
+            # preserving formatting, so fall back to serializing the complete list.
+            updated = yaml.safe_dump(
+                [*current, config], allow_unicode=True, sort_keys=False
+            )
+
+    _atomic_write_text(path, updated)
+    return previous, raw_config
+
+
+def _restore_automation_file(path: Path, previous: str | None) -> None:
+    """Restore the automation file after a failed reload."""
+    if previous is None:
+        if path.exists():
+            path.unlink()
+        return
+    _atomic_write_text(path, previous)
 
 
 class NativeFunction(Function):
@@ -240,31 +335,37 @@ class NativeFunction(Function):
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> str:
-        automation_config = yaml.safe_load(arguments["automation_config"])
-        config = {"id": str(round(time.time() * 1000))}
-        if isinstance(automation_config, list):
-            config.update(automation_config[0])
-        if isinstance(automation_config, dict):
-            config.update(automation_config)
-
+        config = await hass.async_add_executor_job(
+            _parse_automation_config, arguments["automation_config"]
+        )
         await automation.config._async_validate_config_item(hass, config, True, False)
 
-        automations = [config]
-        with open(
-            os.path.join(hass.config.config_dir, AUTOMATION_CONFIG_PATH),
-            encoding="utf-8",
-        ) as f:
-            current_automations = yaml.safe_load(f.read())
+        automation_path = Path(
+            os.path.join(hass.config.config_dir, AUTOMATION_CONFIG_PATH)
+        )
+        lock = hass.data.setdefault(_AUTOMATION_WRITE_LOCK_KEY, asyncio.Lock())
+        async with lock:
+            previous, raw_config = await hass.async_add_executor_job(
+                _append_automation_atomic, automation_path, config
+            )
+            try:
+                await hass.services.async_call(
+                    automation.config.DOMAIN, SERVICE_RELOAD, blocking=True
+                )
+            except Exception:
+                await hass.async_add_executor_job(
+                    _restore_automation_file, automation_path, previous
+                )
+                try:
+                    await hass.services.async_call(
+                        automation.config.DOMAIN, SERVICE_RELOAD, blocking=True
+                    )
+                except Exception:
+                    _LOGGER.exception(
+                        "Unable to reload automations after rolling back add_automation"
+                    )
+                raise
 
-        with open(
-            os.path.join(hass.config.config_dir, AUTOMATION_CONFIG_PATH),
-            "a" if current_automations else "w",
-            encoding="utf-8",
-        ) as f:
-            raw_config = yaml.dump(automations, allow_unicode=True, sort_keys=False)
-            f.write("\n" + raw_config)
-
-        await hass.services.async_call(automation.config.DOMAIN, SERVICE_RELOAD)
         hass.bus.async_fire(
             EVENT_AUTOMATION_REGISTERED,
             {"automation_config": config, "raw_config": raw_config},

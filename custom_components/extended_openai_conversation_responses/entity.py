@@ -73,6 +73,7 @@ from .request import (
     build_web_search_tool,
     format_function_tools,
 )
+from .resource_limits import MAX_ATTACHMENT_COUNT, bounded_local_file_size
 from .speech import async_streaming_speech_cleanup
 from .usage import RequestUsage, UsageManager, extract_usage
 
@@ -773,12 +774,24 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         ):
             return
 
+        attachment_items = list(last_content.attachments or [])
+        if len(attachment_items) > MAX_ATTACHMENT_COUNT:
+            raise HomeAssistantError(
+                f"At most {MAX_ATTACHMENT_COUNT} attachments can be sent in one request"
+            )
+
         def prepare_attachments() -> list[dict[str, Any]]:
             prepared: list[dict[str, Any]] = []
-            for attachment in last_content.attachments or []:
+            total_bytes = 0
+            for attachment in attachment_items:
                 path = Path(attachment.path)
                 if not path.exists():
                     raise HomeAssistantError(f"`{path}` does not exist")
+                if not path.is_file():
+                    raise HomeAssistantError(f"`{path}` is not a file")
+
+                size = bounded_local_file_size(path, total_bytes)
+                total_bytes += size
 
                 mime_type = attachment.mime_type or mimetypes.guess_type(path)[0]
                 if not mime_type:

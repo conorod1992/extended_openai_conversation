@@ -19,6 +19,35 @@ from homeassistant.helpers.template import Template
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
+_DEFAULT_MAX_ROWS = 1000
+_MAX_MAX_ROWS = 10000
+
+
+def _execute_sqlite_query(
+    db_url: str, query: str, single: bool, max_rows: int
+) -> dict[str, Any] | list[dict[str, Any]]:
+    """Execute a bounded read-only SQLite query outside the event loop."""
+    with sqlite3.connect(db_url, uri=True) as conn:
+        cursor = conn.execute(query)
+        if cursor.description is None:
+            raise HomeAssistantError("SQLite query did not return any columns")
+
+        names = [description[0] for description in cursor.description]
+        if single:
+            row = cursor.fetchone()
+            if row is None:
+                return {}
+            return {name: val for name, val in zip(names, row, strict=False)}
+
+        rows = cursor.fetchmany(max_rows + 1)
+        if len(rows) > max_rows:
+            raise HomeAssistantError(
+                f"SQLite query returned more than {max_rows} rows; "
+                "add a LIMIT clause or increase max_rows"
+            )
+        return [
+            {name: val for name, val in zip(names, row, strict=False)} for row in rows
+        ]
 
 
 class SqliteFunction(Function):
@@ -30,6 +59,9 @@ class SqliteFunction(Function):
                     vol.Optional("query"): str,
                     vol.Optional("db_url"): str,
                     vol.Optional("single"): bool,
+                    vol.Optional("max_rows", default=_DEFAULT_MAX_ROWS): vol.All(
+                        vol.Coerce(int), vol.Range(min=1, max=_MAX_MAX_ROWS)
+                    ),
                 }
             )
         )
@@ -92,20 +124,15 @@ class SqliteFunction(Function):
         template_arguments.update(arguments)
 
         q = Template(query, hass).async_render(template_arguments)
-        _LOGGER.info("Rendered query: %s", q)
+        _LOGGER.debug("Rendered SQLite query: %s", q)
 
-        with sqlite3.connect(db_url, uri=True) as conn:
-            cursor = conn.cursor().execute(q)
-            names = [description[0] for description in cursor.description]
-
-            if function_config.get("single") is True:
-                row = cursor.fetchone()
-                return {name: val for name, val in zip(names, row, strict=False)}
-
-            rows = cursor.fetchall()
-            result = []
-            for row in rows:
-                result.append(
-                    {name: val for name, val in zip(names, row, strict=False)}
-                )
-            return result
+        try:
+            return await hass.async_add_executor_job(
+                _execute_sqlite_query,
+                db_url,
+                q,
+                function_config.get("single") is True,
+                int(function_config.get("max_rows", _DEFAULT_MAX_ROWS)),
+            )
+        except sqlite3.Error as err:
+            raise HomeAssistantError(f"SQLite query failed: {err}") from err
