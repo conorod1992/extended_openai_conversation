@@ -505,7 +505,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 raise
             return had_existing
 
-        def _rollback_activation(target: Path, backup: Path, had_existing: bool) -> None:
+        def _rollback_activation(
+            target: Path, backup: Path, had_existing: bool
+        ) -> None:
             if target.exists():
                 shutil.rmtree(target)
             if had_existing and backup.exists():
