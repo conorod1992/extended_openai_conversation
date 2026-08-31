@@ -65,9 +65,7 @@ def _install_delayed_permission_context() -> None:
     DelayedToolManager._async_execute_due = async_execute_due  # type: ignore[method-assign,assignment]
 
 
-async def _async_require_admin(
-    hass: HomeAssistant, llm_context: Any
-) -> Context:
+async def _async_require_admin(hass: HomeAssistant, llm_context: Any) -> Context:
     """Require an active authenticated HA administrator for durable HA mutation."""
     context = getattr(llm_context, "context", None) or get_active_ha_context()
     user_id = getattr(context, "user_id", None)
@@ -113,7 +111,9 @@ def _validate_history_request(arguments: dict[str, Any]) -> None:
     if (
         not isinstance(entity_ids, list)
         or not entity_ids
-        or any(not isinstance(entity_id, str) or not entity_id for entity_id in entity_ids)
+        or any(
+            not isinstance(entity_id, str) or not entity_id for entity_id in entity_ids
+        )
     ):
         raise HomeAssistantError("entity_ids must be a non-empty list of entity IDs")
     if len(entity_ids) > MAX_HISTORY_ENTITY_IDS:
