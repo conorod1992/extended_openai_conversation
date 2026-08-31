@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,6 +12,7 @@ import voluptuous as vol
 import yaml
 
 from homeassistant.components import conversation
+from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -39,6 +41,14 @@ def _make_sparse_file(path: Path, size: int) -> None:
     """Create a file with the requested logical size without allocating its contents."""
     with path.open("wb") as handle:
         handle.truncate(size)
+
+
+def _admin_llm_context(hass):
+    """Give persistence-focused automation tests their required admin caller."""
+    hass.auth.async_get_user = AsyncMock(
+        return_value=SimpleNamespace(is_active=True, is_admin=True)
+    )
+    return SimpleNamespace(context=Context(user_id="admin-user"))
 
 
 async def test_sqlite_single_empty_and_row_limit_are_safe(
@@ -177,6 +187,7 @@ async def test_add_automation_owns_id_and_preserves_existing_yaml(
         AsyncMock(return_value=None),
     )
     hass.services.async_call = AsyncMock(return_value=None)
+    llm_context = _admin_llm_context(hass)
 
     function = NativeFunction()
     result = await function.add_automation(
@@ -190,7 +201,7 @@ async def test_add_automation_owns_id_and_preserves_existing_yaml(
                 "action: []\n"
             )
         },
-        None,
+        llm_context,
         [],
     )
 
@@ -213,6 +224,7 @@ async def test_add_automation_rejects_multiple_definitions(
     automation_path = tmp_path / "automations.yaml"
     automation_path.write_text("", encoding="utf-8")
     monkeypatch.setattr(native_module, "AUTOMATION_CONFIG_PATH", str(automation_path))
+    llm_context = _admin_llm_context(hass)
     function = NativeFunction()
 
     with pytest.raises(HomeAssistantError, match="exactly one automation"):
@@ -220,7 +232,7 @@ async def test_add_automation_rejects_multiple_definitions(
             hass,
             {"type": "native", "name": "add_automation"},
             {"automation_config": "- alias: One\n- alias: Two\n"},
-            None,
+            llm_context,
             [],
         )
 
@@ -241,6 +253,7 @@ async def test_add_automation_rolls_back_when_reload_fails(
     hass.services.async_call = AsyncMock(
         side_effect=[HomeAssistantError("reload failed"), None]
     )
+    llm_context = _admin_llm_context(hass)
     function = NativeFunction()
 
     with pytest.raises(HomeAssistantError, match="reload failed"):
@@ -252,7 +265,7 @@ async def test_add_automation_rolls_back_when_reload_fails(
                     "alias: New automation\ntrigger: []\naction: []\n"
                 )
             },
-            None,
+            llm_context,
             [],
         )
 
@@ -276,6 +289,7 @@ async def test_concurrent_add_automation_calls_do_not_lose_updates(
         AsyncMock(return_value=None),
     )
     hass.services.async_call = AsyncMock(return_value=None)
+    llm_context = _admin_llm_context(hass)
     function = NativeFunction()
 
     async def add(alias: str) -> None:
@@ -283,7 +297,7 @@ async def test_concurrent_add_automation_calls_do_not_lose_updates(
             hass,
             {"type": "native", "name": "add_automation"},
             {"automation_config": f"alias: {alias}\ntrigger: []\naction: []\n"},
-            None,
+            llm_context,
             [],
         )
 
