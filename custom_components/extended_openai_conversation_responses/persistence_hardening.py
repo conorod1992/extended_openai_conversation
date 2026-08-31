@@ -11,6 +11,7 @@ from .knowledge import KnowledgeLibrary
 from .memory import PersistentMemory
 from .request_rules import DEFAULT_MATCHING, DEFAULT_WORDING_GROUPS, RequestRules
 from .runtime_hardening import install_runtime_hardening
+from .safety_hardening import install_safety_hardening
 from .temporary_memory import TemporaryMemory
 
 _COMMITTED_STATE = "_extended_openai_committed_state"
@@ -49,6 +50,7 @@ def install_persistence_transactions() -> None:
         _reset_request_rules,
     )
     install_runtime_hardening()
+    install_safety_hardening()
 
 
 def _install_manager_guard(
