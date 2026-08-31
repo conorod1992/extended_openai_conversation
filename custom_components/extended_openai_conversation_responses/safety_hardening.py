@@ -65,7 +65,7 @@ def _install_delayed_permission_context() -> None:
     DelayedToolManager._async_execute_due = async_execute_due  # type: ignore[method-assign,assignment]
 
 
-async def _async_require_admin(hass: HomeAssistant, llm_context: Any) -> Context:
+async def _async_require_admin(hass: HomeAssistant, llm_context: Any) -> None:
     """Require an active authenticated HA administrator for durable HA mutation."""
     context = getattr(llm_context, "context", None) or get_active_ha_context()
     user_id = getattr(context, "user_id", None)
@@ -82,7 +82,6 @@ async def _async_require_admin(hass: HomeAssistant, llm_context: Any) -> Context
         raise HomeAssistantError(
             "add_automation requires an active Home Assistant administrator"
         )
-    return context
 
 
 def _parse_datetime(value: Any, label: str) -> Any:
