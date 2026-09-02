@@ -243,9 +243,10 @@ class BashFunction(Function):
                 await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
                 return {"error": f"Command timed out after {timeout:g} seconds"}
 
-            (stdout, stdout_truncated), (stderr, stderr_truncated) = await asyncio.gather(
-                stdout_task, stderr_task
-            )
+            (
+                (stdout, stdout_truncated),
+                (stderr, stderr_truncated),
+            ) = await asyncio.gather(stdout_task, stderr_task)
             stdout_text = _decode_bounded_output(stdout, stdout_truncated)
             stderr_text = _decode_bounded_output(stderr, stderr_truncated)
 
