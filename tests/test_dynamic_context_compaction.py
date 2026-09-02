@@ -120,7 +120,7 @@ def test_default_entity_context_is_compact_but_keeps_every_entity_and_alias(hass
     )
 
     assert "```" not in context
-    assert "entity_id,name_if_different,state,area_id,aliases" in context
+    assert "entity_id,name,state,area_id,aliases" in context
     assert "light.study_light,,on,,desk light/office light" in context
     assert "light.lamp_plug_switch_1,Bedroom Lamp,off,," in context
     assert context.count("light.study_light") == 1
