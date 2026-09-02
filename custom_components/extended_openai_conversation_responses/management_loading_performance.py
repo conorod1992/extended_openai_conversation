@@ -38,8 +38,16 @@ _ORIGINAL_MANAGEMENT_COMMAND: Callable[..., Awaitable[dict[str, Any]]] | None = 
 _EXTRA_FRONTEND_MODULES = (
     "management-rendering-performance.js",
     "management-loading-performance.js",
+    "management-state-safety.js",
+    "management-bootstrap.js",
+    "management-route-performance.js",
+    "agent-config-loader.js",
+    "agent-config-editor-base.js",
+    "request-rules-loader.js",
+    "request-rules-ui-impl.js",
     "overview-page-impl.js",
     "guide-page-impl.js",
+    "guide-page-base.js",
 )
 
 
