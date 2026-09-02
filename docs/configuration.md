@@ -6,7 +6,7 @@ Configure conversation-agent behaviour from **Extended OpenAI** in the sidebar:
 
 - **Assistant** splits common behavior into Basics, Model & responses, Conversation, Prompt & context, Voice, Speech, and Advanced subsections.
 - **Capabilities** contains Home Assistant access, Request Rules, the purpose-built Functions/Groups editor, and Guest Mode.
-- **Data & Memory** contains Memories, Knowledge Library, and Conversation history. **Usage & Maintenance** contains Usage, Backup & Restore, Diagnostics, and retention.
+- **Data & Memory** contains Memories, Knowledge Library, and Conversation history. **Usage & Maintenance** contains Usage, Request debugging, Backup & Restore, Diagnostics, and retention.
 - **Guide** provides searchable, concise orientation and links back into the relevant management subsection. The global settings search navigates directly to settings across sections.
 
 Each grouped page uses one compact **Section** dropdown above its content on
@@ -78,7 +78,7 @@ Conversation-agent options are available from the assistant/integration configur
 | **Knowledge Library** | Off | Enables on-demand model search and retrieval of maintained per-agent Knowledge sources. |
 | **Automatically retrieved memories** | 3 | Maximum locally ranked memories added automatically to a request. |
 | **Maximum tokens to return in response** | 500 | Limits model output tokens. |
-| **Maximum function calls per conversation** | 10 | Caps repeated tool calls within one conversation. |
+| **Maximum function calls per conversation** | 10 | Limits model-requested function executions within one conversation. |
 | **Skills** | All available for a new agent | Selects reusable skill instructions the agent may load. |
 | **Functions** | Included Home Assistant tools | Defines tools available to the model. |
 | **Function groups** | None | Optionally keeps related function schemas always available or loads them only when needed. |
