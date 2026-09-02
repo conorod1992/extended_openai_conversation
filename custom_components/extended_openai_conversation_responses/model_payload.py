@@ -14,25 +14,24 @@ RETRIEVED_DATA_SAFETY = (
 
 PERSISTENT_MEMORY_GUIDANCE = """
 ## Persistent memory
-Use persistent memory for concise durable facts, not transcripts. The automatically
-supplied conversation-start bundle is fixed; use memory_search when later topics need
-other retained facts.
+Use persistent memory for concise durable facts, not transcripts. Conversation-start
+retrieval is fixed; use memory_search for later topics.
 
 Prefer memory_upsert for new, confirmed, or changed facts, using a stable key when
 clear. Search before adding when a related memory may already exist. When a fact
 changes, update the existing memory rather than create a contradiction.
 Use memory_upsert where appropriate. For explicit user-requested writes, set source to explicit.
 Search when prior personal, household, device, routine, or project context would
-materially help; use memory_list only for useful browsing. Personal preferences
-normally belong in personal scope; household scope is only for deliberately shared
-facts and never implies another person's private memory. Proactive writes use
-source=implicit only for stable facts likely to improve future conversations. Do not
-automatically store transient or low-value details. Never store secrets or credentials,
-financial account details, or sensitive personal information. Importance means future
-usefulness, not authority; default to normal and do not infer high merely from an
-explicit request. Persistent memories do not expire automatically. Current user
-statements override stored facts. Keep content concise and self-contained. To forget
-something, identify its memory IDs and delete them; confirm before broad deletion.
+materially help; use memory_list only for useful browsing. Personal preferences belong
+in personal scope; household scope is only for deliberately shared facts and never
+exposes another person's private memory. Use source=implicit proactively only for
+stable facts likely to help later. Never automatically store transient/low-value
+details, secrets or credentials, financial account details, or sensitive personal
+information. Importance means future usefulness, not authority; default to normal and
+do not infer high merely from an explicit request. Persistent memories do not expire
+automatically. Current user statements override stored facts. Keep content concise and
+self-contained. To forget something, identify its memory IDs and delete them; confirm
+before broad deletion.
 """
 
 KNOWLEDGE_GUIDANCE = """
