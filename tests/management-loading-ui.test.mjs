@@ -6,11 +6,17 @@ const frontend = (name) => new URL(
   import.meta.url,
 );
 
-const [loading, overview, guide, debug] = await Promise.all([
+const [loading, overview, guide, debug, agentEditor, agentLoader, requestRules, requestRulesLoader, bootstrap, routes] = await Promise.all([
   readFile(frontend("management-loading-performance.js"), "utf8"),
   readFile(frontend("overview-page.js"), "utf8"),
   readFile(frontend("guide-page.js"), "utf8"),
   readFile(frontend("debug-management.js"), "utf8"),
+  readFile(frontend("agent-config-editor.js"), "utf8"),
+  readFile(frontend("agent-config-loader.js"), "utf8"),
+  readFile(frontend("request-rules-ui.js"), "utf8"),
+  readFile(frontend("request-rules-loader.js"), "utf8"),
+  readFile(frontend("management-bootstrap.js"), "utf8"),
+  readFile(frontend("management-route-performance.js"), "utf8"),
 ]);
 
 assert.match(loading, /_call\("overview", "summary"\)/);
@@ -31,13 +37,27 @@ assert.match(loading, /this\._eocRuleSavePromise/);
 assert.match(overview, /import\("\.\/overview-page-impl\.js"\)/);
 assert.doesNotMatch(overview, /from "\.\/overview-page-impl\.js"/);
 assert.match(guide, /import\("\.\/guide-page-impl\.js"\)/);
+assert.doesNotMatch(guide, /management-loading-performance\.js/);
 assert.doesNotMatch(guide, /from "\.\/guide-page-base\.js"/);
 assert.match(debug, /import\("\.\/debug-panel\.js"\)/);
 assert.doesNotMatch(debug, /^import "\.\/debug-panel\.js"/m);
 
+assert.match(agentEditor, /import "\.\/management-bootstrap\.js"/);
+assert.doesNotMatch(agentEditor, /from "\.\/agent-config-editor-base\.js"/);
+assert.doesNotMatch(agentEditor, /export \* from "\.\/agent-config-editor-base\.js"/);
+assert.match(agentLoader, /import\("\.\/agent-config-editor-base\.js"\)/);
+assert.doesNotMatch(requestRules, /from "\.\/request-rules-ui-impl\.js"/);
+assert.match(requestRulesLoader, /import\("\.\/request-rules-ui-impl\.js"\)/);
+assert.match(bootstrap, /await import\("\.\/management-rendering-performance\.js"\)/);
+assert.match(bootstrap, /await import\("\.\/management-loading-performance\.js"\)/);
+assert.match(bootstrap, /await import\("\.\/management-route-performance\.js"\)/);
+assert.match(routes, /event\.stopImmediatePropagation\(\)/);
+assert.doesNotMatch(routes, /panel\._render\(\);\s*\/\/.*rule-search/);
+
 const overviewModule = await import(frontend("overview-page.js"));
 const guideModule = await import(frontend("guide-page.js"));
 const loadingModule = await import(frontend("management-loading-performance.js"));
+const routeModule = await import(frontend("management-route-performance.js"));
 assert.equal(typeof overviewModule.renderOverview, "function");
 assert.equal(typeof overviewModule.bindOverview, "function");
 assert.equal(typeof guideModule.renderGuide, "function");
@@ -45,6 +65,29 @@ assert.equal(typeof guideModule.bindGuide, "function");
 assert.equal(typeof loadingModule.loadSectionAfterAsset, "function");
 assert.equal(loadingModule.fieldErrorKey("title"), "__title");
 assert.equal(loadingModule.fieldErrorKey("chat_model"), "chat_model");
+
+assert.equal(routeModule.routeAssetKind("assistant/basics"), "agent-config");
+assert.equal(routeModule.routeAssetKind("assistant/advanced"), "agent-config");
+assert.equal(routeModule.routeAssetKind("capabilities/functions"), "agent-config");
+assert.equal(routeModule.routeAssetKind("data-memory/conversations"), "agent-config");
+assert.equal(routeModule.routeAssetKind("usage-maintenance/backup-restore"), "agent-config");
+assert.equal(routeModule.routeAssetKind("usage-maintenance/retention"), "agent-config");
+assert.equal(routeModule.routeAssetKind("capabilities/request-rules"), "request-rules");
+assert.equal(routeModule.routeAssetKind("overview"), null);
+assert.equal(
+  routeModule.matchesRequestRuleSearch(
+    {name:"Night", phrases:["good night", "bed time", "sleep now", "lights out", "hidden fifth phrase"], action_type:"local_action"},
+    "fifth phrase",
+  ),
+  true,
+);
+assert.equal(
+  routeModule.matchesRequestRuleSearch(
+    {name:"Careful", phrases:["think carefully"], action_type:"model_routing"},
+    "MODEL_ROUTING",
+  ),
+  true,
+);
 
 const localDateTime = "2026-09-02T19:15";
 assert.equal(
