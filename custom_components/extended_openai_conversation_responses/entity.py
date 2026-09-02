@@ -284,6 +284,16 @@ def _format_tools(
     return format_function_tools(function_tools, api_mode)
 
 
+def _index_function_tools(
+    function_tools: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Index one provider round's effective tools without changing duplicate semantics."""
+    indexed: dict[str, dict[str, Any]] = {}
+    for function_tool in function_tools:
+        indexed.setdefault(function_tool["spec"]["name"], function_tool)
+    return indexed
+
+
 def _build_web_search_tool(
     options: Mapping[str, Any],
     api_mode: str,
@@ -632,15 +642,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             if id(content) not in draft_content_ids
                         ]
 
+            function_tools_by_name = _index_function_tools(request_function_tools)
             for tool_input in pending_tool_calls:
-                function_tool = next(
-                    (
-                        f
-                        for f in request_function_tools
-                        if f["spec"]["name"] == tool_input.tool_name
-                    ),
-                    None,
-                )
+                function_tool = function_tools_by_name.get(tool_input.tool_name)
 
                 if function_tool is None:
                     raise FunctionNotFound(tool_input.tool_name)
@@ -884,7 +888,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
         async for chunk in result:
             _LOGGER.debug("Received chunk: %s", chunk)
-
             # Signal new assistant message on first chunk
             if first_chunk:
                 yield {"role": "assistant"}
