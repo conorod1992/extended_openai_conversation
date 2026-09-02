@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from types import SimpleNamespace
 from typing import Any
 
 from homeassistant.helpers import template
 
+from .capabilities import (
+    persistent_memory_scope_available,
+    resolve_effective_capabilities,
+)
 from .const import (
     CONDITIONAL_CONTINUATION_PROMPT,
     CONF_ARCHIVE_ENABLED,
@@ -33,7 +38,8 @@ from .const import (
     TEMPORARY_MEMORY_OFF,
 )
 from .guest_mode import GUEST_MODE_PROMPT, GuestCapabilityPolicy
-from .memory import MemoryRecord, automatic_memory_enabled, memory_enabled
+from .memory import MemoryRecord, automatic_memory_enabled
+from .scope import resolve_data_scope
 from .temporary_memory import TemporaryMemoryRecord
 
 ARCHIVE_PROMPT = """
@@ -202,6 +208,26 @@ def _temporary_memory_context(memories: list[TemporaryMemoryRecord]) -> str:
     )
 
 
+def _prompt_memory_scope_available(options: Any, user_input: Any) -> bool:
+    """Resolve the same persistent-memory scope eligibility used by live tools."""
+    # Management previews and direct renderer tests have no request identity. They
+    # represent an authenticated/usable scope unless the caller supplies an explicit
+    # capability decision below.
+    if user_input is None or not hasattr(user_input, "context"):
+        return True
+    source_device_id = getattr(user_input, "satellite_id", None) or getattr(
+        user_input, "device_id", None
+    )
+    scope = resolve_data_scope(
+        SimpleNamespace(
+            context=getattr(user_input, "context", None),
+            device_id=source_device_id,
+        ),
+        options,
+    )
+    return persistent_memory_scope_available(options, scope)
+
+
 def render_effective_prompt(
     hass: Any,
     options: Any,
@@ -214,6 +240,7 @@ def render_effective_prompt(
     temporary_memories: list[TemporaryMemoryRecord] | None = None,
     knowledge_available: bool = False,
     guest_policy: GuestCapabilityPolicy | None = None,
+    memory_scope_available: bool | None = None,
 ) -> EffectivePrompt:
     """Render and assemble the production system prompt in deterministic order."""
     raw_prompt: str = options.get(CONF_PROMPT, DEFAULT_PROMPT)
@@ -227,6 +254,13 @@ def render_effective_prompt(
     )
     sections: list[PromptSection] = []
     policy = guest_policy or GuestCapabilityPolicy.unrestricted()
+    if memory_scope_available is None:
+        memory_scope_available = _prompt_memory_scope_available(options, user_input)
+    capabilities = resolve_effective_capabilities(
+        options,
+        memory_scope_available=memory_scope_available,
+        guest_policy=policy,
+    )
 
     if policy.guest_active:
         sections.append(
@@ -238,11 +272,7 @@ def render_effective_prompt(
             )
         )
 
-    if memory_enabled(options) and (
-        not policy.guest_active
-        or policy.shared_memory_read
-        or policy.shared_memory_write
-    ):
+    if capabilities.persistent_memory:
         sections.append(
             PromptSection(
                 "persistent_memory_instructions",
@@ -355,7 +385,7 @@ def render_effective_prompt(
         )
 
     if (
-        memory_enabled(options)
+        capabilities.persistent_memory
         and memories
         and (not policy.guest_active or policy.shared_memory_read)
     ):
