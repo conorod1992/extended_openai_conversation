@@ -96,7 +96,12 @@ const editor = (
     "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js",
   ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
 ).join("\n");
-const overview = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page.js", import.meta.url), "utf8");
+const overview = (
+  await Promise.all([
+    "../custom_components/extended_openai_conversation_responses/frontend/overview-page.js",
+    "../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js",
+  ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
+).join("\n");
 const homeAssistant = panel.slice(panel.indexOf("  _homeAssistant("), panel.indexOf("  _overview("));
 assert.match(panel, /top-section-mobile/);
 assert.match(panel, /id="local-section"/);
