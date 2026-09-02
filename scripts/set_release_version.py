@@ -15,13 +15,22 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "custom_components/extended_openai_conversation_responses/manifest.json"
+FRONTEND_VERSION_FILE = (
+    ROOT
+    / "custom_components/extended_openai_conversation_responses/frontend_version.py"
+)
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 VERSION_PATTERN = re.compile(r'(^  "version": ")[^"]+("$)', re.MULTILINE)
 EXTRACT_PATTERN = re.compile(r'^  "version": "([^"]+)"$', re.MULTILINE)
+FRONTEND_VERSION_PATTERN = re.compile(
+    r'^(FRONTEND_VERSION = ")[^"]+("$)', re.MULTILINE
+)
+FRONTEND_EXTRACT_PATTERN = re.compile(
+    r'^FRONTEND_VERSION = "([^"]+)"$', re.MULTILINE
+)
 
 
-def current_version(root: Path = ROOT) -> str:
-    """Return the tracked integration version, failing on an unexpected manifest."""
+def _manifest_version(root: Path) -> str:
     path = root / MANIFEST.relative_to(ROOT)
     text = path.read_text(encoding="utf-8")
     matches = EXTRACT_PATTERN.findall(text)
@@ -30,10 +39,54 @@ def current_version(root: Path = ROOT) -> str:
             "Expected exactly one integration version in "
             f"{path.relative_to(root)}; found {len(matches)}"
         )
-    version = matches[0]
-    if not SEMVER.fullmatch(version):
-        raise RuntimeError(f"Tracked release version is not X.Y.Z: {version!r}")
+    return matches[0]
+
+
+def _frontend_version(root: Path) -> str:
+    path = root / FRONTEND_VERSION_FILE.relative_to(ROOT)
+    text = path.read_text(encoding="utf-8")
+    matches = FRONTEND_EXTRACT_PATTERN.findall(text)
+    if len(matches) != 1:
+        raise RuntimeError(
+            "Expected exactly one frontend asset version in "
+            f"{path.relative_to(root)}; found {len(matches)}"
+        )
+    return matches[0]
+
+
+def current_version(root: Path = ROOT) -> str:
+    """Return the tracked integration version and verify asset metadata matches."""
+    version = _manifest_version(root)
+    frontend_version = _frontend_version(root)
+    for label, value in (
+        ("Tracked release version", version),
+        ("Frontend asset version", frontend_version),
+    ):
+        if not SEMVER.fullmatch(value):
+            raise RuntimeError(f"{label} is not X.Y.Z: {value!r}")
+    if frontend_version != version:
+        raise RuntimeError(
+            "Frontend asset version does not match manifest version: "
+            f"{frontend_version!r} != {version!r}"
+        )
     return version
+
+
+def _replace_one(
+    path: Path, pattern: re.Pattern[str], version: str, label: str
+) -> None:
+    text = path.read_text(encoding="utf-8")
+
+    def replacement(match: re.Match[str]) -> str:
+        return f"{match.group(1)}{version}{match.group(2)}"
+
+    updated, count = pattern.subn(replacement, text, count=1)
+    if count != 1:
+        raise RuntimeError(
+            f"Expected exactly one writable {label} in {path.relative_to(ROOT)}; "
+            f"found {count}"
+        )
+    path.write_text(updated, encoding="utf-8")
 
 
 def set_release_version(version: str, root: Path = ROOT) -> None:
@@ -42,19 +95,15 @@ def set_release_version(version: str, root: Path = ROOT) -> None:
         raise ValueError(f"Release version must use X.Y.Z format, got {version!r}")
 
     current_version(root)
-    path = root / MANIFEST.relative_to(ROOT)
-    text = path.read_text(encoding="utf-8")
-
-    def replacement(match: re.Match[str]) -> str:
-        return f"{match.group(1)}{version}{match.group(2)}"
-
-    updated, count = VERSION_PATTERN.subn(replacement, text, count=1)
-    if count != 1:
-        raise RuntimeError(
-            "Expected exactly one writable integration version in "
-            f"{path.relative_to(root)}; found {count}"
-        )
-    path.write_text(updated, encoding="utf-8")
+    manifest = root / MANIFEST.relative_to(ROOT)
+    frontend_version_file = root / FRONTEND_VERSION_FILE.relative_to(ROOT)
+    _replace_one(manifest, VERSION_PATTERN, version, "integration version")
+    _replace_one(
+        frontend_version_file,
+        FRONTEND_VERSION_PATTERN,
+        version,
+        "frontend asset version",
+    )
 
     staged = current_version(root)
     if staged != version:

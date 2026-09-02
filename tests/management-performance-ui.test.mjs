@@ -119,13 +119,13 @@ function panelFor(page = "assistant", subsection = "basics") {
   panel._page = "data-memory";
   panel._subsection = "memories";
   await panel._loadSection();
-  assert.deepEqual(calls.slice(5).map((call) => call.section), ["scopes", "memories"]);
+  assert.deepEqual(calls.slice(5).map((call) => call.section), ["memories"]);
 
   panel._agentId = "agent-b";
   panel._scopeId = "user:current";
   panel._applyScopes(initialScopes);
   await panel._loadSection();
-  assert.deepEqual(calls.slice(7).map((call) => [call.section, call.subentry_id]), [
+  assert.deepEqual(calls.slice(6).map((call) => [call.section, call.subentry_id]), [
     ["scopes", "agent-b"],
     ["memories", "agent-b"],
   ]);
@@ -176,7 +176,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   panel._page = "data-memory";
   panel._subsection = "conversations";
   await panel._loadSection();
-  assert.equal(calls.filter((call) => call.section === "scopes").length, 2);
+  assert.equal(calls.filter((call) => call.section === "scopes").length, 1);
 }
 
 {

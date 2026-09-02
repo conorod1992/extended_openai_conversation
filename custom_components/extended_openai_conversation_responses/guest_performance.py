@@ -50,3 +50,10 @@ def install_guest_policy_fast_path() -> None:
     from .runtime_cleanup import install_runtime_cleanup
 
     install_runtime_cleanup()
+
+    # Management loading optimizations also need to be installed before the panel
+    # and websocket endpoints are registered. Reuse this existing startup
+    # performance hook rather than adding another integration lifecycle callback.
+    from .management_loading_performance import install_management_loading_optimizations
+
+    install_management_loading_optimizations()
