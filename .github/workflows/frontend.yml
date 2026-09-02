@@ -46,10 +46,12 @@ jobs:
           node --check custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js
           node --check custom_components/extended_openai_conversation_responses/frontend/management-rendering-performance.js
           node --check custom_components/extended_openai_conversation_responses/frontend/management-loading-performance.js
+          node --check custom_components/extended_openai_conversation_responses/frontend/management-state-safety.js
           node --check custom_components/extended_openai_conversation_responses/frontend/overview-page.js
           node --check custom_components/extended_openai_conversation_responses/frontend/guide-page.js
           node --check custom_components/extended_openai_conversation_responses/frontend/debug-management.js
           node tests/management-loading-ui.test.mjs
+          node tests/frontend-state-safety.test.mjs
 
       - name: Type check
         working-directory: frontend
