@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from functools import partial
 import logging
+import os
 from pathlib import Path
+import stat
+import tempfile
 from typing import Any
 
 import voluptuous as vol
@@ -22,6 +25,54 @@ from ..skills import SkillManager
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _read_text_bounded(path: Path) -> str:
+    """Read UTF-8 text without allowing a size-check/read race to grow memory."""
+    file_size = path.stat().st_size
+    if file_size > FILE_READ_SIZE_LIMIT:
+        raise ValueError(
+            f"File too large: {file_size} bytes (limit: {FILE_READ_SIZE_LIMIT})"
+        )
+    with path.open("rb") as handle:
+        content = handle.read(FILE_READ_SIZE_LIMIT + 1)
+    if len(content) > FILE_READ_SIZE_LIMIT:
+        raise ValueError(
+            "File grew beyond the read limit while it was being read "
+            f"(limit: {FILE_READ_SIZE_LIMIT} bytes)"
+        )
+    return content.decode("utf-8")
+
+
+def _atomic_replace_text(path: Path, content: str) -> int:
+    """Atomically replace an existing text file while preserving its mode."""
+    encoded = content.encode("utf-8")
+    if len(encoded) > FILE_READ_SIZE_LIMIT:
+        raise ValueError(
+            "Edited file would exceed the size limit: "
+            f"{len(encoded)} bytes (limit: {FILE_READ_SIZE_LIMIT})"
+        )
+
+    current_mode = stat.S_IMODE(path.stat().st_mode)
+    fd, temp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_path, current_mode)
+        os.replace(temp_path, path)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+    return len(encoded)
 
 
 class FileFunction(Function):
@@ -157,21 +208,12 @@ class ReadFileFunction(FileFunction):
             if not target_path.is_file():
                 return {"error": f"Not a file: {path_str}"}
 
-            # Check file size
             file_size = target_path.stat().st_size
-            if file_size > FILE_READ_SIZE_LIMIT:
-                return {
-                    "error": f"File too large: {file_size} bytes (limit: {FILE_READ_SIZE_LIMIT})"
-                }
+            content = await hass.async_add_executor_job(_read_text_bounded, target_path)
 
-            # Read file
-            content = await hass.async_add_executor_job(
-                partial(target_path.read_text, encoding="utf-8")
-            )
-
-        except Exception as e:
-            _LOGGER.error(e)
-            return {"error": str(e)}
+        except Exception as err:
+            _LOGGER.error(err)
+            return {"error": str(err)}
 
         return {"content": content, "size": file_size}
 
@@ -271,16 +313,11 @@ class EditFileFunction(FileFunction):
             if not target_path.is_file():
                 return {"error": f"Not a file: {path_str}"}
 
-            # Read current content
-            content = await hass.async_add_executor_job(
-                partial(target_path.read_text, encoding="utf-8")
-            )
+            content = await hass.async_add_executor_job(_read_text_bounded, target_path)
 
-            # Check for text to replace
             if old_text not in content:
                 return {"error": f"Text not found in file: {old_text[:50]}..."}
 
-            # Check for multiple occurrences
             occurrence_count = content.count(old_text)
             if occurrence_count > 1:
                 return {
@@ -288,17 +325,14 @@ class EditFileFunction(FileFunction):
                     "Please provide more specific text to ensure single replacement."
                 }
 
-            # Perform replacement
             new_content = content.replace(old_text, new_text, 1)
-
-            # Write back
             await hass.async_add_executor_job(
-                partial(target_path.write_text, new_content, encoding="utf-8")
+                _atomic_replace_text, target_path, new_content
             )
 
-        except Exception as e:
-            _LOGGER.error(e)
-            return {"error": str(e)}
+        except Exception as err:
+            _LOGGER.error(err)
+            return {"error": str(err)}
 
         return {
             "success": True,
