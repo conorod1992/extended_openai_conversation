@@ -183,7 +183,7 @@ def optimized_render_template(
 
 
 def _assemble_sections(sections: tuple[Any, ...]) -> str:
-    assembled = sections[0].text
+    assembled = str(sections[0].text)
     for section in sections[1:]:
         assembled = f"{assembled.rstrip()}\n{section.text}"
     return assembled
