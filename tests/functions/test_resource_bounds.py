@@ -14,6 +14,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     SHELL_OUTPUT_LIMIT,
 )
 from custom_components.extended_openai_conversation_responses.functions.bash import (
+    _decode_bounded_output,
     _read_bounded_stream,
 )
 from custom_components.extended_openai_conversation_responses.functions.file import (
@@ -26,16 +27,20 @@ from custom_components.extended_openai_conversation_responses.functions.sqlite i
 )
 
 
-async def test_bash_stream_drain_retains_only_configured_limit() -> None:
+async def test_bash_stream_drain_retains_only_bounded_bytes() -> None:
     """Large process output is drained without retaining the full stream in memory."""
     reader = asyncio.StreamReader()
-    reader.feed_data(b"x" * (SHELL_OUTPUT_LIMIT * 3))
+    reader.feed_data(b"x" * (SHELL_OUTPUT_LIMIT * 5))
     reader.feed_eof()
 
     content, truncated = await _read_bounded_stream(reader)
+    decoded = _decode_bounded_output(content, truncated)
 
-    assert len(content) == SHELL_OUTPUT_LIMIT
+    assert len(content) == SHELL_OUTPUT_LIMIT * 4
     assert truncated is True
+    assert decoded.startswith("x" * SHELL_OUTPUT_LIMIT)
+    assert "truncated" in decoded
+    assert len(decoded) < SHELL_OUTPUT_LIMIT + 100
 
 
 def _create_sqlite_database(tmp_path) -> str:
