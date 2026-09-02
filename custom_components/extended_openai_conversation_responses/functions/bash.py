@@ -25,11 +25,14 @@ from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
 _STREAM_CHUNK_SIZE = 4096
+# UTF-8 uses at most four bytes per Unicode code point. Retaining this many bytes
+# preserves the existing character limit while bounding pipe memory during execution.
+_SHELL_OUTPUT_BYTE_LIMIT = SHELL_OUTPUT_LIMIT * 4
 
 
 async def _read_bounded_stream(
     stream: asyncio.StreamReader | None,
-    limit: int = SHELL_OUTPUT_LIMIT,
+    limit: int = _SHELL_OUTPUT_BYTE_LIMIT,
 ) -> tuple[bytes, bool]:
     """Drain a subprocess pipe while retaining at most ``limit`` bytes."""
     if stream is None:
@@ -47,8 +50,11 @@ async def _read_bounded_stream(
 
 
 def _decode_bounded_output(content: bytes, truncated: bool) -> str:
-    """Decode bounded subprocess output and preserve the truncation signal."""
+    """Decode bounded subprocess output and preserve the character limit."""
     text = content.decode("utf-8", errors="replace")
+    if len(text) > SHELL_OUTPUT_LIMIT:
+        text = text[:SHELL_OUTPUT_LIMIT]
+        truncated = True
     if truncated:
         text += "\n... (truncated, output too large)"
     return text
