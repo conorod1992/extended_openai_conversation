@@ -1,5 +1,5 @@
 import "./management-bootstrap.js";
-import {ensureAgentConfigModule, getAgentConfigModule} from "./agent-config-loader.js";
+const {ensureAgentConfigModule, getAgentConfigModule} = await import("./agent-config-loader.js");
 
 if (typeof document === "undefined") await ensureAgentConfigModule();
 
