@@ -97,6 +97,22 @@ async function loadOverview(panel, silent = false) {
   }
 }
 
+function loadSectionAfterAsset(panel, silent, originalLoadSection, view, assetPromise) {
+  return assetPromise
+    .then(() => {
+      if (panel._viewKey() !== view) return undefined;
+      if (view === "overview") return loadOverview(panel, silent);
+      return originalLoadSection.call(panel, silent);
+    })
+    .catch((err) => {
+      if (panel._viewKey() !== view) return undefined;
+      panel._busy = false;
+      panel._error = `Unable to load this frontend section: ${err.message || String(err)}`;
+      panel._render();
+      return undefined;
+    });
+}
+
 function install() {
   const Panel = customElements.get("extended-openai-management-panel");
   if (!Panel || Panel.prototype[PATCHED]) return;
@@ -152,16 +168,7 @@ function install() {
     const view = this._viewKey();
     const assetPromise = viewAssetPromise(view);
     if (!assetPromise) return originalLoadSection.call(this, silent);
-    return assetPromise
-      .then(() => {
-        if (view === "overview") return loadOverview(this, silent);
-        return originalLoadSection.call(this, silent);
-      })
-      .catch((err) => {
-        this._busy = false;
-        this._error = `Unable to load this frontend section: ${err.message || String(err)}`;
-        this._render();
-      });
+    return loadSectionAfterAsset(this, silent, originalLoadSection, view, assetPromise);
   };
 
   const originalRender = prototype._render;
@@ -181,4 +188,4 @@ if (typeof customElements !== "undefined") {
   customElements.whenDefined("extended-openai-management-panel").then(install);
 }
 
-export {SCOPE_CACHE_TTL_MS};
+export {SCOPE_CACHE_TTL_MS, loadSectionAfterAsset};
