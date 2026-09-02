@@ -318,8 +318,9 @@ class RequestRules:
                     bool(settings.get("word_forms")),
                     bool(settings.get("wording_alternatives")),
                 )
-                candidate = normalized_candidates.get(normalization_key)
-                if candidate is None:
+                try:
+                    candidate = normalized_candidates[normalization_key]
+                except KeyError:
                     candidate = normalize_text(text, settings, self._wording_groups)
                     normalized_candidates[normalization_key] = candidate
             for compiled in phrases:
