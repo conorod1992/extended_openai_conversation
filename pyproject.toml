@@ -64,5 +64,5 @@ files = ["custom_components/extended_openai_conversation_responses/**/*.py"]
 exclude = ["tests/"]
 
 [[tool.mypy.overrides]]
-module = "custom_components.extended_openai_conversation_responses.debug"
+module = "extended_openai_conversation_responses.debug"
 disable_error_code = ["method-assign"]
