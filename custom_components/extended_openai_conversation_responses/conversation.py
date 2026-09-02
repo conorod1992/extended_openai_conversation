@@ -626,7 +626,7 @@ class ExtendedOpenAIAgentEntity(
                         self._local_intent_result(user_input, chat_log, local_intent)
                         if local_intent is not None
                         else await self._async_handle_message(
-                            user_input, chat_log, request_options
+                            user_input, chat_log, llm_context, request_options
                         )
                     )
                     if chat_log.content and isinstance(
@@ -644,7 +644,7 @@ class ExtendedOpenAIAgentEntity(
                         self._local_intent_result(user_input, chat_log, local_intent)
                         if local_intent is not None
                         else await self._async_handle_message(
-                            user_input, chat_log, request_options
+                            user_input, chat_log, llm_context, request_options
                         )
                     )
                     await self._async_archive_turn(
@@ -670,12 +670,10 @@ class ExtendedOpenAIAgentEntity(
         self,
         user_input: ConversationInput,
         chat_log: ChatLog,
+        llm_context: llm.LLMContext,
         request_options: Mapping[str, Any] | None = None,
     ) -> ConversationResult:
         """Call the API."""
-        # Create LLM context
-        llm_context = user_input.as_llm_context(DOMAIN)
-
         # Get exposed entities for function tools
         exposed_entities = self._get_exposed_entities()
 
