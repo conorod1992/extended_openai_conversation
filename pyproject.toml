@@ -62,3 +62,7 @@ warn_return_any = true
 warn_unused_configs = true
 files = ["custom_components/extended_openai_conversation_responses/**/*.py"]
 exclude = ["tests/"]
+
+[[tool.mypy.overrides]]
+module = "extended_openai_conversation_responses.debug"
+disable_error_code = ["method-assign"]
