@@ -211,8 +211,9 @@ def test_persistent_memory_context_preserves_record_fields_with_compact_json() -
     ]
     assert ", " not in serialized
     assert ": " not in serialized
-    assert "subject and situation in the current request" in context
-    assert "never automatically apply the user's preference to another person" in context
+    lower_context = context.lower()
+    assert "subject and situation in the current request" in lower_context
+    assert "never automatically apply the user's preference to another person" in lower_context
 
 
 def _temporary(memory_id: str, category: str) -> TemporaryMemoryRecord:
