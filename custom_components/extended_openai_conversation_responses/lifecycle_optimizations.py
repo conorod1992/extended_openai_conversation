@@ -9,7 +9,7 @@ from copy import deepcopy
 from dataclasses import asdict
 from datetime import timedelta
 import logging
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.util import dt as dt_util
 
@@ -38,7 +38,7 @@ def install_lifecycle_optimizations() -> None:
 def _usage_snapshot(manager: Any, category: str) -> dict[str, Any]:
     """Capture immutable usage state while the manager lock is held."""
     if category == "totals":
-        return manager.as_dict()
+        return cast(dict[str, Any], manager.as_dict())
     if category == "daily":
         return {"days": deepcopy(manager.daily)}
     if category == "details":
@@ -118,12 +118,14 @@ def _install_usage_persistence() -> None:
             "request details": "details",
             "run details": "details",
         }.get(label)
-        store = {
-            "totals": manager._storage,
-            "daily": manager._daily_storage,
-            "details": manager._detail_storage,
-        }.get(category)
-        if category is not None and store is not None:
+        store = None
+        if category is not None:
+            store = {
+                "totals": manager._storage,
+                "daily": manager._daily_storage,
+                "details": manager._detail_storage,
+            }.get(category)
+        if store is not None:
             try:
                 if _schedule_store_snapshot(store, _usage_snapshot(manager, category)):
                     return
@@ -259,7 +261,7 @@ def _install_debug_summary_fields() -> None:
     original_summary = trace_type.summary
 
     def summary(trace: Any) -> dict[str, Any]:
-        result = original_summary(trace)
+        result = cast(dict[str, Any], original_summary(trace))
         result["continuity_mode"] = trace.continuity.get("mode")
         result["restored_history_items"] = int(
             trace.continuity.get("restored_history_items") or 0
