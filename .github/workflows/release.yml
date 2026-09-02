@@ -123,9 +123,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add custom_components/extended_openai_conversation_responses/manifest.json
+          git add \
+            custom_components/extended_openai_conversation_responses/manifest.json \
+            custom_components/extended_openai_conversation_responses/frontend_version.py
           if git diff --cached --quiet; then
-            echo "Version $VERSION is already staged in the manifest; releasing the checked-out commit."
+            echo "Version $VERSION is already staged in tracked release metadata; releasing the checked-out commit."
             echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
           else
             git commit -m "chore: bump version to $VERSION"
