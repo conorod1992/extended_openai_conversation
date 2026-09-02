@@ -44,3 +44,9 @@ def install_guest_policy_fast_path() -> None:
     conversation.ExtendedOpenAIAgentEntity._effective_guest_policy = (  # type: ignore[method-assign]
         effective_guest_policy_fast
     )
+
+    # Request-scoped tool reuse relies on this fast path returning the same resolved
+    # policy object while permissions remain unchanged, so install it afterwards.
+    from .runtime_cleanup import install_runtime_cleanup
+
+    install_runtime_cleanup()
