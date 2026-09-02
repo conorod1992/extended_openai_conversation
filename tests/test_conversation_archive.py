@@ -67,11 +67,11 @@ async def test_archive_is_unretained_when_disabled_or_scope_is_unresolved() -> N
         shared_archive_enabled=False,
         inactivity_minutes=30,
     )
-    assert disabled.retention_state == "unretained"
+    assert disabled is None
     assert unresolved.retention_state == "unretained"
     assert (
         await archive.async_record_turn(
-            disabled.session_id,
+            unresolved.session_id,
             run_id="run",
             user_text="secret",
             assistant_text="reply",
