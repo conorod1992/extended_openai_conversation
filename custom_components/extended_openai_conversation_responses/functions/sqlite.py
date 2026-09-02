@@ -159,9 +159,7 @@ def _execute_sqlite_query(
                         f"SQLite query returned more than {max_rows} rows; "
                         "add a LIMIT clause or increase max_rows"
                     )
-                item = {
-                    name: val for name, val in zip(names, row, strict=False)
-                }
+                item = {name: val for name, val in zip(names, row, strict=False)}
                 result_bytes += _estimated_row_bytes(item) + 1
                 if result_bytes > max_result_bytes:
                     raise HomeAssistantError(
@@ -272,14 +270,8 @@ class SqliteFunction(Function):
                 q,
                 function_config.get("single") is True,
                 int(function_config.get("max_rows", _DEFAULT_MAX_ROWS)),
-                float(
-                    function_config.get("timeout", _DEFAULT_QUERY_TIMEOUT_SECONDS)
-                ),
-                int(
-                    function_config.get(
-                        "max_result_bytes", _DEFAULT_MAX_RESULT_BYTES
-                    )
-                ),
+                float(function_config.get("timeout", _DEFAULT_QUERY_TIMEOUT_SECONDS)),
+                int(function_config.get("max_result_bytes", _DEFAULT_MAX_RESULT_BYTES)),
             )
         except sqlite3.Error as err:
             raise HomeAssistantError(f"SQLite query failed: {err}") from err
