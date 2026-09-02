@@ -89,6 +89,42 @@ function installManagementSection() {
     return originalCanAccessView.call(this, page, subsection);
   };
 
+  // Request debugging owns its own small websocket surface. Do not run the generic
+  // management section loader only to receive a null result; load the debug module
+  // on demand and let the embedded panel fetch exactly the data it needs.
+  const originalLoadSection = prototype._loadSection;
+  prototype._loadSection = function(silent = false) {
+    if (this._viewKey?.() !== DEBUG_VIEW) return originalLoadSection.call(this, silent);
+    const view = this._viewKey();
+    const token = (this._eocDebugLoadToken || 0) + 1;
+    this._eocDebugLoadToken = token;
+    if (customElements.get(DEBUG_TAG)) {
+      this._busy = false;
+      this._error = null;
+      this._result = null;
+      this._render?.();
+      return Promise.resolve();
+    }
+    if (!silent) {
+      this._busy = true;
+      this._render?.();
+    }
+    return ensureDebugPanel()
+      .then(() => {
+        if (this._eocDebugLoadToken !== token || this._viewKey?.() !== view) return;
+        this._busy = false;
+        this._error = null;
+        this._result = null;
+        this._render?.();
+      })
+      .catch((err) => {
+        if (this._eocDebugLoadToken !== token || this._viewKey?.() !== view) return;
+        this._busy = false;
+        this._error = `Unable to load request debugging: ${err.message || String(err)}`;
+        this._render?.();
+      });
+  };
+
   const originalContent = prototype._content;
   prototype._content = function(...args) {
     if (this._viewKey?.() !== DEBUG_VIEW) return originalContent.apply(this, args);
@@ -96,10 +132,6 @@ function installManagementSection() {
       return this._empty?.("Request debugging is available to administrators only.") || "";
     }
     if (!customElements.get(DEBUG_TAG)) {
-      void ensureDebugPanel().then(() => this._render?.()).catch((err) => {
-        this._error = `Unable to load request debugging: ${err.message || String(err)}`;
-        this._render?.();
-      });
       return this._loading?.() || '<div class="loading">Loading request debugging…</div>';
     }
     return `<extended-openai-debug-panel embedded></extended-openai-debug-panel>`;
@@ -121,4 +153,4 @@ function installManagementSection() {
 customElements.whenDefined(DEBUG_TAG).then(installDebugPresentation);
 customElements.whenDefined(MANAGEMENT_TAG).then(installManagementSection);
 
-export {ensureDebugPanel, sessionLabel};
+export {ensureDebugPanel, installManagementSection, sessionLabel};
