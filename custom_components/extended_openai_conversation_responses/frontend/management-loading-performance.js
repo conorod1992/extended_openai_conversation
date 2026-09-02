@@ -6,10 +6,11 @@ const SCOPE_CACHE_TTL_MS = 30_000;
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
-async function ensureViewAssets(view) {
-  if (view === "overview") await ensureOverviewModule();
-  else if (view === "guide") await ensureGuideModule();
-  else if (view === "usage-maintenance/request-debug") await import("./debug-panel.js");
+function viewAssetPromise(view) {
+  if (view === "overview") return ensureOverviewModule();
+  if (view === "guide") return ensureGuideModule();
+  if (view === "usage-maintenance/request-debug") return import("./debug-panel.js");
+  return null;
 }
 
 function showErrors(panel, errors = {}) {
@@ -147,18 +148,20 @@ function install() {
   };
 
   const originalLoadSection = prototype._loadSection;
-  prototype._loadSection = async function(silent = false) {
+  prototype._loadSection = function(silent = false) {
     const view = this._viewKey();
-    try {
-      await ensureViewAssets(view);
-    } catch (err) {
-      this._busy = false;
-      this._error = `Unable to load this frontend section: ${err.message || String(err)}`;
-      this._render();
-      return;
-    }
-    if (view === "overview") return loadOverview(this, silent);
-    return originalLoadSection.call(this, silent);
+    const assetPromise = viewAssetPromise(view);
+    if (!assetPromise) return originalLoadSection.call(this, silent);
+    return assetPromise
+      .then(() => {
+        if (view === "overview") return loadOverview(this, silent);
+        return originalLoadSection.call(this, silent);
+      })
+      .catch((err) => {
+        this._busy = false;
+        this._error = `Unable to load this frontend section: ${err.message || String(err)}`;
+        this._render();
+      });
   };
 
   const originalRender = prototype._render;
