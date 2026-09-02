@@ -17,7 +17,7 @@ from datetime import datetime
 import hashlib
 import json
 import time
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from homeassistant.util import dt as dt_util
@@ -30,7 +30,7 @@ DEBUG_MAX_EVENT_BYTES = 2_000_000
 DEBUG_MAX_STRING_CHARACTERS = 1_000_000
 _DEBUG_MANAGERS = f"{DOMAIN}.request_debug_managers"
 
-_ACTIVE_DEBUG_TRACE: ContextVar["DebugTrace | None"] = ContextVar(
+_ACTIVE_DEBUG_TRACE: ContextVar[DebugTrace | None] = ContextVar(
     "extended_openai_request_debug_trace", default=None
 )
 _INSTRUMENTATION_INSTALLED = False
@@ -449,7 +449,7 @@ def get_debug_manager(hass: Any, entry_id: str, subentry_id: str) -> DebugManage
     key = (entry_id, subentry_id)
     if key not in managers:
         managers[key] = DebugManager()
-    return managers[key]
+    return cast(DebugManager, managers[key])
 
 
 def current_debug_trace() -> DebugTrace | None:
@@ -465,7 +465,7 @@ class _DebugAsyncStream:
         self._request = request
         self._finished = False
 
-    def __aiter__(self) -> "_DebugAsyncStream":
+    def __aiter__(self) -> _DebugAsyncStream:
         return self
 
     async def __anext__(self) -> Any:
@@ -480,7 +480,7 @@ class _DebugAsyncStream:
         self._request.add_event(event)
         return event
 
-    async def __aenter__(self) -> "_DebugAsyncStream":
+    async def __aenter__(self) -> _DebugAsyncStream:
         return self
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -700,9 +700,9 @@ def install_debug_instrumentation() -> None:
             }
         return result
 
-    ExtendedOpenAIAgentEntity._async_process = traced_process
-    ExtendedOpenAIAgentEntity._async_handle_message = traced_handle_message
-    ExtendedOpenAIAgentEntity._async_retrieve_memories = traced_retrieve_memories
-    ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories = traced_retrieve_temporary
-    ExtendedOpenAIAgentEntity._build_system_prompt = traced_build_prompt
-    ConversationContinuity.async_resolve = traced_resolve
+    ExtendedOpenAIAgentEntity._async_process = traced_process  # type: ignore[method-assign]
+    ExtendedOpenAIAgentEntity._async_handle_message = traced_handle_message  # type: ignore[method-assign]
+    ExtendedOpenAIAgentEntity._async_retrieve_memories = traced_retrieve_memories  # type: ignore[method-assign]
+    ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories = traced_retrieve_temporary  # type: ignore[method-assign]
+    ExtendedOpenAIAgentEntity._build_system_prompt = traced_build_prompt  # type: ignore[method-assign]
+    ConversationContinuity.async_resolve = traced_resolve  # type: ignore[method-assign]
