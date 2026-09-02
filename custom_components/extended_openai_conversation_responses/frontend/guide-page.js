@@ -1,7 +1,10 @@
 let implementation = null;
 let loadPromise = null;
 
-if (typeof customElements !== "undefined") import("./management-loading-performance.js");
+if (typeof customElements !== "undefined") {
+  import("./management-loading-performance.js");
+  import("./management-state-safety.js");
+}
 
 export async function ensureGuideModule() {
   if (implementation) return implementation;
