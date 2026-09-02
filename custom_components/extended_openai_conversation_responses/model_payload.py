@@ -156,9 +156,7 @@ def _compact_loader_description(description: str) -> str:
     if marker not in description:
         return description
     catalogue = description.split(marker, 1)[1]
-    catalogue = "\n".join(
-        line.removeprefix("- ") for line in catalogue.splitlines()
-    )
+    catalogue = "\n".join(line.removeprefix("- ") for line in catalogue.splitlines())
     return (
         "Load one or more on-demand tool groups. Loading only exposes schemas and "
         "performs no action.\n" + catalogue
@@ -196,13 +194,17 @@ def prepare_model_function_tools(
             if isinstance(description, str):
                 spec["description"] = _compact_loader_description(description)
 
-        integration_owned = function.get("type") in {
-            "memory",
-            "temporary_memory",
-            "knowledge",
-            "archive",
-            "guest_mode",
-        } or name == "set_continue_conversation"
+        integration_owned = (
+            function.get("type")
+            in {
+                "memory",
+                "temporary_memory",
+                "knowledge",
+                "archive",
+                "guest_mode",
+            }
+            or name == "set_continue_conversation"
+        )
         if integration_owned and name in _TOOL_DESCRIPTIONS:
             spec["description"] = _TOOL_DESCRIPTIONS[name]
 
