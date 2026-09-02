@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from functools import partial
 import logging
 import os
@@ -68,10 +69,8 @@ def _atomic_replace_text(path: Path, content: str) -> int:
         os.chmod(temp_path, current_mode)
         os.replace(temp_path, path)
     finally:
-        try:
+        with suppress(FileNotFoundError):
             temp_path.unlink()
-        except FileNotFoundError:
-            pass
     return len(encoded)
 
 
