@@ -51,7 +51,7 @@ _DEFAULT_CURRENT_DATETIME_CONTEXT = """## Current date and time
 {{ now().isoformat(timespec='seconds') }}
 """
 _DEFAULT_EXPOSED_ENTITIES_CONTEXT = """## Available Devices
-entity_id,name,state,area_id,aliases
+entity_id,name_if_different,state,area_id,aliases
 {% for entity in exposed_entities -%}
 {{ entity.entity_id }},{{ entity.prompt_name }},{{ entity.state }},{{ area_id(entity.entity_id) or '' }},{{ entity.aliases | join('/') }}
 {% endfor -%}
