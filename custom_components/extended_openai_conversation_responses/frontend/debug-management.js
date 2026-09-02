@@ -4,9 +4,19 @@ const DEBUG_TAG = "extended-openai-debug-panel";
 let debugPanelPromise = null;
 
 function ensureDebugPanel() {
-  if (customElements.get(DEBUG_TAG)) return Promise.resolve(customElements.get(DEBUG_TAG));
+  if (customElements.get(DEBUG_TAG)) {
+    installDebugPresentation();
+    return Promise.resolve(customElements.get(DEBUG_TAG));
+  }
   if (!debugPanelPromise) {
-    debugPanelPromise = import("./debug-panel.js").finally(() => { debugPanelPromise = null; });
+    debugPanelPromise = import("./debug-panel.js")
+      .then((module) => {
+        // Do not let the management route render the newly-defined element until
+        // its embedded presentation/agent-selection behavior is installed.
+        installDebugPresentation();
+        return module;
+      })
+      .finally(() => { debugPanelPromise = null; });
   }
   return debugPanelPromise;
 }
@@ -99,6 +109,7 @@ function installManagementSection() {
     const token = (this._eocDebugLoadToken || 0) + 1;
     this._eocDebugLoadToken = token;
     if (customElements.get(DEBUG_TAG)) {
+      installDebugPresentation();
       this._busy = false;
       this._error = null;
       this._result = null;
