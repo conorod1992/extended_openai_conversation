@@ -194,7 +194,11 @@ def _temporary_memory_context(memories: list[TemporaryMemoryRecord]) -> str:
                 {
                     "memory_id": item.memory_id,
                     "content": item.content,
-                    **({"category": item.category} if item.category != "general" else {}),
+                    **(
+                        {"category": item.category}
+                        if item.category != "general"
+                        else {}
+                    ),
                     "expires_at": item.expires_at,
                 }
                 for item in memories
