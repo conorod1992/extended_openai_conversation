@@ -76,8 +76,7 @@ def _prune_usage_locked(manager: Any) -> dict[str, int]:
     manager.runs = [
         run
         for run in manager.runs
-        if manager.run_retention_days > 0
-        and _parse_time(run.started_at) >= run_cutoff
+        if manager.run_retention_days > 0 and _parse_time(run.started_at) >= run_cutoff
     ]
     return {
         "deleted_requests": old_request_count - len(manager.requests),
@@ -95,9 +94,8 @@ async def _async_prune_usage_if_due(manager: Any) -> None:
             return
         result = _prune_usage_locked(manager)
         setattr(manager, _LAST_USAGE_PRUNE_DATE, today)
-        if (
-            manager._detail_storage is not None
-            and (result["deleted_requests"] or result["deleted_runs"])
+        if manager._detail_storage is not None and (
+            result["deleted_requests"] or result["deleted_runs"]
         ):
             snapshot = _usage_snapshot(manager, "details")
             if not _schedule_store_snapshot(manager._detail_storage, snapshot):
@@ -140,9 +138,7 @@ def _install_usage_persistence() -> None:
         await original_finalize_run(manager, run)
         await _async_prune_usage_if_due(manager)
 
-    async def async_prune_details(
-        manager: Any, *, save: bool = True
-    ) -> dict[str, int]:
+    async def async_prune_details(manager: Any, *, save: bool = True) -> dict[str, int]:
         async with manager._lock:
             result = _prune_usage_locked(manager)
             setattr(
@@ -154,9 +150,7 @@ def _install_usage_persistence() -> None:
                 await manager._async_save_details()
             return result
 
-    async def async_clear_details(
-        manager: Any, *, confirm: bool
-    ) -> dict[str, int]:
+    async def async_clear_details(manager: Any, *, confirm: bool) -> dict[str, int]:
         if not confirm:
             raise ValueError("Explicit confirmation is required")
         async with manager._lock:
@@ -246,9 +240,7 @@ def _install_memory_prefetch() -> None:
                 _TEMPORARY_MEMORY_PREFETCH.set(None)
             raise
 
-    async def async_retrieve_temporary(
-        agent: Any, *args: Any, **kwargs: Any
-    ) -> Any:
+    async def async_retrieve_temporary(agent: Any, *args: Any, **kwargs: Any) -> Any:
         task = _TEMPORARY_MEMORY_PREFETCH.get()
         if task is None:
             return await original_retrieve_temporary(agent, *args, **kwargs)
