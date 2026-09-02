@@ -200,6 +200,16 @@ class ExtendedOpenAIDebugPanel extends HTMLElement {
     return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(ms >= 10000 ? 1 : 2)} s`;
   }
 
+  _continuityLabel(run) {
+    if (run.continuity_resumed === true) return "Restored";
+    if (run.incoming_conversation_id
+      && run.resolved_conversation_id
+      && run.incoming_conversation_id === run.resolved_conversation_id) {
+      return "Continuing";
+    }
+    return run.resolved_conversation_id ? "New" : "—";
+  }
+
   _toast(message, error = false) {
     const toast = this.shadowRoot.querySelector("#toast");
     if (!toast) return;
@@ -239,7 +249,7 @@ class ExtendedOpenAIDebugPanel extends HTMLElement {
       <td>${this._number(run.provider_request_count)}</td>
       <td>${run.first_text_ms == null ? "—" : this._e(this._duration(run.first_text_ms))}</td>
       <td class="mono" title="${this._e(run.resolved_conversation_id || "")}">${this._e((run.resolved_conversation_id || "—").slice(0,22))}${(run.resolved_conversation_id || "").length > 22 ? "…" : ""}</td>
-      <td>${run.continuity_resumed === true ? "Resumed" : run.continuity_resumed === false ? "Fresh" : "—"}</td>
+      <td>${this._e(this._continuityLabel(run))}</td>
       <td>${run.successful === false ? this._e(run.error_type || "Failed") : "Success"}</td>
       <td><div class="actions"><button data-view="${this._e(run.debug_id)}">View</button><button data-copy="${this._e(run.debug_id)}">Copy entire log</button></div></td>
     </tr>`).join("");
@@ -254,7 +264,7 @@ class ExtendedOpenAIDebugPanel extends HTMLElement {
         <label>Request debugging<span class="switch-row"><input id="enabled" type="checkbox" ${status.enabled ? "checked" : ""} ${!this._agent ? "disabled" : ""}><span>${status.enabled ? "Enabled" : "Disabled"}</span></span></label>
         <button id="clear" class="danger" ${!this._agent || !status.count ? "disabled" : ""}>Clear captures</button>
       </div><p class="status">${status.enabled ? `Capturing the next requests · ${this._number(status.count)} of ${this._number(status.limit)} slots currently used.` : "Capture is off. Normal usage history remains content-free."}</p></section>
-      <section class="card"><div class="heading"><div><h2>Recent debug runs</h2><p>Times are measured locally. First text is relative to provider request dispatch.</p></div></div><div class="table-wrap"><table><thead><tr><th>Completed</th><th>Run</th><th>Input</th><th>Cached</th><th>Requests</th><th>First text</th><th>Conversation ID</th><th>Continuity</th><th>Result</th><th>Debug log</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : `<div class="empty">${status.enabled ? "No debug runs captured yet." : "Enable request debugging to capture future runs."}</div>`}</div></section>
+      <section class="card"><div class="heading"><div><h2>Recent debug runs</h2><p>Times are measured locally. First text is relative to provider request dispatch. Continuity shows whether the request started a new conversation, continued the incoming Home Assistant conversation, or restored integration-managed continuity.</p></div></div><div class="table-wrap"><table><thead><tr><th>Completed</th><th>Run</th><th>Input</th><th>Cached</th><th>Requests</th><th>First text</th><th>Conversation ID</th><th>Continuity</th><th>Result</th><th>Debug log</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : `<div class="empty">${status.enabled ? "No debug runs captured yet." : "Enable request debugging to capture future runs."}</div>`}</div></section>
     </main>
     <dialog id="debug-dialog"><div class="dialog-head"><h2 id="debug-dialog-title">Debug run</h2><button id="close-debug" aria-label="Close">Close</button></div><div class="dialog-body"><pre id="debug-json"></pre></div><div class="dialog-foot"><button id="copy-debug-log" class="primary" disabled>Copy entire debug log</button></div></dialog>
     <div id="toast" class="toast"></div>`;
