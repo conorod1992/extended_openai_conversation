@@ -176,7 +176,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   panel._page = "data-memory";
   panel._subsection = "conversations";
   await panel._loadSection();
-  assert.equal(calls.filter((call) => call.section === "scopes").length, 2);
+  assert.equal(calls.filter((call) => call.section === "scopes").length, 1);
 }
 
 {
