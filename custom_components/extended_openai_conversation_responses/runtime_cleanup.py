@@ -102,8 +102,8 @@ def latest_configured_function_tool(
     latest_data = (
         latest_subentry.data if latest_subentry is not None else agent.subentry.data
     )
-    current_configured: list[dict[str, Any]] = agent._configured_function_tools_from_data(
-        latest_data
+    current_configured: list[dict[str, Any]] = (
+        agent._configured_function_tools_from_data(latest_data)
     )
     current_tool = next(
         (
