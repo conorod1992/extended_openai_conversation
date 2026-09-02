@@ -16,6 +16,27 @@ from .const import (
 
 _RUNTIMES = "extended_openai_conversation_responses.function_group_runtimes"
 
+_AUTOMATIC_SPECIALIST_GROUPS: tuple[dict[str, Any], ...] = (
+    {
+        "id": "auto_history",
+        "name": "History & statistics",
+        "description": "Past entity states, long-term statistics, and energy data.",
+        "native_functions": frozenset({"get_history", "get_statistics", "get_energy"}),
+    },
+    {
+        "id": "auto_automation",
+        "name": "Automation creation",
+        "description": "Create Home Assistant automations.",
+        "native_functions": frozenset({"add_automation"}),
+    },
+    {
+        "id": "auto_broadcast",
+        "name": "Broadcast announcements",
+        "description": "Spoken Assist Satellite and whole-home announcements.",
+        "native_functions": frozenset({"send_broadcast"}),
+    },
+)
+
 
 @dataclass(slots=True)
 class FunctionGroupSession:
@@ -122,6 +143,56 @@ def _function_tool_available(tool: dict[str, Any]) -> bool:
     return True
 
 
+def _next_automatic_group_id(base_id: str, used_ids: set[str]) -> str:
+    """Choose a stable runtime-only group ID without colliding with user config."""
+    if base_id not in used_ids:
+        return base_id
+    suffix = 2
+    while f"{base_id}_{suffix}" in used_ids:
+        suffix += 1
+    return f"{base_id}_{suffix}"
+
+
+def _with_automatic_specialist_groups(
+    configured_tools: list[dict[str, Any]], groups: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Place known ungrouped specialist built-ins behind the existing loader."""
+    assigned_names = {
+        name for group in groups for name in group.get("functions", [])
+    }
+    used_ids = {str(group.get("id")) for group in groups}
+    automatic: list[dict[str, Any]] = []
+
+    for definition in _AUTOMATIC_SPECIALIST_GROUPS:
+        members: list[str] = []
+        native_functions = definition["native_functions"]
+        for tool in configured_tools:
+            spec_name = tool.get("spec", {}).get("name")
+            function_config = tool.get("function", {})
+            if (
+                isinstance(spec_name, str)
+                and spec_name not in assigned_names
+                and function_config.get("type") == "native"
+                and function_config.get("name") in native_functions
+            ):
+                members.append(spec_name)
+        if not members:
+            continue
+        group_id = _next_automatic_group_id(str(definition["id"]), used_ids)
+        used_ids.add(group_id)
+        automatic.append(
+            {
+                "id": group_id,
+                "name": definition["name"],
+                "description": definition["description"],
+                "loading_mode": FUNCTION_GROUP_LOADING_ON_DEMAND,
+                "functions": members,
+            }
+        )
+
+    return [*groups, *automatic]
+
+
 def build_loader_tool(groups: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the compact integration-owned group catalogue tool."""
     group_ids = [group["id"] for group in groups]
@@ -159,6 +230,7 @@ def assemble_function_tools(
     loaded_group_ids: set[str],
 ) -> FunctionToolAssembly:
     """Centralize the effective configured tool set for one provider request."""
+    groups = _with_automatic_specialist_groups(configured_tools, groups)
     groups_by_id = {group["id"]: group for group in groups}
     membership = {
         function_name: group for group in groups for function_name in group["functions"]
@@ -219,6 +291,8 @@ def load_function_groups(
     configured_tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Validate and apply one model-requested group load operation."""
+    if configured_tools is not None:
+        groups = _with_automatic_specialist_groups(configured_tools, groups)
     enabled_names = {
         tool["spec"]["name"]
         for tool in configured_tools or []
