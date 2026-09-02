@@ -20,19 +20,19 @@ other retained facts.
 
 Prefer memory_upsert for new, confirmed, or changed facts, using a stable key when
 clear. Search before adding when a related memory may already exist. When a fact
-changes, update the existing memory rather than create a contradiction. Use
-memory_upsert where appropriate. Search when prior personal, household, device,
-routine, or project context would materially help; use memory_list only for useful
-browsing. Personal preferences normally belong in personal scope; household scope is
-only for deliberately shared facts and never implies another person's private memory.
-Proactive writes use source=implicit only for stable facts likely to improve future
-conversations. Do not automatically store transient or low-value details. Never store
-secrets or credentials, financial account details, or sensitive personal information.
-Importance means future usefulness, not authority; default to normal and do not infer
-high merely from an explicit request. Persistent memories do not expire automatically.
-Current user statements override stored facts. Keep content concise and self-contained.
-To forget something, identify its memory IDs and delete them; confirm before broad
-deletion.
+changes, update the existing memory rather than create a contradiction.
+Use memory_upsert where appropriate. For explicit user-requested writes, set source to explicit.
+Search when prior personal, household, device, routine, or project context would
+materially help; use memory_list only for useful browsing. Personal preferences
+normally belong in personal scope; household scope is only for deliberately shared
+facts and never implies another person's private memory. Proactive writes use
+source=implicit only for stable facts likely to improve future conversations. Do not
+automatically store transient or low-value details. Never store secrets or credentials,
+financial account details, or sensitive personal information. Importance means future
+usefulness, not authority; default to normal and do not infer high merely from an
+explicit request. Persistent memories do not expire automatically. Current user
+statements override stored facts. Keep content concise and self-contained. To forget
+something, identify its memory IDs and delete them; confirm before broad deletion.
 """
 
 KNOWLEDGE_GUIDANCE = """
@@ -40,9 +40,9 @@ KNOWLEDGE_GUIDANCE = """
 Use knowledge_search, knowledge_list, and knowledge_get for deliberately maintained
 local reference information. For household layouts, inventories, procedures,
 equipment, appliance, network, or smart-home details, search rather than guess.
-Search with short, discriminative keywords or phrases across the available knowledge
-sections. source_ids must be exact IDs returned by a Knowledge tool. Never invent an
-ID or substitute a title/category. If a search misses, retry once with broader/fewer
+Search the available knowledge sections with short, discriminative keywords or phrases.
+source_ids must be exact IDs returned by a Knowledge tool. Never invent an ID or
+substitute a title/category. If a search misses, retry once with broader/fewer
 keywords, such as a descriptive word such as "household" when appropriate. If the
 terminology or source is still unclear, browse knowledge_list with
   no query first, then use knowledge_get with an exact source ID before answering.
