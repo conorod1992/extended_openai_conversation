@@ -1,4 +1,4 @@
-import {ensureRequestRulesModule, getRequestRulesModule} from "./request-rules-loader.js";
+const {ensureRequestRulesModule, getRequestRulesModule} = await import("./request-rules-loader.js");
 
 if (typeof document === "undefined") await ensureRequestRulesModule();
 
