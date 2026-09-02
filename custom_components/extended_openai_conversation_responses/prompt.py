@@ -14,7 +14,6 @@ from .capabilities import (
     resolve_effective_capabilities,
 )
 from .const import (
-    CONDITIONAL_CONTINUATION_PROMPT,
     CONF_ARCHIVE_ENABLED,
     CONF_CONTINUE_CONVERSATION,
     CONF_CURRENT_DATETIME_ENABLED,
@@ -32,24 +31,22 @@ from .const import (
     DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
     DEFAULT_PROMPT,
     DEFAULT_TEMPORARY_MEMORY,
-    KNOWLEDGE_PROMPT,
-    MEMORY_PROMPT,
     TEMPORARY_MEMORY_EAGER,
     TEMPORARY_MEMORY_OFF,
 )
-from .guest_mode import GUEST_MODE_PROMPT, GuestCapabilityPolicy
+from .guest_mode import GuestCapabilityPolicy
 from .memory import MemoryRecord, automatic_memory_enabled
+from .model_payload import (
+    ARCHIVE_GUIDANCE,
+    CONTINUATION_GUIDANCE,
+    GUEST_GUIDANCE,
+    KNOWLEDGE_GUIDANCE,
+    PERSISTENT_MEMORY_GUIDANCE,
+    RETRIEVED_DATA_SAFETY,
+    temporary_memory_guidance,
+)
 from .scope import resolve_data_scope
 from .temporary_memory import TemporaryMemoryRecord
-
-ARCHIVE_PROMPT = """
-## Retained conversation archive
-The local archive is separate from persistent memory. Search it only when the user
-clearly refers to a previous discussion. Results may be outdated or situational;
-mention relevant dates. Never turn archive text into a persistent memory unless the
-user separately asks. Privacy and deletion tools are deterministic backend actions:
-use them when the user asks not to save, to resume saving, or to delete this session.
-"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,12 +97,11 @@ def _render_template(
 
 
 def _persistent_memory_instructions(options: Any) -> str:
-    text = MEMORY_PROMPT
+    text = PERSISTENT_MEMORY_GUIDANCE
     if not automatic_memory_enabled(options):
         text += (
-            "\nAutomatic memory creation is disabled. Write memory only when "
-            "the user explicitly asks you to remember something. Use memory_upsert "
-            "where appropriate and set source to explicit.\n"
+            "\nAutomatic creation is disabled: write only when the user explicitly "
+            "asks, using memory_upsert with source=explicit.\n"
         )
     return text
 
@@ -158,33 +154,10 @@ def _persistent_memory_context(memories: list[MemoryRecord]) -> str:
 
 
 def _temporary_memory_instructions(time_zone: str, mode: str) -> str:
-    retention_guidance = (
-        "You should proactively store useful short-lived facts whenever they "
-        "have a plausible chance of being relevant again before expiry. When "
-        "uncertain whether a non-sensitive, non-trivial temporary fact is "
-        "worth retaining, prefer storing it. Normally retain travel or visits "
-        "later today or this weekend; upcoming appointments, events, or visits; "
-        "a film or show the user is currently watching; an ongoing short-lived "
-        "task or project; and a temporary household issue in progress."
-        if mode == TEMPORARY_MEMORY_EAGER
-        else "Store a temporary fact when it has clear near-term usefulness."
+    return temporary_memory_guidance(
+        time_zone,
+        eager=mode == TEMPORARY_MEMORY_EAGER,
     )
-    return f"""
-
-## Temporary memory
-Silently store concise facts expected to stop being true according to this mode:
-{retention_guidance} Infer a useful approximate expiry from ordinary
-language instead of asking unnecessary clarification. Use Home Assistant local time
-({time_zone}) and include a timezone offset in expires_at. For
-"today" use the end of today; for "this weekend" use the end of Sunday; for an
-ongoing meal, film, or task use a reasonable few hours. Explicit durations and dates
-take precedence. Do not automatically store secrets, sensitive information, trivial
-fragments, low-value conversational filler, or facts better suited to persistent
-memory. Do not announce automatic temporary-memory actions. Update or remove an
-existing temporary memory when later information supersedes it. Prefer temporary
-memory over persistent memory for facts expected to expire, and do not create both by
-default.
-"""
 
 
 def _temporary_memory_context(memories: list[TemporaryMemoryRecord]) -> str:
@@ -228,6 +201,13 @@ def _prompt_memory_scope_available(options: Any, user_input: Any) -> bool:
     return persistent_memory_scope_available(options, scope)
 
 
+def _with_retrieved_data_safety(text: str, include: bool) -> str:
+    """Attach shared retrieval-safety wording once across enabled subsystems."""
+    if not include:
+        return text
+    return f"{text.rstrip()}\n\n{RETRIEVED_DATA_SAFETY}\n"
+
+
 def render_effective_prompt(
     hass: Any,
     options: Any,
@@ -261,13 +241,14 @@ def render_effective_prompt(
         memory_scope_available=memory_scope_available,
         guest_policy=policy,
     )
+    retrieval_safety_added = False
 
     if policy.guest_active:
         sections.append(
             PromptSection(
                 "guest_mode",
                 "Guest Mode",
-                GUEST_MODE_PROMPT,
+                GUEST_GUIDANCE,
                 "stable",
             )
         )
@@ -277,10 +258,14 @@ def render_effective_prompt(
             PromptSection(
                 "persistent_memory_instructions",
                 "Persistent-memory instructions",
-                _persistent_memory_instructions(options),
+                _with_retrieved_data_safety(
+                    _persistent_memory_instructions(options),
+                    not retrieval_safety_added,
+                ),
                 "stable",
             )
         )
+        retrieval_safety_added = True
 
     temporary_mode = options.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
     if temporary_mode != TEMPORARY_MEMORY_OFF and policy.temporary_memory:
@@ -288,20 +273,30 @@ def render_effective_prompt(
             PromptSection(
                 "temporary_memory_instructions",
                 "Temporary-memory instructions",
-                _temporary_memory_instructions(hass.config.time_zone, temporary_mode),
+                _with_retrieved_data_safety(
+                    _temporary_memory_instructions(
+                        hass.config.time_zone, temporary_mode
+                    ),
+                    not retrieval_safety_added,
+                ),
                 "stable",
             )
         )
+        retrieval_safety_added = True
 
     if knowledge_available and policy.knowledge_access:
         sections.append(
             PromptSection(
                 "knowledge_instructions",
                 "Knowledge Library instructions",
-                KNOWLEDGE_PROMPT,
+                _with_retrieved_data_safety(
+                    KNOWLEDGE_GUIDANCE,
+                    not retrieval_safety_added,
+                ),
                 "stable",
             )
         )
+        retrieval_safety_added = True
 
     if (
         options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
@@ -311,7 +306,10 @@ def render_effective_prompt(
             PromptSection(
                 "archive_instructions",
                 "Conversation-archive instructions",
-                ARCHIVE_PROMPT,
+                _with_retrieved_data_safety(
+                    ARCHIVE_GUIDANCE,
+                    not retrieval_safety_added,
+                ),
                 "stable",
             )
         )
@@ -324,7 +322,7 @@ def render_effective_prompt(
             PromptSection(
                 "conditional_continuation_instructions",
                 "Conditional-continuation instructions",
-                CONDITIONAL_CONTINUATION_PROMPT,
+                CONTINUATION_GUIDANCE,
                 "stable",
             )
         )
