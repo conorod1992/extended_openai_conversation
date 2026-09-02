@@ -150,7 +150,7 @@ async def async_setup_entry(
     except OpenAIError as err:
         raise ConfigEntryNotReady(err) from err
 
-    entry.runtime_data = DebugOpenAIClientProxy(client)
+    entry.runtime_data = DebugOpenAIClientProxy(client)  # type: ignore[assignment]
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     try:
