@@ -1,3 +1,5 @@
+import "./management-state-safety.js";
+
 let implementation = null;
 let loadPromise = null;
 
