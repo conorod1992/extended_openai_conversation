@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import asdict
@@ -240,10 +241,8 @@ def _install_memory_prefetch() -> None:
         except BaseException:
             if existing is None and task is not None:
                 task.cancel()
-                try:
+                with suppress(BaseException):
                     await task
-                except BaseException:
-                    pass
                 _TEMPORARY_MEMORY_PREFETCH.set(None)
             raise
 
