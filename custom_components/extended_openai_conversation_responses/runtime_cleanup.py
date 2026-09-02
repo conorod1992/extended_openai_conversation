@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.exceptions import HomeAssistantError
 
@@ -125,7 +125,7 @@ def _request_options(
     options = kwargs.get("request_options")
     if options is None and len(positional_tail) > 6:
         options = positional_tail[6]
-    return options or agent.subentry.data
+    return cast(Mapping[str, Any], options or agent.subentry.data)
 
 
 def _assert_tool_loop_completed(chat_log: Any, max_iterations: int) -> None:
@@ -238,7 +238,7 @@ def install_runtime_cleanup() -> None:
         def base_factory() -> list[dict[str, Any]]:
             if original_factory is None:
                 return list(function_tools)
-            return original_factory()
+            return cast(list[dict[str, Any]], original_factory())
 
         def budgeted_factory() -> list[dict[str, Any]]:
             return _budgeted_function_tools(budget, base_factory)
