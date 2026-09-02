@@ -20,8 +20,11 @@ function dialogState(dialog) {
 
 export function dialogHasUnsavedChanges(dialog, baseline, toolInitialYaml = null) {
   if (!dialog) return false;
-  if (dialog.id === "tool-dialog" && typeof toolInitialYaml === "string") {
-    return dialog.querySelector("#tool-yaml")?.value !== toolInitialYaml;
+  if (dialog.id === "tool-dialog") {
+    if (dialog.querySelector("#tool-error")?.textContent === "Loading editor...") return false;
+    if (typeof toolInitialYaml === "string") {
+      return dialog.querySelector("#tool-yaml")?.value !== toolInitialYaml;
+    }
   }
   return Array.isArray(baseline) && !same(dialogState(dialog), baseline);
 }
