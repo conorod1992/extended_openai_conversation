@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (X.Y.Z)"
+        required: true
+        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Validate target release version
+        id: version
+        env:
+          TARGET_VERSION: ${{ inputs.version }}
+        run: |
+          CURRENT_VERSION="$(python scripts/set_release_version.py --check)"
+          python - "$CURRENT_VERSION" "$TARGET_VERSION" <<'PY'
+          import re
+          import sys
+
+          current, target = sys.argv[1:3]
+          pattern = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+          if not pattern.fullmatch(target):
+              raise SystemExit(f"Release version must use X.Y.Z format, got {target!r}")
+          if not pattern.fullmatch(current):
+              raise SystemExit(f"Current tracked version is not X.Y.Z: {current!r}")
+          if tuple(map(int, target.split("."))) < tuple(map(int, current.split("."))):
+              raise SystemExit(
+                  f"Release version {target} cannot be older than tracked version {current}"
+              )
+          PY
+          echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=$TARGET_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release does not already exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_VERSION: ${{ steps.version.outputs.current_version }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "Tag $VERSION already exists"
+            exit 1
+          fi
+
+          LATEST_RELEASE="$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          if [[ -n "$LATEST_RELEASE" ]]; then
+            python - "$LATEST_RELEASE" "$CURRENT_VERSION" "$VERSION" <<'PY'
+          import re
+          import sys
+
+          latest, current, target = sys.argv[1:4]
+          pattern = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+          for label, value in (("latest release", latest), ("tracked version", current), ("target", target)):
+              if not pattern.fullmatch(value):
+                  raise SystemExit(f"{label} is not X.Y.Z: {value!r}")
+          key = lambda value: tuple(map(int, value.split(".")))
+          if key(current) < key(latest):
+              raise SystemExit(
+                  f"Tracked version {current} is older than latest published release {latest}"
+              )
+          if key(target) <= key(latest):
+              raise SystemExit(
+                  f"Release version {target} must be newer than latest published release {latest}"
+              )
+          PY
+          fi
+
+      - name: Capture checked-out source commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Stage target version
+        run: |
+          python scripts/set_release_version.py "${{ steps.version.outputs.version }}"
+          python scripts/set_release_version.py --check
+          git diff --check
+
+      - name: Refuse to publish from stale develop
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          git fetch origin develop
+          DEVELOP_SHA="$(git rev-parse origin/develop)"
+          if [[ "$DEVELOP_SHA" != "$SOURCE_SHA" ]]; then
+            echo "develop moved from $SOURCE_SHA to $DEVELOP_SHA while the release was being prepared"
+            echo "No version bump or release has been published. Re-run from current develop."
+            exit 1
+          fi
+
+      - name: Commit release version if needed
+        id: release_commit
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/extended_openai_conversation_responses/manifest.json
+          if git diff --cached --quiet; then
+            echo "Version $VERSION is already staged in the manifest; releasing the checked-out commit."
+            echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "chore: bump version to $VERSION"
+            git push origin HEAD:develop
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_SHA: ${{ steps.release_commit.outputs.sha }}
+        run: |
+          gh release create "$VERSION" \
+            --target "$RELEASE_SHA" \
+            --title "$VERSION" \
+            --generate-notes
