@@ -13,15 +13,56 @@ function viewAssetPromise(view) {
   return null;
 }
 
+function fieldErrorKey(key) {
+  return key === "title" ? "__title" : key;
+}
+
 function showErrors(panel, errors = {}) {
   const root = panel.shadowRoot;
   root.querySelectorAll(".field-error").forEach((item) => { item.textContent = ""; });
   Object.entries(errors).forEach(([key, message]) => {
-    const escaped = CSS.escape(key);
-    const fallback = CSS.escape(key.split("[")[0]);
+    const mappedKey = fieldErrorKey(key);
+    const escaped = CSS.escape(mappedKey);
+    const fallback = CSS.escape(fieldErrorKey(key.split("[")[0]));
     const target = root.querySelector(`[data-error="${escaped}"]`) || root.querySelector(`[data-error="${fallback}"]`);
     if (target) target.textContent = message;
   });
+}
+
+function normalizeGuestModeTimestamp(value) {
+  if (typeof value !== "string" || !value) return value;
+  if (/(?:z|[+-]\d{2}:\d{2})$/i.test(value)) return value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+}
+
+function validatedImportMatches(validatedDocument, currentDocument) {
+  return typeof validatedDocument === "string" && validatedDocument === currentDocument;
+}
+
+function setControlPending(panel, control, pending) {
+  if (!control) return;
+  if (control.tagName === "BUTTON" && typeof panel._setSaving === "function") {
+    panel._setSaving(control, pending);
+    return;
+  }
+  control.disabled = pending;
+}
+
+async function runFrontendMutation(panel, control, label, operation) {
+  if (!control || control.dataset?.eocMutationPending === "true") return false;
+  control.dataset.eocMutationPending = "true";
+  setControlPending(panel, control, true);
+  try {
+    await operation();
+    return true;
+  } catch (err) {
+    panel._toast(`Unable to ${label}: ${err.message || String(err)}`, true);
+    return false;
+  } finally {
+    delete control.dataset.eocMutationPending;
+    setControlPending(panel, control, false);
+  }
 }
 
 async function saveConfiguration(panel, button) {
@@ -65,6 +106,158 @@ function bindSingleRequestSave(panel) {
     event.preventDefault();
     event.stopImmediatePropagation();
     void saveConfiguration(panel, button);
+  }, true);
+}
+
+function ruleSensitivityValue(value) {
+  return value === "Conservative" ? 94 : value === "Tolerant" ? 84 : 90;
+}
+
+function bindFrontendCorrectness(panel) {
+  const root = panel.shadowRoot;
+  if (root.__eocFrontendCorrectnessBound) return;
+  root.__eocFrontendCorrectnessBound = true;
+
+  root.addEventListener("input", (event) => {
+    const input = event.target;
+    if (input?.id !== "import-document") return;
+    const hadPreview = typeof panel._importDocument === "string";
+    panel._importDocument = null;
+    const apply = root.querySelector("#import-apply");
+    if (apply) apply.disabled = true;
+    if (hadPreview) {
+      const summary = root.querySelector("#import-summary");
+      if (summary) summary.textContent = "Document changed. Validate & preview again before importing.";
+    }
+  }, true);
+
+  root.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("button");
+    if (!button) return;
+
+    if (button.id === "import-preview") {
+      panel._importDocument = null;
+      const apply = root.querySelector("#import-apply");
+      if (apply) apply.disabled = true;
+      return;
+    }
+
+    if (button.id === "import-apply") {
+      const current = root.querySelector("#import-document")?.value ?? "";
+      if (validatedImportMatches(panel._importDocument, current)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      button.disabled = true;
+      panel._toast("Validate & preview the current import document before importing it", true);
+      return;
+    }
+
+    if (button.id === "guest-policy-save") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void (async () => {
+        const saved = await runFrontendMutation(panel, button, "save Guest policy", async () => {
+          await panel._call("guest_mode", "save_policy", {config: clone(panel._guestDraft || {})});
+        });
+        if (!saved) return;
+        await panel._loadSection(true);
+        panel._toast("Guest policy saved");
+      })();
+      return;
+    }
+
+    if (button.classList.contains("rule-duplicate")) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void (async () => {
+        const saved = await runFrontendMutation(panel, button, "duplicate Request Rule", () =>
+          panel._call("request_rules", "duplicate", {rule_id: button.dataset.id})
+        );
+        if (saved) await panel._loadSection();
+      })();
+      return;
+    }
+
+    if (button.classList.contains("rule-delete")) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void (async () => {
+        if (!await panel._confirm("Delete Request Rule?", "This cannot be undone.", "Delete")) return;
+        const saved = await runFrontendMutation(panel, button, "delete Request Rule", () =>
+          panel._call("request_rules", "delete", {rule_id: button.dataset.id, confirm: true})
+        );
+        if (saved) await panel._loadSection();
+      })();
+      return;
+    }
+
+    if (button.id === "rules-default-save") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void (async () => {
+        const saved = await runFrontendMutation(panel, button, "save Request Rule defaults", () =>
+          panel._call("request_rules", "defaults", {
+            defaults: {
+              word_forms: root.querySelector("#rules-default-word-forms").checked,
+              wording_alternatives: root.querySelector("#rules-default-wording").checked,
+              fuzzy: root.querySelector("#rules-default-fuzzy").checked,
+              fuzzy_threshold: ruleSensitivityValue(root.querySelector("#rules-default-threshold").value),
+            },
+          })
+        );
+        if (saved) await panel._loadSection();
+      })();
+      return;
+    }
+
+    if (button.id === "wording-save") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void (async () => {
+        const wordingGroups = [...root.querySelectorAll(".wording-group")].map((row) => ({
+          canonical: row.querySelector(".wording-canonical").value.trim(),
+          alternatives: row.querySelector(".wording-alternatives").value
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean),
+        }));
+        const saved = await runFrontendMutation(panel, button, "save wording alternatives", () =>
+          panel._call("request_rules", "wording_groups", {wording_groups: wordingGroups})
+        );
+        if (saved) await panel._loadSection();
+      })();
+    }
+  }, true);
+
+  root.addEventListener("change", (event) => {
+    const input = event.target;
+    if (!input?.classList?.contains("rule-enabled")) return;
+    event.stopImmediatePropagation();
+    const previous = !input.checked;
+    void (async () => {
+      const rule = (panel._result?.rules || []).find((item) => item.id === input.dataset.id);
+      if (!rule) {
+        input.checked = previous;
+        return;
+      }
+      const saved = await runFrontendMutation(panel, input, "update Request Rule", () =>
+        panel._call("request_rules", "update", {
+          rule_id: rule.id,
+          rule: {...rule, enabled: input.checked, sensitive_matching_warning: undefined},
+        })
+      );
+      if (!saved) {
+        input.checked = previous;
+        return;
+      }
+      await panel._loadSection(true);
+    })();
+  }, true);
+
+  root.addEventListener("submit", (event) => {
+    if (event.target?.id !== "rule-form" || !panel._eocRuleSavePromise) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
   }, true);
 }
 
@@ -130,6 +323,34 @@ function install() {
   const prototype = Panel.prototype;
   prototype[PATCHED] = true;
 
+  const originalCall = prototype._call;
+  prototype._call = function(section, action, extra = {}) {
+    let payload = extra;
+    if (section === "guest_mode" && action === "update") {
+      payload = {...extra};
+      for (const key of ["active_from", "active_until"]) {
+        if (payload[key]) payload[key] = normalizeGuestModeTimestamp(payload[key]);
+      }
+    }
+
+    const ruleDialog = this.shadowRoot?.querySelector?.("#rule-dialog");
+    const ruleSave = section === "request_rules"
+      && ["create", "update"].includes(action)
+      && ruleDialog?.open;
+    if (!ruleSave) return originalCall.call(this, section, action, payload);
+    if (this._eocRuleSavePromise) return this._eocRuleSavePromise;
+
+    const button = this.shadowRoot.querySelector("#rule-save");
+    setControlPending(this, button, true);
+    const request = Promise.resolve().then(() => originalCall.call(this, section, action, payload));
+    const tracked = request.finally(() => {
+      setControlPending(this, button, false);
+      if (this._eocRuleSavePromise === tracked) this._eocRuleSavePromise = null;
+    });
+    this._eocRuleSavePromise = tracked;
+    return tracked;
+  };
+
   const originalCanAccessView = prototype._canAccessView;
   prototype._canAccessView = function(page, subsection = null) {
     if (page === "usage-maintenance" && subsection === "request-debug") {
@@ -194,6 +415,7 @@ function install() {
   prototype._render = function(...args) {
     const result = originalRender.apply(this, args);
     bindSingleRequestSave(this);
+    bindFrontendCorrectness(this);
     return result;
   };
 
@@ -207,4 +429,11 @@ if (typeof customElements !== "undefined") {
   customElements.whenDefined("extended-openai-management-panel").then(install);
 }
 
-export {SCOPE_CACHE_TTL_MS, loadSectionAfterAsset};
+export {
+  SCOPE_CACHE_TTL_MS,
+  fieldErrorKey,
+  loadSectionAfterAsset,
+  normalizeGuestModeTimestamp,
+  runFrontendMutation,
+  validatedImportMatches,
+};
