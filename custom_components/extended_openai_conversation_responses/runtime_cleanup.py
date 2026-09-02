@@ -7,6 +7,7 @@ Mode or expose newly loaded Function Groups between provider rounds.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
@@ -51,7 +52,7 @@ def _snapshot_key(
 def _request_function_tools(
     agent: Any,
     conversation_module: Any,
-    factory: Any,
+    factory: Callable[[], list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
     """Reuse one assembly until Guest policy or loaded Function Groups change."""
     # Outside a live request there is no request-stable Guest policy, so keep the
@@ -101,7 +102,9 @@ def latest_configured_function_tool(
     latest_data = (
         latest_subentry.data if latest_subentry is not None else agent.subentry.data
     )
-    current_configured = agent._configured_function_tools_from_data(latest_data)
+    current_configured: list[dict[str, Any]] = agent._configured_function_tools_from_data(
+        latest_data
+    )
     current_tool = next(
         (
             tool
