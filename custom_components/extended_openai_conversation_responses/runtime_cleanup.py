@@ -7,11 +7,18 @@ Mode or expose newly loaded Function Groups between provider rounds.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any
+from typing import Any, cast
+
+from homeassistant.exceptions import HomeAssistantError
+
+from .const import (
+    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+)
 
 _INTEGRATION_TOOL_TYPES = {
     "guest_mode",
@@ -32,8 +39,33 @@ class FunctionToolsSnapshot:
     tools: tuple[dict[str, Any], ...]
 
 
+@dataclass(slots=True)
+class FunctionCallBudget:
+    """Request-local ceiling for model-requested function executions."""
+
+    limit: int
+    used: int = 0
+
+    @property
+    def exhausted(self) -> bool:
+        """Return whether no further function execution is permitted."""
+        return self.limit >= 0 and self.used >= self.limit
+
+    def claim(self, tool_name: str) -> None:
+        """Claim one execution slot or fail before an over-budget tool can run."""
+        if self.exhausted:
+            raise HomeAssistantError(
+                f"Function call limit of {self.limit} reached; refusing to execute "
+                f"additional tool `{tool_name}`"
+            )
+        self.used += 1
+
+
 _ACTIVE_FUNCTION_TOOLS_SNAPSHOT: ContextVar[FunctionToolsSnapshot | None] = ContextVar(
     "extended_openai_function_tools_snapshot", default=None
+)
+_ACTIVE_FUNCTION_CALL_BUDGET: ContextVar[FunctionCallBudget | None] = ContextVar(
+    "extended_openai_function_call_budget", default=None
 )
 
 
@@ -74,6 +106,41 @@ def _request_function_tools(
     final_key = _snapshot_key(agent, conversation_module)
     _ACTIVE_FUNCTION_TOOLS_SNAPSHOT.set(FunctionToolsSnapshot(final_key, tuple(tools)))
     return tools
+
+
+def _budgeted_function_tools(
+    budget: FunctionCallBudget,
+    factory: Callable[[], list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Stop advertising ordinary functions once the actual execution cap is used."""
+    if budget.exhausted:
+        return []
+    return factory()
+
+
+def _request_options(
+    agent: Any, positional_tail: list[Any], kwargs: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """Resolve request options using the base handler's existing fallback rules."""
+    options = kwargs.get("request_options")
+    if options is None and len(positional_tail) > 6:
+        options = positional_tail[6]
+    return cast(Mapping[str, Any], options or agent.subentry.data)
+
+
+def _assert_tool_loop_completed(chat_log: Any, max_iterations: int) -> None:
+    """Turn hard-loop exhaustion into an explicit failure instead of fall-through."""
+    outstanding = chat_log.unresponded_tool_results
+    if not outstanding:
+        return
+    try:
+        count = len(outstanding)
+    except TypeError:
+        count = 1
+    raise HomeAssistantError(
+        "Provider tool loop exceeded the safety limit of "
+        f"{max_iterations} requests with {count} unresolved tool result(s)"
+    )
 
 
 def latest_configured_function_tool(
@@ -117,16 +184,18 @@ def latest_configured_function_tool(
 
 
 def install_runtime_cleanup() -> None:
-    """Install request-local tool reuse and current-definition execution once."""
+    """Install request-local tool reuse and execution hardening once."""
     global _INSTALLED
     if _INSTALLED:
         return
     _INSTALLED = True
 
     from . import conversation
+    from .entity import MAX_TOOL_ITERATIONS
 
     entity_class = conversation.ExtendedOpenAIAgentEntity
     original_process = entity_class._async_process
+    original_handle_chat_log = entity_class._async_handle_chat_log
     original_get_function_tools = entity_class._get_function_tools
     original_execute_function_tool = entity_class._execute_function_tool
 
@@ -137,6 +206,64 @@ def install_runtime_cleanup() -> None:
             return await original_process(self, user_input)
         finally:
             _ACTIVE_FUNCTION_TOOLS_SNAPSHOT.reset(token)
+
+    @wraps(original_handle_chat_log)
+    async def handle_chat_log_with_function_budget(
+        self: Any,
+        chat_log: Any,
+        function_tools: list[dict[str, Any]],
+        exposed_entities: list[dict[str, Any]],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        positional_tail = list(args)
+        call_kwargs = dict(kwargs)
+        options = _request_options(self, positional_tail, call_kwargs)
+        budget = FunctionCallBudget(
+            int(
+                options.get(
+                    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                )
+            )
+        )
+
+        if "function_tools_factory" in call_kwargs:
+            original_factory = call_kwargs["function_tools_factory"]
+        elif len(positional_tail) > 4:
+            original_factory = positional_tail[4]
+        else:
+            original_factory = None
+
+        def base_factory() -> list[dict[str, Any]]:
+            if original_factory is None:
+                return list(function_tools)
+            return cast(list[dict[str, Any]], original_factory())
+
+        def budgeted_factory() -> list[dict[str, Any]]:
+            return _budgeted_function_tools(budget, base_factory)
+
+        if "function_tools_factory" in call_kwargs:
+            call_kwargs["function_tools_factory"] = budgeted_factory
+        elif len(positional_tail) > 4:
+            positional_tail[4] = budgeted_factory
+        else:
+            call_kwargs["function_tools_factory"] = budgeted_factory
+
+        token = _ACTIVE_FUNCTION_CALL_BUDGET.set(budget)
+        try:
+            result = await original_handle_chat_log(
+                self,
+                chat_log,
+                function_tools,
+                exposed_entities,
+                *positional_tail,
+                **call_kwargs,
+            )
+            _assert_tool_loop_completed(chat_log, MAX_TOOL_ITERATIONS)
+            return result
+        finally:
+            _ACTIVE_FUNCTION_CALL_BUDGET.reset(token)
 
     @wraps(original_get_function_tools)
     def get_function_tools_cached(self: Any) -> list[dict[str, Any]]:
@@ -154,6 +281,12 @@ def install_runtime_cleanup() -> None:
         llm_context: Any,
         exposed_entities: list[dict[str, Any]],
     ) -> Any:
+        budget = _ACTIVE_FUNCTION_CALL_BUDGET.get()
+        if budget is not None:
+            # Loader/finalizer calls are removed by _async_handle_chat_log before
+            # this execution seam, so only real model-requested functions consume
+            # the configured conversation budget.
+            budget.claim(str(tool_input.tool_name))
         current_tool = latest_configured_function_tool(self, function_tool)
         return await original_execute_function_tool(
             self,
@@ -164,5 +297,6 @@ def install_runtime_cleanup() -> None:
         )
 
     entity_class._async_process = process_with_fresh_tool_snapshot  # type: ignore[method-assign]
+    entity_class._async_handle_chat_log = handle_chat_log_with_function_budget  # type: ignore[method-assign]
     entity_class._get_function_tools = get_function_tools_cached  # type: ignore[method-assign]
     entity_class._execute_function_tool = execute_latest_function_tool  # type: ignore[method-assign]
