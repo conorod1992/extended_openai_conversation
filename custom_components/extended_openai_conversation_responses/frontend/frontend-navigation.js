@@ -1,3 +1,5 @@
+if (typeof customElements !== "undefined") import("./debug-management.js");
+
 export const NAVIGATION = [
   {id: "overview", label: "Overview", path: "/extended-openai/overview", sections: []},
   {id: "guide", label: "Guide", path: "/extended-openai/guide", sections: []},
@@ -23,6 +25,7 @@ export const NAVIGATION = [
   ]},
   {id: "usage-maintenance", label: "Usage & Maintenance", path: "/extended-openai/usage-maintenance/usage", sections: [
     {id: "usage", label: "Usage", description: "Review token usage and recent runs."},
+    {id: "request-debug", label: "Request debugging", description: "Capture and inspect complete recent provider requests."},
     {id: "backup-restore", label: "Backup & Restore", description: "Create or restore a private agent backup."},
     {id: "diagnostics", label: "Diagnostics", description: "Test the provider and inspect the selected agent."},
     {id: "retention", label: "Retention & maintenance", description: "Control detailed usage retention and cleanup."},
@@ -56,6 +59,7 @@ export const SETTINGS_INDEX = [
   {label: "Request Rules", description: "Fast local voice commands and model routing.", terms: "phrases matching fuzzy synonyms local commands model reasoning", page: "capabilities", section: "request-rules"},
   {label: "Guest Mode", description: "Schedule visitor restrictions and select excluded access.", terms: "guest labels areas domains entities knowledge functions", page: "capabilities", section: "guest-mode"},
   {label: "Conversation archive", description: "Retained history and archive search settings.", terms: "archive history retention session", page: "data-memory", section: "conversations", target: "config-archive"},
+  {label: "Request debugging", description: "Capture full recent request material for troubleshooting.", terms: "debug request prompt cache timing logs diagnostics", page: "usage-maintenance", section: "request-debug"},
   {label: "Usage retention", description: "Retention for detailed requests and runs.", terms: "usage cleanup maintenance", page: "usage-maintenance", section: "retention", target: "config-retention"},
   {label: "Backup & Restore", description: "Create or restore a full private backup.", terms: "backup export import disaster recovery", page: "usage-maintenance", section: "backup-restore", target: "config-backup"},
 ];
@@ -91,6 +95,7 @@ export function shouldShowGlobalSettingsSearch(page, subsection = null) {
     "usage-maintenance/backup-restore",
     "usage-maintenance/retention",
     "usage-maintenance/diagnostics",
+    "usage-maintenance/request-debug",
   ].includes(view);
 }
 

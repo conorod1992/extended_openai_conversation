@@ -534,7 +534,7 @@ LEGACY_CONTEXT_TRUNCATE_STRATEGY = CONTEXT_TRUNCATE_CLEAR
 
 # Service Tier options (for GPT-5 models)
 CONF_SERVICE_TIER = "service_tier"
-DEFAULT_SERVICE_TIER = "flex"
+DEFAULT_SERVICE_TIER = "default"
 SERVICE_TIER_OPTIONS = ["auto", "default", "flex", "priority"]
 
 # Reasoning Effort options (for o1, o3, o4, gpt-5 models)

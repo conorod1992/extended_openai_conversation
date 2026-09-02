@@ -8,6 +8,7 @@ from copy import deepcopy
 from typing import Any
 
 from .knowledge import KnowledgeLibrary
+from .lifecycle_optimizations import install_lifecycle_optimizations
 from .memory import PersistentMemory
 from .request_rules import DEFAULT_MATCHING, DEFAULT_WORDING_GROUPS, RequestRules
 from .runtime_hardening import install_runtime_hardening
@@ -51,6 +52,7 @@ def install_persistence_transactions() -> None:
     )
     install_runtime_hardening()
     install_safety_hardening()
+    install_lifecycle_optimizations()
 
 
 def _install_manager_guard(

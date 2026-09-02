@@ -1,4 +1,4 @@
-"""Administrator UI/API for opt-in full request debugging."""
+"""Administrator API and frontend modules for opt-in full request debugging."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.components import panel_custom, websocket_api
+from homeassistant.components import websocket_api
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -17,8 +17,6 @@ from .const import DOMAIN
 from .debug import get_debug_manager
 
 DEBUG_WS_COMMAND = f"{DOMAIN}/request_debug"
-DEBUG_PANEL_URL = "extended-openai-request-debug"
-DEBUG_PANEL_TITLE = "Extended OpenAI Debug"
 _DEBUG_UI_SETUP = f"{DOMAIN}.request_debug_ui_setup"
 
 
@@ -114,27 +112,19 @@ async def websocket_request_debug(
 
 
 async def async_setup_debug_ui(hass: HomeAssistant) -> None:
-    """Register the admin-only request-debug panel and websocket API."""
+    """Register request-debug API/modules used by Usage & Maintenance."""
     if hass.data.get(_DEBUG_UI_SETUP):
         return
     hass.data[_DEBUG_UI_SETUP] = True
-    frontend_file = Path(__file__).parent / "frontend" / "debug-panel.js"
+    frontend_dir = Path(__file__).parent / "frontend"
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
-                f"/{DOMAIN}/debug-panel.js",
-                str(frontend_file),
+                f"/{DOMAIN}/{module_name}",
+                str(frontend_dir / module_name),
                 cache_headers=False,
             )
+            for module_name in ("debug-panel.js", "debug-management.js")
         ]
     )
     websocket_api.async_register_command(hass, websocket_request_debug)
-    await panel_custom.async_register_panel(
-        hass,
-        webcomponent_name="extended-openai-debug-panel",
-        frontend_url_path=DEBUG_PANEL_URL,
-        module_url=f"/{DOMAIN}/debug-panel.js",
-        sidebar_title=DEBUG_PANEL_TITLE,
-        sidebar_icon="mdi:bug-outline",
-        require_admin=True,
-    )
