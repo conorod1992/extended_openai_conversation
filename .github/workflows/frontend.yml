@@ -4,12 +4,18 @@ on:
   pull_request:
     paths:
       - "frontend/**"
+      - "custom_components/extended_openai_conversation_responses/frontend/**"
+      - "tests/*frontend*.test.mjs"
+      - "tests/management-performance-ui.test.mjs"
       - ".github/workflows/frontend.yml"
   push:
     branches:
       - develop
     paths:
       - "frontend/**"
+      - "custom_components/extended_openai_conversation_responses/frontend/**"
+      - "tests/*frontend*.test.mjs"
+      - "tests/management-performance-ui.test.mjs"
       - ".github/workflows/frontend.yml"
 
 concurrency:
@@ -32,6 +38,11 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm install --no-audit --no-fund
+
+      - name: Check shipped frontend modules
+        run: |
+          node --check custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js
+          node --check custom_components/extended_openai_conversation_responses/frontend/management-rendering-performance.js
 
       - name: Type check
         working-directory: frontend
