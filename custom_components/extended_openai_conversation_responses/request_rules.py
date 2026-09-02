@@ -302,6 +302,7 @@ class RequestRules:
         """Select one deterministic winner, using fuzzy only as a fallback."""
         deterministic: list[tuple[tuple[int, int, int], RuleMatch]] = []
         fuzzy: list[tuple[tuple[float, int, int], RuleMatch]] = []
+        normalized_candidates: dict[tuple[bool, bool], str] = {}
         rank = {
             "equals": 5,
             "sentence_pattern": 4,
@@ -310,11 +311,17 @@ class RequestRules:
             "contains": 1,
         }
         for rule, settings, phrases in self._compiled:
-            candidate = (
-                ""
-                if rule["match_type"] == "sentence_pattern"
-                else normalize_text(text, settings, self._wording_groups)
-            )
+            if rule["match_type"] == "sentence_pattern":
+                candidate = ""
+            else:
+                normalization_key = (
+                    bool(settings.get("word_forms")),
+                    bool(settings.get("wording_alternatives")),
+                )
+                candidate = normalized_candidates.get(normalization_key)
+                if candidate is None:
+                    candidate = normalize_text(text, settings, self._wording_groups)
+                    normalized_candidates[normalization_key] = candidate
             for compiled in phrases:
                 if compiled.sentence is not None:
                     if compiled.slot_pattern is not None:
