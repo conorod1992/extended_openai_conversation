@@ -8,7 +8,6 @@ from copy import deepcopy
 from dataclasses import asdict
 from datetime import timedelta
 import logging
-from types import MappingProxyType
 from typing import Any
 
 from homeassistant.util import dt as dt_util
@@ -23,7 +22,7 @@ _INSTALLED = False
 
 
 def install_lifecycle_optimizations() -> None:
-    """Install bounded persistence, archive, memory, and default optimizations."""
+    """Install bounded persistence, archive, memory, and debug optimizations."""
     global _INSTALLED
     if _INSTALLED:
         return
@@ -31,7 +30,6 @@ def install_lifecycle_optimizations() -> None:
     _install_usage_persistence()
     _install_archive_fast_path()
     _install_memory_prefetch()
-    _install_service_tier_default()
     _install_debug_summary_fields()
     _INSTALLED = True
 
@@ -178,20 +176,49 @@ def _install_usage_persistence() -> None:
 
 
 def _install_archive_fast_path() -> None:
-    """Do not initialize or touch archive storage for agents with archiving disabled."""
+    """Avoid archive I/O when neither retention nor archive search needs storage."""
+    from .const import (
+        CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+        DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+    )
     from .conversation import ExtendedOpenAIAgentEntity
+    from .conversation_archive import ConversationArchive
 
     agent_type: Any = ExtendedOpenAIAgentEntity
+    archive_type: Any = ConversationArchive
     original_initialize_archive = agent_type._async_initialize_archive
+    original_begin_session = archive_type.async_begin_session
 
     async def async_initialize_archive(agent: Any, configured: bool) -> None:
-        if not configured:
+        search_enabled = bool(
+            agent.subentry.data.get(
+                CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+                DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+            )
+        )
+        if not configured and not search_enabled:
             agent._archive = None
             agent._set_subsystem_status("archive", False)
             return
         await original_initialize_archive(agent, configured)
 
+    async def async_begin_session(
+        archive: Any,
+        *args: Any,
+        archive_enabled: bool,
+        **kwargs: Any,
+    ) -> Any:
+        if not archive_enabled:
+            return None
+        return await original_begin_session(
+            archive,
+            *args,
+            archive_enabled=archive_enabled,
+            **kwargs,
+        )
+
     agent_type._async_initialize_archive = async_initialize_archive
+    archive_type.async_begin_session = async_begin_session
 
 
 def _install_memory_prefetch() -> None:
@@ -205,7 +232,7 @@ def _install_memory_prefetch() -> None:
     async def async_retrieve_memories(agent: Any, *args: Any, **kwargs: Any) -> Any:
         existing = _TEMPORARY_MEMORY_PREFETCH.get()
         task = existing
-        if task is None:
+        if task is None and getattr(agent, "_temporary_memory", None) is not None:
             task = asyncio.create_task(original_retrieve_temporary(agent))
             _TEMPORARY_MEMORY_PREFETCH.set(task)
         try:
@@ -231,31 +258,6 @@ def _install_memory_prefetch() -> None:
 
     agent_type._async_retrieve_memories = async_retrieve_memories
     agent_type._async_retrieve_temporary_memories = async_retrieve_temporary
-
-
-def _install_service_tier_default() -> None:
-    """Use the standard interactive provider tier when no tier was configured."""
-    from . import agent_config, const, request
-
-    standard_tier = "default"
-    const.DEFAULT_SERVICE_TIER = standard_tier
-    request.DEFAULT_SERVICE_TIER = standard_tier
-
-    defaults = dict(agent_config.AGENT_CONFIG_DEFAULTS)
-    defaults[const.CONF_SERVICE_TIER] = standard_tier
-    agent_config.AGENT_CONFIG_DEFAULTS = MappingProxyType(defaults)
-
-    # Config flow constants can be materialized before async_setup on an existing
-    # installation. Keep those runtime defaults aligned without rewriting an
-    # explicitly saved `flex` choice.
-    try:
-        from . import config_flow
-    except ImportError:
-        return
-    config_flow.DEFAULT_SERVICE_TIER = standard_tier
-    config_defaults = dict(config_flow.DEFAULT_OPTIONS)
-    config_defaults[const.CONF_SERVICE_TIER] = standard_tier
-    config_flow.DEFAULT_OPTIONS = MappingProxyType(config_defaults)
 
 
 def _install_debug_summary_fields() -> None:
