@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 import sys
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from homeassistant.components import panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
@@ -147,9 +148,13 @@ async def async_overview_summary(
     """Load selected-agent overview data concurrently in one websocket request."""
     del user_id, is_admin
     management_ui = _management_ui()
-    entry_id = message.get("entry_id")
-    subentry_id = message.get("subentry_id")
-    entry, subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
+    requested_entry_id = message.get("entry_id")
+    requested_subentry_id = message.get("subentry_id")
+    entry, subentry = management_ui.entry_and_agent(
+        hass, requested_entry_id, requested_subentry_id
+    )
+    entry_id = str(entry.entry_id)
+    subentry_id = str(subentry.subentry_id)
 
     usage_result, memory_result, knowledge_result, guest_result = await asyncio.gather(
         async_get_usage(hass, entry_id, subentry_id),
@@ -161,36 +166,44 @@ async def async_overview_summary(
 
     load_errors: list[dict[str, str]] = []
 
-    def failed(key: str, label: str, value: Any) -> bool:
-        if not isinstance(value, BaseException):
-            return False
+    def record_failure(key: str, label: str, error: BaseException) -> None:
         load_errors.append(
-            {"key": key, "label": label, "message": str(value) or type(value).__name__}
+            {
+                "key": key,
+                "label": label,
+                "message": str(error) or type(error).__name__,
+            }
         )
-        return True
 
     usage: dict[str, Any] = {}
     tokens_today = 0
-    if not failed("usage", "Usage", usage_result):
-        usage_manager = usage_result
+    if isinstance(usage_result, BaseException):
+        record_failure("usage", "Usage", usage_result)
+    else:
         usage = {
-            "lifetime": usage_manager.as_dict(),
-            "today": usage_manager.today_summary(),
-            "month": usage_manager.month_summary(),
-            "latest": management_ui.asdict_or_none(usage_manager.latest_run),
+            "lifetime": usage_result.as_dict(),
+            "today": usage_result.today_summary(),
+            "month": usage_result.month_summary(),
+            "latest": management_ui.asdict_or_none(usage_result.latest_run),
         }
         tokens_today = int(usage["today"].get("total_tokens", 0))
 
     memory_count = 0
-    if not failed("memories", "Memory", memory_result):
+    if isinstance(memory_result, BaseException):
+        record_failure("memories", "Memory", memory_result)
+    else:
         memory_count = int(memory_result.stats().get("memory_count", 0))
 
     knowledge_source_count = 0
-    if not failed("knowledge", "Knowledge", knowledge_result):
+    if isinstance(knowledge_result, BaseException):
+        record_failure("knowledge", "Knowledge", knowledge_result)
+    else:
         knowledge_source_count = int(knowledge_result.source_count)
 
     guest_status: dict[str, Any] | None = None
-    if not failed("guest_mode", "Guest Mode", guest_result):
+    if isinstance(guest_result, BaseException):
+        record_failure("guest_mode", "Guest Mode", guest_result)
+    else:
         guest_status = guest_result.status()
 
     return {
@@ -347,5 +360,7 @@ def install_management_loading_optimizations() -> None:
 
     package = sys.modules.get(__package__)
     if package is not None:
-        setattr(package, "async_setup_management_ui", async_setup_cached_management_ui)
-        setattr(package, "async_setup_debug_ui", async_setup_cached_debug_ui)
+        setattr(  # noqa: B010
+            package, "async_setup_management_ui", async_setup_cached_management_ui
+        )
+        setattr(package, "async_setup_debug_ui", async_setup_cached_debug_ui)  # noqa: B010
