@@ -26,7 +26,6 @@ from .agent_config import (
     validate_function_groups as _validate_function_groups,
 )
 from .const import (
-    CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_PROMPT,
     DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE,
