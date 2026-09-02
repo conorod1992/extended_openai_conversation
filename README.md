@@ -190,7 +190,7 @@ Most users can begin with the defaults and change only what they actually need.
 | **Knowledge Library** | Off | Lets an agent search longer reference material stored locally. |
 | **Conversation archive** | Off | Optionally keeps searchable conversation text locally. |
 | **Maximum tokens** | 500 | Limits the length of generated replies. |
-| **Maximum function calls** | 10 | Limits tool-call loops in a single request. |
+| **Maximum function calls** | 10 | Limits model-requested function executions while producing a response. |
 | **Context strategy** | Keep recent messages | Controls how long conversations are managed. |
 | **Speech cleanup** | Off | Optionally cleans formatting or selected text from spoken replies. |
 
