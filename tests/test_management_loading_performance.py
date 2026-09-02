@@ -7,12 +7,14 @@ from unittest.mock import AsyncMock
 
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
+    agent_config_snapshot,
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.frontend_version import (
     FRONTEND_VERSION,
 )
 from custom_components.extended_openai_conversation_responses.management_loading_performance import (
+    _agent_snapshot,
     _asset_url,
     _static_paths,
     async_agent_catalog,
@@ -84,6 +86,25 @@ def test_static_paths_keep_legacy_alias_and_cache_versioned_asset() -> None:
     assert paths[0].cache_headers is False
     assert paths[1].url_path == _asset_url("management-panel.js")
     assert paths[1].cache_headers is True
+
+
+def test_agent_snapshot_accepts_frontend_normalized_function_tools() -> None:
+    hass, entry, subentry = _hass_with_agent()
+    config = agent_config_snapshot(subentry.data)
+    assert isinstance(config["functions"], list)
+
+    result = _agent_snapshot(
+        hass,
+        entry,
+        subentry,
+        config=config,
+        title="Updated Jarvis",
+    )
+
+    assert result["title"] == "Updated Jarvis"
+    assert result["function_count"] == sum(
+        tool.get("enabled", True) is True for tool in config["functions"]
+    )
 
 
 async def test_agent_catalog_does_not_initialize_per_agent_managers(monkeypatch) -> None:
