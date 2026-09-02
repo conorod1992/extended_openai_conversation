@@ -17,6 +17,7 @@ from .const import (
     CONF_ARCHIVE_ENABLED,
     CONF_CHAT_MODEL,
     CONF_FUNCTION_GROUPS,
+    CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
@@ -73,7 +74,13 @@ def _agent_snapshot(
 ) -> dict[str, Any]:
     """Build the cheap frontend metadata shared by bootstrap and overview."""
     options = config if config is not None else dict(subentry.data)
-    configured_tools = _management_ui().configured_function_tools_from_data(options)
+    management_ui = _management_ui()
+    configured = options.get(CONF_FUNCTION_TOOLS)
+    configured_tools = (
+        management_ui.validate_function_tools(configured)
+        if isinstance(configured, list)
+        else management_ui.configured_function_tools_from_data(options)
+    )
     if guest_status is None:
         loaded_guest = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
         guest_status = (
@@ -96,7 +103,7 @@ def _agent_snapshot(
         "knowledge_enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
         "knowledge_source_count": knowledge_source_count,
         "function_count": sum(
-            _management_ui().function_tool_enabled(tool) for tool in configured_tools
+            management_ui.function_tool_enabled(tool) for tool in configured_tools
         ),
         "function_group_count": len(
             options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS)
