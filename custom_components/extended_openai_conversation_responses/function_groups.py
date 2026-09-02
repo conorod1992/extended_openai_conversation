@@ -157,9 +157,7 @@ def _with_automatic_specialist_groups(
     configured_tools: list[dict[str, Any]], groups: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Place known ungrouped specialist built-ins behind the existing loader."""
-    assigned_names = {
-        name for group in groups for name in group.get("functions", [])
-    }
+    assigned_names = {name for group in groups for name in group.get("functions", [])}
     used_ids = {str(group.get("id")) for group in groups}
     automatic: list[dict[str, Any]] = []
 
