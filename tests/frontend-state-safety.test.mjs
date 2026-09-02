@@ -11,8 +11,11 @@ const [source, bootstrap] = await Promise.all([
   readFile(frontend("management-bootstrap.js"), "utf8"),
 ]);
 const stateSafety = await import(frontend("management-state-safety.js"));
+const bootstrapModule = await import(frontend("management-bootstrap.js"));
 
 assert.match(bootstrap, /await import\("\.\/management-state-safety\.js"\)/);
+assert.match(bootstrap, /await import\("\.\/debug-management\.js"\)/);
+assert.match(bootstrap, /installPreDefinitionPropertyReplay\(constructor\)/);
 assert.match(source, /SECTION_CACHE_TTL_MS = 30_000/);
 assert.match(source, /Discard unsaved Guest policy changes\?/);
 assert.match(source, /Switching agents will discard your unsaved Guest Mode policy changes/);
@@ -21,6 +24,47 @@ assert.match(source, /window\.addEventListener\("beforeunload"/);
 assert.match(source, /window\.addEventListener\("focus"/);
 assert.match(source, /originalStartFreshGuestPolicy/);
 assert.match(source, /preserveGuestDraft/);
+
+class UpgradePanel {
+  constructor() {
+    this.hassCalls = 0;
+    this.routeCalls = 0;
+  }
+  set hass(value) {
+    this.hassCalls += 1;
+    this._hass = value;
+  }
+  set route(value) {
+    this.routeCalls += 1;
+    this._route = value;
+  }
+}
+assert.equal(bootstrapModule.installPreDefinitionPropertyReplay(UpgradePanel), true);
+const upgradedPanel = new UpgradePanel();
+Object.defineProperty(upgradedPanel, "hass", {
+  configurable: true,
+  enumerable: true,
+  writable: true,
+  value: {connected: true},
+});
+Object.defineProperty(upgradedPanel, "route", {
+  configurable: true,
+  enumerable: true,
+  writable: true,
+  value: {path: "/extended-openai/overview"},
+});
+upgradedPanel.connectedCallback();
+assert.equal(Object.hasOwn(upgradedPanel, "hass"), false);
+assert.equal(Object.hasOwn(upgradedPanel, "route"), false);
+assert.equal(upgradedPanel.hassCalls, 1);
+assert.equal(upgradedPanel.routeCalls, 1);
+assert.deepEqual(upgradedPanel._hass, {connected: true});
+assert.deepEqual(upgradedPanel._route, {path: "/extended-openai/overview"});
+assert.equal(
+  bootstrapModule.installPreDefinitionPropertyReplay(UpgradePanel),
+  false,
+  "property replay patch must be idempotent",
+);
 
 const guestPanel = {
   _agentId: "agent-a",
