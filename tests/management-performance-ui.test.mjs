@@ -192,7 +192,9 @@ function panelFor(page = "assistant", subsection = "basics") {
   panel._page = "data-memory";
   panel._subsection = "knowledge";
   const knowledge = {sources:[{source_id:"current"}]};
-  panel._sectionCache.set("agent-a|data-memory/knowledge", knowledge);
+  const knowledgeKey = "agent-a|data-memory/knowledge";
+  panel._sectionCache.set(knowledgeKey, knowledge);
+  panel._eocSectionCacheTimes.set(knowledgeKey, Date.now());
   await panel._loadSection();
   resolveRules({rules:[{id:"old"}]});
   await oldLoad;
