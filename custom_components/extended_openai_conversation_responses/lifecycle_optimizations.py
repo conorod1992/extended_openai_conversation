@@ -125,7 +125,7 @@ def _install_usage_persistence() -> None:
                 "daily": manager._daily_storage,
                 "details": manager._detail_storage,
             }.get(category)
-        if store is not None:
+        if category is not None and store is not None:
             try:
                 if _schedule_store_snapshot(store, _usage_snapshot(manager, category)):
                     return
