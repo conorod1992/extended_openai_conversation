@@ -80,9 +80,7 @@ def _jsonable(value: Any, *, _depth: int = 0) -> Any:
         return _jsonable(asdict(value), _depth=_depth + 1)
     if hasattr(value, "model_dump"):
         try:
-            return _jsonable(
-                value.model_dump(exclude_none=True), _depth=_depth + 1
-            )
+            return _jsonable(value.model_dump(exclude_none=True), _depth=_depth + 1)
         except Exception:
             pass
     if hasattr(value, "as_dict"):
@@ -244,9 +242,7 @@ class DebugProviderRequest:
 
     def finish(self, *, successful: bool, error: BaseException | None = None) -> None:
         if self.duration_ms is None:
-            self.duration_ms = int(
-                (time.monotonic() - self._started_monotonic) * 1000
-            )
+            self.duration_ms = int((time.monotonic() - self._started_monotonic) * 1000)
         self.successful = successful
         self.error_type = type(error).__name__ if error is not None else None
 
@@ -301,9 +297,7 @@ class DebugTrace:
             request_id=uuid4().hex,
             api_surface=api_surface,
             started_at=_iso_now(),
-            started_offset_ms=int(
-                (time.monotonic() - self._started_monotonic) * 1000
-            ),
+            started_offset_ms=int((time.monotonic() - self._started_monotonic) * 1000),
             request=request_payload,
             metrics=metrics,
             _started_monotonic=time.monotonic(),
@@ -355,9 +349,7 @@ class DebugTrace:
             "error_type": self.error_type,
             "usage_run_id": self.usage_run_id,
             "incoming_conversation_id": self.incoming_conversation_id,
-            "resolved_conversation_id": self.continuity.get(
-                "resolved_conversation_id"
-            ),
+            "resolved_conversation_id": self.continuity.get("resolved_conversation_id"),
             "continuity_resumed": self.continuity.get("resumed"),
             "provider_request_count": len(self.provider_requests),
             "first_text_ms": (
@@ -375,7 +367,9 @@ class DebugManager:
         self.limit = DEBUG_DEFAULT_LIMIT
         self._runs: deque[DebugTrace] = deque(maxlen=self.limit)
 
-    def configure(self, *, enabled: bool | None = None, limit: int | None = None) -> None:
+    def configure(
+        self, *, enabled: bool | None = None, limit: int | None = None
+    ) -> None:
         if limit is not None:
             if limit not in DEBUG_ALLOWED_LIMITS:
                 raise ValueError(
@@ -703,6 +697,8 @@ def install_debug_instrumentation() -> None:
     ExtendedOpenAIAgentEntity._async_process = traced_process  # type: ignore[method-assign]
     ExtendedOpenAIAgentEntity._async_handle_message = traced_handle_message  # type: ignore[method-assign]
     ExtendedOpenAIAgentEntity._async_retrieve_memories = traced_retrieve_memories  # type: ignore[method-assign]
-    ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories = traced_retrieve_temporary  # type: ignore[method-assign]
+    ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories = (
+        traced_retrieve_temporary  # type: ignore[method-assign]
+    )
     ExtendedOpenAIAgentEntity._build_system_prompt = traced_build_prompt  # type: ignore[method-assign]
     ConversationContinuity.async_resolve = traced_resolve  # type: ignore[method-assign]
