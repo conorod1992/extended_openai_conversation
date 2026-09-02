@@ -11,6 +11,7 @@ from openai.types.chat import ChatCompletionToolParam
 
 from homeassistant.exceptions import HomeAssistantError
 
+from .capabilities import resolve_effective_capabilities
 from .const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -43,7 +44,7 @@ from .conversation_archive import archive_tools
 from .guest_mode import GuestCapabilityPolicy, guest_mode_restrict_tool
 from .helpers import get_api_mode, get_model_config, supports_openai_hosted_tools
 from .knowledge import KNOWLEDGE_TOOL_NAMES, knowledge_tools
-from .memory import MEMORY_TOOL_NAMES, memory_enabled, memory_tools
+from .memory import MEMORY_TOOL_NAMES, memory_tools
 from .temporary_memory import TEMPORARY_MEMORY_TOOL_NAMES, temporary_memory_tools
 
 CONTINUE_CONVERSATION_TOOL_NAME = "set_continue_conversation"
@@ -192,7 +193,12 @@ def assemble_integration_function_tools(
     """Assemble non-configured tools from the same feature/scope decisions."""
     result: list[dict[str, Any]] = []
     guest_policy = guest_policy or GuestCapabilityPolicy.unrestricted()
-    if memory_enabled(options) and memory_scope_available:
+    capabilities = resolve_effective_capabilities(
+        options,
+        memory_scope_available=memory_scope_available,
+        guest_policy=guest_policy,
+    )
+    if capabilities.persistent_memory:
         conflicts = configured_names & MEMORY_TOOL_NAMES
         if conflicts:
             raise HomeAssistantError(
