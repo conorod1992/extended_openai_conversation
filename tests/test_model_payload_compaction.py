@@ -124,7 +124,10 @@ def test_function_group_loader_keeps_full_catalogue_with_less_boilerplate() -> N
     compacted = prepare_model_function_tools([loader])[0]
     description = compacted["spec"]["description"]
 
-    assert "travel: Travel — Routes, destinations, and travel-time helpers." in description
+    assert (
+        "travel: Travel — Routes, destinations, and travel-time helpers."
+        in description
+    )
     assert "media: Media — TV and local media helpers." in description
     assert "performs no action" in description
     assert len(description) < len(loader["spec"]["description"])
