@@ -36,7 +36,9 @@ _ACTIVE_FUNCTION_TOOLS_SNAPSHOT: ContextVar[FunctionToolsSnapshot | None] = Cont
 )
 
 
-def _snapshot_key(agent: Any, conversation_module: Any) -> tuple[int, int, tuple[str, ...]]:
+def _snapshot_key(
+    agent: Any, conversation_module: Any
+) -> tuple[int, int, tuple[str, ...]]:
     """Return the dynamic inputs that may change tool exposure mid-request."""
     policy = agent._effective_guest_policy()
     session = conversation_module._ACTIVE_FUNCTION_GROUP_SESSION.get()
@@ -69,9 +71,7 @@ def _request_function_tools(
     # Resolve the final policy once more so a restricted assembly is never cached
     # under the earlier unrestricted key.
     final_key = _snapshot_key(agent, conversation_module)
-    _ACTIVE_FUNCTION_TOOLS_SNAPSHOT.set(
-        FunctionToolsSnapshot(final_key, tuple(tools))
-    )
+    _ACTIVE_FUNCTION_TOOLS_SNAPSHOT.set(FunctionToolsSnapshot(final_key, tuple(tools)))
     return tools
 
 
@@ -98,7 +98,9 @@ def latest_configured_function_tool(
         if latest_entry is not None
         else None
     )
-    latest_data = latest_subentry.data if latest_subentry is not None else agent.subentry.data
+    latest_data = (
+        latest_subentry.data if latest_subentry is not None else agent.subentry.data
+    )
     current_configured = agent._configured_function_tools_from_data(latest_data)
     current_tool = next(
         (
