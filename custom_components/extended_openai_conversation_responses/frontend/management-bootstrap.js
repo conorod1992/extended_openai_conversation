@@ -1,5 +1,25 @@
 const PANEL_TAG = "extended-openai-management-panel";
 const PROPERTY_REPLAY_PATCHED = Symbol.for("extended-openai.management-property-replay");
+const BOOTSTRAP_MODULES = [
+  "./management-state-safety.js",
+  "./management-rendering-performance.js",
+  "./management-loading-performance.js",
+  "./management-route-performance.js",
+  "./debug-management.js",
+];
+
+function preloadBootstrapModules(documentRef = globalThis.document) {
+  const head = documentRef?.head;
+  if (!head?.append) return;
+  for (const specifier of BOOTSTRAP_MODULES) {
+    const href = new URL(specifier, import.meta.url).href;
+    if (documentRef.querySelector?.(`link[rel="modulepreload"][href="${href}"]`)) continue;
+    const link = documentRef.createElement("link");
+    link.rel = "modulepreload";
+    link.href = href;
+    head.append(link);
+  }
+}
 
 function installPreDefinitionPropertyReplay(constructor) {
   const prototype = constructor?.prototype;
@@ -11,7 +31,7 @@ function installPreDefinitionPropertyReplay(constructor) {
     // Home Assistant may create an unknown custom-panel element and assign these
     // properties before the module has finished defining the element. Those own
     // properties shadow the class setters after upgrade unless they are replayed.
-    for (const name of ["route", "hass"]) {
+    for (const name of ["hass", "route"]) {
       if (!Object.prototype.hasOwnProperty.call(this, name)) continue;
       const value = this[name];
       delete this[name];
@@ -83,6 +103,9 @@ function capturePreRegistrationInstallers(registry) {
 if (typeof customElements !== "undefined") {
   const restore = capturePreRegistrationInstallers(customElements);
   try {
+    // Fetch the independent patch modules concurrently, while preserving their
+    // deterministic evaluation/installation order below.
+    preloadBootstrapModules();
     await import("./management-state-safety.js");
     await import("./management-rendering-performance.js");
     await import("./management-loading-performance.js");
@@ -96,4 +119,9 @@ if (typeof customElements !== "undefined") {
   }
 }
 
-export {capturePreRegistrationInstallers, installPreDefinitionPropertyReplay};
+export {
+  BOOTSTRAP_MODULES,
+  capturePreRegistrationInstallers,
+  installPreDefinitionPropertyReplay,
+  preloadBootstrapModules,
+};
