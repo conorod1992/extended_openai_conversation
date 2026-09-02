@@ -97,15 +97,26 @@ async function loadOverview(panel, silent = false) {
   }
 }
 
-function loadSectionAfterAsset(panel, silent, originalLoadSection, view, assetPromise) {
+function isCurrentLazyLoad(panel, view, loadToken) {
+  return panel._viewKey() === view && panel._loadToken === loadToken;
+}
+
+function loadSectionAfterAsset(
+  panel,
+  silent,
+  originalLoadSection,
+  view,
+  assetPromise,
+  loadToken,
+) {
   return assetPromise
     .then(() => {
-      if (panel._viewKey() !== view) return undefined;
+      if (!isCurrentLazyLoad(panel, view, loadToken)) return undefined;
       if (view === "overview") return loadOverview(panel, silent);
       return originalLoadSection.call(panel, silent);
     })
     .catch((err) => {
-      if (panel._viewKey() !== view) return undefined;
+      if (!isCurrentLazyLoad(panel, view, loadToken)) return undefined;
       panel._busy = false;
       panel._error = `Unable to load this frontend section: ${err.message || String(err)}`;
       panel._render();
@@ -168,7 +179,15 @@ function install() {
     const view = this._viewKey();
     const assetPromise = viewAssetPromise(view);
     if (!assetPromise) return originalLoadSection.call(this, silent);
-    return loadSectionAfterAsset(this, silent, originalLoadSection, view, assetPromise);
+    const loadToken = ++this._loadToken;
+    return loadSectionAfterAsset(
+      this,
+      silent,
+      originalLoadSection,
+      view,
+      assetPromise,
+      loadToken,
+    );
   };
 
   const originalRender = prototype._render;
