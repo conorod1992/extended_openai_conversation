@@ -51,7 +51,7 @@ assert.doesNotMatch(requestRulesDialog(panel), /<ha-selector/);
 assert.match(requestRulesDialog(panel), /Conditions, delays, choose, repeat, parallel/);
 assert.match(requestRulesDialog(panel), /extended_openai_conversation_responses\.call_function/);
 assert.match(requestRulesDialog(panel), /\{\{ item \}\}/);
-const bindingSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js", import.meta.url), "utf8");
+const bindingSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js", import.meta.url), "utf8");
 assert.match(bindingSource, /Value from request/);
 assert.match(bindingSource, /function_catalog/);
 assert.match(bindingSource, /Captured values:/);

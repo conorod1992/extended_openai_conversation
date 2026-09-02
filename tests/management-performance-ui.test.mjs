@@ -16,10 +16,15 @@ globalThis.HTMLElement = class {
   attachShadow() { this.shadowRoot = {hasChildNodes: () => false}; }
 };
 let definedPanel;
+let resolveDefined;
+const definedPromise = new Promise((resolve) => { resolveDefined = resolve; });
 globalThis.customElements = {
-  define(_name, constructor) { definedPanel = constructor; },
+  define(_name, constructor) {
+    definedPanel = constructor;
+    resolveDefined();
+  },
   get() { return definedPanel; },
-  whenDefined() { return Promise.resolve(); },
+  whenDefined() { return definedPanel ? Promise.resolve() : definedPromise; },
 };
 
 const [{ExtendedOpenAIManagementPanel}, {bindRequestRules}] = await Promise.all([
@@ -187,7 +192,9 @@ function panelFor(page = "assistant", subsection = "basics") {
   panel._page = "data-memory";
   panel._subsection = "knowledge";
   const knowledge = {sources:[{source_id:"current"}]};
-  panel._sectionCache.set("agent-a|data-memory/knowledge", knowledge);
+  const knowledgeKey = "agent-a|data-memory/knowledge";
+  panel._sectionCache.set(knowledgeKey, knowledge);
+  panel._eocSectionCacheTimes.set(knowledgeKey, Date.now());
   await panel._loadSection();
   resolveRules({rules:[{id:"old"}]});
   await oldLoad;
@@ -222,7 +229,7 @@ function panelFor(page = "assistant", subsection = "basics") {
 }
 
 const management = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
-const requestRules = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js", import.meta.url), "utf8");
+const requestRules = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js", import.meta.url), "utf8");
 assert.match(management, /_loadServiceCatalog\(\)/);
 assert.doesNotMatch(requestRules, /result\.service_catalog/);
 assert.doesNotMatch(requestRules, /root\.addEventListener\("click"/);

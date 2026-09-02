@@ -6,13 +6,13 @@ const frontend = (name) => new URL(
   import.meta.url,
 );
 
-const [source, guide] = await Promise.all([
+const [source, bootstrap] = await Promise.all([
   readFile(frontend("management-state-safety.js"), "utf8"),
-  readFile(frontend("guide-page.js"), "utf8"),
+  readFile(frontend("management-bootstrap.js"), "utf8"),
 ]);
 const stateSafety = await import(frontend("management-state-safety.js"));
 
-assert.match(guide, /import "\.\/management-state-safety\.js"/);
+assert.match(bootstrap, /await import\("\.\/management-state-safety\.js"\)/);
 assert.match(source, /SECTION_CACHE_TTL_MS = 30_000/);
 assert.match(source, /Discard unsaved Guest policy changes\?/);
 assert.match(source, /Switching agents will discard your unsaved Guest Mode policy changes/);

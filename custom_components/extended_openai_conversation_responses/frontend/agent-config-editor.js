@@ -1,8 +1,7 @@
-import { renderConfiguration as renderBaseConfiguration } from "./agent-config-editor-base.js";
+import "./management-bootstrap.js";
+const {ensureAgentConfigModule, getAgentConfigModule} = await import("./agent-config-loader.js");
 
-export * from "./agent-config-editor-base.js";
-
-if (typeof customElements !== "undefined") import("./management-rendering-performance.js");
+if (typeof document === "undefined") await ensureAgentConfigModule();
 
 const DELAYED_CHOICE = (panel, enabled, checked) => `<label class="group-function-choice" data-local-intent-choice data-choice-search="delayed device commands scheduled deferred actions turn off later"><input type="checkbox" data-config="local_intent_delayed_commands_to_ai" data-type="boolean" ${checked ? "checked" : ""} ${enabled ? "" : "disabled"}><span><strong>Delayed device commands</strong><small>For example, “turn off the lights in 20 minutes”. Normal timers such as “set a 20 minute timer” can still stay local.</small></span></label>`;
 
@@ -61,6 +60,104 @@ function simplifyConfigurationMarkup(panel, html) {
   return template.innerHTML;
 }
 
+function requiredImplementation(name) {
+  const module = getAgentConfigModule();
+  if (!module) throw new Error(`Agent configuration module is not loaded before ${name}`);
+  return module;
+}
+
+function queueRender(panel) {
+  void ensureAgentConfigModule()
+    .then(() => panel?._render?.())
+    .catch((err) => {
+      if (!panel) return;
+      panel._error = `Unable to load configuration editor: ${err.message || String(err)}`;
+      panel._render?.();
+    });
+}
+
 export function renderConfiguration(panel) {
-  return simplifyConfigurationMarkup(panel, renderBaseConfiguration(panel));
+  const module = getAgentConfigModule();
+  if (!module) {
+    queueRender(panel);
+    return panel._loading?.() || '<div class="loading">Loading configuration…</div>';
+  }
+  return simplifyConfigurationMarkup(panel, module.renderConfiguration(panel));
+}
+
+export function bindConfiguration(panel) {
+  const module = getAgentConfigModule();
+  if (!module) return queueRender(panel);
+  return module.bindConfiguration(panel);
+}
+
+export function renderTools(panel) {
+  const module = getAgentConfigModule();
+  if (!module) {
+    queueRender(panel);
+    return panel._loading?.() || '<div class="loading">Loading Functions…</div>';
+  }
+  return module.renderTools(panel);
+}
+
+export function bindTools(panel) {
+  const module = getAgentConfigModule();
+  if (!module) return queueRender(panel);
+  return module.bindTools(panel);
+}
+
+export function configurationDialogs(...args) {
+  return getAgentConfigModule()?.configurationDialogs(...args) || "";
+}
+
+export function restoreDialog(...args) {
+  return getAgentConfigModule()?.restoreDialog(...args) || "";
+}
+
+export function configurationChoiceLabel(...args) {
+  return requiredImplementation("configurationChoiceLabel").configurationChoiceLabel(...args);
+}
+
+export function copyTextToClipboard(...args) {
+  return requiredImplementation("copyTextToClipboard").copyTextToClipboard(...args);
+}
+
+export function functionGroupIdFromName(...args) {
+  return requiredImplementation("functionGroupIdFromName").functionGroupIdFromName(...args);
+}
+
+export function isFunctionToolEnabled(...args) {
+  return requiredImplementation("isFunctionToolEnabled").isFunctionToolEnabled(...args);
+}
+
+export function functionToolCountLabel(...args) {
+  return requiredImplementation("functionToolCountLabel").functionToolCountLabel(...args);
+}
+
+export function backupSummaryLines(...args) {
+  return requiredImplementation("backupSummaryLines").backupSummaryLines(...args);
+}
+
+export function canReplaceToolYamlWithoutConfirmation(...args) {
+  return requiredImplementation("canReplaceToolYamlWithoutConfirmation").canReplaceToolYamlWithoutConfirmation(...args);
+}
+
+export function matchesFunctionSearch(...args) {
+  return requiredImplementation("matchesFunctionSearch").matchesFunctionSearch(...args);
+}
+
+export function deleteFunctionGroup(...args) {
+  return requiredImplementation("deleteFunctionGroup").deleteFunctionGroup(...args);
+}
+
+export function categorizeFunctionTools(...args) {
+  return requiredImplementation("categorizeFunctionTools").categorizeFunctionTools(...args);
+}
+
+export function saveBar(...args) {
+  return requiredImplementation("saveBar").saveBar(...args);
+}
+
+export function synchronizePersistedFunctions(...args) {
+  return requiredImplementation("synchronizePersistedFunctions").synchronizePersistedFunctions(...args);
 }
