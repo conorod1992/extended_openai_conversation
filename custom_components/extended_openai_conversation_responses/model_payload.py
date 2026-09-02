@@ -21,15 +21,18 @@ other retained facts.
 
 Prefer memory_upsert for new, confirmed, or changed facts, using a stable key when
 clear. Search first when a related memory may already exist and update rather than
-create contradictions. Personal preferences normally belong in personal scope;
-household scope is only for deliberately shared facts and never implies another
-person's private memory. Proactive writes use source=implicit only for stable facts
-likely to improve future conversations. Do not automatically store transient or
-low-value details, secrets or credentials, financial account details, or sensitive
-personal information. Importance means future usefulness, not authority; default to
-normal. Current user statements override stored facts. Keep content concise and
-self-contained. Use memory_list only when browsing is useful. To forget something,
-identify its memory IDs and delete them; confirm before broad deletion.
+create contradictions. Search when prior personal, household, device, routine, or
+project context would materially help; use memory_list only for useful browsing.
+Personal preferences normally belong in personal scope; household scope is only for
+deliberately shared facts and never implies another person's private memory. Proactive
+writes use source=implicit only for stable facts likely to improve future
+conversations. Do not automatically store transient or low-value details, secrets or
+credentials, financial account details, or sensitive personal information. Importance
+means future usefulness, not authority; default to normal and do not infer high merely
+from an explicit request. Persistent memories do not expire automatically. Current
+user statements override stored facts. Keep content concise and self-contained. To
+forget something, identify its memory IDs and delete them; confirm before broad
+deletion.
 """
 
 KNOWLEDGE_GUIDANCE = """
@@ -41,9 +44,10 @@ Search with short discriminative keywords or phrases. source_ids must be exact I
 returned by a Knowledge tool; never invent IDs or substitute titles/categories. If a
 search misses, retry once with broader/fewer keywords. If the terminology or source
 is still unclear, browse knowledge_list without a query, then use knowledge_get with
-an exact source ID before answering. Page long sources as needed and do not claim the
-library lacks an answer until these discovery steps fail. If nothing relevant is
-found, say so rather than inventing an answer.
+an exact source ID before answering. Filter the catalogue only after learning useful
+terms. Page long sources as needed and do not claim the library lacks an answer until
+these discovery steps fail. If nothing relevant is found, say so rather than inventing
+an answer.
 """
 
 ARCHIVE_GUIDANCE = """
@@ -60,8 +64,9 @@ CONTINUATION_GUIDANCE = """
 For the final answer, call set_continue_conversation instead of returning ordinary
 text and put the complete spoken answer in response. Set continue_conversation=true
 only when an immediate reply is naturally expected, such as a question,
-clarification, required choice, or missing information; otherwise set it false. Do
-not call it while another tool is still needed or mention this mechanism.
+clarification, required choice, missing information, or another intentionally
+expected turn; otherwise set it false. Do not call it while another tool is still
+needed or mention this mechanism.
 """
 
 GUEST_GUIDANCE = """
