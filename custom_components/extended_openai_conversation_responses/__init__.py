@@ -84,6 +84,7 @@ from .const import (
 )
 from .debug import DebugOpenAIClientProxy, install_debug_instrumentation
 from .debug_ui import async_setup_debug_ui
+from .guest_performance import install_guest_policy_fast_path
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import get_authenticated_client, supports_openai_hosted_tools
 from .intercom_services import async_setup_intercom_services
@@ -120,6 +121,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     apply_openai_compatibility()
     install_persistence_transactions()
     install_performance_optimizations()
+    install_guest_policy_fast_path()
     install_debug_instrumentation()
     await async_migrate_integration(hass)
     await async_setup_ha_permissions(hass)
