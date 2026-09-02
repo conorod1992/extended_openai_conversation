@@ -12,7 +12,7 @@ const [source, guide] = await Promise.all([
 ]);
 const stateSafety = await import(frontend("management-state-safety.js"));
 
-assert.match(guide, /import\("\.\/management-state-safety\.js"\)/);
+assert.match(guide, /import "\.\/management-state-safety\.js"/);
 assert.match(source, /SECTION_CACHE_TTL_MS = 30_000/);
 assert.match(source, /Discard unsaved Guest policy changes\?/);
 assert.match(source, /Switching agents will discard your unsaved Guest Mode policy changes/);
