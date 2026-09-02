@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 import sqlite3
+import time
 from typing import Any
 from urllib import parse
 
@@ -22,6 +23,11 @@ from .base import Function
 _LOGGER = logging.getLogger(__name__)
 _DEFAULT_MAX_ROWS = 1000
 _MAX_MAX_ROWS = 10000
+_DEFAULT_QUERY_TIMEOUT_SECONDS = 5.0
+_MAX_QUERY_TIMEOUT_SECONDS = 30.0
+_DEFAULT_MAX_RESULT_BYTES = 1024 * 1024
+_MAX_MAX_RESULT_BYTES = 4 * 1024 * 1024
+_PROGRESS_HANDLER_STEPS = 1000
 
 # mode=ro protects the primary database file, but SQLite statements such as ATTACH
 # and VACUUM INTO can still have filesystem side effects. Reject every authorizer
@@ -95,36 +101,82 @@ def _read_only_sqlite_uri(db_url: str) -> str:
     return parse.urlunsplit((scheme, netloc, path, new_query_string, fragment))
 
 
+def _estimated_row_bytes(row: dict[str, Any]) -> int:
+    """Return a conservative encoded-size estimate for one SQLite result row."""
+    return len(repr(row).encode("utf-8", errors="replace"))
+
+
 def _execute_sqlite_query(
-    db_url: str, query: str, single: bool, max_rows: int
+    db_url: str,
+    query: str,
+    single: bool,
+    max_rows: int,
+    timeout_seconds: float = _DEFAULT_QUERY_TIMEOUT_SECONDS,
+    max_result_bytes: int = _DEFAULT_MAX_RESULT_BYTES,
 ) -> dict[str, Any] | list[dict[str, Any]]:
-    """Execute a bounded read-only SQLite query outside the event loop."""
+    """Execute a time-, row-, and byte-bounded read-only SQLite query."""
+    deadline = time.monotonic() + timeout_seconds
+    timed_out = False
+
+    def progress_handler() -> int:
+        nonlocal timed_out
+        if time.monotonic() >= deadline:
+            timed_out = True
+            return 1
+        return 0
+
     conn = sqlite3.connect(db_url, uri=True)
     try:
         # Set the built-in read-only guard before installing the authorizer because
         # the authorizer deliberately rejects user-issued PRAGMA statements.
         conn.execute("PRAGMA query_only = ON")
         conn.set_authorizer(_read_only_authorizer)
-        cursor = conn.execute(query)
-        if cursor.description is None:
-            raise HomeAssistantError("SQLite query did not return any columns")
+        conn.set_progress_handler(progress_handler, _PROGRESS_HANDLER_STEPS)
+        try:
+            cursor = conn.execute(query)
+            if cursor.description is None:
+                raise HomeAssistantError("SQLite query did not return any columns")
 
-        names = [description[0] for description in cursor.description]
-        if single:
-            row = cursor.fetchone()
-            if row is None:
-                return {}
-            return {name: val for name, val in zip(names, row, strict=False)}
+            names = [description[0] for description in cursor.description]
+            if single:
+                row = cursor.fetchone()
+                if row is None:
+                    return {}
+                result = {name: val for name, val in zip(names, row, strict=False)}
+                result_bytes = _estimated_row_bytes(result)
+                if result_bytes > max_result_bytes:
+                    raise HomeAssistantError(
+                        "SQLite query result exceeded the configured result-size "
+                        f"limit of {max_result_bytes} bytes"
+                    )
+                return result
 
-        rows = cursor.fetchmany(max_rows + 1)
-        if len(rows) > max_rows:
-            raise HomeAssistantError(
-                f"SQLite query returned more than {max_rows} rows; "
-                "add a LIMIT clause or increase max_rows"
-            )
-        return [
-            {name: val for name, val in zip(names, row, strict=False)} for row in rows
-        ]
+            results: list[dict[str, Any]] = []
+            result_bytes = 2
+            for row_number, row in enumerate(cursor, start=1):
+                if row_number > max_rows:
+                    raise HomeAssistantError(
+                        f"SQLite query returned more than {max_rows} rows; "
+                        "add a LIMIT clause or increase max_rows"
+                    )
+                item = {name: val for name, val in zip(names, row, strict=False)}
+                result_bytes += _estimated_row_bytes(item) + 1
+                if result_bytes > max_result_bytes:
+                    raise HomeAssistantError(
+                        "SQLite query result exceeded the configured result-size "
+                        f"limit of {max_result_bytes} bytes"
+                    )
+                results.append(item)
+            return results
+        except sqlite3.OperationalError as err:
+            if timed_out:
+                raise HomeAssistantError(
+                    "SQLite query exceeded the configured execution deadline of "
+                    f"{timeout_seconds:g} seconds"
+                ) from err
+            raise
+        finally:
+            conn.set_progress_handler(None, 0)
     finally:
         conn.close()
 
@@ -140,6 +192,18 @@ class SqliteFunction(Function):
                     vol.Optional("single"): bool,
                     vol.Optional("max_rows", default=_DEFAULT_MAX_ROWS): vol.All(
                         vol.Coerce(int), vol.Range(min=1, max=_MAX_MAX_ROWS)
+                    ),
+                    vol.Optional(
+                        "timeout", default=_DEFAULT_QUERY_TIMEOUT_SECONDS
+                    ): vol.All(
+                        vol.Coerce(float),
+                        vol.Range(min=0.1, max=_MAX_QUERY_TIMEOUT_SECONDS),
+                    ),
+                    vol.Optional(
+                        "max_result_bytes", default=_DEFAULT_MAX_RESULT_BYTES
+                    ): vol.All(
+                        vol.Coerce(int),
+                        vol.Range(min=1024, max=_MAX_MAX_RESULT_BYTES),
                     ),
                 }
             )
@@ -206,6 +270,8 @@ class SqliteFunction(Function):
                 q,
                 function_config.get("single") is True,
                 int(function_config.get("max_rows", _DEFAULT_MAX_ROWS)),
+                float(function_config.get("timeout", _DEFAULT_QUERY_TIMEOUT_SECONDS)),
+                int(function_config.get("max_result_bytes", _DEFAULT_MAX_RESULT_BYTES)),
             )
         except sqlite3.Error as err:
             raise HomeAssistantError(f"SQLite query failed: {err}") from err

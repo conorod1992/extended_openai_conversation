@@ -24,6 +24,40 @@ from ..const import (
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
+_STREAM_CHUNK_SIZE = 4096
+# UTF-8 uses at most four bytes per Unicode code point. Retaining this many bytes
+# preserves the existing character limit while bounding pipe memory during execution.
+_SHELL_OUTPUT_BYTE_LIMIT = SHELL_OUTPUT_LIMIT * 4
+
+
+async def _read_bounded_stream(
+    stream: asyncio.StreamReader | None,
+    limit: int = _SHELL_OUTPUT_BYTE_LIMIT,
+) -> tuple[bytes, bool]:
+    """Drain a subprocess pipe while retaining at most ``limit`` bytes."""
+    if stream is None:
+        return b"", False
+
+    retained = bytearray()
+    truncated = False
+    while chunk := await stream.read(_STREAM_CHUNK_SIZE):
+        remaining = max(0, limit - len(retained))
+        if remaining:
+            retained.extend(chunk[:remaining])
+        if len(chunk) > remaining:
+            truncated = True
+    return bytes(retained), truncated
+
+
+def _decode_bounded_output(content: bytes, truncated: bool) -> str:
+    """Decode bounded subprocess output and preserve the character limit."""
+    text = content.decode("utf-8", errors="replace")
+    if len(text) > SHELL_OUTPUT_LIMIT:
+        text = text[:SHELL_OUTPUT_LIMIT]
+        truncated = True
+    if truncated:
+        text += "\n... (truncated, output too large)"
+    return text
 
 
 class BashFunction(Function):
@@ -192,11 +226,11 @@ class BashFunction(Function):
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=os.name == "posix",
             )
+            stdout_task = asyncio.create_task(_read_bounded_stream(process.stdout))
+            stderr_task = asyncio.create_task(_read_bounded_stream(process.stderr))
 
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=timeout
-                )
+                await asyncio.wait_for(process.wait(), timeout=timeout)
             except TimeoutError:
                 if process.returncode is None:
                     if os.name == "posix":
@@ -204,22 +238,17 @@ class BashFunction(Function):
                             os.killpg(process.pid, signal.SIGKILL)
                     else:
                         process.kill()
-                await process.communicate()
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
                 return {"error": f"Command timed out after {timeout:g} seconds"}
 
-            stdout_text = stdout.decode("utf-8", errors="replace")
-            stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
-
-            if len(stdout_text) > SHELL_OUTPUT_LIMIT:
-                stdout_text = (
-                    stdout_text[:SHELL_OUTPUT_LIMIT]
-                    + "\n... (truncated, output too large)"
-                )
-            if len(stderr_text) > SHELL_OUTPUT_LIMIT:
-                stderr_text = (
-                    stderr_text[:SHELL_OUTPUT_LIMIT]
-                    + "\n... (truncated, output too large)"
-                )
+            (
+                (stdout, stdout_truncated),
+                (stderr, stderr_truncated),
+            ) = await asyncio.gather(stdout_task, stderr_task)
+            stdout_text = _decode_bounded_output(stdout, stdout_truncated)
+            stderr_text = _decode_bounded_output(stderr, stderr_truncated)
 
             result = {
                 "exit_code": process.returncode,
@@ -229,8 +258,8 @@ class BashFunction(Function):
             if stderr_text:
                 result["stderr"] = stderr_text
 
-        except Exception as e:
-            _LOGGER.error(e)
-            return {"error": str(e)}
+        except Exception as err:
+            _LOGGER.error(err)
+            return {"error": str(err)}
 
         return result
