@@ -85,11 +85,12 @@ from .const import (
 from .debug import DebugOpenAIClientProxy, install_debug_instrumentation
 from .debug_ui import async_setup_debug_ui
 from .ha_permissions import async_setup_ha_permissions
-from .helpers import get_authenticated_client
+from .helpers import get_authenticated_client, supports_openai_hosted_tools
 from .intercom_services import async_setup_intercom_services
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
 from .openai_compat import apply_openai_compatibility
+from .performance import PerformanceOpenAIClientProxy, install_performance_optimizations
 from .persistence_hardening import install_persistence_transactions
 from .services import async_setup_services
 from .template import async_setup_templates, async_unload_templates
@@ -118,6 +119,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Extended OpenAI Conversation (Responses)."""
     apply_openai_compatibility()
     install_persistence_transactions()
+    install_performance_optimizations()
     install_debug_instrumentation()
     await async_migrate_integration(hass)
     await async_setup_ha_permissions(hass)
@@ -150,7 +152,14 @@ async def async_setup_entry(
     except OpenAIError as err:
         raise ConfigEntryNotReady(err) from err
 
-    entry.runtime_data = DebugOpenAIClientProxy(client)  # type: ignore[assignment]
+    debug_client = DebugOpenAIClientProxy(client)
+    entry.runtime_data = PerformanceOpenAIClientProxy(  # type: ignore[assignment]
+        debug_client,
+        direct_openai=supports_openai_hosted_tools(
+            entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
+            entry.data.get(CONF_BASE_URL),
+        ),
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     try:
