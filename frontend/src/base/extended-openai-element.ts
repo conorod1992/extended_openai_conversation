@@ -1,11 +1,12 @@
 import {LitElement, css} from "lit";
+import type {CSSResultGroup} from "lit";
 
 import {fireEocEvent} from "../events";
 import {errorMessage} from "../format";
 import type {HomeAssistantLike} from "../types";
 
 export abstract class ExtendedOpenAiElement extends LitElement {
-  static styles = css`
+  static styles: CSSResultGroup = css`
     :host {
       box-sizing: border-box;
       color: var(--primary-text-color);
