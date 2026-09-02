@@ -111,13 +111,21 @@ _TOOL_DESCRIPTIONS = {
     "knowledge_get": "Read a Knowledge source page by exact source ID.",
     "conversation_search": "Search prior retained conversations.",
     "conversation_get": "Read a page from one retained conversation.",
-    "conversation_private": "Stop retaining this conversation and delete its retained turns.",
+    "conversation_private": (
+        "Stop retaining this conversation and delete its retained turns."
+    ),
     "conversation_resume_saving": "Start a new retained session after private mode.",
     "conversation_delete_current": "Delete the current retained conversation.",
     "conversation_delete_selected": "Delete confirmed selected retained sessions.",
-    "conversation_delete_date_range": "Delete confirmed retained sessions in a date range.",
-    "guest_mode_restrict": "Enable, start sooner, or extend Guest Mode; never weaken it.",
-    "set_continue_conversation": "Return the final spoken answer and whether to listen for an immediate reply.",
+    "conversation_delete_date_range": (
+        "Delete confirmed retained sessions in a date range."
+    ),
+    "guest_mode_restrict": (
+        "Enable, start sooner, or extend Guest Mode; never weaken it."
+    ),
+    "set_continue_conversation": (
+        "Return the final spoken answer and whether to listen for an immediate reply."
+    ),
 }
 
 _PROPERTY_DESCRIPTIONS: dict[tuple[str, str], str] = {
@@ -129,7 +137,10 @@ _PROPERTY_DESCRIPTIONS: dict[tuple[str, str], str] = {
     ("guest_mode_restrict", "active_from"): "ISO 8601; omit to start now.",
     ("guest_mode_restrict", "active_until"): "ISO 8601 expiry; extensions only.",
     ("set_continue_conversation", "response"): "Complete spoken answer.",
-    ("set_continue_conversation", "continue_conversation"): "Expect an immediate reply.",
+    (
+        "set_continue_conversation",
+        "continue_conversation",
+    ): "Expect an immediate reply.",
 }
 
 
@@ -139,7 +150,9 @@ def _compact_loader_description(description: str) -> str:
     if marker not in description:
         return description
     catalogue = description.split(marker, 1)[1]
-    catalogue = "\n".join(line.removeprefix("- ") for line in catalogue.splitlines())
+    catalogue = "\n".join(
+        line.removeprefix("- ") for line in catalogue.splitlines()
+    )
     return (
         "Load one or more on-demand tool groups. Loading only exposes schemas and "
         "performs no action.\n" + catalogue
