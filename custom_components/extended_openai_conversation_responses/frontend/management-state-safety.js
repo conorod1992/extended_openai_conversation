@@ -46,6 +46,8 @@ function openDialogBaseline(panel, dialog) {
   if (!dialog?.id || !["rule-dialog", "tool-dialog", "group-dialog"].includes(dialog.id)) return;
   panel._eocDialogBaselines ||= new Map();
   if (dialog.id === "tool-dialog") {
+    // Function Tools already keep their authoritative initial YAML on the panel,
+    // but it arrives asynchronously after the dialog opens.
     panel._eocDialogBaselines.set(dialog.id, null);
     return;
   }
@@ -107,12 +109,35 @@ function prepareSectionCache(panel, view) {
 }
 
 function markSectionCache(panel, key, reused) {
+  // Do not slide the TTL when a cached value is merely revisited. It should
+  // still become eligible for a real refresh after 30 seconds.
   if (!key || reused || !panel._sectionCache?.has(key)) return;
   panel._eocSectionCacheTimes ||= new Map();
   panel._eocSectionCacheTimes.set(key, Date.now());
 }
 
+function ensureWindowGuards(panel) {
+  if (!panel._eocStateBeforeUnload) {
+    panel._eocStateBeforeUnload = (event) => {
+      if (!panel._guestDirty && !modifiedOpenDialog(panel)) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", panel._eocStateBeforeUnload);
+  }
+  if (!panel._eocStateFocus) {
+    panel._eocStateFocus = () => {
+      const view = panel._viewKey();
+      const key = panel._sectionCacheKey?.(view);
+      const loadedAt = key ? panel._eocSectionCacheTimes?.get(key) : null;
+      if (loadedAt && Date.now() - loadedAt > SECTION_CACHE_TTL_MS) void panel._loadSection(true);
+    };
+    window.addEventListener("focus", panel._eocStateFocus);
+  }
+}
+
 function bindStateSafety(panel) {
+  ensureWindowGuards(panel);
   const root = panel.shadowRoot;
   if (!root || root.__eocStateSafetyBound) return;
   root.__eocStateSafetyBound = true;
@@ -133,9 +158,9 @@ function bindStateSafety(panel) {
       return;
     }
 
-    // Explicit Cancel remains an intentional discard. Protect only close/X paths.
-    if (!button.classList.contains("rule-close") || !button.classList.contains("icon")) return;
-    const dialog = root.querySelector("#rule-dialog");
+    // Explicit Cancel remains an intentional discard. Protect close/X buttons.
+    const dialog = button.closest?.("dialog");
+    if (!button.classList.contains("icon") || !["rule-dialog", "tool-dialog", "group-dialog"].includes(dialog?.id)) return;
     if (!dialogDirty(panel, dialog)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -158,7 +183,7 @@ function bindStateSafety(panel) {
 
   root.addEventListener("change", (event) => {
     const select = event.target;
-    if (select?.id !== "agent" || !panel._guestDirty || panel._viewKey() !== "capabilities/guest-mode") return;
+    if (select?.id !== "agent" || panel._viewKey() !== "capabilities/guest-mode" || !syncGuestDirty(panel)) return;
     const nextAgent = select.value;
     const currentAgent = panel._agentId;
     select.value = currentAgent;
@@ -227,6 +252,43 @@ export function installManagementStateSafety(registry = globalThis.customElement
       return originalHandleRouteChange.call(this, route);
     };
 
+    const originalStartFreshGuestPolicy = prototype._startFreshGuestPolicy;
+    prototype._startFreshGuestPolicy = async function(...args) {
+      const result = await originalStartFreshGuestPolicy.apply(this, args);
+      syncGuestDirty(this);
+      return result;
+    };
+
+    const originalSetupGuestSelectors = prototype._setupGuestSelectors;
+    prototype._setupGuestSelectors = function(...args) {
+      const result = originalSetupGuestSelectors.apply(this, args);
+      this.shadowRoot.querySelectorAll("ha-selector[data-guest-key]").forEach((selector) => {
+        if (selector.__eocGuestDirtyBound) return;
+        selector.__eocGuestDirtyBound = true;
+        selector.addEventListener("value-changed", () => queueMicrotask(() => syncGuestDirty(this)));
+      });
+      return result;
+    };
+
+    const originalLoadAgents = prototype._loadAgents;
+    prototype._loadAgents = async function(selectedId = null) {
+      const preserveGuestDraft = this._viewKey() === "capabilities/guest-mode"
+        && (!selectedId || selectedId === this._agentId)
+        && syncGuestDirty(this);
+      const guestDraft = preserveGuestDraft ? clone(this._guestDraft) : null;
+      const guestBaseline = preserveGuestDraft ? clone(this._eocGuestBaseline) : null;
+      const guestAgent = preserveGuestDraft ? this._agentId : null;
+      const result = await originalLoadAgents.call(this, selectedId);
+      if (preserveGuestDraft && this._agentId === guestAgent) {
+        this._guestDraft = guestDraft;
+        this._eocGuestBaseline = guestBaseline;
+        this._eocGuestBaselineAgent = guestAgent;
+        this._guestDirty = true;
+        this._render();
+      }
+      return result;
+    };
+
     const originalLoadSection = prototype._loadSection;
     prototype._loadSection = function(silent = false) {
       const view = this._viewKey();
@@ -234,11 +296,7 @@ export function installManagementStateSafety(registry = globalThis.customElement
       const result = originalLoadSection.call(this, silent);
       return Promise.resolve(result).then((value) => {
         markSectionCache(this, cache.key, cache.reused);
-        if (
-          view === "capabilities/guest-mode"
-          && this._guestDraft
-          && (!this._eocGuestBaseline || this._eocGuestBaselineAgent !== this._agentId)
-        ) setGuestBaseline(this);
+        if (view === "capabilities/guest-mode" && this._guestDraft && !this._guestDirty) setGuestBaseline(this);
         return value;
       });
     };
@@ -264,8 +322,14 @@ export function installManagementStateSafety(registry = globalThis.customElement
 
     const originalDisconnected = prototype.disconnectedCallback;
     prototype.disconnectedCallback = function(...args) {
-      if (this._eocStateBeforeUnload) window.removeEventListener("beforeunload", this._eocStateBeforeUnload);
-      if (this._eocStateFocus) window.removeEventListener("focus", this._eocStateFocus);
+      if (this._eocStateBeforeUnload) {
+        window.removeEventListener("beforeunload", this._eocStateBeforeUnload);
+        this._eocStateBeforeUnload = null;
+      }
+      if (this._eocStateFocus) {
+        window.removeEventListener("focus", this._eocStateFocus);
+        this._eocStateFocus = null;
+      }
       return originalDisconnected?.apply(this, args);
     };
 
@@ -274,30 +338,5 @@ export function installManagementStateSafety(registry = globalThis.customElement
 }
 
 if (typeof customElements !== "undefined") {
-  void installManagementStateSafety().then((installed) => {
-    if (!installed) return;
-    const Panel = customElements.get("extended-openai-management-panel");
-    const originalConnected = Panel.prototype.connectedCallback;
-    Panel.prototype.connectedCallback = function(...args) {
-      const result = originalConnected?.apply(this, args);
-      if (!this._eocStateBeforeUnload) {
-        this._eocStateBeforeUnload = (event) => {
-          if (!this._guestDirty && !modifiedOpenDialog(this)) return;
-          event.preventDefault();
-          event.returnValue = "";
-        };
-        window.addEventListener("beforeunload", this._eocStateBeforeUnload);
-      }
-      if (!this._eocStateFocus) {
-        this._eocStateFocus = () => {
-          const view = this._viewKey();
-          const key = this._sectionCacheKey?.(view);
-          const loadedAt = key ? this._eocSectionCacheTimes?.get(key) : null;
-          if (loadedAt && Date.now() - loadedAt > SECTION_CACHE_TTL_MS) void this._loadSection(true);
-        };
-        window.addEventListener("focus", this._eocStateFocus);
-      }
-      return result;
-    };
-  });
+  void installManagementStateSafety();
 }
