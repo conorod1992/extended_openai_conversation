@@ -283,19 +283,21 @@ async def optimized_management_command(
     if message.get("section") == "overview" and message.get("action") == "summary":
         return await async_overview_summary(hass, user_id, is_admin, message)
     if message.get("section") == "configuration" and message.get("action") == "save":
-        return await _async_save_configuration(hass, user_id, is_admin, message, original)
+        return await _async_save_configuration(
+            hass, user_id, is_admin, message, original
+        )
     return await original(hass, user_id, is_admin, message)
 
 
-def _static_paths(frontend_dir: Path, module_names: tuple[str, ...]) -> list[StaticPathConfig]:
+def _static_paths(
+    frontend_dir: Path, module_names: tuple[str, ...]
+) -> list[StaticPathConfig]:
     """Keep legacy no-cache aliases while adding immutable versioned URLs."""
     paths: list[StaticPathConfig] = []
     for module_name in module_names:
         file_path = str(frontend_dir / module_name)
         paths.append(
-            StaticPathConfig(
-                f"/{DOMAIN}/{module_name}", file_path, cache_headers=False
-            )
+            StaticPathConfig(f"/{DOMAIN}/{module_name}", file_path, cache_headers=False)
         )
         paths.append(
             StaticPathConfig(_asset_url(module_name), file_path, cache_headers=True)
