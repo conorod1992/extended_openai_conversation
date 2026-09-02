@@ -120,7 +120,7 @@ def test_default_entity_context_is_compact_but_keeps_every_entity_and_alias(hass
     )
 
     assert "```" not in context
-    assert "entity_id,name,state,area_id,aliases" in context
+    assert "entity_id,name_if_different,state,area_id,aliases" in context
     assert "light.study_light,,on,,desk light/office light" in context
     assert "light.lamp_plug_switch_1,Bedroom Lamp,off,," in context
     assert context.count("light.study_light") == 1
@@ -209,8 +209,8 @@ def test_persistent_memory_context_preserves_record_fields_with_compact_json() -
             "content": "The boiler is serviced each October.",
         }
     ]
-    assert ', ' not in serialized
-    assert ': ' not in serialized
+    assert ", " not in serialized
+    assert ": " not in serialized
     assert "never transfer one person's preferences to another" in context
 
 
@@ -241,8 +241,8 @@ def test_temporary_memory_omits_only_default_category_and_explains_default() -> 
     }
     assert records[1]["category"] == "delivery"
     assert "omitted category means general" in context
-    assert ', ' not in serialized
-    assert ': ' not in serialized
+    assert ", " not in serialized
+    assert ": " not in serialized
 
 
 def test_full_prompt_uses_compact_memory_context_without_disabling_features(hass) -> None:
