@@ -54,6 +54,11 @@ def _compact_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
+def _normalized_text(value: str) -> str:
+    """Collapse formatting whitespace so semantic assertions ignore wrapping."""
+    return " ".join(value.split())
+
+
 def test_integration_tool_compaction_preserves_schema_constraints() -> None:
     """Compaction changes prose, not executable metadata or validation structure."""
     original = [
@@ -147,6 +152,9 @@ def test_compact_guidance_retains_memory_and_knowledge_safety_semantics() -> Non
     assert len(PERSISTENT_MEMORY_GUIDANCE) < len(MEMORY_PROMPT) * 0.7
     assert len(KNOWLEDGE_GUIDANCE) < len(KNOWLEDGE_PROMPT) * 0.7
 
+    memory_guidance = _normalized_text(PERSISTENT_MEMORY_GUIDANCE)
+    knowledge_guidance = _normalized_text(KNOWLEDGE_GUIDANCE)
+
     for phrase in (
         "memory_upsert",
         "source=implicit",
@@ -155,14 +163,14 @@ def test_compact_guidance_retains_memory_and_knowledge_safety_semantics() -> Non
         "Current user statements override stored facts",
         "confirm before broad deletion",
     ):
-        assert phrase in PERSISTENT_MEMORY_GUIDANCE
+        assert phrase in memory_guidance
 
     for phrase in (
         "search rather than guess",
-        "short discriminative keywords",
-        "never invent IDs",
-        "knowledge_list without a query",
+        "short, discriminative keywords",
+        "Never invent an ID",
+        "knowledge_list with no query first",
         "knowledge_get",
         "rather than inventing an answer",
     ):
-        assert phrase in KNOWLEDGE_GUIDANCE
+        assert phrase in knowledge_guidance
