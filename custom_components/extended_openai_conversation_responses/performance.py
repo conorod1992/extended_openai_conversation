@@ -83,7 +83,9 @@ def _cached_configured_tools(raw_yaml: str | None) -> tuple[dict[str, Any], ...]
     return tuple(_configured_function_tools_from_data(data))
 
 
-def cached_configured_function_tools_from_data(data: Mapping[str, Any]) -> list[dict[str, Any]]:
+def cached_configured_function_tools_from_data(
+    data: Mapping[str, Any],
+) -> list[dict[str, Any]]:
     """Return isolated tools from the validated configuration-revision cache."""
     # Callers historically received fresh mutable dictionaries. Keep that contract
     # while moving the much more expensive YAML/schema validation behind the cache.
@@ -200,7 +202,9 @@ def prompt_cache_context(
     stable_count = 0
     for section in sections:
         stable = section.volatility == "stable"
-        if section.key == "user_prompt" and not _template_requires_render(raw_user_prompt):
+        if section.key == "user_prompt" and not _template_requires_render(
+            raw_user_prompt
+        ):
             stable = True
         if not stable:
             break
@@ -212,10 +216,9 @@ def prompt_cache_context(
     if stable_count < len(sections):
         # Match the exact separator used when the next, volatile section is appended.
         prefix = prefix.rstrip() + "\n"
-    if (
-        len(prefix) < _EXPLICIT_CACHE_MIN_CHARACTERS
-        or not effective_prompt.text.startswith(prefix)
-    ):
+    if len(
+        prefix
+    ) < _EXPLICIT_CACHE_MIN_CHARACTERS or not effective_prompt.text.startswith(prefix):
         return None
     digest = hashlib.sha256(prefix.encode()).hexdigest()[:48]
     return PromptCacheContext(prefix=prefix, key=f"eoc-{digest}")
@@ -235,7 +238,9 @@ def optimize_responses_kwargs(
     cache_context: PromptCacheContext | None = None,
 ) -> dict[str, Any]:
     """Mark only the stable system-prompt prefix as cacheable for GPT-5.6+."""
-    context = cache_context if cache_context is not None else _PROMPT_CACHE_CONTEXT.get()
+    context = (
+        cache_context if cache_context is not None else _PROMPT_CACHE_CONTEXT.get()
+    )
     if (
         not direct_openai
         or context is None
