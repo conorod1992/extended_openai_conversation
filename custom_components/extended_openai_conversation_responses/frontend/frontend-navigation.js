@@ -1,5 +1,3 @@
-if (typeof customElements !== "undefined") import("./debug-management.js");
-
 export const NAVIGATION = [
   {id: "overview", label: "Overview", path: "/extended-openai/overview", sections: []},
   {id: "guide", label: "Guide", path: "/extended-openai/guide", sections: []},
