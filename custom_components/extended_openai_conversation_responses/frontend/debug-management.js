@@ -1,8 +1,15 @@
-import "./debug-panel.js";
-
 const DEBUG_VIEW = "usage-maintenance/request-debug";
 const MANAGEMENT_TAG = "extended-openai-management-panel";
 const DEBUG_TAG = "extended-openai-debug-panel";
+let debugPanelPromise = null;
+
+function ensureDebugPanel() {
+  if (customElements.get(DEBUG_TAG)) return Promise.resolve(customElements.get(DEBUG_TAG));
+  if (!debugPanelPromise) {
+    debugPanelPromise = import("./debug-panel.js").finally(() => { debugPanelPromise = null; });
+  }
+  return debugPanelPromise;
+}
 
 function sessionLabel(run) {
   const mode = run.continuity_mode;
@@ -88,6 +95,13 @@ function installManagementSection() {
     if (this._data?.is_admin !== true) {
       return this._empty?.("Request debugging is available to administrators only.") || "";
     }
+    if (!customElements.get(DEBUG_TAG)) {
+      void ensureDebugPanel().then(() => this._render?.()).catch((err) => {
+        this._error = `Unable to load request debugging: ${err.message || String(err)}`;
+        this._render?.();
+      });
+      return this._loading?.() || '<div class="loading">Loading request debugging…</div>';
+    }
     return `<extended-openai-debug-panel embedded></extended-openai-debug-panel>`;
   };
 
@@ -106,3 +120,5 @@ function installManagementSection() {
 
 customElements.whenDefined(DEBUG_TAG).then(installDebugPresentation);
 customElements.whenDefined(MANAGEMENT_TAG).then(installManagementSection);
+
+export {ensureDebugPanel, sessionLabel};
