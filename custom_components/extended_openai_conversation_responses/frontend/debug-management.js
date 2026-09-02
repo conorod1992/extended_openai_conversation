@@ -21,7 +21,8 @@ function sessionLabel(run) {
 
 function installDebugPresentation() {
   const DebugPanel = customElements.get(DEBUG_TAG);
-  if (!DebugPanel || DebugPanel.prototype.__managementPresentationInstalled) return;
+  if (!DebugPanel || DebugPanel.name !== "ExtendedOpenAIDebugPanel"
+    || DebugPanel.prototype.__managementPresentationInstalled) return;
   const prototype = DebugPanel.prototype;
   prototype.__managementPresentationInstalled = true;
 
@@ -42,6 +43,8 @@ function installDebugPresentation() {
     const result = originalRender.apply(this, args);
     if (!this.hasAttribute("embedded")) return result;
 
+    this.style.minHeight = "0";
+    this.style.background = "transparent";
     const main = this.shadowRoot?.querySelector("main");
     if (main) {
       main.style.maxWidth = "none";
@@ -66,7 +69,8 @@ function installDebugPresentation() {
 
 function installManagementSection() {
   const ManagementPanel = customElements.get(MANAGEMENT_TAG);
-  if (!ManagementPanel || ManagementPanel.prototype.__requestDebugSectionInstalled) return;
+  if (!ManagementPanel || ManagementPanel.name !== "ExtendedOpenAIManagementPanel"
+    || ManagementPanel.prototype.__requestDebugSectionInstalled) return;
   const prototype = ManagementPanel.prototype;
   prototype.__requestDebugSectionInstalled = true;
 
