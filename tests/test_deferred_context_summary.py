@@ -61,6 +61,7 @@ async def test_manager_schedules_without_waiting_and_applies_before_followup() -
         return "The user chose Celsius."
 
     content = _history()
+    original = list(content)
     assert manager.schedule(
         "conversation:test",
         content,
@@ -71,7 +72,7 @@ async def test_manager_schedules_without_waiting_and_applies_before_followup() -
         summarize=summarize,
         scheduler=asyncio.create_task,
     )
-    assert content == _history()
+    assert content == original
     await asyncio.wait_for(started.wait(), timeout=1)
 
     content.append(conversation.UserContent(content="What about tomorrow?"))
