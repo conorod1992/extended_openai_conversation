@@ -107,6 +107,7 @@ def _register_split_frontend_modules() -> None:
         "agent-config-editor-base.js",
         "guide-page-base.js",
         "request-rules-match-test-ui.js",
+        "management-permission-boundaries.js",
     )
     modules = tuple(
         dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
