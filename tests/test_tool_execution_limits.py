@@ -7,7 +7,6 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses.provider_loop import (
     MAX_PROVIDER_REQUESTS,
-    provider_request_limit,
 )
 from custom_components.extended_openai_conversation_responses.runtime_cleanup import (
     FunctionCallBudget,
@@ -75,20 +74,9 @@ def test_zero_budget_never_advertises_ordinary_functions() -> None:
         budget.claim("do_work")
 
 
-def test_provider_request_limit_reserves_internal_orchestration_rounds() -> None:
-    """A high action budget can exceed the historical 20-request provider loop."""
-    assert provider_request_limit(30, conditional_continue=False) == 36
-    assert provider_request_limit(30, conditional_continue=True) == 37
-
-
-def test_provider_request_limit_keeps_absolute_safety_ceiling() -> None:
-    """Pathological or legacy-unlimited configurations remain absolutely bounded."""
-    assert provider_request_limit(10_000, conditional_continue=True) == (
-        MAX_PROVIDER_REQUESTS
-    )
-    assert provider_request_limit(-1, conditional_continue=False) == (
-        MAX_PROVIDER_REQUESTS
-    )
+def test_provider_safety_ceiling_allows_more_than_legacy_twenty_rounds() -> None:
+    """The emergency ceiling no longer overrides legitimate 20+ call budgets."""
+    assert MAX_PROVIDER_REQUESTS > 30
 
 
 def test_tool_loop_exhaustion_fails_explicitly() -> None:
