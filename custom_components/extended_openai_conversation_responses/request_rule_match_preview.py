@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -13,7 +13,7 @@ from .request_rules import RuleMatch, async_get_request_rules
 
 _PATCHED = "extended_openai_request_rule_match_preview"
 ManagementCommand = Callable[
-    [HomeAssistant, str, bool, dict[str, Any]], Awaitable[dict[str, Any]]
+    [HomeAssistant, str, bool, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]
 ]
 
 
