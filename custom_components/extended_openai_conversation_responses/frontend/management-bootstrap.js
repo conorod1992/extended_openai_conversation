@@ -2,6 +2,7 @@ const PANEL_TAG = "extended-openai-management-panel";
 const PROPERTY_REPLAY_PATCHED = Symbol.for("extended-openai.management-property-replay");
 const BOOTSTRAP_MODULES = [
   "./management-state-safety.js",
+  "./management-feature-status.js",
   "./management-rendering-performance.js",
   "./management-loading-performance.js",
   "./management-route-performance.js",
@@ -107,6 +108,7 @@ if (typeof customElements !== "undefined") {
     // deterministic evaluation/installation order below.
     preloadBootstrapModules();
     await import("./management-state-safety.js");
+    await import("./management-feature-status.js");
     await import("./management-rendering-performance.js");
     await import("./management-loading-performance.js");
     await import("./management-route-performance.js");
