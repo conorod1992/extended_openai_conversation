@@ -26,6 +26,7 @@ from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
+    CONF_LOCAL_INTENT_EXCLUSIONS,
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CHAT_MODEL,
@@ -269,11 +270,12 @@ async def _async_save_configuration(
     if title is not None and (not isinstance(title, str) or not title.strip()):
         return {"valid": False, "errors": {"title": "must not be empty"}}
 
+    management_ui = _management_ui()
+    management_ui._require_admin(is_admin)
     updates = message.get("config", {})
     if not isinstance(updates, dict):
-        raise HomeAssistantError("Configuration update must be an object")
+        raise HomeAssistantError("config must be an object")
 
-    management_ui = _management_ui()
     entry, subentry = management_ui.entry_and_agent(
         hass, message.get("entry_id"), message.get("subentry_id")
     )
@@ -283,7 +285,6 @@ async def _async_save_configuration(
     if not validation.get("valid"):
         return validation
 
-    management_ui._require_admin(is_admin)
     normalized = validation["config"]
     persisted = preserve_legacy_guest_policy(
         dict(subentry.data), deepcopy(normalized)
@@ -304,7 +305,10 @@ async def _async_save_configuration(
             snapshot[CONF_CHAT_MODEL]
         ),
         "local_handling": management_ui.local_handling_snapshot(
-            hass, entry, subentry, snapshot
+            hass,
+            str(entry.entry_id),
+            str(subentry.subentry_id),
+            snapshot.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
         ),
     }
     return {
