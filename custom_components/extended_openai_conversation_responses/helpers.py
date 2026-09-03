@@ -26,7 +26,10 @@ from .const import (
     MODEL_CONFIG_PATTERNS,
     MODEL_TOKEN_PARAMETER_SUPPORT,
 )
-from .entity_context_cache import get_entity_prompt_metadata, normalize_entity_aliases
+from .entity_context_cache import (
+    get_entity_prompt_metadata,
+    normalize_entity_aliases as normalize_entity_aliases,
+)
 from .ha_permissions import filter_entities_for_active_user
 
 _LOGGER = logging.getLogger(__name__)
