@@ -5,14 +5,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses.archive_session_hardening import (
-    _async_begin_session_transactional,
-    _async_resume_saving_transactional,
-    attach_archive_runtime_status,
-    install_archive_session_hardening,
-)
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_ENABLED,
+    CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+    CONF_SHARED_ARCHIVE_ENABLED,
+)
+from custom_components.extended_openai_conversation_responses.conversation import (
+    ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
@@ -55,8 +54,7 @@ async def test_begin_failure_does_not_publish_unpersisted_session() -> None:
     storage.fail_metadata = True
 
     with pytest.raises(OSError, match="metadata write failed"):
-        await _async_begin_session_transactional(
-            archive,
+        await archive.async_begin_session(
             "conversation:test",
             user_scope("alice", source="test"),
             "conversation-id",
@@ -67,10 +65,10 @@ async def test_begin_failure_does_not_publish_unpersisted_session() -> None:
 
     assert archive.active_session("conversation:test") is None
     assert archive.stats()["session_count"] == 0
+    assert storage.metadata is None
 
     storage.fail_metadata = False
-    session = await _async_begin_session_transactional(
-        archive,
+    session = await archive.async_begin_session(
         "conversation:test",
         user_scope("alice", source="test"),
         "conversation-id",
@@ -82,13 +80,13 @@ async def test_begin_failure_does_not_publish_unpersisted_session() -> None:
     assert session is not None
     assert archive.active_session("conversation:test") == session
     assert archive.stats()["session_count"] == 1
+    assert storage.metadata["active"] == {"conversation:test": session.session_id}
 
 
 async def test_resume_failure_keeps_previous_active_session_and_retries() -> None:
     storage = FailingArchiveStorage()
     archive = await _archive(storage)
-    previous = await _async_begin_session_transactional(
-        archive,
+    previous = await archive.async_begin_session(
         "conversation:test",
         user_scope("alice", source="test"),
         "conversation-id",
@@ -100,8 +98,7 @@ async def test_resume_failure_keeps_previous_active_session_and_retries() -> Non
     storage.fail_metadata = True
 
     with pytest.raises(OSError, match="metadata write failed"):
-        await _async_resume_saving_transactional(
-            archive,
+        await archive.async_resume_saving(
             "conversation:test",
             previous.session_id,
             user_scope("alice", source="test"),
@@ -109,10 +106,10 @@ async def test_resume_failure_keeps_previous_active_session_and_retries() -> Non
 
     assert archive.active_session("conversation:test") == previous
     assert archive.stats()["session_count"] == 1
+    assert storage.metadata["active"] == {"conversation:test": previous.session_id}
 
     storage.fail_metadata = False
-    resumed = await _async_resume_saving_transactional(
-        archive,
+    resumed = await archive.async_resume_saving(
         "conversation:test",
         previous.session_id,
         user_scope("alice", source="test"),
@@ -121,6 +118,7 @@ async def test_resume_failure_keeps_previous_active_session_and_retries() -> Non
     assert resumed.session_id != previous.session_id
     assert archive.active_session("conversation:test") == resumed
     assert archive.stats()["session_count"] == 2
+    assert storage.metadata["active"] == {"conversation:test": resumed.session_id}
 
 
 async def test_session_metadata_write_preserves_pending_partition_journal() -> None:
@@ -128,8 +126,7 @@ async def test_session_metadata_write_preserves_pending_partition_journal() -> N
     archive = await _archive(storage)
     archive._pending_partitions.add("2026-09")
 
-    session = await _async_begin_session_transactional(
-        archive,
+    session = await archive.async_begin_session(
         "conversation:test",
         user_scope("alice", source="test"),
         "conversation-id",
@@ -143,8 +140,15 @@ async def test_session_metadata_write_preserves_pending_partition_journal() -> N
 
 
 class FakeAgent:
-    def __init__(self) -> None:
-        self.subentry = SimpleNamespace(data={CONF_ARCHIVE_ENABLED: True})
+    def __init__(self, archive: ConversationArchive) -> None:
+        self._archive = archive
+        self.subentry = SimpleNamespace(
+            data={
+                CONF_ARCHIVE_ENABLED: True,
+                CONF_SHARED_ARCHIVE_ENABLED: False,
+                CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES: 30,
+            }
+        )
         self.statuses: list[tuple[str, bool, Exception | None, bool]] = []
 
     def _set_subsystem_status(
@@ -159,23 +163,23 @@ class FakeAgent:
 
 
 async def test_begin_failure_is_fail_open_and_later_success_restores_health() -> None:
-    install_archive_session_hardening()
     storage = FailingArchiveStorage()
     archive = await _archive(storage)
-    agent = FakeAgent()
-    attach_archive_runtime_status(agent, archive)
+    agent = FakeAgent(archive)
+    policy = SimpleNamespace(archive_retention=True)
+    scope = user_scope("alice", source="test")
     storage.fail_metadata = True
 
-    failed = await archive.async_begin_session(
+    failed = await ExtendedOpenAIAgentEntity._async_begin_archive_session(
+        agent,
         "conversation:test",
-        user_scope("alice", source="test"),
+        scope,
         "conversation-id",
-        archive_enabled=True,
-        shared_archive_enabled=False,
-        inactivity_minutes=30,
+        policy,
     )
 
     assert failed is None
+    assert agent._archive is archive
     assert archive.active_session("conversation:test") is None
     assert archive.stats()["session_count"] == 0
     assert agent.statuses[-1][0:2] == ("archive", True)
@@ -183,15 +187,15 @@ async def test_begin_failure_is_fail_open_and_later_success_restores_health() ->
     assert agent.statuses[-1][3] is False
 
     storage.fail_metadata = False
-    recovered = await archive.async_begin_session(
+    recovered = await ExtendedOpenAIAgentEntity._async_begin_archive_session(
+        agent,
         "conversation:test",
-        user_scope("alice", source="test"),
+        scope,
         "conversation-id",
-        archive_enabled=True,
-        shared_archive_enabled=False,
-        inactivity_minutes=30,
+        policy,
     )
 
     assert recovered is not None
+    assert agent._archive is archive
     assert archive.active_session("conversation:test") == recovered
     assert agent.statuses[-1] == ("archive", True, None, True)
