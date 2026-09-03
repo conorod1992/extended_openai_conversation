@@ -1,6 +1,6 @@
 """Keep context truncation reliable when providers omit stream usage metadata.
 
-Provider-reported usage remains authoritative for accounting.  A conservative local
+Provider-reported usage remains authoritative for accounting. A conservative local
 estimate is attached only to the in-flight RequestUsage object so the existing
 context-management decision can still fire; UsageManager is wrapped to strip that
 estimate before totals/details are persisted.
@@ -39,7 +39,7 @@ _CURRENT_ESTIMATE_STATE: ContextVar[_EstimateState | None] = ContextVar(
 )
 
 
-def _has_provider_usage(usage: RequestUsage) -> bool:
+def _has_token_count(usage: RequestUsage) -> bool:
     """Return whether normalized provider metadata contains a usable token count."""
     return any(
         (
@@ -49,7 +49,7 @@ def _has_provider_usage(usage: RequestUsage) -> bool:
             usage.cached_input_tokens,
             usage.reasoning_tokens,
         )
-    ) or bool(usage.details)
+    )
 
 
 def _copy_usage(target: RequestUsage, source: RequestUsage) -> None:
@@ -67,7 +67,7 @@ def _capture_provider_usage(target: RequestUsage | None, raw_usage: Any) -> bool
     if target is None or raw_usage is None:
         return False
     normalized = extract_usage(raw_usage)
-    if not _has_provider_usage(normalized):
+    if not _has_token_count(normalized):
         return False
     _copy_usage(target, normalized)
     return True
@@ -90,7 +90,7 @@ def estimate_provider_input_tokens(input_value: Any, tools: Any = None) -> int:
 
     ASCII-heavy request JSON is budgeted at roughly three characters per token.
     Non-ASCII characters are budgeted more aggressively because many tokenizers encode
-    them at one or more tokens per character.  This estimate is intentionally used only
+    them at one or more tokens per character. This estimate is intentionally used only
     as a safety fallback for truncation and is never reported as provider/billing usage.
     """
     input_characters, input_non_ascii = _serialized_characters(input_value)
@@ -120,7 +120,7 @@ def _request_tools(state: _EstimateState, api_mode: str) -> list[dict[str, Any]]
             else state.function_tools
         )
     except Exception:
-        # Estimation must never become a new failure mode.  Falling back to the base
+        # Estimation must never become a new failure mode. Falling back to the base
         # list can undercount a newly loaded group, but remains much safer than zero.
         _LOGGER.debug(
             "Unable to refresh Function Tools for local context estimate",
@@ -144,7 +144,7 @@ def _request_tools(state: _EstimateState, api_mode: str) -> list[dict[str, Any]]
         ):
             tools = [*snapshot.provider_tools, *tools]
     except Exception:
-        # The live request path already validates provider-owned tools.  A sizing-only
+        # The live request path already validates provider-owned tools. A sizing-only
         # helper should degrade rather than mask the real request/error behavior.
         _LOGGER.debug(
             "Unable to include provider-owned tools in local context estimate",
@@ -157,7 +157,7 @@ def _estimate_current_request(
     chat_log: Any, request_usage: RequestUsage | None, api_mode: str
 ) -> None:
     """Seed one in-flight request with a local estimate until real usage arrives."""
-    if request_usage is None or _has_provider_usage(request_usage):
+    if request_usage is None or _has_token_count(request_usage):
         return
     state = _CURRENT_ESTIMATE_STATE.get()
     if state is None:
@@ -259,14 +259,14 @@ def install_context_usage_hardening() -> None:
         result: Any,
         request_usage: RequestUsage | None = None,
     ) -> AsyncIterator[Any]:
-        _estimate_current_request(chat_log, request_usage, "chat.completions")
+        _estimate_current_request(chat_log, request_usage, "chat_completions")
 
         async def normalized_stream() -> AsyncIterator[Any]:
             async for chunk in result:
                 raw_usage = getattr(chunk, "usage", None)
                 captured = _capture_provider_usage(request_usage, raw_usage)
                 # The original transformer handles the standard final usage-only
-                # chunk.  Trace only non-standard usage attached to a normal choice.
+                # chunk. Trace only non-standard usage attached to a normal choice.
                 if captured and getattr(chunk, "choices", None):
                     assert request_usage is not None
                     chat_log.async_trace(
@@ -330,5 +330,5 @@ def install_context_usage_hardening() -> None:
     entity_type._async_handle_chat_log = handle_with_estimate_state
     entity_type._transform_chat_stream = chat_transform_with_usage
     entity_type._transform_responses_stream = responses_transform_with_usage
-    UsageManager.async_record_request = record_request_without_estimate
+    UsageManager.async_record_request = record_request_without_estimate  # type: ignore[method-assign]
     _INSTALLED = True
