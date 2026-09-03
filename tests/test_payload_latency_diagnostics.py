@@ -52,9 +52,23 @@ def test_prompt_metrics_preserve_exact_section_sizes_and_stable_prefix() -> None
 
 def test_provider_payload_metrics_are_content_free_and_break_down_tool_results() -> None:
     provider_input = [
-        {"role": "system", "content": "secret system text"},
+        {
+            "role": "system",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "secret stable prefix",
+                    "prompt_cache_breakpoint": {"mode": "explicit"},
+                },
+                {"type": "input_text", "text": "secret volatile suffix"},
+            ],
+        },
         {"role": "user", "content": "private user question"},
-        {"type": "function_call_output", "call_id": "call-1", "output": "private result"},
+        {
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": "private result",
+        },
     ]
     tools = [
         {
@@ -78,6 +92,11 @@ def test_provider_payload_metrics_are_content_free_and_break_down_tool_results()
     assert metrics["input_breakdown"]["by_kind"]["user"]["count"] == 1
     assert metrics["input_breakdown"]["by_kind"]["tool_result"]["count"] == 1
     assert metrics["input_breakdown"]["tool_result_characters"] > 0
+    assert metrics["explicit_prompt_cache"] == {
+        "breakpoint_count": 1,
+        "cacheable_prefix_characters": len("secret stable prefix"),
+        "cacheable_prefix_approx_tokens": 5,
+    }
     assert [item["name"] for item in metrics["tool_breakdown"]] == [
         "large_tool",
         "small_tool",
@@ -86,6 +105,8 @@ def test_provider_payload_metrics_are_content_free_and_break_down_tool_results()
     assert "private description" not in str(metrics)
     assert "private user question" not in str(metrics)
     assert "private result" not in str(metrics)
+    assert "secret stable prefix" not in str(metrics)
+    assert "secret volatile suffix" not in str(metrics)
 
 
 def test_cache_ratio_uses_only_provider_reported_tokens() -> None:
