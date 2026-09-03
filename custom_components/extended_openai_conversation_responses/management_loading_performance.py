@@ -18,6 +18,8 @@ from .agent_config import (
     AGENT_CONFIG_FIELDS,
     agent_config_defaults,
     preserve_legacy_guest_policy,
+    validate_function_groups,
+    validate_function_tools,
 )
 from .const import (
     CONF_API_PROVIDER,
@@ -254,6 +256,11 @@ def _snapshot_normalized_configuration(config: dict[str, Any]) -> dict[str, Any]
             for key, value in config.items()
             if key in AGENT_CONFIG_FIELDS
         }
+    )
+    function_tools = validate_function_tools(snapshot[CONF_FUNCTION_TOOLS])
+    snapshot[CONF_FUNCTION_TOOLS] = function_tools
+    snapshot[CONF_FUNCTION_GROUPS] = validate_function_groups(
+        snapshot[CONF_FUNCTION_GROUPS], function_tools
     )
     return snapshot
 
