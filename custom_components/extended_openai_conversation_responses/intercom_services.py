@@ -17,6 +17,7 @@ from homeassistant.helpers import config_validation as cv
 from .const import DOMAIN
 from .intercom import DEFAULT_TTL_SECONDS, async_get_intercom
 from .intercom_panel import async_setup_broadcast_api
+from .intercom_permissions import async_authorized_broadcast_targets
 
 SERVICE_BROADCAST = "broadcast"
 
@@ -50,14 +51,26 @@ async def async_setup_intercom_services(hass: HomeAssistant) -> None:
 
     async def broadcast(call: ServiceCall) -> ServiceResponse:
         manager = await async_get_intercom(hass)
-        result = await manager.async_send(
-            call.data["message"],
+
+        # Resolve every selector once, enforce the authenticated caller's CONTROL
+        # permission for that exact set, then queue only those entity IDs. Calls
+        # from trusted automations/system context continue to work as before.
+        targets = await async_authorized_broadcast_targets(
+            hass,
+            manager,
+            context=call.context,
             whole_home=call.data["whole_home"],
             entity_ids=call.data.get("entity_id"),
             device_ids=call.data.get("device_id"),
             area_ids=call.data.get("area_id"),
             floor_ids=call.data.get("floor_id"),
             label_ids=call.data.get("label_id"),
+            origin_entity_id=call.data.get("origin_entity_id"),
+            origin_device_id=call.data.get("origin_device_id"),
+        )
+        result = await manager.async_send(
+            call.data["message"],
+            entity_ids=targets,
             origin_entity_id=call.data.get("origin_entity_id"),
             origin_device_id=call.data.get("origin_device_id"),
             source="service",

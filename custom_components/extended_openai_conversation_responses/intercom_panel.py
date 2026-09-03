@@ -12,6 +12,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .intercom import async_get_intercom
+from .intercom_permissions import async_authorized_broadcast_targets
 
 WS_BROADCAST = f"{DOMAIN}/broadcast"
 _SETUP_KEY = f"{DOMAIN}.broadcast_api_setup"
@@ -66,10 +67,19 @@ async def websocket_broadcast(
             raise HomeAssistantError(
                 "Choose at least one Assist satellite or Whole home"
             )
-        result = await manager.async_send(
-            message,
+
+        # Queue only the exact targets that were resolved and authorized for this
+        # authenticated Home Assistant caller.
+        targets = await async_authorized_broadcast_targets(
+            hass,
+            manager,
+            context=connection.context(msg),
             whole_home=whole_home,
             entity_ids=entity_ids,
+        )
+        result = await manager.async_send(
+            message,
+            entity_ids=targets,
             source="frontend",
         )
         connection.send_result(msg["id"], result)
