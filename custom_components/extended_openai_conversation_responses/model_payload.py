@@ -203,7 +203,12 @@ def prepare_model_function_tools(
                 if isinstance(properties, dict):
                     action_list = properties.get("list")
                     if isinstance(action_list, dict):
-                        action_list["maxItems"] = MAX_NATIVE_SERVICE_ACTIONS
+                        configured_max = action_list.get("maxItems")
+                        action_list["maxItems"] = (
+                            min(configured_max, MAX_NATIVE_SERVICE_ACTIONS)
+                            if isinstance(configured_max, int)
+                            else MAX_NATIVE_SERVICE_ACTIONS
+                        )
 
         if function.get("type") == "function_group_loader":
             description = spec.get("description")
