@@ -48,7 +48,7 @@ def management_feature_status(
                 )
             ),
         )
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         auto_retrieve_limit = DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT
 
     if not memory_enabled:
@@ -63,9 +63,7 @@ def management_feature_status(
         )
         memory_state = "disabled"
     else:
-        memory_label = (
-            "Automatic" if memory_mode == MEMORY_MODE_AUTOMATIC else "Manual"
-        )
+        memory_label = "Automatic" if memory_mode == MEMORY_MODE_AUTOMATIC else "Manual"
         saving = (
             "Automatic saving is allowed"
             if memory_mode == MEMORY_MODE_AUTOMATIC
