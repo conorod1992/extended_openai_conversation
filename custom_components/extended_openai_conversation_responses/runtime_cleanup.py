@@ -19,6 +19,7 @@ from .const import (
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
 )
+from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
 
 _INTEGRATION_TOOL_TYPES = {
     "guest_mode",
@@ -129,18 +130,8 @@ def _request_options(
 
 
 def _assert_tool_loop_completed(chat_log: Any, max_iterations: int) -> None:
-    """Turn hard-loop exhaustion into an explicit failure instead of fall-through."""
-    outstanding = chat_log.unresponded_tool_results
-    if not outstanding:
-        return
-    try:
-        count = len(outstanding)
-    except TypeError:
-        count = 1
-    raise HomeAssistantError(
-        "Provider tool loop exceeded the safety limit of "
-        f"{max_iterations} requests with {count} unresolved tool result(s)"
-    )
+    """Backward-compatible alias for the centralized provider-loop assertion."""
+    assert_provider_loop_completed(chat_log, max_iterations)
 
 
 def latest_configured_function_tool(
@@ -190,8 +181,13 @@ def install_runtime_cleanup() -> None:
         return
     _INSTALLED = True
 
-    from . import conversation
-    from .entity import MAX_TOOL_ITERATIONS
+    from . import conversation, entity as entity_module
+
+    # The configured execution budget already prevents ordinary function calls from
+    # running past their limit. Give legitimate high-budget conversations enough
+    # provider round trips to finish, while retaining one separate absolute anti-loop
+    # ceiling for non-compliant/pathological providers.
+    entity_module.MAX_TOOL_ITERATIONS = MAX_PROVIDER_REQUESTS
 
     entity_class = conversation.ExtendedOpenAIAgentEntity
     original_process = entity_class._async_process
@@ -260,7 +256,7 @@ def install_runtime_cleanup() -> None:
                 *positional_tail,
                 **call_kwargs,
             )
-            _assert_tool_loop_completed(chat_log, MAX_TOOL_ITERATIONS)
+            _assert_tool_loop_completed(chat_log, MAX_PROVIDER_REQUESTS)
             return result
         finally:
             _ACTIVE_FUNCTION_CALL_BUDGET.reset(token)
