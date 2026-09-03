@@ -16,7 +16,8 @@ export const NAVIGATION = [
     {id: "functions", label: "Functions", description: "Manage custom Function Tools and on-demand groups."},
     {id: "guest-mode", label: "Guest Mode", description: "Limit what visitors can see, use, and remember."},
   ]},
-  {id: "data-memory", label: "Data & Memory", path: "/extended-openai/data-memory/memories", sections: [
+  {id: "data-memory", label: "Data & Memory", path: "/extended-openai/data-memory/memory-settings", sections: [
+    {id: "memory-settings", label: "Memory settings", description: "Control long-term, temporary, retrieval, and shared memory behavior."},
     {id: "memories", label: "Memories", description: "Review durable and automatically expiring memories."},
     {id: "knowledge", label: "Knowledge Library", description: "Maintain larger reference sources for on-demand search."},
     {id: "conversations", label: "Conversation history", description: "Review continuity and retained conversation archives."},
@@ -52,7 +53,7 @@ export const SETTINGS_INDEX = [
   {label: "Prompt & context", description: "Instructions, date/time, and exposed entity context.", terms: "template devices entities request preview", page: "assistant", section: "prompt-context", target: "config-prompt"},
   {label: "Voice identity", description: "Voice scope, device mappings, and unmapped speakers.", terms: "voice user household satellite follow-up", page: "assistant", section: "voice", target: "config-voice"},
   {label: "Speech post-processing", description: "Clean Markdown, URLs, and phrases for TTS.", terms: "speech regex replacements tts", page: "assistant", section: "speech", target: "config-speech"},
-  {label: "Memory and Knowledge settings", description: "Configure retrieval and available data capabilities.", terms: "memory temporary embeddings knowledge web search skills", page: "assistant", section: "advanced", target: "config-capabilities"},
+  {label: "Memory settings", description: "Configure long-term, temporary, retrieval, embedding, and shared household memory behavior.", terms: "memory temporary short term long term automatic retrieval lexical hybrid embeddings shared household", page: "data-memory", section: "memory-settings", target: "config-memory"},
   {label: "Function Tools & Groups", description: "Manage functions, grouping, and loading modes.", terms: "tools functions yaml", page: "capabilities", section: "functions"},
   {label: "Request Rules", description: "Fast local voice commands and model routing.", terms: "phrases matching fuzzy synonyms local commands model reasoning", page: "capabilities", section: "request-rules"},
   {label: "Guest Mode", description: "Schedule visitor restrictions and select excluded access.", terms: "guest labels areas domains entities knowledge functions", page: "capabilities", section: "guest-mode"},
@@ -90,6 +91,7 @@ export function shouldShowGlobalSettingsSearch(page, subsection = null) {
   return page === "assistant" || [
     "capabilities/home-assistant",
     "capabilities/guest-mode",
+    "data-memory/memory-settings",
     "usage-maintenance/backup-restore",
     "usage-maintenance/retention",
     "usage-maintenance/diagnostics",
