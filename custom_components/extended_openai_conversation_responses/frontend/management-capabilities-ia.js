@@ -1,27 +1,49 @@
-import {bindConfiguration, renderConfiguration} from "./agent-config-editor.js";
+import {getAgentConfigModule} from "./agent-config-loader.js";
 
 const PATCHED = Symbol.for("extended-openai.management-capabilities-ia");
 const WEB_SKILLS_FIELDS = new Set(["web_search", "web_search_context", "skills"]);
 
-function stripWebSkillsConfiguration(html, documentRef = globalThis.document) {
+function renderConfiguration(panel) {
+  const module = getAgentConfigModule();
+  if (!module) return panel._loading?.() || '<div class="loading">Loading configuration…</div>';
+  return module.renderConfiguration(panel);
+}
+
+function bindConfiguration(panel) {
+  return getAgentConfigModule()?.bindConfiguration(panel);
+}
+
+function transformConfiguration(html, transform, documentRef = globalThis.document) {
   if (!documentRef?.createElement) return html;
   const template = documentRef.createElement("template");
   template.innerHTML = html;
-  const section = template.content.querySelector("#config-capabilities");
-  if (!section) return template.innerHTML;
-
-  section.querySelectorAll("[data-field]").forEach((field) => {
-    if (!WEB_SKILLS_FIELDS.has(field.dataset.field)) field.remove();
-  });
-  const heading = section.querySelector(".config-section-heading");
-  if (heading) heading.innerHTML = "<p class=\"eyebrow\">Web search & Skills</p><p>Choose optional online information and installed instruction sets the assistant may load when needed.</p>";
+  transform(template.content);
   return template.innerHTML;
+}
+
+function stripWebSkillsConfiguration(html, documentRef = globalThis.document) {
+  return transformConfiguration(html, (root) => {
+    const section = root.querySelector("#config-capabilities");
+    if (!section) return;
+    section.querySelectorAll("[data-field]").forEach((field) => {
+      if (!WEB_SKILLS_FIELDS.has(field.dataset.field)) field.remove();
+    });
+    const heading = section.querySelector(".config-section-heading");
+    if (heading) heading.innerHTML = "<p class=\"eyebrow\">Web search & Skills</p><p>Choose optional online information and installed instruction sets the assistant may load when needed.</p>";
+  }, documentRef);
+}
+
+function stripLocalHandlingConfiguration(html, documentRef = globalThis.document) {
+  return transformConfiguration(html, (root) => root.querySelector("#config-local")?.remove(), documentRef);
 }
 
 function knowledgeAvailabilityMarkup(panel) {
   if (panel._data?.is_admin === false) return "";
-  const status = panel._selectedAgent?.()?.feature_status?.knowledge;
-  const enabled = status?.state === "enabled";
+  const sectionStatus = panel._result?.feature_status;
+  const status = sectionStatus && typeof sectionStatus.enabled === "boolean"
+    ? sectionStatus
+    : panel._selectedAgent?.()?.feature_status?.knowledge;
+  const enabled = Boolean(status?.enabled);
   return `<section class="content-card knowledge-availability-setting">
     <div class="config-toggle setting">
       <span class="setting-copy"><span class="setting-label-row"><label for="knowledge-enabled-toggle"><strong>Allow the assistant to use Knowledge</strong></label></span><small>When off, stored sources remain in the library but Knowledge tools are not available to the assistant. Changes here save immediately.</small></span>
@@ -42,6 +64,7 @@ async function saveKnowledgeAvailability(panel, input) {
     await panel._call("configuration", "update", {config, title: current.title});
     panel._clearConfigDraft?.();
     await panel._loadAgents(panel._agentId);
+    await panel._loadSection(true);
     panel._toast(`Knowledge ${desired ? "enabled" : "disabled"}`);
   } catch (err) {
     input.checked = !desired;
@@ -82,6 +105,9 @@ export function installManagementCapabilitiesIA(registry = globalThis.customElem
         this._configSections = ["capabilities"];
         return stripWebSkillsConfiguration(renderConfiguration(this));
       }
+      if (view === "assistant/conversation") {
+        return stripLocalHandlingConfiguration(originalContent.call(this, agent));
+      }
       if (view === "data-memory/knowledge") {
         return `${knowledgeAvailabilityMarkup(this)}${originalContent.call(this, agent)}`;
       }
@@ -107,4 +133,4 @@ if (typeof document !== "undefined" && typeof customElements !== "undefined") {
   installManagementCapabilitiesIA();
 }
 
-export {knowledgeAvailabilityMarkup, stripWebSkillsConfiguration};
+export {knowledgeAvailabilityMarkup, stripLocalHandlingConfiguration, stripWebSkillsConfiguration};
