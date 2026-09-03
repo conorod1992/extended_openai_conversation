@@ -42,6 +42,10 @@ const LEGACY_ROUTES = {
   diagnostics: ["usage-maintenance", "diagnostics"],
 };
 
+const LEGACY_NESTED_ROUTES = {
+  "assistant/advanced": ["capabilities", "web-skills"],
+};
+
 export const SETTINGS_INDEX = [
   {label: "Agent name", description: "Name shown for this conversation agent.", terms: "title assistant", page: "assistant", section: "basics", target: "config-general"},
   {label: "Chat model", description: "Provider model used for responses.", terms: "model provider api format", page: "assistant", section: "basics", target: "config-general"},
@@ -72,6 +76,11 @@ export function routeFromPath(pathname) {
   const marker = parts.lastIndexOf("extended-openai");
   const route = marker >= 0 ? parts.slice(marker + 1) : parts;
   if (!route.length) return {page: "overview", section: null, legacy: false};
+  const nestedLegacy = LEGACY_NESTED_ROUTES[`${route[0] || ""}/${route[1] || ""}`];
+  if (nestedLegacy) {
+    const [page, section] = nestedLegacy;
+    return {page, section, legacy: true};
+  }
   if (LEGACY_ROUTES[route[0]]) {
     const [page, section] = LEGACY_ROUTES[route[0]];
     return {page, section, legacy: true};
