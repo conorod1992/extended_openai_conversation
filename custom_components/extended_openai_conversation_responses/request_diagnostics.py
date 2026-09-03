@@ -154,7 +154,9 @@ def install_payload_latency_diagnostics() -> None:
             successful = True
             return result
         finally:
-            spec = function_tool.get("spec", {}) if isinstance(function_tool, dict) else {}
+            spec = (
+                function_tool.get("spec", {}) if isinstance(function_tool, dict) else {}
+            )
             implementation = (
                 function_tool.get("function", {})
                 if isinstance(function_tool, dict)
@@ -163,12 +165,9 @@ def install_payload_latency_diagnostics() -> None:
             trace.memory.setdefault(_INTERNAL_TOOL_CALLS, []).append(
                 {
                     "name": str(
-                        spec.get("name")
-                        or getattr(tool_input, "tool_name", "unknown")
+                        spec.get("name") or getattr(tool_input, "tool_name", "unknown")
                     ),
-                    "implementation_type": str(
-                        implementation.get("type") or "unknown"
-                    ),
+                    "implementation_type": str(implementation.get("type") or "unknown"),
                     "duration_ms": int((time.monotonic() - started) * 1000),
                     "successful": successful,
                     "result_characters": (
@@ -292,7 +291,8 @@ def install_payload_latency_diagnostics() -> None:
             int(request.usage.get("input_tokens", 0)) for request in model_requests
         )
         model_cached_tokens = sum(
-            int(request.usage.get("cached_input_tokens", 0)) for request in model_requests
+            int(request.usage.get("cached_input_tokens", 0))
+            for request in model_requests
         )
         data["provider_reported_model_cache_ratio"] = (
             round(model_cached_tokens / model_input_tokens, 4)
