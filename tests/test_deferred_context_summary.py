@@ -6,6 +6,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
 from homeassistant.components import conversation
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -83,6 +85,42 @@ async def test_manager_schedules_without_waiting_and_applies_before_followup() -
     assert isinstance(content[1], conversation.SystemContent)
     assert "Celsius" in content[1].content
     assert content[-1].content == "What about tomorrow?"
+
+
+async def test_cancelled_followup_keeps_pending_summary_for_next_attempt() -> None:
+    manager = DeferredContextSummaryManager()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def summarize(_older, _model, _api_mode):
+        started.set()
+        await release.wait()
+        return "The user chose Celsius."
+
+    content = _history()
+    assert manager.schedule(
+        "conversation:test",
+        content,
+        observed_input_tokens=1000,
+        target_tokens=100,
+        model="gpt-5.6-luna",
+        api_mode=API_MODE_RESPONSES,
+        summarize=summarize,
+        scheduler=asyncio.create_task,
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+    content.append(conversation.UserContent(content="First followup"))
+
+    apply_task = asyncio.create_task(manager.async_apply("conversation:test", content))
+    await asyncio.sleep(0)
+    apply_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await apply_task
+
+    release.set()
+    assert await manager.async_apply("conversation:test", content)
+    assert "Celsius" in content[1].content
+    assert content[-1].content == "First followup"
 
 
 async def test_manager_summary_failure_uses_existing_keep_recent_fallback() -> None:
