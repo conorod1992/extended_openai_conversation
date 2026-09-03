@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from pathlib import Path
 import sys
 from typing import Any
@@ -11,7 +12,13 @@ from typing import Any
 from homeassistant.components import panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
+from .agent_config import (
+    AGENT_CONFIG_FIELDS,
+    agent_config_defaults,
+    preserve_legacy_guest_policy,
+)
 from .const import (
     CONF_API_PROVIDER,
     CONF_ARCHIVE_ENABLED,
@@ -237,37 +244,69 @@ async def async_overview_summary(
     }
 
 
+def _snapshot_normalized_configuration(config: dict[str, Any]) -> dict[str, Any]:
+    """Build the frontend config shape without normalizing an already-valid config."""
+    snapshot = agent_config_defaults()
+    snapshot.update(
+        {
+            key: deepcopy(value)
+            for key, value in config.items()
+            if key in AGENT_CONFIG_FIELDS
+        }
+    )
+    return snapshot
+
+
 async def _async_save_configuration(
     hass: HomeAssistant,
     user_id: str,
     is_admin: bool,
     message: dict[str, Any],
-    original: Callable[..., Awaitable[dict[str, Any]]],
 ) -> dict[str, Any]:
-    """Validate and persist configuration behind one frontend websocket call."""
+    """Normalize once, persist that candidate, and return the frontend snapshot."""
+    del user_id
     title = message.get("title")
     if title is not None and (not isinstance(title, str) or not title.strip()):
         return {"valid": False, "errors": {"title": "must not be empty"}}
 
-    validation = await original(
-        hass,
-        user_id,
-        is_admin,
-        {**message, "action": "validate"},
-    )
-    if not validation.get("valid"):
-        return validation
+    updates = message.get("config", {})
+    if not isinstance(updates, dict):
+        raise HomeAssistantError("Configuration update must be an object")
 
-    saved = await original(
-        hass,
-        user_id,
-        is_admin,
-        {**message, "action": "update"},
-    )
     management_ui = _management_ui()
     entry, subentry = management_ui.entry_and_agent(
         hass, message.get("entry_id"), message.get("subentry_id")
     )
+    validation = management_ui._validation_result(
+        lambda: management_ui.merge_agent_config(subentry.data, updates)
+    )
+    if not validation.get("valid"):
+        return validation
+
+    management_ui._require_admin(is_admin)
+    normalized = validation["config"]
+    persisted = preserve_legacy_guest_policy(
+        dict(subentry.data), deepcopy(normalized)
+    )
+    saved_title = title.strip() if isinstance(title, str) else subentry.title
+    hass.config_entries.async_update_subentry(
+        entry,
+        subentry,
+        data=persisted,
+        **({"title": saved_title} if isinstance(title, str) else {}),
+    )
+
+    snapshot = _snapshot_normalized_configuration(persisted)
+    saved = {
+        "title": saved_title,
+        "config": snapshot,
+        "model_capabilities": management_ui.model_capabilities(
+            snapshot[CONF_CHAT_MODEL]
+        ),
+        "local_handling": management_ui.local_handling_snapshot(
+            hass, entry, subentry, snapshot
+        ),
+    }
     return {
         "valid": True,
         "errors": {},
@@ -276,8 +315,8 @@ async def _async_save_configuration(
             hass,
             entry,
             subentry,
-            config=saved["config"],
-            title=saved["title"],
+            config=snapshot,
+            title=saved_title,
         ),
     }
 
@@ -298,9 +337,7 @@ async def optimized_management_command(
     if message.get("section") == "overview" and message.get("action") == "summary":
         return await async_overview_summary(hass, user_id, is_admin, message)
     if message.get("section") == "configuration" and message.get("action") == "save":
-        return await _async_save_configuration(
-            hass, user_id, is_admin, message, original
-        )
+        return await _async_save_configuration(hass, user_id, is_admin, message)
     return await original(hass, user_id, is_admin, message)
 
 
@@ -320,39 +357,67 @@ def _static_paths(
     return paths
 
 
+def _setup_step_key(setup_key: str, step: str) -> str:
+    """Return a durable-in-process marker for one completed registration step."""
+    return f"{setup_key}.{step}"
+
+
 async def async_setup_cached_management_ui(hass: HomeAssistant) -> None:
-    """Register the management panel with immutable release-versioned assets."""
+    """Register the management panel with retry-safe versioned assets."""
     management_ui = _management_ui()
-    if hass.data.get(management_ui._UI_SETUP):
+    setup_key = management_ui._UI_SETUP
+    if hass.data.get(setup_key):
         return
-    hass.data[management_ui._UI_SETUP] = True
+
     frontend_dir = Path(management_ui.__file__).parent / "frontend"
-    await hass.http.async_register_static_paths(
-        _static_paths(frontend_dir, management_ui.MANAGEMENT_FRONTEND_MODULES)
-    )
-    websocket_api.async_register_command(hass, management_ui.websocket_management)
-    await panel_custom.async_register_panel(
-        hass,
-        webcomponent_name="extended-openai-management-panel",
-        frontend_url_path=MANAGEMENT_PANEL_URL,
-        module_url=_asset_url("management-panel.js"),
-        sidebar_title=MANAGEMENT_PANEL_TITLE,
-        sidebar_icon="mdi:robot-outline",
-        require_admin=False,
-    )
+    static_key = _setup_step_key(setup_key, "static_paths")
+    websocket_key = _setup_step_key(setup_key, "websocket")
+    panel_key = _setup_step_key(setup_key, "panel")
+
+    if not hass.data.get(static_key):
+        await hass.http.async_register_static_paths(
+            _static_paths(frontend_dir, management_ui.MANAGEMENT_FRONTEND_MODULES)
+        )
+        hass.data[static_key] = True
+    if not hass.data.get(websocket_key):
+        websocket_api.async_register_command(hass, management_ui.websocket_management)
+        hass.data[websocket_key] = True
+    if not hass.data.get(panel_key):
+        await panel_custom.async_register_panel(
+            hass,
+            webcomponent_name="extended-openai-management-panel",
+            frontend_url_path=MANAGEMENT_PANEL_URL,
+            module_url=_asset_url("management-panel.js"),
+            sidebar_title=MANAGEMENT_PANEL_TITLE,
+            sidebar_icon="mdi:robot-outline",
+            require_admin=False,
+        )
+        hass.data[panel_key] = True
+
+    hass.data[setup_key] = True
 
 
 async def async_setup_cached_debug_ui(hass: HomeAssistant) -> None:
-    """Register debug modules at legacy and immutable versioned asset URLs."""
+    """Register debug modules with retry-safe versioned asset URLs."""
     debug_ui = _debug_ui()
-    if hass.data.get(debug_ui._DEBUG_UI_SETUP):
+    setup_key = debug_ui._DEBUG_UI_SETUP
+    if hass.data.get(setup_key):
         return
-    hass.data[debug_ui._DEBUG_UI_SETUP] = True
+
     frontend_dir = Path(debug_ui.__file__).parent / "frontend"
-    await hass.http.async_register_static_paths(
-        _static_paths(frontend_dir, ("debug-panel.js", "debug-management.js"))
-    )
-    websocket_api.async_register_command(hass, debug_ui.websocket_request_debug)
+    static_key = _setup_step_key(setup_key, "static_paths")
+    websocket_key = _setup_step_key(setup_key, "websocket")
+
+    if not hass.data.get(static_key):
+        await hass.http.async_register_static_paths(
+            _static_paths(frontend_dir, ("debug-panel.js", "debug-management.js"))
+        )
+        hass.data[static_key] = True
+    if not hass.data.get(websocket_key):
+        websocket_api.async_register_command(hass, debug_ui.websocket_request_debug)
+        hass.data[websocket_key] = True
+
+    hass.data[setup_key] = True
 
 
 def install_management_loading_optimizations() -> None:
