@@ -245,12 +245,14 @@ async def test_configuration_save_validation_failure_does_not_persist(
         {
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
-            "config": {"chat_model": ""},
+            "config": {
+                "speech_regex_replacements": [{"pattern": "[", "replacement": ""}]
+            },
         },
     )
 
     assert result["valid"] is False
-    assert result["errors"]
+    assert "speech_regex_replacements[0].pattern" in result["errors"]
     assert hass.config_entries.updates == 0
     assert merge_calls == 1
 
