@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import suppress
 from functools import wraps
 from typing import Any
 
@@ -214,10 +215,8 @@ def install_management_feature_status() -> None:
         source_count = len(sources) if isinstance(sources, list) else 0
         stats = result.get("stats")
         if isinstance(stats, Mapping):
-            try:
+            with suppress(TypeError, ValueError):
                 source_count = int(stats.get("source_count", source_count))
-            except (TypeError, ValueError):
-                pass
         enriched["feature_status"] = management_feature_status(
             subentry.data, knowledge_source_count=source_count
         )["knowledge"]
