@@ -29,7 +29,8 @@ function activeConfiguration(panel, explicitData = null) {
   if (panel._draft && panel._draftAgentId === panel._agentId) {
     return {data: panel._configData || explicitData || {}, config: panel._draft, title: panel._draftTitle, draft: true};
   }
-  const data = explicitData || panel._settingsSearchConfig || panel._configData;
+  const cached = panel._settingsSearchConfigAgentId === panel._agentId ? panel._settingsSearchConfig : null;
+  const data = explicitData || cached || panel._configData;
   if (!data?.config) return null;
   return {data, config: data.config, title: data.title, draft: false};
 }
@@ -107,6 +108,7 @@ function searchMarkup(panel) {
 
 async function ensureSearchConfiguration(panel) {
   if (panel._data?.is_admin === false || !panel._settingsSearchQuery || activeConfiguration(panel)) return;
+  if (!visibleSettings(panel).some((item) => item.configKey)) return;
   const agentId = panel._agentId;
   if (!agentId) return;
   if (panel._settingsSearchConfigAgentId === agentId && panel._settingsSearchConfig?.config) return;
