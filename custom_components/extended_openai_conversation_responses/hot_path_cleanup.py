@@ -345,4 +345,5 @@ def _install_request_rule_two_pass_matching() -> None:
             return max(fuzzy, key=lambda item: item[0])[1]
         return None
 
-    rules.RequestRules.match = match
+    manager_type: Any = rules.RequestRules
+    manager_type.match = match
