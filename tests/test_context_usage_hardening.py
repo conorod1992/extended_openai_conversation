@@ -3,6 +3,7 @@ from __future__ import annotations
 from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
     _capture_provider_usage,
     _LOCAL_ESTIMATE_DETAIL,
+    _restore_local_estimate,
     estimate_provider_input_tokens,
     usage_for_accounting,
 )
@@ -85,6 +86,29 @@ def test_unusable_zero_provider_usage_keeps_local_estimate() -> None:
     assert captured is False
     assert usage.input_tokens == 500
     assert usage.details == {_LOCAL_ESTIMATE_DETAIL: 500}
+
+
+def test_terminal_zero_usage_cannot_erase_local_estimate() -> None:
+    usage = RequestUsage()
+
+    # Simulate the stock terminal-event normalizer replacing the in-flight estimate
+    # with an unusable all-zero provider usage object before the wrapper resumes.
+    _restore_local_estimate(usage, 700)
+
+    assert usage.input_tokens == 700
+    assert usage.total_tokens == 700
+    assert usage.details == {_LOCAL_ESTIMATE_DETAIL: 700}
+
+
+def test_real_usage_is_never_replaced_by_local_estimate() -> None:
+    usage = RequestUsage(input_tokens=123, output_tokens=10, total_tokens=133)
+
+    _restore_local_estimate(usage, 700)
+
+    assert usage.input_tokens == 123
+    assert usage.output_tokens == 10
+    assert usage.total_tokens == 133
+    assert usage.details == {}
 
 
 def test_local_estimate_is_never_persisted_as_provider_usage() -> None:
