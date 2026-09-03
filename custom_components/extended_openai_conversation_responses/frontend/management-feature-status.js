@@ -9,9 +9,8 @@ function selectedFeatureStatus(panel, featureName) {
 export function featureStatusMarkup(panel, title, status, configureTarget = null) {
   if (!status) return "";
   const positive = ["enabled", "available"].includes(status.state);
-  const target = configureTarget || {page: "assistant", subsection: "advanced", label: "Configure Memory & Knowledge"};
-  const configure = panel._data?.is_admin
-    ? `<button type="button" class="secondary inline-route" data-page="${panel._e(target.page)}" data-subsection="${panel._e(target.subsection)}">${panel._e(target.label)}</button>`
+  const configure = panel._data?.is_admin && configureTarget
+    ? `<button type="button" class="secondary inline-route" data-page="${panel._e(configureTarget.page)}" data-subsection="${panel._e(configureTarget.subsection)}">${panel._e(configureTarget.label)}</button>`
     : "";
   return `<section class="content-card feature-status-card"><div class="compact-status"><span><strong>${panel._e(title)}</strong><small>${panel._e(status.detail || status.summary || "")}</small></span><strong class="status-value ${positive ? "on" : ""}">${panel._e(status.label || "Unknown")}</strong></div>${configure}</section>`;
 }
@@ -42,7 +41,7 @@ export function installManagementFeatureStatus(registry = globalThis.customEleme
 
     const originalKnowledge = prototype._knowledge;
     prototype._knowledge = function(...args) {
-      return `${featureStatusMarkup(this, "Knowledge Library", selectedFeatureStatus(this, "knowledge"), {page: "assistant", subsection: "advanced", label: "Configure Knowledge"})}${originalKnowledge.apply(this, args)}`;
+      return `${featureStatusMarkup(this, "Knowledge Library", selectedFeatureStatus(this, "knowledge"))}${originalKnowledge.apply(this, args)}`;
     };
 
     prototype[PATCHED] = true;

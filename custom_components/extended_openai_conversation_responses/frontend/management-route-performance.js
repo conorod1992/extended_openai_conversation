@@ -4,6 +4,8 @@ import {ensureRequestRulesModule, getRequestRulesModule} from "./request-rules-l
 const PATCHED = Symbol.for("extended-openai.management-route-performance");
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_VIEWS = new Set([
+  "capabilities/home-assistant",
+  "capabilities/web-skills",
   "capabilities/functions",
   "data-memory/conversations",
   "usage-maintenance/backup-restore",

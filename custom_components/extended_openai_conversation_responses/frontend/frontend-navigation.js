@@ -8,10 +8,10 @@ export const NAVIGATION = [
     {id: "prompt-context", label: "Prompt & context", description: "Manage instructions and live Home Assistant context."},
     {id: "voice", label: "Voice", description: "Choose identity and data scope behavior for voice devices."},
     {id: "speech", label: "Speech", description: "Clean assistant responses before they are spoken."},
-    {id: "advanced", label: "Advanced", description: "Configure less common data and provider capabilities."},
   ]},
   {id: "capabilities", label: "Capabilities", path: "/extended-openai/capabilities/home-assistant", sections: [
-    {id: "home-assistant", label: "Home Assistant", description: "Review normal Home Assistant state and action access."},
+    {id: "home-assistant", label: "Home Assistant & local handling", description: "Review Home Assistant access and choose which simple commands should stay local."},
+    {id: "web-skills", label: "Web search & Skills", description: "Configure current-information search and installed instruction sets."},
     {id: "request-rules", label: "Request Rules", description: "Create fast local commands and route AI requests by phrase."},
     {id: "functions", label: "Functions", description: "Manage custom Function Tools and on-demand groups."},
     {id: "guest-mode", label: "Guest Mode", description: "Limit what visitors can see, use, and remember."},
@@ -19,7 +19,7 @@ export const NAVIGATION = [
   {id: "data-memory", label: "Data & Memory", path: "/extended-openai/data-memory/memory-settings", sections: [
     {id: "memory-settings", label: "Memory settings", description: "Control long-term, temporary, retrieval, and shared memory behavior."},
     {id: "memories", label: "Memories", description: "Review durable and automatically expiring memories."},
-    {id: "knowledge", label: "Knowledge Library", description: "Maintain larger reference sources for on-demand search."},
+    {id: "knowledge", label: "Knowledge Library", description: "Control and maintain larger reference sources for on-demand search."},
     {id: "conversations", label: "Conversation history", description: "Review continuity and retained conversation archives."},
   ]},
   {id: "usage-maintenance", label: "Usage & Maintenance", path: "/extended-openai/usage-maintenance/usage", sections: [
@@ -42,6 +42,10 @@ const LEGACY_ROUTES = {
   diagnostics: ["usage-maintenance", "diagnostics"],
 };
 
+const LEGACY_NESTED_ROUTES = {
+  "assistant/advanced": ["capabilities", "web-skills"],
+};
+
 export const SETTINGS_INDEX = [
   {label: "Agent name", description: "Name shown for this conversation agent.", terms: "title assistant", page: "assistant", section: "basics", target: "config-general"},
   {label: "Chat model", description: "Provider model used for responses.", terms: "model provider api format", page: "assistant", section: "basics", target: "config-general"},
@@ -54,6 +58,10 @@ export const SETTINGS_INDEX = [
   {label: "Voice identity", description: "Voice scope, device mappings, and unmapped speakers.", terms: "voice user household satellite follow-up", page: "assistant", section: "voice", target: "config-voice"},
   {label: "Speech post-processing", description: "Clean Markdown, URLs, and phrases for TTS.", terms: "speech regex replacements tts", page: "assistant", section: "speech", target: "config-speech"},
   {label: "Memory settings", description: "Configure long-term, temporary, retrieval, embedding, and shared household memory behavior.", terms: "memory temporary short term long term automatic retrieval lexical hybrid embeddings shared household", page: "data-memory", section: "memory-settings", target: "config-memory"},
+  {label: "Local handling", description: "Let Home Assistant handle suitable simple commands before AI.", terms: "home assistant local intents delayed commands exclusions prefer local", page: "capabilities", section: "home-assistant", target: "config-local"},
+  {label: "Web search", description: "Let the assistant search the web for current information.", terms: "web current search context detail internet", page: "capabilities", section: "web-skills", target: "config-capabilities"},
+  {label: "Skills", description: "Choose installed instruction sets the assistant may load when needed.", terms: "skills instruction sets installed capability", page: "capabilities", section: "web-skills", target: "config-capabilities"},
+  {label: "Knowledge Library", description: "Enable Knowledge tools and manage stored reference sources.", terms: "knowledge library sources reference enable search", page: "data-memory", section: "knowledge"},
   {label: "Function Tools & Groups", description: "Manage functions, grouping, and loading modes.", terms: "tools functions yaml", page: "capabilities", section: "functions"},
   {label: "Request Rules", description: "Fast local voice commands and model routing.", terms: "phrases matching fuzzy synonyms local commands model reasoning", page: "capabilities", section: "request-rules"},
   {label: "Guest Mode", description: "Schedule visitor restrictions and select excluded access.", terms: "guest labels areas domains entities knowledge functions", page: "capabilities", section: "guest-mode"},
@@ -68,6 +76,11 @@ export function routeFromPath(pathname) {
   const marker = parts.lastIndexOf("extended-openai");
   const route = marker >= 0 ? parts.slice(marker + 1) : parts;
   if (!route.length) return {page: "overview", section: null, legacy: false};
+  const nestedLegacy = LEGACY_NESTED_ROUTES[`${route[0] || ""}/${route[1] || ""}`];
+  if (nestedLegacy) {
+    const [page, section] = nestedLegacy;
+    return {page, section, legacy: true};
+  }
   if (LEGACY_ROUTES[route[0]]) {
     const [page, section] = LEGACY_ROUTES[route[0]];
     return {page, section, legacy: true};
@@ -90,8 +103,10 @@ export function shouldShowGlobalSettingsSearch(page, subsection = null) {
   const view = subsection ? `${page}/${subsection}` : page;
   return page === "assistant" || [
     "capabilities/home-assistant",
+    "capabilities/web-skills",
     "capabilities/guest-mode",
     "data-memory/memory-settings",
+    "data-memory/knowledge",
     "usage-maintenance/backup-restore",
     "usage-maintenance/retention",
     "usage-maintenance/diagnostics",
