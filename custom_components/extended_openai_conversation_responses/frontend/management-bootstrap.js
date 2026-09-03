@@ -5,6 +5,7 @@ const BOOTSTRAP_MODULES = [
   "./management-feature-status.js",
   "./management-memory-settings.js",
   "./management-capabilities-ia.js",
+  "./management-voice-identity.js",
   "./management-rendering-performance.js",
   "./management-loading-performance.js",
   "./management-route-performance.js",
@@ -113,6 +114,7 @@ if (typeof customElements !== "undefined") {
     await import("./management-feature-status.js");
     await import("./management-memory-settings.js");
     await import("./management-capabilities-ia.js");
+    await import("./management-voice-identity.js");
     await import("./management-rendering-performance.js");
     await import("./management-loading-performance.js");
     await import("./management-route-performance.js");
