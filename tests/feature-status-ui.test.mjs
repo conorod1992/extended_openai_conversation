@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import {knowledgeAvailabilityMarkup} from "../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js";
 import {
   featureStatusMarkup,
   overviewAgentFeatureProjection,
@@ -34,6 +35,15 @@ const disabledMarkup = featureStatusMarkup(panel, "Knowledge Library", {
 assert.match(disabledMarkup, /Needs sources/);
 assert.doesNotMatch(disabledMarkup, /status-value on/);
 assert.doesNotMatch(disabledMarkup, /inline-route/);
+
+const knowledgePanel = {
+  _data: {is_admin: true},
+  _result: {feature_status: {state: "empty", enabled: true, source_count: 0}},
+  _selectedAgent: () => ({feature_status: {knowledge: {state: "disabled", enabled: false}}}),
+};
+assert.match(knowledgeAvailabilityMarkup(knowledgePanel), /knowledge-enabled-toggle[^>]*checked/);
+knowledgePanel._result.feature_status = {state: "disabled", enabled: false, source_count: 2};
+assert.doesNotMatch(knowledgeAvailabilityMarkup(knowledgePanel), /knowledge-enabled-toggle[^>]*checked/);
 
 const projected = overviewAgentFeatureProjection({
   memory_mode: "automatic",
