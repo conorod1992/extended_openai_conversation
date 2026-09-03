@@ -78,8 +78,8 @@ async def async_execute_parallel_safe_batch(
     failure order. Remaining read-only tasks are cancelled/collected before the
     exception propagates.
     """
-    tasks = [
-        asyncio.create_task(executor(function_tool, tool_input))
+    tasks: list[asyncio.Future[conversation.ToolResultContent]] = [
+        asyncio.ensure_future(executor(function_tool, tool_input))
         for function_tool, tool_input in resolved_calls
     ]
     results: list[conversation.ToolResultContent] = []
