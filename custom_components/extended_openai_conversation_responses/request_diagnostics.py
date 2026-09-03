@@ -73,8 +73,7 @@ def install_payload_latency_diagnostics() -> None:
     if _INSTALLED:
         return
 
-    from . import conversation as conversation_module
-    from . import debug
+    from . import conversation as conversation_module, debug
 
     agent_type: Any = conversation_module.ExtendedOpenAIAgentEntity
     trace_type: Any = debug.DebugTrace
