@@ -15,6 +15,7 @@ from .request_rules import DEFAULT_MATCHING, DEFAULT_WORDING_GROUPS, RequestRule
 from .runtime_hardening import install_runtime_hardening
 from .safety_hardening import install_safety_hardening
 from .temporary_memory import TemporaryMemory
+from .temporary_memory_performance import install_temporary_memory_read_fast_path
 
 _COMMITTED_STATE = "_extended_openai_committed_state"
 _INSTALLED: set[type[Any]] = set()
@@ -55,6 +56,7 @@ def install_persistence_transactions() -> None:
     install_safety_hardening()
     install_lifecycle_optimizations()
     install_hot_path_cleanup()
+    install_temporary_memory_read_fast_path()
 
 
 def _install_manager_guard(
