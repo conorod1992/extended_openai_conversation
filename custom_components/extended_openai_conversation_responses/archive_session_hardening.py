@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import timedelta
 import logging
 from typing import Any
@@ -33,23 +34,7 @@ def _prospective_metadata(
         if item.retention_state != "unretained"
     }
     payload: dict[str, Any] = {
-        "sessions": [
-            {
-                "session_id": item.session_id,
-                "home_assistant_conversation_id": item.home_assistant_conversation_id,
-                "agent_subentry_id": item.agent_subentry_id,
-                "scope_id": item.scope_id,
-                "scope_type": item.scope_type,
-                "scope_source": item.scope_source,
-                "source_device_id": item.source_device_id,
-                "started_at": item.started_at,
-                "last_message_at": item.last_message_at,
-                "title": item.title,
-                "turn_count": item.turn_count,
-                "retention_state": item.retention_state,
-            }
-            for item in persisted_sessions.values()
-        ],
+        "sessions": [asdict(item) for item in persisted_sessions.values()],
         "active": {
             key: value for key, value in active.items() if value in persisted_sessions
         },
@@ -163,7 +148,11 @@ def _notify_runtime_status(
     handler = getattr(archive, _STATUS_HANDLER, None)
     if not callable(handler):
         return False
-    handler(error)
+    try:
+        handler(error)
+    except Exception:
+        # Diagnostics must never turn an optional archive failure into a request failure.
+        _LOGGER.exception("Unable to update conversation archive runtime status")
     return True
 
 
