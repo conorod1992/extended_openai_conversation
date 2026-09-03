@@ -15,6 +15,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .debug import get_debug_manager
+from .request_diagnostics import install_payload_latency_diagnostics
 
 DEBUG_WS_COMMAND = f"{DOMAIN}/request_debug"
 _DEBUG_UI_SETUP = f"{DOMAIN}.request_debug_ui_setup"
@@ -113,6 +114,7 @@ async def websocket_request_debug(
 
 async def async_setup_debug_ui(hass: HomeAssistant) -> None:
     """Register request-debug API/modules used by Usage & Maintenance."""
+    install_payload_latency_diagnostics()
     if hass.data.get(_DEBUG_UI_SETUP):
         return
     hass.data[_DEBUG_UI_SETUP] = True
