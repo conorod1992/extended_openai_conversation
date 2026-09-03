@@ -142,7 +142,7 @@ def _default_exposed_entities_context(
         )
         grouped.setdefault(area_id, []).append(entity)
 
-    lines = ["## Available Devices by area_id", "entity_id,name,state,aliases"]
+    lines = ["## Available Devices", "entity_id,name,state,aliases"]
     for area_id, entities in grouped.items():
         lines.append(f"area_id={area_id or ''}")
         for entity in entities:
