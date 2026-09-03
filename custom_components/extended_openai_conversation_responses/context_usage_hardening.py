@@ -166,6 +166,7 @@ def _estimate_current_request(
     from .const import CONF_SHORTEN_TOOL_CALL_ID, DEFAULT_SHORTEN_TOOL_CALL_ID
 
     try:
+        input_value: Any
         if api_mode == "responses":
             input_value = entity_module._convert_content_to_responses_param(
                 chat_log.content
@@ -329,5 +330,5 @@ def install_context_usage_hardening() -> None:
     entity_type._async_handle_chat_log = handle_with_estimate_state
     entity_type._transform_chat_stream = chat_transform_with_usage
     entity_type._transform_responses_stream = responses_transform_with_usage
-    UsageManager.async_record_request = record_request_without_estimate  # type: ignore[method-assign]
+    UsageManager.async_record_request = record_request_without_estimate  # type: ignore[assignment]
     _INSTALLED = True
