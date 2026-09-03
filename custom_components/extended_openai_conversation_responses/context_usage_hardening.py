@@ -138,9 +138,8 @@ def _request_tools(state: _EstimateState, api_mode: str) -> list[dict[str, Any]]
         snapshot = build_provider_request_snapshot(
             state.options, getattr(state.entity.entry, "data", {})
         )
-        if (
-            snapshot.provider_tools
-            and state.entity._provider_tool_allowed("web_search")
+        if snapshot.provider_tools and state.entity._provider_tool_allowed(
+            "web_search"
         ):
             tools = [*snapshot.provider_tools, *tools]
     except Exception:
