@@ -111,6 +111,7 @@ class DeferredContextSummaryManager:
         if pending is None:
             return False
 
+        remove_pending = False
         try:
             try:
                 result = await asyncio.shield(pending.task)
@@ -120,6 +121,7 @@ class DeferredContextSummaryManager:
                 result = ContextSummaryResult(
                     list(pending.fallback_content), summarized=False
                 )
+            remove_pending = True
 
             if len(content) < pending.snapshot_length:
                 _LOGGER.warning(
@@ -153,7 +155,8 @@ class DeferredContextSummaryManager:
             content[:] = [*current_system, *compacted_tail, *suffix]
             return True
         finally:
-            self._pending.pop(conversation_id, None)
+            if remove_pending:
+                self._pending.pop(conversation_id, None)
 
     def _prune_completed(self) -> None:
         """Bound abandoned completed summaries without cancelling live maintenance."""
