@@ -38,7 +38,8 @@ async def _summarize_detached(
     run_context = getattr(usage, "_current_run", None) if usage is not None else None
     token = run_context.set(None) if run_context is not None else None
     try:
-        return await entity._async_summarize_history(older, model, api_mode)
+        result = await entity._async_summarize_history(older, model, api_mode)
+        return cast(str | None, result)
     finally:
         if run_context is not None and token is not None:
             run_context.reset(token)
