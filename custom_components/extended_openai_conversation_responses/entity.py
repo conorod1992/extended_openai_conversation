@@ -66,6 +66,10 @@ from .exceptions import FunctionNotFound, ParseArgumentsFailed, TokenLengthExcee
 from .function_execution import validate_function_arguments
 from .functions import get_function
 from .helpers import get_api_mode, get_model_config
+from .parallel_tool_execution import (
+    async_execute_parallel_safe_batch,
+    resolve_parallel_safe_batch,
+)
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
     CONTINUE_CONVERSATION_TOOL_NAME,
@@ -643,20 +647,44 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         ]
 
             function_tools_by_name = _index_function_tools(request_function_tools)
-            for tool_input in pending_tool_calls:
-                function_tool = function_tools_by_name.get(tool_input.tool_name)
-
-                if function_tool is None:
-                    raise FunctionNotFound(tool_input.tool_name)
-
-                tool_result_content = await self._execute_function_tool(
-                    function_tool,
-                    tool_input,
-                    llm_context,
-                    exposed_entities,
+            parallel_batch = resolve_parallel_safe_batch(
+                pending_tool_calls, function_tools_by_name
+            )
+            if parallel_batch is not None:
+                _LOGGER.debug(
+                    "Executing %d integration-owned read-only tool calls concurrently",
+                    len(parallel_batch),
                 )
+                tool_results = await async_execute_parallel_safe_batch(
+                    parallel_batch,
+                    lambda function_tool, tool_input: self._execute_function_tool(
+                        function_tool,
+                        tool_input,
+                        llm_context,
+                        exposed_entities,
+                    ),
+                )
+                for tool_result_content in tool_results:
+                    chat_log.async_add_assistant_content_without_tools(
+                        tool_result_content
+                    )
+            else:
+                for tool_input in pending_tool_calls:
+                    function_tool = function_tools_by_name.get(tool_input.tool_name)
 
-                chat_log.async_add_assistant_content_without_tools(tool_result_content)
+                    if function_tool is None:
+                        raise FunctionNotFound(tool_input.tool_name)
+
+                    tool_result_content = await self._execute_function_tool(
+                        function_tool,
+                        tool_input,
+                        llm_context,
+                        exposed_entities,
+                    )
+
+                    chat_log.async_add_assistant_content_without_tools(
+                        tool_result_content
+                    )
 
             if pending_tool_calls:
                 function_call_rounds += 1
