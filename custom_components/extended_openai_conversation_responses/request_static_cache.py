@@ -36,9 +36,7 @@ def tools_for_available_skills(
     """Hide the canonical no-op skill loader only when zero skills are usable."""
     if skills_available is not False:
         return configured_tools
-    return [
-        tool for tool in configured_tools if not _is_canonical_skill_loader(tool)
-    ]
+    return [tool for tool in configured_tools if not _is_canonical_skill_loader(tool)]
 
 
 def cached_format_tools(
@@ -94,7 +92,9 @@ def install_request_static_caching() -> None:
     original_process = conversation.ExtendedOpenAIAgentEntity._async_process
     original_format_tools = entity._format_tools
     original_render_template = prompt._render_template
-    original_get_function_tools = conversation.ExtendedOpenAIAgentEntity._get_function_tools
+    original_get_function_tools = (
+        conversation.ExtendedOpenAIAgentEntity._get_function_tools
+    )
     original_load_function_groups_method = (
         conversation.ExtendedOpenAIAgentEntity._load_function_groups
     )
@@ -126,9 +126,7 @@ def install_request_static_caching() -> None:
         user_input: Any,
         skills: list[Any],
     ) -> str:
-        maintained_default = getattr(
-            prompt, "_DEFAULT_EXPOSED_ENTITIES_CONTEXT", None
-        )
+        maintained_default = getattr(prompt, "_DEFAULT_EXPOSED_ENTITIES_CONTEXT", None)
         if maintained_default is not None and raw == maintained_default:
             return render_maintained_entity_context(hass, exposed_entities)
         return original_render_template(
@@ -176,13 +174,13 @@ def install_request_static_caching() -> None:
         projected = (
             None
             if configured_tools is None
-            else tools_for_available_skills(
-                configured_tools, _SKILLS_AVAILABLE.get()
-            )
+            else tools_for_available_skills(configured_tools, _SKILLS_AVAILABLE.get())
         )
         return original_load_function_groups(session, requested, groups, projected)
 
-    def snapshot_key_with_skills(agent: Any, conversation_module: Any) -> tuple[Any, ...]:
+    def snapshot_key_with_skills(
+        agent: Any, conversation_module: Any
+    ) -> tuple[Any, ...]:
         base_key = original_snapshot_key(agent, conversation_module)
         get_enabled_skills = getattr(agent, "_get_enabled_skills", None)
         if not callable(get_enabled_skills):
