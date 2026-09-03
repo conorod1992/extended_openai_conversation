@@ -27,7 +27,8 @@ describe("legacy management rendering optimizations", () => {
       _e:(value) => String(value ?? ""),
     };
     const markup = settingsResultsMarkup(panel);
-    expect(markup).toContain("Conversation continuity");
+    expect(markup).toContain("Conversation timeout");
+    expect(markup).toContain('data-target="config-conversation_timeout_minutes"');
     expect(markup).toContain("settings-result");
   });
 
