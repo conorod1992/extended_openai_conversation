@@ -8,6 +8,7 @@ const BOOTSTRAP_MODULES = [
   "./management-rendering-performance.js",
   "./management-loading-performance.js",
   "./management-route-performance.js",
+  "./management-navigation-search.js",
   "./debug-management.js",
 ];
 
@@ -115,6 +116,7 @@ if (typeof customElements !== "undefined") {
     await import("./management-rendering-performance.js");
     await import("./management-loading-performance.js");
     await import("./management-route-performance.js");
+    await import("./management-navigation-search.js");
     // Request debugging extends the management panel too. Install that extension
     // before registration so the route cannot depend on a later microtask race.
     await import("./debug-management.js");
