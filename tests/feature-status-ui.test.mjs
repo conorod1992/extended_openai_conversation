@@ -14,11 +14,16 @@ const markup = featureStatusMarkup(panel, "Persistent memory", {
   state: "enabled",
   label: "Manual",
   detail: "Automatic inclusion is off; memory search tools remain available.",
+}, {
+  page: "data-memory",
+  subsection: "memory-settings",
+  label: "Configure memory",
 });
 assert.match(markup, /Persistent memory/);
 assert.match(markup, /Manual/);
 assert.match(markup, /memory search tools remain available/);
-assert.match(markup, /data-subsection="advanced"/);
+assert.match(markup, /data-page="data-memory"/);
+assert.match(markup, /data-subsection="memory-settings"/);
 assert.match(markup, /status-value on/);
 
 const disabledMarkup = featureStatusMarkup(panel, "Knowledge Library", {
@@ -28,6 +33,7 @@ const disabledMarkup = featureStatusMarkup(panel, "Knowledge Library", {
 });
 assert.match(disabledMarkup, /Needs sources/);
 assert.doesNotMatch(disabledMarkup, /status-value on/);
+assert.doesNotMatch(disabledMarkup, /inline-route/);
 
 const projected = overviewAgentFeatureProjection({
   memory_mode: "automatic",
