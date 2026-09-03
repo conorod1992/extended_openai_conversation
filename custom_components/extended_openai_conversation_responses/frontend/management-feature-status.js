@@ -6,11 +6,12 @@ function selectedFeatureStatus(panel, featureName) {
   return sectionStatus?.[featureName] || panel._selectedAgent?.()?.feature_status?.[featureName] || null;
 }
 
-export function featureStatusMarkup(panel, title, status) {
+export function featureStatusMarkup(panel, title, status, configureTarget = null) {
   if (!status) return "";
   const positive = ["enabled", "available"].includes(status.state);
+  const target = configureTarget || {page: "assistant", subsection: "advanced", label: "Configure Memory & Knowledge"};
   const configure = panel._data?.is_admin
-    ? `<button type="button" class="secondary inline-route" data-page="assistant" data-subsection="advanced">Configure Memory & Knowledge</button>`
+    ? `<button type="button" class="secondary inline-route" data-page="${panel._e(target.page)}" data-subsection="${panel._e(target.subsection)}">${panel._e(target.label)}</button>`
     : "";
   return `<section class="content-card feature-status-card"><div class="compact-status"><span><strong>${panel._e(title)}</strong><small>${panel._e(status.detail || status.summary || "")}</small></span><strong class="status-value ${positive ? "on" : ""}">${panel._e(status.label || "Unknown")}</strong></div>${configure}</section>`;
 }
@@ -36,12 +37,12 @@ export function installManagementFeatureStatus(registry = globalThis.customEleme
     prototype._memories = function(...args) {
       const content = originalMemories.apply(this, args);
       if (this._memoryKind === "temporary") return content;
-      return `${featureStatusMarkup(this, "Persistent memory", selectedFeatureStatus(this, "memory"))}${content}`;
+      return `${featureStatusMarkup(this, "Persistent memory", selectedFeatureStatus(this, "memory"), {page: "data-memory", subsection: "memory-settings", label: "Configure memory"})}${content}`;
     };
 
     const originalKnowledge = prototype._knowledge;
     prototype._knowledge = function(...args) {
-      return `${featureStatusMarkup(this, "Knowledge Library", selectedFeatureStatus(this, "knowledge"))}${originalKnowledge.apply(this, args)}`;
+      return `${featureStatusMarkup(this, "Knowledge Library", selectedFeatureStatus(this, "knowledge"), {page: "assistant", subsection: "advanced", label: "Configure Knowledge"})}${originalKnowledge.apply(this, args)}`;
     };
 
     prototype[PATCHED] = true;

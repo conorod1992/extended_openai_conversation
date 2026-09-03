@@ -3,6 +3,7 @@ const PROPERTY_REPLAY_PATCHED = Symbol.for("extended-openai.management-property-
 const BOOTSTRAP_MODULES = [
   "./management-state-safety.js",
   "./management-feature-status.js",
+  "./management-memory-settings.js",
   "./management-rendering-performance.js",
   "./management-loading-performance.js",
   "./management-route-performance.js",
@@ -45,7 +46,6 @@ function installPreDefinitionPropertyReplay(constructor) {
 
 function capturePreRegistrationInstallers(registry) {
   if (!registry || registry.get?.(PANEL_TAG)) return () => {};
-
   const hadOwnDefine = Object.prototype.hasOwnProperty.call(registry, "define");
   const hadOwnGet = Object.prototype.hasOwnProperty.call(registry, "get");
   const hadOwnWhenDefined = Object.prototype.hasOwnProperty.call(registry, "whenDefined");
@@ -109,6 +109,7 @@ if (typeof customElements !== "undefined") {
     preloadBootstrapModules();
     await import("./management-state-safety.js");
     await import("./management-feature-status.js");
+    await import("./management-memory-settings.js");
     await import("./management-rendering-performance.js");
     await import("./management-loading-performance.js");
     await import("./management-route-performance.js");
