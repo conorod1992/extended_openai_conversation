@@ -12,6 +12,7 @@ from .knowledge import KnowledgeLibrary
 from .lifecycle_optimizations import install_lifecycle_optimizations
 from .memory import PersistentMemory
 from .model_tool_results import install_model_tool_result_compaction
+from .request_diagnostics import install_payload_latency_diagnostics
 from .request_rules import DEFAULT_MATCHING, DEFAULT_WORDING_GROUPS, RequestRules
 from .runtime_hardening import install_runtime_hardening
 from .safety_hardening import install_safety_hardening
@@ -59,6 +60,7 @@ def install_persistence_transactions() -> None:
     install_hot_path_cleanup()
     install_temporary_memory_read_fast_path()
     install_model_tool_result_compaction()
+    install_payload_latency_diagnostics()
 
 
 def _install_manager_guard(
