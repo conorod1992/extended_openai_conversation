@@ -52,6 +52,26 @@ def _has_token_count(usage: RequestUsage) -> bool:
     )
 
 
+def _local_estimate(usage: RequestUsage | None) -> int | None:
+    """Return the request-local context estimate when one is currently active."""
+    if usage is None:
+        return None
+    value = usage.details.get(_LOCAL_ESTIMATE_DETAIL)
+    return value if isinstance(value, int) and value > 0 else None
+
+
+def _restore_local_estimate(usage: RequestUsage | None, estimate: int | None) -> None:
+    """Restore an estimate if a terminal provider event replaced it with zeros."""
+    if usage is None or estimate is None or _has_token_count(usage):
+        return
+    usage.input_tokens = estimate
+    usage.output_tokens = 0
+    usage.total_tokens = estimate
+    usage.cached_input_tokens = 0
+    usage.reasoning_tokens = 0
+    usage.details = {_LOCAL_ESTIMATE_DETAIL: estimate}
+
+
 def _copy_usage(target: RequestUsage, source: RequestUsage) -> None:
     """Replace an in-flight estimate with provider-reported usage."""
     target.input_tokens = source.input_tokens
@@ -263,6 +283,7 @@ def install_context_usage_hardening() -> None:
 
         async def normalized_stream() -> AsyncIterator[Any]:
             async for chunk in result:
+                estimate = _local_estimate(request_usage)
                 raw_usage = getattr(chunk, "usage", None)
                 captured = _capture_provider_usage(request_usage, raw_usage)
                 # The original transformer handles the standard final usage-only
@@ -278,6 +299,8 @@ def install_context_usage_hardening() -> None:
                         }
                     )
                 yield chunk
+                if not captured:
+                    _restore_local_estimate(request_usage, estimate)
 
         async for item in original_chat_transform(
             entity, chat_log, normalized_stream(), request_usage
@@ -294,6 +317,7 @@ def install_context_usage_hardening() -> None:
 
         async def normalized_stream() -> AsyncIterator[Any]:
             async for event in result:
+                estimate = _local_estimate(request_usage)
                 response = getattr(event, "response", None)
                 raw_usage = getattr(response, "usage", None)
                 if raw_usage is None:
@@ -314,6 +338,8 @@ def install_context_usage_hardening() -> None:
                         }
                     )
                 yield event
+                if not captured:
+                    _restore_local_estimate(request_usage, estimate)
 
         async for item in original_responses_transform(
             entity, chat_log, normalized_stream(), request_usage
