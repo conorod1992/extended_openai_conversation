@@ -66,13 +66,16 @@ def _install_conversation_timeout_validation() -> None:
         elif isinstance(value, float) and value.is_integer():
             config[CONF_CONVERSATION_TIMEOUT_MINUTES] = int(value)
 
-    agent_config._coerce_legacy_numbers = coerce_legacy_numbers
+    agent_config._coerce_legacy_numbers = coerce_legacy_numbers  # type: ignore[method-assign]
 
 
 def sync_memory_embedding_provider(entity: Any) -> None:
     """Apply the entity's current Hybrid-memory settings to its shared manager."""
     memory = getattr(entity, "_memory", None)
-    if memory is None:
+    setter = getattr(memory, "set_embedding_provider", None)
+    if not callable(setter):
+        # Some callers/tests use a minimal search-only memory implementation. Provider
+        # synchronization applies only to the real PersistentMemory capability.
         return
     options = entity.subentry.data
     model = str(
@@ -82,12 +85,12 @@ def sync_memory_embedding_provider(entity: Any) -> None:
         options.get(CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE)
         == MEMORY_RETRIEVAL_HYBRID
     ):
-        memory.set_embedding_provider(entity._async_create_embeddings, model)
+        setter(entity._async_create_embeddings, model)
     else:
         # The manager is shared per agent and can outlive one entity instance. Clear
         # a provider left by a previous Hybrid configuration/entity when Lexical is
         # now selected.
-        memory.set_embedding_provider(None, model)
+        setter(None, model)
 
 
 def _install_memory_embedding_lifecycle() -> None:
