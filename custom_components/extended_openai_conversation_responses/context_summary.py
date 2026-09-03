@@ -27,7 +27,8 @@ SummaryCallback = Callable[
     [list[conversation.Content], str, str], Awaitable[str | None]
 ]
 SummaryTaskScheduler = Callable[
-    [Coroutine[Any, Any, "ContextSummaryResult"]], asyncio.Future["ContextSummaryResult"]
+    [Coroutine[Any, Any, "ContextSummaryResult"]],
+    asyncio.Future["ContextSummaryResult"],
 ]
 
 
