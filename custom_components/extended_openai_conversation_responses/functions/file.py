@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from functools import partial
 import logging
 import os
 from pathlib import Path
@@ -46,15 +45,15 @@ def _read_text_bounded(path: Path) -> str:
 
 
 def _atomic_replace_text(path: Path, content: str) -> int:
-    """Atomically replace an existing text file while preserving its mode."""
+    """Atomically write text, preserving an existing file's mode when present."""
     encoded = content.encode("utf-8")
     if len(encoded) > FILE_READ_SIZE_LIMIT:
         raise ValueError(
-            "Edited file would exceed the size limit: "
+            "File would exceed the size limit: "
             f"{len(encoded)} bytes (limit: {FILE_READ_SIZE_LIMIT})"
         )
 
-    current_mode = stat.S_IMODE(path.stat().st_mode)
+    current_mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
     fd, temp_name = tempfile.mkstemp(
         dir=path.parent,
         prefix=f".{path.name}.",
@@ -250,13 +249,9 @@ class WriteFileFunction(FileFunction):
 
         try:
             target_path = self._resolve_path(hass, path_str, allow_dirs)
-
-            # Write file
-            await hass.async_add_executor_job(
-                partial(target_path.write_text, content, encoding="utf-8")
+            bytes_written = await hass.async_add_executor_job(
+                _atomic_replace_text, target_path, content
             )
-
-            bytes_written = len(content.encode("utf-8"))
 
         except Exception as err:
             _LOGGER.exception("File write error: %s", err)

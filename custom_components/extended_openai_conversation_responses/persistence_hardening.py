@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
+import os
+import stat
 from typing import Any
+
+from homeassistant.helpers.storage import Store
 
 from .configuration_lifecycle_hardening import install_configuration_lifecycle_hardening
 from .context_usage_hardening import install_context_usage_hardening
@@ -22,6 +26,7 @@ from .temporary_memory_performance import install_temporary_memory_read_fast_pat
 
 _COMMITTED_STATE = "_extended_openai_committed_state"
 _INSTALLED: set[type[Any]] = set()
+_PRIVATE_STORE_MODE = 0o600
 
 
 type Snapshotter = Callable[[Any], Any]
@@ -55,6 +60,7 @@ def install_persistence_transactions() -> None:
         _restore_request_rules,
         _reset_request_rules,
     )
+    _install_delayed_tool_store_guard()
     install_configuration_lifecycle_hardening()
     install_runtime_hardening()
     install_safety_hardening()
@@ -63,6 +69,44 @@ def install_persistence_transactions() -> None:
     install_temporary_memory_read_fast_path()
     install_model_tool_result_compaction()
     install_context_usage_hardening()
+
+
+def _repair_private_store_mode(path: str) -> None:
+    """Tighten one existing Store file without rewriting unchanged JSON."""
+    try:
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        return
+    if mode != _PRIVATE_STORE_MODE:
+        os.chmod(path, _PRIVATE_STORE_MODE)
+
+
+async def _async_prepare_private_store(store: Any) -> None:
+    """Enable private atomic writes and repair an existing Store before loading."""
+    if not isinstance(store, Store):
+        return
+    # Store has no public setters for these constructor options. These managers
+    # predate the flags, so harden their existing Store instances before first I/O.
+    store._private = True
+    store._atomic_writes = True
+    await store.hass.async_add_executor_job(_repair_private_store_mode, store.path)
+
+
+def _install_delayed_tool_store_guard() -> None:
+    """Harden the delayed-tool Store before its first load or recovery write."""
+    from .delayed_tools import DelayedToolManager
+
+    current = DelayedToolManager.async_setup
+    if getattr(current, "_extended_openai_private_store", False):
+        return
+    original = current
+
+    async def async_setup(manager: Any) -> None:
+        await _async_prepare_private_store(manager._store)
+        await original(manager)
+
+    async_setup._extended_openai_private_store = True  # type: ignore[attr-defined]
+    DelayedToolManager.async_setup = async_setup  # type: ignore[method-assign,assignment]
 
 
 def _install_manager_guard(
@@ -79,6 +123,8 @@ def _install_manager_guard(
     original_save: Callable[..., Awaitable[Any]] = manager_type._async_save_locked
 
     async def async_initialize(manager: Any, *args: Any, **kwargs: Any) -> Any:
+        if manager_type is RequestRules:
+            await _async_prepare_private_store(manager._store)
         try:
             result = await original_initialize(manager, *args, **kwargs)
         except Exception:
