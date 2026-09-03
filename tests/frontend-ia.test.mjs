@@ -4,6 +4,7 @@ import {readFile} from "node:fs/promises";
 import {NAVIGATION, routeFromPath, searchSettings, shouldShowGlobalSettingsSearch} from "../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
 import {GUIDE_TOPICS, MEMORY_COMPARISON} from "../custom_components/extended_openai_conversation_responses/frontend/guide-content.js";
 import {renderGuide} from "../custom_components/extended_openai_conversation_responses/frontend/guide-page.js";
+import {knowledgeAvailabilityMarkup} from "../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js";
 import {MODEL_RESET_FIELDS} from "../custom_components/extended_openai_conversation_responses/frontend/management-memory-settings.js";
 import {renderMemorySettings} from "../custom_components/extended_openai_conversation_responses/frontend/memory-settings-ui.js";
 import {renderOverview} from "../custom_components/extended_openai_conversation_responses/frontend/overview-page.js";
@@ -14,11 +15,13 @@ assert.deepEqual(NAVIGATION.map((item) => item.label), [
   "Overview", "Guide", "Assistant", "Capabilities", "Data & Memory", "Usage & Maintenance",
 ]);
 assert.deepEqual(NAVIGATION.find((item) => item.id === "assistant").sections.map((item) => item.label), [
-  "Basics", "Model & responses", "Conversation", "Prompt & context", "Voice", "Speech", "Advanced",
+  "Basics", "Model & responses", "Conversation", "Prompt & context", "Voice", "Speech",
 ]);
 assert.deepEqual(NAVIGATION.find((item) => item.id === "capabilities").sections.map((item) => item.label), [
-  "Home Assistant", "Request Rules", "Functions", "Guest Mode",
+  "Home Assistant & local handling", "Web search & Skills", "Request Rules", "Functions", "Guest Mode",
 ]);
+assert.equal(routeFromPath("/extended-openai/assistant/advanced").section, "basics");
+assert.deepEqual(routeFromPath("/extended-openai/capabilities/web-skills"), {page:"capabilities", section:"web-skills", legacy:false});
 const dataMemory = NAVIGATION.find((item) => item.id === "data-memory");
 assert.equal(dataMemory.path, "/extended-openai/data-memory/memory-settings");
 assert.deepEqual(dataMemory.sections.map((item) => item.label), [
@@ -44,7 +47,7 @@ for (const [oldRoute, expected] of Object.entries(legacy)) {
 assert.deepEqual(routeFromPath("/extended-openai/assistant/conversation"), {page:"assistant", section:"conversation", legacy:false});
 assert.deepEqual(routeFromPath("/extended-openai/data-memory"), {page:"data-memory", section:"memory-settings", legacy:false});
 
-for (const query of ["archive", "memory", "timeout", "model", "Guest Mode", "voice", "backup", "embeddings", "context", "tools functions"]) {
+for (const query of ["archive", "memory", "timeout", "model", "Guest Mode", "voice", "backup", "embeddings", "context", "tools functions", "local handling", "web search", "skills", "knowledge"]) {
   assert.ok(searchSettings(query).length, `global settings search should find ${query}`);
 }
 assert.equal(searchSettings("timeout")[0].section, "conversation");
@@ -55,10 +58,16 @@ for (const query of ["memory", "temporary", "embeddings", "shared household"]) {
   assert.equal(result?.section, "memory-settings", `${query} should resolve to Memory settings`);
   assert.equal(result?.target, "config-memory");
 }
-for (const [page, section] of [["assistant", "basics"], ["capabilities", "guest-mode"], ["data-memory", "memory-settings"], ["usage-maintenance", "retention"]]) {
+for (const [query, section] of [["local handling","home-assistant"],["web search","web-skills"],["skills","web-skills"]]) {
+  const result = searchSettings(query)[0];
+  assert.equal(result?.page, "capabilities", `${query} should resolve to Capabilities`);
+  assert.equal(result?.section, section);
+}
+assert.equal(searchSettings("knowledge")[0].section, "knowledge");
+for (const [page, section] of [["assistant", "basics"], ["capabilities", "home-assistant"], ["capabilities", "web-skills"], ["capabilities", "guest-mode"], ["data-memory", "memory-settings"], ["data-memory", "knowledge"], ["usage-maintenance", "retention"]]) {
   assert.equal(shouldShowGlobalSettingsSearch(page, section), true);
 }
-for (const [page, section] of [["guide", null], ["capabilities", "functions"], ["data-memory", "memories"], ["data-memory", "knowledge"], ["data-memory", "conversations"], ["usage-maintenance", "usage"]]) {
+for (const [page, section] of [["guide", null], ["capabilities", "functions"], ["data-memory", "memories"], ["data-memory", "conversations"], ["usage-maintenance", "usage"]]) {
   assert.equal(shouldShowGlobalSettingsSearch(page, section), false);
 }
 
@@ -93,6 +102,17 @@ const hybridMemoryHtml = renderMemorySettings(memoryPanel);
 assert.doesNotMatch(hybridMemoryHtml, /data-memory-config="memory_embedding_model"[^>]*disabled/);
 assert.deepEqual(MODEL_RESET_FIELDS, ["temperature", "top_p", "reasoning_effort", "service_tier", "shorten_tool_call_id"]);
 assert.ok(MODEL_RESET_FIELDS.every((key) => !key.includes("memory")));
+
+const knowledgePanel = {
+  _data:{is_admin:true},
+  _selectedAgent:()=>({feature_status:{knowledge:{state:"enabled"}}}),
+};
+const knowledgeAvailability = knowledgeAvailabilityMarkup(knowledgePanel);
+assert.match(knowledgeAvailability, /Allow the assistant to use Knowledge/);
+assert.match(knowledgeAvailability, /knowledge-enabled-toggle/);
+assert.match(knowledgeAvailability, /checked/);
+knowledgePanel._data.is_admin = false;
+assert.equal(knowledgeAvailabilityMarkup(knowledgePanel), "");
 
 assert.ok(GUIDE_TOPICS.length >= 12);
 assert.ok(GUIDE_TOPICS.some((topic) => topic.id === "guest-mode"));
@@ -149,7 +169,9 @@ const overview = (
   ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
 ).join("\n");
 const memoryManagement = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-memory-settings.js", import.meta.url), "utf8");
+const capabilitiesIA = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js", import.meta.url), "utf8");
 const featureStatus = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-feature-status.js", import.meta.url), "utf8");
+const bootstrap = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url), "utf8");
 const homeAssistant = panel.slice(panel.indexOf("  _homeAssistant("), panel.indexOf("  _overview("));
 assert.match(panel, /top-section-mobile/);
 assert.match(panel, /id="local-section"/);
@@ -186,3 +208,11 @@ assert.match(editor, /id="import-agent">Import configuration/);
 assert.match(memoryManagement, /data-memory\/memory-settings/);
 assert.match(memoryManagement, /assistant\/model-responses/);
 assert.match(featureStatus, /subsection: "memory-settings", label: "Configure memory"/);
+assert.doesNotMatch(featureStatus, /assistant.*advanced/);
+assert.match(capabilitiesIA, /capabilities\/home-assistant/);
+assert.match(capabilitiesIA, /capabilities\/web-skills/);
+assert.match(capabilitiesIA, /return \["local"\]/);
+assert.match(capabilitiesIA, /return \["capabilities"\]/);
+assert.match(capabilitiesIA, /knowledge_enabled = desired/);
+assert.match(capabilitiesIA, /configuration", "validate"/);
+assert.match(bootstrap, /management-capabilities-ia\.js/);
