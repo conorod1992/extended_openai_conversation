@@ -1,3 +1,5 @@
+import {overviewAgentFeatureProjection} from "./management-feature-status.js";
+
 let implementation = null;
 let loadPromise = null;
 
@@ -26,7 +28,9 @@ function queueRender(panel) {
 }
 
 export function renderOverview(panel, agent) {
-  if (implementation) return implementation.renderOverview(panel, agent);
+  if (implementation) {
+    return implementation.renderOverview(panel, overviewAgentFeatureProjection(agent));
+  }
   queueRender(panel);
   return panel._loading?.() || '<div class="loading">Loading Overview…</div>';
 }
