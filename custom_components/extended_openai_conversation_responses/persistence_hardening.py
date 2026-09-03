@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from typing import Any
 
+from .hot_path_cleanup import install_hot_path_cleanup
 from .knowledge import KnowledgeLibrary
 from .lifecycle_optimizations import install_lifecycle_optimizations
 from .memory import PersistentMemory
@@ -53,6 +54,7 @@ def install_persistence_transactions() -> None:
     install_runtime_hardening()
     install_safety_hardening()
     install_lifecycle_optimizations()
+    install_hot_path_cleanup()
 
 
 def _install_manager_guard(
