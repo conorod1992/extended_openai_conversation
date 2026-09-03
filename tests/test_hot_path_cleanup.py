@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from datetime import timedelta
 import time
@@ -9,7 +10,12 @@ from types import SimpleNamespace
 
 from homeassistant.util import dt as dt_util
 
-from custom_components.extended_openai_conversation_responses import debug, local_intents
+from custom_components.extended_openai_conversation_responses import (
+    debug,
+    lifecycle_optimizations,
+    local_intents,
+    request_rules,
+)
 from custom_components.extended_openai_conversation_responses.hot_path_cleanup import (
     _USAGE_PRUNE_TASK,
     install_hot_path_cleanup,
@@ -18,13 +24,17 @@ from custom_components.extended_openai_conversation_responses.lifecycle_optimiza
     _LAST_USAGE_PRUNE_DATE,
     install_lifecycle_optimizations,
 )
-from custom_components.extended_openai_conversation_responses import (
-    lifecycle_optimizations,
-    request_rules,
-)
 from custom_components.extended_openai_conversation_responses.request_rules import (
     CompiledPhrase,
     RequestRules,
+)
+from custom_components.extended_openai_conversation_responses.temporary_memory import (
+    TemporaryMemory,
+    TemporaryMemoryRecord,
+)
+from custom_components.extended_openai_conversation_responses.temporary_memory_performance import (
+    _PRUNE_SAVE_TASK,
+    install_temporary_memory_read_fast_path,
 )
 from custom_components.extended_openai_conversation_responses.usage import (
     RequestUsage,
@@ -50,6 +60,23 @@ class DelayedStorage:
 
     def async_delay_save(self, data_func, delay: float = 0) -> None:
         self.delayed.append((data_func, delay))
+
+
+class BlockingStorage:
+    """Store stand-in proving expiry persistence happens after the read returns."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.data = None
+
+    async def async_load(self):
+        return None
+
+    async def async_save(self, data):
+        self.started.set()
+        await self.release.wait()
+        self.data = deepcopy(data)
 
 
 async def _usage_manager():
@@ -119,6 +146,38 @@ async def test_daily_usage_prune_is_scheduled_not_awaited_by_finalizer() -> None
     assert task is not None
     await task
     assert manager.requests == []
+
+
+async def test_temporary_memory_expiry_save_runs_after_active_read_returns() -> None:
+    """Expired facts disappear immediately while their Store write runs later."""
+    install_temporary_memory_read_fast_path()
+    store = BlockingStorage()
+    manager = TemporaryMemory(store)
+    now = dt_util.utcnow()
+    manager._initialized = True
+    manager._records["expired"] = TemporaryMemoryRecord(
+        memory_id="expired",
+        scope_id="scope",
+        content="old temporary fact",
+        category="general",
+        source="automatic",
+        expires_at=(now - timedelta(minutes=1)).isoformat(),
+        created_at=(now - timedelta(hours=1)).isoformat(),
+        updated_at=(now - timedelta(hours=1)).isoformat(),
+    )
+
+    result = await manager.async_active("scope")
+
+    assert result == []
+    assert manager.expired_pruned == 1
+    assert "expired" not in manager._records
+    task = getattr(manager, _PRUNE_SAVE_TASK)
+    assert task is not None
+    await asyncio.wait_for(store.started.wait(), timeout=1)
+    assert not task.done()
+    store.release.set()
+    await task
+    assert store.data == {"records": []}
 
 
 class DumpCountingEvent:
