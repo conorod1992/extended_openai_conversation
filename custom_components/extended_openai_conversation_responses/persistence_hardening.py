@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from typing import Any
 
+from .configuration_lifecycle_hardening import install_configuration_lifecycle_hardening
 from .context_usage_hardening import install_context_usage_hardening
 from .hot_path_cleanup import install_hot_path_cleanup
 from .knowledge import KnowledgeLibrary
@@ -54,6 +55,7 @@ def install_persistence_transactions() -> None:
         _restore_request_rules,
         _reset_request_rules,
     )
+    install_configuration_lifecycle_hardening()
     install_runtime_hardening()
     install_safety_hardening()
     install_lifecycle_optimizations()
