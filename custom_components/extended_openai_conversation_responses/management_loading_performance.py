@@ -286,9 +286,7 @@ async def _async_save_configuration(
         return validation
 
     normalized = validation["config"]
-    persisted = preserve_legacy_guest_policy(
-        dict(subentry.data), deepcopy(normalized)
-    )
+    persisted = preserve_legacy_guest_policy(dict(subentry.data), deepcopy(normalized))
     saved_title = title.strip() if isinstance(title, str) else subentry.title
     hass.config_entries.async_update_subentry(
         entry,
