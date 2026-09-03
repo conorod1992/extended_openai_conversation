@@ -113,7 +113,7 @@ def _install_memory_embedding_lifecycle() -> None:
         if provider is None:
             memory._embedding_maintenance_requested = False
 
-    PersistentMemory.set_embedding_provider = set_embedding_provider  # type: ignore[method-assign]
+    PersistentMemory.set_embedding_provider = set_embedding_provider  # type: ignore[assignment]
 
     original_added = ExtendedOpenAIAgentEntity.async_added_to_hass
 
@@ -124,7 +124,7 @@ def _install_memory_embedding_lifecycle() -> None:
         # provider retained by the shared manager when the new entity is Lexical.
         sync_memory_embedding_provider(entity)
 
-    ExtendedOpenAIAgentEntity.async_added_to_hass = async_added_to_hass  # type: ignore[method-assign]
+    ExtendedOpenAIAgentEntity.async_added_to_hass = async_added_to_hass  # type: ignore[assignment]
 
     original_retrieve = ExtendedOpenAIAgentEntity._async_retrieve_memories
 
@@ -136,7 +136,7 @@ def _install_memory_embedding_lifecycle() -> None:
         sync_memory_embedding_provider(entity)
         return await original_retrieve(entity, *args, **kwargs)
 
-    ExtendedOpenAIAgentEntity._async_retrieve_memories = async_retrieve_memories  # type: ignore[method-assign]
+    ExtendedOpenAIAgentEntity._async_retrieve_memories = async_retrieve_memories  # type: ignore[assignment]
 
 
 def install_configuration_lifecycle_hardening() -> None:
