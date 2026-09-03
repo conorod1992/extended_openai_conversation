@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
@@ -37,25 +37,12 @@ def _build_metadata(hass: HomeAssistant, entity_id: str) -> EntityPromptMetadata
     )
 
 
-def get_entity_prompt_metadata(
-    hass: HomeAssistant, entity_id: str
-) -> EntityPromptMetadata:
-    """Return cached static metadata while preserving a no-cache test/setup fallback."""
-    cache = hass.data.get(_CACHE_KEY)
-    if not isinstance(cache, dict):
-        return _build_metadata(hass, entity_id)
-    metadata = cache.get(entity_id)
-    if isinstance(metadata, EntityPromptMetadata):
-        return metadata
-    metadata = _build_metadata(hass, entity_id)
-    cache[entity_id] = metadata
-    return metadata
+def _metadata_cache(hass: HomeAssistant) -> dict[str, EntityPromptMetadata]:
+    """Create the per-HA cache once and attach exact registry invalidation."""
+    existing = hass.data.get(_CACHE_KEY)
+    if isinstance(existing, dict):
+        return cast(dict[str, EntityPromptMetadata], existing)
 
-
-async def async_setup_entity_context_cache(hass: HomeAssistant) -> None:
-    """Install registry invalidation for static entity prompt metadata."""
-    if _CACHE_KEY in hass.data:
-        return
     cache: dict[str, EntityPromptMetadata] = {}
     hass.data[_CACHE_KEY] = cache
 
@@ -65,3 +52,17 @@ async def async_setup_entity_context_cache(hass: HomeAssistant) -> None:
 
     hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, clear_cache)
     hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, clear_cache)
+    return cache
+
+
+def get_entity_prompt_metadata(
+    hass: HomeAssistant, entity_id: str
+) -> EntityPromptMetadata:
+    """Return cached aliases/area; live exposure, permissions and state stay elsewhere."""
+    cache = _metadata_cache(hass)
+    metadata = cache.get(entity_id)
+    if metadata is not None:
+        return metadata
+    metadata = _build_metadata(hass, entity_id)
+    cache[entity_id] = metadata
+    return metadata
