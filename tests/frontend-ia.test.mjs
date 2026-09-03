@@ -4,6 +4,8 @@ import {readFile} from "node:fs/promises";
 import {NAVIGATION, routeFromPath, searchSettings, shouldShowGlobalSettingsSearch} from "../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
 import {GUIDE_TOPICS, MEMORY_COMPARISON} from "../custom_components/extended_openai_conversation_responses/frontend/guide-content.js";
 import {renderGuide} from "../custom_components/extended_openai_conversation_responses/frontend/guide-page.js";
+import {MODEL_RESET_FIELDS} from "../custom_components/extended_openai_conversation_responses/frontend/management-memory-settings.js";
+import {renderMemorySettings} from "../custom_components/extended_openai_conversation_responses/frontend/memory-settings-ui.js";
 import {renderOverview} from "../custom_components/extended_openai_conversation_responses/frontend/overview-page.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -16,6 +18,11 @@ assert.deepEqual(NAVIGATION.find((item) => item.id === "assistant").sections.map
 ]);
 assert.deepEqual(NAVIGATION.find((item) => item.id === "capabilities").sections.map((item) => item.label), [
   "Home Assistant", "Request Rules", "Functions", "Guest Mode",
+]);
+const dataMemory = NAVIGATION.find((item) => item.id === "data-memory");
+assert.equal(dataMemory.path, "/extended-openai/data-memory/memory-settings");
+assert.deepEqual(dataMemory.sections.map((item) => item.label), [
+  "Memory settings", "Memories", "Knowledge Library", "Conversation history",
 ]);
 assert.ok(NAVIGATION.flatMap((item) => item.sections).every((item) => item.description));
 
@@ -35,18 +42,57 @@ for (const [oldRoute, expected] of Object.entries(legacy)) {
   assert.equal(route.legacy, true);
 }
 assert.deepEqual(routeFromPath("/extended-openai/assistant/conversation"), {page:"assistant", section:"conversation", legacy:false});
+assert.deepEqual(routeFromPath("/extended-openai/data-memory"), {page:"data-memory", section:"memory-settings", legacy:false});
 
 for (const query of ["archive", "memory", "timeout", "model", "Guest Mode", "voice", "backup", "embeddings", "context", "tools functions"]) {
   assert.ok(searchSettings(query).length, `global settings search should find ${query}`);
 }
 assert.equal(searchSettings("timeout")[0].section, "conversation");
 assert.equal(searchSettings("backup")[0].section, "backup-restore");
-for (const [page, section] of [["assistant", "basics"], ["capabilities", "guest-mode"], ["usage-maintenance", "retention"]]) {
+for (const query of ["memory", "temporary", "embeddings", "shared household"]) {
+  const result = searchSettings(query)[0];
+  assert.equal(result?.page, "data-memory", `${query} should resolve to Data & Memory`);
+  assert.equal(result?.section, "memory-settings", `${query} should resolve to Memory settings`);
+  assert.equal(result?.target, "config-memory");
+}
+for (const [page, section] of [["assistant", "basics"], ["capabilities", "guest-mode"], ["data-memory", "memory-settings"], ["usage-maintenance", "retention"]]) {
   assert.equal(shouldShowGlobalSettingsSearch(page, section), true);
 }
 for (const [page, section] of [["guide", null], ["capabilities", "functions"], ["data-memory", "memories"], ["data-memory", "knowledge"], ["data-memory", "conversations"], ["usage-maintenance", "usage"]]) {
   assert.equal(shouldShowGlobalSettingsSearch(page, section), false);
 }
+
+const memoryPanel = {
+  _configDirty: false,
+  _e: escape,
+  _result: {
+    options: {
+      memory_mode: [{value:"off",label:"Off"},{value:"manual",label:"Manual"},{value:"automatic",label:"Automatic"}],
+      temporary_memory: [{value:"off",label:"Off"},{value:"balanced",label:"Balanced"},{value:"eager",label:"Eager"}],
+      memory_retrieval_mode: [{value:"lexical",label:"Lexical"},{value:"hybrid",label:"Hybrid"}],
+      shared_memory_mode: [{value:"disabled",label:"Disabled"},{value:"explicit",label:"Explicit"},{value:"automatic",label:"Automatic"}],
+    },
+    config: {
+      memory_mode: "manual",
+      temporary_memory: "balanced",
+      memory_auto_retrieve_limit: 3,
+      memory_retrieval_mode: "lexical",
+      memory_embedding_model: "text-embedding-3-small",
+      shared_memory_mode: "explicit",
+    },
+  },
+};
+const lexicalMemoryHtml = renderMemorySettings(memoryPanel);
+for (const key of ["memory_mode", "temporary_memory", "memory_auto_retrieve_limit", "memory_retrieval_mode", "memory_embedding_model", "shared_memory_mode"]) {
+  assert.match(lexicalMemoryHtml, new RegExp(`data-memory-config="${key}"`));
+}
+assert.match(lexicalMemoryHtml, /data-memory-config="memory_embedding_model"[^>]*disabled/);
+assert.match(lexicalMemoryHtml, /Manage stored memories/);
+memoryPanel._result.config.memory_retrieval_mode = "hybrid";
+const hybridMemoryHtml = renderMemorySettings(memoryPanel);
+assert.doesNotMatch(hybridMemoryHtml, /data-memory-config="memory_embedding_model"[^>]*disabled/);
+assert.deepEqual(MODEL_RESET_FIELDS, ["temperature", "top_p", "reasoning_effort", "service_tier", "shorten_tool_call_id"]);
+assert.ok(MODEL_RESET_FIELDS.every((key) => !key.includes("memory")));
 
 assert.ok(GUIDE_TOPICS.length >= 12);
 assert.ok(GUIDE_TOPICS.some((topic) => topic.id === "guest-mode"));
@@ -102,6 +148,8 @@ const overview = (
     "../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js",
   ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
 ).join("\n");
+const memoryManagement = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-memory-settings.js", import.meta.url), "utf8");
+const featureStatus = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-feature-status.js", import.meta.url), "utf8");
 const homeAssistant = panel.slice(panel.indexOf("  _homeAssistant("), panel.indexOf("  _overview("));
 assert.match(panel, /top-section-mobile/);
 assert.match(panel, /id="local-section"/);
@@ -135,3 +183,6 @@ assert.match(editor, /const cleanOnly = panel\._configDirty/);
 assert.match(editor, /id="duplicate-agent" \$\{cleanOnly\}/);
 assert.match(editor, /id="export-agent" \$\{cleanOnly\}/);
 assert.match(editor, /id="import-agent">Import configuration/);
+assert.match(memoryManagement, /data-memory\/memory-settings/);
+assert.match(memoryManagement, /assistant\/model-responses/);
+assert.match(featureStatus, /subsection: "memory-settings", label: "Configure memory"/);
