@@ -176,7 +176,7 @@ function enhancePanel(panel) {
   style.textContent = SEARCH_STYLE;
   root.append(style);
 
-  root.querySelector(".global-search")?.remove();
+  root.querySelectorAll(".global-search").forEach((search) => search.remove());
   const topNav = root.querySelector(".top-nav");
   if (topNav) topNav.insertAdjacentHTML("afterend", searchMarkup(panel));
 
