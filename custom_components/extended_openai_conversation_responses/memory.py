@@ -59,9 +59,7 @@ IMPORTANCE_MULTIPLIERS = {"low": 0.85, "normal": 1.0, "high": 1.2}
 MIN_LEXICAL_RELEVANCE_SCORE = 0.08
 MIN_SEMANTIC_SIMILARITY = 0.55
 EmbeddingProvider = Callable[[list[str]], Awaitable[list[list[float]]]]
-EmbeddingTaskScheduler = Callable[
-    [Coroutine[Any, Any, None]], asyncio.Future[Any]
-]
+EmbeddingTaskScheduler = Callable[[Coroutine[Any, Any, None]], asyncio.Future[Any]]
 
 
 class _UnsetType:
@@ -982,12 +980,10 @@ class PersistentMemory:
         try:
             while True:
                 self._embedding_maintenance_requested = False
-                if not await self._async_refresh_missing_embeddings(
-                    None, background=True
-                ):
-                    return
-                if not self._embedding_maintenance_requested:
-                    return
+                await self._async_refresh_missing_embeddings(None, background=True)
+                if self._embedding_maintenance_requested:
+                    continue
+                return
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1019,10 +1015,15 @@ class PersistentMemory:
             batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
             vectors = await provider([_embedding_text(memory) for memory in batch])
             if len(vectors) != len(batch):
-                raise ValueError("embedding provider returned the wrong number of vectors")
+                raise ValueError(
+                    "embedding provider returned the wrong number of vectors"
+                )
             generated_ids: list[str] = []
             async with self._lock:
-                if self._embedding_provider is not provider or self._embedding_model != model:
+                if (
+                    self._embedding_provider is not provider
+                    or self._embedding_model != model
+                ):
                     return False
                 for memory, vector in zip(batch, vectors, strict=True):
                     current = self._memories.get(memory.memory_id)
