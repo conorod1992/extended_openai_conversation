@@ -20,6 +20,7 @@ from .const import (
 from .memory import get_memory_mode
 
 _INSTALLED = False
+_FRONTEND_MODULE = "management-feature-status.js"
 
 
 def management_feature_status(
@@ -223,3 +224,6 @@ def install_management_feature_status() -> None:
         return enriched
 
     management_ui.async_management_command = management_command_with_feature_status
+    management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(
+        dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE))
+    )
