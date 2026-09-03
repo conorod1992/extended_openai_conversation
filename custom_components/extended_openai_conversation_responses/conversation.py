@@ -392,6 +392,47 @@ class ExtendedOpenAIAgentEntity(
             **({"error_type": type(error).__name__} if error is not None else {}),
         }
 
+    async def _async_begin_archive_session(
+        self,
+        session_key: str,
+        scope: ResolvedDataScope,
+        home_assistant_conversation_id: str | None,
+        request_policy: GuestCapabilityPolicy,
+    ) -> ArchiveSession | None:
+        """Begin optional archive retention without taking down the conversation."""
+        if self._archive is None or not request_policy.archive_retention:
+            return None
+        configured = bool(
+            self.subentry.data.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+        )
+        try:
+            session = await self._archive.async_begin_session(
+                session_key,
+                scope,
+                home_assistant_conversation_id,
+                archive_enabled=configured,
+                shared_archive_enabled=bool(
+                    self.subentry.data.get(
+                        CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED
+                    )
+                ),
+                inactivity_minutes=int(
+                    self.subentry.data.get(
+                        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+                        DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+                    )
+                ),
+            )
+        except Exception as err:
+            self._set_subsystem_status("archive", configured, err)
+            _LOGGER.exception(
+                "Unable to begin conversation archive session; continuing without "
+                "archiving this turn"
+            )
+            return None
+        self._set_subsystem_status("archive", configured, healthy=True)
+        return session
+
     async def async_will_remove_from_hass(self) -> None:
         """When entity will be removed from Home Assistant."""
         conversation.async_unset_agent(self.hass, self.entry)
@@ -491,25 +532,12 @@ class ExtendedOpenAIAgentEntity(
             if user_input.conversation_id
             else f"context:{context_id or scope.device_id or 'unidentified'}"
         )
-        archive_session: ArchiveSession | None = None
-        if self._archive is not None and request_policy.archive_retention:
-            archive_session = await self._archive.async_begin_session(
-                session_key,
-                scope,
-                user_input.conversation_id,
-                archive_enabled=self.subentry.data.get(
-                    CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED
-                ),
-                shared_archive_enabled=self.subentry.data.get(
-                    CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED
-                ),
-                inactivity_minutes=int(
-                    self.subentry.data.get(
-                        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
-                        DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
-                    )
-                ),
-            )
+        archive_session = await self._async_begin_archive_session(
+            session_key,
+            scope,
+            user_input.conversation_id,
+            request_policy,
+        )
         scope_token = _ACTIVE_SCOPE.set(scope)
         archive_token = _ACTIVE_ARCHIVE.set(
             (session_key, archive_session.session_id) if archive_session else None
