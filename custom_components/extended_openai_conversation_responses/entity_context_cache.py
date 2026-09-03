@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, cast
 
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.template.helpers import resolve_area_id
 
@@ -49,7 +49,7 @@ def _metadata_cache(hass: HomeAssistant) -> dict[str, EntityPromptMetadata]:
     hass.data[_CACHE_KEY] = cache
 
     @callback
-    def clear_cache(_event: Event) -> None:
+    def clear_cache(_event: Any) -> None:
         cache.clear()
 
     hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, clear_cache)
