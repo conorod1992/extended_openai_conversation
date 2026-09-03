@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable
-from math import ceil
 import json
+from math import ceil
 from typing import Any
 
 from .prompt import EffectivePrompt, PromptSection
@@ -174,7 +174,11 @@ def tool_breakdown(tools: Any) -> list[dict[str, Any]]:
     result = [
         {
             "name": _tool_name(tool),
-            "type": str(tool.get("type", "unknown")) if isinstance(tool, dict) else "unknown",
+            "type": (
+                str(tool.get("type", "unknown"))
+                if isinstance(tool, dict)
+                else "unknown"
+            ),
             **_sized(_json_characters(tool)),
         }
         for tool in tools
@@ -185,7 +189,7 @@ def tool_breakdown(tools: Any) -> list[dict[str, Any]]:
 def provider_payload_metrics(input_value: Any, tools: Any) -> dict[str, Any]:
     """Build metadata-only provider input/tool sizing diagnostics."""
     input_characters = _json_characters(input_value)
-    tool_characters = _json_characters(tools)
+    tool_characters = _json_characters(tools) if isinstance(tools, list) else 0
     return {
         "approximation_method": APPROX_TOKEN_METHOD,
         "approx_input_tokens": approximate_tokens(input_characters),
