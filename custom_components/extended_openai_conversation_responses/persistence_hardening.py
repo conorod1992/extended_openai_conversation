@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from typing import Any
 
-from .archive_session_hardening import install_archive_session_hardening
 from .context_usage_hardening import install_context_usage_hardening
 from .hot_path_cleanup import install_hot_path_cleanup
 from .knowledge import KnowledgeLibrary
@@ -58,7 +57,6 @@ def install_persistence_transactions() -> None:
     install_runtime_hardening()
     install_safety_hardening()
     install_lifecycle_optimizations()
-    install_archive_session_hardening()
     install_hot_path_cleanup()
     install_temporary_memory_read_fast_path()
     install_model_tool_result_compaction()
