@@ -3,7 +3,6 @@ import {describe, expect, it} from "vitest";
 import {readFile} from "node:fs/promises";
 
 import {NAVIGATION, searchSettings} from "../../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
-import {installVoiceMetadata} from "../../custom_components/extended_openai_conversation_responses/frontend/management-voice-identity.js";
 import {renderVoiceIdentity, voiceIdentitySummary, voiceUserLabel, voiceUsers} from "../../custom_components/extended_openai_conversation_responses/frontend/voice-identity-ui.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
@@ -58,8 +57,7 @@ describe("Voice & identity management UX", () => {
     );
   });
 
-  it("updates navigation and settings-search terminology without changing config keys", () => {
-    installVoiceMetadata();
+  it("keeps final navigation and settings-search terminology in the canonical metadata", () => {
     const voice = NAVIGATION.find((item) => item.id === "assistant")?.sections.find((item) => item.id === "voice");
     expect(voice?.label).toBe("Voice & identity");
     expect(searchSettings("default voice user")[0]?.configKey).toBe("voice_default_user_id");
