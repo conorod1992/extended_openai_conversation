@@ -124,6 +124,34 @@ def input_breakdown(input_value: Any) -> dict[str, Any]:
     }
 
 
+def explicit_cache_breakdown(input_value: Any) -> dict[str, Any]:
+    """Measure explicit provider cache blocks that are actually present in input."""
+    items = input_value if isinstance(input_value, list) else []
+    breakpoint_count = 0
+    prefix_characters = 0
+    for item in items:
+        if not isinstance(item, dict) or item.get("role") not in {
+            "system",
+            "developer",
+        }:
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or "prompt_cache_breakpoint" not in block:
+                continue
+            breakpoint_count += 1
+            text = block.get("text")
+            if isinstance(text, str):
+                prefix_characters += len(text)
+    return {
+        "breakpoint_count": breakpoint_count,
+        "cacheable_prefix_characters": prefix_characters,
+        "cacheable_prefix_approx_tokens": approximate_tokens(prefix_characters),
+    }
+
+
 def _tool_name(tool: Any) -> str:
     if not isinstance(tool, dict):
         return "<unknown>"
@@ -163,6 +191,7 @@ def provider_payload_metrics(input_value: Any, tools: Any) -> dict[str, Any]:
         "approx_input_tokens": approximate_tokens(input_characters),
         "approx_tool_tokens": approximate_tokens(tool_characters),
         "input_breakdown": input_breakdown(input_value),
+        "explicit_prompt_cache": explicit_cache_breakdown(input_value),
         "tool_breakdown": tool_breakdown(tools),
     }
 
