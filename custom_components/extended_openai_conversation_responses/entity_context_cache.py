@@ -22,10 +22,12 @@ class EntityPromptMetadata:
     area_id: str | None
 
 
-def normalize_entity_aliases(aliases: list[Any] | tuple[Any, ...] | None) -> list[str]:
-    """Return only genuine string aliases, excluding HA's computed-name sentinel."""
+def normalize_entity_aliases(aliases: Any) -> list[str]:
+    """Keep genuine aliases while dropping computed-name and unknown sentinels."""
     if not aliases:
         return []
+    # COMPUTED_NAME and any future HA sentinel types are non-strings. State.name
+    # remains live separately, so no synthetic registry value is stringified here.
     return [alias for alias in aliases if isinstance(alias, str)]
 
 
