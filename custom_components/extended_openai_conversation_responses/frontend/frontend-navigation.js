@@ -6,7 +6,7 @@ export const NAVIGATION = [
     {id: "model-responses", label: "Model & responses", description: "Fine-tune supported model response controls."},
     {id: "conversation", label: "Conversation", description: "Control how recent conversations are carried into later requests."},
     {id: "prompt-context", label: "Prompt & context", description: "Manage instructions and live Home Assistant context."},
-    {id: "voice", label: "Voice", description: "Choose identity and data scope behavior for voice devices."},
+    {id: "voice", label: "Voice & identity", description: "Choose identity and retained-data behavior for signed-in and unidentified voice requests."},
     {id: "speech", label: "Speech", description: "Clean assistant responses before they are spoken."},
   ]},
   {id: "capabilities", label: "Capabilities", path: "/extended-openai/capabilities/home-assistant", sections: [
@@ -40,9 +40,6 @@ const LEGACY_ROUTES = {
   conversations: ["data-memory", "conversations"],
   usage: ["usage-maintenance", "usage"],
   diagnostics: ["usage-maintenance", "diagnostics"],
-};
-
-const LEGACY_NESTED_ROUTES = {
   "assistant/advanced": ["capabilities", "web-skills"],
 };
 
@@ -75,15 +72,15 @@ export const SETTINGS_INDEX = [
   setting("Device context format", "Optional custom prompt template for exposed entity context.", "advanced context template devices entities format", "assistant", "prompt-context", "exposed_entities_template", "config-prompt", {format:"template"}),
   setting("System prompt", "Instructions supplied to the assistant on each request.", "prompt instructions system template", "assistant", "prompt-context", "prompt", "prompt-editor", {format:"prompt"}),
 
-  setting("When the speaker is not identified", "Retained-data scope used when voice identity cannot be resolved.", "voice unidentified speaker scope household user", "assistant", "voice", "voice_scope_policy", "config-voice_scope_policy"),
-  setting("When a device has no mapping", "Retained-data scope used for an unmapped voice device.", "voice unmapped satellite device scope", "assistant", "voice", "voice_unmapped_policy", "config-voice_unmapped_policy"),
-  setting("Default Home Assistant user ID", "User whose retained data is used when a voice policy selects the default user.", "voice default user id identity", "assistant", "voice", "voice_default_user_id", "config-voice_default_user_id", {format:"text"}),
-  setting("Voice device assignments", "Maps satellites and voice devices to users or household data.", "voice mappings satellite devices assignments json", "assistant", "voice", "voice_device_mappings", "voice-mappings", {format:"mapping"}),
+  setting("Unidentified voice requests", "Choose which retained-data scope is used when Home Assistant does not identify the speaker.", "voice unidentified speaker scope household user", "assistant", "voice", "voice_scope_policy", "config-voice_scope_policy"),
+  setting("Unmapped-device fallback", "Choose the retained-data scope used when device assignment is active but the source device has no assignment.", "voice unmapped satellite device fallback scope", "assistant", "voice", "voice_unmapped_policy", "config-voice_unmapped_policy"),
+  setting("Default voice user", "Home Assistant user whose retained data is used when a voice policy selects the default user.", "voice default user identity home assistant", "assistant", "voice", "voice_default_user_id", "config-voice_default_user_id", {format:"text"}),
+  setting("Voice device assignments", "Assign source voice devices to users, shared household data, or no retained personal data.", "voice mappings satellite devices assignments users household", "assistant", "voice", "voice_device_mappings", "voice-mappings", {format:"mapping"}),
 
   setting("Speech post-processing", "Cleans text before it is spoken while keeping the original response.", "speech tts processing", "assistant", "speech", "speech_processing_enabled", "config-speech_processing_enabled", {format:"boolean"}),
   setting("Remove Markdown links and formatting", "Prevents Markdown formatting from being spoken.", "speech markdown links formatting tts", "assistant", "speech", "speech_strip_markdown", "config-speech_strip_markdown", {format:"boolean"}),
   setting("Remove bare URLs", "Prevents raw web addresses from being spoken.", "speech urls web addresses tts", "assistant", "speech", "speech_strip_urls", "config-speech_strip_urls", {format:"boolean"}),
-  setting("Custom speech replacements", "Completed-response replacement rules used for spoken output.", "speech regex custom replacements rules", "assistant", "speech", "speech_regex_replacements", "regex-rules", {format:"count", singular:"rule", plural:"rules"}),
+  setting("Custom speech replacements", "Completed-response replacement rules used for spoken output only.", "speech regex custom replacements rules", "assistant", "speech", "speech_regex_replacements", "regex-rules", {format:"count", singular:"rule", plural:"rules"}),
 
   setting("Use Extended OpenAI local handling", "Try Home Assistant's built-in commands after Request Rules and before AI.", "local home assistant intents prefer handling", "capabilities", "home-assistant", "local_intents_enabled", "config-local", {format:"boolean"}),
   setting("Send delayed device commands to AI", "Lets deferred Function Tools handle commands such as turning something off later.", "local delayed scheduled deferred commands ai", "capabilities", "home-assistant", "local_intent_delayed_commands_to_ai", "config-local", {format:"boolean"}),
@@ -122,13 +119,10 @@ export function routeFromPath(pathname) {
   const marker = parts.lastIndexOf("extended-openai");
   const route = marker >= 0 ? parts.slice(marker + 1) : parts;
   if (!route.length) return {page: "overview", section: null, legacy: false};
-  const nestedLegacy = LEGACY_NESTED_ROUTES[`${route[0] || ""}/${route[1] || ""}`];
-  if (nestedLegacy) {
-    const [page, section] = nestedLegacy;
-    return {page, section, legacy: true};
-  }
-  if (LEGACY_ROUTES[route[0]]) {
-    const [page, section] = LEGACY_ROUTES[route[0]];
+  const legacyKey = route.length > 1 ? `${route[0]}/${route[1]}` : route[0];
+  const legacy = LEGACY_ROUTES[legacyKey] || LEGACY_ROUTES[route[0]];
+  if (legacy) {
+    const [page, section] = legacy;
     return {page, section, legacy: true};
   }
   const page = NAVIGATION.find((item) => item.id === route[0]);

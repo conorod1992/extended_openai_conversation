@@ -11,16 +11,12 @@ const MEMORY_FIELDS = [
 ];
 const MODEL_RESET_FIELDS = ["temperature", "top_p", "reasoning_effort", "service_tier", "shorten_tool_call_id"];
 
-function stripLegacyMemoryControls(html, view, documentRef = globalThis.document) {
+function stripMovedMemoryControls(html, view, documentRef = globalThis.document) {
   if (!documentRef?.createElement) return html;
   const template = documentRef.createElement("template");
   template.innerHTML = html;
   for (const key of MEMORY_FIELDS) template.content.querySelector(`[data-field="${key}"]`)?.remove();
 
-  if (view === "assistant/advanced") {
-    const description = template.content.querySelector("#config-capabilities .config-section-heading p:last-child");
-    if (description) description.textContent = "Choose optional information sources and instruction sets the assistant can use.";
-  }
   if (view === "assistant/model-responses") {
     const reset = template.content.querySelector("#reset-advanced");
     if (reset) reset.id = "reset-model-parameters";
@@ -67,8 +63,8 @@ export function installManagementMemorySettings(registry = globalThis.customElem
       const view = this._viewKey();
       if (view === "data-memory/memory-settings") return renderMemorySettings(this);
       const content = originalContent.call(this, agent);
-      if (["assistant/advanced", "assistant/model-responses", "assistant/voice"].includes(view)) {
-        return stripLegacyMemoryControls(content, view);
+      if (["assistant/model-responses", "assistant/voice"].includes(view)) {
+        return stripMovedMemoryControls(content, view);
       }
       return content;
     };
@@ -91,4 +87,4 @@ if (typeof document !== "undefined" && typeof customElements !== "undefined") {
   installManagementMemorySettings();
 }
 
-export {MODEL_RESET_FIELDS, stripLegacyMemoryControls};
+export {MODEL_RESET_FIELDS, stripMovedMemoryControls};
