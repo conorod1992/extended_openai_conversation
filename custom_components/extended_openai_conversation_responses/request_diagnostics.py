@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from copy import deepcopy
 import time
-from typing import Any, cast
+from typing import Any
 
 from .function_groups import get_function_group_runtime
 from .payload_diagnostics import (
+    approximate_tokens,
     cache_usage_metrics,
     largest_contributors,
     prompt_metrics,
@@ -19,6 +19,7 @@ _INSTALLED = False
 _INTERNAL_PROMPT_METRICS = "_payload_prompt_metrics"
 _INTERNAL_PREPARATION = "_payload_preparation"
 _INTERNAL_TOOL_CALLS = "_payload_tool_calls"
+_MODEL_API_SURFACES = {"responses", "chat.completions"}
 
 
 def _debug_trace() -> Any | None:
@@ -53,9 +54,17 @@ def _slowest_phases(phases: dict[str, Any], limit: int = 10) -> list[dict[str, A
     items = [
         {"name": name, "duration_ms": int(duration)}
         for name, duration in phases.items()
-        if isinstance(duration, int | float)
+        if isinstance(duration, (int, float))
     ]
     return sorted(items, key=lambda item: item["duration_ms"], reverse=True)[:limit]
+
+
+def _model_requests(trace: Any) -> list[Any]:
+    return [
+        request
+        for request in trace.provider_requests
+        if request.api_surface in _MODEL_API_SURFACES
+    ]
 
 
 def install_payload_latency_diagnostics() -> None:
@@ -81,10 +90,14 @@ def install_payload_latency_diagnostics() -> None:
     original_summary = trace_type.summary
 
     def render_with_metrics(*args: Any, **kwargs: Any) -> Any:
-        effective = original_render(*args, **kwargs)
         trace = _debug_trace()
-        if trace is not None:
-            trace.memory[_INTERNAL_PROMPT_METRICS] = prompt_metrics(effective)
+        if trace is None:
+            return original_render(*args, **kwargs)
+        started = time.monotonic()
+        effective = original_render(*args, **kwargs)
+        render_ms = int((time.monotonic() - started) * 1000)
+        trace.memory[_INTERNAL_PROMPT_METRICS] = prompt_metrics(effective)
+        _record_preparation(trace, "prompt_render_core", render_ms)
         return effective
 
     def exposed_with_timing(agent: Any, *args: Any, **kwargs: Any) -> Any:
@@ -134,6 +147,7 @@ def install_payload_latency_diagnostics() -> None:
             )
         started = time.monotonic()
         successful = False
+        result: Any = None
         try:
             result = await original_execute(
                 agent, function_tool, tool_input, llm_context, exposed_entities
@@ -149,8 +163,13 @@ def install_payload_latency_diagnostics() -> None:
             )
             trace.memory.setdefault(_INTERNAL_TOOL_CALLS, []).append(
                 {
-                    "name": str(spec.get("name") or getattr(tool_input, "tool_name", "unknown")),
-                    "implementation_type": str(implementation.get("type") or "unknown"),
+                    "name": str(
+                        spec.get("name")
+                        or getattr(tool_input, "tool_name", "unknown")
+                    ),
+                    "implementation_type": str(
+                        implementation.get("type") or "unknown"
+                    ),
                     "duration_ms": int((time.monotonic() - started) * 1000),
                     "successful": successful,
                     "result_characters": (
@@ -168,13 +187,29 @@ def install_payload_latency_diagnostics() -> None:
         tools = safe_kwargs.get("tools")
         request.metrics.update(provider_payload_metrics(input_value, tools))
         request.metrics["request_index"] = len(trace.provider_requests)
-        previous = (
-            trace.provider_requests[-2] if len(trace.provider_requests) > 1 else None
+        request.metrics["approx_request_tokens"] = approximate_tokens(
+            int(request.metrics.get("request_characters", 0))
+        )
+        is_model = api_surface in _MODEL_API_SURFACES
+        request.metrics["model_request"] = is_model
+        request.metrics["explicit_prompt_cache"]["request_cache_key_present"] = bool(
+            safe_kwargs.get("prompt_cache_key")
+        )
+        previous = next(
+            (
+                candidate
+                for candidate in reversed(trace.provider_requests[:-1])
+                if candidate.api_surface == api_surface
+            ),
+            None,
         )
         request.metrics["tools_same_as_previous_request"] = (
             request.metrics.get("tools_sha256") == previous.metrics.get("tools_sha256")
-            if previous is not None
+            if previous is not None and is_model
             else None
+        )
+        request.metrics["model_request_index"] = (
+            len(_model_requests(trace)) if is_model else None
         )
         return request
 
@@ -198,46 +233,72 @@ def install_payload_latency_diagnostics() -> None:
                 **rich_prompt,
             }
 
-        first_request = data.get("provider_requests", [{}])[0] if data.get("provider_requests") else {}
-        first_metrics = first_request.get("metrics", {}) if isinstance(first_request, dict) else {}
+        model_requests = [
+            item
+            for item in data.get("provider_requests", [])
+            if isinstance(item, dict) and item.get("api_surface") in _MODEL_API_SURFACES
+        ]
+        first_model = model_requests[0] if model_requests else {}
+        first_metrics = first_model.get("metrics", {})
         input_breakdown = first_metrics.get("input_breakdown", {})
+        input_kinds = (
+            input_breakdown.get("by_kind", {})
+            if isinstance(input_breakdown, dict)
+            else {}
+        )
+        # System/developer input duplicates the more actionable prompt-section split.
+        non_prompt_input_kinds = {
+            key: value
+            for key, value in input_kinds.items()
+            if key not in {"system", "developer"}
+        }
         data["payload_latency_diagnostics"] = {
             "approximation_notice": (
-                "Approximate token counts use characters / 4 and are not provider billing tokens. "
-                "Cache ratios use provider-reported token counts only."
+                "Approximate token counts use characters / 4 and are not provider "
+                "billing tokens. Cache ratios use provider-reported token counts only."
+            ),
+            "model_request_count": len(model_requests),
+            "embedding_request_count": sum(
+                1
+                for item in data.get("provider_requests", [])
+                if isinstance(item, dict) and item.get("api_surface") == "embeddings"
             ),
             "preparation": deepcopy(preparation),
             "function_tool_calls": deepcopy(tool_calls),
             "slowest_phases": _slowest_phases(data.get("phases_ms", {})),
-            "largest_first_request_contributors": largest_contributors(
+            "largest_first_model_request_contributors": largest_contributors(
                 prompt_sections=(data.get("prompt_metrics", {}).get("sections") or []),
                 tools=(first_metrics.get("tool_breakdown") or []),
-                input_kinds=(
-                    input_breakdown.get("by_kind", {})
-                    if isinstance(input_breakdown, dict)
-                    else {}
-                ),
+                input_kinds=non_prompt_input_kinds,
             ),
         }
         return data
 
     def summary_with_diagnostics(trace: Any) -> dict[str, Any]:
         data = original_summary(trace)
-        first_request = trace.provider_requests[0] if trace.provider_requests else None
-        data["first_request_characters"] = (
-            first_request.metrics.get("request_characters")
-            if first_request is not None
+        model_requests = _model_requests(trace)
+        first_model = model_requests[0] if model_requests else None
+        data["model_request_count"] = len(model_requests)
+        data["first_model_request_characters"] = (
+            first_model.metrics.get("request_characters")
+            if first_model is not None
             else None
         )
-        data["first_request_approx_input_tokens"] = (
-            first_request.metrics.get("approx_input_tokens")
-            if first_request is not None
+        data["first_model_request_approx_input_tokens"] = (
+            first_model.metrics.get("approx_input_tokens")
+            if first_model is not None
             else None
         )
-        total_input = int(data.get("input_tokens", 0))
-        cached = int(data.get("cached_input_tokens", 0))
-        data["provider_reported_cache_ratio"] = (
-            round(cached / total_input, 4) if total_input else None
+        model_input_tokens = sum(
+            int(request.usage.get("input_tokens", 0)) for request in model_requests
+        )
+        model_cached_tokens = sum(
+            int(request.usage.get("cached_input_tokens", 0)) for request in model_requests
+        )
+        data["provider_reported_model_cache_ratio"] = (
+            round(model_cached_tokens / model_input_tokens, 4)
+            if model_input_tokens
+            else None
         )
         slowest = _slowest_phases(trace.phases_ms, limit=1)
         data["slowest_phase"] = slowest[0] if slowest else None
