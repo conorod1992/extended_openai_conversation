@@ -14,10 +14,7 @@ from .const import (
     DEFAULT_CONTEXT_THRESHOLD,
     LEGACY_CONTEXT_TRUNCATE_STRATEGY,
 )
-from .context_summary import (
-    ContextSummaryResult,
-    DeferredContextSummaryManager,
-)
+from .context_summary import ContextSummaryResult, DeferredContextSummaryManager
 
 _INSTALLED = False
 _DEFER_CONTEXT_SUMMARY: ContextVar[bool] = ContextVar(
