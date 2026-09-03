@@ -1,3 +1,5 @@
+import {bindRequestRuleMatchTester, formatRequestRuleMatchResult, transformRequestRulesMatchTester} from "./request-rules-match-test-ui.js";
+
 const {ensureRequestRulesModule, getRequestRulesModule} = await import("./request-rules-loader.js");
 
 if (typeof document === "undefined") await ensureRequestRulesModule();
@@ -43,13 +45,15 @@ export function renderRequestRules(panel) {
     queueRender(panel);
     return panel._loading?.() || '<div class="loading">Loading Request Rules…</div>';
   }
-  return renderAllRulesForInPlaceSearch(panel, module);
+  return transformRequestRulesMatchTester(renderAllRulesForInPlaceSearch(panel, module));
 }
 
 export function bindRequestRules(panel) {
   const module = getRequestRulesModule();
   if (!module) return queueRender(panel);
-  return module.bindRequestRules(panel);
+  const result = module.bindRequestRules(panel);
+  bindRequestRuleMatchTester(panel);
+  return result;
 }
 
 export function requestRulesDialog(...args) {
@@ -91,3 +95,5 @@ export function loadRequestRuleActions(...args) {
 export function readRequestRuleActions(...args) {
   return requiredImplementation("readRequestRuleActions").readRequestRuleActions(...args);
 }
+
+export {formatRequestRuleMatchResult};

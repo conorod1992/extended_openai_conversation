@@ -94,6 +94,7 @@ from .memory import get_memory_mode
 from .openai_compat import apply_openai_compatibility
 from .performance import PerformanceOpenAIClientProxy, install_performance_optimizations
 from .persistence_hardening import install_persistence_transactions
+from .request_rule_match_preview import install_request_rule_match_preview
 from .services import async_setup_services
 from .template import async_setup_templates, async_unload_templates
 
@@ -102,7 +103,11 @@ _LOGGER = logging.getLogger(__name__)
 
 def _register_split_frontend_modules() -> None:
     """Add implementation modules used by the management frontend wrappers."""
-    extras = ("agent-config-editor-base.js", "guide-page-base.js")
+    extras = (
+        "agent-config-editor-base.js",
+        "guide-page-base.js",
+        "request-rules-match-test-ui.js",
+    )
     modules = tuple(
         dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
     )
@@ -125,6 +130,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_guest_policy_fast_path()
     install_deferred_context_summary()
     install_debug_instrumentation()
+    install_request_rule_match_preview()
     await async_migrate_integration(hass)
     await async_setup_ha_permissions(hass)
     await async_setup_services(hass, config)
