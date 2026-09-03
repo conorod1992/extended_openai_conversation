@@ -199,9 +199,11 @@ def install_management_feature_status() -> None:
         if action != "list" or section not in {"memories", "knowledge"}:
             return result
 
-        _entry, subentry = management_ui.entry_and_agent(
-            hass, message.get("entry_id"), message.get("subentry_id")
-        )
+        entry_id = message.get("entry_id")
+        subentry_id = message.get("subentry_id")
+        assert isinstance(entry_id, str)
+        assert isinstance(subentry_id, str)
+        _entry, subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
         enriched = dict(result)
         if section == "memories":
             enriched["feature_status"] = management_feature_status(
@@ -221,6 +223,10 @@ def install_management_feature_status() -> None:
         return enriched
 
     management_ui.async_management_command = management_command_with_feature_status
-    management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(
-        dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE))
+    setattr(  # noqa: B010
+        management_ui,
+        "MANAGEMENT_FRONTEND_MODULES",
+        tuple(
+            dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE))
+        ),
     )
