@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from custom_components.extended_openai_conversation_responses.payload_diagnostics import (
     APPROX_TOKEN_METHOD,
     cache_usage_metrics,
@@ -12,6 +14,9 @@ from custom_components.extended_openai_conversation_responses.payload_diagnostic
 from custom_components.extended_openai_conversation_responses.prompt import (
     EffectivePrompt,
     PromptSection,
+)
+from custom_components.extended_openai_conversation_responses.request_diagnostics import (
+    _model_requests,
 )
 
 
@@ -117,6 +122,15 @@ def test_cache_ratio_uses_only_provider_reported_tokens() -> None:
         "provider_reported_cache_ratio": 0.75,
     }
     assert cache_usage_metrics({})["provider_reported_cache_ratio"] is None
+
+
+def test_model_request_selection_ignores_embeddings() -> None:
+    embedding = SimpleNamespace(api_surface="embeddings")
+    responses = SimpleNamespace(api_surface="responses")
+    chat = SimpleNamespace(api_surface="chat.completions")
+    trace = SimpleNamespace(provider_requests=[embedding, responses, chat])
+
+    assert _model_requests(trace) == [responses, chat]
 
 
 def test_largest_contributors_combines_only_names_and_sizes() -> None:
