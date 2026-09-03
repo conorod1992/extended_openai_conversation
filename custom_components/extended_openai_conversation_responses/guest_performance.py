@@ -51,6 +51,12 @@ def install_guest_policy_fast_path() -> None:
 
     install_runtime_cleanup()
 
+    # Static request caching intentionally wraps the final runtime tool snapshot so
+    # policy/group changes remain authoritative invalidation boundaries.
+    from .request_static_cache import install_request_static_caching
+
+    install_request_static_caching()
+
     # Management loading optimizations also need to be installed before the panel
     # and websocket endpoints are registered. Reuse this existing startup
     # performance hook rather than adding another integration lifecycle callback.
