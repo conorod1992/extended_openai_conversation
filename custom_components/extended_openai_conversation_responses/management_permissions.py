@@ -11,6 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 from . import management_ui
 
 _PATCHED = "extended_openai_management_permissions"
+_OPTIMIZED_OVERVIEW_PATCHED = "extended_openai_management_overview_permissions"
 ManagementCommand = Callable[
     [HomeAssistant, str, bool, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]
 ]
@@ -19,6 +20,14 @@ ManagementCommand = Callable[
 def _require_admin(is_admin: bool) -> None:
     if not is_admin:
         raise HomeAssistantError("Administrator permission is required")
+
+
+def sanitize_non_admin_overview(result: dict[str, Any]) -> dict[str, Any]:
+    """Remove agent-global run metadata while retaining aggregate overview usage."""
+    usage = result.get("usage")
+    if not isinstance(usage, dict):
+        return result
+    return {**result, "usage": {**usage, "latest": None}}
 
 
 def wrap_management_permissions(original: ManagementCommand) -> ManagementCommand:
@@ -54,16 +63,45 @@ def wrap_management_permissions(original: ManagementCommand) -> ManagementComman
             result = await original(hass, user_id, is_admin, message)
             return {**result, "latest": None}
 
+        # The optimized management dispatcher has a combined Overview endpoint.
+        # Sanitize it here too when this wrapper is outermost.
+        if section == "overview" and action == "summary" and not is_admin:
+            return sanitize_non_admin_overview(
+                await original(hass, user_id, is_admin, message)
+            )
+
         return await original(hass, user_id, is_admin, message)
 
     return wrapped
 
 
+def _install_optimized_overview_guard() -> None:
+    """Keep the optimized Overview safe regardless of monkey-patch install order."""
+    from . import management_loading_performance
+
+    if getattr(management_loading_performance, _OPTIMIZED_OVERVIEW_PATCHED, False):
+        return
+    original = management_loading_performance.async_overview_summary
+
+    async def wrapped(
+        hass: HomeAssistant,
+        user_id: str,
+        is_admin: bool,
+        message: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = await original(hass, user_id, is_admin, message)
+        return result if is_admin else sanitize_non_admin_overview(result)
+
+    management_loading_performance.async_overview_summary = wrapped  # type: ignore[assignment]
+    setattr(management_loading_performance, _OPTIMIZED_OVERVIEW_PATCHED, True)
+
+
 def install_management_permissions() -> bool:
     """Install the management authorization wrapper once."""
+    _install_optimized_overview_guard()
     if getattr(management_ui, _PATCHED, False):
         return False
-    management_ui.async_management_command = wrap_management_permissions(  # type: ignore[method-assign]
+    management_ui.async_management_command = wrap_management_permissions(  # type: ignore[assignment]
         management_ui.async_management_command
     )
     setattr(management_ui, _PATCHED, True)
