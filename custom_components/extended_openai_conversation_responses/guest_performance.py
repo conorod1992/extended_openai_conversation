@@ -63,3 +63,9 @@ def install_guest_policy_fast_path() -> None:
     from .management_loading_performance import install_management_loading_optimizations
 
     install_management_loading_optimizations()
+
+    # Effective Memory/Knowledge status wraps the optimized management API so the
+    # frontend sees the same configured/effective distinctions on every surface.
+    from .feature_status import install_management_feature_status
+
+    install_management_feature_status()

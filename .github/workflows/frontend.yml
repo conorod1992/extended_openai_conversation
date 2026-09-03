@@ -6,6 +6,7 @@ on:
       - "frontend/**"
       - "custom_components/extended_openai_conversation_responses/frontend/**"
       - "tests/*frontend*.test.mjs"
+      - "tests/feature-status-ui.test.mjs"
       - "tests/management-performance-ui.test.mjs"
       - "tests/management-loading-ui.test.mjs"
       - "tests/request-debug-management-ui.test.mjs"
@@ -17,6 +18,7 @@ on:
       - "frontend/**"
       - "custom_components/extended_openai_conversation_responses/frontend/**"
       - "tests/*frontend*.test.mjs"
+      - "tests/feature-status-ui.test.mjs"
       - "tests/management-performance-ui.test.mjs"
       - "tests/management-loading-ui.test.mjs"
       - "tests/request-debug-management-ui.test.mjs"
@@ -51,6 +53,7 @@ jobs:
           node tests/management-loading-ui.test.mjs
           node tests/frontend-state-safety.test.mjs
           node tests/request-debug-management-ui.test.mjs
+          node tests/feature-status-ui.test.mjs
 
       - name: Type check
         working-directory: frontend

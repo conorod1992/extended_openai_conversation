@@ -25,8 +25,20 @@ function queueRender(panel) {
     });
 }
 
+function overviewAgentFeatureProjection(agent) {
+  const memory = agent?.feature_status?.memory;
+  const knowledge = agent?.feature_status?.knowledge;
+  if (!memory && !knowledge) return agent;
+  const memoryLabel = memory?.label || agent.memory_mode || "Unknown";
+  const labels = [memoryLabel];
+  if (knowledge?.label) labels.push(`Knowledge ${knowledge.label}`);
+  return {...agent, memory_mode: labels.join(" · ")};
+}
+
 export function renderOverview(panel, agent) {
-  if (implementation) return implementation.renderOverview(panel, agent);
+  if (implementation) {
+    return implementation.renderOverview(panel, overviewAgentFeatureProjection(agent));
+  }
   queueRender(panel);
   return panel._loading?.() || '<div class="loading">Loading Overview…</div>';
 }
