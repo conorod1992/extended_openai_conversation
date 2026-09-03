@@ -61,7 +61,9 @@ def resolve_parallel_safe_batch(
     resolved: list[ResolvedToolCall] = []
     for tool_input in pending_tool_calls:
         function_tool = function_tools_by_name.get(tool_input.tool_name)
-        if function_tool is None or not is_parallel_safe_integration_tool(function_tool):
+        if function_tool is None or not is_parallel_safe_integration_tool(
+            function_tool
+        ):
             return None
         resolved.append((function_tool, tool_input))
     return resolved
