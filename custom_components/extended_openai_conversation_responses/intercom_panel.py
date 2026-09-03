@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
+from .ha_permissions import async_require_control_permission
 from .intercom import async_get_intercom
 
 WS_BROADCAST = f"{DOMAIN}/broadcast"
@@ -66,10 +67,26 @@ async def websocket_broadcast(
             raise HomeAssistantError(
                 "Choose at least one Assist satellite or Whole home"
             )
-        result = await manager.async_send(
-            message,
+
+        # Resolve selectors before authorization and queue only that fixed entity
+        # list. This prevents a restricted HA user from escalating through the
+        # integration's later system-context announce call or selector expansion.
+        targets = manager.resolve_targets(
             whole_home=whole_home,
             entity_ids=entity_ids,
+        )
+        if not targets:
+            raise HomeAssistantError(
+                "No matching announcement-capable Assist satellites found"
+            )
+        await async_require_control_permission(
+            hass,
+            targets,
+            context=connection.context(msg),
+        )
+        result = await manager.async_send(
+            message,
+            entity_ids=targets,
             source="frontend",
         )
         connection.send_result(msg["id"], result)
