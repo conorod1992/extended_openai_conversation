@@ -5,6 +5,9 @@ from types import SimpleNamespace
 from homeassistant.exceptions import HomeAssistantError
 import pytest
 
+from custom_components.extended_openai_conversation_responses.provider_loop import (
+    MAX_PROVIDER_REQUESTS,
+)
 from custom_components.extended_openai_conversation_responses.runtime_cleanup import (
     FunctionCallBudget,
     _assert_tool_loop_completed,
@@ -71,19 +74,27 @@ def test_zero_budget_never_advertises_ordinary_functions() -> None:
         budget.claim("do_work")
 
 
+def test_provider_safety_ceiling_allows_more_than_legacy_twenty_rounds() -> None:
+    """The emergency ceiling no longer overrides legitimate 20+ call budgets."""
+    assert MAX_PROVIDER_REQUESTS > 30
+
+
 def test_tool_loop_exhaustion_fails_explicitly() -> None:
     """Outstanding tool results after the hard loop are not returned as success."""
     chat_log = SimpleNamespace(unresponded_tool_results=[object(), object()])
 
     with pytest.raises(
         HomeAssistantError,
-        match=r"safety limit of 20 requests with 2 unresolved tool result\(s\)",
+        match=(
+            rf"safety limit of {MAX_PROVIDER_REQUESTS} requests with 2 unresolved "
+            r"tool result\(s\)"
+        ),
     ):
-        _assert_tool_loop_completed(chat_log, 20)
+        _assert_tool_loop_completed(chat_log, MAX_PROVIDER_REQUESTS)
 
 
 def test_completed_tool_loop_is_accepted() -> None:
     """A normal final model response remains unaffected by the exhaustion guard."""
     chat_log = SimpleNamespace(unresponded_tool_results=[])
 
-    _assert_tool_loop_completed(chat_log, 20)
+    _assert_tool_loop_completed(chat_log, MAX_PROVIDER_REQUESTS)
