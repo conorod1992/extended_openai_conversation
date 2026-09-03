@@ -28,7 +28,6 @@ from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
-    CONF_LOCAL_INTENT_EXCLUSIONS,
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CHAT_MODEL,
@@ -40,6 +39,7 @@ from .const import (
 from .frontend_version import FRONTEND_VERSION
 from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
 from .knowledge import async_get_knowledge
+from .local_intents import CONF_LOCAL_INTENT_EXCLUSIONS
 from .memory import async_get_memory, get_memory_mode
 from .usage import async_get_usage
 
@@ -286,7 +286,7 @@ async def _async_save_configuration(
     entry, subentry = management_ui.entry_and_agent(
         hass, message.get("entry_id"), message.get("subentry_id")
     )
-    validation = management_ui._validation_result(
+    validation: dict[str, Any] = management_ui._validation_result(
         lambda: management_ui.merge_agent_config(subentry.data, updates)
     )
     if not validation.get("valid"):
