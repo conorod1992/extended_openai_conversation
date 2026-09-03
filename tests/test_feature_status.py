@@ -1,8 +1,5 @@
 """Tests for management-facing effective feature status."""
 
-from custom_components.extended_openai_conversation_responses.feature_status import (
-    management_feature_status,
-)
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
@@ -13,6 +10,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     MEMORY_MODE_OFF,
     SHARED_MEMORY_DISABLED,
     SHARED_MEMORY_EXPLICIT,
+)
+from custom_components.extended_openai_conversation_responses.feature_status import (
+    management_feature_status,
 )
 
 
