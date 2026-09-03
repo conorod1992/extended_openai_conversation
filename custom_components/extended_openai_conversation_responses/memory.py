@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import asdict, dataclass
 import hashlib
 import json
@@ -59,6 +59,9 @@ IMPORTANCE_MULTIPLIERS = {"low": 0.85, "normal": 1.0, "high": 1.2}
 MIN_LEXICAL_RELEVANCE_SCORE = 0.08
 MIN_SEMANTIC_SIMILARITY = 0.55
 EmbeddingProvider = Callable[[list[str]], Awaitable[list[list[float]]]]
+EmbeddingTaskScheduler = Callable[
+    [Coroutine[Any, Any, None]], asyncio.Future[Any]
+]
 
 
 class _UnsetType:
@@ -255,6 +258,7 @@ class PersistentMemory:
         self,
         storage: MemoryStorage,
         embedding_cache_storage: EmbeddingCacheStorage | None = None,
+        embedding_task_scheduler: EmbeddingTaskScheduler | None = None,
     ) -> None:
         """Initialize memory collection."""
         self._storage = storage
@@ -266,6 +270,9 @@ class PersistentMemory:
         self._embedding_cache_storage = embedding_cache_storage
         self._embedding_cache: dict[str, EmbeddingCacheEntry] = {}
         self._embedding_cache_dirty = False
+        self._embedding_task_scheduler = embedding_task_scheduler
+        self._embedding_maintenance_task: asyncio.Future[Any] | None = None
+        self._embedding_maintenance_requested = False
         self._lock = asyncio.Lock()
         self._initialized = False
 
@@ -306,6 +313,14 @@ class PersistentMemory:
         """Configure the optional provider used only by hybrid retrieval."""
         self._embedding_provider = provider
         self._embedding_model = model
+        if provider is not None:
+            self._schedule_embedding_maintenance()
+
+    async def async_wait_for_embedding_maintenance(self) -> None:
+        """Wait for currently scheduled regenerable embedding maintenance."""
+        task = self._embedding_maintenance_task
+        if task is not None:
+            await asyncio.shield(task)
 
     async def async_add(
         self,
@@ -358,6 +373,7 @@ class PersistentMemory:
             self._memories[memory.memory_id] = memory
             self._index(memory)
             await self._async_save_locked()
+            self._schedule_embedding_maintenance()
             return {"status": "created", "memory": memory_as_dict(memory)}
 
     async def async_upsert(
@@ -418,6 +434,7 @@ class PersistentMemory:
                     **changes,
                 )
                 await self._async_save_locked()
+                self._schedule_embedding_maintenance()
                 return {"status": "updated", "memory": memory_as_dict(updated)}
             duplicate = self._find_duplicate(user_id, content)
             if duplicate:
@@ -438,6 +455,7 @@ class PersistentMemory:
                     **changes,
                 )
                 await self._async_save_locked()
+                self._schedule_embedding_maintenance()
                 return {"status": "confirmed", "memory": memory_as_dict(confirmed)}
             candidate = self._find_related_candidate(
                 user_id,
@@ -477,6 +495,7 @@ class PersistentMemory:
             self._memories[memory.memory_id] = memory
             self._index(memory)
             await self._async_save_locked()
+            self._schedule_embedding_maintenance()
             return {"status": "created", "memory": memory_as_dict(memory)}
 
     async def async_search(
@@ -561,32 +580,13 @@ class PersistentMemory:
         """Refresh missing embeddings and return one query embedding, or fall back."""
         if self._embedding_provider is None:
             return None
-        missing = [
-            memory
-            for memory in self._memories.values()
-            if memory.user_id in scope_ids and self._cached_embedding(memory) is None
-        ]
         try:
-            for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
-                batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
-                vectors = await self._embedding_provider(
-                    [_embedding_text(memory) for memory in batch]
-                )
-                if len(vectors) != len(batch):
-                    raise ValueError(
-                        "embedding provider returned the wrong number of vectors"
-                    )
-                async with self._lock:
-                    for memory, vector in zip(batch, vectors, strict=True):
-                        self._embedding_cache[memory.memory_id] = EmbeddingCacheEntry(
-                            model=self._embedding_model,
-                            fingerprint=_embedding_fingerprint(memory),
-                            vector=_clean_embedding(vector),
-                        )
-                    self._embedding_cache_dirty = True
-                    if not await self._async_save_embedding_cache_locked():
-                        return None
-            vectors = await self._embedding_provider([query])
+            if not await self._async_refresh_missing_embeddings(scope_ids):
+                return None
+            provider = self._embedding_provider
+            if provider is None:
+                return None
+            vectors = await provider([query])
             return _clean_embedding(vectors[0]) if len(vectors) == 1 else None
         except Exception:
             _LOGGER.warning(
@@ -690,6 +690,7 @@ class PersistentMemory:
                 ),
             )
             await self._async_save_locked()
+            self._schedule_embedding_maintenance()
             return updated
 
     async def async_delete(self, user_id: str, memory_ids: list[str]) -> int:
@@ -882,6 +883,7 @@ class PersistentMemory:
             for record in records:
                 self._index(record)
             await self._async_save_locked()
+            self._schedule_embedding_maintenance()
 
     def _find_duplicate(self, user_id: str, content: str) -> MemoryRecord | None:
         normalized = _normalize(content)
@@ -959,6 +961,93 @@ class PersistentMemory:
         if _embedding_fingerprint(updated) != _embedding_fingerprint(current):
             self._invalidate_cached_embedding(current.memory_id)
         return updated
+
+    def _schedule_embedding_maintenance(self) -> None:
+        if (
+            self._embedding_provider is None
+            or self._embedding_task_scheduler is None
+            or not self._initialized
+        ):
+            return
+        task = self._embedding_maintenance_task
+        if task is not None and not task.done():
+            self._embedding_maintenance_requested = True
+            return
+        self._embedding_maintenance_requested = False
+        self._embedding_maintenance_task = self._embedding_task_scheduler(
+            self._async_run_embedding_maintenance()
+        )
+
+    async def _async_run_embedding_maintenance(self) -> None:
+        try:
+            while True:
+                self._embedding_maintenance_requested = False
+                if not await self._async_refresh_missing_embeddings(
+                    None, background=True
+                ):
+                    return
+                if not self._embedding_maintenance_requested:
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.warning(
+                "Background hybrid memory embedding maintenance failed",
+                exc_info=True,
+            )
+        finally:
+            self._embedding_maintenance_task = None
+
+    async def _async_refresh_missing_embeddings(
+        self,
+        scope_ids: Sequence[str] | None,
+        *,
+        background: bool = False,
+    ) -> bool:
+        provider = self._embedding_provider
+        if provider is None:
+            return False
+        model = self._embedding_model
+        allowed_scopes = set(scope_ids) if scope_ids is not None else None
+        missing = [
+            memory
+            for memory in self._memories.values()
+            if (allowed_scopes is None or memory.user_id in allowed_scopes)
+            and self._cached_embedding(memory) is None
+        ]
+        for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
+            batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
+            vectors = await provider([_embedding_text(memory) for memory in batch])
+            if len(vectors) != len(batch):
+                raise ValueError("embedding provider returned the wrong number of vectors")
+            generated_ids: list[str] = []
+            async with self._lock:
+                if self._embedding_provider is not provider or self._embedding_model != model:
+                    return False
+                for memory, vector in zip(batch, vectors, strict=True):
+                    current = self._memories.get(memory.memory_id)
+                    if (
+                        current is None
+                        or _embedding_fingerprint(current)
+                        != _embedding_fingerprint(memory)
+                        or self._cached_embedding(current) is not None
+                    ):
+                        continue
+                    self._embedding_cache[memory.memory_id] = EmbeddingCacheEntry(
+                        model=model,
+                        fingerprint=_embedding_fingerprint(memory),
+                        vector=_clean_embedding(vector),
+                    )
+                    generated_ids.append(memory.memory_id)
+                if not generated_ids:
+                    continue
+                self._embedding_cache_dirty = True
+                if not await self._async_save_embedding_cache_locked():
+                    if background:
+                        for memory_id in generated_ids:
+                            self._embedding_cache.pop(memory_id, None)
+                    return False
+        return True
 
     async def _async_save_locked(self) -> None:
         await self._storage.async_save(
@@ -1082,6 +1171,7 @@ async def async_get_memory(
         managers[key] = PersistentMemory(
             HomeAssistantMemoryStorage(hass, entry_id, subentry_id),
             HomeAssistantEmbeddingCacheStorage(hass, entry_id, subentry_id),
+            hass.async_create_task,
         )
     manager = managers[key]
     await manager.async_initialize()
