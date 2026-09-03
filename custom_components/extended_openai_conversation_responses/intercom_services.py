@@ -12,13 +12,12 @@ from homeassistant.core import (
     ServiceResponse,
     SupportsResponse,
 )
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
-from .ha_permissions import async_require_control_permission
 from .intercom import DEFAULT_TTL_SECONDS, async_get_intercom
 from .intercom_panel import async_setup_broadcast_api
+from .intercom_permissions import async_authorized_broadcast_targets
 
 SERVICE_BROADCAST = "broadcast"
 
@@ -53,10 +52,13 @@ async def async_setup_intercom_services(hass: HomeAssistant) -> None:
     async def broadcast(call: ServiceCall) -> ServiceResponse:
         manager = await async_get_intercom(hass)
 
-        # Resolve all selectors first and authorize exactly the entities that will
-        # be queued. System/automation calls without a user_id keep their existing
-        # trusted behavior; authenticated users must have CONTROL for every target.
-        targets = manager.resolve_targets(
+        # Resolve every selector once, enforce the authenticated caller's CONTROL
+        # permission for that exact set, then queue only those entity IDs. Calls
+        # from trusted automations/system context continue to work as before.
+        targets = await async_authorized_broadcast_targets(
+            hass,
+            manager,
+            context=call.context,
             whole_home=call.data["whole_home"],
             entity_ids=call.data.get("entity_id"),
             device_ids=call.data.get("device_id"),
@@ -66,11 +68,6 @@ async def async_setup_intercom_services(hass: HomeAssistant) -> None:
             origin_entity_id=call.data.get("origin_entity_id"),
             origin_device_id=call.data.get("origin_device_id"),
         )
-        if not targets:
-            raise HomeAssistantError(
-                "No matching announcement-capable Assist satellites found"
-            )
-        await async_require_control_permission(hass, targets, context=call.context)
         result = await manager.async_send(
             call.data["message"],
             entity_ids=targets,
