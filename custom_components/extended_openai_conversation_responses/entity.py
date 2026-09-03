@@ -187,7 +187,9 @@ def _convert_content_to_param(
                         "type": "function",
                         "function": {
                             "name": tool_call.tool_name,
-                            "arguments": json.dumps(tool_call.tool_args),
+                            "arguments": json.dumps(
+                                tool_call.tool_args, separators=(",", ":")
+                            ),
                         },
                     }
                     for tool_call in content.tool_calls
@@ -274,7 +276,9 @@ def _convert_content_to_responses_param(
                         "type": "function_call",
                         "call_id": tool_call.id,
                         "name": tool_call.tool_name,
-                        "arguments": json.dumps(tool_call.tool_args),
+                        "arguments": json.dumps(
+                            tool_call.tool_args, separators=(",", ":")
+                        ),
                     }
                 )
 
