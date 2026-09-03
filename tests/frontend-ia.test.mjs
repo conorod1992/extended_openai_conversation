@@ -6,6 +6,7 @@ import {GUIDE_TOPICS, MEMORY_COMPARISON} from "../custom_components/extended_ope
 import {renderGuide} from "../custom_components/extended_openai_conversation_responses/frontend/guide-page.js";
 import {knowledgeAvailabilityMarkup} from "../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js";
 import {MODEL_RESET_FIELDS} from "../custom_components/extended_openai_conversation_responses/frontend/management-memory-settings.js";
+import {settingCurrentState} from "../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
 import {renderMemorySettings} from "../custom_components/extended_openai_conversation_responses/frontend/memory-settings-ui.js";
 import {renderOverview} from "../custom_components/extended_openai_conversation_responses/frontend/overview-page.js";
 
@@ -47,29 +48,67 @@ for (const [oldRoute, expected] of Object.entries(legacy)) {
 assert.deepEqual(routeFromPath("/extended-openai/assistant/conversation"), {page:"assistant", section:"conversation", legacy:false});
 assert.deepEqual(routeFromPath("/extended-openai/data-memory"), {page:"data-memory", section:"memory-settings", legacy:false});
 
-for (const query of ["archive", "memory", "timeout", "model", "Guest Mode", "voice", "backup", "embeddings", "context", "tools functions", "local handling", "web search", "skills", "knowledge"]) {
+for (const query of ["archive", "memory", "timeout", "model", "Guest Mode", "voice", "backup", "embeddings", "context", "tools functions", "local handling", "web search", "skills", "knowledge", "tool calls", "markdown", "processing tier"]) {
   assert.ok(searchSettings(query).length, `global settings search should find ${query}`);
 }
-assert.equal(searchSettings("timeout")[0].section, "conversation");
+assert.equal(searchSettings("conversation timeout")[0].configKey, "conversation_timeout_minutes");
+assert.equal(searchSettings("response creativity")[0].configKey, "temperature");
+assert.equal(searchSettings("web search detail")[0].configKey, "web_search_context");
 assert.equal(searchSettings("backup")[0].section, "backup-restore");
-for (const query of ["memory", "temporary", "embeddings", "shared household"]) {
+for (const [query, key] of [["long-term memory","memory_mode"],["short-term memory","temporary_memory"],["embedding model","memory_embedding_model"],["shared household memory","shared_memory_mode"]]) {
   const result = searchSettings(query)[0];
   assert.equal(result?.page, "data-memory", `${query} should resolve to Data & Memory`);
   assert.equal(result?.section, "memory-settings", `${query} should resolve to Memory settings`);
-  assert.equal(result?.target, "config-memory");
+  assert.equal(result?.configKey, key);
+  assert.equal(result?.target, `config-${key}`);
 }
-for (const [query, section] of [["local handling","home-assistant"],["web search","web-skills"],["skills","web-skills"]]) {
+for (const [query, section, key] of [["local handling","home-assistant","local_intents_enabled"],["web search","web-skills","web_search"],["skills","web-skills","skills"]]) {
   const result = searchSettings(query)[0];
   assert.equal(result?.page, "capabilities", `${query} should resolve to Capabilities`);
   assert.equal(result?.section, section);
+  assert.equal(result?.configKey, key);
 }
-assert.equal(searchSettings("knowledge")[0].section, "knowledge");
-for (const [page, section] of [["assistant", "basics"], ["capabilities", "home-assistant"], ["capabilities", "web-skills"], ["capabilities", "guest-mode"], ["data-memory", "memory-settings"], ["data-memory", "knowledge"], ["usage-maintenance", "retention"]]) {
-  assert.equal(shouldShowGlobalSettingsSearch(page, section), true);
+assert.equal(searchSettings("knowledge library access")[0].section, "knowledge");
+for (const [page, section] of [["overview", null], ["guide", null], ["assistant", "basics"], ["capabilities", "functions"], ["data-memory", "memories"], ["data-memory", "conversations"], ["usage-maintenance", "usage"], ["usage-maintenance", "retention"]]) {
+  assert.equal(shouldShowGlobalSettingsSearch(page, section), true, `settings search should be available on ${page}/${section || ""}`);
 }
-for (const [page, section] of [["guide", null], ["capabilities", "functions"], ["data-memory", "memories"], ["data-memory", "conversations"], ["usage-maintenance", "usage"]]) {
-  assert.equal(shouldShowGlobalSettingsSearch(page, section), false);
-}
+
+const configData = {
+  title: "Kitchen",
+  model_capabilities: {supports_temperature:false, supports_reasoning_effort:true},
+  options: {
+    conversation_continuity: [{value:"device",label:"Remember by voice device"}],
+    memory_mode: [{value:"manual",label:"Manual"}],
+  },
+  config: {
+    web_search: true,
+    conversation_timeout_minutes: 30,
+    conversation_continuity: "device",
+    voice_device_mappings: {satellite_one:"user:1", satellite_two:"shared"},
+    speech_regex_replacements: [{pattern:"A",replacement:"B"}],
+    skills: ["weather", "calendar"],
+    memory_mode: "manual",
+    current_datetime_template: "",
+    prompt: "You are helpful.",
+    temperature: 0.4,
+  },
+};
+const currentPanel = {_agentId:"agent-1", _draft:null, _draftAgentId:null, _configData:null, _settingsSearchConfig:configData, _settingsSearchConfigAgentId:"agent-1"};
+assert.deepEqual(settingCurrentState(searchSettings("web search")[0], currentPanel), {label:"Current",value:"On"});
+assert.deepEqual(settingCurrentState(searchSettings("conversation timeout")[0], currentPanel), {label:"Current",value:"30 min"});
+assert.deepEqual(settingCurrentState(searchSettings("voice device assignments")[0], currentPanel), {label:"Current",value:"2 assignments"});
+assert.deepEqual(settingCurrentState(searchSettings("custom speech replacements")[0], currentPanel), {label:"Current",value:"1 rule"});
+assert.deepEqual(settingCurrentState(searchSettings("skills")[0], currentPanel), {label:"Current",value:"2 skills"});
+assert.deepEqual(settingCurrentState(searchSettings("long-term memory")[0], currentPanel), {label:"Current",value:"Manual"});
+assert.deepEqual(settingCurrentState(searchSettings("current date/time format")[0], currentPanel), {label:"Current",value:"Default"});
+assert.deepEqual(settingCurrentState(searchSettings("system prompt")[0], currentPanel), {label:"Current",value:"16 characters"});
+assert.deepEqual(settingCurrentState(searchSettings("response creativity")[0], currentPanel), {label:"Current",value:"Not supported by current model"});
+const draftPanel = {...currentPanel, _draft:{...configData.config, web_search:false}, _draftAgentId:"agent-1", _draftTitle:"Kitchen draft", _configData:configData};
+assert.deepEqual(settingCurrentState(searchSettings("web search")[0], draftPanel), {label:"Current draft",value:"Off"});
+const otherAgentPanel = {...currentPanel, _agentId:"agent-2"};
+assert.equal(settingCurrentState(searchSettings("web search")[0], otherAgentPanel), null, "cached values must not bleed between agents");
+const guestPanel = {_selectedAgent:()=>({guest_mode:{state:"scheduled"}})};
+assert.deepEqual(settingCurrentState(searchSettings("guest mode")[0], guestPanel), {label:"Current",value:"Scheduled"});
 
 const memoryPanel = {
   _configDirty: false,
@@ -170,6 +209,7 @@ const overview = (
 ).join("\n");
 const memoryManagement = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-memory-settings.js", import.meta.url), "utf8");
 const capabilitiesIA = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js", import.meta.url), "utf8");
+const navigationSearch = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js", import.meta.url), "utf8");
 const featureStatus = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-feature-status.js", import.meta.url), "utf8");
 const bootstrap = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url), "utf8");
 const homeAssistant = panel.slice(panel.indexOf("  _homeAssistant("), panel.indexOf("  _overview("));
@@ -218,4 +258,10 @@ assert.match(capabilitiesIA, /return \["capabilities"\]/);
 assert.match(capabilitiesIA, /knowledge_enabled = desired/);
 assert.match(capabilitiesIA, /configuration", "validate"/);
 assert.doesNotMatch(capabilitiesIA, /from "\.\/agent-config-editor\.js"/);
+assert.match(navigationSearch, /Find a setting/);
+assert.match(navigationSearch, /subsection-nav/);
+assert.match(navigationSearch, /Current draft/);
+assert.match(navigationSearch, /configuration", "get"/);
+assert.match(navigationSearch, /_settingsSearchConfigAgentId === panel\._agentId/);
 assert.match(bootstrap, /management-capabilities-ia\.js/);
+assert.match(bootstrap, /management-navigation-search\.js/);
