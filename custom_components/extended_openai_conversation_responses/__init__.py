@@ -89,6 +89,7 @@ from .guest_performance import install_guest_policy_fast_path
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import get_authenticated_client, supports_openai_hosted_tools
 from .intercom_services import async_setup_intercom_services
+from .management_loading_performance import install_management_loading_optimizations
 from .management_permissions import install_management_permissions
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
@@ -107,9 +108,17 @@ def _register_split_frontend_modules() -> None:
     """Add implementation modules used by the management frontend wrappers."""
     extras = (
         "agent-config-editor-base.js",
+        "agent-config-loader.js",
         "guide-page-base.js",
         "request-rules-match-test-ui.js",
         "management-permission-boundaries.js",
+        "management-feature-status.js",
+        "management-memory-settings.js",
+        "memory-settings-ui.js",
+        "management-capabilities-ia.js",
+        "management-voice-identity.js",
+        "voice-identity-ui.js",
+        "management-navigation-search.js",
     )
     modules = tuple(
         dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
@@ -134,14 +143,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_deferred_context_summary()
     install_debug_instrumentation()
     install_request_rule_match_preview()
+    install_management_loading_optimizations()
     install_management_permissions()
     install_safety_hardening()
     await async_migrate_integration(hass)
     await async_setup_ha_permissions(hass)
     await async_setup_services(hass, config)
     await async_setup_intercom_services(hass)
-    await async_setup_management_ui(hass)
+    # The management bootstrap imports debug-management.js, so register the
+    # debug assets before exposing the panel itself.
     await async_setup_debug_ui(hass)
+    await async_setup_management_ui(hass)
     return True
 
 

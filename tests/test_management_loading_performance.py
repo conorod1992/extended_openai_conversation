@@ -3,8 +3,11 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from custom_components.extended_openai_conversation_responses import management_ui
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
     agent_config_snapshot,
@@ -13,12 +16,16 @@ from custom_components.extended_openai_conversation_responses.const import DOMAI
 from custom_components.extended_openai_conversation_responses.frontend_version import (
     FRONTEND_VERSION,
 )
+import custom_components.extended_openai_conversation_responses.management_loading_performance as loading
 from custom_components.extended_openai_conversation_responses.management_loading_performance import (
     _agent_snapshot,
     _asset_url,
+    _async_save_configuration,
     _static_paths,
     async_agent_catalog,
     async_overview_summary,
+    async_setup_cached_debug_ui,
+    async_setup_cached_management_ui,
 )
 
 
@@ -33,6 +40,7 @@ class _Auth:
 class _ConfigEntries:
     def __init__(self, entry):
         self.entry = entry
+        self.updates = 0
 
     def async_entries(self, domain):
         assert domain == DOMAIN
@@ -40,6 +48,13 @@ class _ConfigEntries:
 
     def async_get_entry(self, entry_id):
         return self.entry if entry_id == self.entry.entry_id else None
+
+    def async_update_subentry(self, entry, subentry, *, data, title=None):
+        assert entry is self.entry
+        subentry.data = data
+        if title is not None:
+            subentry.title = title
+        self.updates += 1
 
 
 def _hass_with_agent():
@@ -168,3 +183,135 @@ async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) 
     assert result["load_errors"] == []
     for mock in mocks.values():
         mock.assert_awaited_once()
+
+
+async def test_configuration_save_normalizes_once(monkeypatch) -> None:
+    """The combined Save path validates and persists one normalized candidate."""
+    hass, _entry, subentry = _hass_with_agent()
+    original_merge = management_ui.merge_agent_config
+    merge_calls = 0
+
+    def counted_merge(current, updates):
+        nonlocal merge_calls
+        merge_calls += 1
+        return original_merge(current, updates)
+
+    monkeypatch.setattr(management_ui, "merge_agent_config", counted_merge)
+    monkeypatch.setattr(
+        management_ui,
+        "local_handling_snapshot",
+        lambda _hass, _entry, _subentry, _snapshot: {},
+    )
+
+    result = await _async_save_configuration(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "config": {"chat_model": "gpt-5-mini"},
+            "title": "Updated Jarvis",
+        },
+    )
+
+    assert result["valid"] is True
+    assert result["config"]["chat_model"] == "gpt-5-mini"
+    assert result["title"] == "Updated Jarvis"
+    assert subentry.data["chat_model"] == "gpt-5-mini"
+    assert hass.config_entries.updates == 1
+    assert merge_calls == 1
+
+
+async def test_configuration_save_validation_failure_does_not_persist(
+    monkeypatch,
+) -> None:
+    """A single failed normalization remains frontend-friendly and write-free."""
+    hass, _entry, _subentry = _hass_with_agent()
+    original_merge = management_ui.merge_agent_config
+    merge_calls = 0
+
+    def counted_merge(current, updates):
+        nonlocal merge_calls
+        merge_calls += 1
+        return original_merge(current, updates)
+
+    monkeypatch.setattr(management_ui, "merge_agent_config", counted_merge)
+
+    result = await _async_save_configuration(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "config": {
+                "speech_regex_replacements": [{"pattern": "[", "replacement": ""}]
+            },
+        },
+    )
+
+    assert result["valid"] is False
+    assert "speech_regex_replacements[0].pattern" in result["errors"]
+    assert hass.config_entries.updates == 0
+    assert merge_calls == 1
+
+
+async def test_management_setup_retry_resumes_after_panel_failure(monkeypatch) -> None:
+    """A failed panel registration must not poison setup or duplicate earlier steps."""
+    setup_key = "test.management_ui_setup"
+    fake_ui = SimpleNamespace(
+        _UI_SETUP=setup_key,
+        __file__="/integration/management_ui.py",
+        MANAGEMENT_FRONTEND_MODULES=("management-panel.js",),
+        websocket_management=object(),
+    )
+    static_paths = AsyncMock()
+    hass = SimpleNamespace(
+        data={},
+        http=SimpleNamespace(async_register_static_paths=static_paths),
+    )
+    websocket_register = MagicMock()
+    panel_register = AsyncMock(side_effect=[RuntimeError("panel unavailable"), None])
+    monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
+    monkeypatch.setattr(loading.websocket_api, "async_register_command", websocket_register)
+    monkeypatch.setattr(loading.panel_custom, "async_register_panel", panel_register)
+
+    with pytest.raises(RuntimeError, match="panel unavailable"):
+        await async_setup_cached_management_ui(hass)
+
+    assert setup_key not in hass.data
+    await async_setup_cached_management_ui(hass)
+
+    assert hass.data[setup_key] is True
+    assert static_paths.await_count == 1
+    assert websocket_register.call_count == 1
+    assert panel_register.await_count == 2
+
+
+async def test_debug_setup_retry_resumes_after_websocket_failure(monkeypatch) -> None:
+    """A failed debug websocket registration retries without duplicating static paths."""
+    setup_key = "test.debug_ui_setup"
+    fake_ui = SimpleNamespace(
+        _DEBUG_UI_SETUP=setup_key,
+        __file__="/integration/debug_ui.py",
+        websocket_request_debug=object(),
+    )
+    static_paths = AsyncMock()
+    hass = SimpleNamespace(
+        data={},
+        http=SimpleNamespace(async_register_static_paths=static_paths),
+    )
+    websocket_register = MagicMock(side_effect=[RuntimeError("ws unavailable"), None])
+    monkeypatch.setattr(loading, "_debug_ui", lambda: fake_ui)
+    monkeypatch.setattr(loading.websocket_api, "async_register_command", websocket_register)
+
+    with pytest.raises(RuntimeError, match="ws unavailable"):
+        await async_setup_cached_debug_ui(hass)
+
+    assert setup_key not in hass.data
+    await async_setup_cached_debug_ui(hass)
+
+    assert hass.data[setup_key] is True
+    assert static_paths.await_count == 1
+    assert websocket_register.call_count == 2
