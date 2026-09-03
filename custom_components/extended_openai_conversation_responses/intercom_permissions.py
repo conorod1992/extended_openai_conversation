@@ -26,7 +26,7 @@ async def async_authorized_broadcast_targets(
     origin_device_id: str | None = None,
 ) -> list[str]:
     """Resolve selectors once and require CONTROL permission for every target."""
-    targets = manager.resolve_targets(
+    resolved = manager.resolve_targets(
         whole_home=whole_home,
         entity_ids=list(entity_ids or []),
         device_ids=list(device_ids or []),
@@ -36,6 +36,7 @@ async def async_authorized_broadcast_targets(
         origin_entity_id=origin_entity_id,
         origin_device_id=origin_device_id,
     )
+    targets = [str(entity_id) for entity_id in resolved]
     if not targets:
         raise HomeAssistantError(
             "No matching announcement-capable Assist satellites found"
