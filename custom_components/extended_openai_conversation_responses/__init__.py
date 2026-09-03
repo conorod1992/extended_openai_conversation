@@ -89,6 +89,7 @@ from .guest_performance import install_guest_policy_fast_path
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import get_authenticated_client, supports_openai_hosted_tools
 from .intercom_services import async_setup_intercom_services
+from .management_permissions import install_management_permissions
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
 from .openai_compat import apply_openai_compatibility
@@ -132,6 +133,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_deferred_context_summary()
     install_debug_instrumentation()
     install_request_rule_match_preview()
+    install_management_permissions()
     await async_migrate_integration(hass)
     await async_setup_ha_permissions(hass)
     await async_setup_services(hass, config)
