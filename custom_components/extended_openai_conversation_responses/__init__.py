@@ -82,6 +82,7 @@ from .const import (
     MEMORY_MODE_AUTOMATIC,
     MEMORY_MODE_OFF,
 )
+from .context_summary_performance import install_deferred_context_summary
 from .debug import DebugOpenAIClientProxy, install_debug_instrumentation
 from .debug_ui import async_setup_debug_ui
 from .guest_performance import install_guest_policy_fast_path
@@ -122,6 +123,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_persistence_transactions()
     install_performance_optimizations()
     install_guest_policy_fast_path()
+    install_deferred_context_summary()
     install_debug_instrumentation()
     await async_migrate_integration(hass)
     await async_setup_ha_permissions(hass)
