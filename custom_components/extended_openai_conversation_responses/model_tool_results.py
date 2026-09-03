@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 from .memory import MemoryRecord, memory_as_dict
 
@@ -131,7 +131,9 @@ def install_model_tool_result_compaction() -> None:
     async def execute_knowledge(
         agent: Any, operation: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        result = await original_knowledge(agent, operation, arguments)
+        result = cast(
+            dict[str, Any], await original_knowledge(agent, operation, arguments)
+        )
         if operation == "search":
             policy_ids = agent._effective_guest_policy().knowledge_source_ids
             return knowledge_search_payload(
@@ -151,7 +153,10 @@ def install_model_tool_result_compaction() -> None:
         arguments: dict[str, Any],
         llm_context: Any,
     ) -> dict[str, Any]:
-        result = await original_memory(agent, operation, arguments, llm_context)
+        result = cast(
+            dict[str, Any],
+            await original_memory(agent, operation, arguments, llm_context),
+        )
         return _compact_memory_result(result)
 
     agent_type._execute_function_tool = execute_function_tool
