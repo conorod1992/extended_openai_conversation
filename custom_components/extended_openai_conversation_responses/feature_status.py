@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from functools import wraps
 from typing import Any
 
 from .const import (
@@ -17,6 +18,8 @@ from .const import (
     SHARED_MEMORY_DISABLED,
 )
 from .memory import get_memory_mode
+
+_INSTALLED = False
 
 
 def management_feature_status(
@@ -48,14 +51,19 @@ def management_feature_status(
 
     if not memory_enabled:
         memory_label = "Off"
-        memory_summary = "Stored memories are retained, but conversations cannot use persistent memory."
+        memory_summary = (
+            "Stored memories are retained, but conversations cannot use persistent "
+            "memory."
+        )
         memory_detail = (
             "Persistent memory is disabled for this agent. Stored records are retained, "
             "but memory tools and automatic memory context are not available."
         )
         memory_state = "disabled"
     else:
-        memory_label = "Automatic" if memory_mode == MEMORY_MODE_AUTOMATIC else "Manual"
+        memory_label = (
+            "Automatic" if memory_mode == MEMORY_MODE_AUTOMATIC else "Manual"
+        )
         saving = (
             "Automatic saving is allowed"
             if memory_mode == MEMORY_MODE_AUTOMATIC
@@ -144,3 +152,74 @@ def management_feature_status(
             "source_count": source_count,
         },
     }
+
+
+def install_management_feature_status() -> None:
+    """Attach authoritative feature status to optimized management responses."""
+    global _INSTALLED
+    if _INSTALLED:
+        return
+    _INSTALLED = True
+
+    from . import management_loading_performance, management_ui
+    from .knowledge import get_loaded_knowledge
+
+    original_snapshot = management_loading_performance._agent_snapshot
+
+    @wraps(original_snapshot)
+    def agent_snapshot_with_feature_status(
+        hass: Any, entry: Any, subentry: Any, *args: Any, **kwargs: Any
+    ) -> dict[str, Any]:
+        snapshot = original_snapshot(hass, entry, subentry, *args, **kwargs)
+        options = kwargs.get("config")
+        if not isinstance(options, Mapping):
+            options = subentry.data
+        source_count = int(snapshot.get("knowledge_source_count", 0))
+        if source_count == 0:
+            loaded = get_loaded_knowledge(hass, entry.entry_id, subentry.subentry_id)
+            if loaded is not None:
+                source_count = int(loaded.source_count)
+                snapshot["knowledge_source_count"] = source_count
+        snapshot["feature_status"] = management_feature_status(
+            options, knowledge_source_count=source_count
+        )
+        return snapshot
+
+    management_loading_performance._agent_snapshot = agent_snapshot_with_feature_status
+
+    original_command = management_ui.async_management_command
+
+    @wraps(original_command)
+    async def management_command_with_feature_status(
+        hass: Any, user_id: str, is_admin: bool, message: dict[str, Any]
+    ) -> dict[str, Any]:
+        result = await original_command(hass, user_id, is_admin, message)
+        section = message.get("section")
+        action = message.get("action")
+        if action != "list" or section not in {"memories", "knowledge"}:
+            return result
+
+        _entry, subentry = management_ui.entry_and_agent(
+            hass, message.get("entry_id"), message.get("subentry_id")
+        )
+        enriched = dict(result)
+        if section == "memories":
+            enriched["feature_status"] = management_feature_status(
+                subentry.data, knowledge_source_count=0
+            )["memory"]
+            return enriched
+
+        sources = result.get("sources", [])
+        source_count = len(sources) if isinstance(sources, list) else 0
+        stats = result.get("stats")
+        if isinstance(stats, Mapping):
+            try:
+                source_count = int(stats.get("source_count", source_count))
+            except (TypeError, ValueError):
+                pass
+        enriched["feature_status"] = management_feature_status(
+            subentry.data, knowledge_source_count=source_count
+        )["knowledge"]
+        return enriched
+
+    management_ui.async_management_command = management_command_with_feature_status
