@@ -1,5 +1,3 @@
-import {overviewAgentFeatureProjection} from "./management-feature-status.js";
-
 let implementation = null;
 let loadPromise = null;
 
@@ -25,6 +23,16 @@ function queueRender(panel) {
       panel._error = `Unable to load Overview: ${err.message || String(err)}`;
       panel._render?.();
     });
+}
+
+function overviewAgentFeatureProjection(agent) {
+  const memory = agent?.feature_status?.memory;
+  const knowledge = agent?.feature_status?.knowledge;
+  if (!memory && !knowledge) return agent;
+  const memoryLabel = memory?.label || agent.memory_mode || "Unknown";
+  const labels = [memoryLabel];
+  if (knowledge?.label) labels.push(`Knowledge ${knowledge.label}`);
+  return {...agent, memory_mode: labels.join(" · ")};
 }
 
 export function renderOverview(panel, agent) {
