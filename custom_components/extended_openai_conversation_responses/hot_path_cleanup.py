@@ -64,8 +64,8 @@ def _install_usage_lazy_snapshots_and_background_prune() -> None:
                 # in-memory state without making the provider/tool loop serialize the
                 # retained history first.
                 delay_save(
-                    lambda manager=manager, category=category: lifecycle._usage_snapshot(
-                        manager, category
+                    lambda manager=manager, category=category: (
+                        lifecycle._usage_snapshot(manager, category)
                     ),
                     lifecycle._USAGE_SAVE_DELAY_SECONDS,
                 )
@@ -314,9 +314,7 @@ def _install_request_rule_two_pass_matching() -> None:
                     continue
 
                 phrase = cast(str, compiled.normalized)
-                if rules._deterministic_match(
-                    normalized, phrase, rule["match_type"]
-                ):
+                if rules._deterministic_match(normalized, phrase, rule["match_type"]):
                     result = rules.RuleMatch(rule, compiled.original, False, 100.0)
                     deterministic.append(
                         (
