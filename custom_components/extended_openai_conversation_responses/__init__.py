@@ -111,6 +111,13 @@ def _register_split_frontend_modules() -> None:
         "guide-page-base.js",
         "request-rules-match-test-ui.js",
         "management-permission-boundaries.js",
+        "management-feature-status.js",
+        "management-memory-settings.js",
+        "memory-settings-ui.js",
+        "management-capabilities-ia.js",
+        "management-voice-identity.js",
+        "voice-identity-ui.js",
+        "management-navigation-search.js",
     )
     modules = tuple(
         dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
@@ -142,8 +149,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_setup_ha_permissions(hass)
     await async_setup_services(hass, config)
     await async_setup_intercom_services(hass)
-    await async_setup_management_ui(hass)
+    # The management bootstrap imports debug-management.js, so register the
+    # debug assets before exposing the panel itself.
     await async_setup_debug_ui(hass)
+    await async_setup_management_ui(hass)
     return True
 
 
