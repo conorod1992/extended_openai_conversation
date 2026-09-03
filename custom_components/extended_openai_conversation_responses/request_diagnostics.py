@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import time
-from typing import Any
+from typing import Any, cast
 
 from .function_groups import get_function_group_runtime
 from .payload_diagnostics import (
@@ -51,7 +51,7 @@ def _result_characters(result: Any) -> int:
 
 
 def _slowest_phases(phases: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
-    items = [
+    items: list[dict[str, Any]] = [
         {"name": name, "duration_ms": int(duration)}
         for name, duration in phases.items()
         if isinstance(duration, (int, float))
@@ -212,14 +212,14 @@ def install_payload_latency_diagnostics() -> None:
         return request
 
     def provider_as_dict_with_cache(request: Any) -> dict[str, Any]:
-        data = original_provider_as_dict(request)
+        data = cast(dict[str, Any], original_provider_as_dict(request))
         metrics = dict(data.get("metrics", {}))
         metrics["cache_usage"] = cache_usage_metrics(request.usage)
         data["metrics"] = metrics
         return data
 
     def trace_as_dict_with_diagnostics(trace: Any) -> dict[str, Any]:
-        data = original_trace_as_dict(trace)
+        data = cast(dict[str, Any], original_trace_as_dict(trace))
         memory = dict(data.get("memory", {}))
         rich_prompt = memory.pop(_INTERNAL_PROMPT_METRICS, None)
         preparation = memory.pop(_INTERNAL_PREPARATION, {})
@@ -273,7 +273,7 @@ def install_payload_latency_diagnostics() -> None:
         return data
 
     def summary_with_diagnostics(trace: Any) -> dict[str, Any]:
-        data = original_summary(trace)
+        data = cast(dict[str, Any], original_summary(trace))
         model_requests = _model_requests(trace)
         first_model = model_requests[0] if model_requests else None
         data["model_request_count"] = len(model_requests)
