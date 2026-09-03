@@ -91,6 +91,10 @@ def install_request_rule_match_preview() -> bool:
     if getattr(management_ui, _PATCHED, False):
         return False
     original = management_ui.async_management_command
-    management_ui.async_management_command = wrap_management_command(original)
+    setattr(  # noqa: B010
+        management_ui,
+        "async_management_command",
+        wrap_management_command(original),
+    )
     setattr(management_ui, _PATCHED, True)
     return True
