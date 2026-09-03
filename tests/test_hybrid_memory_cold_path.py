@@ -121,6 +121,34 @@ async def test_model_change_prewarms_stale_cache_before_next_query() -> None:
     assert calls == [("second-model", ["breed"])]
 
 
+async def test_model_change_during_warmup_restarts_with_new_provider() -> None:
+    memory = await _background_memory()
+    await memory.async_add("alice", "Oscar is a Cavachon.", "pets", "explicit")
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    second_calls: list[list[str]] = []
+
+    async def first_provider(inputs: list[str]) -> list[list[float]]:
+        first_started.set()
+        await release_first.wait()
+        return [[1.0, 0.0] for _ in inputs]
+
+    async def second_provider(inputs: list[str]) -> list[list[float]]:
+        second_calls.append(inputs)
+        return [[0.0, 1.0] for _ in inputs]
+
+    memory.set_embedding_provider(first_provider, "first-model")
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+    memory.set_embedding_provider(second_provider, "second-model")
+    release_first.set()
+    await memory.async_wait_for_embedding_maintenance()
+
+    assert second_calls == [["pets | Oscar is a Cavachon."]]
+    second_calls.clear()
+    assert await memory.async_prepare_hybrid(["alice"], "breed")
+    assert second_calls == [["breed"]]
+
+
 async def test_failed_background_warmup_keeps_request_time_fallback() -> None:
     memory = await _background_memory()
     await memory.async_add("alice", "Oscar is a Cavachon.", "pets", "explicit")
