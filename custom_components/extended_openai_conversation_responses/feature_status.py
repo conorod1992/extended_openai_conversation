@@ -227,6 +227,8 @@ def install_management_feature_status() -> None:
         management_ui,
         "MANAGEMENT_FRONTEND_MODULES",
         tuple(
-            dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE))
+            dict.fromkeys(
+                (*management_ui.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE)
+            )
         ),
     )
