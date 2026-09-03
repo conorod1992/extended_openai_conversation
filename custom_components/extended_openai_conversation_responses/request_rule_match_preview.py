@@ -9,7 +9,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from . import management_ui
-from .management_permissions import install_management_permissions
 from .request_rules import RuleMatch, async_get_request_rules
 
 _PATCHED = "extended_openai_request_rule_match_preview"
@@ -90,7 +89,6 @@ def wrap_management_command(original: ManagementCommand) -> ManagementCommand:
 def install_request_rule_match_preview() -> bool:
     """Make both legacy and new management test actions side-effect free."""
     if getattr(management_ui, _PATCHED, False):
-        install_management_permissions()
         return False
     original = management_ui.async_management_command
     setattr(  # noqa: B010
@@ -99,5 +97,4 @@ def install_request_rule_match_preview() -> bool:
         wrap_management_command(original),
     )
     setattr(management_ui, _PATCHED, True)
-    install_management_permissions()
     return True
