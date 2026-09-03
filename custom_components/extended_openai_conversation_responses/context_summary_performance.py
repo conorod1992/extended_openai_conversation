@@ -114,9 +114,7 @@ def install_deferred_context_summary() -> None:
                 model=model,
                 api_mode=api_mode,
                 summarize=lambda older, summary_model, summary_api_mode: (
-                    _summarize_detached(
-                        self, older, summary_model, summary_api_mode
-                    )
+                    _summarize_detached(self, older, summary_model, summary_api_mode)
                 ),
                 scheduler=schedule,
             ):
