@@ -199,13 +199,15 @@ class ConversationArchive:
         archive_enabled: bool,
         shared_archive_enabled: bool,
         inactivity_minutes: int,
-    ) -> ArchiveSession:
+    ) -> ArchiveSession | None:
         """Resolve the stable scope once and return the exact active session."""
+        if not archive_enabled:
+            return None
         async with self._lock:
             self._ensure_initialized()
             current = self._sessions.get(self._active.get(session_key, ""))
             now = dt_util.utcnow()
-            may_retain = archive_enabled and scope.allows_retention
+            may_retain = scope.allows_retention
             if scope.scope_type == "shared" and not shared_archive_enabled:
                 may_retain = False
             if current is not None:
@@ -238,9 +240,7 @@ class ConversationArchive:
                 turn_count=0,
                 retention_state="retained" if may_retain else "unretained",
             )
-            self._sessions[session.session_id] = session
-            self._active[session_key] = session.session_id
-            await self._async_save_metadata_locked()
+            await self._async_publish_session_locked(session_key, session)
             return session
 
     async def async_record_turn(
@@ -320,9 +320,7 @@ class ConversationArchive:
                 turn_count=0,
                 retention_state="retained" if scope.allows_retention else "unretained",
             )
-            self._sessions[session.session_id] = session
-            self._active[session_key] = session.session_id
-            await self._async_save_metadata_locked()
+            await self._async_publish_session_locked(session_key, session)
             return session
 
     async def async_search(
@@ -700,22 +698,52 @@ class ConversationArchive:
             raise ValueError("conversation session not found")
         return session
 
+    async def _async_publish_session_locked(
+        self, session_key: str, session: ArchiveSession
+    ) -> None:
+        """Persist a new active session before exposing it to runtime readers."""
+        sessions = {**self._sessions, session.session_id: session}
+        active = {**self._active, session_key: session.session_id}
+        pending = (
+            {
+                partition: self._partition_payload_locked(partition)
+                for partition in sorted(self._pending_partitions)
+            }
+            if self._pending_partitions
+            else None
+        )
+        await self._storage.async_save_metadata(
+            self._metadata_payload_locked(
+                pending,
+                sessions=sessions,
+                active=active,
+            )
+        )
+        self._sessions[session.session_id] = session
+        self._active[session_key] = session.session_id
+
     async def _async_save_metadata_locked(self) -> None:
         await self._storage.async_save_metadata(self._metadata_payload_locked())
 
     def _metadata_payload_locked(
-        self, pending_partitions: dict[str, dict[str, Any]] | None = None
+        self,
+        pending_partitions: dict[str, dict[str, Any]] | None = None,
+        *,
+        sessions: dict[str, ArchiveSession] | None = None,
+        active: dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        source_sessions = self._sessions if sessions is None else sessions
+        source_active = self._active if active is None else active
         persisted_sessions = {
             session.session_id: session
-            for session in self._sessions.values()
+            for session in source_sessions.values()
             if session.retention_state != "unretained"
         }
         payload: dict[str, Any] = {
             "sessions": [asdict(session) for session in persisted_sessions.values()],
             "active": {
                 key: value
-                for key, value in self._active.items()
+                for key, value in source_active.items()
                 if value in persisted_sessions
             },
             "partitions": sorted(self._partitions),
