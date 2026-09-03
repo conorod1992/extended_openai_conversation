@@ -16,7 +16,7 @@ assert.deepEqual(NAVIGATION.map((item) => item.label), [
   "Overview", "Guide", "Assistant", "Capabilities", "Data & Memory", "Usage & Maintenance",
 ]);
 assert.deepEqual(NAVIGATION.find((item) => item.id === "assistant").sections.map((item) => item.label), [
-  "Basics", "Model & responses", "Conversation", "Prompt & context", "Voice", "Speech",
+  "Basics", "Model & responses", "Conversation", "Prompt & context", "Voice & identity", "Speech",
 ]);
 assert.deepEqual(NAVIGATION.find((item) => item.id === "capabilities").sections.map((item) => item.label), [
   "Home Assistant & local handling", "Web search & Skills", "Request Rules", "Functions", "Guest Mode",
@@ -207,8 +207,10 @@ const overview = (
     "../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js",
   ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
 ).join("\n");
+const navigation = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js", import.meta.url), "utf8");
 const memoryManagement = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-memory-settings.js", import.meta.url), "utf8");
 const capabilitiesIA = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js", import.meta.url), "utf8");
+const voiceManagement = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-voice-identity.js", import.meta.url), "utf8");
 const navigationSearch = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js", import.meta.url), "utf8");
 const featureStatus = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-feature-status.js", import.meta.url), "utf8");
 const bootstrap = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url), "utf8");
@@ -245,8 +247,13 @@ assert.match(editor, /const cleanOnly = panel\._configDirty/);
 assert.match(editor, /id="duplicate-agent" \$\{cleanOnly\}/);
 assert.match(editor, /id="export-agent" \$\{cleanOnly\}/);
 assert.match(editor, /id="import-agent">Import configuration/);
+assert.match(navigation, /"assistant\/advanced": \["capabilities", "web-skills"\]/);
+assert.doesNotMatch(navigation, /LEGACY_NESTED_ROUTES/);
 assert.match(memoryManagement, /data-memory\/memory-settings/);
 assert.match(memoryManagement, /assistant\/model-responses/);
+assert.match(memoryManagement, /stripMovedMemoryControls/);
+assert.doesNotMatch(memoryManagement, /assistant\/advanced/);
+assert.doesNotMatch(voiceManagement, /installVoiceMetadata|SETTINGS_INDEX|NAVIGATION/);
 assert.match(featureStatus, /subsection: "memory-settings", label: "Configure memory"/);
 assert.doesNotMatch(featureStatus, /assistant.*advanced/);
 assert.match(capabilitiesIA, /capabilities\/home-assistant/);
