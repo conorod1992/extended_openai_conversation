@@ -20,7 +20,7 @@ assert.deepEqual(NAVIGATION.find((item) => item.id === "assistant").sections.map
 assert.deepEqual(NAVIGATION.find((item) => item.id === "capabilities").sections.map((item) => item.label), [
   "Home Assistant & local handling", "Web search & Skills", "Request Rules", "Functions", "Guest Mode",
 ]);
-assert.equal(routeFromPath("/extended-openai/assistant/advanced").section, "basics");
+assert.deepEqual(routeFromPath("/extended-openai/assistant/advanced"), {page:"capabilities", section:"web-skills", legacy:true});
 assert.deepEqual(routeFromPath("/extended-openai/capabilities/web-skills"), {page:"capabilities", section:"web-skills", legacy:false});
 const dataMemory = NAVIGATION.find((item) => item.id === "data-memory");
 assert.equal(dataMemory.path, "/extended-openai/data-memory/memory-settings");
@@ -211,8 +211,11 @@ assert.match(featureStatus, /subsection: "memory-settings", label: "Configure me
 assert.doesNotMatch(featureStatus, /assistant.*advanced/);
 assert.match(capabilitiesIA, /capabilities\/home-assistant/);
 assert.match(capabilitiesIA, /capabilities\/web-skills/);
+assert.match(capabilitiesIA, /assistant\/conversation/);
+assert.match(capabilitiesIA, /stripLocalHandlingConfiguration/);
 assert.match(capabilitiesIA, /return \["local"\]/);
 assert.match(capabilitiesIA, /return \["capabilities"\]/);
 assert.match(capabilitiesIA, /knowledge_enabled = desired/);
 assert.match(capabilitiesIA, /configuration", "validate"/);
+assert.doesNotMatch(capabilitiesIA, /from "\.\/agent-config-editor\.js"/);
 assert.match(bootstrap, /management-capabilities-ia\.js/);
