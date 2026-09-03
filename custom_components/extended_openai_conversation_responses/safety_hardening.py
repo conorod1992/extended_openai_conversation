@@ -12,6 +12,7 @@ from homeassistant.exceptions import HomeAssistantError
 import homeassistant.util.dt as dt_util
 
 from .ha_permissions import get_active_ha_context, set_active_ha_context
+from .resource_limits import MAX_NATIVE_SERVICE_ACTIONS
 
 MAX_HISTORY_ENTITY_IDS = 50
 MAX_HISTORY_SPAN = timedelta(days=31)
@@ -136,6 +137,17 @@ def _validate_history_request(arguments: dict[str, Any]) -> None:
     _validate_time_window(start, end, MAX_HISTORY_SPAN)
 
 
+def _validate_execute_service_request(arguments: dict[str, Any]) -> None:
+    """Bound the number of Home Assistant actions inside one native tool call."""
+    actions = arguments.get("list")
+    if not isinstance(actions, list):
+        raise HomeAssistantError("execute_service list must be an array")
+    if len(actions) > MAX_NATIVE_SERVICE_ACTIONS:
+        raise HomeAssistantError(
+            f"execute_service may contain at most {MAX_NATIVE_SERVICE_ACTIONS} actions"
+        )
+
+
 def _normalized_statistics_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
     """Validate the period/window and normalize the optional period default."""
     normalized = dict(arguments)
@@ -150,8 +162,45 @@ def _normalized_statistics_arguments(arguments: dict[str, Any]) -> dict[str, Any
 
 
 def _install_native_tool_guards() -> None:
-    """Add admin and Recorder work bounds without changing normal HA actions."""
+    """Add admin, Recorder, and action work bounds to native tools."""
+    from .functions import native as native_module
     from .functions.native import NativeFunction
+
+    current_native_call = native_module.async_call_ha_action
+    if not getattr(current_native_call, "_extended_openai_blocking_native", False):
+        original_native_call = current_native_call
+
+        async def async_call_ha_action_blocking(*args: Any, **kwargs: Any) -> Any:
+            kwargs["blocking"] = True
+            return await original_native_call(*args, **kwargs)
+
+        async_call_ha_action_blocking._extended_openai_blocking_native = True  # type: ignore[attr-defined]
+        native_module.async_call_ha_action = async_call_ha_action_blocking  # type: ignore[assignment]
+
+    current_execute = NativeFunction.execute_service
+    if not getattr(current_execute, "_extended_openai_batch_guard", False):
+        original_execute = current_execute
+
+        async def execute_service(
+            function: Any,
+            hass: HomeAssistant,
+            function_config: dict[str, Any],
+            arguments: dict[str, Any],
+            llm_context: Any,
+            exposed_entities: list[dict[str, Any]],
+        ) -> Any:
+            _validate_execute_service_request(arguments)
+            return await original_execute(
+                function,
+                hass,
+                function_config,
+                arguments,
+                llm_context,
+                exposed_entities,
+            )
+
+        execute_service._extended_openai_batch_guard = True  # type: ignore[attr-defined]
+        NativeFunction.execute_service = execute_service  # type: ignore[method-assign,assignment]
 
     current_add = NativeFunction.add_automation
     if not getattr(current_add, "_extended_openai_admin_guard", False):
@@ -294,13 +343,15 @@ def _install_broadcast_state_transactions() -> None:
 
 
 def _update_builtin_resource_schema() -> None:
-    """Tell the model about the history cardinality bound before tool execution."""
+    """Tell the model about built-in native cardinality bounds before execution."""
     from .built_in_functions import BUILT_IN_FUNCTION_PRESETS
 
     for preset in BUILT_IN_FUNCTION_PRESETS:
-        if preset.get("implementation") != "get_history":
-            continue
-        entity_schema = preset["tool"]["spec"]["parameters"]["properties"]["entity_ids"]
-        entity_schema["minItems"] = 1
-        entity_schema["maxItems"] = MAX_HISTORY_ENTITY_IDS
-        break
+        implementation = preset.get("implementation")
+        properties = preset["tool"]["spec"]["parameters"]["properties"]
+        if implementation == "get_history":
+            entity_schema = properties["entity_ids"]
+            entity_schema["minItems"] = 1
+            entity_schema["maxItems"] = MAX_HISTORY_ENTITY_IDS
+        elif implementation == "execute_service":
+            properties["list"]["maxItems"] = MAX_NATIVE_SERVICE_ACTIONS
