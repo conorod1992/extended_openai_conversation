@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.util import dt as dt_util
 
@@ -38,7 +38,7 @@ def install_temporary_memory_read_fast_path() -> None:
             if expired:
                 expired_count = len(expired)
                 manager.expired_pruned += expired_count
-            result = manager._active_snapshot_locked(scope_id)
+            result = cast(list[Any], manager._active_snapshot_locked(scope_id))
 
         if expired_count:
             _schedule_pruned_state_save(manager)
