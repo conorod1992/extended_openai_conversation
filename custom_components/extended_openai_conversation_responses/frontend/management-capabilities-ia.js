@@ -43,7 +43,7 @@ function knowledgeAvailabilityMarkup(panel) {
   const status = sectionStatus && typeof sectionStatus.enabled === "boolean"
     ? sectionStatus
     : panel._selectedAgent?.()?.feature_status?.knowledge;
-  const enabled = Boolean(status?.enabled);
+  const enabled = typeof status?.enabled === "boolean" ? status.enabled : status?.state === "enabled";
   return `<section class="content-card knowledge-availability-setting">
     <div class="config-toggle setting">
       <span class="setting-copy"><span class="setting-label-row"><label for="knowledge-enabled-toggle"><strong>Allow the assistant to use Knowledge</strong></label></span><small>When off, stored sources remain in the library but Knowledge tools are not available to the assistant. Changes here save immediately.</small></span>
