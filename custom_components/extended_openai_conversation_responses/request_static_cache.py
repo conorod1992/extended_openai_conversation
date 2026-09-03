@@ -75,6 +75,13 @@ def render_maintained_entity_context(
     return "\n".join(lines) + "\n"
 
 
+def snapshot_key_with_enabled_skills(
+    base_key: tuple[Any, ...], enabled_skills: list[Any]
+) -> tuple[Any, ...]:
+    """Include the usable skill catalogue in request-tool snapshot invalidation."""
+    return (*base_key, tuple(str(skill.name) for skill in enabled_skills))
+
+
 def install_request_static_caching() -> None:
     """Install request-scoped caching after existing performance/security wrappers."""
     global _INSTALLED
@@ -177,8 +184,10 @@ def install_request_static_caching() -> None:
 
     def snapshot_key_with_skills(agent: Any, conversation_module: Any) -> tuple[Any, ...]:
         base_key = original_snapshot_key(agent, conversation_module)
-        enabled_skills = tuple(skill.name for skill in agent._get_enabled_skills())
-        return (*base_key, enabled_skills)
+        get_enabled_skills = getattr(agent, "_get_enabled_skills", None)
+        if not callable(get_enabled_skills):
+            return base_key
+        return snapshot_key_with_enabled_skills(base_key, get_enabled_skills())
 
     conversation.ExtendedOpenAIAgentEntity._async_process = (  # type: ignore[method-assign]
         process_with_fresh_formatted_tool_cache
