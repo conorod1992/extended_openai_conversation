@@ -12,7 +12,6 @@ from openai import AsyncAzureOpenAI, AsyncClient, AsyncOpenAI
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_should_expose
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.template import Template
 
@@ -27,6 +26,7 @@ from .const import (
     MODEL_CONFIG_PATTERNS,
     MODEL_TOKEN_PARAMETER_SUPPORT,
 )
+from .entity_context_cache import get_entity_prompt_metadata, normalize_entity_aliases
 from .ha_permissions import filter_entities_for_active_user
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,41 +73,26 @@ def get_model_config(model: str) -> dict[str, bool]:
 
 def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:
     """Get Assist-exposed entities the authenticated caller may read."""
+    # Exposure, state values/names and caller permissions deliberately stay live.
+    # Only registry-derived aliases/area metadata are cached behind registry-event
+    # invalidation in entity_context_cache.
     states = [
         state
         for state in hass.states.async_all()
         if async_should_expose(hass, conversation.DOMAIN, state.entity_id)
     ]
-    entity_registry = er.async_get(hass)
     exposed_entities = []
     for state in states:
-        entity_id = state.entity_id
-        entity = entity_registry.async_get(entity_id)
-
-        aliases = normalize_entity_aliases(entity.aliases if entity else None)
-
+        metadata = get_entity_prompt_metadata(hass, state.entity_id)
         exposed_entities.append(
             {
-                "entity_id": entity_id,
+                "entity_id": state.entity_id,
                 "name": state.name,
                 "state": state.state,
-                "aliases": aliases,
+                "aliases": list(metadata.aliases),
             }
         )
     return filter_entities_for_active_user(hass, exposed_entities)
-
-
-def normalize_entity_aliases(aliases: Any) -> list[str]:
-    """Keep genuine aliases while dropping computed-name and unknown sentinels."""
-    if not aliases:
-        return []
-    # COMPUTED_NAME is represented separately by state.name. Unknown non-string
-    # sentinel objects are intentionally not stringified into model context.
-    return [
-        alias
-        for alias in aliases
-        if isinstance(alias, str) and not isinstance(alias, er.ComputedNameType)
-    ]
 
 
 def is_azure_url(base_url: str | None) -> bool:
