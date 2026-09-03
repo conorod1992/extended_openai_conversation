@@ -30,9 +30,11 @@ Existing agents that predate context-strategy storage can retain this legacy fal
 
 Makes one bounded model request to summarize older context while retaining recent raw turns.
 
+The summary is generated after the current reply is complete so this optional maintenance request does not delay delivery of that reply. If another turn arrives before summarization finishes, the integration waits for and applies the pending summary before sending the next provider request. This preserves the same conversation context rather than temporarily falling back to an incomplete history.
+
 If summarization fails, the integration falls back to **Keep recent messages** rather than breaking the conversation.
 
-Usage from the summary request is included in the agent's usage statistics.
+Usage from the summary request is included in the agent's aggregate usage statistics. Because the request can finish after the user turn itself has completed, it is treated as detached maintenance rather than modifying an already-finalized per-turn usage run.
 
 ## Which strategy should I use?
 
