@@ -8,7 +8,7 @@ const defaultFacts = {
   provider_runtime: {client_loaded: true, provider: "openai", model: "gpt-5-mini"},
   prompt_state: "starter",
   exposed_entity_count: 1,
-  memory_mode: "off",
+  memory: {mode: "off", available: true},
   knowledge: {enabled: false, source_count: 0, available: true},
   web_search: {enabled: false, available: false, reason: "requires_responses"},
   can_manage: true,
@@ -51,14 +51,21 @@ assert.equal(warningChecks.web_search.action.target, "config-api_mode");
 const unknownHealth = buildSetupHealth({
   ...defaultFacts,
   exposed_entity_count: null,
+  memory: {mode: "automatic", available: false},
   knowledge: {enabled: true, source_count: 0, available: false},
 });
 const unknownChecks = Object.fromEntries(unknownHealth.checks.map((check) => [check.id, check]));
 assert.equal(unknownHealth.state, "warning");
-assert.equal(unknownHealth.unknown_count, 2);
+assert.equal(unknownHealth.unknown_count, 3);
 assert.equal(unknownChecks.home_assistant_exposure.state, "unknown");
+assert.equal(unknownChecks.memory.state, "unknown");
 assert.equal(unknownChecks.knowledge.state, "unknown");
 assert.equal(unknownChecks.knowledge.value, "Unable to determine");
+
+const unavailableHealth = buildSetupHealth({unavailable: true, can_manage: true});
+assert.equal(unavailableHealth.state, "warning");
+assert.equal(unavailableHealth.unknown_count, 1);
+assert.equal(unavailableHealth.checks[0].id, "setup_health");
 
 const panel = {
   _result: {
