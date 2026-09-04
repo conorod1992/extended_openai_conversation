@@ -1011,44 +1011,82 @@ class PersistentMemory:
             if (allowed_scopes is None or memory.user_id in allowed_scopes)
             and self._cached_embedding(memory) is None
         ]
-        for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
-            batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
-            vectors = await provider([_embedding_text(memory) for memory in batch])
-            if len(vectors) != len(batch):
-                raise ValueError(
-                    "embedding provider returned the wrong number of vectors"
-                )
-            generated_ids: list[str] = []
-            async with self._lock:
-                if (
-                    self._embedding_provider is not provider
-                    or self._embedding_model != model
-                ):
-                    return False
-                for memory, vector in zip(batch, vectors, strict=True):
-                    current = self._memories.get(memory.memory_id)
-                    if (
-                        current is None
-                        or _embedding_fingerprint(current)
-                        != _embedding_fingerprint(memory)
-                        or self._cached_embedding(current) is not None
-                    ):
-                        continue
-                    self._embedding_cache[memory.memory_id] = EmbeddingCacheEntry(
-                        model=model,
-                        fingerprint=_embedding_fingerprint(memory),
-                        vector=_clean_embedding(vector),
+        generated_entries: dict[str, EmbeddingCacheEntry] = {}
+        try:
+            for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
+                batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
+                vectors = await provider([_embedding_text(memory) for memory in batch])
+                if len(vectors) != len(batch):
+                    raise ValueError(
+                        "embedding provider returned the wrong number of vectors"
                     )
-                    generated_ids.append(memory.memory_id)
-                if not generated_ids:
-                    continue
-                self._embedding_cache_dirty = True
-                if not await self._async_save_embedding_cache_locked():
-                    if background:
-                        for memory_id in generated_ids:
-                            self._embedding_cache.pop(memory_id, None)
-                    return False
-        return True
+                batch_generated = False
+                async with self._lock:
+                    if (
+                        self._embedding_provider is not provider
+                        or self._embedding_model != model
+                    ):
+                        if background and generated_entries:
+                            await self._async_commit_background_embeddings_locked(
+                                generated_entries
+                            )
+                        return False
+                    for memory, vector in zip(batch, vectors, strict=True):
+                        current = self._memories.get(memory.memory_id)
+                        if (
+                            current is None
+                            or _embedding_fingerprint(current)
+                            != _embedding_fingerprint(memory)
+                            or self._cached_embedding(current) is not None
+                        ):
+                            continue
+                        entry = EmbeddingCacheEntry(
+                            model=model,
+                            fingerprint=_embedding_fingerprint(memory),
+                            vector=_clean_embedding(vector),
+                        )
+                        self._embedding_cache[memory.memory_id] = entry
+                        generated_entries[memory.memory_id] = entry
+                        batch_generated = True
+                    if not batch_generated:
+                        continue
+                    self._embedding_cache_dirty = True
+                    if (
+                        not background
+                        and not await self._async_save_embedding_cache_locked()
+                    ):
+                        return False
+        except Exception:
+            if background and generated_entries:
+                async with self._lock:
+                    await self._async_commit_background_embeddings_locked(
+                        generated_entries
+                    )
+            raise
+
+        if not background or not generated_entries:
+            return True
+        async with self._lock:
+            if (
+                self._embedding_provider is not provider
+                or self._embedding_model != model
+            ):
+                await self._async_commit_background_embeddings_locked(generated_entries)
+                return False
+            return await self._async_commit_background_embeddings_locked(
+                generated_entries
+            )
+
+    async def _async_commit_background_embeddings_locked(
+        self, generated_entries: Mapping[str, EmbeddingCacheEntry]
+    ) -> bool:
+        """Persist one background refresh and discard only its entries on failure."""
+        if await self._async_save_embedding_cache_locked():
+            return True
+        for memory_id, generated_entry in generated_entries.items():
+            if self._embedding_cache.get(memory_id) == generated_entry:
+                self._embedding_cache.pop(memory_id, None)
+        return False
 
     async def _async_save_locked(self) -> None:
         await self._storage.async_save(

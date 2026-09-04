@@ -6,6 +6,7 @@ import asyncio
 from copy import deepcopy
 
 from custom_components.extended_openai_conversation_responses.memory import (
+    EMBEDDING_CACHE_BATCH_SIZE,
     PersistentMemory,
 )
 
@@ -21,6 +22,18 @@ class FakeStorage:
 
     async def async_save(self, data):
         self.data = deepcopy(data)
+
+
+class CountingCacheStorage(FakeStorage):
+    """Embedding cache that records persistence frequency."""
+
+    def __init__(self, data=None) -> None:
+        super().__init__(data)
+        self.save_calls = 0
+
+    async def async_save(self, data):
+        self.save_calls += 1
+        await super().async_save(data)
 
 
 class FailingCacheStorage(FakeStorage):
@@ -62,6 +75,32 @@ async def test_provider_configuration_prewarms_existing_memories() -> None:
     calls.clear()
     assert await memory.async_prepare_hybrid(["alice"], "What breed is Oscar?")
     assert calls == [["What breed is Oscar?"]]
+
+
+async def test_background_warmup_coalesces_embedding_cache_writes() -> None:
+    cache = CountingCacheStorage()
+    memory = await _background_memory(cache)
+    memory_count = EMBEDDING_CACHE_BATCH_SIZE + 1
+    for index in range(memory_count):
+        await memory.async_add(
+            "alice",
+            f"Unique memory {index} records code value-{index}.",
+            "test",
+            "explicit",
+        )
+
+    calls: list[list[str]] = []
+
+    async def embeddings(inputs: list[str]) -> list[list[float]]:
+        calls.append(inputs)
+        return [[1.0, float(index + 1)] for index, _ in enumerate(inputs)]
+
+    memory.set_embedding_provider(embeddings, "test-model")
+    await memory.async_wait_for_embedding_maintenance()
+
+    assert [len(batch) for batch in calls] == [EMBEDDING_CACHE_BATCH_SIZE, 1]
+    assert cache.save_calls == 1
+    assert len(cache.data["embeddings"]) == memory_count
 
 
 async def test_embedding_relevant_write_is_warmed_after_write_returns() -> None:
