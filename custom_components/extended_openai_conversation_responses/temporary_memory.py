@@ -20,6 +20,7 @@ STORAGE_KEY_PREFIX = f"{DOMAIN}.temporary_memory"
 MAX_ACTIVE_RECORDS = 100
 MAX_CONTENT_LENGTH = 500
 MAX_CATEGORY_LENGTH = 64
+MAX_DELETE_RECORDS = 50
 MAX_INJECT_RECORDS = 30
 MAX_INJECT_CHARACTERS = 6_000
 
@@ -210,9 +211,13 @@ class TemporaryMemory:
 
     async def async_delete(self, scope_id: str, memory_ids: list[str]) -> int:
         """Delete selected records only from the current scope."""
+        if not memory_ids or len(memory_ids) > MAX_DELETE_RECORDS:
+            raise ValueError(
+                f"memory_ids must contain 1 to {MAX_DELETE_RECORDS} IDs"
+            )
         async with self._lock:
             deleted = 0
-            for memory_id in set(memory_ids[:50]):
+            for memory_id in set(memory_ids):
                 record = self._records.get(memory_id)
                 if record is not None and record.scope_id == scope_id:
                     del self._records[memory_id]
@@ -431,7 +436,12 @@ def temporary_memory_tools() -> list[dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "memory_ids": {"type": "array", "items": {"type": "string"}},
+                        "memory_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 1,
+                            "maxItems": MAX_DELETE_RECORDS,
+                        },
                     },
                     "required": ["memory_ids"],
                     "additionalProperties": False,
