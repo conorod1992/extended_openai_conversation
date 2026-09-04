@@ -7,8 +7,6 @@ from dataclasses import dataclass
 import json
 from typing import Any
 
-from openai.types.chat import ChatCompletionToolParam
-
 from homeassistant.exceptions import HomeAssistantError
 
 from .capabilities import resolve_effective_capabilities
@@ -103,12 +101,7 @@ def format_function_tools(
     if api_mode == API_MODE_RESPONSES:
         return [{"type": "function", **tool["spec"]} for tool in model_tools]
     return [
-        dict(
-            ChatCompletionToolParam(
-                type="function",
-                function=tool["spec"],
-            )
-        )
+        {"type": "function", "function": tool["spec"]}
         for tool in model_tools
     ]
 
