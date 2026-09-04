@@ -122,9 +122,7 @@ def install_management_setup_health() -> bool:
             subentry_id = message.get("subentry_id")
             if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
                 raise ValueError("entry_id and subentry_id are required")
-            entry, subentry = management_ui.entry_and_agent(
-                hass, entry_id, subentry_id
-            )
+            entry, subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
             agent = result.get("agent") if isinstance(result, dict) else None
             knowledge_source_count = (
                 int(agent.get("knowledge_source_count", 0))
