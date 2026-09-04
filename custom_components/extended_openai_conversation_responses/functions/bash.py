@@ -89,9 +89,7 @@ async def _async_cleanup_process(
     if process.returncode is None and graceful:
         stop_process(terminate=True)
         with suppress(TimeoutError):
-            await asyncio.wait_for(
-                process.wait(), timeout=_SHELL_CANCEL_GRACE_SECONDS
-            )
+            await asyncio.wait_for(process.wait(), timeout=_SHELL_CANCEL_GRACE_SECONDS)
 
     if process.returncode is None:
         stop_process(terminate=False)
