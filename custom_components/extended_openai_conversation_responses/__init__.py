@@ -15,6 +15,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from . import management_ui as _management_ui
+from .agent_maintenance import install_agent_maintenance_barrier
 from .const import (
     CONF_API_PROVIDER,
     CONF_API_VERSION,
@@ -153,6 +154,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_safety_hardening()
     install_configurable_regex_isolation()
     install_model_search_hardening()
+    # Install last so the gate wraps the effective post-optimization entry points.
+    install_agent_maintenance_barrier()
     await async_migrate_integration(hass)
     await async_setup_ha_permissions(hass)
     await async_setup_services(hass, config)
