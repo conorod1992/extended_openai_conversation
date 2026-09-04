@@ -100,10 +100,7 @@ def format_function_tools(
     model_tools = prepare_model_function_tools(function_tools)
     if api_mode == API_MODE_RESPONSES:
         return [{"type": "function", **tool["spec"]} for tool in model_tools]
-    return [
-        {"type": "function", "function": tool["spec"]}
-        for tool in model_tools
-    ]
+    return [{"type": "function", "function": tool["spec"]} for tool in model_tools]
 
 
 def build_web_search_tool(
