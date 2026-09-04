@@ -5,6 +5,9 @@ if (typeof document === "undefined") await ensureAgentConfigModule();
 
 const DELAYED_CHOICE = (panel, enabled, checked) => `<label class="group-function-choice" data-local-intent-choice data-choice-search="delayed device commands scheduled deferred actions turn off later"><input type="checkbox" data-config="local_intent_delayed_commands_to_ai" data-type="boolean" ${checked ? "checked" : ""} ${enabled ? "" : "disabled"}><span><strong>Delayed device commands</strong><small>For example, “turn off the lights in 20 minutes”. Normal timers such as “set a 20 minute timer” can still stay local.</small></span></label>`;
 
+export const BACKUP_CREDENTIAL_WARNING = "Recognised API keys, tokens, passwords, authorization headers and other common secrets are redacted from full backups. Re-enter any required credentials after restore. Redaction is best-effort, so review backup files before sharing them.";
+const BACKUP_CREDENTIAL_NOTICE = `<p class="privacy-warning credential-redaction-warning"><strong>Credentials are not backed up:</strong> ${BACKUP_CREDENTIAL_WARNING}</p>`;
+
 function simplifyConfigurationMarkupLegacy(panel, html) {
   const config = panel._draft || panel._result?.config || {};
   const localEnabled = Boolean(config.local_intents_enabled);
@@ -25,6 +28,7 @@ function simplifyConfigurationMarkupLegacy(panel, html) {
     .replace(/\s*<div class="config-toggle setting" data-field="local_intent_delayed_commands_to_ai"[\s\S]*?<span class="switch-track" aria-hidden="true"><\/span><\/label><\/div>/, "")
     .replace("Always send these command types to AI", "Send these command types to AI")
     .replace("Select any Home Assistant command types that should skip local handling and continue to your Function Tools or AI model.", "Choose any commands that should skip local handling and continue to your Function Tools or AI model.");
+  result = result.replace(/(<div class="backup-panel"[^>]*>[\s\S]*?<p class="privacy-warning">[\s\S]*?<\/p>)/, `$1${BACKUP_CREDENTIAL_NOTICE}`);
   return result.replace('<div id="local-intent-list" class="group-function-choices">', `<div id="local-intent-list" class="group-function-choices">${DELAYED_CHOICE(panel, localEnabled, Boolean(config.local_intent_delayed_commands_to_ai))}`);
 }
 
@@ -37,26 +41,31 @@ function simplifyConfigurationMarkup(panel, html) {
   root.querySelector(".config-jumps")?.remove();
 
   const local = root.querySelector("#config-local");
-  if (!local) return template.innerHTML;
-  const heading = local.querySelector(".config-section-heading");
-  const description = heading?.querySelector("p:last-child");
-  if (description) description.textContent = "Let Extended OpenAI try Home Assistant's built-in commands after Request Rules, before using AI.";
-  heading?.insertAdjacentHTML("afterend", `<div class="notice local-handling-explainer"><strong>How this differs from Home Assistant's “Prefer local handling”</strong><p>Home Assistant's own option runs before a request reaches Extended OpenAI. That is simple and fast, but it means Extended OpenAI cannot apply Request Rules or choose that particular command for a Function Tool instead.</p><p><strong>Extended OpenAI local handling</strong> runs after Request Rules. It can still use Home Assistant's fast built-in commands, while letting you send selected command types on to your Function Tools or AI model.</p><p><strong>Example:</strong> “Turn on the kitchen light” can stay local, while “turn off the kitchen light in 20 minutes” can be sent to a deferred-action Function Tool.</p></div>`);
+  if (local) {
+    const heading = local.querySelector(".config-section-heading");
+    const description = heading?.querySelector("p:last-child");
+    if (description) description.textContent = "Let Extended OpenAI try Home Assistant's built-in commands after Request Rules, before using AI.";
+    heading?.insertAdjacentHTML("afterend", `<div class="notice local-handling-explainer"><strong>How this differs from Home Assistant's “Prefer local handling”</strong><p>Home Assistant's own option runs before a request reaches Extended OpenAI. That is simple and fast, but it means Extended OpenAI cannot apply Request Rules or choose that particular command for a Function Tool instead.</p><p><strong>Extended OpenAI local handling</strong> runs after Request Rules. It can still use Home Assistant's fast built-in commands, while letting you send selected command types on to your Function Tools or AI model.</p><p><strong>Example:</strong> “Turn on the kitchen light” can stay local, while “turn off the kitchen light in 20 minutes” can be sent to a deferred-action Function Tool.</p></div>`);
 
-  const enabledSetting = local.querySelector('[data-field="local_intents_enabled"]');
-  const enabledLabel = enabledSetting?.querySelector("strong");
-  const enabledDescription = enabledSetting?.querySelector("small");
-  if (enabledLabel) enabledLabel.textContent = "Use Extended OpenAI local handling";
-  if (enabledDescription) enabledDescription.textContent = "After Request Rules, try Home Assistant's built-in commands first. Requests that do not match locally, or that you exclude below, continue to your Function Tools or AI model.";
-  local.querySelector('[data-field="local_intent_delayed_commands_to_ai"]')?.remove();
+    const enabledSetting = local.querySelector('[data-field="local_intents_enabled"]');
+    const enabledLabel = enabledSetting?.querySelector("strong");
+    const enabledDescription = enabledSetting?.querySelector("small");
+    if (enabledLabel) enabledLabel.textContent = "Use Extended OpenAI local handling";
+    if (enabledDescription) enabledDescription.textContent = "After Request Rules, try Home Assistant's built-in commands first. Requests that do not match locally, or that you exclude below, continue to your Function Tools or AI model.";
+    local.querySelector('[data-field="local_intent_delayed_commands_to_ai"]')?.remove();
 
-  const exceptions = local.querySelector('[data-search*="local handling exceptions"] .subheading');
-  const exceptionsHeading = exceptions?.querySelector("h3");
-  const exceptionsDescription = exceptions?.querySelector("p");
-  if (exceptionsHeading) exceptionsHeading.textContent = "Send these command types to AI";
-  if (exceptionsDescription) exceptionsDescription.textContent = "Choose any commands that should skip local handling and continue to your Function Tools or AI model.";
+    const exceptions = local.querySelector('[data-search*="local handling exceptions"] .subheading');
+    const exceptionsHeading = exceptions?.querySelector("h3");
+    const exceptionsDescription = exceptions?.querySelector("p");
+    if (exceptionsHeading) exceptionsHeading.textContent = "Send these command types to AI";
+    if (exceptionsDescription) exceptionsDescription.textContent = "Choose any commands that should skip local handling and continue to your Function Tools or AI model.";
 
-  local.querySelector("#local-intent-list")?.insertAdjacentHTML("afterbegin", DELAYED_CHOICE(panel, Boolean(config.local_intents_enabled), Boolean(config.local_intent_delayed_commands_to_ai)));
+    local.querySelector("#local-intent-list")?.insertAdjacentHTML("afterbegin", DELAYED_CHOICE(panel, Boolean(config.local_intents_enabled), Boolean(config.local_intent_delayed_commands_to_ai)));
+  }
+
+  const backupPanel = root.querySelector("#config-backup .backup-panel");
+  const privateWarning = backupPanel?.querySelector(".privacy-warning");
+  if (privateWarning && !backupPanel.querySelector(".credential-redaction-warning")) privateWarning.insertAdjacentHTML("afterend", BACKUP_CREDENTIAL_NOTICE);
   return template.innerHTML;
 }
 
@@ -135,7 +144,7 @@ export function functionToolCountLabel(...args) {
 }
 
 export function backupSummaryLines(...args) {
-  return requiredImplementation("backupSummaryLines").backupSummaryLines(...args);
+  return [...requiredImplementation("backupSummaryLines").backupSummaryLines(...args), BACKUP_CREDENTIAL_WARNING];
 }
 
 export function canReplaceToolYamlWithoutConfirmation(...args) {
