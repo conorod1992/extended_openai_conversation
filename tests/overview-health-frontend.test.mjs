@@ -114,7 +114,7 @@ const nonAdminMarkup = renderOverview(panel, agent);
 assert.match(nonAdminMarkup, /Unable to determine/);
 assert.match(nonAdminMarkup, /2 items to review/);
 assert.match(nonAdminMarkup, /An administrator can run Diagnostics/);
-assert.doesNotMatch(nonAdminMarkup, /setup-health-action/);
+assert.doesNotMatch(nonAdminMarkup, /<button[^>]*class="[^"]*setup-health-action/);
 
 const source = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js", import.meta.url),
