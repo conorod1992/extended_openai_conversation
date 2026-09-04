@@ -30,8 +30,7 @@ def _bounded_offset(message: dict[str, Any]) -> int:
 def _search_projection(record: Any) -> str:
     """Mirror the former browser-side Memory filter without touching retrieval."""
     return " ".join(
-        str(value or "")
-        for value in (record.content, record.category, record.source)
+        str(value or "") for value in (record.content, record.category, record.source)
     ).casefold()
 
 
@@ -55,7 +54,9 @@ def _search_page(
     records.sort(key=lambda record: record.updated_at, reverse=True)
     page = records[offset : offset + limit]
     return {
-        "memories": [memory_as_dict(record, include_scope=include_scope) for record in page],
+        "memories": [
+            memory_as_dict(record, include_scope=include_scope) for record in page
+        ],
         "offset": offset,
         "limit": limit,
         "has_more": len(records) > offset + limit,
