@@ -21,6 +21,7 @@ from ..const import (
     SHELL_OUTPUT_LIMIT,
     SHELL_TIMEOUT,
 )
+from ..regex_execution import async_run_configurable_regex
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -161,6 +162,24 @@ class BashFunction(Function):
                         f"Command blocked by defensive path guard (path '{raw}' outside working dir).\nSet 'restrict_to_workspace: false' to permit literal paths outside the working directory."
                     )
 
+    async def _async_guard_command(
+        self,
+        hass: HomeAssistant,
+        command: str,
+        cwd: str | Path,
+        restrict_to_workspace: bool,
+        allow_patterns: list[str] | None = None,
+    ) -> None:
+        """Run command guards, including configured regex allowlists, off-loop."""
+        await async_run_configurable_regex(
+            hass,
+            self._guard_command,
+            command,
+            cwd,
+            restrict_to_workspace,
+            allow_patterns,
+        )
+
     async def execute(
         self,
         hass: HomeAssistant,
@@ -209,7 +228,8 @@ class BashFunction(Function):
         allow_patterns = function_config.get("allow_patterns", [])
 
         try:
-            self._guard_command(
+            await self._async_guard_command(
+                hass,
                 command,
                 cwd=cwd,
                 restrict_to_workspace=restrict_to_workspace,
