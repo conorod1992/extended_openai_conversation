@@ -436,7 +436,7 @@ export function installManagementConfigurationGuidance(registry = globalThis.cus
 
     const originalCall = prototype._call;
     prototype._call = async function(...args) {
-      const guidanceCall = args[0] === "configuration" && ["get", "validate", "update"].includes(args[1]);
+      const guidanceCall = args[0] === "configuration" && ["get", "validate", "update", "save"].includes(args[1]);
       const agentId = this._agentId;
       const revision = guidanceCall
         ? (this._eocGuidanceCallRevision = (this._eocGuidanceCallRevision || 0) + 1)
