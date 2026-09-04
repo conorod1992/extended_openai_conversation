@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 import math
 from typing import Any
 
@@ -17,7 +17,7 @@ _LATEST_FOOTPRINTS = f"{DOMAIN}.input_footprints"
 _INSTALLED = False
 
 ManagementCommand = Callable[
-    [HomeAssistant, str, bool, dict[str, Any]], Awaitable[dict[str, Any]]
+    [HomeAssistant, str, bool, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]
 ]
 
 
@@ -128,9 +128,9 @@ async def async_input_footprint(
     """Return baseline and latest content-free input footprint measurements."""
     from . import management_ui
 
-    entry, subentry = management_ui.entry_and_agent(
-        hass, message.get("entry_id"), message.get("subentry_id")
-    )
+    entry_id = str(message.get("entry_id") or "")
+    subentry_id = str(message.get("subentry_id") or "")
+    entry, subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
     preview = await management_ui._async_preview_effective_request(
         hass, entry, subentry, dict(subentry.data), user_id
     )
