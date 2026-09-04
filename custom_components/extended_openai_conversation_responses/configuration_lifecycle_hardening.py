@@ -195,6 +195,16 @@ async def async_reconcile_runtime_configuration(
     ):
         return
 
+    # A few direct unit/service seams deliberately exercise the core request logic
+    # on a partially constructed entity. Runtime manager reconciliation only makes
+    # sense once Home Assistant has supplied the real entry identity.
+    if (
+        getattr(entity, "hass", None) is None
+        or getattr(entity, "entry", None) is None
+        or getattr(entity.subentry, "subentry_id", None) is None
+    ):
+        return
+
     lock = getattr(entity, _RUNTIME_CONFIG_LOCK, None)
     if lock is None:
         lock = asyncio.Lock()
@@ -388,8 +398,10 @@ def _install_runtime_configuration_lifecycle() -> None:
             return []
         return await original_temporary_retrieve(entity, *args, **kwargs)
 
-    ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories = (
-        retrieve_temporary_memories  # type: ignore[assignment]
+    setattr(
+        ExtendedOpenAIAgentEntity,
+        "_async_retrieve_temporary_memories",
+        retrieve_temporary_memories,
     )
 
     original_memory_execute = ExtendedOpenAIAgentEntity._async_execute_memory_tool
@@ -415,15 +427,17 @@ def _install_runtime_configuration_lifecycle() -> None:
             raise RuntimeError("temporary memory is disabled")
         return await original_temporary_execute(entity, *args, **kwargs)
 
-    ExtendedOpenAIAgentEntity._async_execute_temporary_memory_tool = (
-        execute_temporary_memory  # type: ignore[assignment]
+    setattr(
+        ExtendedOpenAIAgentEntity,
+        "_async_execute_temporary_memory_tool",
+        execute_temporary_memory,
     )
 
     original_archive_execute = ExtendedOpenAIAgentEntity._async_execute_archive_tool
 
     @wraps(original_archive_execute)
     async def execute_archive(entity: Any, *args: Any, **kwargs: Any) -> Any:
-        if not entity.subentry.data.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED):
+        if not _archive_runtime_required(entity.subentry.data):
             raise RuntimeError("conversation archive is disabled")
         return await original_archive_execute(entity, *args, **kwargs)
 
