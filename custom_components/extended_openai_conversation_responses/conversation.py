@@ -554,7 +554,7 @@ class ExtendedOpenAIAgentEntity(
             )
             temporary_scope = (
                 None
-                if request_policy.guest_active
+                if request_policy.guest_active or not scope.allows_retention
                 else resolution.key or f"conversation:{chat_log.conversation_id}"
             )
             temporary_token = _ACTIVE_TEMPORARY_SCOPE.set(temporary_scope)
@@ -1056,7 +1056,19 @@ class ExtendedOpenAIAgentEntity(
     async def _async_rank_memories(
         self, readable_scope_ids: list[str], query: str, limit: int
     ) -> list[MemoryRecord]:
+        return await self._async_search_memories(readable_scope_ids, query, limit)
+
+    async def _async_search_memories(
+        self,
+        readable_scope_ids: list[str],
+        query: str,
+        limit: int,
+        category: str | None = None,
+    ) -> list[MemoryRecord]:
+        """Search using the configured lexical or Hybrid retrieval semantics."""
         assert self._memory is not None
+        if not readable_scope_ids:
+            return []
         hybrid = (
             self.subentry.data.get(
                 CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE
@@ -1068,14 +1080,16 @@ class ExtendedOpenAIAgentEntity(
             if hybrid
             else None
         )
-        if not hybrid and len(readable_scope_ids) == 1:
-            return await self._memory.async_search(
-                readable_scope_ids[0], query, limit=limit
-            )
+        search_scope: str | list[str] = (
+            readable_scope_ids[0]
+            if not hybrid and len(readable_scope_ids) == 1
+            else readable_scope_ids
+        )
         return await self._memory.async_search(
-            readable_scope_ids,
+            search_scope,
             query,
-            limit=limit,
+            category,
+            limit,
             query_embedding=query_embedding,
             hybrid=hybrid and query_embedding is not None,
         )
@@ -1698,11 +1712,11 @@ class ExtendedOpenAIAgentEntity(
             search_scopes = self._filter_read_scopes(
                 readable_scope_ids, requested_scope
             )
-            memories = await self._memory.async_search(
+            memories = await self._async_search_memories(
                 search_scopes,
                 query,
-                category,
                 limit,
+                category,
             )
             personal_id = self._personal_memory_scope_id(llm_context)
             return {
@@ -1748,9 +1762,16 @@ class ExtendedOpenAIAgentEntity(
             content = arguments.get("content")
             category = arguments.get("category")
             metadata = {
-                key: arguments.get(key)
+                key: arguments[key]
                 for key in ("importance", "subject", "key", "valid_from")
+                if arguments.get(key) is not None
             }
+            clear_fields = arguments.get("clear_fields")
+            if clear_fields is not None and (
+                not isinstance(clear_fields, list)
+                or not all(isinstance(field, str) for field in clear_fields)
+            ):
+                raise ValueError("clear_fields must be a list of metadata field names")
             if (
                 not isinstance(memory_id, str)
                 or (content is not None and not isinstance(content, str))
@@ -1758,7 +1779,8 @@ class ExtendedOpenAIAgentEntity(
                 or (
                     content is None
                     and category is None
-                    and all(value is None for value in metadata.values())
+                    and not metadata
+                    and not clear_fields
                 )
             ):
                 raise ValueError("memory_id and at least one valid update are required")
@@ -1771,6 +1793,7 @@ class ExtendedOpenAIAgentEntity(
                 content,
                 category,
                 **metadata,
+                clear_fields=clear_fields,
             )
             return {
                 "status": "updated",
