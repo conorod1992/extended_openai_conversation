@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from json import JSONDecodeError
-import logging
 from typing import TYPE_CHECKING
 
 from homeassistant.components import ai_task, conversation
@@ -11,16 +9,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.util.json import json_loads
 
 from .entity import ExtendedOpenAIBaseLLMEntity
+from .structured_output import parse_ai_task_structured_response
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigSubentry
 
     from . import ExtendedOpenAIConfigEntry
-
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -87,15 +83,7 @@ class ExtendedOpenAITaskEntity(
                 data=text,
             )
 
-        try:
-            data = json_loads(text)
-        except JSONDecodeError as err:
-            _LOGGER.error(
-                "Failed to parse JSON response: %s. Response: %s",
-                err,
-                text,
-            )
-            raise HomeAssistantError("Error with structured response") from err
+        data = parse_ai_task_structured_response(text)
 
         return ai_task.GenDataTaskResult(
             conversation_id=chat_log.conversation_id,
