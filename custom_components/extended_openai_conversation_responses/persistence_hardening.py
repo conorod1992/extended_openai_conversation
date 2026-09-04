@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
@@ -181,14 +182,46 @@ def _install_manager_guard(
         return result
 
     async def async_save_locked(manager: Any, *args: Any, **kwargs: Any) -> Any:
+        save_task = asyncio.create_task(original_save(manager, *args, **kwargs))
+        cancellation: asyncio.CancelledError | None = None
+
+        # A caller cancellation must not abort a Store write after the manager's live
+        # state has already changed. Keep observing the save until it reaches a known
+        # result; repeated cancellation requests remain deferred to this boundary.
+        while not save_task.done():
+            try:
+                await asyncio.shield(save_task)
+            except asyncio.CancelledError as err:
+                if save_task.cancelled():
+                    committed = getattr(manager, _COMMITTED_STATE, None)
+                    if committed is not None:
+                        restorer(manager, committed)
+                    raise
+                if cancellation is None:
+                    cancellation = err
+            except Exception:
+                # Inspect the finished task below so rollback and cancellation
+                # precedence stay in one place.
+                break
+
         try:
-            result = await original_save(manager, *args, **kwargs)
-        except Exception:
+            result = save_task.result()
+        except asyncio.CancelledError:
             committed = getattr(manager, _COMMITTED_STATE, None)
             if committed is not None:
                 restorer(manager, committed)
             raise
+        except Exception as err:
+            committed = getattr(manager, _COMMITTED_STATE, None)
+            if committed is not None:
+                restorer(manager, committed)
+            if cancellation is not None:
+                raise cancellation from err
+            raise
+
         setattr(manager, _COMMITTED_STATE, snapshotter(manager))
+        if cancellation is not None:
+            raise cancellation
         return result
 
     manager_type.async_initialize = async_initialize
