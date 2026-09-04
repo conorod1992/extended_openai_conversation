@@ -1051,7 +1051,10 @@ class PersistentMemory:
                     if not batch_generated:
                         continue
                     self._embedding_cache_dirty = True
-                    if not background and not await self._async_save_embedding_cache_locked():
+                    if (
+                        not background
+                        and not await self._async_save_embedding_cache_locked()
+                    ):
                         return False
         except Exception:
             if background and generated_entries:
@@ -1070,7 +1073,9 @@ class PersistentMemory:
             ):
                 await self._async_commit_background_embeddings_locked(generated_entries)
                 return False
-            return await self._async_commit_background_embeddings_locked(generated_entries)
+            return await self._async_commit_background_embeddings_locked(
+                generated_entries
+            )
 
     async def _async_commit_background_embeddings_locked(
         self, generated_entries: Mapping[str, EmbeddingCacheEntry]
