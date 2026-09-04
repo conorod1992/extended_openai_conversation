@@ -94,7 +94,7 @@ function scheduleMemorySearch(panel) {
 async function loadMoreMemories(panel, button) {
   const state = browserState(panel);
   const current = panel._result?.memories || [];
-  const query = state.memoryQuery;
+  const query = state.memoryQuery ? panel._query.trim() : "";
   panel._setSaving(button, true, "Loading…");
   try {
     const result = await panel._call("memories", query ? "search" : "list", {
@@ -130,7 +130,8 @@ function mappedArchiveResults(found) {
 async function loadMoreConversations(panel, button) {
   const state = browserState(panel);
   const target = resultTarget(panel);
-  const current = target?.sessions?.sessions || [];
+  if (!target) return;
+  const current = target.sessions?.sessions || [];
   panel._setSaving(button, true, "Loading…");
   try {
     const result = state.archiveQuery
@@ -161,7 +162,7 @@ async function loadMoreTurns(panel, button) {
   panel._setSaving(button, true, "Loading…");
   try {
     const data = await panel._call("conversations", "get", {
-      scope_id: panel._scopeId,
+      scope_id: state.scopeId,
       session_id: state.sessionId,
       start_turn: state.turns.length,
       limit: ARCHIVE_PAGE_SIZE,
@@ -190,13 +191,17 @@ export function installManagementBrowser(Panel) {
   };
 
   proto._loadSection = async function(...args) {
-    const value = await originalLoadSection.apply(this, args);
     const state = browserState(this);
+    clearTimeout(state.memorySearchTimer);
+    state.memorySearchSequence += 1;
+    const view = this._viewKey();
+    if (view === "data-memory/memories" && this._memoryKind === "persistent") state.memoryQuery = "";
+    if (view === "data-memory/conversations") state.archiveQuery = "";
+    const value = await originalLoadSection.apply(this, args);
     if (this._viewKey() === "data-memory/memories" && this._memoryKind === "persistent") {
-      state.memoryQuery = "";
       indexMemories(this);
+      if (this._query.trim()) await runMemorySearch(this);
     }
-    if (this._viewKey() === "data-memory/conversations") state.archiveQuery = "";
     return value;
   };
 
@@ -230,7 +235,7 @@ export function installManagementBrowser(Panel) {
     this.shadowRoot.querySelectorAll(".memory-list .list-card").forEach((card) => {
       card.hidden = Boolean(query && !(state.projections.get(card.dataset.memoryId) || "").includes(query));
     });
-    scheduleMemorySearch(this);
+    if (query !== state.memoryQuery) scheduleMemorySearch(this);
   };
 
   proto._searchArchive = async function() {
@@ -242,6 +247,7 @@ export function installManagementBrowser(Panel) {
     this._setSaving(button, true, "Searching…");
     try {
       const target = resultTarget(this);
+      if (!target) return;
       if (query) {
         const found = await this._call("conversations", "search", {scope_id: this._scopeId, query, limit: ARCHIVE_PAGE_SIZE, offset: 0});
         target.sessions = mappedArchiveResults(found);
@@ -265,7 +271,7 @@ export function installManagementBrowser(Panel) {
     try {
       const data = await this._call("conversations", "get", {scope_id: this._scopeId, session_id: sessionId, start_turn: 0, limit: ARCHIVE_PAGE_SIZE});
       root.querySelector("#session-title").textContent = data.session.title || "Untitled conversation";
-      browserState(this).session = {sessionId, turns: [...(data.turns || [])], hasMore: Boolean(data.has_more)};
+      browserState(this).session = {scopeId: this._scopeId, sessionId, turns: [...(data.turns || [])], hasMore: Boolean(data.has_more)};
       renderSessionBody(this);
     } catch (err) {
       root.querySelector("#session-body").innerHTML = `<div class="error" role="alert">${this._e(err.message || String(err))}</div>`;
