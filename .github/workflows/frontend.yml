@@ -56,6 +56,7 @@ jobs:
           node tests/feature-status-ui.test.mjs
           node tests/configuration-clarity-frontend.test.mjs
           node tests/configuration-guidance-frontend.test.mjs
+          node tests/overview-health-frontend.test.mjs
 
       - name: Type check
         working-directory: frontend
