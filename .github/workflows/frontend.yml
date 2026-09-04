@@ -37,6 +37,13 @@ jobs:
         working-directory: frontend
         run: npm install --no-audit --no-fund
 
+      - name: Print generated package lock
+        working-directory: frontend
+        run: |
+          echo "===PACKAGE_LOCK_BEGIN==="
+          cat package-lock.json
+          echo "===PACKAGE_LOCK_END==="
+
       - name: Check shipped frontend modules
         run: |
           find custom_components/extended_openai_conversation_responses/frontend \
