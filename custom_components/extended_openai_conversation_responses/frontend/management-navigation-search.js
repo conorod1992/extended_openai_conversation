@@ -1,4 +1,36 @@
-import {pageMetadata, searchSettings} from "./frontend-navigation.js";
+import {SETTINGS_INDEX, pageMetadata} from "./frontend-navigation.js";
+
+export function buildSettingsSearchProjection(settings = SETTINGS_INDEX) {
+  return settings.map((item, index) => {
+    const label = String(item.label || "");
+    const description = String(item.description || "");
+    const terms = String(item.terms || "");
+    const configKey = String(item.configKey || "");
+    return {
+      item,
+      index,
+      label: label.toLowerCase(),
+      haystack: `${label} ${description} ${terms} ${configKey}`.toLowerCase(),
+    };
+  });
+}
+
+export const SETTINGS_SEARCH_PROJECTION = buildSettingsSearchProjection();
+
+export function searchProjectedSettings(query, projection = SETTINGS_SEARCH_PROJECTION) {
+  const normalized = String(query || "").trim().toLowerCase();
+  const terms = normalized.split(/\s+/).filter(Boolean);
+  if (!terms.length) return [];
+  return projection
+    .map((entry) => {
+      if (!terms.every((term) => entry.haystack.includes(term))) return null;
+      const score = entry.label === normalized ? 0 : entry.label.startsWith(normalized) ? 1 : entry.label.includes(normalized) ? 2 : 3;
+      return {item: entry.item, index: entry.index, score};
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.score - b.score || a.index - b.index)
+    .map(({item}) => item);
+}
 
 const PATCHED = Symbol.for("extended-openai.management-navigation-search");
 const SEARCH_STYLE = `
@@ -13,12 +45,14 @@ const SEARCH_STYLE = `
   .eoc-global-search .settings-result small{grid-column:1;color:var(--secondary-text-color);line-height:1.4}
   .eoc-global-search .settings-current{grid-column:2;grid-row:2;font-size:12px;color:var(--primary-color);align-self:start;text-align:right;white-space:nowrap}
   .eoc-global-search .settings-loading{color:var(--secondary-text-color)}
+  .eoc-global-search .settings-load-error{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px;margin:2px;border-radius:8px;background:var(--secondary-background-color);color:var(--secondary-text-color);font-size:13px}
+  .eoc-global-search .settings-load-error button{min-height:32px;padding:5px 10px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color)}
   .eoc-global-search .empty{margin:8px 10px}
   .subsection-nav{display:flex;gap:8px;flex-wrap:wrap;overflow:visible;border:0;margin:0 0 12px;padding:0}
   .subsection-nav button{min-height:38px;padding:8px 13px;border:1px solid var(--divider-color);border-radius:999px;background:var(--card-background-color);color:var(--secondary-text-color)}
   .subsection-nav button.active{border-color:var(--primary-color);background:color-mix(in srgb,var(--primary-color) 10%,var(--card-background-color));color:var(--primary-color)}
   @media (min-width:801px){.section-selector>label{display:none}.section-selector{margin-top:0}.subsection-nav+.section-selector{margin-top:0}}
-  @media (max-width:800px){.subsection-nav{display:none}.eoc-global-search>label{grid-template-columns:1fr}.eoc-global-search .search-label{display:none}.eoc-global-search .search-results{position:static;max-height:52vh;width:100%}.eoc-global-search .settings-result{grid-template-columns:1fr}.eoc-global-search .settings-result .setting-path,.eoc-global-search .settings-current{grid-column:1;text-align:left}.eoc-global-search .settings-result small{grid-column:1}}
+  @media (max-width:800px){.subsection-nav{display:none}.eoc-global-search>label{grid-template-columns:1fr}.eoc-global-search .search-label{display:none}.eoc-global-search .search-results{position:static;max-height:52vh;width:100%}.eoc-global-search .settings-result{grid-template-columns:1fr}.eoc-global-search .settings-result .setting-path,.eoc-global-search .settings-current{grid-column:1;text-align:left}.eoc-global-search .settings-result small{grid-column:1}.eoc-global-search .settings-load-error{align-items:flex-start}}
 `;
 
 function titleCase(value) {
@@ -80,7 +114,7 @@ export function settingCurrentState(item, panel, explicitData = null) {
 }
 
 function visibleSettings(panel) {
-  return searchSettings(panel._settingsSearchQuery).filter((item) => {
+  return searchProjectedSettings(panel._settingsSearchQuery).filter((item) => {
     if (!panel._canAccessView(item.page, item.section)) return false;
     if (item.configKey && panel._data?.is_admin === false) return false;
     return true;
@@ -96,8 +130,18 @@ function pathLabel(item) {
 function searchMarkup(panel) {
   const query = String(panel._settingsSearchQuery || "");
   const results = visibleSettings(panel);
+  const configUnavailable = Boolean(
+    query
+      && panel._data?.is_admin !== false
+      && !activeConfiguration(panel)
+      && panel._settingsSearchConfigError
+      && panel._settingsSearchConfigErrorAgentId === panel._agentId
+  );
   const configLoading = Boolean(query && panel._data?.is_admin !== false && !activeConfiguration(panel) && panel._settingsSearchConfigLoading);
-  return `<div class="global-search eoc-global-search"><label><span class="search-label">Find a setting</span><input id="settings-search" type="search" value="${panel._e(query)}" placeholder="Search settings by name or purpose" aria-label="Search all settings" autocomplete="off"></label>${query ? `<div class="search-results" role="listbox" aria-label="Settings search results">${results.map((item) => {
+  const loadError = configUnavailable
+    ? '<div class="settings-load-error" role="status"><span>Current setting values couldn’t be loaded.</span><button id="settings-search-retry" type="button">Retry</button></div>'
+    : "";
+  return `<div class="global-search eoc-global-search"><label><span class="search-label">Find a setting</span><input id="settings-search" type="search" value="${panel._e(query)}" placeholder="Search settings by name or purpose" aria-label="Search all settings" autocomplete="off"></label>${query ? `<div class="search-results" role="listbox" aria-label="Settings search results">${loadError}${results.map((item) => {
     const state = settingCurrentState(item, panel);
     const current = state
       ? `<span class="settings-current">${panel._e(state.label)}: ${panel._e(state.value)}</span>`
@@ -106,34 +150,52 @@ function searchMarkup(panel) {
   }).join("") || '<p class="empty">No settings match.</p>'}</div>` : ""}</div>`;
 }
 
-async function ensureSearchConfiguration(panel) {
+async function ensureSearchConfiguration(panel, {retry = false} = {}) {
   if (panel._data?.is_admin === false || !panel._settingsSearchQuery || activeConfiguration(panel)) return;
   if (!visibleSettings(panel).some((item) => item.configKey)) return;
   const agentId = panel._agentId;
   if (!agentId) return;
   if (panel._settingsSearchConfigAgentId === agentId && panel._settingsSearchConfig?.config) return;
   if (panel._settingsSearchConfigPromise && panel._settingsSearchConfigPromiseAgentId === agentId) return panel._settingsSearchConfigPromise;
+  if (panel._settingsSearchConfigError && panel._settingsSearchConfigErrorAgentId === agentId && !retry) return;
 
+  if (retry && panel._settingsSearchConfigErrorAgentId === agentId) {
+    panel._settingsSearchConfigError = null;
+    panel._settingsSearchConfigErrorAgentId = null;
+  }
   panel._settingsSearchConfigLoading = true;
   panel._settingsSearchConfigPromiseAgentId = agentId;
   panel._settingsSearchConfigPromise = panel._call("configuration", "get")
     .then((data) => {
       if (panel._agentId !== agentId) return;
+      if (!data?.config) throw new Error("Configuration response did not include config");
       panel._settingsSearchConfig = data;
       panel._settingsSearchConfigAgentId = agentId;
-      if (panel._settingsSearchQuery) {
-        panel._settingsSearchShouldFocus = true;
-        panel._render();
-      }
+      panel._settingsSearchConfigError = null;
+      panel._settingsSearchConfigErrorAgentId = null;
     })
-    .catch(() => {})
+    .catch(() => {
+      if (panel._agentId !== agentId) return;
+      panel._settingsSearchConfig = null;
+      panel._settingsSearchConfigAgentId = null;
+      panel._settingsSearchConfigError = true;
+      panel._settingsSearchConfigErrorAgentId = agentId;
+    })
     .finally(() => {
       if (panel._settingsSearchConfigPromiseAgentId === agentId) {
         panel._settingsSearchConfigLoading = false;
         panel._settingsSearchConfigPromise = null;
         panel._settingsSearchConfigPromiseAgentId = null;
+        if (panel._settingsSearchQuery) {
+          panel._settingsSearchShouldFocus = true;
+          panel._render();
+        }
       }
     });
+  if (panel._settingsSearchQuery) {
+    panel._settingsSearchShouldFocus = true;
+    panel._render();
+  }
   return panel._settingsSearchConfigPromise;
 }
 
@@ -145,6 +207,10 @@ function bindSearch(panel) {
     panel._settingsSearchShouldFocus = true;
     panel._render();
     void ensureSearchConfiguration(panel);
+  });
+  root.querySelector("#settings-search-retry")?.addEventListener("click", () => {
+    panel._settingsSearchShouldFocus = true;
+    void ensureSearchConfiguration(panel, {retry:true});
   });
   root.querySelectorAll(".settings-result").forEach((button) => button.addEventListener("click", async () => {
     panel._pendingSettingFocus = button.dataset.target;
@@ -211,6 +277,8 @@ export function installManagementNavigationSearch(registry = globalThis.customEl
       const result = originalClearConfigDraft.apply(this, args);
       this._settingsSearchConfig = null;
       this._settingsSearchConfigAgentId = null;
+      this._settingsSearchConfigError = null;
+      this._settingsSearchConfigErrorAgentId = null;
       return result;
     };
 
