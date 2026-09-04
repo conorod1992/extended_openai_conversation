@@ -31,8 +31,8 @@ def _serialized_footprint(input_value: Any, tools: Any = None) -> tuple[int, int
     tool_characters = 0
     tool_non_ascii = 0
     if tools:
-        tool_characters, tool_non_ascii = context_usage_hardening._serialized_characters(
-            tools
+        tool_characters, tool_non_ascii = (
+            context_usage_hardening._serialized_characters(tools)
         )
 
     total_characters = input_characters + tool_characters
@@ -157,10 +157,7 @@ def _wrap_management_command(original: ManagementCommand) -> ManagementCommand:
         is_admin: bool,
         message: dict[str, Any],
     ) -> dict[str, Any]:
-        if (
-            message.get("section") == "usage"
-            and message.get("action") == "footprint"
-        ):
+        if message.get("section") == "usage" and message.get("action") == "footprint":
             # The management-permissions wrapper is installed after this hook, so
             # detailed Usage actions remain administrator-only.
             return await async_input_footprint(hass, user_id, message)
