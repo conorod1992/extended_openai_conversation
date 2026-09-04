@@ -21,6 +21,7 @@ from .usage import RequestUsage, UsageManager, extract_usage
 _LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
 _LOCAL_ESTIMATE_DETAIL = "__extended_openai_local_context_estimate"
+_PARTIAL_PROVIDER_USAGE_DETAIL = "__extended_openai_partial_provider_usage"
 
 
 @dataclass(slots=True)
@@ -40,7 +41,7 @@ _CURRENT_ESTIMATE_STATE: ContextVar[_EstimateState | None] = ContextVar(
 
 
 def _has_token_count(usage: RequestUsage) -> bool:
-    """Return whether normalized provider metadata contains a usable token count."""
+    """Return whether normalized provider metadata contains any real token count."""
     return any(
         (
             usage.input_tokens,
@@ -82,14 +83,25 @@ def _copy_usage(target: RequestUsage, source: RequestUsage) -> None:
     target.details = dict(source.details)
 
 
-def _capture_provider_usage(target: RequestUsage | None, raw_usage: Any) -> bool:
-    """Normalize provider usage from any stream position into one request object."""
+def _capture_provider_usage(
+    target: RequestUsage | None,
+    raw_usage: Any,
+    *,
+    local_estimate: int | None = None,
+) -> bool:
+    """Normalize provider usage while preserving a missing-input context estimate."""
     if target is None or raw_usage is None:
         return False
     normalized = extract_usage(raw_usage)
     if not _has_token_count(normalized):
         return False
+
+    estimate = local_estimate if local_estimate is not None else _local_estimate(target)
     _copy_usage(target, normalized)
+    if estimate is not None and normalized.input_tokens <= 0:
+        target.input_tokens = estimate
+        target.details[_LOCAL_ESTIMATE_DETAIL] = estimate
+        target.details[_PARTIAL_PROVIDER_USAGE_DETAIL] = 1
     return True
 
 
@@ -213,10 +225,25 @@ def _estimate_current_request(
 
 
 def usage_for_accounting(usage: RequestUsage | None) -> RequestUsage | None:
-    """Remove local context estimates before provider-usage accounting persists them."""
+    """Strip local estimates while preserving genuine partial provider usage."""
     if usage is None or _LOCAL_ESTIMATE_DETAIL not in usage.details:
         return usage
-    return RequestUsage()
+    if _PARTIAL_PROVIDER_USAGE_DETAIL not in usage.details:
+        return RequestUsage()
+
+    details = {
+        key: value
+        for key, value in usage.details.items()
+        if key not in {_LOCAL_ESTIMATE_DETAIL, _PARTIAL_PROVIDER_USAGE_DETAIL}
+    }
+    return RequestUsage(
+        input_tokens=0,
+        output_tokens=usage.output_tokens,
+        total_tokens=usage.total_tokens,
+        cached_input_tokens=usage.cached_input_tokens,
+        reasoning_tokens=usage.reasoning_tokens,
+        details=details,
+    )
 
 
 def install_context_usage_hardening() -> None:
@@ -289,17 +316,24 @@ def install_context_usage_hardening() -> None:
                 # The original transformer handles the standard final usage-only
                 # chunk. Trace only non-standard usage attached to a normal choice.
                 if captured and getattr(chunk, "choices", None):
-                    assert request_usage is not None
+                    provider_usage = extract_usage(raw_usage)
                     chat_log.async_trace(
                         {
                             "stats": {
-                                "input_tokens": request_usage.input_tokens,
-                                "output_tokens": request_usage.output_tokens,
+                                "input_tokens": provider_usage.input_tokens,
+                                "output_tokens": provider_usage.output_tokens,
                             }
                         }
                     )
                 yield chunk
-                if not captured:
+                if captured:
+                    # The stock transformer writes normalized provider usage into the
+                    # same object while consuming this event. Reconcile afterwards so
+                    # partial usage cannot erase the request-local input estimate.
+                    _capture_provider_usage(
+                        request_usage, raw_usage, local_estimate=estimate
+                    )
+                else:
                     _restore_local_estimate(request_usage, estimate)
 
         async for item in original_chat_transform(
@@ -328,17 +362,23 @@ def install_context_usage_hardening() -> None:
                     "response.completed",
                     "response.incomplete",
                 }:
-                    assert request_usage is not None
+                    provider_usage = extract_usage(raw_usage)
                     chat_log.async_trace(
                         {
                             "stats": {
-                                "input_tokens": request_usage.input_tokens,
-                                "output_tokens": request_usage.output_tokens,
+                                "input_tokens": provider_usage.input_tokens,
+                                "output_tokens": provider_usage.output_tokens,
                             }
                         }
                     )
                 yield event
-                if not captured:
+                if captured:
+                    # Terminal Responses events also write into request_usage in the
+                    # stock transformer before this generator resumes.
+                    _capture_provider_usage(
+                        request_usage, raw_usage, local_estimate=estimate
+                    )
+                else:
                     _restore_local_estimate(request_usage, estimate)
 
         async for item in original_responses_transform(
