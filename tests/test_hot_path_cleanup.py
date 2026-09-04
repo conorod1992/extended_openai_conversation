@@ -16,6 +16,9 @@ from custom_components.extended_openai_conversation_responses import (
     local_intents,
     request_rules,
 )
+from custom_components.extended_openai_conversation_responses.durable_state_hardening import (
+    install_durable_state_hardening,
+)
 from custom_components.extended_openai_conversation_responses.hot_path_cleanup import (
     _USAGE_PRUNE_TASK,
     install_hot_path_cleanup,
@@ -120,6 +123,7 @@ async def test_daily_usage_prune_is_scheduled_not_awaited_by_finalizer() -> None
     """The first retention pass of a new UTC day should run after the user turn."""
     install_lifecycle_optimizations()
     install_hot_path_cleanup()
+    install_durable_state_hardening()
     manager, _totals, _daily, _details = await _usage_manager()
     old = (dt_util.utcnow() - timedelta(days=120)).isoformat()
     manager.request_retention_days = 30
@@ -233,6 +237,10 @@ async def test_non_broadcast_local_intent_does_not_initialize_intercom(monkeypat
         object(), SimpleNamespace(text="turn on the kitchen light")
     )
     assert result is None
+
+
+class _CompiledManager(RequestRules):
+    pass
 
 
 def _compiled_manager() -> RequestRules:
