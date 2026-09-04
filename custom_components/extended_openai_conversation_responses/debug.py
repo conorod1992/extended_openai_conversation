@@ -79,10 +79,10 @@ def _jsonable(value: Any, *, _depth: int = 0) -> Any:
     if isinstance(value, (list, tuple, set, frozenset, deque)):
         return [_jsonable(item, _depth=_depth + 1) for item in value]
     if is_dataclass(value) and not isinstance(value, type):
-        return {
-            item.name: _jsonable(getattr(value, item.name), _depth=_depth + 1)
-            for item in fields(value)
-        }
+        return _jsonable(
+            {item.name: getattr(value, item.name) for item in fields(value)},
+            _depth=_depth + 1,
+        )
     if hasattr(value, "model_dump"):
         try:
             return _jsonable(value.model_dump(exclude_none=True), _depth=_depth + 1)
