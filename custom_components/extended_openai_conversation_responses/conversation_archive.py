@@ -334,53 +334,27 @@ class ConversationArchive:
         offset: int = 0,
     ) -> dict[str, Any]:
         """Perform bounded phrase/token lexical search within one exact scope."""
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("query must not be blank")
         limit = max(1, min(limit, MAX_SEARCH_LIMIT))
         offset = max(0, offset)
-        query_tokens = _tokens(query)
-        normalized_query = _normalize(query)
-        ranked: list[tuple[float, str, ArchiveSession, ArchiveTurn]] = []
-        for session in self._sessions.values():
-            if session.scope_id != scope_id or session.retention_state != "retained":
-                continue
-            for turn in self._turns.get(session.session_id, []):
-                date = turn.timestamp[:10]
-                if start_date and date < start_date:
-                    continue
-                if end_date and date > end_date:
-                    continue
-                combined = f"{turn.user_text} {turn.assistant_text}"
-                tokens = _tokens(combined)
-                overlap = len(query_tokens & tokens)
-                if (
-                    query_tokens
-                    and not overlap
-                    and normalized_query not in _normalize(combined)
-                ):
-                    continue
-                score = overlap / max(1, len(query_tokens))
-                if normalized_query and normalized_query in _normalize(combined):
-                    score += 2
-                ranked.append((score, turn.timestamp, session, turn))
-        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        page = ranked[offset : offset + limit]
-        return {
-            "results": [
-                {
-                    "session_id": session.session_id,
-                    "turn_id": turn.turn_id,
-                    "date": turn.timestamp[:10],
-                    "timestamp": turn.timestamp,
-                    "title": session.title,
-                    "excerpt": _excerpt(
-                        f"{turn.user_text}\n{turn.assistant_text}", query
-                    ),
-                }
-                for _, _, session, turn in page
-            ],
-            "offset": offset,
-            "limit": limit,
-            "has_more": len(ranked) > offset + limit,
-        }
+        async with self._lock:
+            self._ensure_initialized()
+            snapshot = tuple(
+                (session, tuple(self._turns.get(session.session_id, ())))
+                for session in self._sessions.values()
+                if session.scope_id == scope_id
+                and session.retention_state == "retained"
+            )
+        return await asyncio.to_thread(
+            _search_archive_snapshot,
+            snapshot,
+            query,
+            start_date,
+            end_date,
+            limit,
+            offset,
+        )
 
     async def async_get(
         self, scope_id: str, session_id: str, start_turn: int = 0, limit: int = 6
@@ -543,7 +517,7 @@ class ConversationArchive:
         """Return retained session totals grouped by data scope."""
         counts: dict[str, int] = {}
         for session in self._sessions.values():
-            if session.retention_state == "unretained":
+            if session.retention_state != "retained":
                 continue
             counts[session.scope_id] = counts.get(session.scope_id, 0) + 1
         return counts
@@ -701,7 +675,11 @@ class ConversationArchive:
     async def _async_publish_session_locked(
         self, session_key: str, session: ArchiveSession
     ) -> None:
-        """Persist a new active session before exposing it to runtime readers."""
+        """Publish a new active session, persisting only durable archive state."""
+        if session.retention_state == "unretained" and not self._pending_partitions:
+            self._sessions[session.session_id] = session
+            self._active[session_key] = session.session_id
+            return
         sessions = {**self._sessions, session.session_id: session}
         active = {**self._active, session_key: session.session_id}
         pending = (
@@ -900,6 +878,61 @@ def _tool(
             },
         },
         "function": {"type": "archive", "operation": operation},
+    }
+
+
+def _search_archive_snapshot(
+    snapshot: tuple[tuple[ArchiveSession, tuple[ArchiveTurn, ...]], ...],
+    query: str,
+    start_date: str | None,
+    end_date: str | None,
+    limit: int,
+    offset: int,
+) -> dict[str, Any]:
+    """Rank one immutable Archive snapshot outside the event loop."""
+    query_tokens = _tokens(query)
+    normalized_query = _normalize(query)
+    ranked: list[tuple[float, str, ArchiveSession, ArchiveTurn]] = []
+    for session, turns in snapshot:
+        for turn in turns:
+            date = turn.timestamp[:10]
+            if start_date and date < start_date:
+                continue
+            if end_date and date > end_date:
+                continue
+            combined = f"{turn.user_text} {turn.assistant_text}"
+            normalized_combined = _normalize(combined)
+            tokens = _tokens(combined)
+            overlap = len(query_tokens & tokens)
+            if (
+                query_tokens
+                and not overlap
+                and normalized_query not in normalized_combined
+            ):
+                continue
+            score = overlap / max(1, len(query_tokens))
+            if normalized_query and normalized_query in normalized_combined:
+                score += 2
+            ranked.append((score, turn.timestamp, session, turn))
+    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    page = ranked[offset : offset + limit]
+    return {
+        "results": [
+            {
+                "session_id": session.session_id,
+                "turn_id": turn.turn_id,
+                "date": turn.timestamp[:10],
+                "timestamp": turn.timestamp,
+                "title": session.title,
+                "excerpt": _excerpt(
+                    f"{turn.user_text}\n{turn.assistant_text}", query
+                ),
+            }
+            for _, _, session, turn in page
+        ],
+        "offset": offset,
+        "limit": limit,
+        "has_more": len(ranked) > offset + limit,
     }
 
 
