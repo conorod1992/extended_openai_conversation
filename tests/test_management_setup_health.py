@@ -30,25 +30,30 @@ def _subentry(config=None):
     return SimpleNamespace(data=config or agent_config_defaults())
 
 
+def _facts(config=None, *, runtime_loaded=True, **kwargs):
+    return build_setup_health_facts(
+        object(),
+        _entry(runtime_loaded=runtime_loaded),
+        _subentry(config),
+        memory_available=kwargs.get("memory_available", True),
+        knowledge_source_count=kwargs.get("knowledge_source_count", 0),
+        knowledge_available=kwargs.get("knowledge_available", True),
+        is_admin=kwargs.get("is_admin", True),
+    )
+
+
 def test_default_facts_are_side_effect_free_and_descriptive(monkeypatch) -> None:
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.management_setup_health._exposed_entity_count",
         lambda _hass: 1,
     )
 
-    facts = build_setup_health_facts(
-        object(),
-        _entry(),
-        _subentry(),
-        knowledge_source_count=0,
-        knowledge_available=True,
-        is_admin=True,
-    )
+    facts = _facts()
 
     assert facts["provider_runtime"]["client_loaded"] is True
     assert facts["prompt_state"] == "starter"
     assert facts["exposed_entity_count"] == 1
-    assert facts["memory_mode"] == "off"
+    assert facts["memory"] == {"mode": "off", "available": True}
     assert facts["knowledge"] == {
         "enabled": False,
         "source_count": 0,
@@ -69,17 +74,8 @@ def test_prompt_classification_distinguishes_empty_and_custom(monkeypatch) -> No
     custom = agent_config_defaults()
     custom[CONF_PROMPT] = "You are the kitchen assistant."
 
-    empty_facts = build_setup_health_facts(
-        object(), _entry(), _subentry(empty),
-        knowledge_source_count=0, knowledge_available=True, is_admin=True,
-    )
-    custom_facts = build_setup_health_facts(
-        object(), _entry(), _subentry(custom),
-        knowledge_source_count=0, knowledge_available=True, is_admin=True,
-    )
-
-    assert empty_facts["prompt_state"] == "empty"
-    assert custom_facts["prompt_state"] == "custom"
+    assert _facts(empty)["prompt_state"] == "empty"
+    assert _facts(custom)["prompt_state"] == "custom"
 
 
 def test_web_search_facts_reuse_runtime_compatibility(monkeypatch) -> None:
@@ -91,14 +87,7 @@ def test_web_search_facts_reuse_runtime_compatibility(monkeypatch) -> None:
     config[CONF_WEB_SEARCH] = True
     config[CONF_API_MODE] = "auto"
 
-    facts = build_setup_health_facts(
-        object(),
-        _entry(),
-        _subentry(config),
-        knowledge_source_count=0,
-        knowledge_available=True,
-        is_admin=True,
-    )
+    facts = _facts(config)
 
     assert facts["web_search"]["enabled"] is True
     assert facts["web_search"]["effective_api_mode"] == "chat_completions"
@@ -117,17 +106,17 @@ def test_unavailable_counts_remain_unknown_facts(monkeypatch) -> None:
     config = agent_config_defaults()
     config[CONF_KNOWLEDGE_ENABLED] = True
 
-    facts = build_setup_health_facts(
-        object(),
-        _entry(runtime_loaded=False),
-        _subentry(config),
-        knowledge_source_count=0,
+    facts = _facts(
+        config,
+        runtime_loaded=False,
+        memory_available=False,
         knowledge_available=False,
         is_admin=False,
     )
 
     assert facts["provider_runtime"]["client_loaded"] is False
     assert facts["exposed_entity_count"] is None
+    assert facts["memory"]["available"] is False
     assert facts["knowledge"]["enabled"] is True
     assert facts["knowledge"]["available"] is False
     assert facts["can_manage"] is False
