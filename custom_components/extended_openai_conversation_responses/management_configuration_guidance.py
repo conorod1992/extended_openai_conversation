@@ -23,23 +23,23 @@ from .helpers import get_api_mode, supports_openai_hosted_tools
 from .request import build_web_search_tool
 
 _PATCHED = "extended_openai_management_configuration_guidance"
-_FRONTEND_MODULE = "management-configuration-guidance.js"
+_FRONTEND_MODULES = (
+    "management-configuration-clarity.js",
+    "management-configuration-guidance.js",
+)
 ManagementCommand = Callable[
     [HomeAssistant, str, bool, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]
 ]
 
 
-def _register_frontend_module() -> None:
-    """Expose the guidance frontend alongside the existing management modules."""
-    if _FRONTEND_MODULE in management_ui.MANAGEMENT_FRONTEND_MODULES:
-        return
-    management_ui.MANAGEMENT_FRONTEND_MODULES = (
-        *management_ui.MANAGEMENT_FRONTEND_MODULES,
-        _FRONTEND_MODULE,
+def _register_frontend_modules() -> None:
+    """Expose the clarity/guidance frontend alongside existing management modules."""
+    management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(
+        dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, *_FRONTEND_MODULES))
     )
 
 
-_register_frontend_module()
+_register_frontend_modules()
 
 
 def configuration_guidance_snapshot(
@@ -124,7 +124,7 @@ def wrap_management_configuration_guidance(
 
 def install_management_configuration_guidance() -> bool:
     """Install the guidance wrapper exactly once."""
-    _register_frontend_module()
+    _register_frontend_modules()
     if getattr(management_ui, _PATCHED, False):
         return False
     management_ui.async_management_command = wrap_management_configuration_guidance(  # type: ignore[assignment]
