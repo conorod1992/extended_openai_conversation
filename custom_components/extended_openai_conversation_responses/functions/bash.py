@@ -26,6 +26,8 @@ from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
 _STREAM_CHUNK_SIZE = 4096
+_SHELL_CANCEL_GRACE_SECONDS = 1.0
+_SHELL_CLEANUP_WAIT_SECONDS = 5.0
 # UTF-8 uses at most four bytes per Unicode code point. Retaining this many bytes
 # preserves the existing character limit while bounding pipe memory during execution.
 _SHELL_OUTPUT_BYTE_LIMIT = SHELL_OUTPUT_LIMIT * 4
@@ -59,6 +61,54 @@ def _decode_bounded_output(content: bytes, truncated: bool) -> str:
     if truncated:
         text += "\n... (truncated, output too large)"
     return text
+
+
+async def _async_cleanup_process(
+    process: asyncio.subprocess.Process,
+    stdout_task: asyncio.Task[tuple[bytes, bool]],
+    stderr_task: asyncio.Task[tuple[bytes, bool]],
+    *,
+    graceful: bool,
+) -> None:
+    """Stop a subprocess and settle pipe readers with bounded waits."""
+
+    def stop_process(*, terminate: bool) -> None:
+        if process.returncode is not None:
+            return
+        if os.name == "posix":
+            sig = signal.SIGTERM if terminate else signal.SIGKILL
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, sig)
+        elif terminate:
+            with suppress(ProcessLookupError):
+                process.terminate()
+        else:
+            with suppress(ProcessLookupError):
+                process.kill()
+
+    if process.returncode is None and graceful:
+        stop_process(terminate=True)
+        with suppress(TimeoutError):
+            await asyncio.wait_for(process.wait(), timeout=_SHELL_CANCEL_GRACE_SECONDS)
+
+    if process.returncode is None:
+        stop_process(terminate=False)
+
+    if process.returncode is None:
+        with suppress(TimeoutError):
+            await asyncio.wait_for(process.wait(), timeout=_SHELL_CLEANUP_WAIT_SECONDS)
+
+    readers = (stdout_task, stderr_task)
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*readers, return_exceptions=True),
+            timeout=_SHELL_CLEANUP_WAIT_SECONDS,
+        )
+    except TimeoutError:
+        for reader in readers:
+            if not reader.done():
+                reader.cancel()
+        await asyncio.gather(*readers, return_exceptions=True)
 
 
 class BashFunction(Function):
@@ -251,22 +301,29 @@ class BashFunction(Function):
 
             try:
                 await asyncio.wait_for(process.wait(), timeout=timeout)
+                (
+                    (stdout, stdout_truncated),
+                    (stderr, stderr_truncated),
+                ) = await asyncio.gather(stdout_task, stderr_task)
             except TimeoutError:
-                if process.returncode is None:
-                    if os.name == "posix":
-                        with suppress(ProcessLookupError):
-                            os.killpg(process.pid, signal.SIGKILL)
-                    else:
-                        process.kill()
-                with suppress(TimeoutError):
-                    await asyncio.wait_for(process.wait(), timeout=5)
-                await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+                await _async_cleanup_process(
+                    process,
+                    stdout_task,
+                    stderr_task,
+                    graceful=False,
+                )
                 return {"error": f"Command timed out after {timeout:g} seconds"}
+            except asyncio.CancelledError:
+                await asyncio.shield(
+                    _async_cleanup_process(
+                        process,
+                        stdout_task,
+                        stderr_task,
+                        graceful=True,
+                    )
+                )
+                raise
 
-            (
-                (stdout, stdout_truncated),
-                (stderr, stderr_truncated),
-            ) = await asyncio.gather(stdout_task, stderr_task)
             stdout_text = _decode_bounded_output(stdout, stdout_truncated)
             stderr_text = _decode_bounded_output(stderr, stderr_truncated)
 
