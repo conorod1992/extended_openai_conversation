@@ -13,6 +13,7 @@ from homeassistant.core import HomeAssistant
 from .const import (
     CONF_API_PROVIDER,
     CONF_CHAT_MODEL,
+    CONF_KNOWLEDGE_ENABLED,
     CONF_PROMPT,
     CONF_WEB_SEARCH,
     DEFAULT_API_PROVIDER,
@@ -21,6 +22,7 @@ from .const import (
 )
 from .ha_permissions import filter_entities_for_active_user
 from .management_configuration_guidance import configuration_guidance_snapshot
+from .memory import get_memory_mode
 
 _PATCHED = "extended_openai_management_setup_health"
 OverviewCommand = Callable[..., Awaitable[dict[str, Any]]]
@@ -41,6 +43,7 @@ def build_setup_health_facts(
     entry: ConfigEntry[Any],
     subentry: ConfigSubentry,
     *,
+    knowledge_source_count: int,
     knowledge_available: bool,
     is_admin: bool,
 ) -> dict[str, Any]:
@@ -69,7 +72,12 @@ def build_setup_health_facts(
         },
         "prompt_state": prompt_state,
         "exposed_entity_count": exposed_entity_count,
-        "knowledge_available": knowledge_available,
+        "memory_mode": get_memory_mode(options),
+        "knowledge": {
+            "enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
+            "source_count": knowledge_source_count,
+            "available": knowledge_available,
+        },
         "web_search": {
             "enabled": bool(options.get(CONF_WEB_SEARCH, False)),
             "effective_api_mode": guidance.get("effective_api_mode"),
@@ -98,6 +106,12 @@ def install_management_setup_health() -> bool:
         entry, subentry = management_ui.entry_and_agent(
             hass, message.get("entry_id"), message.get("subentry_id")
         )
+        agent = result.get("agent") if isinstance(result, dict) else None
+        knowledge_source_count = (
+            int(agent.get("knowledge_source_count", 0))
+            if isinstance(agent, dict)
+            else 0
+        )
         load_errors = result.get("load_errors", []) if isinstance(result, dict) else []
         knowledge_available = not any(
             isinstance(issue, dict) and issue.get("key") == "knowledge"
@@ -109,6 +123,7 @@ def install_management_setup_health() -> bool:
                 hass,
                 entry,
                 subentry,
+                knowledge_source_count=knowledge_source_count,
                 knowledge_available=knowledge_available,
                 is_admin=is_admin,
             ),
