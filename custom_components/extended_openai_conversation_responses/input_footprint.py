@@ -176,7 +176,7 @@ def install_input_footprint() -> None:
 
     _ORIGINAL_ESTIMATE = context_usage_hardening.estimate_provider_input_tokens
     context_usage_hardening.estimate_provider_input_tokens = _capture_live_footprint
-    management_ui.async_management_command = _wrap_management_command(
+    management_ui.async_management_command = _wrap_management_command(  # type: ignore[assignment]
         management_ui.async_management_command
     )
     _INSTALLED = True
