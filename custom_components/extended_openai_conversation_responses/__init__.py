@@ -94,6 +94,7 @@ from .management_loading_performance import install_management_loading_optimizat
 from .management_permissions import install_management_permissions
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
+from .model_search_hardening import install_model_search_hardening
 from .openai_compat import apply_openai_compatibility
 from .performance import PerformanceOpenAIClientProxy, install_performance_optimizations
 from .persistence_hardening import install_persistence_transactions
@@ -151,6 +152,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_management_permissions()
     install_safety_hardening()
     install_configurable_regex_isolation()
+    install_model_search_hardening()
     await async_migrate_integration(hass)
     await async_setup_ha_permissions(hass)
     await async_setup_services(hass, config)

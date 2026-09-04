@@ -258,4 +258,19 @@ def assemble_integration_function_tools(
                 "Reserved Guest Mode tool name configured: guest_mode_restrict"
             )
         result.append(guest_mode_restrict_tool())
+    for tool in result:
+        if tool.get("spec", {}).get("name") not in {
+            "memory_search",
+            "conversation_search",
+            "knowledge_search",
+        }:
+            continue
+        query_schema = (
+            tool.get("spec", {})
+            .get("parameters", {})
+            .get("properties", {})
+            .get("query")
+        )
+        if isinstance(query_schema, dict):
+            query_schema["minLength"] = 1
     return result
