@@ -10,8 +10,14 @@ import re
 import yaml
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
 from .const import DEFAULT_SKILLS_DIRECTORY, DEFAULT_WORKING_DIRECTORY, SKILL_FILE_NAME
+from .skill_resource_limits import (
+    MAX_DISCOVERED_SKILLS,
+    MAX_SKILL_DISCOVERY_ENTRIES,
+    read_bounded_skill_text,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -227,7 +233,15 @@ class SkillManager:
             _LOGGER.warning("Skills path is not a directory: %s", skills_dir)
             return results
 
+        entries_seen = 0
         for skill_dir in skills_dir.iterdir():
+            entries_seen += 1
+            if entries_seen > MAX_SKILL_DISCOVERY_ENTRIES:
+                _LOGGER.warning(
+                    "Skill discovery stopped after %d directory entries",
+                    MAX_SKILL_DISCOVERY_ENTRIES,
+                )
+                break
             if not skill_dir.is_dir():
                 continue
 
@@ -235,11 +249,16 @@ class SkillManager:
             if not skill_file.exists():
                 _LOGGER.debug("No SKILL.md found in %s", skill_dir)
                 continue
+            if len(results) >= MAX_DISCOVERED_SKILLS:
+                _LOGGER.warning(
+                    "Skill discovery stopped after %d Skills", MAX_DISCOVERED_SKILLS
+                )
+                break
 
             try:
-                content = skill_file.read_text(encoding="utf-8")
+                content = read_bounded_skill_text(skill_file)
                 results.append((skill_file, content))
-            except OSError as e:
+            except HomeAssistantError as e:
                 _LOGGER.warning("Failed to read skill file %s: %s", skill_file, e)
 
         return results
