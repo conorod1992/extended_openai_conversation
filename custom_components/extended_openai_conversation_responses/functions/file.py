@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import suppress
 import logging
 import os
@@ -19,12 +20,26 @@ from homeassistant.helpers.template import Template
 from ..const import (
     DEFAULT_ALLOWED_DIRS,
     DEFAULT_WORKING_DIRECTORY,
+    DOMAIN,
     FILE_READ_SIZE_LIMIT,
 )
 from ..skills import SkillManager
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
+_FILE_EDIT_LOCKS = f"{DOMAIN}.file_edit_locks"
+type _FileFingerprint = tuple[int, int, int, int, int]
+
+
+def _fingerprint(stat_result: os.stat_result) -> _FileFingerprint:
+    """Return a cheap identity/version fingerprint for conflict detection."""
+    return (
+        stat_result.st_dev,
+        stat_result.st_ino,
+        stat_result.st_size,
+        stat_result.st_mtime_ns,
+        stat_result.st_ctime_ns,
+    )
 
 
 def _read_text_bounded(path: Path) -> str:
@@ -42,6 +57,28 @@ def _read_text_bounded(path: Path) -> str:
             f"(limit: {FILE_READ_SIZE_LIMIT} bytes)"
         )
     return content.decode("utf-8")
+
+
+def _read_text_bounded_snapshot(path: Path) -> tuple[str, _FileFingerprint]:
+    """Read bounded text and capture the exact file version that was read."""
+    with path.open("rb") as handle:
+        before = os.fstat(handle.fileno())
+        if before.st_size > FILE_READ_SIZE_LIMIT:
+            raise ValueError(
+                f"File too large: {before.st_size} bytes "
+                f"(limit: {FILE_READ_SIZE_LIMIT})"
+            )
+        content = handle.read(FILE_READ_SIZE_LIMIT + 1)
+        after = os.fstat(handle.fileno())
+
+    if len(content) > FILE_READ_SIZE_LIMIT:
+        raise ValueError(
+            "File grew beyond the read limit while it was being read "
+            f"(limit: {FILE_READ_SIZE_LIMIT} bytes)"
+        )
+    if _fingerprint(before) != _fingerprint(after):
+        raise RuntimeError("File changed while it was being read; retry the edit")
+    return content.decode("utf-8"), _fingerprint(after)
 
 
 def _atomic_replace_text(path: Path, content: str) -> int:
@@ -71,6 +108,30 @@ def _atomic_replace_text(path: Path, content: str) -> int:
         with suppress(FileNotFoundError):
             temp_path.unlink()
     return len(encoded)
+
+
+def _atomic_replace_text_if_unchanged(
+    path: Path, content: str, expected: _FileFingerprint
+) -> int:
+    """Atomically replace text only when the path still identifies the read version."""
+    try:
+        current = _fingerprint(path.stat())
+    except FileNotFoundError as err:
+        raise RuntimeError("File changed since it was read; retry the edit") from err
+    if current != expected:
+        raise RuntimeError("File changed since it was read; retry the edit")
+    return _atomic_replace_text(path, content)
+
+
+def _get_edit_lock(hass: HomeAssistant, path: Path) -> asyncio.Lock:
+    """Return the integration-wide lock for one canonical target path."""
+    locks: dict[str, asyncio.Lock] = hass.data.setdefault(_FILE_EDIT_LOCKS, {})
+    key = os.path.normcase(str(path))
+    lock = locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        locks[key] = lock
+    return lock
 
 
 class FileFunction(Function):
@@ -300,29 +361,34 @@ class EditFileFunction(FileFunction):
 
         try:
             target_path = self._resolve_path(hass, path_str, allow_dirs)
+            async with _get_edit_lock(hass, target_path):
+                if not target_path.exists():
+                    return {"error": f"File not found: {path_str}"}
 
-            if not target_path.exists():
-                return {"error": f"File not found: {path_str}"}
+                if not target_path.is_file():
+                    return {"error": f"Not a file: {path_str}"}
 
-            if not target_path.is_file():
-                return {"error": f"Not a file: {path_str}"}
+                content, fingerprint = await hass.async_add_executor_job(
+                    _read_text_bounded_snapshot, target_path
+                )
 
-            content = await hass.async_add_executor_job(_read_text_bounded, target_path)
+                if old_text not in content:
+                    return {"error": f"Text not found in file: {old_text[:50]}..."}
 
-            if old_text not in content:
-                return {"error": f"Text not found in file: {old_text[:50]}..."}
+                occurrence_count = content.count(old_text)
+                if occurrence_count > 1:
+                    return {
+                        "error": f"Text appears {occurrence_count} times in file. "
+                        "Please provide more specific text to ensure single replacement."
+                    }
 
-            occurrence_count = content.count(old_text)
-            if occurrence_count > 1:
-                return {
-                    "error": f"Text appears {occurrence_count} times in file. "
-                    "Please provide more specific text to ensure single replacement."
-                }
-
-            new_content = content.replace(old_text, new_text, 1)
-            await hass.async_add_executor_job(
-                _atomic_replace_text, target_path, new_content
-            )
+                new_content = content.replace(old_text, new_text, 1)
+                await hass.async_add_executor_job(
+                    _atomic_replace_text_if_unchanged,
+                    target_path,
+                    new_content,
+                    fingerprint,
+                )
 
         except Exception as err:
             _LOGGER.error(err)
