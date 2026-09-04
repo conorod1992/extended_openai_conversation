@@ -72,13 +72,14 @@ async def _async_cleanup_process(
 ) -> None:
     """Stop a subprocess and settle pipe readers with bounded waits."""
 
-    def signal_process(sig: signal.Signals) -> None:
+    def stop_process(*, terminate: bool) -> None:
         if process.returncode is not None:
             return
         if os.name == "posix":
+            sig = signal.SIGTERM if terminate else signal.SIGKILL
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, sig)
-        elif sig == signal.SIGTERM:
+        elif terminate:
             with suppress(ProcessLookupError):
                 process.terminate()
         else:
@@ -86,14 +87,14 @@ async def _async_cleanup_process(
                 process.kill()
 
     if process.returncode is None and graceful:
-        signal_process(signal.SIGTERM)
+        stop_process(terminate=True)
         with suppress(TimeoutError):
             await asyncio.wait_for(
                 process.wait(), timeout=_SHELL_CANCEL_GRACE_SECONDS
             )
 
     if process.returncode is None:
-        signal_process(signal.SIGKILL)
+        stop_process(terminate=False)
 
     if process.returncode is None:
         with suppress(TimeoutError):
