@@ -67,9 +67,7 @@ def _copy_runtime_value(value: Any, memo: dict[int, Any]) -> Any:
         return copied_set
 
     if isinstance(value, frozenset):
-        copied_frozenset = frozenset(
-            _copy_runtime_value(item, memo) for item in value
-        )
+        copied_frozenset = frozenset(_copy_runtime_value(item, memo) for item in value)
         memo[value_id] = copied_frozenset
         return copied_frozenset
 
