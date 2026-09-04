@@ -233,6 +233,7 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
         _LOGGER.warning(
             "Migrating Extended OpenAI Conversation (Responses) config entry %s from version %s to version %s",
             entry.entry_id,
+            entry.version,
             CONFIG_ENTRY_VERSION,
         )
         if entry.version == 1:
