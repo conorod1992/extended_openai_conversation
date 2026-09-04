@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
-from homeassistant.components import conversation
-from homeassistant.exceptions import HomeAssistantError
 import pytest
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -32,6 +31,8 @@ from custom_components.extended_openai_conversation_responses.function_tool_reso
 from custom_components.extended_openai_conversation_responses.provider_loop import (
     MAX_PROVIDER_REQUESTS,
 )
+from homeassistant.components import conversation
+from homeassistant.exceptions import HomeAssistantError
 
 
 class FakeStream:
@@ -67,7 +68,7 @@ def _function_call_stream(
             type="function_call",
             call_id=call_id,
             name=name,
-            arguments=__import__("json").dumps(arguments),
+            arguments=json.dumps(arguments),
         )
         events.extend(
             [
@@ -337,6 +338,34 @@ async def test_provider_loop_exhaustion_is_explicit(hass, monkeypatch) -> None:
         await entity._async_handle_chat_log(_chat_log(hass), [tool], [])
 
     assert entity._execute_function_tool.await_count == 2
+
+
+async def test_tool_edit_between_request_and_execution_uses_current_definition(
+    hass,
+) -> None:
+    stale = _tool("notify", {"type": "service", "service": "notify.old"})
+    current = _tool("notify", {"type": "service", "service": "notify.current"})
+    entity = _entity(
+        hass,
+        [
+            _function_call_stream([("call-1", "notify", {})]),
+            _final_stream(),
+        ],
+        limit=2,
+    )
+    latest_data = {"revision": 2}
+    latest_subentry = SimpleNamespace(data=latest_data)
+    latest_entry = SimpleNamespace(subentries={"agent-1": latest_subentry})
+    entity.hass = SimpleNamespace(
+        config_entries=SimpleNamespace(async_get_entry=Mock(return_value=latest_entry))
+    )
+    entity._configured_function_tools_from_data = Mock(return_value=[current])
+    entity._execute_function_tool = _executor(entity)
+
+    await entity._async_handle_chat_log(_chat_log(hass), [stale], [])
+
+    assert entity._execute_function_tool.await_args_list[0].args[0] is current
+    entity._configured_function_tools_from_data.assert_called_with(latest_data)
 
 
 def test_latest_definition_is_selected_for_execution() -> None:
