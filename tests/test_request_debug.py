@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
 
+from homeassistant.helpers.template import Template
+
 from custom_components.extended_openai_conversation_responses.debug import (
     _ACTIVE_DEBUG_TRACE,
+    _jsonable,
     DebugManager,
     DebugOpenAIClientProxy,
+    DebugProviderRequest,
 )
 
 
@@ -59,6 +64,31 @@ def test_debug_manager_can_resize_and_clear() -> None:
 
     with pytest.raises(ValueError, match="Debug run limit"):
         manager.configure(limit=3)
+
+
+@dataclass
+class _TemplateResult:
+    template: Template
+
+
+def test_debug_serialization_does_not_deepcopy_template(hass) -> None:
+    """Dataclass/debug serialization must not traverse Template.hass."""
+    result = _TemplateResult(Template("{{ value }}", hass))
+
+    assert _jsonable(result) == {"template": "{{ value }}"}
+
+    request = DebugProviderRequest(
+        request_id="request",
+        api_surface="responses",
+        started_at="now",
+        started_offset_ms=0,
+        request={},
+        metrics={},
+        response_events=[result],
+    )
+    assert request.as_dict()["response_events"] == [
+        {"template": "{{ value }}"}
+    ]
 
 
 class _FakeStream:
