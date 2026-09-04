@@ -1,8 +1,9 @@
 """Low-risk conversation hot-path optimizations.
 
 This module keeps expensive configuration validation at configuration-revision
-boundaries, reuses compiled Home Assistant templates, and opts direct OpenAI GPT-5.6+
-Responses requests into explicit stable-prefix prompt caching.
+boundaries, reuses compiled Home Assistant templates and immutable memory lexical
+derivations, and opts direct OpenAI GPT-5.6+ Responses requests into explicit
+stable-prefix prompt caching.
 """
 
 from __future__ import annotations
@@ -13,7 +14,9 @@ from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache, wraps
 import hashlib
+import math
 import re
+from types import MappingProxyType
 from typing import Any
 
 import yaml
@@ -31,10 +34,17 @@ from .const import (
     DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE,
     DEFAULT_PROMPT,
 )
+from .memory import (
+    MemoryRecord,
+    _normalize as _memory_normalize,
+    _record_token_list as _memory_record_token_list,
+    _tokens as _memory_tokens,
+)
 from .prompt import EffectivePrompt
 
 _TEMPLATE_MARKERS = ("{{", "{%", "{#")
 _TEMPLATE_CACHE_LIMIT = 64
+_MEMORY_LEXICAL_CACHE_LIMIT = 20_000
 _EXPLICIT_CACHE_MIN_CHARACTERS = 4096
 _GPT_56_OR_LATER = re.compile(r"^gpt-5\.(\d+)(?:[-.]|$)", re.IGNORECASE)
 
@@ -123,6 +133,68 @@ def cached_validate_function_groups(
         # Preserve the existing validation/error path for malformed unexpected data.
         return _validate_function_groups(value, function_tools)
     return deepcopy(list(_cached_function_groups(groups_yaml, tool_names)))
+
+
+@lru_cache(maxsize=_MEMORY_LEXICAL_CACHE_LIMIT)
+def _cached_memory_record_terms(memory_record: MemoryRecord) -> tuple[str, ...]:
+    """Tokenize one immutable memory record only once per record revision."""
+    return tuple(_memory_record_token_list(memory_record))
+
+
+def cached_memory_record_token_list(memory_record: MemoryRecord) -> list[str]:
+    """Preserve the historical fresh-list contract around cached record terms."""
+    return list(_cached_memory_record_terms(memory_record))
+
+
+@lru_cache(maxsize=_MEMORY_LEXICAL_CACHE_LIMIT)
+def _cached_memory_tokens(value: str) -> frozenset[str]:
+    """Cache deterministic token sets while keeping callers isolated from mutation."""
+    return frozenset(_memory_tokens(value))
+
+
+def cached_memory_tokens(value: str) -> set[str]:
+    """Return a fresh set backed by cached string tokenization."""
+    return set(_cached_memory_tokens(value))
+
+
+@lru_cache(maxsize=_MEMORY_LEXICAL_CACHE_LIMIT)
+def cached_memory_normalize(value: str) -> str:
+    """Cache deterministic normalized text used repeatedly by memory ranking."""
+    return _memory_normalize(value)
+
+
+@lru_cache(maxsize=_MEMORY_LEXICAL_CACHE_LIMIT)
+def _cached_memory_term_frequencies(
+    document_terms: tuple[str, ...],
+) -> Mapping[str, int]:
+    """Build one immutable frequency map per distinct tokenized memory document."""
+    frequencies: dict[str, int] = {}
+    for term in document_terms:
+        frequencies[term] = frequencies.get(term, 0) + 1
+    return MappingProxyType(frequencies)
+
+
+def cached_memory_bm25_score(
+    query_terms: list[str],
+    document_terms: list[str],
+    document_frequency: Mapping[str, int],
+    document_count: int,
+    average_length: float,
+) -> float:
+    """Calculate the existing BM25 score without rebuilding term frequencies."""
+    frequencies = _cached_memory_term_frequencies(tuple(document_terms))
+    k1, b = 1.2, 0.75
+    score = 0.0
+    max_score = 0.0
+    for term in dict.fromkeys(query_terms):
+        df = document_frequency.get(term, 0)
+        idf = math.log(1 + (document_count - df + 0.5) / (df + 0.5))
+        tf = frequencies.get(term, 0)
+        denominator = tf + k1 * (1 - b + b * len(document_terms) / average_length)
+        if tf:
+            score += idf * (tf * (k1 + 1) / denominator)
+        max_score += idf * (k1 + 1) / (1 + k1 * (1 - b))
+    return score / max_score if max_score else 0.0
 
 
 def _render_default_exposed_entities(
@@ -323,7 +395,7 @@ def install_performance_optimizations() -> None:
         return
     _INSTALLED = True
 
-    from . import agent_config, conversation, prompt
+    from . import agent_config, conversation, memory, prompt
 
     # Runtime callers repeatedly reached the authoritative validators. Retain those
     # validators at save/load boundaries while reusing the result for an unchanged
@@ -336,6 +408,14 @@ def install_performance_optimizations() -> None:
     )
     agent_config.validate_function_groups = cached_validate_function_groups  # type: ignore[assignment]
     conversation.validate_function_groups = cached_validate_function_groups  # type: ignore[assignment]
+
+    # Persistent Memory records are frozen and record updates replace the object.
+    # Cache only deterministic lexical derivations underneath the existing ranking
+    # algorithm; query parsing, candidate selection and ranking stay authoritative.
+    memory._record_token_list = cached_memory_record_token_list  # type: ignore[assignment]
+    memory._tokens = cached_memory_tokens  # type: ignore[attr-defined]
+    memory._normalize = cached_memory_normalize  # type: ignore[attr-defined]
+    memory._bm25_score = cached_memory_bm25_score  # type: ignore[attr-defined]
 
     # render_effective_prompt resolves this module global at call time, so replacing
     # the helper speeds both live prompts and previews without changing their output.
