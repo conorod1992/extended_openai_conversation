@@ -40,6 +40,16 @@ class FunctionToolsSnapshot:
     tools: tuple[dict[str, Any], ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ConfiguredToolResolution:
+    """One authoritative execution-time configured-tool resolution."""
+
+    agent_id: int
+    data: Any
+    tools: list[dict[str, Any]]
+    current_tool: dict[str, Any] | None
+
+
 @dataclass(slots=True)
 class FunctionCallBudget:
     """Request-local ceiling for model-requested function executions."""
@@ -64,6 +74,9 @@ class FunctionCallBudget:
 
 _ACTIVE_FUNCTION_TOOLS_SNAPSHOT: ContextVar[FunctionToolsSnapshot | None] = ContextVar(
     "extended_openai_function_tools_snapshot", default=None
+)
+_ACTIVE_CONFIGURED_TOOL_RESOLUTION: ContextVar[ConfiguredToolResolution | None] = (
+    ContextVar("extended_openai_configured_tool_resolution", default=None)
 )
 _ACTIVE_FUNCTION_CALL_BUDGET: ContextVar[FunctionCallBudget | None] = ContextVar(
     "extended_openai_function_call_budget", default=None
@@ -134,22 +147,17 @@ def _assert_tool_loop_completed(chat_log: Any, max_iterations: int) -> None:
     assert_provider_loop_completed(chat_log, max_iterations)
 
 
-def latest_configured_function_tool(
+def _resolve_latest_configured_function_tool(
     agent: Any, function_tool: dict[str, Any]
-) -> dict[str, Any]:
-    """Return the latest persisted definition for a configured Function Tool.
-
-    Integration-owned tools are request-internal definitions and are returned
-    unchanged. If a configured tool was deleted, leave the request-time object in
-    place so the existing executor performs its authoritative fail-closed lookup.
-    """
+) -> ConfiguredToolResolution | None:
+    """Resolve one configured tool and retain its full current catalogue once."""
     function_type = function_tool.get("function", {}).get("type")
     if function_type in _INTEGRATION_TOOL_TYPES:
-        return function_tool
+        return None
 
     tool_name = function_tool.get("spec", {}).get("name")
     if not isinstance(tool_name, str) or not tool_name:
-        return function_tool
+        return None
 
     latest_entry = agent.hass.config_entries.async_get_entry(agent.entry.entry_id)
     latest_subentry = (
@@ -171,7 +179,43 @@ def latest_configured_function_tool(
         ),
         None,
     )
-    return current_tool if current_tool is not None else function_tool
+    return ConfiguredToolResolution(
+        agent_id=id(agent),
+        data=latest_data,
+        tools=current_configured,
+        current_tool=current_tool,
+    )
+
+
+def latest_configured_function_tool(
+    agent: Any, function_tool: dict[str, Any]
+) -> dict[str, Any]:
+    """Return the latest persisted definition for a configured Function Tool.
+
+    Integration-owned tools are request-internal definitions and are returned
+    unchanged. If a configured tool was deleted, leave the request-time object in
+    place so the existing executor performs its authoritative fail-closed lookup.
+    """
+    resolution = _resolve_latest_configured_function_tool(agent, function_tool)
+    if resolution is None or resolution.current_tool is None:
+        return function_tool
+    return resolution.current_tool
+
+
+def _execution_configured_function_tools(
+    agent: Any,
+    data: Any,
+    factory: Callable[[], list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Reuse the one fresh catalogue already resolved for this execution only."""
+    resolution = _ACTIVE_CONFIGURED_TOOL_RESOLUTION.get()
+    if (
+        resolution is not None
+        and resolution.agent_id == id(agent)
+        and data is resolution.data
+    ):
+        return resolution.tools
+    return factory()
 
 
 def install_runtime_cleanup() -> None:
@@ -193,6 +237,9 @@ def install_runtime_cleanup() -> None:
     original_process = entity_class._async_process
     original_handle_chat_log = entity_class._async_handle_chat_log
     original_get_function_tools = entity_class._get_function_tools
+    original_configured_function_tools_from_data = (
+        entity_class._configured_function_tools_from_data
+    )
     original_execute_function_tool = entity_class._execute_function_tool
 
     @wraps(original_process)
@@ -269,6 +316,16 @@ def install_runtime_cleanup() -> None:
             lambda: original_get_function_tools(self),
         )
 
+    @wraps(original_configured_function_tools_from_data)
+    def configured_function_tools_for_execution(
+        self: Any, data: Any
+    ) -> list[dict[str, Any]]:
+        return _execution_configured_function_tools(
+            self,
+            data,
+            lambda: original_configured_function_tools_from_data(self, data),
+        )
+
     @wraps(original_execute_function_tool)
     async def execute_latest_function_tool(
         self: Any,
@@ -283,16 +340,38 @@ def install_runtime_cleanup() -> None:
             # this execution seam, so only real model-requested functions consume
             # the configured conversation budget.
             budget.claim(str(tool_input.tool_name))
-        current_tool = latest_configured_function_tool(self, function_tool)
-        return await original_execute_function_tool(
-            self,
-            current_tool,
-            tool_input,
-            llm_context,
-            exposed_entities,
-        )
+
+        resolution = _resolve_latest_configured_function_tool(self, function_tool)
+        if resolution is None:
+            return await original_execute_function_tool(
+                self,
+                function_tool,
+                tool_input,
+                llm_context,
+                exposed_entities,
+            )
+
+        # Keep provider-facing request snapshots frozen, but make the execution seam
+        # use one fresh persisted catalogue. The original executor reuses this exact
+        # catalogue for enabled/Guest/security checks instead of parsing/copying it a
+        # second time, and receives the exact current tool object when it still exists.
+        execution_tool = resolution.current_tool or function_tool
+        token = _ACTIVE_CONFIGURED_TOOL_RESOLUTION.set(resolution)
+        try:
+            return await original_execute_function_tool(
+                self,
+                execution_tool,
+                tool_input,
+                llm_context,
+                exposed_entities,
+            )
+        finally:
+            _ACTIVE_CONFIGURED_TOOL_RESOLUTION.reset(token)
 
     entity_class._async_process = process_with_fresh_tool_snapshot  # type: ignore[method-assign]
     entity_class._async_handle_chat_log = handle_chat_log_with_function_budget  # type: ignore[method-assign]
     entity_class._get_function_tools = get_function_tools_cached  # type: ignore[method-assign]
+    entity_class._configured_function_tools_from_data = (  # type: ignore[method-assign]
+        configured_function_tools_for_execution
+    )
     entity_class._execute_function_tool = execute_latest_function_tool  # type: ignore[method-assign]
