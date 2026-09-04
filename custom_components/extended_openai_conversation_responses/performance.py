@@ -17,7 +17,7 @@ import hashlib
 import math
 import re
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -102,8 +102,11 @@ def cached_configured_function_tools_from_data(
     # while moving the much more expensive YAML/schema validation behind the cache.
     # Runtime Function configs require a container copy that keeps HA-bound Template
     # objects hydrated; their normal deepcopy is intentionally the persistence form.
-    return copy_runtime_function_config(
-        list(_cached_configured_tools(_configured_tools_yaml(data)))
+    return cast(
+        list[dict[str, Any]],
+        copy_runtime_function_config(
+            list(_cached_configured_tools(_configured_tools_yaml(data)))
+        ),
     )
 
 
