@@ -427,19 +427,13 @@ class PersistentMemory:
                     changes["subject"] = cleaned_subject
                 if cleaned_valid_from is not _UNSET:
                     changes["valid_from"] = cleaned_valid_from
-                updated = self._replace_record(
-                    current,
-                    **changes,
-                )
+                updated = self._replace_record(current, **changes)
                 await self._async_save_locked()
                 self._schedule_embedding_maintenance()
                 return {"status": "updated", "memory": memory_as_dict(updated)}
             duplicate = self._find_duplicate(user_id, content)
             if duplicate:
-                changes = {
-                    "category": category,
-                    "last_confirmed_at": timestamp,
-                }
+                changes = {"category": category, "last_confirmed_at": timestamp}
                 if cleaned_importance is not _UNSET:
                     changes["importance"] = cleaned_importance
                 if cleaned_subject is not _UNSET:
@@ -448,10 +442,7 @@ class PersistentMemory:
                     changes["key"] = cleaned_key
                 if cleaned_valid_from is not _UNSET:
                     changes["valid_from"] = cleaned_valid_from
-                confirmed = self._replace_record(
-                    duplicate,
-                    **changes,
-                )
+                confirmed = self._replace_record(duplicate, **changes)
                 await self._async_save_locked()
                 self._schedule_embedding_maintenance()
                 return {"status": "confirmed", "memory": memory_as_dict(confirmed)}
@@ -483,7 +474,7 @@ class PersistentMemory:
                     if isinstance(cleaned_importance, str)
                     else "normal"
                 ),
-                subject=(cleaned_subject if isinstance(cleaned_subject, str) else None),
+                subject=cleaned_subject if isinstance(cleaned_subject, str) else None,
                 key=cleaned_key if isinstance(cleaned_key, str) else None,
                 valid_from=(
                     cleaned_valid_from if isinstance(cleaned_valid_from, str) else None
@@ -1011,6 +1002,7 @@ class PersistentMemory:
             if (allowed_scopes is None or memory.user_id in allowed_scopes)
             and self._cached_embedding(memory) is None
         ]
+        generated_entries: dict[str, EmbeddingCacheEntry] = {}
         for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
             batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
             vectors = await provider([_embedding_text(memory) for memory in batch])
@@ -1018,7 +1010,7 @@ class PersistentMemory:
                 raise ValueError(
                     "embedding provider returned the wrong number of vectors"
                 )
-            generated_ids: list[str] = []
+            batch_generated = False
             async with self._lock:
                 if (
                     self._embedding_provider is not provider
@@ -1034,21 +1026,29 @@ class PersistentMemory:
                         or self._cached_embedding(current) is not None
                     ):
                         continue
-                    self._embedding_cache[memory.memory_id] = EmbeddingCacheEntry(
+                    entry = EmbeddingCacheEntry(
                         model=model,
                         fingerprint=_embedding_fingerprint(memory),
                         vector=_clean_embedding(vector),
                     )
-                    generated_ids.append(memory.memory_id)
-                if not generated_ids:
-                    continue
-                self._embedding_cache_dirty = True
-                if not await self._async_save_embedding_cache_locked():
-                    if background:
-                        for memory_id in generated_ids:
-                            self._embedding_cache.pop(memory_id, None)
-                    return False
-        return True
+                    self._embedding_cache[memory.memory_id] = entry
+                    generated_entries[memory.memory_id] = entry
+                    batch_generated = True
+                if batch_generated:
+                    self._embedding_cache_dirty = True
+
+        if not generated_entries:
+            return True
+        async with self._lock:
+            if self._embedding_provider is not provider or self._embedding_model != model:
+                return False
+            if await self._async_save_embedding_cache_locked():
+                return True
+            if background:
+                for memory_id, generated_entry in generated_entries.items():
+                    if self._embedding_cache.get(memory_id) == generated_entry:
+                        self._embedding_cache.pop(memory_id, None)
+            return False
 
     async def _async_save_locked(self) -> None:
         await self._storage.async_save(
