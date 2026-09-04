@@ -7,7 +7,6 @@ from copy import deepcopy
 from typing import Any
 
 import voluptuous as vol
-import yaml
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm
@@ -16,7 +15,7 @@ from ..exceptions import EntityNotExposed, EntityNotFound, InvalidFunction
 
 
 class _RuntimeFunctionConfig(dict[str, Any]):
-    """Runtime-validated config with an explicit persistence representation."""
+    """Runtime-validated config with a persistence-safe deepcopy boundary."""
 
     def __init__(
         self, runtime_config: dict[str, Any], persisted_config: dict[str, Any]
@@ -24,30 +23,19 @@ class _RuntimeFunctionConfig(dict[str, Any]):
         super().__init__(runtime_config)
         self._persisted_config = persisted_config
 
-    def persisted_copy(self) -> dict[str, Any]:
-        """Return an isolated JSON/YAML-safe source configuration."""
-        return deepcopy(self._persisted_config)
-
-    def __deepcopy__(self, memo: dict[int, Any]) -> _RuntimeFunctionConfig:
-        """Copy runtime containers without de-hydrating schema-created objects."""
-        return _copy_runtime_value(self, memo)
+    def __deepcopy__(self, memo: dict[int, Any]) -> dict[str, Any]:
+        """Return the plain source config instead of copying runtime HA objects."""
+        return deepcopy(self._persisted_config, memo)
 
 
 def _copy_runtime_value(value: Any, memo: dict[int, Any]) -> Any:
-    """Copy mutable config containers while treating runtime objects as atomic.
-
-    Home Assistant schema validation can hydrate persisted strings into objects such
-    as Template instances that are deliberately bound to the live HomeAssistant
-    object and are not deepcopy-safe. Runtime Function Tool callers still require
-    isolated mutable dictionaries/lists, so copy those containers recursively while
-    retaining schema-created leaf objects by reference.
-    """
+    """Copy runtime config containers while retaining hydrated leaf objects."""
     value_id = id(value)
     if value_id in memo:
         return memo[value_id]
 
     if isinstance(value, _RuntimeFunctionConfig):
-        copied = _RuntimeFunctionConfig({}, value.persisted_copy())
+        copied = _RuntimeFunctionConfig({}, deepcopy(value._persisted_config))
         memo[value_id] = copied
         copied.update(
             {key: _copy_runtime_value(item, memo) for key, item in value.items()}
@@ -85,22 +73,15 @@ def _copy_runtime_value(value: Any, memo: dict[int, Any]) -> Any:
         memo[value_id] = copied_frozenset
         return copied_frozenset
 
+    # Schema-created runtime objects such as Home Assistant Template instances are
+    # deliberately treated as atomic. They are reusable, but recursively copying
+    # them can traverse into the live HomeAssistant object and is not supported.
     return value
 
 
-def _represent_runtime_function_config(
-    dumper: yaml.SafeDumper, data: _RuntimeFunctionConfig
-) -> Any:
-    """Serialize runtime configs using only their original persisted representation."""
-    return dumper.represent_dict(data.persisted_copy())
-
-
-# Runtime Function Tool objects can legitimately reach the management normalization
-# path before they are written back as YAML. Keep runtime deepcopy semantics correct,
-# and make the persistence conversion explicit at the serializer boundary instead.
-yaml.SafeDumper.add_representer(
-    _RuntimeFunctionConfig, _represent_runtime_function_config
-)
+def copy_runtime_function_config(value: Any) -> Any:
+    """Return an isolated runtime-safe copy without de-hydrating Function Tools."""
+    return _copy_runtime_value(value, {})
 
 
 class Function(ABC):
@@ -111,12 +92,8 @@ class Function(ABC):
     def validate_schema(self, function_config: dict[str, Any]) -> dict[str, Any]:
         """Validate and convert function configuration using the schema."""
         try:
-            persisted_config = (
-                function_config.persisted_copy()
-                if isinstance(function_config, _RuntimeFunctionConfig)
-                else deepcopy(function_config)
-            )
-            result = self.data_schema(deepcopy(persisted_config))
+            persisted_config = deepcopy(function_config)
+            result = self.data_schema(function_config)
             if not isinstance(result, dict):
                 return {}
             return _RuntimeFunctionConfig(dict(result), persisted_config)
