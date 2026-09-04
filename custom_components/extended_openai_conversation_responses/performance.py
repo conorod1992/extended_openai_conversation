@@ -34,6 +34,7 @@ from .const import (
     DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE,
     DEFAULT_PROMPT,
 )
+from .functions.base import copy_runtime_function_config
 from .memory import (
     MemoryRecord,
     _normalize as _memory_normalize,
@@ -99,7 +100,11 @@ def cached_configured_function_tools_from_data(
     """Return isolated tools from the validated configuration-revision cache."""
     # Callers historically received fresh mutable dictionaries. Keep that contract
     # while moving the much more expensive YAML/schema validation behind the cache.
-    return deepcopy(list(_cached_configured_tools(_configured_tools_yaml(data))))
+    # Runtime Function configs require a container copy that keeps HA-bound Template
+    # objects hydrated; their normal deepcopy is intentionally the persistence form.
+    return copy_runtime_function_config(
+        list(_cached_configured_tools(_configured_tools_yaml(data)))
+    )
 
 
 def _groups_cache_key(value: Any) -> str:
