@@ -398,7 +398,7 @@ def _install_runtime_configuration_lifecycle() -> None:
             return []
         return await original_temporary_retrieve(entity, *args, **kwargs)
 
-    ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories = (  # type: ignore[method-assign]
+    ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories = (  # type: ignore[assignment]
         retrieve_temporary_memories
     )
 
@@ -425,7 +425,7 @@ def _install_runtime_configuration_lifecycle() -> None:
             raise RuntimeError("temporary memory is disabled")
         return await original_temporary_execute(entity, *args, **kwargs)
 
-    ExtendedOpenAIAgentEntity._async_execute_temporary_memory_tool = (  # type: ignore[method-assign]
+    ExtendedOpenAIAgentEntity._async_execute_temporary_memory_tool = (  # type: ignore[assignment]
         execute_temporary_memory
     )
 
