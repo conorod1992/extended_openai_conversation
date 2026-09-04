@@ -231,9 +231,7 @@ def _install_archive_transactions() -> None:
             }
             turns = dict(archive._turns)
             removed = [
-                turn
-                for session_id in targets
-                for turn in turns.pop(session_id, ())
+                turn for session_id in targets for turn in turns.pop(session_id, ())
             ]
             active = {
                 key: value
@@ -277,9 +275,7 @@ def _install_archive_transactions() -> None:
             }
             turns = dict(archive._turns)
             removed = [
-                turn
-                for session_id in targets
-                for turn in turns.pop(session_id, ())
+                turn for session_id in targets for turn in turns.pop(session_id, ())
             ]
             active = {
                 key: value
@@ -318,9 +314,7 @@ def _install_archive_transactions() -> None:
             }
             turns = dict(archive._turns)
             removed = [
-                turn
-                for session_id in targets
-                for turn in turns.pop(session_id, ())
+                turn for session_id in targets for turn in turns.pop(session_id, ())
             ]
             active = {
                 key: value
@@ -415,12 +409,12 @@ def _install_usage_transactions() -> None:
     from .usage import UsageManager
 
     manager_type: Any = UsageManager
-    if getattr(manager_type.async_prune_details, "_extended_openai_persist_first", False):
+    if getattr(
+        manager_type.async_prune_details, "_extended_openai_persist_first", False
+    ):
         return
 
-    async def async_prune_details(
-        manager: Any, *, save: bool = True
-    ) -> dict[str, int]:
+    async def async_prune_details(manager: Any, *, save: bool = True) -> dict[str, int]:
         async with manager._lock:
             requests, runs, result = _usage_pruned_state(manager)
             if save:
@@ -502,7 +496,9 @@ async def async_prune_archive_retention(
             )
         )
     except Exception:
-        _LOGGER.exception("Background conversation archive retention maintenance failed")
+        _LOGGER.exception(
+            "Background conversation archive retention maintenance failed"
+        )
 
 
 def _install_archive_retention_schedule() -> None:
