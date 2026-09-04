@@ -3,7 +3,6 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-from homeassistant.exceptions import HomeAssistantError
 import pytest
 
 from custom_components.extended_openai_conversation_responses.conversation import (
@@ -15,6 +14,7 @@ from custom_components.extended_openai_conversation_responses.exceptions import 
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def _tool(*, enabled: bool = True, service: str = "notify.old") -> dict:
@@ -47,9 +47,6 @@ def _agent(current_tools: list[dict]):
 
 async def test_deleted_tool_fails_closed_before_execution() -> None:
     agent = _agent([])
-    agent._execute_function_tool.__func__.__globals__["get_exposed_entities"] = Mock(
-        return_value=[]
-    )
 
     with pytest.raises(FunctionNotFound):
         await ExtendedOpenAIAgentEntity._execute_function_tool(
