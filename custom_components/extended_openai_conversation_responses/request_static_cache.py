@@ -73,13 +73,6 @@ def render_maintained_entity_context(
     return "\n".join(lines) + "\n"
 
 
-def snapshot_key_with_enabled_skills(
-    base_key: tuple[Any, ...], enabled_skills: list[Any]
-) -> tuple[Any, ...]:
-    """Include the usable skill catalogue in request-tool snapshot invalidation."""
-    return (*base_key, tuple(str(skill.name) for skill in enabled_skills))
-
-
 def install_request_static_caching() -> None:
     """Install request-scoped caching after existing performance/security wrappers."""
     global _INSTALLED
@@ -87,7 +80,7 @@ def install_request_static_caching() -> None:
         return
     _INSTALLED = True
 
-    from . import conversation, entity, prompt, runtime_cleanup
+    from . import conversation, entity, prompt
 
     original_process = conversation.ExtendedOpenAIAgentEntity._async_process
     original_format_tools = entity._format_tools
@@ -100,7 +93,6 @@ def install_request_static_caching() -> None:
     )
     original_assemble_function_tools = conversation.assemble_function_tools
     original_load_function_groups = conversation.load_function_groups
-    original_snapshot_key = runtime_cleanup._snapshot_key
 
     @wraps(original_process)
     async def process_with_fresh_formatted_tool_cache(
@@ -178,15 +170,6 @@ def install_request_static_caching() -> None:
         )
         return original_load_function_groups(session, requested, groups, projected)
 
-    def snapshot_key_with_skills(
-        agent: Any, conversation_module: Any
-    ) -> tuple[Any, ...]:
-        base_key = original_snapshot_key(agent, conversation_module)
-        get_enabled_skills = getattr(agent, "_get_enabled_skills", None)
-        if not callable(get_enabled_skills):
-            return base_key
-        return snapshot_key_with_enabled_skills(base_key, get_enabled_skills())
-
     conversation.ExtendedOpenAIAgentEntity._async_process = (  # type: ignore[method-assign]
         process_with_fresh_formatted_tool_cache
     )
@@ -200,4 +183,3 @@ def install_request_static_caching() -> None:
     )
     conversation.assemble_function_tools = assemble_function_tools_for_skills
     conversation.load_function_groups = load_function_groups_projected
-    runtime_cleanup._snapshot_key = snapshot_key_with_skills  # type: ignore[assignment]
