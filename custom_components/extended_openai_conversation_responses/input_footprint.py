@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 import math
 from typing import Any, Awaitable, Callable
 
@@ -70,7 +69,11 @@ def _capture_live_footprint(input_value: Any, tools: Any = None) -> int:
     entity = state.entity
     footprints = entity.hass.data.setdefault(_LATEST_FOOTPRINTS, {})
     footprints[(entity.entry.entry_id, entity.subentry.subentry_id)] = {
-        **{key: value for key, value in metrics.items() if key != "context_safety_estimate_tokens"},
+        **{
+            key: value
+            for key, value in metrics.items()
+            if key != "context_safety_estimate_tokens"
+        },
         "captured_at": dt_util.utcnow().isoformat(),
         "attachments_excluded": True,
     }
@@ -100,7 +103,7 @@ def _baseline_footprint(preview: dict[str, Any]) -> dict[str, Any]:
 
 
 def _latest_provider_usage(usage: Any) -> dict[str, Any] | None:
-    """Return only exact provider-reported input usage for the newest retained request."""
+    """Return exact provider input usage for the newest retained request."""
     if not usage.requests:
         return None
     request = usage.requests[-1]
@@ -151,9 +154,12 @@ def _wrap_management_command(original: ManagementCommand) -> ManagementCommand:
         is_admin: bool,
         message: dict[str, Any],
     ) -> dict[str, Any]:
-        if message.get("section") == "usage" and message.get("action") == "footprint":
-            # The existing management-permissions wrapper, installed after this hook,
-            # keeps every detailed Usage action admin-only.
+        if (
+            message.get("section") == "usage"
+            and message.get("action") == "footprint"
+        ):
+            # The management-permissions wrapper is installed after this hook, so
+            # detailed Usage actions remain administrator-only.
             return await async_input_footprint(hass, user_id, message)
         return await original(hass, user_id, is_admin, message)
 
