@@ -16,6 +16,9 @@ on:
       - "tests/*.test.mjs"
       - ".github/workflows/frontend.yml"
 
+permissions:
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -27,6 +30,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -37,12 +42,19 @@ jobs:
         working-directory: frontend
         run: npm install --no-audit --no-fund
 
-      - name: Print generated package lock
-        working-directory: frontend
+      - name: Commit generated package lock
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          echo "===PACKAGE_LOCK_BEGIN==="
-          cat package-lock.json
-          echo "===PACKAGE_LOCK_END==="
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/package-lock.json
+          if git diff --cached --quiet; then
+            echo "package-lock.json is already committed"
+          else
+            git commit -m "Lock frontend dependency resolution"
+            git push origin "HEAD:$HEAD_REF"
+          fi
 
       - name: Check shipped frontend modules
         run: |
