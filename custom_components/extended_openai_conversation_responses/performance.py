@@ -190,9 +190,7 @@ def cached_memory_bm25_score(
         df = document_frequency.get(term, 0)
         idf = math.log(1 + (document_count - df + 0.5) / (df + 0.5))
         tf = frequencies.get(term, 0)
-        denominator = tf + k1 * (
-            1 - b + b * len(document_terms) / average_length
-        )
+        denominator = tf + k1 * (1 - b + b * len(document_terms) / average_length)
         if tf:
             score += idf * (tf * (k1 + 1) / denominator)
         max_score += idf * (k1 + 1) / (1 + k1 * (1 - b))
