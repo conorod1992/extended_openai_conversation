@@ -80,7 +80,7 @@ from .request import (
     build_web_search_tool,
     format_function_tools,
 )
-from .resource_limits import MAX_ATTACHMENT_COUNT, bounded_local_file_size
+from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
 from .speech import async_streaming_speech_cleanup
 from .usage import RequestUsage, UsageManager, extract_usage
 
@@ -844,8 +844,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if not path.is_file():
                     raise HomeAssistantError(f"`{path}` is not a file")
 
-                size = bounded_local_file_size(path, total_bytes)
-                total_bytes += size
+                content = read_bounded_local_file(path, total_bytes)
+                total_bytes += len(content)
 
                 mime_type = attachment.mime_type or mimetypes.guess_type(path)[0]
                 if not mime_type:
@@ -853,7 +853,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         f"Unable to determine attachment type for `{path}`"
                     )
 
-                encoded = base64.b64encode(path.read_bytes()).decode()
+                encoded = base64.b64encode(content).decode()
                 data_url = f"data:{mime_type};base64,{encoded}"
                 if mime_type.startswith("image/"):
                     if api_mode == API_MODE_RESPONSES:
