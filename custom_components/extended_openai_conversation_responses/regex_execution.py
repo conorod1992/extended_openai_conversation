@@ -70,7 +70,10 @@ def _install_speech_regex_isolation() -> None:
         chat_log: Any,
         request_options: Mapping[str, Any] | None = None,
     ) -> Any:
-        defer = has_custom_speech_replacements(agent.subentry.data)
+        subentry_data = getattr(getattr(agent, "subentry", None), "data", None)
+        defer = bool(
+            subentry_data and has_custom_speech_replacements(subentry_data)
+        )
         defer_token = _DEFER_SPEECH_PROCESSING.set(defer)
         input_token = _DEFERRED_SPEECH_INPUT.set(None)
         deferred_input: tuple[str, Mapping[str, Any]] | None = None
