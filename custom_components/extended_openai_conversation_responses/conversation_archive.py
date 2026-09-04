@@ -924,9 +924,7 @@ def _search_archive_snapshot(
                 "date": turn.timestamp[:10],
                 "timestamp": turn.timestamp,
                 "title": session.title,
-                "excerpt": _excerpt(
-                    f"{turn.user_text}\n{turn.assistant_text}", query
-                ),
+                "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
             }
             for _, _, session, turn in page
         ],
