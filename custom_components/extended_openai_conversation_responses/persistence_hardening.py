@@ -102,7 +102,7 @@ async def _async_prepare_private_store(store: Any) -> None:
 
 def _install_delayed_tool_store_guard() -> None:
     """Harden delayed-tool persistence and keep retry limits fail-safe."""
-    from .delayed_tools import DelayedToolManager, _MAX_AGENT_RETRIES
+    from .delayed_tools import _MAX_AGENT_RETRIES, DelayedToolManager
 
     current_setup = DelayedToolManager.async_setup
     if not getattr(current_setup, "_extended_openai_private_store", False):
