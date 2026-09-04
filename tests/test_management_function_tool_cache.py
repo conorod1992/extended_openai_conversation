@@ -3,11 +3,11 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import custom_components.extended_openai_conversation_responses.management_loading_performance as loading
+from custom_components.extended_openai_conversation_responses import management_ui
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
 )
-from custom_components.extended_openai_conversation_responses import management_ui
-import custom_components.extended_openai_conversation_responses.management_loading_performance as loading
 
 
 def test_agent_snapshot_uses_authoritative_cached_function_parser(monkeypatch) -> None:
