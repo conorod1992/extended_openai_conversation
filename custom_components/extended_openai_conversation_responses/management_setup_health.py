@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
@@ -20,6 +21,9 @@ from .const import (
 from .helpers import get_exposed_entities
 from .management_configuration_guidance import configuration_guidance_snapshot
 from .memory import get_memory_mode
+
+_PATCHED = "extended_openai_management_setup_health"
+OverviewCommand = Callable[..., Awaitable[dict[str, Any]]]
 
 
 def _check(
@@ -60,10 +64,11 @@ def _overall_state(checks: list[dict[str, Any]]) -> str:
 
 def build_setup_health_snapshot(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: ConfigEntry[Any],
     subentry: ConfigSubentry,
     *,
     knowledge_source_count: int,
+    knowledge_available: bool,
     is_admin: bool,
 ) -> dict[str, Any]:
     """Return Overview health without provider calls, writes, or manager wakeups."""
@@ -166,7 +171,9 @@ def build_setup_health_snapshot(
             "memory",
             "neutral" if memory_mode == "off" else "ready",
             "Persistent memory",
-            "Off by choice" if memory_mode == "off" else memory_mode.replace("_", " ").title(),
+            "Off by choice"
+            if memory_mode == "off"
+            else memory_mode.replace("_", " ").title(),
             (
                 "Persistent memory is optional and is currently disabled."
                 if memory_mode == "off"
@@ -186,6 +193,18 @@ def build_setup_health_snapshot(
                 "Knowledge Library",
                 "Off by choice",
                 "Knowledge Library access is optional and is currently disabled.",
+                page="data-memory",
+                subsection="knowledge",
+            )
+        )
+    elif not knowledge_available:
+        checks.append(
+            _check(
+                "knowledge",
+                "unknown",
+                "Knowledge Library",
+                "Unable to determine",
+                "Knowledge Library is enabled, but Overview could not load the stored-source count.",
                 page="data-memory",
                 subsection="knowledge",
             )
@@ -238,7 +257,10 @@ def build_setup_health_snapshot(
                 "warning",
                 "Web Search",
                 "Needs attention",
-                str(web_status.get("message") or "The current provider configuration cannot attach hosted Web Search."),
+                str(
+                    web_status.get("message")
+                    or "The current provider configuration cannot attach hosted Web Search."
+                ),
                 page="assistant" if requires_responses else "capabilities",
                 subsection="basics" if requires_responses else "web-skills",
                 target="config-api_mode" if requires_responses else "config-web_search",
@@ -275,3 +297,49 @@ def build_setup_health_snapshot(
         "checks": checks,
         "live_provider_tested": False,
     }
+
+
+def install_management_setup_health() -> bool:
+    """Attach setup health to the optimized Overview response exactly once."""
+    from . import management_loading_performance, management_ui
+
+    if getattr(management_loading_performance, _PATCHED, False):
+        return False
+    original: OverviewCommand = management_loading_performance.async_overview_summary
+
+    async def wrapped(
+        hass: HomeAssistant,
+        user_id: str,
+        is_admin: bool,
+        message: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = await original(hass, user_id, is_admin, message)
+        entry, subentry = management_ui.entry_and_agent(
+            hass, message.get("entry_id"), message.get("subentry_id")
+        )
+        agent = result.get("agent") if isinstance(result, dict) else None
+        knowledge_source_count = (
+            int(agent.get("knowledge_source_count", 0))
+            if isinstance(agent, dict)
+            else 0
+        )
+        load_errors = result.get("load_errors", []) if isinstance(result, dict) else []
+        knowledge_available = not any(
+            isinstance(issue, dict) and issue.get("key") == "knowledge"
+            for issue in load_errors
+        )
+        return {
+            **result,
+            "setup_health": build_setup_health_snapshot(
+                hass,
+                entry,
+                subentry,
+                knowledge_source_count=knowledge_source_count,
+                knowledge_available=knowledge_available,
+                is_admin=is_admin,
+            ),
+        }
+
+    management_loading_performance.async_overview_summary = wrapped  # type: ignore[assignment]
+    setattr(management_loading_performance, _PATCHED, True)
+    return True
