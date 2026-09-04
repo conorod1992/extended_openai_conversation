@@ -389,11 +389,11 @@ class IntercomManager:
             self._draining.discard(entity_id)
             queue = self._queues.get(entity_id)
             if queue:
-                delivery = queue[0].deliveries.get(entity_id)
+                queued_delivery = queue[0].deliveries.get(entity_id)
                 state = self.hass.states.get(entity_id)
                 if (
-                    delivery is not None
-                    and delivery.status == "queued_busy"
+                    queued_delivery is not None
+                    and queued_delivery.status == "queued_busy"
                     and state is not None
                     and state.state == "idle"
                 ):
