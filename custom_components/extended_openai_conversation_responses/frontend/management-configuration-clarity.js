@@ -95,6 +95,11 @@ export function settingEffectBadges(key, value, {disabled = false} = {}) {
 
 export function dirtyConfigurationKeys(panel) {
   if (!panel?._configData?.config || !panel?._draft || panel._draftAgentId !== panel._agentId) return new Set();
+  if (panel._eocDirtyConfigKeys instanceof Set) {
+    return new Set(panel._eocDirtyConfigKeys);
+  }
+  // Compatibility fallback for callers that do not install the management state
+  // layer. Normal management-panel edits use the authoritative changed-key set.
   const baseline = panel._configData.config;
   const draft = panel._draft;
   const keys = new Set([...Object.keys(baseline), ...Object.keys(draft)]);
