@@ -90,7 +90,7 @@ def configuration_guidance_snapshot(
 def wrap_management_configuration_guidance(
     original: ManagementCommand,
 ) -> ManagementCommand:
-    """Attach guidance to successful configuration read/validate/update results."""
+    """Attach guidance to successful configuration read/validate/save results."""
 
     async def wrapped(
         hass: HomeAssistant,
@@ -101,7 +101,7 @@ def wrap_management_configuration_guidance(
         result = await original(hass, user_id, is_admin, message)
         if message.get("section", "overview") != "configuration":
             return result
-        if message.get("action") not in {"get", "validate", "update"}:
+        if message.get("action") not in {"get", "validate", "update", "save"}:
             return result
         config = result.get("config") if isinstance(result, dict) else None
         if not isinstance(config, dict):
