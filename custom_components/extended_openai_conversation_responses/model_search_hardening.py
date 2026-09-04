@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 _LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
@@ -41,14 +41,19 @@ def _install_on_agent_class(agent_class: Any) -> None:
     ) -> dict[str, Any]:
         if operation == "search":
             _require_nonblank_query(arguments)
-        return await original_memory_tool(agent, operation, arguments, llm_context)
+        return cast(
+            dict[str, Any],
+            await original_memory_tool(agent, operation, arguments, llm_context),
+        )
 
     async def async_execute_knowledge_tool(
         agent: Any, operation: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         if operation == "search":
             _require_nonblank_query(arguments)
-        return await original_knowledge_tool(agent, operation, arguments)
+        return cast(
+            dict[str, Any], await original_knowledge_tool(agent, operation, arguments)
+        )
 
     async def async_execute_archive_tool(
         agent: Any, operation: str, arguments: dict[str, Any]
@@ -56,7 +61,9 @@ def _install_on_agent_class(agent_class: Any) -> None:
         if operation == "search":
             _require_nonblank_query(arguments)
         try:
-            return await original_archive_tool(agent, operation, arguments)
+            return cast(
+                dict[str, Any], await original_archive_tool(agent, operation, arguments)
+            )
         except RuntimeError, ValueError:
             raise
         except Exception:
