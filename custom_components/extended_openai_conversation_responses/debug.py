@@ -11,8 +11,7 @@ import asyncio
 from collections import deque
 from collections.abc import AsyncIterator, Mapping
 from contextvars import ContextVar
-from copy import deepcopy
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import datetime
 import hashlib
 import json
@@ -20,6 +19,7 @@ import time
 from typing import Any, cast
 from uuid import uuid4
 
+from homeassistant.helpers.template import Template
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
@@ -65,6 +65,8 @@ def _jsonable(value: Any, *, _depth: int = 0) -> Any:
         return f"<binary payload: {len(value)} bytes>"
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, Template):
+        return value.template
     if isinstance(value, Mapping):
         result: dict[str, Any] = {}
         for raw_key, item in value.items():
@@ -77,7 +79,10 @@ def _jsonable(value: Any, *, _depth: int = 0) -> Any:
     if isinstance(value, (list, tuple, set, frozenset, deque)):
         return [_jsonable(item, _depth=_depth + 1) for item in value]
     if is_dataclass(value) and not isinstance(value, type):
-        return _jsonable(asdict(value), _depth=_depth + 1)
+        return {
+            item.name: _jsonable(getattr(value, item.name), _depth=_depth + 1)
+            for item in fields(value)
+        }
     if hasattr(value, "model_dump"):
         try:
             return _jsonable(value.model_dump(exclude_none=True), _depth=_depth + 1)
@@ -247,10 +252,11 @@ class DebugProviderRequest:
         self.error_type = type(error).__name__ if error is not None else None
 
     def as_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        data.pop("_started_monotonic", None)
-        data.pop("_event_bytes", None)
-        return data
+        return {
+            item.name: _jsonable(getattr(self, item.name))
+            for item in fields(self)
+            if not item.name.startswith("_")
+        }
 
 
 @dataclass(slots=True)
@@ -316,15 +322,15 @@ class DebugTrace:
             "successful": self.successful,
             "error_type": self.error_type,
             "usage_run_id": self.usage_run_id,
-            "user_input": deepcopy(self.user_input),
+            "user_input": _jsonable(self.user_input),
             "incoming_conversation_id": self.incoming_conversation_id,
-            "continuity": deepcopy(self.continuity),
-            "phases_ms": deepcopy(self.phases_ms),
+            "continuity": _jsonable(self.continuity),
+            "phases_ms": _jsonable(self.phases_ms),
             "system_prompt": self.system_prompt,
-            "prompt_metrics": deepcopy(self.prompt_metrics),
-            "memory": deepcopy(self.memory),
+            "prompt_metrics": _jsonable(self.prompt_metrics),
+            "memory": _jsonable(self.memory),
             "provider_requests": [item.as_dict() for item in self.provider_requests],
-            "result": deepcopy(self.result),
+            "result": _jsonable(self.result),
             "notes": list(self.notes),
         }
 
