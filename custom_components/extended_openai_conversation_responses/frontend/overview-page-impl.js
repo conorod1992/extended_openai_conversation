@@ -156,7 +156,7 @@ function healthActionLabel(check) {
 function setupHealthMarkup(panel, health) {
   if (!health?.checks?.length) return "";
   const state = ["ready", "warning", "error"].includes(health.state) ? health.state : "ready";
-  const issueCount = Number(health.warning_count || 0) + Number(health.error_count || 0);
+  const issueCount = Number(health.warning_count || 0) + Number(health.error_count || 0) + Number(health.unknown_count || 0);
   const summaryDetail = issueCount
     ? `${issueCount} item${issueCount === 1 ? "" : "s"} to review`
     : "Core setup looks ready";
