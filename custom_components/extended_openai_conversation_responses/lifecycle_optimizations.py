@@ -9,13 +9,17 @@ from copy import deepcopy
 from dataclasses import asdict
 from datetime import timedelta
 import logging
+import time
 from typing import Any, cast
 
 from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
 _USAGE_SAVE_DELAY_SECONDS = 5.0
+_USAGE_PRUNE_RETRY_SECONDS = 300.0
 _LAST_USAGE_PRUNE_DATE = "_extended_openai_last_usage_prune_date"
+_NEXT_USAGE_PRUNE_RETRY = "_extended_openai_next_usage_prune_retry"
+_USAGE_PRUNE_SAVE_PENDING = "_extended_openai_usage_prune_save_pending"
 _TEMPORARY_MEMORY_PREFETCH: ContextVar[asyncio.Task[Any] | None] = ContextVar(
     "extended_openai_temporary_memory_prefetch", default=None
 )
@@ -85,21 +89,41 @@ def _prune_usage_locked(manager: Any) -> dict[str, int]:
 
 
 async def _async_prune_usage_if_due(manager: Any) -> None:
-    """Enforce detail retention at most once per UTC day during long uptimes."""
+    """Enforce detail retention daily, retrying failed work with a cooldown."""
     today = dt_util.utcnow().date().isoformat()
     if getattr(manager, _LAST_USAGE_PRUNE_DATE, None) == today:
+        return
+    if time.monotonic() < float(getattr(manager, _NEXT_USAGE_PRUNE_RETRY, 0.0) or 0.0):
         return
     async with manager._lock:
         if getattr(manager, _LAST_USAGE_PRUNE_DATE, None) == today:
             return
-        result = _prune_usage_locked(manager)
-        setattr(manager, _LAST_USAGE_PRUNE_DATE, today)
-        if manager._detail_storage is not None and (
-            result["deleted_requests"] or result["deleted_runs"]
+        if time.monotonic() < float(
+            getattr(manager, _NEXT_USAGE_PRUNE_RETRY, 0.0) or 0.0
         ):
-            snapshot = _usage_snapshot(manager, "details")
-            if not _schedule_store_snapshot(manager._detail_storage, snapshot):
-                await manager._async_save_details()
+            return
+        save_pending = bool(getattr(manager, _USAGE_PRUNE_SAVE_PENDING, False))
+        try:
+            result = _prune_usage_locked(manager)
+            save_pending = save_pending or bool(
+                result["deleted_requests"] or result["deleted_runs"]
+            )
+            if manager._detail_storage is not None and save_pending:
+                snapshot = _usage_snapshot(manager, "details")
+                if not _schedule_store_snapshot(manager._detail_storage, snapshot):
+                    await manager._async_save_details()
+        except Exception:
+            if manager._detail_storage is not None:
+                setattr(manager, _USAGE_PRUNE_SAVE_PENDING, True)
+            setattr(
+                manager,
+                _NEXT_USAGE_PRUNE_RETRY,
+                time.monotonic() + _USAGE_PRUNE_RETRY_SECONDS,
+            )
+            raise
+        setattr(manager, _LAST_USAGE_PRUNE_DATE, today)
+        setattr(manager, _NEXT_USAGE_PRUNE_RETRY, 0.0)
+        setattr(manager, _USAGE_PRUNE_SAVE_PENDING, False)
 
 
 def _install_usage_persistence() -> None:
@@ -150,13 +174,16 @@ def _install_usage_persistence() -> None:
     async def async_prune_details(manager: Any, *, save: bool = True) -> dict[str, int]:
         async with manager._lock:
             result = _prune_usage_locked(manager)
+            if save and manager._detail_storage is not None:
+                setattr(manager, _USAGE_PRUNE_SAVE_PENDING, True)
+                await manager._async_save_details()
             setattr(
                 manager,
                 _LAST_USAGE_PRUNE_DATE,
                 dt_util.utcnow().date().isoformat(),
             )
-            if save and manager._detail_storage is not None:
-                await manager._async_save_details()
+            setattr(manager, _NEXT_USAGE_PRUNE_RETRY, 0.0)
+            setattr(manager, _USAGE_PRUNE_SAVE_PENDING, False)
             return result
 
     async def async_clear_details(manager: Any, *, confirm: bool) -> dict[str, int]:
