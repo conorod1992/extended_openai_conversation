@@ -475,15 +475,11 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 if item_type == "file":
                     download_url = item.get("download_url")
                     if not isinstance(download_url, str):
-                        raise HomeAssistantError(
-                            f"No download URL for `{repo_path}`"
-                        )
+                        raise HomeAssistantError(f"No download URL for `{repo_path}`")
                     max_bytes = download_budget.check_file(repo_path, item.get("size"))
                     async with session.get(download_url) as file_resp:
                         if file_resp.status != 200:
-                            raise HomeAssistantError(
-                                f"Failed to download `{repo_path}`"
-                            )
+                            raise HomeAssistantError(f"Failed to download `{repo_path}`")
                         content = await async_read_bounded_response(
                             file_resp,
                             max_bytes,
@@ -498,9 +494,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 elif item_type == "dir":
                     child_url = item.get("url")
                     if not isinstance(child_url, str):
-                        raise HomeAssistantError(
-                            f"No API URL for `{repo_path}`"
-                        )
+                        raise HomeAssistantError(f"No API URL for `{repo_path}`")
                     await _download_directory(child_url, item_path, depth + 1)
 
         def _write_file_sync(file_path: Path, content: bytes) -> None:
@@ -633,7 +627,8 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         """Clear memories only after explicit confirmation."""
         if call.data["confirm"] is not True:
             raise HomeAssistantError("Set confirm to true to clear memories")
-        deleted = await (await _memory_for_call(call)).async_clear(
+        memory = await _memory_for_call(call)
+        deleted = await memory.async_clear(
             memory_user_id(call), call.data.get("category")
         )
         return {"deleted": deleted}
