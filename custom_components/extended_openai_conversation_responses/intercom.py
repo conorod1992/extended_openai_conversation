@@ -387,6 +387,17 @@ class IntercomManager:
                 self._queues.pop(entity_id, None)
         finally:
             self._draining.discard(entity_id)
+            queue = self._queues.get(entity_id)
+            if queue:
+                delivery = queue[0].deliveries.get(entity_id)
+                state = self.hass.states.get(entity_id)
+                if (
+                    delivery is not None
+                    and delivery.status == "queued_busy"
+                    and state is not None
+                    and state.state == "idle"
+                ):
+                    self._schedule_drain(entity_id)
 
     @callback
     def _async_state_changed(self, event: Event[Any]) -> None:
