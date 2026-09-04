@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { backupSummaryLines } from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
+import { BACKUP_CREDENTIAL_WARNING, backupSummaryLines } from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
 
 const lines = backupSummaryLines({
   request_rules: 5,
@@ -23,4 +23,8 @@ assert.deepEqual(lines, [
   "4 archived conversations (19 turns)",
   "Usage history (8 runs, 13 requests)",
   "Guest Mode schedule included",
+  BACKUP_CREDENTIAL_WARNING,
 ]);
+assert.match(BACKUP_CREDENTIAL_WARNING, /redacted/i);
+assert.match(BACKUP_CREDENTIAL_WARNING, /re-enter/i);
+assert.match(BACKUP_CREDENTIAL_WARNING, /best-effort/i);
