@@ -1,4 +1,4 @@
-"""Tests for the cheap Overview setup-health snapshot."""
+"""Tests for the cheap Overview setup-health facts."""
 
 from types import SimpleNamespace
 
@@ -12,7 +12,10 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_WEB_SEARCH,
 )
 from custom_components.extended_openai_conversation_responses.management_setup_health import (
-    build_setup_health_snapshot,
+    build_setup_health_facts,
+)
+from custom_components.extended_openai_conversation_responses.management_ui import (
+    MANAGEMENT_FRONTEND_MODULES,
 )
 
 
@@ -27,19 +30,13 @@ def _subentry(config=None):
     return SimpleNamespace(data=config or agent_config_defaults())
 
 
-def _by_id(snapshot):
-    return {check["id"]: check for check in snapshot["checks"]}
-
-
-def test_default_setup_is_ready_without_treating_optional_features_as_errors(
-    monkeypatch,
-) -> None:
+def test_default_facts_are_side_effect_free_and_descriptive(monkeypatch) -> None:
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.management_setup_health._exposed_entity_count",
         lambda _hass: 1,
     )
 
-    snapshot = build_setup_health_snapshot(
+    facts = build_setup_health_facts(
         object(),
         _entry(),
         _subentry(),
@@ -47,32 +44,54 @@ def test_default_setup_is_ready_without_treating_optional_features_as_errors(
         knowledge_available=True,
         is_admin=True,
     )
-    checks = _by_id(snapshot)
 
-    assert snapshot["state"] == "ready"
-    assert snapshot["summary"] == "Ready"
-    assert snapshot["live_provider_tested"] is False
-    assert checks["provider_runtime"]["state"] == "ready"
-    assert checks["instructions"]["value"] == "Starter instructions"
-    assert checks["home_assistant_exposure"]["state"] == "ready"
-    assert checks["memory"]["state"] == "neutral"
-    assert checks["memory"]["value"] == "Off by choice"
-    assert checks["knowledge"]["state"] == "neutral"
-    assert checks["web_search"]["state"] == "neutral"
+    assert facts["provider_runtime"]["client_loaded"] is True
+    assert facts["prompt_state"] == "starter"
+    assert facts["exposed_entity_count"] == 1
+    assert facts["memory_mode"] == "off"
+    assert facts["knowledge"] == {
+        "enabled": False,
+        "source_count": 0,
+        "available": True,
+    }
+    assert facts["web_search"]["enabled"] is False
+    assert facts["can_manage"] is True
+    assert facts["live_provider_tested"] is False
 
 
-def test_real_configuration_problems_are_warnings(monkeypatch) -> None:
+def test_prompt_classification_distinguishes_empty_and_custom(monkeypatch) -> None:
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.management_setup_health._exposed_entity_count",
         lambda _hass: 0,
     )
+    empty = agent_config_defaults()
+    empty[CONF_PROMPT] = ""
+    custom = agent_config_defaults()
+    custom[CONF_PROMPT] = "You are the kitchen assistant."
+
+    empty_facts = build_setup_health_facts(
+        object(), _entry(), _subentry(empty),
+        knowledge_source_count=0, knowledge_available=True, is_admin=True,
+    )
+    custom_facts = build_setup_health_facts(
+        object(), _entry(), _subentry(custom),
+        knowledge_source_count=0, knowledge_available=True, is_admin=True,
+    )
+
+    assert empty_facts["prompt_state"] == "empty"
+    assert custom_facts["prompt_state"] == "custom"
+
+
+def test_web_search_facts_reuse_runtime_compatibility(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_setup_health._exposed_entity_count",
+        lambda _hass: 2,
+    )
     config = agent_config_defaults()
-    config[CONF_PROMPT] = ""
-    config[CONF_KNOWLEDGE_ENABLED] = True
     config[CONF_WEB_SEARCH] = True
     config[CONF_API_MODE] = "auto"
 
-    snapshot = build_setup_health_snapshot(
+    facts = build_setup_health_facts(
         object(),
         _entry(),
         _subentry(config),
@@ -80,56 +99,39 @@ def test_real_configuration_problems_are_warnings(monkeypatch) -> None:
         knowledge_available=True,
         is_admin=True,
     )
-    checks = _by_id(snapshot)
 
-    assert snapshot["state"] == "warning"
-    assert snapshot["warning_count"] == 4
-    assert checks["instructions"]["state"] == "warning"
-    assert checks["home_assistant_exposure"]["state"] == "warning"
-    assert checks["knowledge"]["value"] == "Enabled, no sources"
-    assert checks["web_search"]["state"] == "warning"
-    assert checks["web_search"]["action"]["target"] == "config-api_mode"
+    assert facts["web_search"]["enabled"] is True
+    assert facts["web_search"]["effective_api_mode"] == "chat_completions"
+    assert facts["web_search"]["available"] is False
+    assert facts["web_search"]["reason"] == "requires_responses"
 
 
-def test_unavailable_runtime_is_an_error(monkeypatch) -> None:
+def test_unavailable_counts_remain_unknown_facts(monkeypatch) -> None:
+    def fail(_hass):
+        raise RuntimeError("exposure unavailable")
+
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.management_setup_health._exposed_entity_count",
-        lambda _hass: 1,
-    )
-    snapshot = build_setup_health_snapshot(
-        object(),
-        _entry(runtime_loaded=False),
-        _subentry(),
-        knowledge_source_count=0,
-        knowledge_available=True,
-        is_admin=False,
-    )
-
-    assert snapshot["state"] == "error"
-    assert snapshot["error_count"] == 1
-    assert snapshot["can_manage"] is False
-    assert _by_id(snapshot)["provider_runtime"]["state"] == "error"
-
-
-def test_failed_knowledge_count_is_unknown_not_empty(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_setup_health._exposed_entity_count",
-        lambda _hass: 1,
+        fail,
     )
     config = agent_config_defaults()
     config[CONF_KNOWLEDGE_ENABLED] = True
 
-    snapshot = build_setup_health_snapshot(
+    facts = build_setup_health_facts(
         object(),
-        _entry(),
+        _entry(runtime_loaded=False),
         _subentry(config),
         knowledge_source_count=0,
         knowledge_available=False,
-        is_admin=True,
+        is_admin=False,
     )
-    knowledge = _by_id(snapshot)["knowledge"]
 
-    assert knowledge["state"] == "unknown"
-    assert knowledge["value"] == "Unable to determine"
-    assert snapshot["unknown_count"] == 1
-    assert snapshot["state"] == "warning"
+    assert facts["provider_runtime"]["client_loaded"] is False
+    assert facts["exposed_entity_count"] is None
+    assert facts["knowledge"]["enabled"] is True
+    assert facts["knowledge"]["available"] is False
+    assert facts["can_manage"] is False
+
+
+def test_overview_health_frontend_helper_is_registered() -> None:
+    assert "overview-health.js" in MANAGEMENT_FRONTEND_MODULES
