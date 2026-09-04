@@ -15,7 +15,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_API_MODE,
     CONF_CHAT_MODEL,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-    CONTINUE_CONVERSATION_TOOL_NAME,
     FUNCTION_GROUP_LOADER_TOOL_NAME,
 )
 from custom_components.extended_openai_conversation_responses.entity import (
@@ -30,6 +29,9 @@ from custom_components.extended_openai_conversation_responses.function_tool_reso
 )
 from custom_components.extended_openai_conversation_responses.provider_loop import (
     MAX_PROVIDER_REQUESTS,
+)
+from custom_components.extended_openai_conversation_responses.request import (
+    CONTINUE_CONVERSATION_TOOL_NAME,
 )
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
