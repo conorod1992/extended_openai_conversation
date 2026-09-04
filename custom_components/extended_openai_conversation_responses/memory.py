@@ -427,13 +427,19 @@ class PersistentMemory:
                     changes["subject"] = cleaned_subject
                 if cleaned_valid_from is not _UNSET:
                     changes["valid_from"] = cleaned_valid_from
-                updated = self._replace_record(current, **changes)
+                updated = self._replace_record(
+                    current,
+                    **changes,
+                )
                 await self._async_save_locked()
                 self._schedule_embedding_maintenance()
                 return {"status": "updated", "memory": memory_as_dict(updated)}
             duplicate = self._find_duplicate(user_id, content)
             if duplicate:
-                changes = {"category": category, "last_confirmed_at": timestamp}
+                changes = {
+                    "category": category,
+                    "last_confirmed_at": timestamp,
+                }
                 if cleaned_importance is not _UNSET:
                     changes["importance"] = cleaned_importance
                 if cleaned_subject is not _UNSET:
@@ -442,7 +448,10 @@ class PersistentMemory:
                     changes["key"] = cleaned_key
                 if cleaned_valid_from is not _UNSET:
                     changes["valid_from"] = cleaned_valid_from
-                confirmed = self._replace_record(duplicate, **changes)
+                confirmed = self._replace_record(
+                    duplicate,
+                    **changes,
+                )
                 await self._async_save_locked()
                 self._schedule_embedding_maintenance()
                 return {"status": "confirmed", "memory": memory_as_dict(confirmed)}
@@ -474,7 +483,7 @@ class PersistentMemory:
                     if isinstance(cleaned_importance, str)
                     else "normal"
                 ),
-                subject=cleaned_subject if isinstance(cleaned_subject, str) else None,
+                subject=(cleaned_subject if isinstance(cleaned_subject, str) else None),
                 key=cleaned_key if isinstance(cleaned_key, str) else None,
                 valid_from=(
                     cleaned_valid_from if isinstance(cleaned_valid_from, str) else None
@@ -1040,7 +1049,10 @@ class PersistentMemory:
         if not generated_entries:
             return True
         async with self._lock:
-            if self._embedding_provider is not provider or self._embedding_model != model:
+            if (
+                self._embedding_provider is not provider
+                or self._embedding_model != model
+            ):
                 return False
             if await self._async_save_embedding_cache_locked():
                 return True
