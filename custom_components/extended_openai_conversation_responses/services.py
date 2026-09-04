@@ -479,7 +479,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                     max_bytes = download_budget.check_file(repo_path, item.get("size"))
                     async with session.get(download_url) as file_resp:
                         if file_resp.status != 200:
-                            raise HomeAssistantError(f"Failed to download `{repo_path}`")
+                            raise HomeAssistantError(
+                                f"Failed to download `{repo_path}`"
+                            )
                         content = await async_read_bounded_response(
                             file_resp,
                             max_bytes,
