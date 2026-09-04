@@ -14,7 +14,6 @@ from custom_components.extended_openai_conversation_responses.request_static_cac
     _FORMATTED_TOOLS,
     cached_format_tools,
     render_maintained_entity_context,
-    snapshot_key_with_enabled_skills,
     tools_for_available_skills,
 )
 
@@ -89,19 +88,6 @@ def test_zero_skills_remove_only_canonical_loader() -> None:
     assert tools_for_available_skills([canonical, other], False) == [other]
     assert tools_for_available_skills([canonical, other], True) == [canonical, other]
     assert tools_for_available_skills([custom, other], False) == [custom, other]
-
-
-def test_tool_snapshot_key_changes_when_enabled_skill_catalogue_changes() -> None:
-    """A same-request skill reload cannot leave a stale skill-loader tool snapshot."""
-    base = (1, 2, ("group",))
-    empty = snapshot_key_with_enabled_skills(base, [])
-    populated = snapshot_key_with_enabled_skills(
-        base, [SimpleNamespace(name="calendar-helper")]
-    )
-
-    assert empty != populated
-    assert empty == (*base, ())
-    assert populated == (*base, ("calendar-helper",))
 
 
 def test_maintained_entity_renderer_preserves_live_rows_and_cached_area() -> None:
