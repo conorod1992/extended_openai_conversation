@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from homeassistant.components import conversation
+from homeassistant.components.homeassistant.exposed_entities import async_should_expose
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
 
@@ -18,7 +20,7 @@ from .const import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_PROMPT,
 )
-from .helpers import get_exposed_entities
+from .ha_permissions import filter_entities_for_active_user
 from .management_configuration_guidance import configuration_guidance_snapshot
 from .memory import get_memory_mode
 
@@ -60,6 +62,16 @@ def _overall_state(checks: list[dict[str, Any]]) -> str:
     if "warning" in states or "unknown" in states:
         return "warning"
     return "ready"
+
+
+def _exposed_entity_count(hass: HomeAssistant) -> int:
+    """Count Assist-exposed readable entities without building prompt metadata."""
+    exposed = [
+        {"entity_id": state.entity_id}
+        for state in hass.states.async_all()
+        if async_should_expose(hass, conversation.DOMAIN, state.entity_id)
+    ]
+    return len(filter_entities_for_active_user(hass, exposed))
 
 
 def build_setup_health_snapshot(
@@ -135,7 +147,7 @@ def build_setup_health_snapshot(
         )
 
     try:
-        exposed_count = len(get_exposed_entities(hass))
+        exposed_count = _exposed_entity_count(hass)
     except Exception:
         checks.append(
             _check(
