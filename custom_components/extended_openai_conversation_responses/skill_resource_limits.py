@@ -28,7 +28,9 @@ def read_bounded_skill_text(path: Path) -> str:
         with path.open("rb") as handle:
             content = handle.read(MAX_SKILL_METADATA_BYTES + 1)
     except OSError as err:
-        raise HomeAssistantError(f"Unable to read Skill metadata `{path}`: {err}") from err
+        raise HomeAssistantError(
+            f"Unable to read Skill metadata `{path}`: {err}"
+        ) from err
 
     if len(content) > MAX_SKILL_METADATA_BYTES:
         raise HomeAssistantError(
