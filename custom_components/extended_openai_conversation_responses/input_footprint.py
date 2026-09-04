@@ -107,6 +107,8 @@ def _latest_provider_usage(usage: Any) -> dict[str, Any] | None:
     if not usage.requests:
         return None
     request = usage.requests[-1]
+    if request.input_tokens <= 0:
+        return None
     return {
         "timestamp": request.timestamp,
         "input_tokens": request.input_tokens,
