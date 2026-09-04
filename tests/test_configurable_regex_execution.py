@@ -15,6 +15,13 @@ from custom_components.extended_openai_conversation_responses.regex_execution im
 )
 
 
+class _ExecutorHass:
+    """Minimal HA-shaped object with genuine executor semantics for focused tests."""
+
+    async def async_add_executor_job(self, target, *args):
+        return await asyncio.get_running_loop().run_in_executor(None, target, *args)
+
+
 async def _assert_event_loop_progresses_while(awaitable_factory) -> None:
     """Prove deliberately blocking synchronous work does not occupy the event loop."""
     started = threading.Event()
@@ -23,7 +30,7 @@ async def _assert_event_loop_progresses_while(awaitable_factory) -> None:
 
     def blocking_work() -> str:
         started.set()
-        release.wait(0.2)
+        release.wait(1)
         finished.set()
         return "done"
 
@@ -42,19 +49,21 @@ async def _assert_event_loop_progresses_while(awaitable_factory) -> None:
     assert await task == "done"
 
 
-async def test_configurable_regex_executor_keeps_event_loop_responsive(hass) -> None:
+async def test_configurable_regex_executor_keeps_event_loop_responsive() -> None:
     """The shared regex seam must run synchronous matching outside the HA loop."""
+    hass = _ExecutorHass()
 
     async def run(blocking_work):
-        return await async_run_configurable_regex(hass, blocking_work)
+        return await async_run_configurable_regex(hass, blocking_work)  # type: ignore[arg-type]
 
     await _assert_event_loop_progresses_while(run)
 
 
 async def test_bash_guard_keeps_event_loop_responsive(
-    hass, monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path
 ) -> None:
     """Bash allow-pattern and defensive regex checks use the same executor seam."""
+    hass = _ExecutorHass()
     function = BashFunction()
     started = threading.Event()
     release = threading.Event()
@@ -62,12 +71,12 @@ async def test_bash_guard_keeps_event_loop_responsive(
 
     def blocking_guard(*_args, **_kwargs) -> None:
         started.set()
-        release.wait(0.2)
+        release.wait(1)
         finished.set()
 
     monkeypatch.setattr(function, "_guard_command", blocking_guard)
     task = asyncio.create_task(
-        function._async_guard_command(
+        function._async_guard_command(  # type: ignore[arg-type]
             hass,
             "echo ready",
             tmp_path,
