@@ -107,6 +107,13 @@ def _install_usage_persistence() -> None:
     from .usage import UsageManager
 
     manager_type: Any = UsageManager
+    preserve_transactional_details = bool(
+        getattr(
+            manager_type.async_prune_details,
+            "_extended_openai_persist_first",
+            False,
+        )
+    )
     original_save_safely = manager_type._async_save_safely
     original_finalize_run = manager_type._async_finalize_run
 
@@ -168,8 +175,9 @@ def _install_usage_persistence() -> None:
 
     manager_type._async_save_safely = async_save_safely
     manager_type._async_finalize_run = async_finalize_run
-    manager_type.async_prune_details = async_prune_details
-    manager_type.async_clear_details = async_clear_details
+    if not preserve_transactional_details:
+        manager_type.async_prune_details = async_prune_details
+        manager_type.async_clear_details = async_clear_details
 
 
 def _install_archive_fast_path() -> None:
