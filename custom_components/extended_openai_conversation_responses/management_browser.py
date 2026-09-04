@@ -49,7 +49,7 @@ def _search_page(
     # event-loop-local snapshot avoids paging/sorting the same collection repeatedly.
     records = [
         record
-        for record in memory._memories.values()  # noqa: SLF001
+        for record in memory._memories.values()
         if record.user_id == owner and query.casefold() in _search_projection(record)
     ]
     records.sort(key=lambda record: record.updated_at, reverse=True)
@@ -113,10 +113,10 @@ def wrap_management_browser(original: ManagementCommand) -> ManagementCommand:
         if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
             raise HomeAssistantError("entry_id and subentry_id are required")
         management_ui.entry_and_agent(hass, entry_id, subentry_id)
-        scope_id = management_ui._selected_scope(  # noqa: SLF001
+        scope_id = management_ui._selected_scope(
             user_id, is_admin, message.get("scope_id")
         )
-        owner = management_ui._memory_scope(scope_id)  # noqa: SLF001
+        owner = management_ui._memory_scope(scope_id)
         memory = await async_get_memory(hass, entry_id, subentry_id)
 
         if message.get("action") == "list":
