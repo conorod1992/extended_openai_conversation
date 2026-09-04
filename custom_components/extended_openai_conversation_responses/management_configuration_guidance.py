@@ -12,6 +12,8 @@ from . import management_ui
 from .const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
+    CONF_API_PROVIDER,
+    CONF_BASE_URL,
     CONF_CHAT_MODEL,
     CONF_WEB_SEARCH,
     DEFAULT_API_MODE,
@@ -48,7 +50,7 @@ def configuration_guidance_snapshot(
     configured_api_mode = str(options.get(CONF_API_MODE, DEFAULT_API_MODE))
     effective_api_mode = get_api_mode(configured_api_mode, model)
     hosted_tools_supported = supports_openai_hosted_tools(
-        entry_data.get("api_provider"), entry_data.get("base_url")
+        entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
     )
 
     # Reuse the production request builder as the authority for whether Web Search
@@ -64,6 +66,7 @@ def configuration_guidance_snapshot(
         web_search_available = False
         web_search_message = str(err)
 
+    reason: str | None
     if web_search_available:
         reason = None
     elif effective_api_mode != API_MODE_RESPONSES:
