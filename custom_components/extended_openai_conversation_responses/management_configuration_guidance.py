@@ -26,6 +26,7 @@ _PATCHED = "extended_openai_management_configuration_guidance"
 _FRONTEND_MODULES = (
     "management-configuration-clarity.js",
     "management-configuration-guidance.js",
+    "management-decision-guidance.js",
 )
 ManagementCommand = Callable[
     [HomeAssistant, str, bool, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]

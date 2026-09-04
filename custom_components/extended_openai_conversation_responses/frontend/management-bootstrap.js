@@ -15,6 +15,7 @@ const BOOTSTRAP_MODULES = [
   "./debug-management.js",
   "./management-configuration-clarity.js",
   "./management-configuration-guidance.js",
+  "./management-decision-guidance.js",
 ];
 
 function preloadBootstrapModules(documentRef = globalThis.document) {
@@ -129,9 +130,10 @@ if (typeof customElements !== "undefined") {
     // before registration so the route cannot depend on a later microtask race.
     await import("./debug-management.js");
     // Configuration clarity decorates the final persistent shell/navigation; the
-    // guidance layer builds on those labels and badges without duplicating them.
+    // guidance layers build on those labels and badges without duplicating them.
     await import("./management-configuration-clarity.js");
     await import("./management-configuration-guidance.js");
+    await import("./management-decision-guidance.js");
   } catch (err) {
     restore();
     throw err;
