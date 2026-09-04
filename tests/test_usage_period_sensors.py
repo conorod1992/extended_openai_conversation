@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -62,7 +62,9 @@ async def test_period_usage_sensor_refreshes_at_local_midnight(
     entity.hass = hass
     entity.entity_id = f"sensor.test_{sensor_cls.__name__.lower()}"
     write_state = Mock()
+    on_remove = Mock()
     monkeypatch.setattr(entity, "async_write_ha_state", write_state)
+    monkeypatch.setattr(entity, "async_on_remove", on_remove)
 
     tracked: dict[str, object] = {}
     remove_midnight_listener = Mock()
@@ -87,12 +89,12 @@ async def test_period_usage_sensor_refreshes_at_local_midnight(
 
     assert tracked["hass"] is hass
     assert (tracked["hour"], tracked["minute"], tracked["second"]) == (0, 0, 0)
+    assert on_remove.call_args_list == [
+        call(usage.remove_listener),
+        call(remove_midnight_listener),
+    ]
 
     action = tracked["action"]
     assert callable(action)
     action(datetime(2026, 10, 1, tzinfo=UTC))
     write_state.assert_called_once_with()
-
-    await entity.async_will_remove_from_hass()
-    remove_midnight_listener.assert_called_once_with()
-    usage.remove_listener.assert_called_once_with()
