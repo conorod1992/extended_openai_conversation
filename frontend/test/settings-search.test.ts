@@ -1,14 +1,15 @@
 // @ts-nocheck
-import {describe, expect, it} from "vitest";
 import {readFile} from "node:fs/promises";
+import {describe, expect, it} from "vitest";
 
 import {searchSettings} from "../../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
-import {ensureSearchConfiguration, searchMarkup} from "../../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
 import {
   SETTINGS_SEARCH_PROJECTION,
   buildSettingsSearchProjection,
+  ensureSearchConfiguration,
+  searchMarkup,
   searchProjectedSettings,
-} from "../../custom_components/extended_openai_conversation_responses/frontend/settings-search-index.js";
+} from "../../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
 
 const escape = (value) => String(value ?? "");
 
@@ -61,10 +62,11 @@ describe("settings search projection", () => {
     expect(reads).toEqual({label:1, description:1, terms:1, configKey:1});
   });
 
-  it("keeps management search on the projection rather than rebuilding per candidate", async () => {
+  it("keeps management search on the reusable projection", async () => {
     const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js", import.meta.url), "utf8");
-    expect(source).toContain('import {searchProjectedSettings} from "./settings-search-index.js"');
+    expect(source).toContain("SETTINGS_SEARCH_PROJECTION = buildSettingsSearchProjection()");
     expect(source).toContain("searchProjectedSettings(panel._settingsSearchQuery)");
+    expect(source).not.toContain("settings-search-index.js");
     expect(source).not.toContain("searchSettings(panel._settingsSearchQuery)");
   });
 });
