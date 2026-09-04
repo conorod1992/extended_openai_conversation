@@ -166,10 +166,6 @@ function enhanceAgentContext(panel, destinations) {
   const select = picker.querySelector("#agent");
   if (select) select.setAttribute("aria-label", "Editing assistant");
   const draftActive = panel._draft && panel._draftAgentId === panel._agentId;
-  const draftTitleChanged = draftActive && panel._configData && panel._draftTitle !== panel._configData.title;
-  if (select?.selectedOptions?.[0] && agent) {
-    select.selectedOptions[0].textContent = draftTitleChanged ? `${panel._draftTitle} (unsaved)` : agent.title;
-  }
   const detail = picker.querySelector("small");
   if (detail && agent) {
     const model = draftActive ? panel._draft.chat_model || agent.model : agent.model;
