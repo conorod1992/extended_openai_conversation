@@ -172,7 +172,7 @@ def _install_conversation_guard() -> None:
             return await current(entity, *args, **kwargs)
 
     guarded._extended_openai_maintenance_gate = True  # type: ignore[attr-defined]
-    ExtendedOpenAIAgentEntity._async_process = guarded
+    setattr(ExtendedOpenAIAgentEntity, "_async_process", guarded)  # noqa: B010
 
 
 def _install_backup_guards() -> None:
