@@ -19,18 +19,12 @@ def _require_nonblank_query(arguments: dict[str, Any]) -> str:
     return query
 
 
-def install_model_search_hardening() -> None:
-    """Install bounded model-search guards on the conversation agent."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-
-    from .conversation import ExtendedOpenAIAgentEntity
-
-    original_rank_memories = ExtendedOpenAIAgentEntity._async_rank_memories
-    original_memory_tool = ExtendedOpenAIAgentEntity._async_execute_memory_tool
-    original_knowledge_tool = ExtendedOpenAIAgentEntity._async_execute_knowledge_tool
-    original_archive_tool = ExtendedOpenAIAgentEntity._async_execute_archive_tool
+def _install_on_agent_class(agent_class: Any) -> None:
+    """Wrap one agent class so model searches fail cheaply and precisely."""
+    original_rank_memories = agent_class._async_rank_memories
+    original_memory_tool = agent_class._async_execute_memory_tool
+    original_knowledge_tool = agent_class._async_execute_knowledge_tool
+    original_archive_tool = agent_class._async_execute_archive_tool
 
     async def async_rank_memories(
         agent: Any, readable_scope_ids: list[str], query: str, limit: int
@@ -76,8 +70,19 @@ def install_model_search_hardening() -> None:
     async_execute_memory_tool._extended_openai_model_search_hardening = True  # type: ignore[attr-defined]
     async_execute_knowledge_tool._extended_openai_model_search_hardening = True  # type: ignore[attr-defined]
     async_execute_archive_tool._extended_openai_model_search_hardening = True  # type: ignore[attr-defined]
-    ExtendedOpenAIAgentEntity._async_rank_memories = async_rank_memories  # type: ignore[method-assign,assignment]
-    ExtendedOpenAIAgentEntity._async_execute_memory_tool = async_execute_memory_tool  # type: ignore[method-assign,assignment]
-    ExtendedOpenAIAgentEntity._async_execute_knowledge_tool = async_execute_knowledge_tool  # type: ignore[method-assign,assignment]
-    ExtendedOpenAIAgentEntity._async_execute_archive_tool = async_execute_archive_tool  # type: ignore[method-assign,assignment]
+    agent_class._async_rank_memories = async_rank_memories
+    agent_class._async_execute_memory_tool = async_execute_memory_tool
+    agent_class._async_execute_knowledge_tool = async_execute_knowledge_tool
+    agent_class._async_execute_archive_tool = async_execute_archive_tool
+
+
+def install_model_search_hardening() -> None:
+    """Install bounded model-search guards on the conversation agent."""
+    global _INSTALLED
+    if _INSTALLED:
+        return
+
+    from .conversation import ExtendedOpenAIAgentEntity
+
+    _install_on_agent_class(ExtendedOpenAIAgentEntity)
     _INSTALLED = True
