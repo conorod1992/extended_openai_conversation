@@ -182,7 +182,9 @@ def _install_manager_guard(
         return result
 
     async def async_save_locked(manager: Any, *args: Any, **kwargs: Any) -> Any:
-        save_task = asyncio.create_task(original_save(manager, *args, **kwargs))
+        save_task: asyncio.Future[Any] = asyncio.ensure_future(
+            original_save(manager, *args, **kwargs)
+        )
         cancellation: asyncio.CancelledError | None = None
 
         # A caller cancellation must not abort a Store write after the manager's live
