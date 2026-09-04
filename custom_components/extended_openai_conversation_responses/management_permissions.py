@@ -10,6 +10,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from . import management_ui
 from .management_browser import install_management_browser
+from .management_configuration_guidance import install_management_configuration_guidance
 
 _PATCHED = "extended_openai_management_permissions"
 _OPTIMIZED_OVERVIEW_PATCHED = "extended_openai_management_overview_permissions"
@@ -102,9 +103,11 @@ def install_management_permissions() -> bool:
     install_management_browser()
     _install_optimized_overview_guard()
     if getattr(management_ui, _PATCHED, False):
+        install_management_configuration_guidance()
         return False
     management_ui.async_management_command = wrap_management_permissions(  # type: ignore[assignment]
         management_ui.async_management_command
     )
     setattr(management_ui, _PATCHED, True)
+    install_management_configuration_guidance()
     return True

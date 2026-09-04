@@ -14,6 +14,7 @@ const BOOTSTRAP_MODULES = [
   "./usage-input-footprint.js",
   "./debug-management.js",
   "./management-configuration-clarity.js",
+  "./management-configuration-guidance.js",
 ];
 
 function preloadBootstrapModules(documentRef = globalThis.document) {
@@ -127,9 +128,10 @@ if (typeof customElements !== "undefined") {
     // Request debugging extends the management panel too. Install that extension
     // before registration so the route cannot depend on a later microtask race.
     await import("./debug-management.js");
-    // Configuration clarity intentionally installs last so it decorates the final
-    // persistent shell/navigation produced by the earlier extensions.
+    // Configuration clarity decorates the final persistent shell/navigation; the
+    // guidance layer builds on those labels and badges without duplicating them.
     await import("./management-configuration-clarity.js");
+    await import("./management-configuration-guidance.js");
   } catch (err) {
     restore();
     throw err;
