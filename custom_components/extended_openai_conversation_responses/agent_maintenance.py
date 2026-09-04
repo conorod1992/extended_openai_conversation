@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from functools import wraps
 import inspect
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
 
@@ -15,7 +15,6 @@ from .const import DOMAIN
 
 _AGENT_MAINTENANCE_GATES = f"{DOMAIN}.agent_maintenance_gates"
 _INSTALLED = False
-_T = TypeVar("_T")
 
 
 class AgentMaintenanceGate:
@@ -94,14 +93,14 @@ def get_agent_maintenance_gate(
     return gates.setdefault((entry_id, subentry_id), AgentMaintenanceGate())
 
 
-async def _async_run_exclusive_operation(
+async def _async_run_exclusive_operation[T](
     gate: AgentMaintenanceGate,
-    operation: Callable[[], Awaitable[_T]],
-) -> _T:
+    operation: Callable[[], Awaitable[T]],
+) -> T:
     """Finish one exclusive operation before propagating caller cancellation."""
     cancellation: asyncio.CancelledError | None = None
     async with gate.exclusive():
-        task: asyncio.Future[_T] = asyncio.ensure_future(operation())
+        task: asyncio.Future[T] = asyncio.ensure_future(operation())
         while not task.done():
             try:
                 await asyncio.shield(task)
