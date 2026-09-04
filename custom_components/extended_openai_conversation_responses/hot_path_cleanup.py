@@ -39,6 +39,13 @@ def _install_usage_lazy_snapshots_and_background_prune() -> None:
     manager_type: Any = UsageManager
     previous_save_safely = manager_type._async_save_safely
     previous_prune_if_due = lifecycle._async_prune_usage_if_due
+    transactional_prune = bool(
+        getattr(
+            manager_type.async_prune_details,
+            "_extended_openai_persist_first",
+            False,
+        )
+    )
 
     async def async_save_safely(manager: Any, label: str, save: Any) -> None:
         category = {
@@ -105,8 +112,11 @@ def _install_usage_lazy_snapshots_and_background_prune() -> None:
     manager_type._async_save_safely = async_save_safely
     # The lifecycle finalizer resolves this module global at runtime. Replacing the
     # helper keeps its established call site while making the daily O(N) scan a
-    # background maintenance task rather than part of response completion.
-    lifecycle._async_prune_usage_if_due = prune_if_due_off_path
+    # background maintenance task rather than part of response completion. If a
+    # later hardening layer already made pruning persist-first and backgrounded it,
+    # preserve that single task instead of scheduling an outer task around it.
+    if not transactional_prune:
+        lifecycle._async_prune_usage_if_due = prune_if_due_off_path
 
 
 def _debug_event_has_text(data: Any) -> bool:
