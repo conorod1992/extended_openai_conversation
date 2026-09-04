@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from . import management_ui
+from .management_browser import install_management_browser
 
 _PATCHED = "extended_openai_management_permissions"
 _OPTIMIZED_OVERVIEW_PATCHED = "extended_openai_management_overview_permissions"
@@ -98,6 +99,7 @@ def _install_optimized_overview_guard() -> None:
 
 def install_management_permissions() -> bool:
     """Install the management authorization wrapper once."""
+    install_management_browser()
     _install_optimized_overview_guard()
     if getattr(management_ui, _PATCHED, False):
         return False
