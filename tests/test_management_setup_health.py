@@ -35,8 +35,8 @@ def test_default_setup_is_ready_without_treating_optional_features_as_errors(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_setup_health.get_exposed_entities",
-        lambda _hass: [{"entity_id": "light.kitchen"}],
+        "custom_components.extended_openai_conversation_responses.management_setup_health._exposed_entity_count",
+        lambda _hass: 1,
     )
 
     snapshot = build_setup_health_snapshot(
@@ -63,8 +63,8 @@ def test_default_setup_is_ready_without_treating_optional_features_as_errors(
 
 def test_real_configuration_problems_are_warnings(monkeypatch) -> None:
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_setup_health.get_exposed_entities",
-        lambda _hass: [],
+        "custom_components.extended_openai_conversation_responses.management_setup_health._exposed_entity_count",
+        lambda _hass: 0,
     )
     config = agent_config_defaults()
     config[CONF_PROMPT] = ""
@@ -93,8 +93,8 @@ def test_real_configuration_problems_are_warnings(monkeypatch) -> None:
 
 def test_unavailable_runtime_is_an_error(monkeypatch) -> None:
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_setup_health.get_exposed_entities",
-        lambda _hass: [{"entity_id": "switch.test"}],
+        "custom_components.extended_openai_conversation_responses.management_setup_health._exposed_entity_count",
+        lambda _hass: 1,
     )
     snapshot = build_setup_health_snapshot(
         object(),
@@ -113,8 +113,8 @@ def test_unavailable_runtime_is_an_error(monkeypatch) -> None:
 
 def test_failed_knowledge_count_is_unknown_not_empty(monkeypatch) -> None:
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_setup_health.get_exposed_entities",
-        lambda _hass: [{"entity_id": "light.kitchen"}],
+        "custom_components.extended_openai_conversation_responses.management_setup_health._exposed_entity_count",
+        lambda _hass: 1,
     )
     config = agent_config_defaults()
     config[CONF_KNOWLEDGE_ENABLED] = True
