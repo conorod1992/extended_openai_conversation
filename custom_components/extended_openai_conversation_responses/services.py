@@ -67,7 +67,12 @@ from .guest_mode import async_get_guest_mode
 from .helpers import get_api_mode, get_authenticated_client, get_token_param_for_model
 from .memory import async_get_memory, memory_as_dict, memory_user_id
 from .request_rules import async_call_active_function
-from .resource_limits import MAX_ATTACHMENT_COUNT, bounded_local_file_size
+from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
+from .skill_resource_limits import (
+    SkillDownloadBudget,
+    async_read_bounded_json,
+    async_read_bounded_response,
+)
 
 QUERY_IMAGE_SCHEMA = vol.Schema(
     {
@@ -425,6 +430,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         )
 
         downloaded_files: list[str] = []
+        download_budget = SkillDownloadBudget()
 
         def _safe_child(base: Path, name: str) -> Path:
             """Resolve a downloaded child without allowing path traversal."""
@@ -434,8 +440,11 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 raise HomeAssistantError("Downloaded skill contains an unsafe path")
             return child
 
-        async def _download_directory(url: str, local_dir: Path) -> None:
-            """Recursively download a directory from GitHub."""
+        async def _download_directory(
+            url: str, local_dir: Path, depth: int = 0
+        ) -> None:
+            """Recursively download a bounded directory from GitHub."""
+            download_budget.check_directory(depth)
             async with session.get(url) as resp:
                 if resp.status == 404:
                     raise HomeAssistantError(
@@ -445,7 +454,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                     raise HomeAssistantError(
                         f"Failed to fetch skill from GitHub (HTTP {resp.status})"
                     )
-                items = await resp.json()
+                items = await async_read_bounded_json(
+                    resp, f"GitHub listing for Skill `{skill_name}`"
+                )
 
             if not isinstance(items, list):
                 raise HomeAssistantError(
@@ -460,30 +471,37 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 if not isinstance(item_name, str):
                     raise HomeAssistantError("GitHub skill item has no valid name")
                 item_path = _safe_child(local_dir, item_name)
+                repo_path = str(item.get("path", item_name))
                 if item_type == "file":
                     download_url = item.get("download_url")
                     if not isinstance(download_url, str):
                         raise HomeAssistantError(
-                            f"No download URL for `{item.get('path', item_name)}`"
+                            f"No download URL for `{repo_path}`"
                         )
+                    max_bytes = download_budget.check_file(repo_path, item.get("size"))
                     async with session.get(download_url) as file_resp:
                         if file_resp.status != 200:
                             raise HomeAssistantError(
-                                f"Failed to download `{item.get('path', item_name)}`"
+                                f"Failed to download `{repo_path}`"
                             )
-                        content = await file_resp.read()
+                        content = await async_read_bounded_response(
+                            file_resp,
+                            max_bytes,
+                            f"Downloaded Skill file `{repo_path}`",
+                        )
+                    download_budget.record_file(repo_path, len(content))
 
                     await hass.async_add_executor_job(
                         _write_file_sync, item_path, content
                     )
-                    downloaded_files.append(str(item.get("path", item_name)))
+                    downloaded_files.append(repo_path)
                 elif item_type == "dir":
                     child_url = item.get("url")
                     if not isinstance(child_url, str):
                         raise HomeAssistantError(
-                            f"No API URL for `{item.get('path', item_name)}`"
+                            f"No API URL for `{repo_path}`"
                         )
-                    await _download_directory(child_url, item_path)
+                    await _download_directory(child_url, item_path, depth + 1)
 
         def _write_file_sync(file_path: Path, content: bytes) -> None:
             """Write file content to disk (run in executor)."""
@@ -615,8 +633,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         """Clear memories only after explicit confirmation."""
         if call.data["confirm"] is not True:
             raise HomeAssistantError("Set confirm to true to clear memories")
-        memory = await _memory_for_call(call)
-        deleted = await memory.async_clear(
+        deleted = await (await _memory_for_call(call)).async_clear(
             memory_user_id(call), call.data.get("category")
         )
         return {"deleted": deleted}
@@ -874,9 +891,11 @@ def _convert_image_param(
     if mime_type is None or not mime_type.startswith("image"):
         raise HomeAssistantError(f"`{url}` is not an image")
 
-    size = bounded_local_file_size(path, total_bytes)
-    result["url"] = f"data:{mime_type};base64,{encode_image(url)}"
-    return result, size
+    content = read_bounded_local_file(path, total_bytes)
+    result["url"] = (
+        f"data:{mime_type};base64,{base64.b64encode(content).decode('utf-8')}"
+    )
+    return result, len(content)
 
 
 def prepare_image_params(hass: HomeAssistant, images: list[dict]) -> list[dict]:
@@ -901,6 +920,6 @@ def to_image_param(hass: HomeAssistant, image: dict) -> dict:
 
 
 def encode_image(image_path: str) -> str:
-    """Convert to base64 encoded image."""
-    with open(image_path, "rb") as image_file:
-        return base64.b64encode(image_file.read()).decode("utf-8")
+    """Convert a bounded local file to base64 encoded image."""
+    content = read_bounded_local_file(Path(image_path))
+    return base64.b64encode(content).decode("utf-8")
