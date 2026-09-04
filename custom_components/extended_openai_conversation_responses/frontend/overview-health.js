@@ -77,16 +77,35 @@ function exposureCheck(facts) {
 }
 
 function memoryCheck(facts) {
-  const mode = String(facts.memory_mode || "off");
+  const memory = facts.memory || {};
+  const mode = String(memory.mode || "off");
   const off = mode === "off";
+  if (off) {
+    return {
+      id: "memory",
+      state: "neutral",
+      title: "Persistent memory",
+      value: "Off by choice",
+      detail: "Persistent memory is optional and is currently disabled.",
+      action: action("data-memory", "memory-settings"),
+    };
+  }
+  if (memory.available === false) {
+    return {
+      id: "memory",
+      state: "unknown",
+      title: "Persistent memory",
+      value: "Unable to determine",
+      detail: "Persistent memory is enabled, but Overview could not load its current status.",
+      action: action("data-memory", "memory-settings"),
+    };
+  }
   return {
     id: "memory",
-    state: off ? "neutral" : "ready",
+    state: "ready",
     title: "Persistent memory",
-    value: off ? "Off by choice" : titleCase(mode),
-    detail: off
-      ? "Persistent memory is optional and is currently disabled."
-      : "Persistent memory is enabled for this assistant.",
+    value: titleCase(mode),
+    detail: "Persistent memory is enabled for this assistant.",
     action: action("data-memory", "memory-settings"),
   };
 }
@@ -159,6 +178,16 @@ function webSearchCheck(facts) {
         : action("capabilities", "web-skills", "config-web_search"),
     };
   }
+  if (web.available !== true) {
+    return {
+      id: "web_search",
+      state: "unknown",
+      title: "Web Search",
+      value: "Unable to determine",
+      detail: "Overview could not determine whether hosted Web Search is available for the current provider configuration.",
+      action: action("capabilities", "web-skills"),
+    };
+  }
   return {
     id: "web_search",
     state: "ready",
@@ -170,6 +199,24 @@ function webSearchCheck(facts) {
 }
 
 export function buildSetupHealth(facts = {}) {
+  if (facts.unavailable === true) {
+    return {
+      state: "warning",
+      summary: "Review recommended",
+      error_count: 0,
+      warning_count: 0,
+      unknown_count: 1,
+      can_manage: facts.can_manage === true,
+      live_provider_tested: false,
+      checks: [{
+        id: "setup_health",
+        state: "unknown",
+        title: "Setup health",
+        value: "Unable to determine",
+        detail: "Overview could not complete the setup checks. Other Overview information is still available.",
+      }],
+    };
+  }
   const checks = [
     providerRuntimeCheck(facts),
     instructionsCheck(facts),
