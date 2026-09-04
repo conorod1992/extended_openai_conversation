@@ -49,9 +49,9 @@ assert.equal(
   "technical Service Tier terminology must remain searchable",
 );
 assert.equal(
-  searchProjectedSettings("hassil", projection).some((item) => item.configKey === "local_intents_enabled"),
+  searchProjectedSettings("hassil").some((item) => item.configKey === "local_intents_enabled"),
   true,
-  "technical/local-handling terminology must remain searchable",
+  "Hassil should remain a searchable alias for local handling",
 );
 
 const baseline = {
