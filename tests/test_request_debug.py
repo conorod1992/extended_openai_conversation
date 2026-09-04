@@ -69,13 +69,18 @@ def test_debug_manager_can_resize_and_clear() -> None:
 @dataclass
 class _TemplateResult:
     template: Template
+    authorization: str = "Bearer secret"
 
 
 def test_debug_serialization_does_not_deepcopy_template(hass) -> None:
-    """Dataclass/debug serialization must not traverse Template.hass."""
+    """Dataclass/debug serialization must not traverse Template.hass or leak secrets."""
     result = _TemplateResult(Template("{{ value }}", hass))
+    expected = {
+        "template": "{{ value }}",
+        "authorization": "<redacted credential>",
+    }
 
-    assert _jsonable(result) == {"template": "{{ value }}"}
+    assert _jsonable(result) == expected
 
     request = DebugProviderRequest(
         request_id="request",
@@ -86,9 +91,7 @@ def test_debug_serialization_does_not_deepcopy_template(hass) -> None:
         metrics={},
         response_events=[result],
     )
-    assert request.as_dict()["response_events"] == [
-        {"template": "{{ value }}"}
-    ]
+    assert request.as_dict()["response_events"] == [expected]
 
 
 class _FakeStream:
