@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from homeassistant.exceptions import HomeAssistantError
+
 from custom_components.extended_openai_conversation_responses import management_browser
 
 
@@ -125,9 +127,13 @@ async def test_wrapper_keeps_scope_authorization_before_memory_access(monkeypatc
     wrapped = management_browser.wrap_management_browser(original)
     memory_get = AsyncMock()
     monkeypatch.setattr(management_browser, "async_get_memory", memory_get)
-    monkeypatch.setattr(management_browser.management_ui, "entry_and_agent", lambda *args: (object(), object()))
+    monkeypatch.setattr(
+        management_browser.management_ui,
+        "entry_and_agent",
+        lambda *args: (object(), object()),
+    )
 
-    with pytest.raises(Exception, match="Unknown data scope"):
+    with pytest.raises(HomeAssistantError, match="Unknown data scope"):
         await wrapped(
             None,
             "user-a",
