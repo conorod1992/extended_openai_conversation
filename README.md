@@ -521,4 +521,6 @@ Extended OpenAI Conversation (Responses) was originally forked from [jekalmin/ex
 
 The upstream project's custom-function architecture and earlier Home Assistant/OpenAI integration work formed the foundation of this project.
 
+AI-assisted development: OpenAI Codex is used in the development of this project.
+
 Thanks to the upstream author and contributors, and to everyone contributing to Home Assistant, HACS, and the OpenAI ecosystem.
