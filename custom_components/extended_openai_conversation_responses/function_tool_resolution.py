@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 # These definitions are owned by the integration runtime rather than the user's
@@ -31,7 +31,10 @@ def latest_function_tool_for_execution(
     the conversation executor's existing authoritative lookup fails closed.
     """
     function = function_tool.get("function")
-    if not isinstance(function, Mapping) or function.get("type") in _INTEGRATION_TOOL_TYPES:
+    if (
+        not isinstance(function, Mapping)
+        or function.get("type") in _INTEGRATION_TOOL_TYPES
+    ):
         return function_tool
 
     tool_name = function_tool.get("spec", {}).get("name")
