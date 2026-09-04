@@ -598,7 +598,8 @@ async def test_function_group_loader_refreshes_tools_without_using_real_call_quo
     requests = client.responses.create.await_args_list
     assert requests[0].kwargs["tools"][0]["name"] == FUNCTION_GROUP_LOADER_TOOL_NAME
     assert requests[1].kwargs["tools"][0]["name"] == "create_reminder"
-    assert requests[2].kwargs["tool_choice"] == "none"
+    assert "tools" not in requests[2].kwargs
+    assert "tool_choice" not in requests[2].kwargs
     entity._execute_function_tool.assert_awaited_once()
     assert chat_log.content[-1].content == "Reminder created."
 
