@@ -4,8 +4,11 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from custom_components.extended_openai_conversation_responses.runtime_cleanup import (
+    _ACTIVE_CONFIGURED_TOOL_RESOLUTION,
     _ACTIVE_FUNCTION_TOOLS_SNAPSHOT,
+    _execution_configured_function_tools,
     _request_function_tools,
+    _resolve_latest_configured_function_tool,
     latest_configured_function_tool,
 )
 
@@ -94,6 +97,23 @@ def test_request_function_tools_refreshes_after_guest_tightening() -> None:
     assert calls == 2
 
 
+def _configured_agent(current_tools):
+    latest_data = {"revision": 2}
+    latest_subentry = SimpleNamespace(data=latest_data)
+    latest_entry = SimpleNamespace(subentries={"agent": latest_subentry})
+    agent = SimpleNamespace(
+        hass=SimpleNamespace(
+            config_entries=SimpleNamespace(
+                async_get_entry=Mock(return_value=latest_entry)
+            )
+        ),
+        entry=SimpleNamespace(entry_id="entry"),
+        subentry=SimpleNamespace(subentry_id="agent", data={"revision": 1}),
+        _configured_function_tools_from_data=Mock(return_value=current_tools),
+    )
+    return agent, latest_data
+
+
 def test_latest_configured_function_tool_returns_current_definition() -> None:
     """Execution uses the latest persisted schema/config rather than the stale request copy."""
     stale = {
@@ -104,25 +124,63 @@ def test_latest_configured_function_tool_returns_current_definition() -> None:
         "spec": {"name": "notify", "parameters": {"type": "object"}},
         "function": {"type": "service", "service": "notify.current"},
     }
-    latest_subentry = SimpleNamespace(data={"revision": 2})
-    latest_entry = SimpleNamespace(subentries={"agent": latest_subentry})
-    agent = SimpleNamespace(
-        hass=SimpleNamespace(
-            config_entries=SimpleNamespace(
-                async_get_entry=Mock(return_value=latest_entry)
-            )
-        ),
-        entry=SimpleNamespace(entry_id="entry"),
-        subentry=SimpleNamespace(subentry_id="agent", data={"revision": 1}),
-        _configured_function_tools_from_data=Mock(return_value=[current]),
-    )
+    agent, latest_data = _configured_agent([current])
 
     result = latest_configured_function_tool(agent, stale)
 
     assert result is current
-    agent._configured_function_tools_from_data.assert_called_once_with(
-        latest_subentry.data
-    )
+    agent._configured_function_tools_from_data.assert_called_once_with(latest_data)
+
+
+def test_execution_reuses_one_authoritative_configured_catalogue() -> None:
+    """The executor's second validation pass reuses the one fresh catalogue copy."""
+    stale = {
+        "spec": {"name": "notify", "parameters": {"type": "object"}},
+        "function": {"type": "service", "service": "notify.old"},
+    }
+    current = {
+        "spec": {"name": "notify", "parameters": {"type": "object"}},
+        "function": {"type": "service", "service": "notify.current"},
+    }
+    agent, latest_data = _configured_agent([current])
+    resolution = _resolve_latest_configured_function_tool(agent, stale)
+    assert resolution is not None
+    assert resolution.current_tool is current
+
+    fallback = Mock(return_value=[stale])
+    token = _ACTIVE_CONFIGURED_TOOL_RESOLUTION.set(resolution)
+    try:
+        reused = _execution_configured_function_tools(agent, latest_data, fallback)
+        other_data = _execution_configured_function_tools(
+            agent, {"revision": 2}, fallback
+        )
+    finally:
+        _ACTIVE_CONFIGURED_TOOL_RESOLUTION.reset(token)
+
+    assert reused is resolution.tools
+    assert reused[0] is current
+    fallback.assert_called_once_with()
+    assert other_data == [stale]
+
+
+def test_deleted_configured_tool_keeps_fail_closed_catalogue() -> None:
+    """Deletion remains visible to the original executor without a second parse/copy."""
+    stale = {
+        "spec": {"name": "notify", "parameters": {"type": "object"}},
+        "function": {"type": "service", "service": "notify.old"},
+    }
+    agent, latest_data = _configured_agent([])
+    resolution = _resolve_latest_configured_function_tool(agent, stale)
+
+    assert resolution is not None
+    assert resolution.current_tool is None
+    token = _ACTIVE_CONFIGURED_TOOL_RESOLUTION.set(resolution)
+    try:
+        assert _execution_configured_function_tools(
+            agent, latest_data, Mock(side_effect=AssertionError("must reuse"))
+        ) == []
+    finally:
+        _ACTIVE_CONFIGURED_TOOL_RESOLUTION.reset(token)
 
 
 def test_latest_configured_function_tool_leaves_integration_tools_unchanged() -> None:
