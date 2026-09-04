@@ -100,9 +100,9 @@ export function installUsageInputFootprint(registry = globalThis.customElements)
       return `${footprintMarkup(this)}${originalUsage.apply(this, args)}`;
     };
 
-    const originalBind = prototype._bind;
-    prototype._bind = function(...args) {
-      const result = originalBind.apply(this, args);
+    const originalBindActions = prototype._bindActions;
+    prototype._bindActions = function(...args) {
+      const result = originalBindActions.apply(this, args);
       if (this._viewKey() === "usage-maintenance/usage") bindRetry(this);
       return result;
     };
