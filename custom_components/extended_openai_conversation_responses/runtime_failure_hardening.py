@@ -11,7 +11,6 @@ from typing import Any, cast
 
 from openai import OpenAIError
 
-from homeassistant.components import conversation
 from homeassistant.components.conversation import ConversationResult
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
