@@ -88,6 +88,7 @@ from .debug_ui import async_setup_debug_ui
 from .guest_performance import install_guest_policy_fast_path
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import get_authenticated_client, supports_openai_hosted_tools
+from .input_footprint import install_input_footprint
 from .intercom_services import async_setup_intercom_services
 from .management_loading_performance import install_management_loading_optimizations
 from .management_permissions import install_management_permissions
@@ -119,6 +120,7 @@ def _register_split_frontend_modules() -> None:
         "management-voice-identity.js",
         "voice-identity-ui.js",
         "management-navigation-search.js",
+        "usage-input-footprint.js",
     )
     modules = tuple(
         dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
@@ -144,6 +146,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_debug_instrumentation()
     install_request_rule_match_preview()
     install_management_loading_optimizations()
+    install_input_footprint()
     install_management_permissions()
     install_safety_hardening()
     await async_migrate_integration(hass)
