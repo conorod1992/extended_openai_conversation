@@ -5,6 +5,129 @@ export const SECTION_CACHE_TTL_MS = 30_000;
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+const RESET_PROMPT_KEYS = [
+  "prompt",
+  "current_datetime_enabled",
+  "exposed_entities_enabled",
+  "current_datetime_template",
+  "exposed_entities_template",
+];
+const RESET_ADVANCED_KEYS = [
+  "temperature",
+  "top_p",
+  "reasoning_effort",
+  "service_tier",
+  "shorten_tool_call_id",
+  "memory_auto_retrieve_limit",
+  "memory_retrieval_mode",
+  "memory_embedding_model",
+];
+const RESET_MODEL_KEYS = [
+  "temperature",
+  "top_p",
+  "reasoning_effort",
+  "service_tier",
+  "shorten_tool_call_id",
+];
+
+function configBaselineReady(panel) {
+  return Boolean(
+    panel?._configData?.config
+      && panel?._draft
+      && panel._draftAgentId === panel._agentId
+  );
+}
+
+function configKeyChanged(panel, key) {
+  if (!configBaselineReady(panel)) return false;
+  if (key === "__title") return panel._draftTitle !== panel._configData.title;
+  return !same(panel._draft[key], panel._configData.config[key]);
+}
+
+export function rebuildConfigDirtyKeys(panel) {
+  const changed = new Set();
+  if (configBaselineReady(panel)) {
+    const baseline = panel._configData.config;
+    const draft = panel._draft;
+    const keys = new Set([...Object.keys(baseline), ...Object.keys(draft)]);
+    for (const key of keys) {
+      if (!same(baseline[key], draft[key])) changed.add(key);
+    }
+    if (panel._draftTitle !== panel._configData.title) changed.add("__title");
+  }
+  panel._eocDirtyConfigKeys = changed;
+  return changed;
+}
+
+export function syncConfigDirtyKeys(panel, keys) {
+  if (!configBaselineReady(panel)) {
+    panel._eocDirtyConfigKeys = new Set();
+    return panel._eocDirtyConfigKeys;
+  }
+  const changed = panel._eocDirtyConfigKeys instanceof Set
+    ? panel._eocDirtyConfigKeys
+    : new Set();
+  for (const key of keys) {
+    if (!key) continue;
+    if (configKeyChanged(panel, key)) changed.add(key);
+    else changed.delete(key);
+  }
+  panel._eocDirtyConfigKeys = changed;
+  return changed;
+}
+
+export function configKeyForControl(control) {
+  if (!control) return null;
+  if (control.dataset?.config) return control.dataset.config;
+  if (control.dataset?.memoryConfig) return control.dataset.memoryConfig;
+  if (control.id === "voice-mappings") return "voice_device_mappings";
+  if (control.matches?.("[data-local-intent-exclusion]")) return "local_intent_exclusions";
+  if (control.matches?.(".regex-pattern,.regex-replacement")) {
+    return "speech_regex_replacements";
+  }
+  if (control.id === "conversation-timeout-preset") {
+    return "conversation_timeout_minutes";
+  }
+  return null;
+}
+
+export function configKeysForButton(button) {
+  if (!button) return [];
+  if (button.id === "reset-prompt") return RESET_PROMPT_KEYS;
+  if (button.id === "reset-advanced") return RESET_ADVANCED_KEYS;
+  if (button.id === "reset-model-parameters") return RESET_MODEL_KEYS;
+  if (button.classList?.contains("reset-context-template")) {
+    return button.dataset?.templateKey ? [button.dataset.templateKey] : [];
+  }
+  if (
+    button.id === "add-regex"
+    || button.classList?.contains("delete-regex")
+    || button.classList?.contains("move-regex")
+  ) {
+    return ["speech_regex_replacements"];
+  }
+  return [];
+}
+
+function restoreConfigFocus(panel, control) {
+  const id = control?.id;
+  if (!id || typeof requestAnimationFrame !== "function") return;
+  requestAnimationFrame(() => {
+    const escaped = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id;
+    panel.shadowRoot?.querySelector?.(`#${escaped}`)?.focus?.({preventScroll: true});
+  });
+}
+
+function applyTargetedConfigDirty(panel, keys, control = null) {
+  if (!keys.length) return;
+  const wasDirty = Boolean(panel._configDirty);
+  const changed = syncConfigDirtyKeys(panel, keys);
+  panel._setConfigDirty(changed.size > 0);
+  if (wasDirty && !panel._configDirty) {
+    panel._render?.();
+    restoreConfigFocus(panel, control);
+  }
+}
 
 function dialogState(dialog) {
   if (!dialog) return [];
@@ -146,13 +269,24 @@ function bindStateSafety(panel) {
   root.__eocStateSafetyBound = true;
 
   const syncGuestAfterEvent = () => queueMicrotask(() => syncGuestDirty(panel));
+  const syncConfigAfterControlEvent = (event) => {
+    const key = configKeyForControl(event.target);
+    if (key) applyTargetedConfigDirty(panel, [key], event.target);
+  };
   root.addEventListener("input", syncGuestAfterEvent);
+  root.addEventListener("input", syncConfigAfterControlEvent);
   root.addEventListener("change", syncGuestAfterEvent);
+  root.addEventListener("change", syncConfigAfterControlEvent);
   root.addEventListener("value-changed", syncGuestAfterEvent);
+  root.addEventListener("value-changed", syncConfigAfterControlEvent);
 
   root.addEventListener("click", (event) => {
     const button = event.target?.closest?.("button");
     if (!button) return;
+    const configKeys = configKeysForButton(button);
+    if (configKeys.length) {
+      queueMicrotask(() => applyTargetedConfigDirty(panel, configKeys, button));
+    }
     if (button.matches("#rule-add,#rule-empty-add,#add-tool,.edit-tool,.duplicate-tool,#add-group,.edit-group")) {
       requestAnimationFrame(() => {
         const dialog = root.querySelector("#rule-dialog[open],#tool-dialog[open],#group-dialog[open]");
@@ -236,6 +370,31 @@ export function installManagementStateSafety(registry = globalThis.customElement
     const prototype = Panel?.prototype;
     if (!prototype || prototype[PATCHED]) return false;
     prototype[PATCHED] = true;
+
+    const originalSetConfigDirty = prototype._setConfigDirty;
+    prototype._setConfigDirty = function(value) {
+      if (!value) {
+        this._eocDirtyConfigKeys = new Set();
+        return originalSetConfigDirty.call(this, false);
+      }
+      const result = originalSetConfigDirty.call(this, true);
+      if (this._eocDirtyConfigKeys instanceof Set) {
+        queueMicrotask(() => {
+          if (!(this._eocDirtyConfigKeys instanceof Set) || this._eocDirtyConfigKeys.size) return;
+          const changed = rebuildConfigDirtyKeys(this);
+          const dirty = changed.size > 0;
+          const wasDirty = Boolean(this._configDirty);
+          originalSetConfigDirty.call(this, dirty);
+          if (wasDirty && !dirty) this._render?.();
+        });
+      }
+      return result;
+    };
+
+    prototype._syncConfigDirty = function() {
+      const changed = rebuildConfigDirtyKeys(this);
+      return originalSetConfigDirty.call(this, changed.size > 0);
+    };
 
     const originalNavigate = prototype._navigate;
     prototype._navigate = async function(page, subsection = null) {

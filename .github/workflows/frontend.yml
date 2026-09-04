@@ -5,11 +5,7 @@ on:
     paths:
       - "frontend/**"
       - "custom_components/extended_openai_conversation_responses/frontend/**"
-      - "tests/*frontend*.test.mjs"
-      - "tests/feature-status-ui.test.mjs"
-      - "tests/management-performance-ui.test.mjs"
-      - "tests/management-loading-ui.test.mjs"
-      - "tests/request-debug-management-ui.test.mjs"
+      - "tests/*.test.mjs"
       - ".github/workflows/frontend.yml"
   push:
     branches:
@@ -17,11 +13,7 @@ on:
     paths:
       - "frontend/**"
       - "custom_components/extended_openai_conversation_responses/frontend/**"
-      - "tests/*frontend*.test.mjs"
-      - "tests/feature-status-ui.test.mjs"
-      - "tests/management-performance-ui.test.mjs"
-      - "tests/management-loading-ui.test.mjs"
-      - "tests/request-debug-management-ui.test.mjs"
+      - "tests/*.test.mjs"
       - ".github/workflows/frontend.yml"
 
 concurrency:
@@ -50,14 +42,9 @@ jobs:
           find custom_components/extended_openai_conversation_responses/frontend \
             -maxdepth 1 -type f -name '*.js' -print0 \
             | xargs -0 -n1 node --check
-          node tests/management-loading-ui.test.mjs
-          node tests/frontend-state-safety.test.mjs
-          node tests/request-debug-management-ui.test.mjs
-          node tests/feature-status-ui.test.mjs
-          node tests/configuration-clarity-frontend.test.mjs
-          node tests/configuration-guidance-frontend.test.mjs
-          node tests/overview-health-frontend.test.mjs
-          node tests/decision-guidance-frontend.test.mjs
+          find tests -maxdepth 1 -type f -name '*.test.mjs' -print0 \
+            | sort -z \
+            | xargs -0 -n1 node
 
       - name: Type check
         working-directory: frontend

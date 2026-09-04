@@ -17,12 +17,12 @@ const panel = {
 const tester = renderRequestRuleMatchTester();
 assert.match(tester, /Test matching/);
 assert.match(tester, /Safe preview only/);
+assert.match(tester, /same matcher as real requests/);
 assert.match(tester, /does not run Home Assistant actions/);
 assert.match(tester, /does not .*call the AI provider/i);
 assert.match(tester, /id="rule-match-test"/);
 assert.match(tester, />Test match</);
 assert.doesNotMatch(tester, /Process request/);
-assert.doesNotMatch(tester, /real request/);
 
 const transformed = transformRequestRulesMatchTester(
   '<main>Rules</main><section class="content-card"><h2>Test a request</h2><p>dangerous legacy tester</p></section>',
