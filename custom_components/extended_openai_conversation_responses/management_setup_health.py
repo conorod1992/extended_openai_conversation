@@ -57,7 +57,7 @@ def _overall_state(checks: list[dict[str, Any]]) -> str:
     states = {str(check.get("state")) for check in checks}
     if "error" in states:
         return "error"
-    if "warning" in states:
+    if "warning" in states or "unknown" in states:
         return "warning"
     return "ready"
 
@@ -282,6 +282,7 @@ def build_setup_health_snapshot(
     state = _overall_state(checks)
     warning_count = sum(check.get("state") == "warning" for check in checks)
     error_count = sum(check.get("state") == "error" for check in checks)
+    unknown_count = sum(check.get("state") == "unknown" for check in checks)
     return {
         "state": state,
         "summary": (
@@ -293,6 +294,7 @@ def build_setup_health_snapshot(
         ),
         "warning_count": warning_count,
         "error_count": error_count,
+        "unknown_count": unknown_count,
         "can_manage": is_admin,
         "checks": checks,
         "live_provider_tested": False,
