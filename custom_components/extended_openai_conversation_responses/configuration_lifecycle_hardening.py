@@ -398,8 +398,12 @@ def _install_runtime_configuration_lifecycle() -> None:
             return []
         return await original_temporary_retrieve(entity, *args, **kwargs)
 
-    ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories = (  # type: ignore[assignment]
-        retrieve_temporary_memories
+    # These are deliberate runtime monkey patches. setattr avoids asking static
+    # typing to reinterpret the @wraps helper as the original bound-method type.
+    setattr(  # noqa: B010
+        ExtendedOpenAIAgentEntity,
+        "_async_retrieve_temporary_memories",
+        retrieve_temporary_memories,
     )
 
     original_memory_execute = ExtendedOpenAIAgentEntity._async_execute_memory_tool
@@ -425,8 +429,10 @@ def _install_runtime_configuration_lifecycle() -> None:
             raise RuntimeError("temporary memory is disabled")
         return await original_temporary_execute(entity, *args, **kwargs)
 
-    ExtendedOpenAIAgentEntity._async_execute_temporary_memory_tool = (  # type: ignore[assignment]
-        execute_temporary_memory
+    setattr(  # noqa: B010
+        ExtendedOpenAIAgentEntity,
+        "_async_execute_temporary_memory_tool",
+        execute_temporary_memory,
     )
 
     original_archive_execute = ExtendedOpenAIAgentEntity._async_execute_archive_tool
