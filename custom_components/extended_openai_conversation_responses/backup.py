@@ -48,7 +48,9 @@ BACKUP_VERSION = 5
 MAX_BACKUP_BYTES = 16 * 1024 * 1024
 _BACKUP_LOCKS = f"{DOMAIN}.backup_locks"
 _LOGGER = logging.getLogger(__name__)
-_SECRET_KEY_PARTS = frozenset({"password", "passwd", "secret", "token", "authorization"})
+_SECRET_KEY_PARTS = frozenset(
+    {"password", "passwd", "secret", "token", "authorization"}
+)
 _SECRET_KEY_FAMILIES = ("apikey", "clientsecret", "accesstoken", "refreshtoken")
 _CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _KEY_SEPARATOR = re.compile(r"[^A-Za-z0-9]+")
@@ -104,9 +106,7 @@ def _integration_version() -> str:
 def _is_secret_key(key: Any) -> bool:
     """Classify credential-like keys without depending on separator spelling."""
     separated = _CAMEL_CASE_BOUNDARY.sub(" ", str(key))
-    parts = tuple(
-        part.casefold() for part in _KEY_SEPARATOR.split(separated) if part
-    )
+    parts = tuple(part.casefold() for part in _KEY_SEPARATOR.split(separated) if part)
     if any(part in _SECRET_KEY_PARTS for part in parts):
         return True
     canonical = "".join(parts)
