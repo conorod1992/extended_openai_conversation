@@ -369,10 +369,10 @@ function bindGuidanceRoutes(panel) {
   });
 }
 
-function storeRuntimeGuidance(panel, result) {
-  if (!result?.configuration_guidance) return;
+function storeRuntimeGuidance(panel, result, agentId = panel._agentId) {
+  if (!result?.configuration_guidance || panel._agentId !== agentId) return;
   panel._configurationGuidance = result.configuration_guidance;
-  panel._configurationGuidanceAgentId = panel._agentId;
+  panel._configurationGuidanceAgentId = agentId;
   if (panel._result && typeof panel._result === "object") {
     panel._result.configuration_guidance = result.configuration_guidance;
   }
@@ -405,12 +405,11 @@ function configControlFromEvent(event) {
 
 function refreshRuntimeGuidance(panel) {
   const agentId = panel._agentId;
-  if (!agentId || panel._eocGuidanceRefreshAgentId === agentId) return;
-  panel._eocGuidanceRefreshAgentId = agentId;
-  const config = activeConfig(panel);
+  if (!agentId) return;
+  const config = JSON.parse(JSON.stringify(activeConfig(panel)));
   void panel._call("configuration", "validate", {config})
+    .catch(() => null)
     .finally(() => {
-      if (panel._eocGuidanceRefreshAgentId === agentId) panel._eocGuidanceRefreshAgentId = null;
       if (panel._agentId === agentId) queueEnhance(panel);
     });
 }
@@ -437,9 +436,14 @@ export function installManagementConfigurationGuidance(registry = globalThis.cus
 
     const originalCall = prototype._call;
     prototype._call = async function(...args) {
+      const guidanceCall = args[0] === "configuration" && ["get", "validate", "update"].includes(args[1]);
+      const agentId = this._agentId;
+      const revision = guidanceCall
+        ? (this._eocGuidanceCallRevision = (this._eocGuidanceCallRevision || 0) + 1)
+        : null;
       const result = await originalCall.apply(this, args);
-      if (args[0] === "configuration" && ["get", "validate", "update"].includes(args[1])) {
-        storeRuntimeGuidance(this, result);
+      if (guidanceCall && revision === this._eocGuidanceCallRevision && this._agentId === agentId) {
+        storeRuntimeGuidance(this, result, agentId);
       }
       return result;
     };
