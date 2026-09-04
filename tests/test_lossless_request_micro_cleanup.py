@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from custom_components.extended_openai_conversation_responses.const import (
+    API_MODE_CHAT_COMPLETIONS,
+)
 from custom_components.extended_openai_conversation_responses.model_payload import (
     prepare_model_function_tools,
+)
+from custom_components.extended_openai_conversation_responses.request import (
+    format_function_tools,
 )
 
 
@@ -59,3 +65,29 @@ def test_malformed_tool_keeps_historical_full_copy_fallback() -> None:
     assert prepared["function"] is not tool["function"]
     prepared["function"]["nested"]["value"] = 2
     assert tool["function"]["nested"]["value"] == 1
+
+
+def test_chat_completions_wrapper_is_exact_and_schema_only() -> None:
+    """Chat Completions keeps the exact provider shape without extra wrapper copies."""
+    tool = {
+        "spec": {
+            "name": "custom_tool",
+            "description": "User-authored tool.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "custom", "private_execution_value": "not-provider-data"},
+    }
+
+    formatted = format_function_tools([tool], API_MODE_CHAT_COMPLETIONS)
+
+    assert formatted == [
+        {
+            "type": "function",
+            "function": {
+                "name": "custom_tool",
+                "description": "User-authored tool.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    assert "private_execution_value" not in repr(formatted)
