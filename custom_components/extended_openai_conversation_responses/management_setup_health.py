@@ -131,9 +131,7 @@ def install_management_setup_health() -> bool:
                 result.get("load_errors", []) if isinstance(result, dict) else []
             )
             failed_keys = {
-                issue.get("key")
-                for issue in load_errors
-                if isinstance(issue, dict)
+                issue.get("key") for issue in load_errors if isinstance(issue, dict)
             }
             setup_health = build_setup_health_facts(
                 hass,
