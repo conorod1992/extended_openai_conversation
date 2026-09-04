@@ -53,6 +53,7 @@ def build_setup_health_facts(
     entry: ConfigEntry[Any],
     subentry: ConfigSubentry,
     *,
+    memory_available: bool,
     knowledge_source_count: int,
     knowledge_available: bool,
     is_admin: bool,
@@ -82,7 +83,10 @@ def build_setup_health_facts(
         },
         "prompt_state": prompt_state,
         "exposed_entity_count": exposed_entity_count,
-        "memory_mode": get_memory_mode(options),
+        "memory": {
+            "mode": get_memory_mode(options),
+            "available": memory_available,
+        },
         "knowledge": {
             "enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
             "source_count": knowledge_source_count,
@@ -123,18 +127,20 @@ def install_management_setup_health() -> bool:
             else 0
         )
         load_errors = result.get("load_errors", []) if isinstance(result, dict) else []
-        knowledge_available = not any(
-            isinstance(issue, dict) and issue.get("key") == "knowledge"
+        failed_keys = {
+            issue.get("key")
             for issue in load_errors
-        )
+            if isinstance(issue, dict)
+        }
         return {
             **result,
             "setup_health": build_setup_health_facts(
                 hass,
                 entry,
                 subentry,
+                memory_available="memories" not in failed_keys,
                 knowledge_source_count=knowledge_source_count,
-                knowledge_available=knowledge_available,
+                knowledge_available="knowledge" not in failed_keys,
                 is_admin=is_admin,
             ),
         }
