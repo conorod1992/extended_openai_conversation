@@ -133,7 +133,9 @@ async def test_wrapper_keeps_scope_authorization_before_memory_access(monkeypatc
         lambda *args: (object(), object()),
     )
 
-    with pytest.raises(HomeAssistantError, match="Unknown data scope"):
+    with pytest.raises(
+        HomeAssistantError, match="This scope is not available to the current user"
+    ):
         await wrapped(
             None,
             "user-a",
