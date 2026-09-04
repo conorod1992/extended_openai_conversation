@@ -57,7 +57,7 @@ def _install_on_agent_class(agent_class: Any) -> None:
             _require_nonblank_query(arguments)
         try:
             return await original_archive_tool(agent, operation, arguments)
-        except (RuntimeError, ValueError):
+        except RuntimeError, ValueError:
             raise
         except Exception:
             _LOGGER.exception("Conversation Archive tool failed")
