@@ -3,6 +3,7 @@ from __future__ import annotations
 from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
     _capture_provider_usage,
     _LOCAL_ESTIMATE_DETAIL,
+    _PARTIAL_PROVIDER_USAGE_DETAIL,
     _restore_local_estimate,
     estimate_provider_input_tokens,
     usage_for_accounting,
@@ -46,6 +47,21 @@ def test_estimate_is_more_conservative_for_non_ascii_text() -> None:
     assert unicode_estimate > ascii_estimate
 
 
+def test_missing_provider_usage_keeps_local_estimate() -> None:
+    usage = RequestUsage(
+        input_tokens=500,
+        total_tokens=500,
+        details={_LOCAL_ESTIMATE_DETAIL: 500},
+    )
+
+    captured = _capture_provider_usage(usage, None)
+
+    assert captured is False
+    assert usage.input_tokens == 500
+    assert usage.total_tokens == 500
+    assert usage.details == {_LOCAL_ESTIMATE_DETAIL: 500}
+
+
 def test_provider_usage_replaces_local_estimate() -> None:
     usage = RequestUsage(
         input_tokens=999,
@@ -69,6 +85,7 @@ def test_provider_usage_replaces_local_estimate() -> None:
     assert usage.total_tokens == 150
     assert usage.cached_input_tokens == 20
     assert _LOCAL_ESTIMATE_DETAIL not in usage.details
+    assert _PARTIAL_PROVIDER_USAGE_DETAIL not in usage.details
 
 
 def test_unusable_zero_provider_usage_keeps_local_estimate() -> None:
@@ -86,6 +103,73 @@ def test_unusable_zero_provider_usage_keeps_local_estimate() -> None:
     assert captured is False
     assert usage.input_tokens == 500
     assert usage.details == {_LOCAL_ESTIMATE_DETAIL: 500}
+
+
+def test_output_only_provider_usage_keeps_estimate_for_context() -> None:
+    usage = RequestUsage(
+        input_tokens=800,
+        total_tokens=800,
+        details={_LOCAL_ESTIMATE_DETAIL: 800},
+    )
+
+    captured = _capture_provider_usage(
+        usage,
+        {"completion_tokens": 30, "total_tokens": 30},
+    )
+
+    assert captured is True
+    assert usage.input_tokens == 800
+    assert usage.output_tokens == 30
+    assert usage.total_tokens == 30
+    assert usage.details[_LOCAL_ESTIMATE_DETAIL] == 800
+    assert usage.details[_PARTIAL_PROVIDER_USAGE_DETAIL] == 1
+
+    accounted = usage_for_accounting(usage)
+    assert accounted == RequestUsage(output_tokens=30, total_tokens=30)
+
+
+def test_reasoning_only_provider_usage_keeps_estimate_for_context() -> None:
+    usage = RequestUsage(
+        input_tokens=900,
+        total_tokens=900,
+        details={_LOCAL_ESTIMATE_DETAIL: 900},
+    )
+
+    captured = _capture_provider_usage(
+        usage,
+        {"output_tokens_details": {"reasoning_tokens": 17}},
+    )
+
+    assert captured is True
+    assert usage.input_tokens == 900
+    assert usage.output_tokens == 0
+    assert usage.total_tokens == 0
+    assert usage.reasoning_tokens == 17
+    assert usage.details[_LOCAL_ESTIMATE_DETAIL] == 900
+    assert usage.details[_PARTIAL_PROVIDER_USAGE_DETAIL] == 1
+
+    accounted = usage_for_accounting(usage)
+    assert accounted == RequestUsage(
+        reasoning_tokens=17,
+        details={"output_reasoning_tokens": 17},
+    )
+
+
+def test_partial_usage_can_be_reconciled_after_stock_transform_overwrite() -> None:
+    usage = RequestUsage(output_tokens=25, total_tokens=25)
+
+    captured = _capture_provider_usage(
+        usage,
+        {"completion_tokens": 25, "total_tokens": 25},
+        local_estimate=700,
+    )
+
+    assert captured is True
+    assert usage.input_tokens == 700
+    assert usage.output_tokens == 25
+    assert usage.total_tokens == 25
+    assert usage.details[_LOCAL_ESTIMATE_DETAIL] == 700
+    assert usage.details[_PARTIAL_PROVIDER_USAGE_DETAIL] == 1
 
 
 def test_terminal_zero_usage_cannot_erase_local_estimate() -> None:
