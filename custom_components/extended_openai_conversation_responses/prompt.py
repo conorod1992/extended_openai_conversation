@@ -167,8 +167,9 @@ def _persistent_memory_instructions(options: Any) -> str:
 def _persistent_memory_context(memories: list[MemoryRecord]) -> str:
     return (
         "Potentially relevant local memories may be stale or irrelevant. Apply only "
-        "to the subject and situation in the current request; never transfer one "
-        "person's preferences to another:\n"
+        "to the subject and situation in the current request; the user's current "
+        "request and explicitly stated context take precedence. Never automatically "
+        "apply the user's preference to another person:\n"
         + _compact_json(
             [
                 {
