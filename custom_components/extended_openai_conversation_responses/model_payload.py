@@ -172,14 +172,17 @@ def prepare_model_function_tools(
 
     Execution metadata and JSON-schema structure/constraints are preserved exactly,
     except for integration-owned runtime bounds that are also advertised to the
-    provider. The legacy memory_add operation stays executable by the backend but is
-    omitted from new model-facing tool lists because memory_upsert fully covers
-    creation.
+    provider. Valid provider tools copy only the schema tree because execution
+    metadata is read-only here and is never sent to the model. Malformed tools keep
+    the historical full-copy fallback. The legacy memory_add operation stays
+    executable by the backend but is omitted from new model-facing tool lists because
+    memory_upsert fully covers creation.
     """
     compacted: list[dict[str, Any]] = []
     for tool in function_tools:
         function = tool.get("function", {})
-        name = tool.get("spec", {}).get("name")
+        source_spec = tool.get("spec")
+        name = source_spec.get("name") if isinstance(source_spec, dict) else None
         if (
             name == "memory_add"
             and function.get("type") == "memory"
@@ -187,11 +190,13 @@ def prepare_model_function_tools(
         ):
             continue
 
-        current = deepcopy(tool)
-        spec = current.get("spec")
-        if not isinstance(spec, dict) or not isinstance(name, str):
-            compacted.append(current)
+        if not isinstance(source_spec, dict) or not isinstance(name, str):
+            compacted.append(deepcopy(tool))
             continue
+
+        current = dict(tool)
+        spec = deepcopy(source_spec)
+        current["spec"] = spec
 
         if (
             function.get("type") == "native"
