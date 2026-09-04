@@ -1,4 +1,5 @@
 import {SETTINGS_INDEX} from "./frontend-navigation.js";
+import {SETTINGS_SEARCH_PROJECTION} from "./management-navigation-search.js";
 
 const PATCHED = Symbol.for("extended-openai.management-configuration-clarity");
 
@@ -9,6 +10,10 @@ const EXTRA_CONFIG_OWNERS = Object.freeze({
 
 const FRIENDLY_LABEL_OVERRIDES = Object.freeze({
   memory_retrieval_mode: "Relevance matching",
+});
+
+const TECHNICAL_SEARCH_ALIASES = Object.freeze({
+  local_intents_enabled: "hassil",
 });
 
 const FRIENDLY_VALUE_LABELS = Object.freeze({
@@ -51,6 +56,10 @@ const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const SETTING_BY_KEY = new Map();
 for (const item of SETTINGS_INDEX) {
   if (item.configKey && !SETTING_BY_KEY.has(item.configKey)) SETTING_BY_KEY.set(item.configKey, item);
+}
+for (const entry of SETTINGS_SEARCH_PROJECTION) {
+  const alias = TECHNICAL_SEARCH_ALIASES[entry.item?.configKey];
+  if (alias && !entry.haystack.includes(alias)) entry.haystack += ` ${alias}`;
 }
 
 function ownerForKey(key) {
@@ -233,7 +242,7 @@ function enhanceSettingField(panel, field) {
   if (label && labelText) replaceLabelText(label, labelText);
 
   if (item) {
-    const aliases = `${item.label || ""} ${item.description || ""} ${item.terms || ""} ${item.configKey || ""}`.toLowerCase();
+    const aliases = `${item.label || ""} ${item.description || ""} ${item.terms || ""} ${item.configKey || ""} ${TECHNICAL_SEARCH_ALIASES[key] || ""}`.toLowerCase();
     if (!String(field.dataset.search || "").includes(aliases)) field.dataset.search = `${field.dataset.search || ""} ${aliases}`.trim();
   }
 
