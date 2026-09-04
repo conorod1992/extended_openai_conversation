@@ -107,6 +107,6 @@ const source = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/management-configuration-guidance.js", import.meta.url),
   "utf8",
 );
-assert.match(source, /data-eoc-injected-model/);
+assert.match(source, /dataset\.eocInjectedModel/);
 assert.match(source, /parent\.disabled = !config\.local_intents_enabled/);
 assert.match(source, /configuration.*validate/s);
