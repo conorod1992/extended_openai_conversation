@@ -13,7 +13,11 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
 )
-from custom_components.extended_openai_conversation_responses.functions.base import Function
+from custom_components.extended_openai_conversation_responses.functions.base import (
+    Function,
+    _RuntimeFunctionConfig,
+    copy_runtime_function_config,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm
 
@@ -45,7 +49,7 @@ class _RuntimeConvertingFunction(Function):
 
 
 def test_runtime_function_config_deepcopy_restores_plain_source() -> None:
-    """Persistence copies must not recurse into schema-created runtime objects."""
+    """Persistence copies must never traverse schema-created runtime objects."""
     raw_config = {"type": "test", "value": "{{ plain_source }}"}
     runtime_config = _RuntimeConvertingFunction().validate_schema(raw_config)
 
@@ -53,8 +57,8 @@ def test_runtime_function_config_deepcopy_restores_plain_source() -> None:
     assert deepcopy(runtime_config) == raw_config
 
 
-def test_runtime_function_config_is_safe_inside_tool_copy() -> None:
-    """Copying a configured tool for agent persistence keeps plain function data."""
+def test_runtime_function_config_is_safe_inside_persistence_copy() -> None:
+    """The persistence-safe deepcopy boundary also works in the nested tool shape."""
     raw_config = {"type": "test", "value": "{{ plain_source }}"}
     runtime_config = _RuntimeConvertingFunction().validate_schema(raw_config)
     tool = {
@@ -69,6 +73,27 @@ def test_runtime_function_config_is_safe_inside_tool_copy() -> None:
     copied = deepcopy({"functions": [tool]})
 
     assert copied["functions"][0]["function"] == raw_config
+
+
+def test_runtime_copy_preserves_hydrated_values_and_isolates_containers() -> None:
+    """Runtime cache copies keep hydrated leaves without sharing mutable configs."""
+    raw_config = {"type": "test", "value": "{{ plain_source }}"}
+    runtime_config = _RuntimeConvertingFunction().validate_schema(raw_config)
+    runtime_value = runtime_config["value"]
+    source = {"functions": [{"function": runtime_config, "nested": [{"a": 1}]}]}
+
+    copied = copy_runtime_function_config(source)
+    copied_config = copied["functions"][0]["function"]
+
+    assert isinstance(copied_config, _RuntimeFunctionConfig)
+    assert copied_config is not runtime_config
+    assert copied_config["value"] is runtime_value
+    assert copied["functions"] is not source["functions"]
+    assert copied["functions"][0]["nested"] is not source["functions"][0]["nested"]
+
+    copied["functions"][0]["nested"][0]["a"] = 2
+    assert source["functions"][0]["nested"][0]["a"] == 1
+    assert deepcopy(copied_config) == raw_config
 
 
 async def test_agent_merge_persists_runtime_template_as_plain_yaml(hass) -> None:

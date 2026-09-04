@@ -28,6 +28,60 @@ class _RuntimeFunctionConfig(dict[str, Any]):
         return deepcopy(self._persisted_config, memo)
 
 
+def _copy_runtime_value(value: Any, memo: dict[int, Any]) -> Any:
+    """Copy runtime config containers while retaining hydrated leaf objects."""
+    value_id = id(value)
+    if value_id in memo:
+        return memo[value_id]
+
+    if isinstance(value, _RuntimeFunctionConfig):
+        copied = _RuntimeFunctionConfig({}, deepcopy(value._persisted_config))
+        memo[value_id] = copied
+        copied.update(
+            {key: _copy_runtime_value(item, memo) for key, item in value.items()}
+        )
+        return copied
+
+    if isinstance(value, dict):
+        copied_dict: dict[Any, Any] = {}
+        memo[value_id] = copied_dict
+        copied_dict.update(
+            {key: _copy_runtime_value(item, memo) for key, item in value.items()}
+        )
+        return copied_dict
+
+    if isinstance(value, list):
+        copied_list: list[Any] = []
+        memo[value_id] = copied_list
+        copied_list.extend(_copy_runtime_value(item, memo) for item in value)
+        return copied_list
+
+    if isinstance(value, tuple):
+        copied_tuple = tuple(_copy_runtime_value(item, memo) for item in value)
+        memo[value_id] = copied_tuple
+        return copied_tuple
+
+    if isinstance(value, set):
+        copied_set = {_copy_runtime_value(item, memo) for item in value}
+        memo[value_id] = copied_set
+        return copied_set
+
+    if isinstance(value, frozenset):
+        copied_frozenset = frozenset(_copy_runtime_value(item, memo) for item in value)
+        memo[value_id] = copied_frozenset
+        return copied_frozenset
+
+    # Schema-created runtime objects such as Home Assistant Template instances are
+    # deliberately treated as atomic. They are reusable, but recursively copying
+    # them can traverse into the live HomeAssistant object and is not supported.
+    return value
+
+
+def copy_runtime_function_config(value: Any) -> Any:
+    """Return an isolated runtime-safe copy without de-hydrating Function Tools."""
+    return _copy_runtime_value(value, {})
+
+
 class Function(ABC):
     def __init__(self, data_schema: vol.Schema = vol.Schema({})) -> None:
         """Initialize tool."""
