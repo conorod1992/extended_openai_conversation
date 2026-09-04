@@ -10,6 +10,7 @@ from homeassistant.components.homeassistant.exposed_entities import async_should
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
 
+from . import management_ui
 from .const import (
     CONF_API_PROVIDER,
     CONF_CHAT_MODEL,
@@ -20,22 +21,31 @@ from .const import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_PROMPT,
 )
-from .ha_permissions import filter_entities_for_active_user
 from .management_configuration_guidance import configuration_guidance_snapshot
 from .memory import get_memory_mode
 
 _PATCHED = "extended_openai_management_setup_health"
+_FRONTEND_MODULE = "overview-health.js"
 OverviewCommand = Callable[..., Awaitable[dict[str, Any]]]
 
 
+def _register_frontend_module() -> None:
+    """Expose the setup-health presentation helper before UI static paths exist."""
+    modules = tuple(
+        dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE))
+    )
+    setattr(management_ui, "MANAGEMENT_FRONTEND_MODULES", modules)  # noqa: B010
+
+
+_register_frontend_module()
+
+
 def _exposed_entity_count(hass: HomeAssistant) -> int:
-    """Count Assist-exposed readable entities without building prompt metadata."""
-    exposed = [
-        {"entity_id": state.entity_id}
+    """Count entities globally exposed to Home Assistant Assist."""
+    return sum(
+        async_should_expose(hass, conversation.DOMAIN, state.entity_id)
         for state in hass.states.async_all()
-        if async_should_expose(hass, conversation.DOMAIN, state.entity_id)
-    ]
-    return len(filter_entities_for_active_user(hass, exposed))
+    )
 
 
 def build_setup_health_facts(
@@ -90,7 +100,7 @@ def build_setup_health_facts(
 
 def install_management_setup_health() -> bool:
     """Attach setup facts to the optimized Overview response exactly once."""
-    from . import management_loading_performance, management_ui
+    from . import management_loading_performance
 
     if getattr(management_loading_performance, _PATCHED, False):
         return False
