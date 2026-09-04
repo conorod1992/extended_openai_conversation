@@ -45,7 +45,8 @@ def test_web_search_guidance_reuses_runtime_compatibility_rules() -> None:
     assert "direct OpenAI Responses API" in custom_endpoint["web_search"]["message"]
 
 
-def test_guidance_frontend_module_is_registered() -> None:
+def test_configuration_clarity_and_guidance_frontend_modules_are_registered() -> None:
+    assert "management-configuration-clarity.js" in MANAGEMENT_FRONTEND_MODULES
     assert "management-configuration-guidance.js" in MANAGEMENT_FRONTEND_MODULES
 
 
