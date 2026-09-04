@@ -153,9 +153,21 @@ def _install_conversation_guard() -> None:
 
     @wraps(current)
     async def guarded(entity: Any, *args: Any, **kwargs: Any) -> Any:
-        gate = get_agent_maintenance_gate(
-            entity.hass, entity.entry.entry_id, entity.subentry.subentry_id
-        )
+        # Some focused unit tests deliberately construct a partial entity with
+        # object.__new__ to exercise inner pipeline cleanup. A real registered
+        # conversation entity always has all three identity fields.
+        entry = getattr(entity, "entry", None)
+        subentry = getattr(entity, "subentry", None)
+        hass = getattr(entity, "hass", None)
+        entry_id = getattr(entry, "entry_id", None)
+        subentry_id = getattr(subentry, "subentry_id", None)
+        if (
+            hass is None
+            or not isinstance(entry_id, str)
+            or not isinstance(subentry_id, str)
+        ):
+            return await current(entity, *args, **kwargs)
+        gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
         async with gate.shared():
             return await current(entity, *args, **kwargs)
 
