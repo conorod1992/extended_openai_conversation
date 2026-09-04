@@ -412,7 +412,7 @@ def install_performance_optimizations() -> None:
     # Persistent Memory records are frozen and record updates replace the object.
     # Cache only deterministic lexical derivations underneath the existing ranking
     # algorithm; query parsing, candidate selection and ranking stay authoritative.
-    memory._record_token_list = cached_memory_record_token_list  # type: ignore[attr-defined]
+    memory._record_token_list = cached_memory_record_token_list  # type: ignore[assignment]
     memory._tokens = cached_memory_tokens  # type: ignore[attr-defined]
     memory._normalize = cached_memory_normalize  # type: ignore[attr-defined]
     memory._bm25_score = cached_memory_bm25_score  # type: ignore[attr-defined]
