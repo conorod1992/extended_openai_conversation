@@ -225,9 +225,7 @@ def _install_late_chat_tool_call_id_repair() -> None:
                             ids_by_index[index] = call_id
                 yield chunk
 
-        async for item in original(
-            entity, chat_log, recording_stream(), request_usage
-        ):
+        async for item in original(entity, chat_log, recording_stream(), request_usage):
             tool_calls = item.get("tool_calls") if isinstance(item, dict) else None
             if not tool_calls or not seen_indexes:
                 yield item
