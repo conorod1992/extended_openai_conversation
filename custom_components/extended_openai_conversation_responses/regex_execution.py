@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
-from typing import Any, TypeVar
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 
 from .speech import has_custom_speech_replacements
-
-_T = TypeVar("_T")
 
 _DEFER_SPEECH_PROCESSING: ContextVar[bool] = ContextVar(
     "extended_openai_defer_speech_processing", default=False
@@ -25,11 +23,11 @@ _PREVALIDATED_ARGUMENTS: ContextVar[
 _INSTALLED = False
 
 
-async def async_run_configurable_regex(
+async def async_run_configurable_regex[T](
     hass: HomeAssistant,
-    target: Callable[..., _T],
+    target: Callable[..., T],
     *args: Any,
-) -> _T:
+) -> T:
     """Run synchronous configurable-regex work in Home Assistant's executor.
 
     This isolates potentially expensive administrator-configured matching from the
