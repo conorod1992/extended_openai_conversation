@@ -63,13 +63,16 @@ from .context import (
     select_summary_history,
 )
 from .exceptions import FunctionNotFound, ParseArgumentsFailed, TokenLengthExceededError
+from .function_call_budget import FunctionCallBudget
 from .function_execution import validate_function_arguments
+from .function_tool_resolution import latest_function_tool_for_execution
 from .functions import get_function
 from .helpers import get_api_mode, get_model_config
 from .parallel_tool_execution import (
     async_execute_parallel_safe_batch,
     resolve_parallel_safe_batch,
 )
+from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
     CONTINUE_CONVERSATION_TOOL_NAME,
@@ -86,8 +89,9 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Max number of back and forth with the LLM to generate a response
-MAX_TOOL_ITERATIONS = 20
+# Backward-compatible name for the absolute provider-loop safety ceiling. Ordinary
+# Function Tool executions are constrained separately by FunctionCallBudget.
+MAX_TOOL_ITERATIONS = MAX_PROVIDER_REQUESTS
 
 
 def _shorten_tool_call_id(tool_call_id: str) -> str:
@@ -370,6 +374,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
             DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
         )
+        function_call_budget = FunctionCallBudget(int(max_function_calls))
         shorten_tool_call_id = options.get(
             CONF_SHORTEN_TOOL_CALL_ID,
             DEFAULT_SHORTEN_TOOL_CALL_ID,
@@ -414,7 +419,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         finalization_retry_attempted = False
         draft_content_ids: set[int] = set()
         observed_input_tokens = 0
-        function_call_rounds = 0
         loader_rounds = 0
         integration_loader_seen = False
         force_finalizer_only = False
@@ -434,6 +438,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     tool
                     for tool in request_function_tools
                     if tool.get("function", {}).get("type") != "function_group_loader"
+                ]
+            if function_call_budget.exhausted:
+                # The Function Group loader and Conditional finalizer are control
+                # operations, not model-requested Function Tool executions. Keep the
+                # loader available while suppressing ordinary functions; the
+                # finalizer is appended separately below.
+                request_function_tools = [
+                    tool
+                    for tool in request_function_tools
+                    if tool.get("function", {}).get("type") == "function_group_loader"
                 ]
             if conditional_continue and any(
                 tool["spec"]["name"] == CONTINUE_CONVERSATION_TOOL_NAME
@@ -469,14 +483,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     [CONTINUE_CONVERSATION_TOOL], api_mode
                 )
                 tool_kwargs["tool_choice"] = "required"
-            elif tools and 0 <= max_function_calls <= function_call_rounds:
-                if conditional_continue:
-                    tool_kwargs["tools"] = _format_tools(
-                        [CONTINUE_CONVERSATION_TOOL], api_mode
-                    )
-                    tool_kwargs["tool_choice"] = "required"
-                else:
-                    tool_kwargs["tool_choice"] = "none"
 
             _LOGGER.info(
                 "Sending provider request for %s using %s with %d input items",
@@ -651,10 +657,22 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         ]
 
             function_tools_by_name = _index_function_tools(request_function_tools)
+            execution_tools_by_name: dict[str, dict[str, Any]] = {}
+            for tool_input in pending_tool_calls:
+                function_tool = function_tools_by_name.get(tool_input.tool_name)
+                if function_tool is None:
+                    continue
+                execution_tools_by_name[tool_input.tool_name] = (
+                    latest_function_tool_for_execution(self, function_tool)
+                )
+
             parallel_batch = resolve_parallel_safe_batch(
-                pending_tool_calls, function_tools_by_name
+                pending_tool_calls, execution_tools_by_name
             )
             if parallel_batch is not None:
+                function_call_budget.claim_many(
+                    tool_input.tool_name for _, tool_input in parallel_batch
+                )
                 _LOGGER.debug(
                     "Executing %d integration-owned read-only tool calls concurrently",
                     len(parallel_batch),
@@ -674,11 +692,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     )
             else:
                 for tool_input in pending_tool_calls:
-                    function_tool = function_tools_by_name.get(tool_input.tool_name)
+                    function_tool = execution_tools_by_name.get(tool_input.tool_name)
 
                     if function_tool is None:
                         raise FunctionNotFound(tool_input.tool_name)
 
+                    function_call_budget.claim(tool_input.tool_name)
                     tool_result_content = await self._execute_function_tool(
                         function_tool,
                         tool_input,
@@ -689,9 +708,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     chat_log.async_add_assistant_content_without_tools(
                         tool_result_content
                     )
-
-            if pending_tool_calls:
-                function_call_rounds += 1
 
             if api_mode == API_MODE_RESPONSES:
                 messages.extend(
@@ -745,6 +761,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             if not chat_log.unresponded_tool_results:
                 break
+
+        assert_provider_loop_completed(chat_log, MAX_TOOL_ITERATIONS)
 
         threshold = int(options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD))
         if observed_input_tokens > threshold:
