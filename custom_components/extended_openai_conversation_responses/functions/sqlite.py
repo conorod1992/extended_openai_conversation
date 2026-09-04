@@ -106,6 +106,11 @@ def _estimated_row_bytes(row: dict[str, Any]) -> int:
     return len(repr(row).encode("utf-8", errors="replace"))
 
 
+def _set_sqlite_result_limit(conn: sqlite3.Connection, max_result_bytes: int) -> None:
+    """Bound any single SQLite string/BLOB before Python can materialize it."""
+    conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, max_result_bytes)
+
+
 def _execute_sqlite_query(
     db_url: str,
     query: str,
@@ -127,6 +132,9 @@ def _execute_sqlite_query(
 
     conn = sqlite3.connect(db_url, uri=True)
     try:
+        # Apply SQLite's own length ceiling before executing user SQL so oversized
+        # strings/BLOBs are rejected by the engine rather than materialized first.
+        _set_sqlite_result_limit(conn, max_result_bytes)
         # Set the built-in read-only guard before installing the authorizer because
         # the authorizer deliberately rejects user-issued PRAGMA statements.
         conn.execute("PRAGMA query_only = ON")
@@ -168,6 +176,13 @@ def _execute_sqlite_query(
                     )
                 results.append(item)
             return results
+        except sqlite3.DataError as err:
+            if "too big" in str(err).lower():
+                raise HomeAssistantError(
+                    "SQLite query result exceeded the configured result-size "
+                    f"limit of {max_result_bytes} bytes"
+                ) from err
+            raise
         except sqlite3.OperationalError as err:
             if timed_out:
                 raise HomeAssistantError(
