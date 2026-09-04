@@ -81,12 +81,20 @@ async def test_bash_cancellation_terminates_child_and_reraises(
     """Cancelling Bash must settle the child instead of orphaning it."""
     function = BashFunction()
     process = _FakeProcess()
-    monkeypatch.setattr(bash.os, "name", "nt")
     monkeypatch.setattr(
         bash.asyncio,
         "create_subprocess_shell",
         AsyncMock(return_value=process),
     )
+    if bash.os.name == "posix":
+
+        def kill_group(_pid: int, sig) -> None:
+            if sig == bash.signal.SIGTERM:
+                process.terminate()
+            else:
+                process.kill()
+
+        monkeypatch.setattr(bash.os, "killpg", kill_group)
     monkeypatch.setattr(function, "_async_guard_command", AsyncMock())
     function_config = {
         "allow_unsafe_shell": True,
