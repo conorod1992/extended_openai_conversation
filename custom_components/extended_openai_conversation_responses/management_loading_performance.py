@@ -41,6 +41,7 @@ from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
 from .knowledge import async_get_knowledge
 from .local_intents import CONF_LOCAL_INTENT_EXCLUSIONS
 from .memory import async_get_memory, get_memory_mode
+from .performance import cached_configured_function_tools_from_data
 from .usage import async_get_usage
 
 _INSTALLED = False
@@ -93,12 +94,7 @@ def _agent_snapshot(
     """Build the cheap frontend metadata shared by bootstrap and overview."""
     options = config if config is not None else dict(subentry.data)
     management_ui = _management_ui()
-    configured = options.get(CONF_FUNCTION_TOOLS)
-    configured_tools = (
-        management_ui.validate_function_tools(configured)
-        if isinstance(configured, list)
-        else management_ui.configured_function_tools_from_data(options)
-    )
+    configured_tools = cached_configured_function_tools_from_data(options)
     if guest_status is None:
         loaded_guest = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
         guest_status = (
