@@ -119,6 +119,8 @@ def _set_subsystem_status(
     *,
     healthy: bool = False,
 ) -> None:
+    if getattr(entity, "hass", None) is None:
+        return
     setter = getattr(entity, "_set_subsystem_status", None)
     if callable(setter):
         setter(subsystem, configured, error, healthy=healthy)
@@ -141,9 +143,7 @@ def _gate_disabled_subsystems(entity: Any, options: Any) -> None:
         setter = getattr(memory, "set_embedding_provider", None)
         if callable(setter):
             model = str(
-                options.get(
-                    CONF_MEMORY_EMBEDDING_MODEL, DEFAULT_MEMORY_EMBEDDING_MODEL
-                )
+                options.get(CONF_MEMORY_EMBEDDING_MODEL, DEFAULT_MEMORY_EMBEDDING_MODEL)
             )
             setter(None, model)
         entity._memory = None
@@ -373,10 +373,14 @@ def _install_runtime_configuration_lifecycle() -> None:
 
     ExtendedOpenAIAgentEntity._async_retrieve_memories = retrieve_memories  # type: ignore[assignment]
 
-    original_temporary_retrieve = ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories
+    original_temporary_retrieve = (
+        ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories
+    )
 
     @wraps(original_temporary_retrieve)
-    async def retrieve_temporary_memories(entity: Any, *args: Any, **kwargs: Any) -> Any:
+    async def retrieve_temporary_memories(
+        entity: Any, *args: Any, **kwargs: Any
+    ) -> Any:
         if (
             entity.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
             == TEMPORARY_MEMORY_OFF
@@ -384,7 +388,9 @@ def _install_runtime_configuration_lifecycle() -> None:
             return []
         return await original_temporary_retrieve(entity, *args, **kwargs)
 
-    ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories = retrieve_temporary_memories  # type: ignore[assignment]
+    ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories = (
+        retrieve_temporary_memories  # type: ignore[assignment]
+    )
 
     original_memory_execute = ExtendedOpenAIAgentEntity._async_execute_memory_tool
 
@@ -396,7 +402,9 @@ def _install_runtime_configuration_lifecycle() -> None:
 
     ExtendedOpenAIAgentEntity._async_execute_memory_tool = execute_memory  # type: ignore[assignment]
 
-    original_temporary_execute = ExtendedOpenAIAgentEntity._async_execute_temporary_memory_tool
+    original_temporary_execute = (
+        ExtendedOpenAIAgentEntity._async_execute_temporary_memory_tool
+    )
 
     @wraps(original_temporary_execute)
     async def execute_temporary_memory(entity: Any, *args: Any, **kwargs: Any) -> Any:
@@ -407,7 +415,9 @@ def _install_runtime_configuration_lifecycle() -> None:
             raise RuntimeError("temporary memory is disabled")
         return await original_temporary_execute(entity, *args, **kwargs)
 
-    ExtendedOpenAIAgentEntity._async_execute_temporary_memory_tool = execute_temporary_memory  # type: ignore[assignment]
+    ExtendedOpenAIAgentEntity._async_execute_temporary_memory_tool = (
+        execute_temporary_memory  # type: ignore[assignment]
+    )
 
     original_archive_execute = ExtendedOpenAIAgentEntity._async_execute_archive_tool
 
