@@ -206,11 +206,11 @@ def _install_late_chat_tool_call_id_repair() -> None:
         chat_log: Any,
         result: Any,
         request_usage: Any = None,
-    ) -> AsyncGenerator[Any, None]:
+    ) -> AsyncGenerator[Any]:
         seen_indexes: set[int] = set()
         ids_by_index: dict[int, str] = {}
 
-        async def recording_stream() -> AsyncGenerator[Any, None]:
+        async def recording_stream() -> AsyncGenerator[Any]:
             async for chunk in result:
                 choices = getattr(chunk, "choices", None)
                 if choices:
