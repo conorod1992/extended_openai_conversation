@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from homeassistant.exceptions import HomeAssistantError
 
@@ -22,7 +22,7 @@ class FunctionCallBudget:
 
     @property
     def remaining(self) -> int | None:
-        """Return remaining slots, or None when the legacy negative limit is unlimited."""
+        """Return remaining slots, or None when a negative limit is unlimited."""
         if self.limit < 0:
             return None
         return max(0, self.limit - self.used)
