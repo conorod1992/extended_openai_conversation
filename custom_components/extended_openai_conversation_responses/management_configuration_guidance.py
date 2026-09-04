@@ -34,9 +34,10 @@ ManagementCommand = Callable[
 
 def _register_frontend_modules() -> None:
     """Expose the clarity/guidance frontend alongside existing management modules."""
-    management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(
+    modules = tuple(
         dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, *_FRONTEND_MODULES))
     )
+    setattr(management_ui, "MANAGEMENT_FRONTEND_MODULES", modules)  # noqa: B010
 
 
 _register_frontend_modules()
