@@ -117,24 +117,25 @@ def install_management_setup_health() -> bool:
         message: dict[str, Any],
     ) -> dict[str, Any]:
         result = await original(hass, user_id, is_admin, message)
-        entry, subentry = management_ui.entry_and_agent(
-            hass, message.get("entry_id"), message.get("subentry_id")
-        )
-        agent = result.get("agent") if isinstance(result, dict) else None
-        knowledge_source_count = (
-            int(agent.get("knowledge_source_count", 0))
-            if isinstance(agent, dict)
-            else 0
-        )
-        load_errors = result.get("load_errors", []) if isinstance(result, dict) else []
-        failed_keys = {
-            issue.get("key")
-            for issue in load_errors
-            if isinstance(issue, dict)
-        }
-        return {
-            **result,
-            "setup_health": build_setup_health_facts(
+        try:
+            entry, subentry = management_ui.entry_and_agent(
+                hass, message.get("entry_id"), message.get("subentry_id")
+            )
+            agent = result.get("agent") if isinstance(result, dict) else None
+            knowledge_source_count = (
+                int(agent.get("knowledge_source_count", 0))
+                if isinstance(agent, dict)
+                else 0
+            )
+            load_errors = (
+                result.get("load_errors", []) if isinstance(result, dict) else []
+            )
+            failed_keys = {
+                issue.get("key")
+                for issue in load_errors
+                if isinstance(issue, dict)
+            }
+            setup_health = build_setup_health_facts(
                 hass,
                 entry,
                 subentry,
@@ -142,8 +143,16 @@ def install_management_setup_health() -> bool:
                 knowledge_source_count=knowledge_source_count,
                 knowledge_available="knowledge" not in failed_keys,
                 is_admin=is_admin,
-            ),
-        }
+            )
+        except Exception:
+            # Setup health is additive. Never turn a failure in this summary layer
+            # into an Overview failure when the original Overview data is usable.
+            setup_health = {
+                "unavailable": True,
+                "can_manage": is_admin,
+                "live_provider_tested": False,
+            }
+        return {**result, "setup_health": setup_health}
 
     management_loading_performance.async_overview_summary = wrapped  # type: ignore[assignment]
     setattr(management_loading_performance, _PATCHED, True)
