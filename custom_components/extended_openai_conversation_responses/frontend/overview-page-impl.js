@@ -1,3 +1,5 @@
+import {buildSetupHealth} from "./overview-health.js";
+
 const WS_BROADCAST = "extended_openai_conversation_responses/broadcast";
 
 function card(panel, title, status, detail, page, section, action, icon, tone = "neutral") {
@@ -160,6 +162,9 @@ function setupHealthMarkup(panel, health) {
   const summaryDetail = issueCount
     ? `${issueCount} item${issueCount === 1 ? "" : "s"} to review`
     : "Core setup looks ready";
+  const liveTestNote = health.can_manage
+    ? "Overview never sends a provider test request. Diagnostics can run a minimal live test when you choose to."
+    : "Overview never sends a provider test request. An administrator can run Diagnostics for a live connection test.";
   return `<section class="setup-health setup-health-${state}" aria-label="Setup and health">
     <div class="setup-health-heading">
       <div><span class="section-kicker"><ha-icon icon="mdi:heart-pulse"></ha-icon> Configuration</span><h2>Setup & health</h2><p>Quick checks for the selected assistant. Optional features that are off by choice are not treated as problems.</p></div>
@@ -168,13 +173,13 @@ function setupHealthMarkup(panel, health) {
     <div class="setup-health-grid">
       ${health.checks.map((check) => {
         const checkState = HEALTH_ICONS[check.state] ? check.state : "unknown";
-        const action = health.can_manage && check.action
+        const actionMarkup = health.can_manage && check.action
           ? `<button type="button" class="secondary setup-health-action" data-page="${panel._e(check.action.page || "")}" data-subsection="${panel._e(check.action.subsection || "")}" data-target="${panel._e(check.action.target || "")}">${panel._e(healthActionLabel(check))}</button>`
           : "";
-        return `<article class="setup-health-check setup-health-check-${checkState}"><ha-icon class="setup-health-icon" icon="${HEALTH_ICONS[checkState]}" aria-hidden="true"></ha-icon><div class="setup-health-copy"><span>${panel._e(check.title)}</span><strong>${panel._e(check.value)}</strong><p>${panel._e(check.detail)}</p></div>${action}</article>`;
+        return `<article class="setup-health-check setup-health-check-${checkState}"><ha-icon class="setup-health-icon" icon="${HEALTH_ICONS[checkState]}" aria-hidden="true"></ha-icon><div class="setup-health-copy"><span>${panel._e(check.title)}</span><strong>${panel._e(check.value)}</strong><p>${panel._e(check.detail)}</p></div>${actionMarkup}</article>`;
       }).join("")}
     </div>
-    <p class="setup-health-footnote"><ha-icon icon="mdi:information-outline" aria-hidden="true"></ha-icon> Overview never sends a provider test request. Diagnostics can run a minimal live test when you choose to.</p>
+    <p class="setup-health-footnote"><ha-icon icon="mdi:information-outline" aria-hidden="true"></ha-icon> ${panel._e(liveTestNote)}</p>
   </section>`;
 }
 
@@ -182,6 +187,7 @@ export function renderOverview(panel, agent) {
   const result = panel._result || {};
   const usage = result.usage || {};
   const conversations = result.conversations || {};
+  const setupHealth = buildSetupHealth(result.setup_health || {});
   const guest = agent.guest_mode || {};
   const warnings = [];
   if (["active", "active_indefinitely"].includes(guest.state) && !guest.has_home_assistant_exclusions) warnings.push("Guest Mode is active without configured Home Assistant exclusions.");
@@ -235,7 +241,7 @@ export function renderOverview(panel, agent) {
       @media (max-width:700px){.broadcast-mode-options{grid-template-columns:1fr}.broadcast-actions{justify-content:stretch}.broadcast-actions button{flex:1}.dashboard-card-main{gap:12px}}
     </style>
     <section class="page-intro"><h1>${panel._e(agent.title)}</h1><p>Your assistant at a glance. Open a card to change or inspect that area.</p></section>
-    ${setupHealthMarkup(panel, result.setup_health)}
+    ${setupHealthMarkup(panel, setupHealth)}
     ${warnings.length ? `<section class="overview-warnings" aria-label="Actionable warnings">${warnings.map((warning) => `<div class="notice"><strong>Review recommended</strong><p>${panel._e(warning)}</p></div>`).join("")}</section>` : ""}
     <section class="dashboard-grid" aria-label="Assistant overview">
       ${card(panel,"Assistant",`${agent.provider} · ${agent.model}`,"Model, responses, conversation behavior, prompt, and voice.","assistant","basics","Configure","mdi:robot-outline")}
