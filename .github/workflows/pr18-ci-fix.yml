@@ -1,0 +1,39 @@
+name: Fix PR18 local-rule compatibility
+
+on:
+  push:
+    branches: [fix/pr18-request-rule-execution-safety]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pr18-request-rule-execution-safety
+      - name: Apply compatibility fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('custom_components/extended_openai_conversation_responses/conversation.py')
+          text = path.read_text()
+          old = '        *,\n        successful: bool,\n    ) -> ConversationResult:\n'
+          new = '        *,\n        successful: bool = True,\n    ) -> ConversationResult:\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one signature match, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          Path('.github/workflows/pr18-ci-fix.yml').unlink()
+          PY
+          python -m compileall -q custom_components/extended_openai_conversation_responses/conversation.py
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Preserve local rule helper success default'
+          git push
