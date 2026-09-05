@@ -150,6 +150,7 @@ async def test_skip_authentication_is_preserved_and_reported() -> None:
     assert result["validation_performed"] is False
     assert result["reload_requested"] is True
     hass.config_entries.async_update_entry.assert_called_once()
+    hass.config_entries.async_schedule_reload.assert_not_called()
 
 
 async def test_startup_failure_schedules_recovery_reload() -> None:
@@ -219,7 +220,7 @@ async def test_unchanged_key_retries_failed_entry_after_successful_validation() 
     hass.config_entries.async_schedule_reload.assert_called_once_with("entry-1")
 
 
-async def test_unchanged_key_does_not_reload_healthy_entry() -> None:
+async def test_unchanged_validated_key_reloads_loaded_entry() -> None:
     entry = _entry()
     hass = MagicMock()
     hass.config_entries.async_update_entry = MagicMock(return_value=False)
@@ -231,6 +232,24 @@ async def test_unchanged_key_does_not_reload_healthy_entry() -> None:
         result = await async_replace_api_key(hass, entry, "old-key")
 
     assert result["updated"] is False
+    assert result["validation_performed"] is True
+    assert result["reload_requested"] is True
+    hass.config_entries.async_schedule_reload.assert_called_once_with("entry-1")
+
+
+async def test_unchanged_unvalidated_key_does_not_reload_loaded_entry() -> None:
+    entry = _entry(skip_authentication=True)
+    hass = MagicMock()
+    hass.config_entries.async_update_entry = MagicMock(return_value=False)
+
+    with patch(
+        "custom_components.extended_openai_conversation_responses.provider_credentials.get_authenticated_client",
+        AsyncMock(return_value=object()),
+    ):
+        result = await async_replace_api_key(hass, entry, "old-key")
+
+    assert result["updated"] is False
+    assert result["validation_performed"] is False
     assert result["reload_requested"] is False
     hass.config_entries.async_schedule_reload.assert_not_called()
 
