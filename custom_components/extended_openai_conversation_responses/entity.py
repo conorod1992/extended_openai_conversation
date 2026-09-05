@@ -156,9 +156,13 @@ def _schema_explicitly_allows_null(schema: dict[str, Any]) -> bool:
             return True
 
     variants = schema.get("allOf")
-    return bool(variants) and isinstance(variants, list) and all(
-        isinstance(variant, dict) and _schema_explicitly_allows_null(variant)
-        for variant in variants
+    return (
+        bool(variants)
+        and isinstance(variants, list)
+        and all(
+            isinstance(variant, dict) and _schema_explicitly_allows_null(variant)
+            for variant in variants
+        )
     )
 
 
