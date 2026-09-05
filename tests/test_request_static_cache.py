@@ -79,6 +79,53 @@ def test_provider_format_cache_key_tracks_mode_and_effective_tool_objects() -> N
     assert calls == 3
 
 
+def test_provider_format_cache_invalidates_in_place_schema_changes() -> None:
+    calls = 0
+    tools = [{"spec": {"name": "one"}, "function": {"type": "template"}}]
+
+    def formatter(value, _api_mode):
+        nonlocal calls
+        calls += 1
+        return [{"name": value[0]["spec"]["name"]}]
+
+    token = _FORMATTED_TOOLS.set({})
+    try:
+        assert cached_format_tools(tools, "responses", formatter) == [{"name": "one"}]
+        tools[0]["spec"]["name"] = "two"
+        assert cached_format_tools(tools, "responses", formatter) == [{"name": "two"}]
+    finally:
+        _FORMATTED_TOOLS.reset(token)
+
+    assert calls == 2
+
+
+def test_provider_format_cache_rejects_identity_key_collision() -> None:
+    calls = 0
+    old_tool = {"spec": {"name": "old"}, "function": {"type": "template"}}
+    new_tool = {"spec": {"name": "new"}, "function": {"type": "template"}}
+
+    def formatter(value, _api_mode):
+        nonlocal calls
+        calls += 1
+        return [{"name": value[0]["spec"]["name"]}]
+
+    token = _FORMATTED_TOOLS.set({})
+    try:
+        cached_format_tools([new_tool], "responses", formatter)
+        cache = _FORMATTED_TOOLS.get()
+        assert cache is not None
+        key = ("responses", (id(new_tool),))
+        _, signatures, _ = cache[key]
+        cache[key] = ((old_tool,), signatures, ({"name": "old"},))
+        assert cached_format_tools([new_tool], "responses", formatter) == [
+            {"name": "new"}
+        ]
+    finally:
+        _FORMATTED_TOOLS.reset(token)
+
+    assert calls == 2
+
+
 def test_zero_skills_remove_only_canonical_loader() -> None:
     """A same-name custom tool is never hidden by a name-only heuristic."""
     canonical = _skill_loader(canonical=True)

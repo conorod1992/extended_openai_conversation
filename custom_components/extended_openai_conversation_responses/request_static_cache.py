@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextvars import ContextVar
 from functools import wraps
+import json
 from typing import Any
 
 from .entity_context_cache import get_entity_prompt_metadata
@@ -13,8 +14,13 @@ _INSTALLED = False
 _SKILLS_AVAILABLE: ContextVar[bool | None] = ContextVar(
     "extended_openai_skills_available", default=None
 )
+type _FormattedToolCacheEntry = tuple[
+    tuple[dict[str, Any], ...],
+    tuple[str, ...],
+    tuple[dict[str, Any], ...],
+]
 _FORMATTED_TOOLS: ContextVar[
-    dict[tuple[str, tuple[int, ...]], tuple[dict[str, Any], ...]] | None
+    dict[tuple[str, tuple[int, ...]], _FormattedToolCacheEntry] | None
 ] = ContextVar("extended_openai_formatted_tool_cache", default=None)
 _CANONICAL_SKILL_LOADER_PATH = "{{extended_openai.skill_dir(name)}}/{{file}}"
 
@@ -39,20 +45,67 @@ def tools_for_available_skills(
     return [tool for tool in configured_tools if not _is_canonical_skill_loader(tool)]
 
 
+def _tool_format_signature(tool: dict[str, Any]) -> str | None:
+    """Return the model-facing fields that can affect provider schema formatting."""
+    function = tool.get("function")
+    relevant_function = (
+        {
+            key: function.get(key)
+            for key in ("type", "operation", "name")
+            if key in function
+        }
+        if isinstance(function, dict)
+        else {}
+    )
+    try:
+        return json.dumps(
+            {"spec": tool.get("spec"), "function": relevant_function},
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    except TypeError, ValueError:
+        # A malformed/non-JSON schema is outside the normal model payload contract.
+        # Do not cache it by identity; let the formatter surface its normal error.
+        return None
+
+
 def cached_format_tools(
     function_tools: list[dict[str, Any]],
     api_mode: str,
     formatter: Callable[[list[dict[str, Any]], str], list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    """Reuse provider-formatted schemas within one request for an identical tool set."""
+    """Reuse provider-formatted schemas only for the exact unchanged tool objects."""
     cache = _FORMATTED_TOOLS.get()
     if cache is None:
         return formatter(function_tools, api_mode)
+
+    signatures = tuple(_tool_format_signature(tool) for tool in function_tools)
+    if any(signature is None for signature in signatures):
+        return formatter(function_tools, api_mode)
+    stable_signatures = tuple(
+        signature for signature in signatures if signature is not None
+    )
     key = (api_mode, tuple(id(tool) for tool in function_tools))
-    formatted = cache.get(key)
-    if formatted is None:
-        formatted = tuple(formatter(function_tools, api_mode))
-        cache[key] = formatted
+    cached = cache.get(key)
+    if cached is not None:
+        original_tools, original_signatures, formatted = cached
+        if (
+            len(original_tools) == len(function_tools)
+            and all(
+                original is current
+                for original, current in zip(
+                    original_tools, function_tools, strict=True
+                )
+            )
+            and original_signatures == stable_signatures
+        ):
+            return list(formatted)
+
+    formatted = tuple(formatter(function_tools, api_mode))
+    # Keep strong references to the original containers. Their ids therefore cannot
+    # be recycled into a false cache hit while this request-local entry exists.
+    cache[key] = (tuple(function_tools), stable_signatures, formatted)
     return list(formatted)
 
 
