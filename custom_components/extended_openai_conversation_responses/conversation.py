@@ -627,6 +627,7 @@ class ExtendedOpenAIAgentEntity(
                         archive_session,
                         resolution.key,
                         source_device_id,
+                        successful=evaluation.successful,
                     )
                 request_options = (
                     self._request_rule_runtime.effective_options(
@@ -918,6 +919,8 @@ class ExtendedOpenAIAgentEntity(
         archive_session: ArchiveSession | None,
         continuity_key: str | None,
         source_device_id: str | None,
+        *,
+        successful: bool,
     ) -> ConversationResult:
         """Finalize a locally consumed rule as a zero-provider-request run."""
         if self._usage is not None:
@@ -926,12 +929,14 @@ class ExtendedOpenAIAgentEntity(
                 source_device_id=source_device_id,
             ) as run:
                 result = self._local_rule_result(user_input, chat_log, response)
+                if not successful:
+                    self._usage.mark_current_run_failed("RequestRuleExecutionFailed")
                 await self._async_archive_turn(
                     archive_session,
                     run.run_id,
                     user_input,
                     chat_log,
-                    successful=True,
+                    successful=successful,
                 )
         else:
             result = self._local_rule_result(user_input, chat_log, response)
@@ -940,10 +945,15 @@ class ExtendedOpenAIAgentEntity(
                 None,
                 user_input,
                 chat_log,
-                successful=True,
+                successful=successful,
             )
         assert self._continuity is not None
-        await self._continuity.async_record_success(continuity_key, chat_log.content)
+        if successful:
+            await self._continuity.async_record_success(
+                continuity_key, chat_log.content
+            )
+        else:
+            await self._continuity.async_release(continuity_key)
         return result
 
     async def _async_execute_request_rule_function(

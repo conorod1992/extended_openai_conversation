@@ -128,6 +128,7 @@ from .request import (
 )
 from .request_rules import (
     async_get_request_rules,
+    get_request_rule_runtime,
     rule_has_sensitive_actions,
     validate_rule,
 )
@@ -144,6 +145,17 @@ from .usage import async_get_usage
 
 WS_COMMAND = f"{DOMAIN}/management"
 _UI_SETUP = f"{DOMAIN}.management_ui_setup"
+
+
+def _reset_request_rule_runtime(
+    hass: HomeAssistant, entry_id: str, subentry_id: str, continuity_key: str
+) -> None:
+    """Clear Request Rule routing state for one ended continuity session."""
+    get_request_rule_runtime(hass, entry_id, subentry_id).reset(
+        f"continuity:{continuity_key}"
+    )
+
+
 MANAGEMENT_FRONTEND_MODULES = (
     "management-panel.js",
     "agent-config-editor.js",
@@ -1448,6 +1460,7 @@ async def async_management_command(
                 )
                 if function_groups is not None:
                     function_groups.end(f"continuity:{continuity_key}")
+                _reset_request_rule_runtime(hass, entry_id, subentry_id, continuity_key)
             return {"ended": int(ended)}
         archive = await async_get_archive(hass, entry_id, subentry_id)
         if action == "list":

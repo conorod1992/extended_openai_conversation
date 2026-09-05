@@ -55,7 +55,9 @@ MATCH_TYPES = ("equals", "starts_with", "ends_with", "contains", "sentence_patte
 ACTION_TYPES = ("local_action", "model_routing")
 SLOT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 SLOT_REFERENCE = re.compile(r"(?<!\{)\{([A-Za-z_][A-Za-z0-9_]{0,63})\}(?!\})")
-JINJA_SLOT_REFERENCE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]{0,63})\s*\}\}")
+JINJA_SLOT_REFERENCE = re.compile(
+    r"\{\{\s*(?:request\.slots\.)?([A-Za-z_][A-Za-z0-9_]{0,63})\s*\}\}"
+)
 ROUTING_SCOPES = ("request", "conversation")
 _REQUEST_RESET_SENTINEL = "__request_rule_reset__"
 _SENTENCE_MATCH_BOUNDARY = "zxqrequestboundaryqzx"
@@ -129,6 +131,7 @@ class RuleEvaluation:
     consume: bool
     response: str | None = None
     request_override: dict[str, str] | None = None
+    successful: bool = True
 
 
 class RequestRuleStore(Store[dict[str, Any]]):
@@ -1038,12 +1041,60 @@ def canonical_action_signature(actions: Sequence[Mapping[str, Any]]) -> str:
     return json.dumps(actions, sort_keys=True, separators=(",", ":"))
 
 
+def _iter_script_actions(
+    sequence: Sequence[Mapping[str, Any]],
+    *,
+    depth: int = 0,
+    budget: list[int] | None = None,
+):
+    """Yield executable action mappings from native nested script branches."""
+    if depth > MAX_SCRIPT_DEPTH:
+        raise ValueError(f"action sequence exceeds maximum depth {MAX_SCRIPT_DEPTH}")
+    if budget is None:
+        budget = [0]
+
+    def nested_sequence(value: Any):
+        if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+            return None
+        if not all(isinstance(child, Mapping) for child in value):
+            return None
+        return cast(Sequence[Mapping[str, Any]], value)
+
+    for item in sequence:
+        budget[0] += 1
+        if budget[0] > MAX_SCRIPT_NODES:
+            raise ValueError(f"action sequence exceeds {MAX_SCRIPT_NODES} nodes")
+        yield item
+
+        for key in ("sequence", "then", "else", "default", "parallel"):
+            nested = nested_sequence(item.get(key))
+            if nested is not None:
+                yield from _iter_script_actions(nested, depth=depth + 1, budget=budget)
+
+        choose = item.get("choose")
+        if isinstance(choose, Sequence) and not isinstance(choose, (str, bytes)):
+            for branch in choose:
+                if not isinstance(branch, Mapping):
+                    continue
+                nested = nested_sequence(branch.get("sequence"))
+                if nested is not None:
+                    yield from _iter_script_actions(
+                        nested, depth=depth + 1, budget=budget
+                    )
+
+        repeat = item.get("repeat")
+        if isinstance(repeat, Mapping):
+            nested = nested_sequence(repeat.get("sequence"))
+            if nested is not None:
+                yield from _iter_script_actions(nested, depth=depth + 1, budget=budget)
+
+
 def rule_has_sensitive_actions(rule: Mapping[str, Any]) -> bool:
-    """Flag tolerant matching for obvious security-sensitive local domains."""
+    """Flag tolerant matching for sensitive actions anywhere in a script tree."""
     if rule.get("action_type") != "local_action":
         return False
     actions = cast(Mapping[str, Any], rule.get("action", {})).get("actions", [])
-    for action in actions:
+    for action in _iter_script_actions(cast(Sequence[Mapping[str, Any]], actions)):
         service_name = str(action.get("action", action.get("service", "")))
         domain, _, service = service_name.casefold().partition(".")
         if domain in SENSITIVE_DOMAINS or (
@@ -1066,9 +1117,16 @@ async def async_call_active_function(function: str, arguments: Any) -> Any:
 
 
 def _resolve_guest_slot_templates(value: Any, slots: Mapping[str, str]) -> Any:
-    """Resolve only captured-value templates for Guest Mode preauthorization."""
+    """Resolve only deterministic captured-value templates for Guest preflight."""
+
+    def replace_slot(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in slots:
+            raise GuestModeDenied(GUEST_MODE_UNAVAILABLE)
+        return slots[name]
+
     if isinstance(value, str):
-        rendered = JINJA_SLOT_REFERENCE.sub(lambda match: slots[match.group(1)], value)
+        rendered = JINJA_SLOT_REFERENCE.sub(replace_slot, value)
         if "{{" in rendered or "{%" in rendered or "{#" in rendered:
             raise GuestModeDenied(GUEST_MODE_UNAVAILABLE)
         return rendered
@@ -1087,13 +1145,21 @@ def _guest_script_allowed(
     sequence: Sequence[Mapping[str, Any]],
     policy: GuestCapabilityPolicy,
 ) -> bool:
-    """Preauthorize every static service action across all native branches."""
-    for item in sequence:
+    """Preauthorize every executable action before a Guest script can start."""
+    for item in _iter_script_actions(sequence):
         action_name = item.get("action", item.get("service"))
         if action_name is not None:
             if not isinstance(action_name, str):
                 return False
             if action_name == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}":
+                data = item.get("data", {})
+                if not isinstance(data, Mapping):
+                    return False
+                function_name = data.get("function")
+                if not isinstance(
+                    function_name, str
+                ) or not policy.allows_configured_tool(function_name):
+                    return False
                 continue
             if not guest_arguments_allowed_runtime(
                 hass,
@@ -1106,29 +1172,6 @@ def _guest_script_allowed(
         elif any(key in item for key in ("device_id", "event", "event_type")):
             # Device and event actions do not provide an entity-scoped boundary.
             return False
-        for nested in item.values():
-            if (
-                isinstance(nested, list)
-                and nested
-                and all(isinstance(child, Mapping) for child in nested)
-            ):
-                if not _guest_script_allowed(
-                    hass, cast(Sequence[Mapping[str, Any]], nested), policy
-                ):
-                    return False
-            elif isinstance(nested, Mapping):
-                for candidate in nested.values():
-                    if (
-                        isinstance(candidate, list)
-                        and candidate
-                        and all(isinstance(child, Mapping) for child in candidate)
-                        and not _guest_script_allowed(
-                            hass,
-                            cast(Sequence[Mapping[str, Any]], candidate),
-                            policy,
-                        )
-                    ):
-                        return False
     return True
 
 
@@ -1160,21 +1203,30 @@ async def async_evaluate_rule(
     action = rule["action"]
     if rule["action_type"] == "local_action":
         policy = guest_policy or GuestCapabilityPolicy.unrestricted()
+        executable_actions = action["actions"]
         if policy.guest_active:
             try:
-                guest_actions = _resolve_guest_slot_templates(
-                    action["actions"], match.slots
+                executable_actions = _resolve_guest_slot_templates(
+                    executable_actions, match.slots
                 )
-                allowed = _guest_script_allowed(hass, guest_actions, policy)
+                allowed = _guest_script_allowed(
+                    hass,
+                    cast(Sequence[Mapping[str, Any]], executable_actions),
+                    policy,
+                )
+            except GuestModeDenied:
+                allowed = False
             except Exception:
                 _LOGGER.exception(
                     "Guest authorization failed for Request Rule %s", rule["id"]
                 )
                 allowed = False
             if not allowed:
-                return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE)
+                return RuleEvaluation(
+                    match, True, GUEST_MODE_UNAVAILABLE, successful=False
+                )
         try:
-            schema_actions = cv.SCRIPT_SCHEMA(action["actions"])
+            schema_actions = cv.SCRIPT_SCHEMA(executable_actions)
             validated_actions = await async_validate_actions_config(
                 hass, schema_actions
             )
@@ -1198,13 +1250,14 @@ async def async_evaluate_rule(
                 _ACTIVE_FUNCTION_EXECUTOR.reset(token)
                 await script.async_unload()
         except GuestModeDenied:
-            return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE)
+            return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE, successful=False)
         except Exception:
             _LOGGER.exception("Request Rule local action failed for %s", rule["id"])
             return RuleEvaluation(
                 match,
                 True,
                 resolve_slot_values(action["failure_response"], match.slots),
+                successful=False,
             )
         return RuleEvaluation(
             match, True, resolve_slot_values(action["success_response"], match.slots)
