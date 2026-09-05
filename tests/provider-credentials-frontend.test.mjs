@@ -31,11 +31,17 @@ const source = await readFile(
 );
 assert.match(source, /Provider credentials/);
 assert.match(source, /type="password"/);
-assert.match(source, /autocomplete="new-password"/);
+assert.match(source, /autocomplete="off"/);
 assert.match(source, /Validate & replace/);
 assert.match(source, /panel\._call\("diagnostics", "update_api_key", \{api_key: apiKey\}\)/);
 assert.match(source, /saved key is never displayed/i);
 assert.match(source, /Home Assistant's reauthentication flow if it is offered/);
+assert.match(source, /#eoc-dialog-host/);
+assert.match(source, /setDialogBusy\(dialog, true\)/);
+assert.match(source, /stopDiagnosticsWatch\(this\)/);
+assert.match(source, /panel\._data\?\.is_admin === false/);
+assert.match(source, /reload_requested === false/);
+assert.doesNotMatch(source, /root\.append\(dialog\)/);
 assert.doesNotMatch(source, /slice\([^)]*apiKey|substring\([^)]*apiKey/);
 
 const bootstrap = await readFile(
