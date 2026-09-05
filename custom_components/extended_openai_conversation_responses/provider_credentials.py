@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from openai import OpenAIError
+import voluptuous as vol
 
+from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
@@ -19,10 +21,13 @@ from .const import (
     CONF_SKIP_AUTHENTICATION,
     DEFAULT_API_PROVIDER,
     DEFAULT_SKIP_AUTHENTICATION,
+    DOMAIN,
 )
 from .helpers import get_authenticated_client
 from .provider_errors import classify_config_provider_error
 
+WS_UPDATE_API_KEY = f"{DOMAIN}/management/update_api_key"
+_WS_SETUP = f"{DOMAIN}.provider_credentials_ws_setup"
 _VALIDATION_MESSAGES = {
     "invalid_auth": "The provider rejected the new API key.",
     "cannot_connect": "Could not connect to the configured provider while validating the new API key.",
@@ -105,3 +110,50 @@ async def async_replace_api_key(
         "reload_requested": reload_requested,
         "provider": str(candidate.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER)),
     }
+
+
+async def _async_update_api_key_command(
+    hass: HomeAssistant, message: dict[str, Any]
+) -> dict[str, Any]:
+    """Resolve the exact parent entry addressed by one conversation subentry."""
+    # Import lazily so credential primitives remain independent of management UI
+    # module initialization while still reusing its canonical entry/scope resolver.
+    from .management_ui import entry_and_agent
+
+    entry, _subentry = entry_and_agent(
+        hass, message["entry_id"], message["subentry_id"]
+    )
+    return await async_replace_api_key(hass, entry, message["api_key"])
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_UPDATE_API_KEY,
+        vol.Required("entry_id"): str,
+        vol.Required("subentry_id"): str,
+        vol.Required("api_key"): str,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def websocket_update_api_key(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Validate and rotate a provider credential for an administrator."""
+    try:
+        result = await _async_update_api_key_command(hass, msg)
+    except (HomeAssistantError, RuntimeError, ValueError) as err:
+        connection.send_error(msg["id"], "invalid_request", str(err))
+        return
+    connection.send_result(msg["id"], result)
+
+
+def setup_provider_credentials_websocket(hass: HomeAssistant) -> bool:
+    """Register the narrow admin-only credential command exactly once."""
+    if hass.data.get(_WS_SETUP):
+        return False
+    websocket_api.async_register_command(hass, websocket_update_api_key)
+    hass.data[_WS_SETUP] = True
+    return True
