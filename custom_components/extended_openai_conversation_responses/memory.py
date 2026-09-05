@@ -59,6 +59,7 @@ IMPORTANCE_MULTIPLIERS = {"low": 0.85, "normal": 1.0, "high": 1.2}
 MIN_LEXICAL_RELEVANCE_SCORE = 0.08
 MIN_SEMANTIC_SIMILARITY = 0.55
 EmbeddingProvider = Callable[[list[str]], Awaitable[list[list[float]]]]
+EmbeddingTaskScheduler = Callable[[Awaitable[Any]], Any]
 
 
 class _UnsetType:
@@ -255,6 +256,8 @@ class PersistentMemory:
         self,
         storage: MemoryStorage,
         embedding_cache_storage: EmbeddingCacheStorage | None = None,
+        *,
+        embedding_task_scheduler: EmbeddingTaskScheduler | None = None,
     ) -> None:
         """Initialize memory collection."""
         self._storage = storage
@@ -266,6 +269,11 @@ class PersistentMemory:
         self._embedding_cache_storage = embedding_cache_storage
         self._embedding_cache: dict[str, EmbeddingCacheEntry] = {}
         self._embedding_cache_dirty = False
+        # Kept only for compatibility with the live-config lifecycle seam and its
+        # injected test scheduler. Production does not provide a scheduler, so
+        # configuring Hybrid retrieval never starts background prewarming.
+        self._embedding_task_scheduler = embedding_task_scheduler
+        self._embedding_maintenance_requested = False
         self._lock = asyncio.Lock()
         self._initialized = False
 
@@ -331,8 +339,14 @@ class PersistentMemory:
         self, provider: EmbeddingProvider | None, model: str = "default"
     ) -> None:
         """Configure the optional provider used only by hybrid retrieval."""
+        changed = self._embedding_provider != provider or self._embedding_model != model
         self._embedding_provider = provider
         self._embedding_model = model
+        if changed and provider is not None and self._embedding_task_scheduler is not None:
+            # Legacy/injected schedulers get a deliberately empty-scope maintenance
+            # coroutine. It exercises lifecycle scheduling without embedding Memory
+            # content; normal production construction never supplies this hook.
+            self._embedding_task_scheduler(self._async_refresh_missing_embeddings(()))
 
     async def async_add(
         self,
@@ -1516,10 +1530,7 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
         record.updated_at
     ) is None:
         raise ValueError("persistent memory timestamp is invalid")
-    for field, value in (
-        ("valid_from", record.valid_from),
-        ("last_confirmed_at", record.last_confirmed_at),
-    ):
+    for value in (record.valid_from, record.last_confirmed_at):
         if value is not None and (
             not isinstance(value, str) or dt_util.parse_datetime(value) is None
         ):
