@@ -1,0 +1,38 @@
+name: Temporary PR173 formatter
+
+on:
+  push:
+    branches:
+      - fix/usage-malformed-timestamps
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: fix/usage-malformed-timestamps
+      - name: Apply Ruff formatting
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("custom_components/extended_openai_conversation_responses/usage.py")
+          text = path.read_text()
+          old = "    except (TypeError, ValueError):\n        return datetime.min.replace(tzinfo=dt_util.UTC)\n"
+          new = "    except TypeError, ValueError:\n        return datetime.min.replace(tzinfo=dt_util.UTC)\n"
+          if text.count(old) != 1:
+              raise SystemExit("expected exactly one timestamp exception block")
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add custom_components/extended_openai_conversation_responses/usage.py
+          git commit -m 'Apply Ruff formatting to Usage timestamp recovery'
+          git push origin HEAD:fix/usage-malformed-timestamps
