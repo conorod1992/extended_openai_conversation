@@ -131,15 +131,19 @@ function applyTargetedConfigDirty(panel, keys, control = null) {
 
 function dialogState(dialog) {
   if (!dialog) return [];
-  return [...dialog.querySelectorAll("input,select,textarea")]
+  return [...dialog.querySelectorAll("input,select,textarea,ha-selector")]
     .filter((control) => !["button", "submit", "reset", "file", "search"].includes(control.type))
-    .map((control) => ({
-      id: control.id || control.name || "",
-      type: control.type || control.tagName,
-      checked: "checked" in control ? Boolean(control.checked) : undefined,
-      value: control.value,
-    }));
+    .map((control) => {
+      const isSelector = String(control.tagName || "").toUpperCase() === "HA-SELECTOR";
+      return {
+        id: control.id || control.name || "",
+        type: control.type || control.tagName,
+        checked: "checked" in control ? Boolean(control.checked) : undefined,
+        value: isSelector ? clone(control.value ?? null) : control.value,
+      };
+    });
 }
+
 
 export function dialogHasUnsavedChanges(dialog, baseline, toolInitialYaml = null) {
   if (!dialog) return false;
