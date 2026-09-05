@@ -29,19 +29,8 @@ jobs:
 
           path = Path("tests/test_memory.py")
           text = path.read_text()
-          old = '''    entity._memory.async_search.assert_awaited_once_with(
-              "user-1", "temperature units", limit=2
-          )
-          '''
-          new = '''    entity._memory.async_search.assert_awaited_once_with(
-              "user-1",
-              "temperature units",
-              None,
-              2,
-              query_embedding=None,
-              hybrid=False,
-          )
-          '''
+          old = '    entity._memory.async_search.assert_awaited_once_with(\n        "user-1", "temperature units", limit=2\n    )'
+          new = '    entity._memory.async_search.assert_awaited_once_with(\n        "user-1",\n        "temperature units",\n        None,\n        2,\n        query_embedding=None,\n        hybrid=False,\n    )'
           if text.count(old) != 1:
               raise SystemExit("expected stale memory-search assertion exactly once")
           path.write_text(text.replace(old, new, 1))
