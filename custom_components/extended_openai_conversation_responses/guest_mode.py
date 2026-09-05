@@ -17,6 +17,7 @@ from homeassistant.helpers import (
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .agent_config import CONF_GUEST_WEB_SEARCH, DEFAULT_GUEST_WEB_SEARCH
 from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_GUEST_ALLOWED_FUNCTION_NAMES,
@@ -175,6 +176,7 @@ class GuestCapabilityPolicy:
                 else len(self.knowledge_source_ids)
             ),
             "temporary_memory": self.temporary_memory,
+            "web_search": self.web_search,
         }
 
 
@@ -583,7 +585,7 @@ def _resolve_exclusion_policy(
         knowledge_access=knowledge_policy == "on" or bool(knowledge_sources),
         temporary_memory=False,
         skills=False,
-        web_search=False,
+        web_search=bool(options.get(CONF_GUEST_WEB_SEARCH, DEFAULT_GUEST_WEB_SEARCH)),
         private_capabilities=False,
     )
 
@@ -641,6 +643,9 @@ def guest_policy_editor_snapshot(
         return {
             CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
             CONF_GUEST_MODE_ENABLED: options.get(CONF_GUEST_MODE_ENABLED, True),
+            CONF_GUEST_WEB_SEARCH: bool(
+                options.get(CONF_GUEST_WEB_SEARCH, DEFAULT_GUEST_WEB_SEARCH)
+            ),
             **{key: sorted(_string_set(options.get(key, ()))) for key in keys},
             CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS: options.get(
                 CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS, False
@@ -667,6 +672,7 @@ def guest_policy_editor_snapshot(
     return {
         CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
         CONF_GUEST_MODE_ENABLED: options.get(CONF_GUEST_MODE_ENABLED, True),
+        CONF_GUEST_WEB_SEARCH: False,
         CONF_GUEST_EXCLUDED_ENTITIES: sorted(baseline - readable),
         CONF_GUEST_EXCLUDED_DOMAINS: [],
         CONF_GUEST_EXCLUDED_AREAS: [],
