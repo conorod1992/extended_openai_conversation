@@ -3,6 +3,7 @@ import {readFile} from "node:fs/promises";
 
 import {
   buildGettingStarted,
+  completeOnboarding,
   dismissOnboarding,
   hasEstablishedUsage,
   markOnboardingSeen,
@@ -51,6 +52,7 @@ const initial = buildGettingStarted({
   isAdmin: true,
 });
 assert.ok(initial);
+assert.equal(initial.complete, false);
 assert.equal(initial.reviewed_count, 1);
 assert.equal(initial.total_count, 4);
 assert.equal(initial.remaining_count, 3);
@@ -59,6 +61,7 @@ assert.match(initial.steps.find((step) => step.id === "assistant_model").value, 
 assert.equal(initial.steps.find((step) => step.id === "instructions").reviewed, false);
 assert.equal(initial.steps.find((step) => step.id === "home_assistant_access").state, "warning");
 assert.equal(initial.steps.find((step) => step.id === "connection_test").reviewed, false);
+assert.equal(initial.steps.find((step) => step.id === "connection_test").action.target, "");
 
 const reviewedDefaults = buildGettingStarted({
   facts: baseFacts,
@@ -67,7 +70,9 @@ const reviewedDefaults = buildGettingStarted({
   reviewState: {seen:true, reviewed:["instructions", "home_assistant_access", "connection_test"]},
   isAdmin: true,
 });
-assert.equal(reviewedDefaults, null, "reviewing intentional defaults should complete one-time onboarding");
+assert.ok(reviewedDefaults);
+assert.equal(reviewedDefaults.complete, true, "reviewing intentional defaults should complete one-time onboarding");
+assert.equal(reviewedDefaults.remaining_count, 0);
 
 const emptyPrompt = buildGettingStarted({
   facts: {...baseFacts, prompt_state:"empty", exposed_entity_count:2},
@@ -78,7 +83,7 @@ const emptyPrompt = buildGettingStarted({
 });
 assert.ok(emptyPrompt);
 const emptyInstructions = emptyPrompt.steps.find((step) => step.id === "instructions");
-assert.equal(emptyInstructions.reviewed, false, "an actually empty prompt remains blocking even if previously reviewed");
+assert.equal(emptyInstructions.reviewed, false, "an actually empty prompt remains blocking before onboarding is completed");
 assert.equal(emptyInstructions.state, "warning");
 
 const configured = buildGettingStarted({
@@ -88,10 +93,17 @@ const configured = buildGettingStarted({
   reviewState: {seen:true, reviewed:["connection_test"]},
   isAdmin: true,
 });
-assert.equal(configured, null);
+assert.ok(configured);
+assert.equal(configured.complete, true);
 
 assert.equal(buildGettingStarted({facts:baseFacts, agent, result:freshResult, isAdmin:false}), null);
 assert.equal(buildGettingStarted({facts:{unavailable:true}, agent, result:freshResult, isAdmin:true}), null);
+assert.equal(buildGettingStarted({
+  facts:baseFacts,
+  agent,
+  result:{...freshResult, usage:{}, load_errors:[]},
+  isAdmin:true,
+}), null, "first encounter fails closed if a lifetime usage snapshot is missing");
 assert.equal(buildGettingStarted({
   facts:baseFacts,
   agent,
@@ -122,6 +134,20 @@ assert.equal(buildGettingStarted({
   facts:baseFacts,
   agent,
   result:freshResult,
+  reviewState:{seen:true, completed:true},
+  isAdmin:true,
+}), null, "completed one-time onboarding must not reopen when configuration later changes");
+assert.equal(buildGettingStarted({
+  facts:{...baseFacts, prompt_state:"empty", exposed_entity_count:0},
+  agent,
+  result:freshResult,
+  reviewState:{seen:true, completed:true},
+  isAdmin:true,
+}), null, "later health regressions belong to Setup & health, not onboarding");
+assert.equal(buildGettingStarted({
+  facts:baseFacts,
+  agent,
+  result:freshResult,
   reviewState:{seen:true, dismissed:true},
   isAdmin:true,
 }), null);
@@ -131,23 +157,26 @@ const storage = {
   getItem: (key) => values.get(key) ?? null,
   setItem: (key, value) => values.set(key, value),
 };
-assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:false, dismissed:false, reviewed:[]});
+assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:false, completed:false, dismissed:false, reviewed:[]});
 assert.equal(markOnboardingSeen(agent, storage), true);
-assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:true, dismissed:false, reviewed:[]});
+assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:true, completed:false, dismissed:false, reviewed:[]});
 assert.equal(markOnboardingStepReviewed(agent, "instructions", storage), true);
-assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:true, dismissed:false, reviewed:["instructions"]});
+assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:true, completed:false, dismissed:false, reviewed:["instructions"]});
 assert.equal(markOnboardingStepReviewed(agent, "instructions", storage), true);
-assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:true, dismissed:false, reviewed:["instructions"]});
+assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:true, completed:false, dismissed:false, reviewed:["instructions"]});
+assert.equal(completeOnboarding(agent, storage), true);
+assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:true, completed:true, dismissed:false, reviewed:["instructions"]});
 assert.equal(dismissOnboarding(agent, storage), true);
-assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:true, dismissed:true, reviewed:["instructions"]});
+assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:true, completed:true, dismissed:true, reviewed:["instructions"]});
 
 const brokenStorage = {
   getItem: () => { throw new Error("storage blocked"); },
   setItem: () => { throw new Error("storage blocked"); },
 };
-assert.deepEqual(readOnboardingReviewState(agent, brokenStorage), {seen:false, dismissed:false, reviewed:[]});
+assert.deepEqual(readOnboardingReviewState(agent, brokenStorage), {seen:false, completed:false, dismissed:false, reviewed:[]});
 assert.equal(markOnboardingSeen(agent, brokenStorage), false);
 assert.equal(markOnboardingStepReviewed(agent, "instructions", brokenStorage), false);
+assert.equal(completeOnboarding(agent, brokenStorage), false);
 assert.equal(dismissOnboarding(agent, brokenStorage), false);
 
 const source = await readFile(
@@ -158,10 +187,12 @@ assert.match(source, /Getting started/);
 assert.match(source, /First-time setup/);
 assert.match(source, /Optional capabilities such as Memory, Knowledge, Web Search and Function Tools are not required here/);
 assert.match(source, /Setup & health below remains the ongoing source of truth/);
-assert.match(source, /panel\._data\?\.is_admin === true/);
+assert.match(source, /panel\._data\?\.is_admin === true && result\.setup_health\?\.can_manage === true/);
 assert.match(source, /panel\._pendingSettingFocus/);
-assert.match(source, /panel\._navigate/);
+assert.match(source, /await panel\._navigate/);
 assert.match(source, /markOnboardingSeen\(agent\)/);
+assert.match(source, /completeOnboarding\(agent\)/);
+assert.match(source, /setup steps reviewed/);
 assert.match(source, /Nothing runs automatically from Overview/);
 assert.doesNotMatch(source, /callWS\(/, "the onboarding card must not add provider or management calls");
 
