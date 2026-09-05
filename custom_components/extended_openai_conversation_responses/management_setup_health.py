@@ -12,11 +12,13 @@ from homeassistant.core import HomeAssistant
 
 from . import management_ui
 from .const import (
+    CONF_API_MODE,
     CONF_API_PROVIDER,
     CONF_CHAT_MODEL,
     CONF_KNOWLEDGE_ENABLED,
     CONF_PROMPT,
     CONF_WEB_SEARCH,
+    DEFAULT_API_MODE,
     DEFAULT_API_PROVIDER,
     DEFAULT_CHAT_MODEL,
     DEFAULT_PROMPT,
@@ -25,19 +27,19 @@ from .management_configuration_guidance import configuration_guidance_snapshot
 from .memory import get_memory_mode
 
 _PATCHED = "extended_openai_management_setup_health"
-_FRONTEND_MODULE = "overview-health.js"
+_FRONTEND_MODULES = ("overview-health.js", "overview-onboarding.js")
 OverviewCommand = Callable[..., Awaitable[dict[str, Any]]]
 
 
-def _register_frontend_module() -> None:
-    """Expose the setup-health presentation helper before UI static paths exist."""
+def _register_frontend_modules() -> None:
+    """Expose Overview setup presentation helpers before UI static paths exist."""
     modules = tuple(
-        dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE))
+        dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, *_FRONTEND_MODULES))
     )
     setattr(management_ui, "MANAGEMENT_FRONTEND_MODULES", modules)  # noqa: B010
 
 
-_register_frontend_module()
+_register_frontend_modules()
 
 
 def _exposed_entity_count(hass: HomeAssistant) -> int:
@@ -80,6 +82,9 @@ def build_setup_health_facts(
             "client_loaded": getattr(entry, "runtime_data", None) is not None,
             "provider": str(entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER)),
             "model": str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)).strip(),
+            "configured_api_mode": str(
+                options.get(CONF_API_MODE, DEFAULT_API_MODE)
+            ).strip(),
         },
         "prompt_state": prompt_state,
         "exposed_entity_count": exposed_entity_count,
