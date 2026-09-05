@@ -1191,6 +1191,7 @@ async def async_management_command(
                     hass, entry, subentry, tools, groups
                 )
 
+            assert original_name is not None
             original_tools = configured_function_tools_from_data(subentry.data)
             original_groups = [dict(group) for group in groups]
             groups = [

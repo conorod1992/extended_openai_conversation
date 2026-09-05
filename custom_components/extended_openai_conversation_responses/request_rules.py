@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from copy import deepcopy
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 import logging
@@ -194,7 +194,7 @@ class RequestRules:
             actions = rule.get("action", {}).get("actions", [])
             if any(
                 isinstance(action, Mapping)
-                and action.get("action") == service_action
+                and action.get("action", action.get("service")) == service_action
                 and isinstance(action.get("data"), Mapping)
                 and action["data"].get("function") == function_name
                 for action in actions
@@ -216,8 +216,8 @@ class RequestRules:
                 updated = deepcopy(rule)
                 for action in updated.get("action", {}).get("actions", []):
                     if (
-                        isinstance(action, Mapping)
-                        and action.get("action") == service_action
+                        isinstance(action, dict)
+                        and action.get("action", action.get("service")) == service_action
                         and isinstance(action.get("data"), Mapping)
                         and action["data"].get("function") == old_name
                     ):
