@@ -122,7 +122,11 @@
                         "chat_model": "Model",
                         "api_mode": "API mode",
                         "max_tokens": "Maximum tokens to return in response",
+                        "web_search": "Web search",
                         "advanced_options": "Advanced options"
+                    },
+                    "data_description": {
+                        "web_search": "Allow this AI Task agent to use OpenAI's native Web Search tool for current or external information. Requires the direct OpenAI Responses API."
                     }
                 },
                 "advanced": {
