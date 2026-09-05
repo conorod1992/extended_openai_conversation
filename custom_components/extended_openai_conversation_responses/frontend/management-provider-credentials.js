@@ -9,6 +9,7 @@ export function providerCredentialScope(agent = {}) {
 }
 
 export function diagnosticsAuthenticationRejected(result = {}) {
+  if (result?.authentication_rejected === true) return true;
   const checks = Array.isArray(result.checks) ? result.checks : [];
   return checks.some((check) =>
     check?.name === "Model access"
