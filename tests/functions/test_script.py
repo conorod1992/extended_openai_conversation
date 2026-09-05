@@ -35,6 +35,7 @@ class TestScriptFunctionYaml:
             mock_result = MagicMock()
             mock_result.variables = {"_function_result": "Movie mode activated"}
             mock_script.async_run = AsyncMock(return_value=mock_result)
+            mock_script.async_unload = AsyncMock()
             mock_script_class.return_value = mock_script
 
             # Arguments based on yaml spec parameters (brightness_pct is optional with default 10)
@@ -45,7 +46,8 @@ class TestScriptFunctionYaml:
             )
 
             assert result == "Movie mode activated"
-            mock_script.async_run.assert_called_once()
+            mock_script.async_run.assert_awaited_once()
+            mock_script.async_unload.assert_awaited_once_with()
 
     async def test_execute_script_with_defaults(
         self, hass, function, exposed_entities, llm_context
@@ -61,6 +63,7 @@ class TestScriptFunctionYaml:
             mock_result = MagicMock()
             mock_result.variables = {"_function_result": "Movie mode activated"}
             mock_script.async_run = AsyncMock(return_value=mock_result)
+            mock_script.async_unload = AsyncMock()
             mock_script_class.return_value = mock_script
 
             # No arguments, should use default brightness_pct
@@ -71,4 +74,27 @@ class TestScriptFunctionYaml:
             )
 
             assert result == "Movie mode activated"
-            mock_script.async_run.assert_called_once()
+            mock_script.async_run.assert_awaited_once()
+            mock_script.async_unload.assert_awaited_once_with()
+
+    async def test_execute_script_unloads_after_failure(
+        self, hass, function, exposed_entities, llm_context
+    ):
+        """Transient Script runners are unloaded even when the sequence fails."""
+        function_tool = prepare_function_tool_from_yaml("script_example.yaml")
+        function_config = function_tool["function"]
+
+        with patch(
+            "custom_components.extended_openai_conversation_responses.functions.script.Script"
+        ) as mock_script_class:
+            mock_script = AsyncMock()
+            mock_script.async_run = AsyncMock(side_effect=RuntimeError("script failed"))
+            mock_script.async_unload = AsyncMock()
+            mock_script_class.return_value = mock_script
+
+            with pytest.raises(RuntimeError, match="script failed"):
+                await function.execute(
+                    hass, function_config, {}, llm_context, exposed_entities
+                )
+
+            mock_script.async_unload.assert_awaited_once_with()
