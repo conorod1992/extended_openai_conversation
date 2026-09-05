@@ -57,6 +57,13 @@ def _entity(hass) -> SimpleNamespace:
     )
 
 
+def _install_test_hook(monkeypatch, original: AsyncMock) -> None:
+    """Install the wrapper over an AsyncMock without tripping its dynamic attrs."""
+    original._extended_openai_delayed_hook = False
+    monkeypatch.setattr(ExtendedOpenAIBaseLLMEntity, "_execute_function_tool", original)
+    _install_execution_hook()
+
+
 async def test_async_setup_activates_delayed_tool_manager_after_entity_hardening(
     hass, monkeypatch
 ) -> None:
@@ -119,13 +126,12 @@ async def test_delay_hook_leaves_immediate_and_literal_delay_arguments_alone(
 ) -> None:
     """Only the documented legacy delay object opts a call into scheduling."""
     original = AsyncMock(return_value=sentinel.immediate)
-    monkeypatch.setattr(ExtendedOpenAIBaseLLMEntity, "_execute_function_tool", original)
+    _install_test_hook(monkeypatch, original)
     monkeypatch.setattr(
         delayed_tools,
         "validate_function_arguments",
         MagicMock(side_effect=lambda _spec, values: dict(values)),
     )
-    _install_execution_hook()
 
     tool_input = llm.ToolInput(
         id="call-1",
@@ -143,13 +149,12 @@ async def test_delay_hook_leaves_immediate_and_literal_delay_arguments_alone(
 async def test_legacy_delay_object_is_scheduled_durably(hass, monkeypatch) -> None:
     """The documented legacy delay shape is handed to the durable manager."""
     original = AsyncMock(return_value=sentinel.immediate)
-    monkeypatch.setattr(ExtendedOpenAIBaseLLMEntity, "_execute_function_tool", original)
+    _install_test_hook(monkeypatch, original)
     monkeypatch.setattr(
         delayed_tools,
         "validate_function_arguments",
         MagicMock(side_effect=lambda _spec, values: dict(values)),
     )
-    _install_execution_hook()
 
     manager = DelayedToolManager(hass)
     manager.async_schedule = AsyncMock()
@@ -176,7 +181,7 @@ async def test_recovered_delayed_execution_strips_scheduler_metadata(
 ) -> None:
     """A recovered durable call executes the function without its legacy delay field."""
     original = AsyncMock(return_value=sentinel.immediate)
-    monkeypatch.setattr(ExtendedOpenAIBaseLLMEntity, "_execute_function_tool", original)
+    _install_test_hook(monkeypatch, original)
     monkeypatch.setattr(
         delayed_tools,
         "validate_function_arguments",
@@ -184,7 +189,6 @@ async def test_recovered_delayed_execution_strips_scheduler_metadata(
     )
     function = SimpleNamespace(execute=AsyncMock(return_value="done"))
     monkeypatch.setattr(delayed_tools, "get_function", MagicMock(return_value=function))
-    _install_execution_hook()
 
     context = SimpleNamespace()
     setattr(context, _DELAYED_EXECUTION_MARKER, True)
