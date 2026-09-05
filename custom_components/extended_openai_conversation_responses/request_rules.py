@@ -118,10 +118,7 @@ def _match_compiled_sentence(
     )
     if context is None:
         return None
-    return {
-        entity.name: str(entity.value).strip()
-        for entity in context.entities
-    }
+    return {entity.name: str(entity.value).strip() for entity in context.entities}
 
 
 @dataclass(frozen=True, slots=True)
