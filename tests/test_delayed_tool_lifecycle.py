@@ -129,8 +129,8 @@ async def test_delay_hook_leaves_immediate_and_literal_delay_arguments_alone(
     _install_test_hook(monkeypatch, original)
     monkeypatch.setattr(
         delayed_tools,
-        "validate_function_arguments",
-        MagicMock(side_effect=lambda _spec, values: dict(values)),
+        "async_validate_function_arguments",
+        AsyncMock(side_effect=lambda _hass, _spec, values: dict(values)),
     )
 
     tool_input = llm.ToolInput(
@@ -152,8 +152,8 @@ async def test_legacy_delay_object_is_scheduled_durably(hass, monkeypatch) -> No
     _install_test_hook(monkeypatch, original)
     monkeypatch.setattr(
         delayed_tools,
-        "validate_function_arguments",
-        MagicMock(side_effect=lambda _spec, values: dict(values)),
+        "async_validate_function_arguments",
+        AsyncMock(side_effect=lambda _hass, _spec, values: dict(values)),
     )
 
     manager = DelayedToolManager(hass)
@@ -184,8 +184,8 @@ async def test_recovered_delayed_execution_strips_scheduler_metadata(
     _install_test_hook(monkeypatch, original)
     monkeypatch.setattr(
         delayed_tools,
-        "validate_function_arguments",
-        MagicMock(side_effect=lambda _spec, values: dict(values)),
+        "async_validate_function_arguments",
+        AsyncMock(side_effect=lambda _hass, _spec, values: dict(values)),
     )
     function = SimpleNamespace(execute=AsyncMock(return_value="done"))
     monkeypatch.setattr(delayed_tools, "get_function", MagicMock(return_value=function))
