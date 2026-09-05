@@ -28,6 +28,8 @@ from .memory import async_get_memory, get_memory_mode, memory_as_dict
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .temporary_memory import (
     MAX_DELETE_RECORDS,
+    TemporaryMemory,
+    TemporaryMemoryRecord,
     async_get_temporary_memory,
     temporary_memory_as_dict,
 )
@@ -47,7 +49,9 @@ def _entry_and_agent(hass: HomeAssistant, entry_id: str, subentry_id: str):
     return entry, subentry
 
 
-async def _async_user_temporary_records(temporary_memory, scope_id: str):
+async def _async_user_temporary_records(
+    temporary_memory: TemporaryMemory, scope_id: str
+) -> list[TemporaryMemoryRecord]:
     """Return only active Temporary Memory owned by one exact user scope."""
     return [
         record
@@ -153,7 +157,7 @@ async def async_manage_command(
             int(message.get("limit", 100)),
             int(message.get("offset", 0)),
         )
-        temporary_records = []
+        temporary_records: list[TemporaryMemoryRecord] = []
         if temporary_enabled:
             temporary_memory = await async_get_temporary_memory(
                 hass, entry_id, subentry_id
