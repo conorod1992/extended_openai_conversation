@@ -142,7 +142,7 @@ function showAuthenticationRecovery(panel) {
   const notice = document.createElement("div");
   notice.id = "eoc-auth-recovery";
   notice.className = "notice eoc-auth-recovery";
-  notice.innerHTML = `<strong>Provider authentication was rejected</strong><p>Home Assistant has requested reauthentication. Replace the shared API key here now, or complete Home Assistant's reauthentication flow.</p><div class="section-actions"><button type="button" class="secondary" id="eoc-auth-replace-api-key">Replace API key</button></div>`;
+  notice.innerHTML = `<strong>Provider authentication was rejected</strong><p>Replace the shared API key here, or complete Home Assistant's reauthentication flow if it is offered.</p><div class="section-actions"><button type="button" class="secondary" id="eoc-auth-replace-api-key">Replace API key</button></div>`;
   testCard.append(notice);
   notice.querySelector("#eoc-auth-replace-api-key")?.addEventListener("click", () => openApiKeyDialog(panel));
 }
