@@ -124,6 +124,7 @@ def _register_split_frontend_modules() -> None:
         "voice-identity-ui.js",
         "management-navigation-search.js",
         "usage-input-footprint.js",
+        "management-provider-credentials.js",
     )
     modules = tuple(
         dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
