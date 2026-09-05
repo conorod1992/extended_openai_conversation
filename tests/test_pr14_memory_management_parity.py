@@ -232,11 +232,11 @@ async def test_ui_preserves_household_and_advanced_persistent_editing() -> None:
     assert result["memory"]["importance"] == "high"
 
 
-def test_agents_report_shared_and_temporary_management_capabilities() -> None:
-    """The panel can accurately describe management surfaces for each agent."""
+async def test_agents_report_shared_and_temporary_management_capabilities() -> None:
+    """The panel accurately describes management surfaces for each agent."""
     hass = _hass_and_agent()
 
-    result = pytest.run(async_manage_command(hass, "user-7", {"action": "agents"}))
+    result = await async_manage_command(hass, "user-7", {"action": "agents"})
 
     assert result["agents"][0]["shared_memory_enabled"] is True
     assert result["agents"][0]["temporary_memory_enabled"] is True
