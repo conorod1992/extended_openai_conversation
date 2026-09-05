@@ -33,6 +33,17 @@ _SHELL_CLEANUP_WAIT_SECONDS = 5.0
 _SHELL_OUTPUT_BYTE_LIMIT = SHELL_OUTPUT_LIMIT * 4
 
 
+def _valid_allow_pattern(value: str) -> str:
+    """Reject malformed Bash allowlist regular expressions at configuration time."""
+    if not isinstance(value, str):
+        raise vol.Invalid("allow pattern must be a string")
+    try:
+        re.compile(value)
+    except re.error as err:
+        raise vol.Invalid(f"invalid allow pattern: {err}") from err
+    return value
+
+
 async def _read_bounded_stream(
     stream: asyncio.StreamReader | None,
     limit: int = _SHELL_OUTPUT_BYTE_LIMIT,
@@ -129,7 +140,9 @@ class BashFunction(Function):
                 vol.Optional("allow_unsafe_shell", default=False): bool,
                 vol.Optional("cwd"): cv.template,
                 vol.Optional("restrict_to_workspace", default=True): bool,
-                vol.Optional("allow_patterns"): vol.All(cv.ensure_list, [str]),
+                vol.Optional("allow_patterns"): vol.All(
+                    cv.ensure_list, [_valid_allow_pattern]
+                ),
             }
         )
         super().__init__(schema)
@@ -161,11 +174,13 @@ class BashFunction(Function):
         if re.search(r"\brm\s+-[A-Za-z]*r[A-Za-z]*", command, re.IGNORECASE):
             raise ValueError("Command blocked by defensive policy: recursive rm")
 
-        # Allow patterns check
-        if allow_patterns:
-            lower = command.lower()
-            if not any(re.search(p, lower) for p in allow_patterns):
-                raise ValueError("Command blocked: not in allowlist")
+        # Allow patterns are intentionally case-insensitive. They were historically
+        # matched against a lower-cased command; IGNORECASE preserves that behavior
+        # while making mixed-case configured patterns work consistently too.
+        if allow_patterns and not any(
+            re.search(pattern, command, re.IGNORECASE) for pattern in allow_patterns
+        ):
+            raise ValueError("Command blocked: not in allowlist")
 
         # Path restriction check when restrict_to_workspace is enabled. The
         # configured cwd is the workspace root. This is a defensive path guard,

@@ -165,6 +165,12 @@ from .const import (
     VOICE_POLICIES,
     WEB_SEARCH_CONTEXT_OPTIONS,
 )
+from .function_execution import validate_function_schema
+from .function_tool_policy import (
+    FUNCTION_TOOL_NAME_PATTERN,
+    NATIVE_FUNCTION_IMPLEMENTATIONS,
+    RESERVED_FUNCTION_TOOL_NAMES,
+)
 from .functions import FUNCTIONS, get_function
 from .helpers import get_model_config
 from .local_intents import (
@@ -406,12 +412,47 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
         function_config = tool.get("function")
         if not isinstance(spec, dict):
             raise AgentConfigError(f"{field}.spec", "must be an object")
+        unknown_spec_fields = set(spec) - {
+            "name",
+            "description",
+            "parameters",
+            "strict",
+        }
+        if unknown_spec_fields:
+            raise AgentConfigError(
+                f"{field}.spec",
+                "unknown fields: " + ", ".join(sorted(unknown_spec_fields)),
+            )
         name = spec.get("name")
-        if not isinstance(name, str) or not name.strip():
+        if not isinstance(name, str) or not name:
             raise AgentConfigError(f"{field}.spec.name", "is required")
+        if not FUNCTION_TOOL_NAME_PATTERN.fullmatch(name):
+            raise AgentConfigError(
+                f"{field}.spec.name",
+                "must contain only letters, numbers, underscores, or hyphens "
+                "and be at most 64 characters",
+            )
+        if name in RESERVED_FUNCTION_TOOL_NAMES:
+            raise AgentConfigError(
+                f"{field}.spec.name", f"reserved integration tool name: {name}"
+            )
         if name in names:
             raise AgentConfigError(f"{field}.spec.name", f"duplicate tool name: {name}")
         names.add(name)
+        description = spec.get("description")
+        if description is not None and not isinstance(description, str):
+            raise AgentConfigError(f"{field}.spec.description", "must be a string")
+        strict = spec.get("strict")
+        if strict is not None and not isinstance(strict, bool):
+            raise AgentConfigError(f"{field}.spec.strict", "must be a boolean")
+        parameters = spec.get("parameters", {})
+        if not isinstance(parameters, dict):
+            raise AgentConfigError(f"{field}.spec.parameters", "must be an object")
+        try:
+            validate_function_schema(parameters)
+        except HomeAssistantError as err:
+            message = str(err).removeprefix("Function input schema is invalid: ")
+            raise AgentConfigError(f"{field}.spec.parameters", message) from err
         if not isinstance(function_config, dict):
             raise AgentConfigError(f"{field}.function", "must be an object")
         function_type = function_config.get("type")
@@ -426,6 +467,14 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
                 f"{field}.function",
                 f"configuration is invalid for {function_type}: {err}",
             ) from err
+        if (
+            function_type == "native"
+            and function_config.get("name") not in NATIVE_FUNCTION_IMPLEMENTATIONS
+        ):
+            raise AgentConfigError(
+                f"{field}.function.name",
+                f"unknown native implementation: {function_config.get('name')}",
+            )
         normalized = deepcopy(tool)
         normalized["spec"] = deepcopy(spec)
         normalized["function"] = deepcopy(function_config)

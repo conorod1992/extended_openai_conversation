@@ -53,6 +53,7 @@ from .const import (
     CONF_CONVERSATION_TIMEOUT_MINUTES,
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
+    CONF_GUEST_ALLOWED_FUNCTION_NAMES,
     CONF_GUEST_MODE_ENABLED,
     CONF_GUEST_POLICY_VERSION,
     CONF_KNOWLEDGE_ENABLED,
@@ -488,14 +489,19 @@ def _persist_function_configuration(
     subentry: Any,
     tools: list[dict[str, Any]],
     groups: list[dict[str, Any]],
+    *,
+    extra_updates: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist only Function Tool fields against the latest saved subentry."""
+    updates: dict[str, Any] = {
+        CONF_FUNCTION_TOOLS: tools,
+        CONF_FUNCTION_GROUPS: groups,
+    }
+    if extra_updates:
+        updates.update(extra_updates)
     normalized = preserve_legacy_guest_policy(
         subentry.data,
-        merge_agent_config(
-            subentry.data,
-            {CONF_FUNCTION_TOOLS: tools, CONF_FUNCTION_GROUPS: groups},
-        ),
+        merge_agent_config(subentry.data, updates),
     )
     hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
     snapshot = agent_config_snapshot(normalized)
@@ -503,6 +509,40 @@ def _persist_function_configuration(
         "functions": snapshot[CONF_FUNCTION_TOOLS],
         "function_groups": snapshot[CONF_FUNCTION_GROUPS],
     }
+
+
+async def _function_reference_state(
+    hass: HomeAssistant,
+    entry_id: str,
+    subentry_id: str,
+    subentry_data: MappingProxyType | dict[str, Any],
+    function_name: str,
+):
+    """Return exact durable references to one configured Function Tool."""
+    rules = await async_get_request_rules(hass, entry_id, subentry_id)
+    guest_names = subentry_data.get(CONF_GUEST_ALLOWED_FUNCTION_NAMES, [])
+    return rules, {
+        "request_rules": rules.function_references(function_name),
+        "guest_mode": isinstance(guest_names, list) and function_name in guest_names,
+    }
+
+
+def _function_reference_error(name: str, references: dict[str, Any]) -> str:
+    """Describe semantic references that must be resolved before deletion."""
+    parts: list[str] = []
+    rule_names = [
+        item.get("name", item.get("id", "unnamed rule"))
+        for item in references.get("request_rules", [])
+    ]
+    if rule_names:
+        parts.append("Request Rules: " + ", ".join(rule_names))
+    if references.get("guest_mode"):
+        parts.append("Guest Mode custom function access")
+    return (
+        f"Function Tool `{name}` is still referenced by "
+        + "; ".join(parts)
+        + ". Update those references before deleting it."
+    )
 
 
 _SECRET_KEY = re.compile(
@@ -1142,20 +1182,63 @@ async def async_management_command(
                 raise HomeAssistantError(f"Function Tool {saved_name} already exists")
             if existing_index is None:
                 tools.append(saved_tool)
-            else:
-                tools[existing_index] = saved_tool
-                if original_name != saved_name:
-                    groups = [
-                        {
-                            **group,
-                            "functions": [
-                                saved_name if name == original_name else name
-                                for name in group["functions"]
-                            ],
-                        }
-                        for group in groups
-                    ]
-            return _persist_function_configuration(hass, entry, subentry, tools, groups)
+                return _persist_function_configuration(
+                    hass, entry, subentry, tools, groups
+                )
+
+            tools[existing_index] = saved_tool
+            if original_name == saved_name:
+                return _persist_function_configuration(
+                    hass, entry, subentry, tools, groups
+                )
+
+            assert original_name is not None
+            original_tools = configured_function_tools_from_data(subentry.data)
+            original_groups = [dict(group) for group in groups]
+            groups = [
+                {
+                    **group,
+                    "functions": [
+                        saved_name if name == original_name else name
+                        for name in group["functions"]
+                    ],
+                }
+                for group in groups
+            ]
+            rules, references = await _function_reference_state(
+                hass, entry_id, subentry_id, subentry.data, original_name
+            )
+            guest_names = list(subentry.data.get(CONF_GUEST_ALLOWED_FUNCTION_NAMES, []))
+            renamed_guest_names = [
+                saved_name if name == original_name else name for name in guest_names
+            ]
+            result = _persist_function_configuration(
+                hass,
+                entry,
+                subentry,
+                tools,
+                groups,
+                extra_updates={CONF_GUEST_ALLOWED_FUNCTION_NAMES: renamed_guest_names},
+            )
+            try:
+                renamed_rule_references = await rules.async_rename_function_reference(
+                    original_name, saved_name
+                )
+            except Exception:
+                _persist_function_configuration(
+                    hass,
+                    entry,
+                    subentry,
+                    original_tools,
+                    original_groups,
+                    extra_updates={CONF_GUEST_ALLOWED_FUNCTION_NAMES: guest_names},
+                )
+                raise
+            result["renamed_references"] = {
+                "request_rules": renamed_rule_references,
+                "guest_mode": references["guest_mode"],
+            }
+            return result
         if action == "set_enabled":
             name = message.get("name")
             enabled = message.get("enabled")
@@ -1165,7 +1248,15 @@ async def async_management_command(
             if tool is None:
                 raise HomeAssistantError("The Function Tool no longer exists")
             tool["enabled"] = enabled
-            return _persist_function_configuration(hass, entry, subentry, tools, groups)
+            result = _persist_function_configuration(
+                hass, entry, subentry, tools, groups
+            )
+            if not enabled:
+                _rules, references = await _function_reference_state(
+                    hass, entry_id, subentry_id, subentry.data, name
+                )
+                result["references"] = references
+            return result
         if action == "delete":
             if message.get("confirm") is not True:
                 raise HomeAssistantError("Explicit confirmation is required")
@@ -1175,6 +1266,11 @@ async def async_management_command(
             remaining = [tool for tool in tools if tool["spec"]["name"] != name]
             if len(remaining) == len(tools):
                 raise HomeAssistantError("The Function Tool no longer exists")
+            _rules, references = await _function_reference_state(
+                hass, entry_id, subentry_id, subentry.data, name
+            )
+            if references["request_rules"] or references["guest_mode"]:
+                raise HomeAssistantError(_function_reference_error(name, references))
             groups = [
                 {
                     **group,
