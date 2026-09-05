@@ -12,7 +12,9 @@ from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
-from custom_components.extended_openai_conversation_responses import entity as entity_module
+from custom_components.extended_openai_conversation_responses import (
+    entity as entity_module,
+)
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
     _convert_content_to_param,
@@ -59,9 +61,9 @@ def _entity() -> SimpleNamespace:
                 "unexpected background execution"
             )
         ),
-        should_run_in_background=ExtendedOpenAIBaseLLMEntity.should_run_in_background,
-        get_delayed_function_config=(
-            ExtendedOpenAIBaseLLMEntity.get_delayed_function_config
+        should_run_in_background=lambda execution_delay: execution_delay is not None,
+        get_delayed_function_config=lambda _config, _delay: pytest.fail(
+            "unexpected delayed Function config"
         ),
     )
 
