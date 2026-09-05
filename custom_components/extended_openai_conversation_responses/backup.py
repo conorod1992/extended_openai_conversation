@@ -18,6 +18,7 @@ from .agent_config import (
     agent_config_snapshot,
     normalize_agent_config,
     preserve_legacy_guest_policy,
+    validate_agent_title,
 )
 from .const import (
     CONF_USAGE_REQUEST_RETENTION_DAYS,
@@ -36,6 +37,7 @@ from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mod
 from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
 from .memory import MemoryRecord, PersistentMemory, async_get_memory
 from .request_rules import RequestRules, async_get_request_rules
+from .secret_redaction import redact_secrets, restore_redacted_secrets
 from .temporary_memory import (
     TemporaryMemory,
     TemporaryMemoryRecord,
@@ -48,13 +50,6 @@ BACKUP_VERSION = 5
 MAX_BACKUP_BYTES = 16 * 1024 * 1024
 _BACKUP_LOCKS = f"{DOMAIN}.backup_locks"
 _LOGGER = logging.getLogger(__name__)
-_SECRET_KEY_PARTS = frozenset(
-    {"password", "passwd", "secret", "token", "authorization"}
-)
-_SECRET_KEY_FAMILIES = ("apikey", "clientsecret", "accesstoken", "refreshtoken")
-_CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-_KEY_SEPARATOR = re.compile(r"[^A-Za-z0-9]+")
-_LIKELY_SECRET = re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b")
 
 
 class BackupError(HomeAssistantError):
@@ -103,31 +98,9 @@ def _integration_version() -> str:
     return str(manifest["version"])
 
 
-def _is_secret_key(key: Any) -> bool:
-    """Classify credential-like keys without depending on separator spelling."""
-    separated = _CAMEL_CASE_BOUNDARY.sub(" ", str(key))
-    parts = tuple(part.casefold() for part in _KEY_SEPARATOR.split(separated) if part)
-    if any(part in _SECRET_KEY_PARTS for part in parts):
-        return True
-    canonical = "".join(parts)
-    return any(family in canonical for family in _SECRET_KEY_FAMILIES)
-
-
 def _safe_configuration(value: Any, *, schema: bool = False) -> Any:
-    """Remove common credential fields and unmistakable key literals."""
-    if isinstance(value, list):
-        return [_safe_configuration(item, schema=schema) for item in value]
-    if isinstance(value, str):
-        return _LIKELY_SECRET.sub("[redacted]", value)
-    if not isinstance(value, dict):
-        return value
-    result = {}
-    for key, item in value.items():
-        child_schema = schema or key in {"parameters", "properties", "items"}
-        if not schema and _is_secret_key(key):
-            continue
-        result[key] = _safe_configuration(item, schema=child_schema)
-    return result
+    """Redact credential values while preserving the exported object shape."""
+    return redact_secrets(value, schema=schema)
 
 
 def _backup_lock(hass: HomeAssistant, entry_id: str, subentry_id: str) -> asyncio.Lock:
@@ -258,15 +231,16 @@ def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
         "config",
     }:
         raise BackupError("The agent configuration is incomplete or corrupted")
-    title = agent["title"]
-    if not isinstance(title, str) or not title.strip() or len(title.strip()) > 255:
-        raise BackupError("The backed-up agent name is invalid")
+    try:
+        title = validate_agent_title(agent["title"])
+    except HomeAssistantError as err:
+        raise BackupError("The backed-up agent name is invalid") from err
     if not isinstance(agent["source_entry_id"], str) or not isinstance(
         agent["source_subentry_id"], str
     ):
         raise BackupError("The backup agent identity is invalid")
     try:
-        raw_config = agent["config"]
+        raw_config = restore_redacted_secrets(agent["config"])
         if not isinstance(raw_config, dict):
             raise ValueError("agent config must be an object")
         config = preserve_legacy_guest_policy(
@@ -289,12 +263,14 @@ def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
             else None
         )
         request_rules = RequestRules.validate_backup_data(
-            value.get("request_rules", {"defaults": {}, "rules": []})
+            restore_redacted_secrets(
+                value.get("request_rules", {"defaults": {}, "rules": []})
+            )
         )
     except (TypeError, ValueError) as err:
         raise BackupError(f"The backup is incomplete or corrupted: {err}") from err
     return PreparedRestore(
-        title.strip(),
+        title,
         config,
         memories,
         temporary_memories,

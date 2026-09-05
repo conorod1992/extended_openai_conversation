@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from hashlib import sha256
+import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from copy import deepcopy
@@ -233,10 +235,36 @@ class RequestRules:
                 await self._async_save_locked()
             self._initialized = True
 
+    def revision(self) -> str:
+        """Return a deterministic token for the current durable rule set."""
+        payload = json.dumps(
+            {
+                "defaults": self._defaults,
+                "wording_groups": self._wording_groups,
+                "rules": self._rules,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        return sha256(payload.encode("utf-8")).hexdigest()
+
+    def _require_revision_locked(self, expected_revision: str | None) -> None:
+        """Reject a stale management writer while the mutation lock is held."""
+        if expected_revision is None:
+            return
+        if not isinstance(expected_revision, str):
+            raise ValueError("revision must be a string")
+        if expected_revision != self.revision():
+            raise ValueError(
+                "Request Rules changed in another tab. Reload the latest rules before saving."
+            )
+
     def snapshot(self) -> dict[str, Any]:
         """Return a copy suitable for the management API."""
         return {
             "storage_version": STORAGE_VERSION,
+            "revision": self.revision(),
             "defaults": dict(self._defaults),
             "wording_groups": _copy_wording_groups(self._wording_groups),
             "rules": [dict(rule) for rule in self._rules],
@@ -288,8 +316,10 @@ class RequestRules:
         return changed
 
     async def async_backup_data(self) -> dict[str, Any]:
-        """Return durable Request Rule state for the per-agent backup."""
-        return self.snapshot()
+        """Return durable Request Rule state without the management revision token."""
+        snapshot = self.snapshot()
+        snapshot.pop("revision", None)
+        return snapshot
 
     @staticmethod
     def validate_backup_data(value: Any) -> dict[str, Any]:
@@ -329,29 +359,38 @@ class RequestRules:
             self._initialized = True
             await self._async_save_locked()
 
-    async def async_set_defaults(self, value: Any) -> dict[str, Any]:
+    async def async_set_defaults(
+        self, value: Any, *, expected_revision: str | None = None
+    ) -> dict[str, Any]:
         """Replace global matching defaults."""
         defaults = validate_matching_settings(value)
         async with self._lock:
+            self._require_revision_locked(expected_revision)
             self._defaults = defaults
             self._sort_and_compile()
             await self._async_save_locked()
         return dict(defaults)
 
-    async def async_set_wording_groups(self, value: Any) -> list[dict[str, Any]]:
+    async def async_set_wording_groups(
+        self, value: Any, *, expected_revision: str | None = None
+    ) -> list[dict[str, Any]]:
         """Replace the persisted wording synonym groups."""
         groups = validate_wording_groups(value)
         async with self._lock:
+            self._require_revision_locked(expected_revision)
             self._wording_groups = groups
             self._sort_and_compile()
             await self._async_save_locked()
         return _copy_wording_groups(groups)
 
-    async def async_create(self, value: Any) -> dict[str, Any]:
+    async def async_create(
+        self, value: Any, *, expected_revision: str | None = None
+    ) -> dict[str, Any]:
         """Create one rule."""
         if not isinstance(value, Mapping):
             raise ValueError("rule must be an object")
         async with self._lock:
+            self._require_revision_locked(expected_revision)
             if len(self._rules) >= MAX_RULES:
                 raise ValueError("Request Rule limit reached")
             raw = dict(value)
@@ -365,11 +404,18 @@ class RequestRules:
             await self._async_save_locked()
         return dict(rule)
 
-    async def async_update(self, rule_id: str, value: Any) -> dict[str, Any]:
+    async def async_update(
+        self,
+        rule_id: str,
+        value: Any,
+        *,
+        expected_revision: str | None = None,
+    ) -> dict[str, Any]:
         """Replace one rule while preserving its id."""
         if not isinstance(value, Mapping):
             raise ValueError("rule must be an object")
         async with self._lock:
+            self._require_revision_locked(expected_revision)
             index = self._index(rule_id)
             raw = dict(value)
             raw["id"] = rule_id
@@ -380,18 +426,24 @@ class RequestRules:
             await self._async_save_locked()
         return dict(rule)
 
-    async def async_delete(self, rule_id: str) -> bool:
+    async def async_delete(
+        self, rule_id: str, *, expected_revision: str | None = None
+    ) -> bool:
         """Delete one rule."""
         async with self._lock:
+            self._require_revision_locked(expected_revision)
             index = self._index(rule_id)
             del self._rules[index]
             self._sort_and_compile()
             await self._async_save_locked()
         return True
 
-    async def async_duplicate(self, rule_id: str) -> dict[str, Any]:
+    async def async_duplicate(
+        self, rule_id: str, *, expected_revision: str | None = None
+    ) -> dict[str, Any]:
         """Duplicate one rule immediately after its source."""
         async with self._lock:
+            self._require_revision_locked(expected_revision)
             if len(self._rules) >= MAX_RULES:
                 raise ValueError("Request Rule limit reached")
             source = deepcopy(self._rules[self._index(rule_id)])
