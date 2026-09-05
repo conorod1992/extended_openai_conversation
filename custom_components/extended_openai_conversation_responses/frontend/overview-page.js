@@ -1,3 +1,5 @@
+import {bindGettingStarted} from "./overview-onboarding.js";
+
 let implementation = null;
 let loadPromise = null;
 
@@ -44,5 +46,6 @@ export function renderOverview(panel, agent) {
 }
 
 export function bindOverview(panel) {
-  return implementation?.bindOverview?.(panel);
+  implementation?.bindOverview?.(panel);
+  bindGettingStarted(panel);
 }
