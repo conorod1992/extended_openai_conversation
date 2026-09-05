@@ -118,10 +118,10 @@ async def async_manage_command(
             }
         if message.get("confirm") is not True:
             raise HomeAssistantError("Explicit confirmation is required")
-        records = await _async_user_temporary_records(
+        temporary_records_to_clear = await _async_user_temporary_records(
             temporary_memory, temporary_scope_id
         )
-        memory_ids = [record.memory_id for record in records]
+        memory_ids = [record.memory_id for record in temporary_records_to_clear]
         deleted = 0
         for start in range(0, len(memory_ids), MAX_DELETE_RECORDS):
             deleted += await temporary_memory.async_delete(
@@ -149,7 +149,7 @@ async def async_manage_command(
     else:
         write_scope = user_id
     if action == "list":
-        records = await memory.async_list(
+        persistent_records = await memory.async_list(
             readable_scopes[0] if len(readable_scopes) == 1 else readable_scopes,
             message.get("category"),
             int(message.get("limit", 100)),
@@ -166,7 +166,7 @@ async def async_manage_command(
         return {
             "memories": [
                 memory_as_dict(record, include_scope=True, personal_scope_id=user_id)
-                for record in records
+                for record in persistent_records
             ],
             "temporary_memories": [
                 temporary_memory_as_dict(record) for record in temporary_records
