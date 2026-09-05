@@ -34,7 +34,6 @@ def _entry(
     *,
     skip_authentication: bool = False,
     state: ConfigEntryState = ConfigEntryState.LOADED,
-    update_listener: bool = True,
     disabled_by=None,
     domain: str = DOMAIN,
 ):
@@ -49,7 +48,6 @@ def _entry(
             CONF_SKIP_AUTHENTICATION: skip_authentication,
         },
         state=state,
-        update_listeners=[object()] if update_listener else [],
         disabled_by=disabled_by,
     )
 
@@ -115,6 +113,27 @@ async def test_invalid_replacement_leaves_existing_key_untouched() -> None:
     hass.config_entries.async_schedule_reload.assert_not_called()
 
 
+async def test_unexpected_validation_error_cannot_reflect_candidate_secret() -> None:
+    entry = _entry()
+    hass = MagicMock()
+    hass.config_entries.async_update_entry = MagicMock()
+
+    with (
+        patch(
+            "custom_components.extended_openai_conversation_responses.provider_credentials.get_authenticated_client",
+            AsyncMock(side_effect=RuntimeError("candidate-secret appeared here")),
+        ),
+        pytest.raises(HomeAssistantError) as raised,
+    ):
+        await async_replace_api_key(hass, entry, "candidate-secret")
+
+    assert "candidate-secret" not in str(raised.value)
+    assert str(raised.value) == (
+        "The new API key could not be validated. The existing API key was not changed."
+    )
+    hass.config_entries.async_update_entry.assert_not_called()
+
+
 async def test_skip_authentication_is_preserved_and_reported() -> None:
     entry = _entry(skip_authentication=True)
     hass = MagicMock()
@@ -133,8 +152,8 @@ async def test_skip_authentication_is_preserved_and_reported() -> None:
     hass.config_entries.async_update_entry.assert_called_once()
 
 
-async def test_startup_failure_schedules_recovery_reload_without_listener() -> None:
-    entry = _entry(state=ConfigEntryState.SETUP_ERROR, update_listener=False)
+async def test_startup_failure_schedules_recovery_reload() -> None:
+    entry = _entry(state=ConfigEntryState.SETUP_ERROR)
     hass = MagicMock()
     hass.config_entries.async_update_entry = MagicMock(return_value=True)
 
@@ -152,7 +171,6 @@ async def test_startup_failure_schedules_recovery_reload_without_listener() -> N
 async def test_disabled_entry_is_not_reloaded_implicitly() -> None:
     entry = _entry(
         state=ConfigEntryState.NOT_LOADED,
-        update_listener=False,
         disabled_by="user",
     )
     hass = MagicMock()
@@ -169,8 +187,24 @@ async def test_disabled_entry_is_not_reloaded_implicitly() -> None:
     hass.config_entries.async_schedule_reload.assert_not_called()
 
 
+async def test_nonrecoverable_entry_is_not_reloaded_implicitly() -> None:
+    entry = _entry(state=ConfigEntryState.MIGRATION_ERROR)
+    hass = MagicMock()
+    hass.config_entries.async_update_entry = MagicMock(return_value=True)
+
+    with patch(
+        "custom_components.extended_openai_conversation_responses.provider_credentials.get_authenticated_client",
+        AsyncMock(return_value=object()),
+    ):
+        result = await async_replace_api_key(hass, entry, "new-key")
+
+    assert result["updated"] is True
+    assert result["reload_requested"] is False
+    hass.config_entries.async_schedule_reload.assert_not_called()
+
+
 async def test_unchanged_key_retries_failed_entry_after_successful_validation() -> None:
-    entry = _entry(state=ConfigEntryState.SETUP_ERROR, update_listener=False)
+    entry = _entry(state=ConfigEntryState.SETUP_ERROR)
     hass = MagicMock()
     hass.config_entries.async_update_entry = MagicMock(return_value=False)
 
