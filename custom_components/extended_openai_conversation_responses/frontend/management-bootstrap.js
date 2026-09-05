@@ -13,6 +13,7 @@ const BOOTSTRAP_MODULES = [
   "./management-navigation-search.js",
   "./usage-input-footprint.js",
   "./debug-management.js",
+  "./management-provider-credentials.js",
   "./management-configuration-clarity.js",
   "./management-configuration-guidance.js",
   "./management-decision-guidance.js",
@@ -129,6 +130,9 @@ if (typeof customElements !== "undefined") {
     // Request debugging extends the management panel too. Install that extension
     // before registration so the route cannot depend on a later microtask race.
     await import("./debug-management.js");
+    // Provider credential controls are Diagnostics-only and reuse the existing
+    // admin management boundary rather than introducing a second settings form.
+    await import("./management-provider-credentials.js");
     // Configuration clarity decorates the final persistent shell/navigation; the
     // guidance layers build on those labels and badges without duplicating them.
     await import("./management-configuration-clarity.js");
