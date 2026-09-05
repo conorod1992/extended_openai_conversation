@@ -23,6 +23,7 @@ from homeassistant.helpers.template import Template
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .provider_errors import provider_error_metadata
 
 DEBUG_DEFAULT_LIMIT = 10
 DEBUG_ALLOWED_LIMITS = (5, 10, 25, 50)
@@ -218,6 +219,7 @@ class DebugProviderRequest:
     duration_ms: int | None = None
     successful: bool | None = None
     error_type: str | None = None
+    error: dict[str, Any] = field(default_factory=dict)
     usage: dict[str, int] = field(default_factory=dict)
     response_events: list[Any] = field(default_factory=list)
     response_events_truncated: bool = False
@@ -250,6 +252,7 @@ class DebugProviderRequest:
             self.duration_ms = int((time.monotonic() - self._started_monotonic) * 1000)
         self.successful = successful
         self.error_type = type(error).__name__ if error is not None else None
+        self.error = provider_error_metadata(error) if error is not None else {}
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -273,6 +276,7 @@ class DebugTrace:
     duration_ms: int = 0
     successful: bool | None = None
     error_type: str | None = None
+    error: dict[str, Any] = field(default_factory=dict)
     usage_run_id: str | None = None
     continuity: dict[str, Any] = field(default_factory=dict)
     phases_ms: dict[str, int] = field(default_factory=dict)
@@ -321,6 +325,7 @@ class DebugTrace:
             "duration_ms": self.duration_ms,
             "successful": self.successful,
             "error_type": self.error_type,
+            "error": _jsonable(self.error),
             "usage_run_id": self.usage_run_id,
             "user_input": _jsonable(self.user_input),
             "incoming_conversation_id": self.incoming_conversation_id,
@@ -353,6 +358,7 @@ class DebugTrace:
             "duration_ms": self.duration_ms,
             "successful": self.successful,
             "error_type": self.error_type,
+            "error": _jsonable(self.error),
             "usage_run_id": self.usage_run_id,
             "incoming_conversation_id": self.incoming_conversation_id,
             "resolved_conversation_id": self.continuity.get("resolved_conversation_id"),
@@ -417,7 +423,9 @@ class DebugManager:
         trace.completed_at = _iso_now()
         trace.duration_ms = int((time.monotonic() - trace._started_monotonic) * 1000)
         trace.successful = successful
-        trace.error_type = type(error).__name__ if error is not None else None
+        if error is not None:
+            trace.error_type = type(error).__name__
+            trace.error = provider_error_metadata(error)
         if result is not None:
             trace.result = _jsonable(result)
         self._runs.append(trace)
@@ -454,6 +462,17 @@ def get_debug_manager(hass: Any, entry_id: str, subentry_id: str) -> DebugManage
 
 def current_debug_trace() -> DebugTrace | None:
     return _ACTIVE_DEBUG_TRACE.get()
+
+
+def record_current_provider_failure(error: BaseException) -> None:
+    """Attach a provider failure to the active opt-in debug trace, if any."""
+    trace = current_debug_trace()
+    if trace is None:
+        return
+    trace.error_type = type(error).__name__
+    trace.error = provider_error_metadata(error)
+    if trace.provider_requests:
+        trace.provider_requests[-1].finish(successful=False, error=error)
 
 
 class _DebugAsyncStream:
@@ -602,7 +621,7 @@ def install_debug_instrumentation() -> None:
             manager.finish(trace, successful=False, error=err)
             raise
         else:
-            manager.finish(trace, successful=True, result=result)
+            manager.finish(trace, successful=trace.error_type is None, result=result)
             return result
         finally:
             _ACTIVE_DEBUG_TRACE.reset(token)

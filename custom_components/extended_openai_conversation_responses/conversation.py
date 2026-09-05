@@ -131,6 +131,12 @@ from .memory import (
     memory_user_id,
 )
 from .prompt import render_effective_prompt
+from .provider_errors import (
+    log_provider_failure,
+    provider_user_message,
+    request_reauthentication,
+)
+from .debug import record_current_provider_failure
 from .request import assemble_integration_function_tools
 from .request_rules import (
     RequestRuleRuntime,
@@ -751,11 +757,13 @@ class ExtendedOpenAIAgentEntity(
         except OpenAIError as err:
             if self._usage is not None:
                 self._usage.mark_current_run_failed(type(err).__name__)
-            _LOGGER.error(err)
+            request_reauthentication(self.hass, self.entry, err)
+            record_current_provider_failure(err)
+            log_provider_failure(_LOGGER, "OpenAI conversation request failed", err)
             intent_response = intent.IntentResponse(language=user_input.language)
             intent_response.async_set_error(
                 intent.IntentResponseErrorCode.UNKNOWN,
-                f"Sorry, I had a problem talking to OpenAI: {err}",
+                f"Sorry, I had a problem talking to OpenAI: {provider_user_message(err)}",
             )
             self._fire_conversation_finished(
                 user_input, chat_log, status="error", error_type=type(err).__name__
