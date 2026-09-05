@@ -1185,10 +1185,10 @@ async def async_management_command(
         if action == "validate_current":
             return {"valid": True, "errors": {}}
         if action == "save":
-            candidate = message.get("tool")
-            if not isinstance(candidate, dict):
+            tool_candidate = message.get("tool")
+            if not isinstance(tool_candidate, dict):
                 raise HomeAssistantError("tool must be an object")
-            saved_tool = validate_function_tools([candidate])[0]
+            saved_tool = validate_function_tools([tool_candidate])[0]
             original_name = message.get("original_name")
             if original_name is not None and not isinstance(original_name, str):
                 raise HomeAssistantError("original_name must be a string")
@@ -1310,9 +1310,10 @@ async def async_management_command(
                 hass, entry, subentry, remaining, groups
             )
         if action == "save_group":
-            candidate = message.get("group")
-            if not isinstance(candidate, dict):
+            group_candidate = message.get("group")
+            if not isinstance(group_candidate, dict):
                 raise HomeAssistantError("group must be an object")
+            candidate = group_candidate
             candidate_functions = candidate.get("functions", [])
             if not isinstance(candidate_functions, list) or not all(
                 isinstance(name, str) for name in candidate_functions

@@ -904,7 +904,9 @@ async def test_conversation_override_precedence_reset_and_new_session() -> None:
         == "default"
     )
 
-    reset_rules = await manager(routing_rule(reset=True, match_type="equals"))
+    reset_rules = await manager(
+        routing_rule(scope="conversation", reset=True, match_type="equals")
+    )
     reset = await async_evaluate_rule(
         SimpleNamespace(), reset_rules, runtime, "think carefully", "one"
     )
