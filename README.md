@@ -9,7 +9,7 @@ You can start with a simple setup and leave the advanced features alone until yo
 > [!IMPORTANT]
 > **A ChatGPT subscription does not include OpenAI API usage.**
 >
-> This integration uses the OpenAI API, which is billed separately by OpenAI or by the compatible provider you configure.
+> This integration uses the OpenAI API, which is billed separately by OpenAI or by the compatible provider you configure. If you use OpenAI directly, make sure API billing or credits are configured for your API account.
 
 This project began as a fork of [jekalmin/extended_openai_conversation](https://github.com/jekalmin/extended_openai_conversation), but has since diverged substantially in features, configuration, architecture, and user interface.
 
@@ -25,15 +25,19 @@ For example:
 
 > Set the living room lights to 30%.
 
-Optional features can add much more:
+Common optional additions include:
 
 - **Web Search** — allow supported models to look up current information.
+- **Temporary Memory** — automatically retain useful short-lived facts, such as plans for today or tomorrow, until they expire.
 - **Persistent Memory** — let the assistant remember useful facts between conversations.
-- **Knowledge Library** — give an agent larger reference material that it can search when needed.
-- **Request Rules** — handle selected requests locally without calling the AI provider, or route requests to different models.
 - **Local handling** — let Home Assistant handle simple built-in commands before an AI request, while more complex requests continue to the normal AI path.
 - **Broadcast** — send one-way spoken messages to selected Assist satellites or the whole home, without interrupting satellites that are currently busy.
 - **Voice follow-ups** — control whether Assist keeps listening after a reply.
+
+More advanced or specialist features include:
+
+- **Knowledge Library** — give an agent larger reference material that it can search when needed.
+- **Request Rules** — handle selected requests locally without calling the AI provider, call configured actions or tools, or route requests to different models.
 - **Guest Mode** — restrict what visitors can access and keep guest conversations separate.
 - **Conversation archive** — optionally keep searchable conversation history locally.
 - **Skills** — give agents reusable sets of instructions.
@@ -55,6 +59,8 @@ You will need:
 - a Home Assistant Assist pipeline if you want to use it as a conversation agent
 
 If you want the assistant to know about or control Home Assistant entities, those entities also need to be **exposed to Assist**.
+
+For a first setup, start by exposing only a few useful entities and add more later. With the default entity-context setup, exposed entities contribute context to model requests, so keeping the initial set focused also keeps requests easier to understand and smaller.
 
 Broadcast is different: Assist Satellite entities used as Broadcast destinations do **not** need to be exposed to Assist. The integration discovers announcement-capable Assist satellites directly from Home Assistant.
 
@@ -108,6 +114,8 @@ After restarting Home Assistant:
 
 You normally only need to change **Base URL** when using another compatible provider.
 
+If you are using OpenAI directly, remember that API billing is separate from ChatGPT billing. A valid ChatGPT subscription on its own does not provide API usage.
+
 ### 2. Open Extended OpenAI
 
 After adding the integration, open **Extended OpenAI** from the Home Assistant sidebar.
@@ -143,6 +151,8 @@ and expose the entities the assistant should be able to know about or control.
 
 For example, if `light.kitchen` is not exposed to Assist, the conversation agent should not be expected to know about or control it through normal Home Assistant entity control.
 
+Start with a small, easy-to-test set such as one or two lights. Once basic control works, expose the other entities you actually want the assistant to use.
+
 You do **not** need to create custom functions just to control ordinary exposed Home Assistant entities.
 
 ### 5. Try it
@@ -157,7 +167,36 @@ or:
 
 Once that works, you can enable additional features such as Web Search, memory, Request Rules, local handling, Broadcast, or custom functions as needed.
 
+### If the first test does not work
+
+- **No useful response at all:** run **Test agent** and check the API credentials and provider/API billing.
+- **It responds but cannot see or control a device:** check that the entity is exposed under **Settings → Voice assistants → Expose**.
+- **Voice is using a different assistant or agent:** check the selected **Conversation agent** under **Settings → Voice assistants**.
+- **Basic requests work:** keep the basic setup as-is and enable optional features one at a time. This makes later problems much easier to isolate.
+
 For a fuller walkthrough, see [First setup](docs/getting-started/setup.md).
+
+## Which feature do I need?
+
+Several features deal with context or actions, but they solve different problems.
+
+### Conversation information and memory
+
+| Feature | Best thought of as |
+| --- | --- |
+| **Conversation context** | What has been said in the current conversation or retained conversation session. |
+| **Temporary Memory** | Useful short-lived facts that should survive beyond the immediate conversation but expire automatically, such as plans for today or tomorrow. |
+| **Persistent Memory** | Durable facts or preferences that remain useful indefinitely until changed or deleted. |
+| **Knowledge Library** | Larger reference material, notes, or documents that the model can search when needed. |
+| **Conversation archive** | An optional local history of previous user text and final assistant responses for searching and management. |
+
+### Ways requests can be handled
+
+| Feature | What it is for |
+| --- | --- |
+| **Local handling** | Lets Home Assistant itself complete simple built-in commands before making an AI request. |
+| **Request Rules** | Lets you define special behaviour for requests that match specific patterns or conditions. |
+| **Function Tools** | Capabilities the AI model can choose to call while working through a request. The integration includes Function Tools by default; custom functions are additional or modified tool definitions you configure yourself. |
 
 ## A few terms you may see
 
@@ -186,6 +225,7 @@ Most users can begin with the defaults and change only what they actually need.
 | **Local handling** | Off | Optionally lets Home Assistant complete simple built-in commands before an AI request. |
 | **Broadcast** | Off | Enables one-way spoken messages to selected Assist satellites or the whole home. |
 | **Web Search** | Off | Lets compatible OpenAI Responses models search the web when needed. |
+| **Temporary Memory** | Off | Optionally retains useful short-lived facts until their inferred or explicit expiry. |
 | **Memory mode** | Off | Enables persistent memory in Manual or Automatic mode. |
 | **Knowledge Library** | Off | Lets an agent search longer reference material stored locally. |
 | **Conversation archive** | Off | Optionally keeps searchable conversation text locally. |
@@ -258,6 +298,20 @@ When Web Search is enabled with a compatible direct OpenAI Responses setup, the 
 It does **not** search the web for every request.
 
 [Read the Web Search guide](docs/features/web-search.md)
+
+### Temporary Memory
+
+Temporary Memory is separate from Persistent Memory. It is intended for useful facts that matter beyond the immediate conversation but should disappear automatically when they are no longer relevant.
+
+Examples include a visitor arriving tomorrow, a parcel expected today, or another short-lived plan.
+
+- **Off** — no temporary memories are created or supplied.
+- **Balanced** — clearly useful short-lived facts can be stored automatically.
+- **Eager** — useful temporary context is retained more proactively when it may plausibly matter again.
+
+Temporary memories are stored locally in Home Assistant, have an expiry, and are removed after they expire. They can also be viewed and deleted from the Memories interface.
+
+[Read the Temporary Memory guide](docs/features/temporary-memory.md)
 
 ### Persistent Memory
 
@@ -345,9 +399,9 @@ They are useful when you want the assistant to follow a particular workflow or s
 
 ### Custom Functions
 
-Custom Functions give the model additional tools.
+Function Tools are capabilities the model can call while working through a request. The integration includes Function Tools in its default configuration, so seeing Function Tools in the UI does **not** mean you need to create any yourself.
 
-They can be used for more advanced workflows involving:
+Custom Functions are additional or modified Function Tools that you configure for more advanced workflows involving:
 
 - Home Assistant scripts and actions
 - templates
@@ -356,7 +410,7 @@ They can be used for more advanced workflows involving:
 - composite functions
 - SQLite queries
 
-They are an advanced feature. Basic control of exposed Home Assistant entities does not require custom functions.
+They are an advanced feature. Basic control of exposed Home Assistant entities does not require you to create custom functions.
 
 [Read about Custom Functions](docs/functions/index.md)
 
@@ -414,6 +468,17 @@ Each agent can be backed up independently for recovery or migration.
 Backups can include the agent configuration and associated Extended OpenAI data such as Request Rules, memories, Knowledge sources, archived conversations, Guest Mode settings, and usage history.
 
 Treat backup files as private data.
+
+## Privacy and data flow
+
+Extended OpenAI combines local Home Assistant storage and processing with requests to the AI provider you configure.
+
+- Requests that need the AI model send the relevant request text, prompt/context, and available tool information to the configured provider.
+- Relevant memories or Knowledge Library content retrieved for an AI request can become part of the context supplied to that provider.
+- Extended OpenAI's memories, Knowledge Library data, optional Conversation Archive, Request Rules, and related integration data are stored locally in Home Assistant.
+- Features that successfully complete a request locally, such as eligible Local handling or local Request Rules, can avoid an AI provider request for that request.
+
+Exactly what a provider retains or processes after receiving a request is governed by that provider's own service and data policies.
 
 ## Responses API and provider compatibility
 
@@ -494,6 +559,7 @@ Good places to start:
 - [First setup](docs/getting-started/setup.md)
 - [Full configuration reference](docs/configuration.md)
 - [Request Rules](docs/features/request-rules.md)
+- [Temporary Memory](docs/features/temporary-memory.md)
 - [Persistent Memory](docs/features/persistent-memory.md)
 - [Knowledge Library](docs/features/knowledge-library.md)
 - [Guest Mode](docs/features/guest-mode.md)
