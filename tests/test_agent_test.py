@@ -251,15 +251,26 @@ async def test_responses_failed_status_is_reported() -> None:
     client.responses = SimpleNamespace(
         create=AsyncMock(
             return_value=SimpleNamespace(
-                id="resp_failed", status="failed",
-                error=SimpleNamespace(message="provider failed", code="server_error", type="server_error"),
+                id="resp_failed",
+                status="failed",
+                error=SimpleNamespace(
+                    message="provider failed",
+                    code="server_error",
+                    type="server_error",
+                ),
                 usage=None,
             )
         )
     )
     with (
-        patch("custom_components.extended_openai_conversation_responses.agent_test.get_exposed_entities", return_value=[SimpleNamespace()]),
-        patch("custom_components.extended_openai_conversation_responses.agent_test.async_get_usage", AsyncMock(return_value=usage)),
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.get_exposed_entities",
+            return_value=[SimpleNamespace()],
+        ),
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.async_get_usage",
+            AsyncMock(return_value=usage),
+        ),
     ):
         result = await async_test_agent(hass, entry, subentry)
     model = next(check for check in result.checks if check.name == "Model access")
@@ -277,14 +288,23 @@ async def test_responses_incomplete_status_is_reported() -> None:
     client.responses = SimpleNamespace(
         create=AsyncMock(
             return_value=SimpleNamespace(
-                id="resp_incomplete", status="incomplete", error=None,
-                incomplete_details=SimpleNamespace(reason="max_output_tokens"), usage=None,
+                id="resp_incomplete",
+                status="incomplete",
+                error=None,
+                incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+                usage=None,
             )
         )
     )
     with (
-        patch("custom_components.extended_openai_conversation_responses.agent_test.get_exposed_entities", return_value=[SimpleNamespace()]),
-        patch("custom_components.extended_openai_conversation_responses.agent_test.async_get_usage", AsyncMock(return_value=usage)),
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.get_exposed_entities",
+            return_value=[SimpleNamespace()],
+        ),
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.async_get_usage",
+            AsyncMock(return_value=usage),
+        ),
     ):
         result = await async_test_agent(hass, entry, subentry)
     model = next(check for check in result.checks if check.name == "Model access")
