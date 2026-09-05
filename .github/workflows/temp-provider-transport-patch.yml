@@ -24,86 +24,78 @@ jobs:
 
           provider = Path("custom_components/extended_openai_conversation_responses/provider_errors.py")
           text = provider.read_text()
-          marker = '''class ProviderStreamError(OpenAIError):
-          '''
-          addition = '''class ProviderTransportError(OpenAIError):
-              """Standard-library transport failure normalized into the provider path."""
-
-
-          def provider_transport_error(
-              error: TimeoutError | ConnectionError,
-          ) -> ProviderTransportError:
-              """Normalize a raw timeout/connection failure without exposing its details."""
-              if isinstance(error, TimeoutError):
-                  return ProviderTransportError("Provider request timed out")
-              return ProviderTransportError("Could not connect to provider")
-
-
-          class ProviderStreamError(OpenAIError):
-          '''
+          marker = "class ProviderStreamError(OpenAIError):\n"
+          addition = (
+              "class ProviderTransportError(OpenAIError):\n"
+              "    \"\"\"Standard-library transport failure normalized into the provider path.\"\"\"\n"
+              "\n"
+              "\n"
+              "def provider_transport_error(\n"
+              "    error: TimeoutError | ConnectionError,\n"
+              ") -> ProviderTransportError:\n"
+              "    \"\"\"Normalize a raw timeout/connection failure without exposing its details.\"\"\"\n"
+              "    if isinstance(error, TimeoutError):\n"
+              "        return ProviderTransportError(\"Provider request timed out\")\n"
+              "    return ProviderTransportError(\"Could not connect to provider\")\n"
+              "\n"
+              "\n"
+              "class ProviderStreamError(OpenAIError):\n"
+          )
           if marker not in text:
               raise SystemExit("provider class marker not found")
           text = text.replace(marker, addition, 1)
-          old = '''    if isinstance(error, APIConnectionError):
-                  return "cannot_connect"
-          '''
-          new = '''    if isinstance(error, (APIConnectionError, ProviderTransportError)):
-                  return "cannot_connect"
-          '''
+          old = '    if isinstance(error, APIConnectionError):\n        return "cannot_connect"\n'
+          new = '    if isinstance(error, (APIConnectionError, ProviderTransportError)):\n        return "cannot_connect"\n'
           if old not in text:
               raise SystemExit("provider classifier marker not found")
           provider.write_text(text.replace(old, new, 1))
 
           helpers = Path("custom_components/extended_openai_conversation_responses/helpers.py")
           text = helpers.read_text()
-          marker = '''from .ha_permissions import filter_entities_for_active_user
-          '''
-          replacement = '''from .ha_permissions import filter_entities_for_active_user
-          from .provider_errors import provider_transport_error
-          '''
+          marker = "from .ha_permissions import filter_entities_for_active_user\n"
+          replacement = marker + "from .provider_errors import provider_transport_error\n"
           if marker not in text:
               raise SystemExit("helpers import marker not found")
           text = text.replace(marker, replacement, 1)
-          old = '''    response = await hass.async_add_executor_job(
-              partial(client.models.list, timeout=10)
+          old = (
+              "    response = await hass.async_add_executor_job(\n"
+              "        partial(client.models.list, timeout=10)\n"
+              "    )\n"
+              "\n"
+              "    async for _ in response:\n"
+              "        break\n"
+              "    return client\n"
           )
-
-              async for _ in response:
-                  break
-              return client
-          '''
-          new = '''    try:
-                  response = await hass.async_add_executor_job(
-                      partial(client.models.list, timeout=10)
-                  )
-
-                  async for _ in response:
-                      break
-              except (TimeoutError, ConnectionError) as err:
-                  raise provider_transport_error(err) from err
-              return client
-          '''
+          new = (
+              "    try:\n"
+              "        response = await hass.async_add_executor_job(\n"
+              "            partial(client.models.list, timeout=10)\n"
+              "        )\n"
+              "\n"
+              "        async for _ in response:\n"
+              "            break\n"
+              "    except (TimeoutError, ConnectionError) as err:\n"
+              "        raise provider_transport_error(err) from err\n"
+              "    return client\n"
+          )
           if old not in text:
               raise SystemExit("helpers validation marker not found")
           helpers.write_text(text.replace(old, new, 1))
 
           entity = Path("custom_components/extended_openai_conversation_responses/entity.py")
           text = entity.read_text()
-          old = '''from .provider_errors import provider_stream_error
-          '''
-          new = '''from .provider_errors import provider_stream_error, provider_transport_error
-          '''
+          old = "from .provider_errors import provider_stream_error\n"
+          new = "from .provider_errors import provider_stream_error, provider_transport_error\n"
           if old not in text:
               raise SystemExit("entity import marker not found")
           text = text.replace(old, new, 1)
-          old = '''                raise
-              else:
-          '''
-          new = '''                if isinstance(err, (TimeoutError, ConnectionError)):
-                      raise provider_transport_error(err) from err
-                  raise
-              else:
-          '''
+          old = "                raise\n            else:\n"
+          new = (
+              "                if isinstance(err, (TimeoutError, ConnectionError)):\n"
+              "                    raise provider_transport_error(err) from err\n"
+              "                raise\n"
+              "            else:\n"
+          )
           if old not in text:
               raise SystemExit("entity exception marker not found")
           entity.write_text(text.replace(old, new, 1))
