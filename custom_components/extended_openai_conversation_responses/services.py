@@ -66,6 +66,12 @@ from .const import (
 from .guest_mode import async_get_guest_mode
 from .helpers import get_api_mode, get_authenticated_client, get_token_param_for_model
 from .memory import async_get_memory, memory_as_dict, memory_user_id
+from .provider_errors import (
+    ensure_successful_responses_result,
+    log_provider_failure,
+    provider_user_message,
+    request_reauthentication,
+)
 from .request_rules import async_call_active_function
 from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
 from .skill_resource_limits import (
@@ -269,6 +275,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
     async def query_image(call: ServiceCall) -> ServiceResponse:
         """Query an image."""
         await _async_require_service_admin(hass, call)
+        entry = None
         try:
             model = call.data["model"]
             api_mode = get_api_mode(call.data[CONF_API_MODE], model)
@@ -311,6 +318,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                     max_output_tokens=call.data["max_tokens"],
                     store=False,
                 )
+                ensure_successful_responses_result(response)
             else:
                 images = [
                     {"type": "image_url", "image_url": image} for image in image_params
@@ -340,7 +348,12 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             response_dict: dict = response.model_dump()
             _LOGGER.debug("Image query completed using %s", model)
         except OpenAIError as err:
-            raise HomeAssistantError(f"Error generating image: {err}") from err
+            log_provider_failure(_LOGGER, "Image query provider request failed", err)
+            if entry is not None:
+                request_reauthentication(hass, entry, err)
+            raise HomeAssistantError(
+                f"Error generating image: {provider_user_message(err)}"
+            ) from err
 
         return response_dict
 
@@ -352,6 +365,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         if not entry or entry.domain != DOMAIN:
             raise HomeAssistantError(f"Config entry {entry_id} not found")
 
+        original_data = dict(entry.data)
         updates = {}
         for key in (
             CONF_API_KEY,
@@ -367,7 +381,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         if not updates:
             return
 
-        new_data = entry.data.copy()
+        new_data = dict(original_data)
         new_data.update(updates)
 
         _LOGGER.debug(
@@ -385,15 +399,27 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         if new_data.get(CONF_API_PROVIDER) == "azure" and not base_url:
             raise HomeAssistantError("Azure OpenAI requires a custom base URL.")
 
-        await get_authenticated_client(
-            hass=hass,
-            api_key=new_data[CONF_API_KEY],
-            base_url=new_data.get(CONF_BASE_URL),
-            api_version=new_data.get(CONF_API_VERSION),
-            organization=new_data.get(CONF_ORGANIZATION),
-            skip_authentication=new_data.get(CONF_SKIP_AUTHENTICATION, False),
-            api_provider=new_data.get(CONF_API_PROVIDER),
-        )
+        try:
+            await get_authenticated_client(
+                hass=hass,
+                api_key=new_data[CONF_API_KEY],
+                base_url=new_data.get(CONF_BASE_URL),
+                api_version=new_data.get(CONF_API_VERSION),
+                organization=new_data.get(CONF_ORGANIZATION),
+                skip_authentication=new_data.get(CONF_SKIP_AUTHENTICATION, False),
+                api_provider=new_data.get(CONF_API_PROVIDER),
+            )
+        except OpenAIError as err:
+            log_provider_failure(_LOGGER, "Provider configuration validation failed", err)
+            raise HomeAssistantError(
+                f"Provider configuration validation failed: {provider_user_message(err)}"
+            ) from err
+
+        if dict(entry.data) != original_data:
+            raise HomeAssistantError(
+                "Provider settings changed while this configuration was being "
+                "validated. No changes were saved by this operation. Try again."
+            )
 
         hass.config_entries.async_update_entry(entry, data=new_data)
 
