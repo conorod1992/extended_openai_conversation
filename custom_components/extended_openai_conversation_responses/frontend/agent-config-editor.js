@@ -8,6 +8,31 @@ const DELAYED_CHOICE = (panel, enabled, checked) => `<label class="group-functio
 export const BACKUP_CREDENTIAL_WARNING = "Recognised API keys, tokens, passwords, authorization headers and other common secrets are redacted from full backups. Re-enter any required credentials after restore. Redaction is best-effort, so review backup files before sharing them.";
 const BACKUP_CREDENTIAL_NOTICE = `<p class="privacy-warning credential-redaction-warning"><strong>Credentials are not backed up:</strong> ${BACKUP_CREDENTIAL_WARNING}</p>`;
 
+export function reasoningEffortOptionsForResult(result = {}) {
+  const values = result?.model_capabilities?.reasoning_effort_options;
+  const supported = Array.isArray(values) && values.length ? values : ["low", "medium", "high"];
+  return supported.map((value) => ({value, label: String(value).charAt(0).toUpperCase() + String(value).slice(1)}));
+}
+
+function applyModelAwareReasoningOptions(panel) {
+  if (!panel?._result?.options) return;
+  panel._result.options = {
+    ...panel._result.options,
+    reasoning_effort: reasoningEffortOptionsForResult(panel._result),
+  };
+}
+
+function normalizeReasoningBeforeModelValidation(panel) {
+  const root = panel?.shadowRoot;
+  const model = root?.querySelector('[data-config="chat_model"]');
+  if (!model) return;
+  model.addEventListener("change", () => {
+    if (/^gpt-6-astra(?:[-.]|$)/i.test(model.value || "")) return;
+    const reasoning = root.querySelector('[data-config="reasoning_effort"]');
+    if (reasoning && ["xhigh", "max"].includes(reasoning.value)) reasoning.value = "high";
+  }, {capture: true});
+}
+
 function simplifyConfigurationMarkupLegacy(panel, html) {
   const config = panel._draft || panel._result?.config || {};
   const localEnabled = Boolean(config.local_intents_enabled);
@@ -27,7 +52,9 @@ function simplifyConfigurationMarkupLegacy(panel, html) {
     .replace("After Request Rules, simple commands Home Assistant already understands can run locally without an AI request. If Home Assistant cannot handle the request, Extended OpenAI continues as normal.", "After Request Rules, try Home Assistant's built-in commands first. Requests that do not match locally, or that you exclude below, continue to your Function Tools or AI model.")
     .replace(/\s*<div class="config-toggle setting" data-field="local_intent_delayed_commands_to_ai"[\s\S]*?<span class="switch-track" aria-hidden="true"><\/span><\/label><\/div>/, "")
     .replace("Always send these command types to AI", "Send these command types to AI")
-    .replace("Select any Home Assistant command types that should skip local handling and continue to your Function Tools or AI model.", "Choose any commands that should skip local handling and continue to your Function Tools or AI model.");
+    .replace("Select any Home Assistant command types that should skip local handling and continue to your Function Tools or AI model.", "Choose any commands that should skip local handling and continue to your Function Tools or AI model.")
+    .replace("Maximum tool calls per conversation", "Maximum tool calls per request")
+    .replace("Stops the assistant after this many tool calls in one conversation to prevent runaway actions.", "Stops the assistant after this many model-requested tool calls while producing one response to a user request.");
   result = result.replace(/(<div class="backup-panel"[^>]*>[\s\S]*?<p class="privacy-warning">[\s\S]*?<\/p>)/, `$1${BACKUP_CREDENTIAL_NOTICE}`);
   return result.replace('<div id="local-intent-list" class="group-function-choices">', `<div id="local-intent-list" class="group-function-choices">${DELAYED_CHOICE(panel, localEnabled, Boolean(config.local_intent_delayed_commands_to_ai))}`);
 }
@@ -63,6 +90,12 @@ function simplifyConfigurationMarkup(panel, html) {
     local.querySelector("#local-intent-list")?.insertAdjacentHTML("afterbegin", DELAYED_CHOICE(panel, Boolean(config.local_intents_enabled), Boolean(config.local_intent_delayed_commands_to_ai)));
   }
 
+  const maximumToolCalls = root.querySelector('[data-field="max_function_calls_per_conversation"]');
+  const maximumToolCallsLabel = maximumToolCalls?.querySelector("strong, .setting-label-row > span, label");
+  const maximumToolCallsDescription = maximumToolCalls?.querySelector("small");
+  if (maximumToolCallsLabel) maximumToolCallsLabel.textContent = "Maximum tool calls per request";
+  if (maximumToolCallsDescription) maximumToolCallsDescription.textContent = "Stops the assistant after this many model-requested tool calls while producing one response to a user request.";
+
   const backupPanel = root.querySelector("#config-backup .backup-panel");
   const privateWarning = backupPanel?.querySelector(".privacy-warning");
   if (privateWarning && !backupPanel.querySelector(".credential-redaction-warning")) privateWarning.insertAdjacentHTML("afterend", BACKUP_CREDENTIAL_NOTICE);
@@ -91,12 +124,14 @@ export function renderConfiguration(panel) {
     queueRender(panel);
     return panel._loading?.() || '<div class="loading">Loading configuration…</div>';
   }
+  applyModelAwareReasoningOptions(panel);
   return simplifyConfigurationMarkup(panel, module.renderConfiguration(panel));
 }
 
 export function bindConfiguration(panel) {
   const module = getAgentConfigModule();
   if (!module) return queueRender(panel);
+  normalizeReasoningBeforeModelValidation(panel);
   return module.bindConfiguration(panel);
 }
 
