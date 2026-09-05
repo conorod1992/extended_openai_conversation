@@ -358,7 +358,7 @@ fixed conversation-start bundle; call memory_search when a later topic needs oth
 
 MODEL_TOKEN_PARAMETER_SUPPORT = (
     {
-        "pattern": r"(^|-)(gpt-4o|gpt-5|o1|o3|o4)",
+        "pattern": r"(^|-)(gpt-4o|gpt-5|gpt-6-astra|o1|o3|o4)",
         "token_param": "max_completion_tokens",
     },
 )
@@ -532,12 +532,12 @@ CONF_CONTEXT_TRUNCATE_STRATEGY = "context_truncate_strategy"
 DEFAULT_CONTEXT_TRUNCATE_STRATEGY = CONTEXT_TRUNCATE_KEEP_RECENT
 LEGACY_CONTEXT_TRUNCATE_STRATEGY = CONTEXT_TRUNCATE_CLEAR
 
-# Service Tier options (for GPT-5 models)
+# Service Tier options (for supported reasoning models)
 CONF_SERVICE_TIER = "service_tier"
 DEFAULT_SERVICE_TIER = "default"
 SERVICE_TIER_OPTIONS = ["auto", "default", "flex", "priority"]
 
-# Reasoning Effort options (for o1, o3, o4, gpt-5 models)
+# Reasoning Effort options (extended levels are handled separately)
 CONF_REASONING_EFFORT = "reasoning_effort"
 DEFAULT_REASONING_EFFORT = "low"
 REASONING_EFFORT_OPTIONS = ["low", "medium", "high"]
@@ -565,9 +565,9 @@ DEFAULT_MODEL_CONFIG = {
 # Each entry: {"pattern": regex_string, "config": config_dict}
 # Patterns are matched in order; first match wins
 MODEL_CONFIG_PATTERNS = [
-    # Reasoning models (o1, o3, o4, gpt-5, etc.)
+    # Reasoning models with the current shared request-parameter profile.
     {
-        "pattern": r"^o[1-4]|^gpt-5",
+        "pattern": r"^(?:o[1-4]|gpt-5|gpt-6-astra(?:[-.]|$))",
         "config": {
             "supports_top_p": False,
             "supports_temperature": False,
