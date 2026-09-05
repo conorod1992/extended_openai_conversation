@@ -5,6 +5,7 @@ import {
   buildGettingStarted,
   dismissOnboarding,
   hasEstablishedUsage,
+  markOnboardingSeen,
   markOnboardingStepReviewed,
   onboardingStorageKey,
   readOnboardingReviewState,
@@ -63,7 +64,7 @@ const reviewedDefaults = buildGettingStarted({
   facts: baseFacts,
   agent,
   result: freshResult,
-  reviewState: {reviewed:["instructions", "home_assistant_access", "connection_test"]},
+  reviewState: {seen:true, reviewed:["instructions", "home_assistant_access", "connection_test"]},
   isAdmin: true,
 });
 assert.equal(reviewedDefaults, null, "reviewing intentional defaults should complete one-time onboarding");
@@ -72,7 +73,7 @@ const emptyPrompt = buildGettingStarted({
   facts: {...baseFacts, prompt_state:"empty", exposed_entity_count:2},
   agent,
   result: freshResult,
-  reviewState: {reviewed:["instructions", "connection_test"]},
+  reviewState: {seen:true, reviewed:["instructions", "connection_test"]},
   isAdmin: true,
 });
 assert.ok(emptyPrompt);
@@ -84,7 +85,7 @@ const configured = buildGettingStarted({
   facts: {...baseFacts, prompt_state:"custom", exposed_entity_count:4},
   agent,
   result: freshResult,
-  reviewState: {reviewed:["connection_test"]},
+  reviewState: {seen:true, reviewed:["connection_test"]},
   isAdmin: true,
 });
 assert.equal(configured, null);
@@ -96,18 +97,32 @@ assert.equal(buildGettingStarted({
   agent,
   result:{...freshResult, load_errors:[{key:"usage"}]},
   isAdmin:true,
-}), null, "do not show first-run onboarding when usage history cannot be determined");
+}), null, "do not introduce first-run onboarding when usage history cannot be determined");
 assert.equal(buildGettingStarted({
   facts:baseFacts,
   agent,
   result:{usage:{lifetime:{api_request_count:3}}},
   isAdmin:true,
 }), null, "established agents must not be nagged after upgrade");
+assert.ok(buildGettingStarted({
+  facts:baseFacts,
+  agent,
+  result:{usage:{lifetime:{api_request_count:3}}},
+  reviewState:{seen:true},
+  isAdmin:true,
+}), "once a new agent has shown onboarding, first use must not silently hide unfinished steps");
+assert.ok(buildGettingStarted({
+  facts:baseFacts,
+  agent,
+  result:{...freshResult, load_errors:[{key:"usage"}]},
+  reviewState:{seen:true},
+  isAdmin:true,
+}), "an already-started checklist does not depend on later usage-summary availability");
 assert.equal(buildGettingStarted({
   facts:baseFacts,
   agent,
   result:freshResult,
-  reviewState:{dismissed:true},
+  reviewState:{seen:true, dismissed:true},
   isAdmin:true,
 }), null);
 
@@ -116,19 +131,22 @@ const storage = {
   getItem: (key) => values.get(key) ?? null,
   setItem: (key, value) => values.set(key, value),
 };
-assert.deepEqual(readOnboardingReviewState(agent, storage), {dismissed:false, reviewed:[]});
+assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:false, dismissed:false, reviewed:[]});
+assert.equal(markOnboardingSeen(agent, storage), true);
+assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:true, dismissed:false, reviewed:[]});
 assert.equal(markOnboardingStepReviewed(agent, "instructions", storage), true);
-assert.deepEqual(readOnboardingReviewState(agent, storage), {dismissed:false, reviewed:["instructions"]});
+assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:true, dismissed:false, reviewed:["instructions"]});
 assert.equal(markOnboardingStepReviewed(agent, "instructions", storage), true);
-assert.deepEqual(readOnboardingReviewState(agent, storage), {dismissed:false, reviewed:["instructions"]});
+assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:true, dismissed:false, reviewed:["instructions"]});
 assert.equal(dismissOnboarding(agent, storage), true);
-assert.deepEqual(readOnboardingReviewState(agent, storage), {dismissed:true, reviewed:["instructions"]});
+assert.deepEqual(readOnboardingReviewState(agent, storage), {seen:true, dismissed:true, reviewed:["instructions"]});
 
 const brokenStorage = {
   getItem: () => { throw new Error("storage blocked"); },
   setItem: () => { throw new Error("storage blocked"); },
 };
-assert.deepEqual(readOnboardingReviewState(agent, brokenStorage), {dismissed:false, reviewed:[]});
+assert.deepEqual(readOnboardingReviewState(agent, brokenStorage), {seen:false, dismissed:false, reviewed:[]});
+assert.equal(markOnboardingSeen(agent, brokenStorage), false);
 assert.equal(markOnboardingStepReviewed(agent, "instructions", brokenStorage), false);
 assert.equal(dismissOnboarding(agent, brokenStorage), false);
 
@@ -143,6 +161,7 @@ assert.match(source, /Setup & health below remains the ongoing source of truth/)
 assert.match(source, /panel\._data\?\.is_admin === true/);
 assert.match(source, /panel\._pendingSettingFocus/);
 assert.match(source, /panel\._navigate/);
+assert.match(source, /markOnboardingSeen\(agent\)/);
 assert.match(source, /Nothing runs automatically from Overview/);
 assert.doesNotMatch(source, /callWS\(/, "the onboarding card must not add provider or management calls");
 
