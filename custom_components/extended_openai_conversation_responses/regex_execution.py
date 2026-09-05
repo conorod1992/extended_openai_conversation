@@ -99,7 +99,9 @@ def _run_regex_worker(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         result = json.loads(completed.stdout)
     except (TypeError, ValueError) as err:
-        raise HomeAssistantError("Configured regular expression returned invalid data") from err
+        raise HomeAssistantError(
+            "Configured regular expression returned invalid data"
+        ) from err
     if not isinstance(result, dict):
         raise HomeAssistantError("Configured regular expression returned invalid data")
     return result
@@ -123,13 +125,21 @@ async def async_search_configured_patterns(
     invalid = result.get("invalid")
     if isinstance(invalid, list) and invalid:
         first = invalid[0]
-        detail = first[1] if isinstance(first, list) and len(first) > 1 else "invalid pattern"
+        detail = (
+            first[1]
+            if isinstance(first, list) and len(first) > 1
+            else "invalid pattern"
+        )
         raise HomeAssistantError(f"Invalid configured regular expression: {detail}")
     matches = result.get("results")
-    if not isinstance(matches, list) or not all(isinstance(item, bool) for item in matches):
+    if not isinstance(matches, list) or not all(
+        isinstance(item, bool) for item in matches
+    ):
         raise HomeAssistantError("Configured regular expression returned invalid data")
     if len(matches) != len(checks):
-        raise HomeAssistantError("Configured regular expression returned incomplete data")
+        raise HomeAssistantError(
+            "Configured regular expression returned incomplete data"
+        )
     return matches
 
 
@@ -153,7 +163,7 @@ async def _async_apply_speech_replacements(
                     "replacement": str(rule["replacement"]),
                 }
             )
-        except (KeyError, TypeError):
+        except KeyError, TypeError:
             _LOGGER.warning("Skipping invalid speech regex replacement %s", index)
     if not items:
         return text
@@ -164,11 +174,15 @@ async def _async_apply_speech_replacements(
     invalid = result.get("invalid")
     if isinstance(invalid, list):
         for item in invalid:
-            index = item[0] if isinstance(item, list) and item else "unknown"
-            _LOGGER.warning("Skipping invalid speech regex replacement %s", index)
+            invalid_index = item[0] if isinstance(item, list) and item else "unknown"
+            _LOGGER.warning(
+                "Skipping invalid speech regex replacement %s", invalid_index
+            )
     value = result.get("text")
     if not isinstance(value, str):
-        raise HomeAssistantError("Configured speech regular expression returned invalid data")
+        raise HomeAssistantError(
+            "Configured speech regular expression returned invalid data"
+        )
     return value
 
 
