@@ -262,7 +262,9 @@ async def async_test_agent(
                 kwargs["max_tokens"] = 16
             response = await client.chat.completions.create(**kwargs)
     except OpenAIError as err:
-        is_authentication_failure = classify_config_provider_error(err) == "invalid_auth"
+        is_authentication_failure = (
+            classify_config_provider_error(err) == "invalid_auth"
+        )
         if is_authentication_failure:
             # Authentication recovery is more important than diagnostics bookkeeping.
             # Request it first so a secondary usage-storage failure cannot suppress reauth.
