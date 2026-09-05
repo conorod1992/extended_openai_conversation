@@ -207,15 +207,116 @@ def validate_function_arguments(
     return dict(result)
 
 
+def _schema_contains_pattern(schema: Mapping[str, Any]) -> bool:
+    """Return whether a schema tree contains a configured string pattern."""
+    if "pattern" in schema:
+        return True
+    properties = schema.get("properties")
+    if isinstance(properties, Mapping) and any(
+        isinstance(child, Mapping) and _schema_contains_pattern(child)
+        for child in properties.values()
+    ):
+        return True
+    additional = schema.get("additionalProperties")
+    if isinstance(additional, Mapping) and _schema_contains_pattern(additional):
+        return True
+    items = schema.get("items")
+    return isinstance(items, Mapping) and _schema_contains_pattern(items)
+
+
+def _schema_without_patterns(value: Any) -> Any:
+    """Copy a JSON-schema tree while removing only runtime pattern constraints."""
+    if isinstance(value, Mapping):
+        return {
+            key: _schema_without_patterns(item)
+            for key, item in value.items()
+            if key != "pattern"
+        }
+    if isinstance(value, list):
+        return [_schema_without_patterns(item) for item in value]
+    return value
+
+
+def _collect_pattern_checks(
+    name: str,
+    value: Any,
+    schema: Mapping[str, Any],
+    checks: list[tuple[str, str, str, int]],
+) -> None:
+    """Collect configured regex checks from already type-validated arguments."""
+    expected = schema.get("type")
+    if expected is None:
+        if _OBJECT_KEYWORDS.intersection(schema):
+            expected = "object"
+        elif _ARRAY_KEYWORDS.intersection(schema):
+            expected = "array"
+    expected_types = {expected} if isinstance(expected, str) else set(expected or [])
+
+    if "object" in expected_types and isinstance(value, Mapping):
+        properties = schema.get("properties", {})
+        additional = schema.get("additionalProperties", True)
+        if isinstance(properties, Mapping):
+            for key, item in value.items():
+                child = properties.get(key)
+                if child is None and isinstance(additional, Mapping):
+                    child = additional
+                if isinstance(child, Mapping):
+                    _collect_pattern_checks(
+                        _field_name(name, str(key)), item, child, checks
+                    )
+    elif "array" in expected_types and isinstance(value, list):
+        items = schema.get("items")
+        if isinstance(items, Mapping):
+            for index, item in enumerate(value):
+                _collect_pattern_checks(
+                    f"{name or 'input'}[{index}]", item, items, checks
+                )
+    elif "string" in expected_types and isinstance(value, str):
+        pattern = schema.get("pattern")
+        if pattern is not None:
+            if not isinstance(pattern, str):
+                raise _schema_error("pattern must be a string")
+            checks.append((name or "input", pattern, value, 0))
+
+
 async def async_validate_function_arguments(
     hass: HomeAssistant,
     spec: Mapping[str, Any],
     arguments: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Validate Function Tool arguments away from Home Assistant's event loop."""
-    return await hass.async_add_executor_job(
-        validate_function_arguments, spec, arguments
+    """Validate Function Tool arguments with bounded configurable regex matching."""
+    schema = spec.get("parameters", {})
+    if not isinstance(schema, Mapping) or not _schema_contains_pattern(schema):
+        return await hass.async_add_executor_job(
+            validate_function_arguments, spec, arguments
+        )
+
+    # Run all non-pattern validation first, so configured regex is evaluated only
+    # against values that have already passed the normal schema/type contract.
+    stripped_spec = dict(spec)
+    stripped_spec["parameters"] = _schema_without_patterns(schema)
+    validated = await hass.async_add_executor_job(
+        validate_function_arguments, stripped_spec, arguments
     )
+
+    checks: list[tuple[str, str, str, int]] = []
+    _collect_pattern_checks("", validated, schema, checks)
+    if not checks:
+        return validated
+
+    from .regex_execution import async_search_configured_patterns
+
+    matches = await async_search_configured_patterns(
+        hass, [(pattern, value, flags) for _, pattern, value, flags in checks]
+    )
+    for (name, _pattern, _value, _flags), matches_pattern in zip(
+        checks, matches, strict=True
+    ):
+        if not matches_pattern:
+            raise HomeAssistantError(
+                f"Function input `{name}` does not match its required pattern"
+            )
+    return validated
 
 
 def _is_legacy_delay_schema(schema: object) -> bool:
