@@ -21,7 +21,6 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
 
           def replace_once(text: str, old: str, new: str, label: str) -> str:
               count = text.count(old)
@@ -100,7 +99,7 @@ jobs:
               ("await manager.async_release(first.key)", "await manager.async_release(first.key, first.claim_token)"),
               ("        expired.key, [conversation.SystemContent(content=\"bounded\")]\n", "        expired.key,\n        expired.claim_token,\n        [conversation.SystemContent(content=\"bounded\")],\n"),
               ("await manager.async_release(active.key)", "await manager.async_release(active.key, active.claim_token)"),
-              ("        first.key, history\n", "        first.key, first.claim_token, history\n"),
+              ("await manager.async_record_success(first.key, history)", "await manager.async_record_success(first.key, first.claim_token, history)"),
               ("await manager.async_record_success(owner.key, owner_history)", "await manager.async_record_success(owner.key, owner.claim_token, owner_history)"),
               ("        first.key, [conversation.SystemContent(content=\"expired guest history\")]\n", "        first.key,\n        first.claim_token,\n        [conversation.SystemContent(content=\"expired guest history\")],\n"),
               ("await manager.async_release(expired.key)", "await manager.async_release(expired.key, expired.claim_token)"),
