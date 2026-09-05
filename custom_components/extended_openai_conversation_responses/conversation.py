@@ -91,6 +91,7 @@ from .continuity import (
     async_get_continuity,
 )
 from .conversation_archive import ArchiveSession, ConversationArchive, async_get_archive
+from .debug import record_current_provider_failure
 from .entity import ExtendedOpenAIBaseLLMEntity
 from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
 from .function_groups import (
@@ -136,7 +137,6 @@ from .provider_errors import (
     provider_user_message,
     request_reauthentication,
 )
-from .debug import record_current_provider_failure
 from .request import assemble_integration_function_tools
 from .request_rules import (
     RequestRuleRuntime,
