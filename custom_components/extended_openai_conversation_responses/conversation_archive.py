@@ -29,6 +29,8 @@ MAX_EXCERPT_LENGTH = 500
 _ARCHIVE_MANAGERS = f"{DOMAIN}.archive_managers"
 _TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
+
+
 def _scope_retention_allowed(
     scope: ResolvedDataScope, shared_archive_enabled: bool
 ) -> bool:
@@ -217,9 +219,7 @@ class ConversationArchive:
             self._ensure_initialized()
             current = self._sessions.get(self._active.get(session_key, ""))
             now = dt_util.utcnow()
-            may_retain = _scope_retention_allowed(
-                scope, shared_archive_enabled
-            )
+            may_retain = _scope_retention_allowed(scope, shared_archive_enabled)
             if current is not None:
                 expired = (
                     _parse_time(current.last_message_at)
