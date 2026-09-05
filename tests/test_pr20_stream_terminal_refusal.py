@@ -79,14 +79,13 @@ async def test_chat_stream_surfaces_refusal_text() -> None:
 async def test_chat_content_filter_without_refusal_is_error() -> None:
     """A filtered empty Chat completion is not treated as normal success."""
     stream = FakeStream([_chat_chunk(finish_reason="content_filter")])
+    transformed = _entity()._transform_chat_stream(SimpleNamespace(), stream)
 
-    with pytest.raises(HomeAssistantError, match="content filter"):
-        _ = [
-            delta
-            async for delta in _entity()._transform_chat_stream(
-                SimpleNamespace(), stream
-            )
-        ]
+    try:
+        with pytest.raises(HomeAssistantError, match="content filter"):
+            _ = [delta async for delta in transformed]
+    finally:
+        await transformed.aclose()
 
 
 async def test_chat_content_filter_with_refusal_preserves_refusal() -> None:
