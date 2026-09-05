@@ -1,0 +1,120 @@
+name: Temporary provider transport patch
+
+on:
+  push:
+    branches:
+      - fix/provider-transport-classification
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: fix/provider-transport-classification
+
+      - name: Apply bounded provider transport changes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          provider = Path("custom_components/extended_openai_conversation_responses/provider_errors.py")
+          text = provider.read_text()
+          marker = '''class ProviderStreamError(OpenAIError):
+          '''
+          addition = '''class ProviderTransportError(OpenAIError):
+              """Standard-library transport failure normalized into the provider path."""
+
+
+          def provider_transport_error(
+              error: TimeoutError | ConnectionError,
+          ) -> ProviderTransportError:
+              """Normalize a raw timeout/connection failure without exposing its details."""
+              if isinstance(error, TimeoutError):
+                  return ProviderTransportError("Provider request timed out")
+              return ProviderTransportError("Could not connect to provider")
+
+
+          class ProviderStreamError(OpenAIError):
+          '''
+          if marker not in text:
+              raise SystemExit("provider class marker not found")
+          text = text.replace(marker, addition, 1)
+          old = '''    if isinstance(error, APIConnectionError):
+                  return "cannot_connect"
+          '''
+          new = '''    if isinstance(error, (APIConnectionError, ProviderTransportError)):
+                  return "cannot_connect"
+          '''
+          if old not in text:
+              raise SystemExit("provider classifier marker not found")
+          provider.write_text(text.replace(old, new, 1))
+
+          helpers = Path("custom_components/extended_openai_conversation_responses/helpers.py")
+          text = helpers.read_text()
+          marker = '''from .ha_permissions import filter_entities_for_active_user
+          '''
+          replacement = '''from .ha_permissions import filter_entities_for_active_user
+          from .provider_errors import provider_transport_error
+          '''
+          if marker not in text:
+              raise SystemExit("helpers import marker not found")
+          text = text.replace(marker, replacement, 1)
+          old = '''    response = await hass.async_add_executor_job(
+              partial(client.models.list, timeout=10)
+          )
+
+              async for _ in response:
+                  break
+              return client
+          '''
+          new = '''    try:
+                  response = await hass.async_add_executor_job(
+                      partial(client.models.list, timeout=10)
+                  )
+
+                  async for _ in response:
+                      break
+              except (TimeoutError, ConnectionError) as err:
+                  raise provider_transport_error(err) from err
+              return client
+          '''
+          if old not in text:
+              raise SystemExit("helpers validation marker not found")
+          helpers.write_text(text.replace(old, new, 1))
+
+          entity = Path("custom_components/extended_openai_conversation_responses/entity.py")
+          text = entity.read_text()
+          old = '''from .provider_errors import provider_stream_error
+          '''
+          new = '''from .provider_errors import provider_stream_error, provider_transport_error
+          '''
+          if old not in text:
+              raise SystemExit("entity import marker not found")
+          text = text.replace(old, new, 1)
+          old = '''                raise
+              else:
+          '''
+          new = '''                if isinstance(err, (TimeoutError, ConnectionError)):
+                      raise provider_transport_error(err) from err
+                  raise
+              else:
+          '''
+          if old not in text:
+              raise SystemExit("entity exception marker not found")
+          entity.write_text(text.replace(old, new, 1))
+
+      - name: Format and commit production changes
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+          ruff format custom_components/extended_openai_conversation_responses/provider_errors.py custom_components/extended_openai_conversation_responses/helpers.py custom_components/extended_openai_conversation_responses/entity.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/extended_openai_conversation_responses/provider_errors.py custom_components/extended_openai_conversation_responses/helpers.py custom_components/extended_openai_conversation_responses/entity.py
+          git commit -m "Normalize standard provider transport failures"
+          git push origin HEAD:fix/provider-transport-classification
