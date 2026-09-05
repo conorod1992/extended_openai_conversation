@@ -16,7 +16,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_TOP_P,
     DEFAULT_AI_TASK_OPTIONS,
 )
-from custom_components.extended_openai_conversation_responses.entity import _adjust_schema
+from custom_components.extended_openai_conversation_responses.entity import (
+    _adjust_schema,
+)
 from custom_components.extended_openai_conversation_responses.helpers import (
     get_api_mode,
     get_model_config,
