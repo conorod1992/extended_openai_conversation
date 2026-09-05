@@ -35,7 +35,7 @@ assert.match(source, /autocomplete="new-password"/);
 assert.match(source, /Validate & replace/);
 assert.match(source, /panel\._call\("diagnostics", "update_api_key", \{api_key: apiKey\}\)/);
 assert.match(source, /saved key is never displayed/i);
-assert.match(source, /Home Assistant has requested reauthentication/);
+assert.match(source, /Home Assistant's reauthentication flow if it is offered/);
 assert.doesNotMatch(source, /slice\([^)]*apiKey|substring\([^)]*apiKey/);
 
 const bootstrap = await readFile(
