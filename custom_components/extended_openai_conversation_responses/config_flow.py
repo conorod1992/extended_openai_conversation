@@ -6,7 +6,7 @@ import logging
 import types
 from typing import Any
 
-from openai._exceptions import APIConnectionError, AuthenticationError
+from openai import OpenAIError
 import voluptuous as vol
 import yaml
 
@@ -77,6 +77,7 @@ from .const import (
     SERVICE_TIER_OPTIONS,
 )
 from .helpers import get_authenticated_client, get_model_config
+from .provider_errors import classify_config_provider_error, log_provider_failure
 from .skills import SkillManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -266,10 +267,9 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
 
         try:
             await validate_input(self.hass, user_input)
-        except APIConnectionError:
-            errors["base"] = "cannot_connect"
-        except AuthenticationError:
-            errors["base"] = "invalid_auth"
+        except OpenAIError as err:
+            log_provider_failure(_LOGGER, "Provider validation failed", err)
+            errors["base"] = classify_config_provider_error(err)
         except Exception:  # pylint: disable=broad-except
             _LOGGER.exception("Unexpected exception")
             errors["base"] = "unknown"
@@ -315,10 +315,9 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             updated = {**self._reauth_entry.data, **user_input}
             try:
                 await validate_input(self.hass, updated)
-            except APIConnectionError:
-                errors["base"] = "cannot_connect"
-            except AuthenticationError:
-                errors["base"] = "invalid_auth"
+            except OpenAIError as err:
+                log_provider_failure(_LOGGER, "Provider reauthentication failed", err)
+                errors["base"] = classify_config_provider_error(err)
             except Exception:
                 _LOGGER.exception("Unexpected exception during reauthentication")
                 errors["base"] = "unknown"

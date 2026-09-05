@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
+
+from openai import OpenAIError
 
 from homeassistant.components import ai_task, conversation
 from homeassistant.config_entries import ConfigEntry
@@ -10,8 +13,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .debug import record_current_provider_failure
 from .entity import ExtendedOpenAIBaseLLMEntity
+from .provider_errors import log_provider_failure, request_reauthentication
 from .structured_output import parse_ai_task_structured_response
+
+_LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigSubentry
@@ -59,14 +66,20 @@ class ExtendedOpenAITaskEntity(
         """Handle a generate data task."""
         # Call _async_handle_chat_log with empty custom_functions and exposed_entities
         # AI Task operates without functions
-        await self._async_handle_chat_log(
-            chat_log,
-            function_tools=[],
-            exposed_entities=[],
-            llm_context=None,
-            structure_name=task.name,
-            structure=task.structure,
-        )
+        try:
+            await self._async_handle_chat_log(
+                chat_log,
+                function_tools=[],
+                exposed_entities=[],
+                llm_context=None,
+                structure_name=task.name,
+                structure=task.structure,
+            )
+        except OpenAIError as err:
+            request_reauthentication(self.hass, getattr(self, "entry", None), err)
+            record_current_provider_failure(err)
+            log_provider_failure(_LOGGER, "OpenAI AI Task request failed", err)
+            raise
 
         # Extract response
         if not isinstance(chat_log.content[-1], conversation.AssistantContent):

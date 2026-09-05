@@ -18,7 +18,13 @@ from homeassistant.helpers import intent
 
 from . import usage as usage_module
 from .const import DOMAIN
+from .debug import record_current_provider_failure
 from .guest_mode import GUEST_MODE_UNAVAILABLE
+from .provider_errors import (
+    log_provider_failure,
+    provider_user_message,
+    request_reauthentication,
+)
 from .usage import UsageManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -99,8 +105,12 @@ def _conversation_error_result(
         usage.mark_current_run_failed(type(err).__name__)
 
     if isinstance(err, OpenAIError):
-        _LOGGER.error(err)
-        message = f"Sorry, I had a problem talking to OpenAI: {err}"
+        request_reauthentication(entity.hass, getattr(entity, "entry", None), err)
+        record_current_provider_failure(err)
+        log_provider_failure(_LOGGER, "OpenAI request preparation failed", err)
+        message = (
+            f"Sorry, I had a problem talking to OpenAI: {provider_user_message(err)}"
+        )
     else:
         _LOGGER.error("Error during conversation: %s", err, exc_info=True)
         message = f"Something went wrong: {err}"

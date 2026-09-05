@@ -10,6 +10,7 @@ from custom_components.extended_openai_conversation_responses.agent_test import 
 )
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
+    API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_CHAT_MODEL,
     CONF_FUNCTION_TOOLS,
@@ -164,3 +165,52 @@ async def test_no_exposed_entities_produces_partial_warning() -> None:
     )
     assert entities.status == "Warning"
     assert entities.message == "0"
+
+
+async def test_responses_failed_status_is_reported() -> None:
+    hass, entry, subentry, client, usage = _objects(
+        {CONF_API_MODE: API_MODE_RESPONSES, CONF_CHAT_MODEL: "gpt-5.6"}
+    )
+    client.responses = SimpleNamespace(
+        create=AsyncMock(
+            return_value=SimpleNamespace(
+                id="resp_failed", status="failed",
+                error=SimpleNamespace(message="provider failed", code="server_error", type="server_error"),
+                usage=None,
+            )
+        )
+    )
+    with (
+        patch("custom_components.extended_openai_conversation_responses.agent_test.get_exposed_entities", return_value=[SimpleNamespace()]),
+        patch("custom_components.extended_openai_conversation_responses.agent_test.async_get_usage", AsyncMock(return_value=usage)),
+    ):
+        result = await async_test_agent(hass, entry, subentry)
+    model = next(check for check in result.checks if check.name == "Model access")
+    assert result.status == "Failed"
+    assert model.status == "Failed"
+    assert "server_error" in model.message
+    usage.async_record_request.assert_awaited_once_with(successful=False)
+
+
+async def test_responses_incomplete_status_is_reported() -> None:
+    hass, entry, subentry, client, usage = _objects(
+        {CONF_API_MODE: API_MODE_RESPONSES, CONF_CHAT_MODEL: "gpt-5.6"}
+    )
+    client.responses = SimpleNamespace(
+        create=AsyncMock(
+            return_value=SimpleNamespace(
+                id="resp_incomplete", status="incomplete", error=None,
+                incomplete_details=SimpleNamespace(reason="max_output_tokens"), usage=None,
+            )
+        )
+    )
+    with (
+        patch("custom_components.extended_openai_conversation_responses.agent_test.get_exposed_entities", return_value=[SimpleNamespace()]),
+        patch("custom_components.extended_openai_conversation_responses.agent_test.async_get_usage", AsyncMock(return_value=usage)),
+    ):
+        result = await async_test_agent(hass, entry, subentry)
+    model = next(check for check in result.checks if check.name == "Model access")
+    assert result.status == "Failed"
+    assert model.status == "Failed"
+    assert "max_output_tokens" in model.message
+    usage.async_record_request.assert_awaited_once_with(successful=False)

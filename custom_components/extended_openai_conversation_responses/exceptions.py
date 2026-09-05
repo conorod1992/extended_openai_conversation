@@ -95,13 +95,13 @@ class ParseArgumentsFailed(HomeAssistantError):
         """Initialize error."""
         super().__init__(
             self,
-            f"failed to parse arguments `{arguments}`. Increase maximum token to avoid the issue.",
+            "The provider returned malformed or unparseable tool-call arguments.",
         )
         self.arguments = arguments
 
     def __str__(self) -> str:
         """Return string representation."""
-        return f"failed to parse arguments `{self.arguments}`. Increase maximum token to avoid the issue."
+        return "The provider returned malformed or unparseable tool-call arguments."
 
 
 class TokenLengthExceededError(HomeAssistantError):

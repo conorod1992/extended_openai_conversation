@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, cast
 
-from openai import AuthenticationError
+from openai import AuthenticationError, OpenAIError
 import yaml
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
@@ -36,6 +36,7 @@ from .helpers import (
     supports_openai_hosted_tools,
 )
 from .memory import async_get_memory, memory_enabled
+from .provider_errors import ensure_successful_responses_result, provider_user_message
 from .usage import async_get_usage, extract_usage
 
 
@@ -228,6 +229,7 @@ async def async_test_agent(
                 tools=tools,
                 tool_choice="none",
             )
+            ensure_successful_responses_result(response)
         else:
             model_config = get_model_config(model)
             kwargs: dict[str, Any] = {
@@ -257,9 +259,16 @@ async def async_test_agent(
             check for check in checks if check.name == "Authentication"
         )
         authentication.status = "Failed"
-        authentication.message = str(err)
+        authentication.message = provider_user_message(err)
         checks.append(_check("Model access", "Failed", "Authentication rejected"))
         checks.append(_check("Function calling", "Failed", "Probe was rejected"))
+    except OpenAIError as err:
+        await usage_manager.async_record_request(successful=False)
+        message = provider_user_message(err)
+        checks.append(_check("Model access", "Failed", message))
+        checks.append(_check("Function calling", "Failed", "Probe was rejected"))
+        if web_search and web_search_compatible:
+            checks.append(_check("Web Search", "Failed", message))
     except Exception as err:
         await usage_manager.async_record_request(successful=False)
         checks.append(_check("Model access", "Failed", str(err)))

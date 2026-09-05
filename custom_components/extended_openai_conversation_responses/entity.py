@@ -75,6 +75,7 @@ from .parallel_tool_execution import (
     async_execute_parallel_safe_batch,
     resolve_parallel_safe_batch,
 )
+from .provider_errors import provider_stream_error
 from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
@@ -1224,13 +1225,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 continue
 
             if event_type == "response.failed":
-                error = getattr(event.response, "error", None)
-                reason = getattr(error, "message", None) or "unknown reason"
-                raise HomeAssistantError(f"OpenAI response failed: {reason}")
+                response = getattr(event, "response", None)
+                raise provider_stream_error(
+                    "OpenAI response failed",
+                    getattr(response, "error", None),
+                    response_id=getattr(response, "id", None),
+                )
 
             if event_type in {"error", "response.error"}:
-                reason = getattr(event, "message", None) or "unknown reason"
-                raise HomeAssistantError(f"OpenAI response error: {reason}")
+                raise provider_stream_error("OpenAI response error", event)
 
         if not terminal_event_seen:
             raise HomeAssistantError(
