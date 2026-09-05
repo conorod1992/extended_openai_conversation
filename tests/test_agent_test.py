@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from openai import AuthenticationError
+import pytest
 
 from custom_components.extended_openai_conversation_responses.agent_test import (
     async_test_agent,
@@ -74,6 +75,8 @@ async def test_successful_agent_test() -> None:
     result, client, usage = await _run()
 
     assert result.status == "Passed"
+    assert result.authentication_rejected is False
+    assert result.as_dict()["authentication_rejected"] is False
     assert {check.name for check in result.checks} >= {
         "Authentication",
         "Model access",
@@ -115,10 +118,42 @@ async def test_invalid_authentication() -> None:
         result = await async_test_agent(hass, entry, subentry)
 
     assert result.status == "Failed"
+    assert result.authentication_rejected is True
+    assert result.as_dict()["authentication_rejected"] is True
     assert any(
         check.name == "Authentication" and check.status == "Failed"
         for check in result.checks
     )
+    reauth.assert_called_once_with(hass, entry, authentication_error)
+
+
+async def test_reauthentication_is_requested_before_usage_recording() -> None:
+    hass, entry, subentry, client, usage = _objects()
+    response = MagicMock(status_code=401, request=MagicMock())
+    authentication_error = AuthenticationError(
+        "invalid key", response=response, body=None
+    )
+    client.chat.completions.create.side_effect = authentication_error
+    usage.async_record_request.side_effect = RuntimeError("usage unavailable")
+    reauth = MagicMock(return_value=True)
+
+    with (
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.get_exposed_entities",
+            return_value=[SimpleNamespace()],
+        ),
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.async_get_usage",
+            AsyncMock(return_value=usage),
+        ),
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.request_reauthentication",
+            reauth,
+        ),
+        pytest.raises(RuntimeError, match="usage unavailable"),
+    ):
+        await async_test_agent(hass, entry, subentry)
+
     reauth.assert_called_once_with(hass, entry, authentication_error)
 
 
@@ -127,6 +162,7 @@ async def test_unsupported_api_mode_stops_before_probe() -> None:
     result = await async_test_agent(hass, entry, subentry)
 
     assert result.status == "Failed"
+    assert result.authentication_rejected is False
     assert result.checks[-1].name == "API mode"
     client.chat.completions.create.assert_not_awaited()
 
@@ -194,6 +230,7 @@ async def test_responses_failed_status_is_reported() -> None:
         result = await async_test_agent(hass, entry, subentry)
     model = next(check for check in result.checks if check.name == "Model access")
     assert result.status == "Failed"
+    assert result.authentication_rejected is False
     assert model.status == "Failed"
     assert "server_error" in model.message
     usage.async_record_request.assert_awaited_once_with(successful=False)
@@ -218,6 +255,7 @@ async def test_responses_incomplete_status_is_reported() -> None:
         result = await async_test_agent(hass, entry, subentry)
     model = next(check for check in result.checks if check.name == "Model access")
     assert result.status == "Failed"
+    assert result.authentication_rejected is False
     assert model.status == "Failed"
     assert "max_output_tokens" in model.message
     usage.async_record_request.assert_awaited_once_with(successful=False)
