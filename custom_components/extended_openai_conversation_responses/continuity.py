@@ -30,6 +30,7 @@ class ContinuityResolution:
     key: str | None
     history: list[conversation.Content]
     resumed: bool
+    claim_token: str | None = None
 
 
 @dataclass(slots=True)
@@ -42,6 +43,7 @@ class ActiveConversation:
     last_active: Any
     history: list[conversation.Content]
     in_flight: bool = False
+    claim_token: str | None = None
 
 
 @dataclass(slots=True)
@@ -146,19 +148,28 @@ class ConversationContinuity:
                         [],
                         False,
                     )
+                claim_token = uuid4().hex
                 active.in_flight = True
+                active.claim_token = claim_token
                 self.resume_count += 1
                 return ContinuityResolution(
-                    active.conversation_id, key, active.history.copy(), True
+                    active.conversation_id,
+                    key,
+                    active.history.copy(),
+                    True,
+                    claim_token=claim_token,
                 )
             # A non-ULID caller-selected ID is explicitly supported by HA's
             # chat-session helper and remains stable if Core recreates its log.
             conversation_id = self._new_conversation_id(namespace)
+            claim_token = uuid4().hex
             self._sessions[key] = ActiveConversation(
-                key, conversation_id, label, now, [], True
+                key, conversation_id, label, now, [], True, claim_token
             )
             self.new_session_count += 1
-            return ContinuityResolution(conversation_id, key, [], False)
+            return ContinuityResolution(
+                conversation_id, key, [], False, claim_token=claim_token
+            )
 
     def _new_conversation_id(self, namespace: str | None) -> str:
         """Create an integration-owned ID with an inspectable privacy namespace."""
@@ -186,27 +197,34 @@ class ConversationContinuity:
         )
 
     async def async_record_success(
-        self, key: str | None, content: list[conversation.Content]
+        self,
+        key: str | None,
+        claim_token: str | None,
+        content: list[conversation.Content],
     ) -> None:
-        """Record a successful turn after the model call has completed."""
-        if key is None:
+        """Record a successful turn only for the request that owns the claim."""
+        if key is None or claim_token is None:
             return
         async with self._lock:
             active = self._sessions.get(key)
-            if active is None:
+            if active is None or active.claim_token != claim_token:
                 return
             active.history = content.copy()
             active.last_active = dt_util.utcnow()
             active.in_flight = False
+            active.claim_token = None
 
-    async def async_release(self, key: str | None) -> None:
-        """Release a request claim after failure or cancellation."""
-        if key is None:
+    async def async_release(
+        self, key: str | None, claim_token: str | None
+    ) -> None:
+        """Release only the request claim identified by its opaque token."""
+        if key is None or claim_token is None:
             return
         async with self._lock:
             active = self._sessions.get(key)
-            if active is not None:
+            if active is not None and active.claim_token == claim_token:
                 active.in_flight = False
+                active.claim_token = None
 
     async def async_end(self, key: str) -> bool:
         """End one active conversation."""
