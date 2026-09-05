@@ -870,8 +870,11 @@ def _calculate_averages(day: dict[str, Any]) -> None:
         )
 
 
-def _parse_time(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value)
+def _parse_time(value: Any) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except TypeError, ValueError:
+        return datetime.min.replace(tzinfo=dt_util.UTC)
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_util.UTC)
 
 
