@@ -5,7 +5,7 @@ const STEP_ACTIONS = {
   assistant_model: {page: "assistant", subsection: "basics", target: "config-chat_model"},
   instructions: {page: "assistant", subsection: "prompt-context", target: "prompt-editor"},
   home_assistant_access: {page: "capabilities", subsection: "home-assistant", target: ""},
-  connection_test: {page: "usage-maintenance", subsection: "diagnostics", target: "test-agent"},
+  connection_test: {page: "usage-maintenance", subsection: "diagnostics", target: ""},
 };
 
 function defaultStorage() {
@@ -35,6 +35,7 @@ function apiModeLabel(configuredMode, effectiveMode) {
 function normalizedReviewState(state = {}) {
   return {
     seen: state?.seen === true,
+    completed: state?.completed === true,
     dismissed: state?.dismissed === true,
     reviewed: Array.from(new Set(Array.isArray(state?.reviewed) ? state.reviewed.filter((item) => typeof item === "string") : [])),
   };
@@ -81,6 +82,11 @@ export function markOnboardingStepReviewed(agent, stepId, storage = defaultStora
   return writeOnboardingReviewState(agent, {...current, seen: true, reviewed: [...reviewed]}, storage);
 }
 
+export function completeOnboarding(agent, storage = defaultStorage()) {
+  const current = readOnboardingReviewState(agent, storage);
+  return writeOnboardingReviewState(agent, {...current, seen: true, completed: true}, storage);
+}
+
 export function dismissOnboarding(agent, storage = defaultStorage()) {
   const current = readOnboardingReviewState(agent, storage);
   return writeOnboardingReviewState(agent, {...current, seen: true, dismissed: true}, storage);
@@ -94,13 +100,14 @@ export function hasEstablishedUsage(result = {}) {
 }
 
 function usageStatusKnown(result = {}) {
+  if (!result?.usage?.lifetime || typeof result.usage.lifetime !== "object") return false;
   return !(Array.isArray(result?.load_errors)
     && result.load_errors.some((issue) => issue?.key === "usage"));
 }
 
 export function buildGettingStarted({facts = {}, agent = {}, result = {}, reviewState = {}, isAdmin = false} = {}) {
   const review = normalizedReviewState(reviewState);
-  if (!isAdmin || facts?.unavailable === true || review.dismissed) return null;
+  if (!isAdmin || facts?.unavailable === true || review.completed || review.dismissed) return null;
   if (!review.seen && (!usageStatusKnown(result) || hasEstablishedUsage(result))) return null;
 
   const reviewed = new Set(review.reviewed);
@@ -179,8 +186,8 @@ export function buildGettingStarted({facts = {}, agent = {}, result = {}, review
   ];
 
   const reviewedCount = steps.filter((step) => step.reviewed).length;
-  if (reviewedCount === steps.length) return null;
   return {
+    complete: reviewedCount === steps.length,
     reviewed_count: reviewedCount,
     total_count: steps.length,
     remaining_count: steps.length - reviewedCount,
@@ -226,7 +233,7 @@ function renderGettingStarted(panel, model) {
     <section id="eoc-getting-started" class="getting-started" aria-label="Getting started">
       <div class="getting-started-heading">
         <div><span class="section-kicker"><ha-icon icon="mdi:map-marker-path"></ha-icon> First-time setup</span><h2>Getting started</h2><p>Review the core setup for this assistant. Optional capabilities such as Memory, Knowledge, Web Search and Function Tools are not required here.</p></div>
-        <div class="getting-started-progress" role="status"><strong>${model.reviewed_count} of ${model.total_count} reviewed</strong><span>${model.remaining_count} ${model.remaining_count === 1 ? "step" : "steps"} remaining</span></div>
+        <div class="getting-started-progress" role="status"><strong>${model.reviewed_count} of ${model.total_count} setup steps reviewed</strong><span>${model.remaining_count} ${model.remaining_count === 1 ? "step" : "steps"} remaining</span></div>
       </div>
       <div class="getting-started-grid">${steps}</div>
       <div class="getting-started-footer"><p>Setup & health below remains the ongoing source of truth even after this one-time checklist is dismissed or completed.</p><button type="button" class="secondary getting-started-dismiss" id="eoc-dismiss-getting-started">Dismiss</button></div>
@@ -245,24 +252,28 @@ export function bindGettingStarted(panel) {
     agent,
     result,
     reviewState,
-    isAdmin: panel._data?.is_admin === true,
+    isAdmin: panel._data?.is_admin === true && result.setup_health?.can_manage === true,
   });
   if (!model) return;
+  if (model.complete) {
+    completeOnboarding(agent);
+    return;
+  }
   const intro = root.querySelector(".page-intro");
   if (!intro) return;
   ensureStyles(panel);
-  markOnboardingSeen(agent);
   const host = document.createElement("div");
   host.innerHTML = renderGettingStarted(panel, model).trim();
   const card = host.firstElementChild;
   if (!card) return;
   intro.insertAdjacentElement("afterend", card);
+  markOnboardingSeen(agent);
 
   card.querySelectorAll("[data-onboarding-step]").forEach((button) => button.addEventListener("click", async () => {
-    const stepId = button.dataset.onboardingStep || "";
-    if (stepId) markOnboardingStepReviewed(agent, stepId);
     panel._pendingSettingFocus = button.dataset.target || "";
     await panel._navigate(button.dataset.page, button.dataset.subsection || null);
+    const stepId = button.dataset.onboardingStep || "";
+    if (stepId) markOnboardingStepReviewed(agent, stepId);
   }));
   card.querySelector("#eoc-dismiss-getting-started")?.addEventListener("click", () => {
     dismissOnboarding(agent);
