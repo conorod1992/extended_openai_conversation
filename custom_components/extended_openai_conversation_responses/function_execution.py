@@ -7,6 +7,7 @@ import math
 import re
 from typing import Any
 
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 _JSON_TYPES = {"array", "boolean", "integer", "null", "number", "object", "string"}
@@ -28,6 +29,7 @@ _SUPPORTED_SCHEMA_KEYWORDS = (
     | _STRING_KEYWORDS
     | _NUMBER_KEYWORDS
 )
+_LEGACY_DELAY_FIELDS = frozenset({"hours", "minutes", "seconds"})
 
 
 def validate_function_schema(schema: Mapping[str, Any]) -> None:
@@ -203,6 +205,60 @@ def validate_function_arguments(
     if not isinstance(result, Mapping):
         raise HomeAssistantError("Function input schema must describe an object")
     return dict(result)
+
+
+async def async_validate_function_arguments(
+    hass: HomeAssistant,
+    spec: Mapping[str, Any],
+    arguments: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate Function Tool arguments away from Home Assistant's event loop."""
+    return await hass.async_add_executor_job(
+        validate_function_arguments, spec, arguments
+    )
+
+
+def _is_legacy_delay_schema(schema: object) -> bool:
+    """Return whether a parameter matches the documented legacy delay contract."""
+    if not isinstance(schema, Mapping) or schema.get("type") != "object":
+        return False
+    properties = schema.get("properties")
+    if not isinstance(properties, Mapping) or not properties:
+        return False
+    if not set(properties).issubset(_LEGACY_DELAY_FIELDS):
+        return False
+    return all(
+        isinstance(child, Mapping) and child.get("type") in {"integer", "number"}
+        for child in properties.values()
+    )
+
+
+def split_legacy_execution_delay(
+    spec: Mapping[str, Any], arguments: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Separate documented legacy scheduling metadata from real function arguments.
+
+    Historically any argument named ``delay`` was consumed as integration scheduling
+    metadata. Preserve that behavior only for the documented object-shaped delay
+    schema (hours/minutes/seconds). Other parameters literally named ``delay`` remain
+    part of the configured Function Tool's argument namespace.
+    """
+    execution_arguments = dict(arguments)
+    parameters = spec.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return execution_arguments, None
+    properties = parameters.get("properties")
+    if not isinstance(properties, Mapping):
+        return execution_arguments, None
+    delay_schema = properties.get("delay")
+    delay_value = execution_arguments.get("delay")
+    if not _is_legacy_delay_schema(delay_schema) or not isinstance(
+        delay_value, Mapping
+    ):
+        return execution_arguments, None
+
+    execution_arguments.pop("delay", None)
+    return execution_arguments, dict(delay_value)
 
 
 def _field_name(parent: str, child: str) -> str:
