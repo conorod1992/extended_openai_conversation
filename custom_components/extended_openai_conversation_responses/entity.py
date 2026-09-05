@@ -64,7 +64,10 @@ from .context import (
 )
 from .exceptions import FunctionNotFound, ParseArgumentsFailed, TokenLengthExceededError
 from .function_call_budget import FunctionCallBudget
-from .function_execution import validate_function_arguments
+from .function_execution import (
+    async_validate_function_arguments,
+    split_legacy_execution_delay,
+)
 from .function_tool_resolution import latest_function_tool_for_execution
 from .functions import get_function
 from .helpers import get_api_mode, get_model_config
@@ -123,6 +126,15 @@ def _normalize_url_citation(annotation: object) -> dict[str, Any] | None:
         "title": _annotation_value(annotation, "title"),
         "url": _annotation_value(annotation, "url"),
     }
+
+
+def _normalize_function_result(result: Any) -> Any:
+    """Preserve provider-serializable Function results, falling back compatibly."""
+    try:
+        orjson.dumps(result)
+    except (TypeError, OverflowError):
+        return str(result)
+    return result
 
 
 def _adjust_schema(schema: dict[str, Any]) -> None:
@@ -210,7 +222,9 @@ def _convert_content_to_param(
                     "tool_call_id": _shorten_tool_call_id(content.tool_call_id)
                     if shorten_tool_call_id
                     else content.tool_call_id,
-                    "content": orjson.dumps(content.tool_result).decode(),
+                    "content": orjson.dumps(
+                        content.tool_result, option=orjson.OPT_SORT_KEYS
+                    ).decode(),
                 }
             )
 
@@ -249,7 +263,9 @@ def _convert_content_to_responses_param(
                 {
                     "type": "function_call_output",
                     "call_id": content.tool_call_id,
-                    "output": orjson.dumps(content.tool_result).decode(),
+                    "output": orjson.dumps(
+                        content.tool_result, option=orjson.OPT_SORT_KEYS
+                    ).decode(),
                 }
             )
             continue
@@ -1169,61 +1185,79 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> conversation.ToolResultContent:
-        """Execute a custom function."""
-        arguments = validate_function_arguments(
-            function_tool.get("spec", {}), tool_input.tool_args
-        )
-        function_config = function_tool["function"]
-        function = get_function(function_config["type"])
-
-        if self.should_run_in_background(arguments):
-            # create a delayed function and execute in background
-            function_config = self.get_delayed_function_config(
-                function_config, arguments
+        """Execute a configured Function Tool."""
+        try:
+            spec = function_tool.get("spec", {})
+            arguments = await async_validate_function_arguments(
+                self.hass, spec, tool_input.tool_args
             )
+            execution_arguments, execution_delay = split_legacy_execution_delay(
+                spec, arguments
+            )
+            function_config = function_tool["function"]
             function = get_function(function_config["type"])
-            self.entry.async_create_task(
-                self.hass,
-                function.execute(
+
+            if self.should_run_in_background(execution_delay):
+                # Preserve the documented legacy delay object as scheduling metadata,
+                # but keep it out of the configured Function Tool's own arguments.
+                function_config = self.get_delayed_function_config(
+                    function_config, execution_delay
+                )
+                function = get_function(function_config["type"])
+                self.entry.async_create_task(
+                    self.hass,
+                    function.execute(
+                        self.hass,
+                        function_config,
+                        execution_arguments,
+                        llm_context,
+                        exposed_entities,
+                    ),
+                )
+                result: Any = "Scheduled"
+            else:
+                result = await function.execute(
                     self.hass,
                     function_config,
-                    arguments,
+                    execution_arguments,
                     llm_context,
                     exposed_entities,
-                ),
-            )
-            result = "Scheduled"
-        else:
-            result = await function.execute(
-                self.hass, function_config, arguments, llm_context, exposed_entities
-            )
+                )
+        except HomeAssistantError as err:
+            _LOGGER.warning("Function Tool `%s` failed: %s", tool_input.tool_name, err)
+            result = {"status": "error", "error": str(err)}
 
         return conversation.ToolResultContent(
             agent_id=self.entity_id,
             tool_call_id=tool_input.id,
             tool_name=tool_input.tool_name,
-            tool_result={"result": str(result)},
+            tool_result={"result": _normalize_function_result(result)},
         )
 
     def _provider_tool_allowed(self, tool_type: str) -> bool:
         """Allow subclasses to tighten provider-owned tools between rounds."""
         return True
 
-    def should_run_in_background(self, arguments: dict[str, Any]) -> bool:
-        """Check if function needs delay."""
-        return isinstance(arguments, dict) and arguments.get("delay") is not None
+    def should_run_in_background(
+        self, execution_delay: Mapping[str, Any] | None
+    ) -> bool:
+        """Check whether explicit legacy scheduling metadata is present."""
+        return execution_delay is not None
 
     def get_delayed_function_config(
-        self, function_config: dict[str, Any], arguments: dict[str, Any]
+        self,
+        function_config: dict[str, Any],
+        execution_delay: Mapping[str, Any] | None,
     ) -> dict[str, Any]:
-        """Execute function with delay."""
-        # create a composite function with delay in script function
+        """Wrap a function with its explicit scheduling delay."""
+        if execution_delay is None:
+            raise HomeAssistantError("Delayed Function Tool execution requires a delay")
         return {
             "type": "composite",
             "sequence": [
                 {
                     "type": "script",
-                    "sequence": [{"delay": arguments["delay"]}],
+                    "sequence": [{"delay": dict(execution_delay)}],
                 },
                 function_config,
             ],
