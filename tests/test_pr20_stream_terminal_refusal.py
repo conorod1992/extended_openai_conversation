@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
 
@@ -19,10 +18,17 @@ class FakeStream:
 
     def __init__(self, events: list[Any]) -> None:
         self.events = events
+        self._index = 0
 
-    async def __aiter__(self) -> AsyncIterator[Any]:
-        for event in self.events:
-            yield event
+    def __aiter__(self) -> FakeStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._index >= len(self.events):
+            raise StopAsyncIteration
+        event = self.events[self._index]
+        self._index += 1
+        return event
 
 
 def _event(event_type: str, **kwargs: Any) -> SimpleNamespace:
@@ -82,6 +88,7 @@ async def test_chat_content_filter_without_refusal_is_error() -> None:
     transformed = _entity()._transform_chat_stream(SimpleNamespace(), stream)
 
     try:
+        assert await anext(transformed) == {"role": "assistant"}
         with pytest.raises(HomeAssistantError, match="content filter"):
             await anext(transformed)
     finally:
