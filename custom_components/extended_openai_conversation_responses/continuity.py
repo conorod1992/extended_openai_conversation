@@ -214,9 +214,7 @@ class ConversationContinuity:
             active.in_flight = False
             active.claim_token = None
 
-    async def async_release(
-        self, key: str | None, claim_token: str | None
-    ) -> None:
+    async def async_release(self, key: str | None, claim_token: str | None) -> None:
         """Release only the request claim identified by its opaque token."""
         if key is None or claim_token is None:
             return
