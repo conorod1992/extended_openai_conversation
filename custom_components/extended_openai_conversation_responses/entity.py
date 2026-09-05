@@ -1049,6 +1049,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             choice = chunk.choices[0]
             delta = choice.delta
             finish_reason = choice.finish_reason
+            finish_reason = choice.finish_reason
 
             if delta.content:
                 # Ensure content is a string (Mistral might return unexpected types)
