@@ -27,29 +27,29 @@ def install_guest_policy_fast_path() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
-    _INSTALLED = True
 
     from . import conversation
 
-    original_effective_guest_policy = (
+    current_effective_guest_policy = (
         conversation.ExtendedOpenAIAgentEntity._effective_guest_policy
     )
+    if not getattr(
+        current_effective_guest_policy,
+        "_extended_openai_guest_policy_fast_path",
+        False,
+    ):
+        original_effective_guest_policy = current_effective_guest_policy
 
-    def effective_guest_policy_fast(self: Any) -> Any:
-        request_policy = conversation._ACTIVE_GUEST_POLICY.get()
-        if can_reuse_request_policy(request_policy, self._guest_mode):
-            return request_policy
-        return original_effective_guest_policy(self)
+        def effective_guest_policy_fast(self: Any) -> Any:
+            request_policy = conversation._ACTIVE_GUEST_POLICY.get()
+            if can_reuse_request_policy(request_policy, self._guest_mode):
+                return request_policy
+            return original_effective_guest_policy(self)
 
-    conversation.ExtendedOpenAIAgentEntity._effective_guest_policy = (  # type: ignore[method-assign]
-        effective_guest_policy_fast
-    )
-
-    # Request-scoped tool reuse relies on this fast path returning the same resolved
-    # policy object while permissions remain unchanged, so install it afterwards.
-    from .runtime_cleanup import install_runtime_cleanup
-
-    install_runtime_cleanup()
+        effective_guest_policy_fast._extended_openai_guest_policy_fast_path = True  # type: ignore[attr-defined]
+        conversation.ExtendedOpenAIAgentEntity._effective_guest_policy = (  # type: ignore[method-assign]
+            effective_guest_policy_fast
+        )
 
     # Static request caching intentionally wraps the final runtime tool snapshot so
     # policy/group changes remain authoritative invalidation boundaries.
@@ -69,3 +69,9 @@ def install_guest_policy_fast_path() -> None:
     from .feature_status import install_management_feature_status
 
     install_management_feature_status()
+
+    # Publish installation only after the complete chain succeeds. If a later hook
+    # raises, a same-process retry resumes installation rather than silently skipping
+    # an unfinished startup sequence; the method wrapper above is independently
+    # idempotent so such a retry cannot double-wrap it.
+    _INSTALLED = True
