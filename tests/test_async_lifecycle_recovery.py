@@ -91,8 +91,10 @@ async def test_bash_cancellation_terminates_child_and_reraises(
         def kill_group(_pid: int, sig) -> None:
             if sig == bash.signal.SIGTERM:
                 process.terminate()
-            else:
-                process.kill()
+                return
+            if process.returncode is not None:
+                raise ProcessLookupError
+            process.kill()
 
         monkeypatch.setattr(bash.os, "killpg", kill_group)
     monkeypatch.setattr(function, "_async_guard_command", AsyncMock())
@@ -128,8 +130,8 @@ async def test_bash_cleanup_signals_group_after_shell_leader_exits(
     process = _FakeProcess()
     process.returncode = 0
     process._done.set()
-    stdout_task = asyncio.create_task(bash._async_read_stream(process.stdout))
-    stderr_task = asyncio.create_task(bash._async_read_stream(process.stderr))
+    stdout_task = asyncio.create_task(bash._read_bounded_stream(process.stdout))
+    stderr_task = asyncio.create_task(bash._read_bounded_stream(process.stderr))
     signals = []
 
     def kill_group(pid: int, sig) -> None:
