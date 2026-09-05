@@ -99,6 +99,7 @@ from .model_search_hardening import install_model_search_hardening
 from .openai_compat import apply_openai_compatibility
 from .performance import PerformanceOpenAIClientProxy, install_performance_optimizations
 from .persistence_hardening import install_persistence_transactions
+from .provider_credentials import setup_provider_credentials_websocket
 from .regex_execution import install_configurable_regex_isolation
 from .request_rule_match_preview import install_request_rule_match_preview
 from .safety_hardening import install_safety_hardening
@@ -124,6 +125,7 @@ def _register_split_frontend_modules() -> None:
         "voice-identity-ui.js",
         "management-navigation-search.js",
         "usage-input-footprint.js",
+        "management-provider-credentials.js",
     )
     modules = tuple(
         dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
@@ -160,6 +162,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_setup_ha_permissions(hass)
     await async_setup_services(hass, config)
     await async_setup_intercom_services(hass)
+    # Register the narrow admin credential command separately from the broad
+    # management command before exposing the management panel.
+    setup_provider_credentials_websocket(hass)
     # The management bootstrap imports debug-management.js, so register the
     # debug assets before exposing the panel itself.
     await async_setup_debug_ui(hass)

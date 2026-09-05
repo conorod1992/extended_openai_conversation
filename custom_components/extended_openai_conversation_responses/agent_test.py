@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, cast
 
-from openai import AuthenticationError, OpenAIError
+from openai import OpenAIError
 import yaml
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
@@ -36,7 +36,12 @@ from .helpers import (
     supports_openai_hosted_tools,
 )
 from .memory import async_get_memory, memory_enabled
-from .provider_errors import ensure_successful_responses_result, provider_user_message
+from .provider_errors import (
+    classify_config_provider_error,
+    ensure_successful_responses_result,
+    provider_user_message,
+    request_reauthentication,
+)
 from .usage import async_get_usage, extract_usage
 
 
@@ -55,12 +60,14 @@ class AgentTestResult:
 
     status: str
     checks: list[TestCheck]
+    authentication_rejected: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         """Return a JSON-safe response for flows and WebSocket clients."""
         return {
             "status": self.status,
             "checks": [asdict(check) for check in self.checks],
+            "authentication_rejected": self.authentication_rejected,
         }
 
     def as_text(self) -> str:
@@ -105,6 +112,7 @@ async def async_test_agent(
 ) -> AgentTestResult:
     """Test one agent with local checks and at most one minimal live request."""
     checks: list[TestCheck] = []
+    authentication_rejected = False
     client = getattr(entry, "runtime_data", None)
     if client is None:
         checks.append(_check("Authentication", "Failed", "API client is unavailable"))
@@ -253,22 +261,30 @@ async def async_test_agent(
             else:
                 kwargs["max_tokens"] = 16
             response = await client.chat.completions.create(**kwargs)
-    except AuthenticationError as err:
-        await usage_manager.async_record_request(successful=False)
-        authentication = next(
-            check for check in checks if check.name == "Authentication"
-        )
-        authentication.status = "Failed"
-        authentication.message = provider_user_message(err)
-        checks.append(_check("Model access", "Failed", "Authentication rejected"))
-        checks.append(_check("Function calling", "Failed", "Probe was rejected"))
     except OpenAIError as err:
-        await usage_manager.async_record_request(successful=False)
-        message = provider_user_message(err)
-        checks.append(_check("Model access", "Failed", message))
-        checks.append(_check("Function calling", "Failed", "Probe was rejected"))
-        if web_search and web_search_compatible:
-            checks.append(_check("Web Search", "Failed", message))
+        is_authentication_failure = (
+            classify_config_provider_error(err) == "invalid_auth"
+        )
+        if is_authentication_failure:
+            # Authentication recovery is more important than diagnostics bookkeeping.
+            # Request it first so a secondary usage-storage failure cannot suppress reauth.
+            request_reauthentication(hass, entry, err)
+            authentication_rejected = True
+            await usage_manager.async_record_request(successful=False)
+            authentication = next(
+                check for check in checks if check.name == "Authentication"
+            )
+            authentication.status = "Failed"
+            authentication.message = provider_user_message(err)
+            checks.append(_check("Model access", "Failed", "Authentication rejected"))
+            checks.append(_check("Function calling", "Failed", "Probe was rejected"))
+        else:
+            await usage_manager.async_record_request(successful=False)
+            message = provider_user_message(err)
+            checks.append(_check("Model access", "Failed", message))
+            checks.append(_check("Function calling", "Failed", "Probe was rejected"))
+            if web_search and web_search_compatible:
+                checks.append(_check("Web Search", "Failed", message))
     except Exception as err:
         await usage_manager.async_record_request(successful=False)
         checks.append(_check("Model access", "Failed", str(err)))
@@ -286,4 +302,6 @@ async def async_test_agent(
         if web_search and web_search_compatible:
             checks.append(_check("Web Search", "Passed", "Hosted tool schema accepted"))
 
-    return AgentTestResult(_overall(checks), checks)
+    return AgentTestResult(
+        _overall(checks), checks, authentication_rejected=authentication_rejected
+    )
