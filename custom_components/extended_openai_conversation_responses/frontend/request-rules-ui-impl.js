@@ -229,6 +229,7 @@ export function bindRequestRules(panel) {
   const q = (selector) => root.querySelector(selector);
   const result = panel._result || {};
   const rules = result.rules || [];
+  const revision = result.revision;
   const actionSelectorHost = q("#rule-action-sequence-host");
   if (!actionSelectorHost) return;
   const actionSelector = createRequestRuleActionSelector(panel, actionSelectorHost);
@@ -285,24 +286,24 @@ export function bindRequestRules(panel) {
   q("#rule-search")?.addEventListener("input", (event) => { panel._query = event.target.value; panel._render(); });
   root.querySelectorAll(".rule-edit").forEach((button) => button.addEventListener("click", () => open(button.dataset.id)));
   root.querySelectorAll(".rule-duplicate").forEach((button) => button.addEventListener("click", async () => {
-    try { await panel._call("request_rules", "duplicate", {rule_id:button.dataset.id}); await panel._loadSection(); }
+    try { await panel._call("request_rules", "duplicate", {rule_id:button.dataset.id,revision}); await panel._loadSection(); }
     catch (err) { await recoverRequestRuleMutation(panel, err, "Unable to duplicate Request Rule"); }
   }));
   root.querySelectorAll(".rule-delete").forEach((button) => button.addEventListener("click", async () => {
     if (!await panel._confirm("Delete Request Rule?", "This cannot be undone.", "Delete")) return;
-    try { await panel._call("request_rules", "delete", {rule_id:button.dataset.id, confirm:true}); await panel._loadSection(); }
+    try { await panel._call("request_rules", "delete", {rule_id:button.dataset.id,confirm:true,revision}); await panel._loadSection(); }
     catch (err) { await recoverRequestRuleMutation(panel, err, "Unable to delete Request Rule"); }
   }));
   root.querySelectorAll(".rule-enabled").forEach((input) => input.addEventListener("change", async () => {
     const rule = rules.find((item) => item.id === input.dataset.id);
-    try { await panel._call("request_rules", "update", {rule_id:rule.id, rule:{...rule, enabled:input.checked, sensitive_matching_warning:undefined}}); await panel._loadSection(true); }
+    try { await panel._call("request_rules", "update", {rule_id:rule.id,rule:{...rule,enabled:input.checked,sensitive_matching_warning:undefined},revision}); await panel._loadSection(true); }
     catch (err) { input.checked = Boolean(rule.enabled); await recoverRequestRuleMutation(panel, err, "Unable to update Request Rule"); }
   }));
   q("#rules-default-fuzzy")?.addEventListener("change", () => setFuzzyState(root, "rules-default"));
   q("#rule-fuzzy")?.addEventListener("change", () => setFuzzyState(root, "rule"));
   setFuzzyState(root, "rules-default");
   q("#rules-default-save")?.addEventListener("click", async () => {
-    try { await panel._call("request_rules", "defaults", {defaults:{word_forms:q("#rules-default-word-forms").checked, wording_alternatives:q("#rules-default-wording").checked, fuzzy:q("#rules-default-fuzzy").checked, fuzzy_threshold:fuzzyThresholdValue(q("#rules-default-threshold").value)}}); await panel._loadSection(); }
+    try { await panel._call("request_rules", "defaults", {defaults:{word_forms:q("#rules-default-word-forms").checked,wording_alternatives:q("#rules-default-wording").checked,fuzzy:q("#rules-default-fuzzy").checked,fuzzy_threshold:fuzzyThresholdValue(q("#rules-default-threshold").value)},revision}); await panel._loadSection(); }
     catch (err) { await recoverRequestRuleMutation(panel, err, "Unable to save Request Rule defaults"); }
   });
   q("#rule-test")?.addEventListener("click", async () => { const output = q("#rule-test-result"), text = q("#rule-test-text").value.trim(); if (!text) return; output.textContent = "Processing…"; try { const response = await panel._call("request_rules", "test", {text}), captured = Object.entries(response.captured_values || {}); output.textContent = `${response.response || "(No response text)"}\nConversation ID: ${response.conversation_id || "—"}\nPath: ${response.handled_locally ? "Handled locally" : "AI provider"}${response.matched_rule ? `\nMatched rule: ${response.matched_rule.name}` : ""}${captured.length ? `\nCaptured values:\n${captured.map(([name,value]) => `${name} → ${value}`).join("\n")}` : ""}`; } catch (err) { output.textContent = err.message || String(err); } });
@@ -311,7 +312,7 @@ export function bindRequestRules(panel) {
   q("#wording-add")?.addEventListener("click", () => { const wrapper = document.createElement("div"); wrapper.className = "wording-group"; wrapper.innerHTML = `<label>Main phrase<input class="wording-canonical" maxlength="100"></label><label>Other ways to say it<input class="wording-alternatives" placeholder="Comma-separated alternatives"></label><button type="button" class="icon wording-remove" aria-label="Remove wording alternative">×</button>`; q("#wording-groups").append(wrapper); bindRemove(); });
   q("#wording-save")?.addEventListener("click", async () => {
     const wording_groups = [...root.querySelectorAll(".wording-group")].map((row) => ({canonical:row.querySelector(".wording-canonical").value.trim(), alternatives:row.querySelector(".wording-alternatives").value.split(",").map((item) => item.trim()).filter(Boolean)}));
-    try { await panel._call("request_rules", "wording_groups", {wording_groups}); await panel._loadSection(); }
+    try { await panel._call("request_rules", "wording_groups", {wording_groups,revision}); await panel._loadSection(); }
     catch (err) { await recoverRequestRuleMutation(panel, err, "Unable to save wording alternatives"); }
   });
   q("#rule-action-type")?.addEventListener("change", refresh);
@@ -325,7 +326,7 @@ export function bindRequestRules(panel) {
       const actionType = q("#rule-action-type").value;
       const actions = readRequestRuleActions(actionSelector);
       const rule = {name:q("#rule-name").value, enabled:q("#rule-enabled-edit").checked, phrases:q("#rule-phrases").value.split("\n").map((item) => item.trim()).filter(Boolean), match_type:q("#rule-match").value, action_type:actionType, action:actionType === "local_action" ? {actions, success_response:q("#rule-success").value, failure_response:q("#rule-failure").value} : {model:q("#rule-model").value, reasoning_effort:q("#rule-reasoning").value, scope:q("#rule-scope").value, reset:q("#rule-reset").checked, success_response:q("#rule-routing-success").value}, matching_behavior:q("#rule-matching-behavior").value, matching:{word_forms:q("#rule-word-forms").checked, wording_alternatives:q("#rule-wording").checked, fuzzy:q("#rule-fuzzy").checked, fuzzy_threshold:fuzzyThresholdValue(q("#rule-threshold").value)}, order:rules.find((item) => item.id === panel._editingRuleId)?.order ?? rules.length};
-      await panel._call("request_rules", panel._editingRuleId ? "update" : "create", {...(panel._editingRuleId ? {rule_id:panel._editingRuleId} : {}), rule});
+      await panel._call("request_rules", panel._editingRuleId ? "update" : "create", {...(panel._editingRuleId ? {rule_id:panel._editingRuleId} : {}),rule,revision});
       q("#rule-dialog").close();
       await panel._loadSection();
     } catch (err) { q("#rule-error").textContent = err.message || String(err); }

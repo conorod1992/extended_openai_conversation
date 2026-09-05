@@ -172,6 +172,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _invalidateAfterMutation(agentId, section, action) {
+    if (agentId && section === "backup" && action === "restore") {
+      const prefix = `${agentId}|`;
+      for (const key of this._sectionCache.keys()) if (key.startsWith(prefix)) this._sectionCache.delete(key);
+      for (const key of this._scopeCatalogCache.keys()) if (key.startsWith(prefix)) this._scopeCatalogCache.delete(key);
+      if (this._scopeCatalogVisitKey?.startsWith(prefix)) this._scopeCatalogVisitKey = null;
+      return;
+    }
     const mutations = {
       request_rules: new Set(["defaults", "wording_groups", "create", "update", "delete", "duplicate"]),
       knowledge: new Set(["create", "update", "delete"]),
