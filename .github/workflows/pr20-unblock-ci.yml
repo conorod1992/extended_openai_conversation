@@ -1,0 +1,32 @@
+name: PR20 unblock CI
+
+on:
+  push:
+    branches:
+      - fix/pr20-stream-terminal-refusal
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  unblock:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pr20-stream-terminal-refusal
+          fetch-depth: 0
+      - name: Cancel orphaned superseded CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh api --method POST "repos/${GH_REPO}/actions/runs/33978220754/cancel" || true
+      - name: Remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/pr20-unblock-ci.yml
+          git commit -m "Remove temporary PR20 CI unblocker"
+          git push origin HEAD:fix/pr20-stream-terminal-refusal
