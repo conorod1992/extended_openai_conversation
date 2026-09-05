@@ -138,16 +138,21 @@ function showAuthenticationRecovery(panel) {
   const root = panel.shadowRoot;
   const output = root?.querySelector("#test-result");
   const testCard = output?.closest(".content-card");
-  if (!root || !testCard) return;
-  let notice = root.querySelector("#eoc-auth-recovery");
-  if (!notice) {
-    notice = document.createElement("div");
-    notice.id = "eoc-auth-recovery";
-    notice.className = "notice eoc-auth-recovery";
-    notice.innerHTML = `<strong>Provider authentication was rejected</strong><p>Home Assistant has requested reauthentication. Replace the shared API key here now, or complete Home Assistant's reauthentication flow.</p><div class="section-actions"><button type="button" class="secondary" id="eoc-auth-replace-api-key">Replace API key</button></div>`;
-    testCard.append(notice);
-    notice.querySelector("#eoc-auth-replace-api-key")?.addEventListener("click", () => openApiKeyDialog(panel));
+  if (!root || !testCard || root.querySelector("#eoc-auth-recovery")) return;
+  const notice = document.createElement("div");
+  notice.id = "eoc-auth-recovery";
+  notice.className = "notice eoc-auth-recovery";
+  notice.innerHTML = `<strong>Provider authentication was rejected</strong><p>Home Assistant has requested reauthentication. Replace the shared API key here now, or complete Home Assistant's reauthentication flow.</p><div class="section-actions"><button type="button" class="secondary" id="eoc-auth-replace-api-key">Replace API key</button></div>`;
+  testCard.append(notice);
+  notice.querySelector("#eoc-auth-replace-api-key")?.addEventListener("click", () => openApiKeyDialog(panel));
+}
+
+function syncAuthenticationRecovery(panel, result) {
+  if (diagnosticsAuthenticationRejected(result)) {
+    showAuthenticationRecovery(panel);
+    return;
   }
+  panel.shadowRoot?.querySelector("#eoc-auth-recovery")?.remove();
 }
 
 function watchDiagnosticsResult(panel) {
@@ -157,7 +162,7 @@ function watchDiagnosticsResult(panel) {
   const inspect = () => {
     try {
       const result = JSON.parse(output.textContent || "");
-      if (diagnosticsAuthenticationRejected(result)) showAuthenticationRecovery(panel);
+      syncAuthenticationRecovery(panel, result);
     } catch (_) {
       // "Testing…" and plain error messages are not structured diagnostic results.
     }
