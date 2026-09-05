@@ -1,0 +1,94 @@
+name: Temporary runtime configuration state fix
+
+on:
+  push:
+    branches:
+      - fix/runtime-configuration-state
+    paths:
+      - .github/workflows/temp-runtime-configuration-state-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/runtime-configuration-state
+          fetch-depth: 0
+      - name: Apply focused fixes and regression tests
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              if text.count(old) != 1:
+                  raise SystemExit(f"Expected exactly one match in {path}: {old[:80]!r}")
+              file.write_text(text.replace(old, new, 1))
+
+          provider = "custom_components/extended_openai_conversation_responses/provider_credentials.py"
+          replace_once(
+              provider,
+              "    candidate = dict(entry.data)\n    candidate[CONF_API_KEY] = api_key\n",
+              "    original_data = dict(entry.data)\n    candidate = dict(original_data)\n    candidate[CONF_API_KEY] = api_key\n",
+          )
+          replace_once(
+              provider,
+              "    state_before = entry.state\n    changed = hass.config_entries.async_update_entry(entry, data=candidate)\n",
+              "    if dict(entry.data) != original_data:\n        raise HomeAssistantError(\n            \"Provider settings changed while the new API key was being validated. \"\n            \"The API key was not changed by this operation. Try again.\"\n        )\n\n    state_before = entry.state\n    changed = hass.config_entries.async_update_entry(entry, data=candidate)\n",
+          )
+
+          archive = "custom_components/extended_openai_conversation_responses/conversation_archive.py"
+          replace_once(
+              archive,
+              "_STOP_WORDS = {\n",
+              "def _scope_retention_allowed(\n    scope: ResolvedDataScope, shared_archive_enabled: bool\n) -> bool:\n    \"\"\"Return whether the current scope policy permits transcript retention.\"\"\"\n    return bool(\n        scope.allows_retention\n        and (scope.scope_type != \"shared\" or shared_archive_enabled)\n    )\n\n\n_STOP_WORDS = {\n",
+          )
+          replace_once(
+              archive,
+              "            may_retain = scope.allows_retention\n            if scope.scope_type == \"shared\" and not shared_archive_enabled:\n                may_retain = False\n",
+              "            may_retain = _scope_retention_allowed(\n                scope, shared_archive_enabled\n            )\n",
+          )
+          replace_once(
+              archive,
+              "                    and current.retention_state != \"closed\"\n                ):\n                    return current\n",
+              "                    and current.retention_state != \"closed\"\n                    and (may_retain or current.retention_state != \"retained\")\n                ):\n                    return current\n",
+          )
+          replace_once(
+              archive,
+              "    async def async_resume_saving(\n        self, session_key: str, previous_session_id: str, scope: ResolvedDataScope\n    ) -> ArchiveSession:\n",
+              "    async def async_resume_saving(\n        self,\n        session_key: str,\n        previous_session_id: str,\n        scope: ResolvedDataScope,\n        *,\n        shared_archive_enabled: bool,\n    ) -> ArchiveSession:\n",
+          )
+          replace_once(
+              archive,
+              "                retention_state=\"retained\" if scope.allows_retention else \"unretained\",\n",
+              "                retention_state=(\n                    \"retained\"\n                    if _scope_retention_allowed(scope, shared_archive_enabled)\n                    else \"unretained\"\n                ),\n",
+          )
+
+          conversation = "custom_components/extended_openai_conversation_responses/conversation.py"
+          replace_once(
+              conversation,
+              "            session = await self._archive.async_resume_saving(\n                session_key, session_id, scope\n            )\n",
+              "            session = await self._archive.async_resume_saving(\n                session_key,\n                session_id,\n                scope,\n                shared_archive_enabled=bool(\n                    self.subentry.data.get(\n                        CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED\n                    )\n                ),\n            )\n",
+          )
+
+          existing_test = "tests/test_conversation_archive.py"
+          replace_once(
+              existing_test,
+              "    resumed = await archive.async_resume_saving(\"browser\", active.session_id, scope)\n",
+              "    resumed = await archive.async_resume_saving(\n        \"browser\", active.session_id, scope, shared_archive_enabled=False\n    )\n",
+          )
+
+          Path("tests/test_runtime_configuration_state.py").write_text('''\"\"\"Regression tests for runtime configuration state enforcement.\"\"\"\n\nfrom copy import deepcopy\nfrom types import SimpleNamespace\nfrom unittest.mock import AsyncMock, MagicMock, patch\n\nimport pytest\n\nfrom homeassistant.config_entries import ConfigEntryState\nfrom homeassistant.const import CONF_API_KEY\nfrom homeassistant.exceptions import HomeAssistantError\n\nfrom custom_components.extended_openai_conversation_responses.const import (\n    CONF_API_PROVIDER,\n    CONF_BASE_URL,\n    CONF_ORGANIZATION,\n    CONF_SKIP_AUTHENTICATION,\n)\nfrom custom_components.extended_openai_conversation_responses.conversation_archive import (\n    ConversationArchive,\n)\nfrom custom_components.extended_openai_conversation_responses.provider_credentials import (\n    async_replace_api_key,\n)\nfrom custom_components.extended_openai_conversation_responses.scope import shared_scope\n\n\nclass FakeArchiveStorage:\n    def __init__(self) -> None:\n        self.metadata = None\n        self.partitions = {}\n\n    async def async_load_metadata(self):\n        return deepcopy(self.metadata)\n\n    async def async_save_metadata(self, data):\n        self.metadata = deepcopy(data)\n\n    async def async_load_partition(self, partition):\n        return deepcopy(self.partitions.get(partition))\n\n    async def async_save_partition(self, partition, data):\n        self.partitions[partition] = deepcopy(data)\n\n\nasync def _archive() -> ConversationArchive:\n    archive = ConversationArchive(FakeArchiveStorage(), \"agent-1\")\n    await archive.async_initialize()\n    return archive\n\n\nasync def test_api_key_rotation_rejects_provider_change_during_validation() -> None:\n    entry = SimpleNamespace(\n        entry_id=\"entry-1\",\n        data={\n            CONF_API_KEY: \"old-key\",\n            CONF_API_PROVIDER: \"openai\",\n            CONF_BASE_URL: \"https://old.example/v1\",\n            CONF_ORGANIZATION: \"org-1\",\n            CONF_SKIP_AUTHENTICATION: False,\n        },\n        state=ConfigEntryState.LOADED,\n        disabled_by=None,\n    )\n    hass = MagicMock()\n    hass.config_entries.async_update_entry = MagicMock(return_value=True)\n\n    async def validate(**_kwargs):\n        entry.data = {**entry.data, CONF_BASE_URL: \"https://new.example/v1\"}\n        return object()\n\n    with (\n        patch(\n            \"custom_components.extended_openai_conversation_responses.provider_credentials.get_authenticated_client\",\n            AsyncMock(side_effect=validate),\n        ),\n        pytest.raises(HomeAssistantError, match=\"Provider settings changed\"),\n    ):\n        await async_replace_api_key(hass, entry, \"new-key\")\n\n    assert entry.data[CONF_BASE_URL] == \"https://new.example/v1\"\n    assert entry.data[CONF_API_KEY] == \"old-key\"\n    hass.config_entries.async_update_entry.assert_not_called()\n\n\nasync def test_disabling_shared_archive_stops_reusing_retained_session() -> None:\n    archive = await _archive()\n    scope = shared_scope(source=\"shared_voice_policy\")\n    retained = await archive.async_begin_session(\n        \"shared\",\n        scope,\n        \"conversation-1\",\n        archive_enabled=True,\n        shared_archive_enabled=True,\n        inactivity_minutes=30,\n    )\n    await archive.async_record_turn(\n        retained.session_id,\n        run_id=\"run-1\",\n        user_text=\"keep this\",\n        assistant_text=\"kept\",\n        successful=True,\n    )\n\n    unretained = await archive.async_begin_session(\n        \"shared\",\n        scope,\n        \"conversation-1\",\n        archive_enabled=True,\n        shared_archive_enabled=False,\n        inactivity_minutes=30,\n    )\n\n    assert unretained.session_id != retained.session_id\n    assert unretained.retention_state == \"unretained\"\n    assert (\n        await archive.async_record_turn(\n            unretained.session_id,\n            run_id=\"run-2\",\n            user_text=\"do not keep\",\n            assistant_text=\"not kept\",\n            successful=True,\n        )\n        is None\n    )\n    assert archive.stats()[\"turn_count\"] == 1\n\n\nasync def test_resume_saving_respects_disabled_shared_archive() -> None:\n    archive = await _archive()\n    scope = shared_scope(source=\"shared_voice_policy\")\n    session = await archive.async_begin_session(\n        \"shared\",\n        scope,\n        \"conversation-1\",\n        archive_enabled=True,\n        shared_archive_enabled=True,\n        inactivity_minutes=30,\n    )\n    await archive.async_make_private(session.session_id)\n\n    resumed = await archive.async_resume_saving(\n        \"shared\",\n        session.session_id,\n        scope,\n        shared_archive_enabled=False,\n    )\n\n    assert resumed.retention_state == \"unretained\"\n    assert (\n        await archive.async_record_turn(\n            resumed.session_id,\n            run_id=\"run-1\",\n            user_text=\"do not retain\",\n            assistant_text=\"not retained\",\n            successful=True,\n        )\n        is None\n    )\n''')
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components tests
+          git commit -m "Enforce current runtime configuration state"
+          git push origin HEAD:fix/runtime-configuration-state
