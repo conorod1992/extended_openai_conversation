@@ -1210,7 +1210,7 @@ async def async_evaluate_rule(
         return RuleEvaluation(
             match,
             rule["match_type"] in {"equals", "sentence_pattern"},
-            action["success_response"],
+            resolve_slot_values(action["success_response"], match.slots),
             request_override,
         )
 
@@ -1265,7 +1265,11 @@ async def async_evaluate_rule(
     return RuleEvaluation(
         match,
         consume,
-        action["success_response"] if consume else None,
+        (
+            resolve_slot_values(action["success_response"], match.slots)
+            if consume
+            else None
+        ),
         request_override,
     )
 
@@ -1380,9 +1384,7 @@ def _fuzzy_score(text: str, phrase: str, match_type: str) -> float:
     )
 
 
-def _duplicate_rule_name(
-    source_name: str, rules: Sequence[Mapping[str, Any]]
-) -> str:
+def _duplicate_rule_name(source_name: str, rules: Sequence[Mapping[str, Any]]) -> str:
     """Return a unique duplicate name without exceeding the persisted limit."""
     existing = {str(rule.get("name", "")).casefold() for rule in rules}
     number = 1

@@ -251,6 +251,7 @@ async def test_captured_routing_values_are_resolved_and_validated() -> None:
         match_type="sentence_pattern",
         model="{model_name}",
     )
+    model_rule["action"]["success_response"] = "Using {model_name}"
     result = await async_evaluate_rule(
         SimpleNamespace(),
         await manager(model_rule),
@@ -259,6 +260,7 @@ async def test_captured_routing_values_are_resolved_and_validated() -> None:
         "session",
     )
     assert result is not None
+    assert result.response == "Using gpt-5"
     assert runtime.get("session")[CONF_CHAT_MODEL] == "gpt-5"
 
     effort_rule = routing_rule(
