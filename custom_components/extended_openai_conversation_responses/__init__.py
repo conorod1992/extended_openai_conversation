@@ -85,6 +85,7 @@ from .const import (
 )
 from .context_summary_performance import install_deferred_context_summary
 from .debug import DebugOpenAIClientProxy, install_debug_instrumentation
+from .delayed_tools import async_setup_delayed_tools
 from .debug_ui import async_setup_debug_ui
 from .guest_performance import install_guest_policy_fast_path
 from .ha_permissions import async_setup_ha_permissions
@@ -158,6 +159,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_model_search_hardening()
     # Install last so the gate wraps the effective post-optimization entry points.
     install_agent_maintenance_barrier()
+    # Activate the durable delayed-tool scheduler after entity hardening so its
+    # execution hook wraps the final configured Function Tool seam.
+    await async_setup_delayed_tools(hass)
     await async_migrate_integration(hass)
     await async_setup_ha_permissions(hass)
     await async_setup_services(hass, config)
