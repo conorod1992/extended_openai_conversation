@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from hashlib import sha256
 import json
 from pathlib import Path
-import re
 from types import MappingProxyType
 from typing import Any, cast
 from uuid import uuid4
@@ -23,6 +23,7 @@ from homeassistant.helpers import entity_registry as er, service as service_help
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
     GUEST_V2_FIELDS,
+    MAX_AGENT_TITLE_LENGTH,
     AgentConfigError,
     agent_config_defaults,
     agent_config_options,
@@ -35,6 +36,7 @@ from .agent_config import (
     normalize_agent_config,
     preserve_legacy_guest_policy,
     starter_function_tool_yaml,
+    validate_agent_title,
     validate_function_groups,
     validate_function_tools,
     validate_single_function_tool,
@@ -133,6 +135,7 @@ from .request_rules import (
     validate_rule,
 )
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID, user_scope
+from .secret_redaction import redact_secrets, restore_redacted_secrets
 from .skills import SkillManager
 from .speech import process_speech_text
 from .temporary_memory import (
@@ -498,6 +501,26 @@ def _validation_result(callback) -> dict[str, Any]:
     return {"valid": True, "errors": {}, "config": value}
 
 
+def _agent_config_revision(data: Mapping[str, Any], title: str) -> str:
+    """Return a stable optimistic-concurrency token for one saved agent config."""
+    payload = canonical_json(
+        {"title": title, "config": agent_config_snapshot(dict(data))}
+    )
+    return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _require_agent_config_revision(subentry: Any, expected_revision: Any) -> None:
+    """Reject a stale management writer before it can replace newer settings."""
+    if expected_revision is None:
+        return
+    if not isinstance(expected_revision, str):
+        raise HomeAssistantError("revision must be a string")
+    if expected_revision != _agent_config_revision(subentry.data, subentry.title):
+        raise HomeAssistantError(
+            "Configuration changed in another tab. Reload the latest saved settings before saving."
+        )
+
+
 def _persist_function_configuration(
     hass: HomeAssistant,
     entry: Any,
@@ -560,26 +583,9 @@ def _function_reference_error(name: str, references: dict[str, Any]) -> str:
     )
 
 
-_SECRET_KEY = re.compile(
-    r"(?:^|[_-])(?:api_?key|password|passwd|secret|token|authorization)(?:$|[_-])"
-    r"|(?:apiKey|clientSecret|accessToken|refreshToken)$",
-    re.IGNORECASE,
-)
-
-
 def _redact_export_secrets(value: Any, *, schema: bool = False) -> Any:
-    """Remove likely credential values while preserving JSON-schema properties."""
-    if isinstance(value, list):
-        return [_redact_export_secrets(item, schema=schema) for item in value]
-    if not isinstance(value, dict):
-        return value
-    result = {}
-    for key, item in value.items():
-        child_schema = schema or key in {"parameters", "properties", "items"}
-        if not schema and _SECRET_KEY.search(str(key)):
-            continue
-        result[key] = _redact_export_secrets(item, schema=child_schema)
-    return result
+    """Redact credential values while preserving exported configuration structure."""
+    return redact_secrets(value, schema=schema)
 
 
 def _export_agent(subentry) -> dict[str, Any]:
@@ -612,11 +618,13 @@ def _parse_import_document(value: Any) -> dict[str, Any]:
         raise AgentConfigError(
             "document", "unknown fields: " + ", ".join(sorted(unknown))
         )
-    config = value.get("config")
+    config = restore_redacted_secrets(value.get("config"))
     if not isinstance(config, dict):
         raise AgentConfigError("config", "must be an object")
     return {
-        "title": str(value.get("title") or "Imported conversation agent").strip(),
+        "title": validate_agent_title(
+            value.get("title"), default="Imported conversation agent"
+        ),
         "config": preserve_legacy_guest_policy(config, normalize_agent_config(config)),
     }
 
@@ -853,13 +861,16 @@ async def async_management_command(
                 ),
             )
         if action == "defaults":
-            return {"defaults": await rules.async_set_defaults(message.get("defaults"))}
+            defaults = await rules.async_set_defaults(
+                message.get("defaults"), expected_revision=message.get("revision")
+            )
+            return {"defaults": defaults, "revision": rules.revision()}
         if action == "wording_groups":
-            return {
-                "wording_groups": await rules.async_set_wording_groups(
-                    message.get("wording_groups")
-                )
-            }
+            wording_groups = await rules.async_set_wording_groups(
+                message.get("wording_groups"),
+                expected_revision=message.get("revision"),
+            )
+            return {"wording_groups": wording_groups, "revision": rules.revision()}
         if action == "create":
             candidate = _prepare_request_rule(message.get("rule"))
             _validate_request_rule_functions(
@@ -868,7 +879,10 @@ async def async_management_command(
                 if hasattr(subentry, "data")
                 else [],
             )
-            return {"rule": await rules.async_create(candidate)}
+            rule = await rules.async_create(
+                candidate, expected_revision=message.get("revision")
+            )
+            return {"rule": rule, "revision": rules.revision()}
         rule_id = message.get("rule_id")
         if not isinstance(rule_id, str):
             raise HomeAssistantError("rule_id is required")
@@ -880,13 +894,22 @@ async def async_management_command(
                 if hasattr(subentry, "data")
                 else [],
             )
-            return {"rule": await rules.async_update(rule_id, candidate)}
+            rule = await rules.async_update(
+                rule_id, candidate, expected_revision=message.get("revision")
+            )
+            return {"rule": rule, "revision": rules.revision()}
         if action == "delete":
             if message.get("confirm") is not True:
                 raise HomeAssistantError("Explicit confirmation is required")
-            return {"deleted": await rules.async_delete(rule_id)}
+            deleted = await rules.async_delete(
+                rule_id, expected_revision=message.get("revision")
+            )
+            return {"deleted": deleted, "revision": rules.revision()}
         if action == "duplicate":
-            return {"rule": await rules.async_duplicate(rule_id)}
+            rule = await rules.async_duplicate(
+                rule_id, expected_revision=message.get("revision")
+            )
+            return {"rule": rule, "revision": rules.revision()}
         raise HomeAssistantError(f"Unknown Request Rules action: {action}")
 
     if section == "guest_mode":
@@ -1001,6 +1024,7 @@ async def async_management_command(
             config = agent_config_snapshot(subentry.data)
             return {
                 "title": subentry.title,
+                "revision": _agent_config_revision(subentry.data, subentry.title),
                 "config": config,
                 "defaults": agent_config_snapshot(agent_config_defaults()),
                 "options": agent_config_options(),
@@ -1032,6 +1056,7 @@ async def async_management_command(
             updates = message.get("config")
             if not isinstance(updates, dict):
                 raise HomeAssistantError("config must be an object")
+            _require_agent_config_revision(subentry, message.get("revision"))
             normalized = merge_agent_config(subentry.data, updates)
             if CONF_GUEST_POLICY_VERSION not in subentry.data:
                 # The general configuration editor must not implicitly accept
@@ -1039,18 +1064,19 @@ async def async_management_command(
                 # action crosses this boundary.
                 for key in GUEST_V2_FIELDS:
                     normalized.pop(key, None)
-            title = message.get("title")
-            if title is not None and (not isinstance(title, str) or not title.strip()):
-                raise AgentConfigError("title", "must not be empty")
+            requested_title = message.get("title")
+            saved_title = (
+                validate_agent_title(requested_title)
+                if requested_title is not None
+                else validate_agent_title(subentry.title)
+            )
             hass.config_entries.async_update_subentry(
-                entry,
-                subentry,
-                data=normalized,
-                **({"title": title.strip()} if isinstance(title, str) else {}),
+                entry, subentry, data=normalized, title=saved_title
             )
             snapshot = agent_config_snapshot(normalized)
             return {
-                "title": title.strip() if isinstance(title, str) else subentry.title,
+                "title": saved_title,
+                "revision": _agent_config_revision(normalized, saved_title),
                 "config": snapshot,
                 "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
                 "local_handling": local_handling_snapshot(
@@ -1063,11 +1089,13 @@ async def async_management_command(
         if action == "duplicate":
             _require_admin(is_admin)
             requested_title = message.get("title")
-            title = (
-                requested_title.strip()
-                if isinstance(requested_title, str) and requested_title.strip()
-                else f"{subentry.title} - Copy"
-            )
+            if requested_title is None:
+                suffix = " - Copy"
+                source = validate_agent_title(subentry.title)
+                base = source[: MAX_AGENT_TITLE_LENGTH - len(suffix)].rstrip()
+                title = validate_agent_title(f"{base}{suffix}")
+            else:
+                title = validate_agent_title(requested_title)
             duplicate_source = {
                 key: value
                 for key, value in subentry.data.items()
@@ -1120,10 +1148,17 @@ async def async_management_command(
             if mode == "current":
                 if message.get("confirm") is not True:
                     raise HomeAssistantError("Explicit confirmation is required")
+                _require_agent_config_revision(subentry, message.get("revision"))
                 hass.config_entries.async_update_subentry(
                     entry, subentry, data=parsed["config"], title=parsed["title"]
                 )
-                return {"status": "updated", "subentry_id": subentry.subentry_id}
+                return {
+                    "status": "updated",
+                    "subentry_id": subentry.subentry_id,
+                    "revision": _agent_config_revision(
+                        parsed["config"], parsed["title"]
+                    ),
+                }
             if mode != "new":
                 raise HomeAssistantError("mode must be current or new")
             imported = ConfigSubentry(
@@ -1596,20 +1631,26 @@ async def async_management_command(
                 )
             }
         if action == "create":
-            source = await library.async_create(
+            knowledge_source = await library.async_create(
                 message.get("title", ""),
                 message.get("description", ""),
                 message.get("content", ""),
             )
-            return {"status": "created", "source": knowledge_source_as_dict(source)}
+            return {
+                "status": "created",
+                "source": knowledge_source_as_dict(knowledge_source),
+            }
         if action == "update":
-            source = await library.async_update(
+            knowledge_source = await library.async_update(
                 str(message.get("source_id", "")),
                 message.get("title"),
                 message.get("description"),
                 message.get("content"),
             )
-            return {"status": "updated", "source": knowledge_source_as_dict(source)}
+            return {
+                "status": "updated",
+                "source": knowledge_source_as_dict(knowledge_source),
+            }
         if action == "delete":
             if message.get("confirm") is not True:
                 raise HomeAssistantError("Explicit confirmation is required")

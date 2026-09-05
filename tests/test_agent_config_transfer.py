@@ -15,6 +15,9 @@ from custom_components.extended_openai_conversation_responses.management_ui impo
     _parse_import_document,
     _redact_export_secrets,
 )
+from custom_components.extended_openai_conversation_responses.secret_redaction import (
+    REDACTED_SECRET_SENTINEL,
+)
 
 
 def test_export_is_versioned_and_excludes_history_and_credentials(hass) -> None:
@@ -53,12 +56,16 @@ def test_export_redaction_preserves_schema_fields_but_removes_values() -> None:
         "spec": {"parameters": {"properties": {"password": {"type": "string"}}}},
     }
     redacted = _redact_export_secrets(value)
-    assert "api_key" not in redacted["function"]
-    assert "apiKey" not in redacted["function"]
-    assert "clientSecret" not in redacted["function"]
-    assert "accessToken" not in redacted["function"]
-    assert "refreshToken" not in redacted["function"]
-    assert "Authorization" not in redacted["function"]["headers"]
+    assert redacted["function"]["api_key"] == REDACTED_SECRET_SENTINEL
+    assert redacted["function"]["apiKey"] == REDACTED_SECRET_SENTINEL
+    assert redacted["function"]["clientSecret"] == REDACTED_SECRET_SENTINEL
+    assert redacted["function"]["accessToken"] == REDACTED_SECRET_SENTINEL
+    assert redacted["function"]["refreshToken"] == REDACTED_SECRET_SENTINEL
+    assert (
+        redacted["function"]["headers"]["Authorization"]
+        == REDACTED_SECRET_SENTINEL
+    )
+    assert redacted["function"]["headers"]["Accept"] == "json"
     assert "password" in redacted["spec"]["parameters"]["properties"]
 
 

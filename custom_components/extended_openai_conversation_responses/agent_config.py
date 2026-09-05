@@ -192,6 +192,25 @@ class AgentConfigError(HomeAssistantError):
         super().__init__(f"{field}: {message}")
 
 
+MAX_AGENT_TITLE_LENGTH = 255
+
+
+def validate_agent_title(value: Any, *, default: str | None = None) -> str:
+    """Return one canonical conversation-agent title for every persistence path."""
+    if value is None and default is not None:
+        value = default
+    if not isinstance(value, str):
+        raise AgentConfigError("title", "must be a string")
+    title = value.strip()
+    if not title:
+        raise AgentConfigError("title", "must not be empty")
+    if len(title) > MAX_AGENT_TITLE_LENGTH:
+        raise AgentConfigError(
+            "title", f"must be at most {MAX_AGENT_TITLE_LENGTH} characters"
+        )
+    return title
+
+
 def _tools_yaml(value: Any) -> str:
     tools = validate_function_tools(value)
     return yaml.safe_dump(tools, sort_keys=False, allow_unicode=True)

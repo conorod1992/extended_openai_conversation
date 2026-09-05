@@ -5,6 +5,9 @@ import pytest
 from custom_components.extended_openai_conversation_responses.backup import (
     _safe_configuration,
 )
+from custom_components.extended_openai_conversation_responses.secret_redaction import (
+    REDACTED_SECRET_SENTINEL,
+)
 
 
 @pytest.mark.parametrize(
@@ -47,7 +50,7 @@ def test_backup_redacts_separator_and_case_variants(secret_key: str) -> None:
     )
 
     headers = safe["functions"][0]["function"]["request"]["headers"]
-    assert secret_key not in headers
+    assert headers[secret_key] == REDACTED_SECRET_SENTINEL
     assert headers["Content-Type"] == "application/json"
 
 
@@ -75,8 +78,11 @@ def test_backup_redacts_nested_function_tool_credentials() -> None:
     )
 
     transport = safe["functions"][0]["function"]["options"]["transport"]
-    assert transport["headers"] == {}
-    assert transport["credentials"] == {}
+    assert transport["headers"] == {"X-API-Key": REDACTED_SECRET_SENTINEL}
+    assert transport["credentials"] == {
+        "Client Secret": REDACTED_SECRET_SENTINEL,
+        "refresh-token": REDACTED_SECRET_SENTINEL,
+    }
 
 
 def test_backup_preserves_credential_named_schema_properties() -> None:
