@@ -56,20 +56,20 @@ def _restore_redacted_secrets(value: Any) -> Any:
     if value == REDACTED_SECRET_SENTINEL:
         return _DROP
     if isinstance(value, list):
-        result = []
+        restored_items = []
         for item in value:
             restored = _restore_redacted_secrets(item)
             if restored is not _DROP:
-                result.append(restored)
-        return result
+                restored_items.append(restored)
+        return restored_items
     if not isinstance(value, dict):
         return value
-    result: dict[Any, Any] = {}
+    restored_mapping: dict[Any, Any] = {}
     for key, item in value.items():
         restored = _restore_redacted_secrets(item)
         if restored is not _DROP:
-            result[key] = restored
-    return result
+            restored_mapping[key] = restored
+    return restored_mapping
 
 
 def restore_redacted_secrets(value: Any) -> Any:

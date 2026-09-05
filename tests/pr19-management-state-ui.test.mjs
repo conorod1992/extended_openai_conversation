@@ -49,7 +49,7 @@ assert.match(
 for (const action of ["duplicate", "delete", "update", "defaults", "wording_groups"]) {
   assert.match(
     rulesSource,
-    new RegExp(`request_rules.{0,80}${action}.{0,180}revision`, "s"),
+    new RegExp(`panel\\._call\\("request_rules", "${action}", [^\\n]*revision`),
     `${action} mutation must carry a Request Rule revision`,
   );
 }

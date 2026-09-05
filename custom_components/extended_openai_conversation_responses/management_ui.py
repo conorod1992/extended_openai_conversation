@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from hashlib import sha256
 import json
 from pathlib import Path
-import re
 from types import MappingProxyType
 from typing import Any, cast
 from uuid import uuid4
@@ -24,6 +23,7 @@ from homeassistant.helpers import entity_registry as er, service as service_help
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
     GUEST_V2_FIELDS,
+    MAX_AGENT_TITLE_LENGTH,
     AgentConfigError,
     agent_config_defaults,
     agent_config_options,
@@ -35,7 +35,6 @@ from .agent_config import (
     model_capabilities,
     normalize_agent_config,
     preserve_legacy_guest_policy,
-    MAX_AGENT_TITLE_LENGTH,
     starter_function_tool_yaml,
     validate_agent_title,
     validate_function_groups,
@@ -1632,20 +1631,26 @@ async def async_management_command(
                 )
             }
         if action == "create":
-            source = await library.async_create(
+            knowledge_source = await library.async_create(
                 message.get("title", ""),
                 message.get("description", ""),
                 message.get("content", ""),
             )
-            return {"status": "created", "source": knowledge_source_as_dict(source)}
+            return {
+                "status": "created",
+                "source": knowledge_source_as_dict(knowledge_source),
+            }
         if action == "update":
-            source = await library.async_update(
+            knowledge_source = await library.async_update(
                 str(message.get("source_id", "")),
                 message.get("title"),
                 message.get("description"),
                 message.get("content"),
             )
-            return {"status": "updated", "source": knowledge_source_as_dict(source)}
+            return {
+                "status": "updated",
+                "source": knowledge_source_as_dict(knowledge_source),
+            }
         if action == "delete":
             if message.get("confirm") is not True:
                 raise HomeAssistantError("Explicit confirmation is required")

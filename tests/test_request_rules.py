@@ -1113,7 +1113,8 @@ async def test_management_api_permissions_crud_and_delete_confirmation(
         True,
         {**base, "action": "wording_groups", "wording_groups": groups},
     )
-    assert updated_groups == {"wording_groups": groups}
+    assert updated_groups["wording_groups"] == groups
+    assert isinstance(updated_groups["revision"], str)
     created = await async_management_command(
         hass,
         "admin",
@@ -1134,4 +1135,5 @@ async def test_management_api_permissions_crud_and_delete_confirmation(
         True,
         {**base, "action": "delete", "rule_id": rule_id, "confirm": True},
     )
-    assert deleted == {"deleted": True}
+    assert deleted["deleted"] is True
+    assert isinstance(deleted["revision"], str)

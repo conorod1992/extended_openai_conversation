@@ -114,7 +114,7 @@ def test_import_uses_title_contract_and_removes_redaction_sentinel() -> None:
     valid_config["api_key"] = REDACTED_SECRET_SENTINEL
     parsed = _parse_import_document(
         {
-            "format": "extended_openai_agent_config",
+            "schema": "extended_openai_conversation.agent",
             "version": 1,
             "title": "  Imported  ",
             "config": valid_config,
@@ -126,7 +126,7 @@ def test_import_uses_title_contract_and_removes_redaction_sentinel() -> None:
     with pytest.raises(AgentConfigError, match="must not be empty"):
         _parse_import_document(
             {
-                "format": "extended_openai_agent_config",
+                "schema": "extended_openai_conversation.agent",
                 "version": 1,
                 "title": "   ",
                 "config": agent_config_defaults(),
