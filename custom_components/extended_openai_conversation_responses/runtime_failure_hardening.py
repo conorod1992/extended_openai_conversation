@@ -105,9 +105,7 @@ def _conversation_error_result(
         usage.mark_current_run_failed(type(err).__name__)
 
     if isinstance(err, OpenAIError):
-        request_reauthentication(
-            entity.hass, getattr(entity, "entry", None), err
-        )
+        request_reauthentication(entity.hass, getattr(entity, "entry", None), err)
         record_current_provider_failure(err)
         log_provider_failure(_LOGGER, "OpenAI request preparation failed", err)
         message = (
