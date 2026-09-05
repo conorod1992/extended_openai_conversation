@@ -920,7 +920,7 @@ class ExtendedOpenAIAgentEntity(
         continuity_key: str | None,
         source_device_id: str | None,
         *,
-        successful: bool,
+        successful: bool = True,
     ) -> ConversationResult:
         """Finalize a locally consumed rule as a zero-provider-request run."""
         if self._usage is not None:
