@@ -31,6 +31,7 @@ from .entity_context_cache import (
     normalize_entity_aliases as normalize_entity_aliases,
 )
 from .ha_permissions import filter_entities_for_active_user
+from .provider_errors import provider_transport_error
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -191,10 +192,13 @@ async def get_authenticated_client(
     if skip_authentication:
         return client
 
-    response = await hass.async_add_executor_job(
-        partial(client.models.list, timeout=10)
-    )
+    try:
+        response = await hass.async_add_executor_job(
+            partial(client.models.list, timeout=10)
+        )
 
-    async for _ in response:
-        break
+        async for _ in response:
+            break
+    except (TimeoutError, ConnectionError) as err:
+        raise provider_transport_error(err) from err
     return client

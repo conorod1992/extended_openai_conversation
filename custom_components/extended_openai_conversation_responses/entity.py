@@ -75,7 +75,7 @@ from .parallel_tool_execution import (
     async_execute_parallel_safe_batch,
     resolve_parallel_safe_batch,
 )
-from .provider_errors import provider_stream_error
+from .provider_errors import provider_stream_error, provider_transport_error
 from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
@@ -624,6 +624,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         request_stage="initial" if n_requests == 0 else "after_tool",
                         error_type=type(err).__name__,
                     )
+                if isinstance(err, (TimeoutError, ConnectionError)):
+                    raise provider_transport_error(err) from err
                 raise
             else:
                 if self._usage is not None:
