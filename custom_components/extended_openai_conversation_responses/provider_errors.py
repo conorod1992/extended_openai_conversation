@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 import json
 import logging
+import re
 from typing import Any
 
 from openai import APIConnectionError, AuthenticationError, OpenAIError
@@ -12,6 +13,14 @@ from openai import APIConnectionError, AuthenticationError, OpenAIError
 _MAX_MESSAGE = 1000
 _MAX_FIELD = 200
 _LOGGER = logging.getLogger(__name__)
+_OPENAI_API_KEY = re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b")
+_LABELED_CREDENTIAL = re.compile(
+    r"(?i)(\b(?:authorization|api[-_ ]?key)\b\s*[:=]\s*)(?:bearer\s+)?([^\s,;]+)"
+)
+_QUERY_CREDENTIAL = re.compile(
+    r"(?i)([?&](?:api[-_]?key|access_token)=)([^&#\s]+)"
+)
+_BASIC_AUTH_URL = re.compile(r"(?i)(https?://)([^\s/@:]+):([^\s/@]+)@")
 
 
 def _value(source: object | None, name: str) -> Any:
@@ -29,6 +38,24 @@ def _text(value: object | None, limit: int = _MAX_FIELD) -> str | None:
     if not normalized:
         return None
     return normalized[:limit]
+
+
+def _safe_error_message(error: BaseException) -> str:
+    """Return bounded provider text with known credential forms removed.
+
+    Provider SDK errors are useful diagnostics, but some compatible providers echo
+    request URLs or authentication headers in exception strings. Keep this deliberately
+    targeted to credential shapes that can occur in provider errors instead of trying
+    to classify arbitrary application text as a secret.
+    """
+    normalized = " ".join(str(error).split())
+    if not normalized:
+        return type(error).__name__
+    normalized = _OPENAI_API_KEY.sub("[redacted]", normalized)
+    normalized = _LABELED_CREDENTIAL.sub(r"\1[redacted]", normalized)
+    normalized = _QUERY_CREDENTIAL.sub(r"\1[redacted]", normalized)
+    normalized = _BASIC_AUTH_URL.sub(r"\1[redacted]@", normalized)
+    return normalized[:_MAX_MESSAGE]
 
 
 def _integer(value: object | None) -> int | None:
@@ -140,7 +167,7 @@ def ensure_successful_responses_result(response: object) -> None:
 def provider_error_metadata(error: BaseException) -> dict[str, Any]:
     """Return bounded failure metadata without request/response bodies or credentials."""
     metadata: dict[str, Any] = {
-        "message": _text(str(error), _MAX_MESSAGE) or type(error).__name__,
+        "message": _safe_error_message(error),
     }
     status = _integer(getattr(error, "status_code", None))
     if status is not None:
