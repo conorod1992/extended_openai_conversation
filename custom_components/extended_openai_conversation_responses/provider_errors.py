@@ -54,6 +54,19 @@ def _root_cause_category(error: BaseException) -> tuple[str | None, str | None]:
     return cause_type[:_MAX_FIELD], category
 
 
+class ProviderTransportError(OpenAIError):
+    """Standard-library transport failure normalized into the provider path."""
+
+
+def provider_transport_error(
+    error: TimeoutError | ConnectionError,
+) -> ProviderTransportError:
+    """Normalize a raw timeout/connection failure without exposing its details."""
+    if isinstance(error, TimeoutError):
+        return ProviderTransportError("Provider request timed out")
+    return ProviderTransportError("Could not connect to provider")
+
+
 class ProviderStreamError(OpenAIError):
     """Structured provider failure reported inside an established response stream."""
 
@@ -166,7 +179,7 @@ def classify_config_provider_error(error: BaseException) -> str:
     status = _integer(getattr(error, "status_code", None))
     if isinstance(error, AuthenticationError) or status == 401:
         return "invalid_auth"
-    if isinstance(error, APIConnectionError):
+    if isinstance(error, (APIConnectionError, ProviderTransportError)):
         return "cannot_connect"
     if status == 403:
         return "provider_forbidden"
