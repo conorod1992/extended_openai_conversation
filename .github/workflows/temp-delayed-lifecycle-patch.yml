@@ -1,0 +1,140 @@
+name: Temporary delayed lifecycle patch
+
+on:
+  push:
+    branches:
+      - fix/durable-delayed-tool-lifecycle
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: fix/durable-delayed-tool-lifecycle
+
+      - name: Apply delayed scheduler lifecycle fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          delayed = Path("custom_components/extended_openai_conversation_responses/delayed_tools.py")
+          text = delayed.read_text()
+          old_import = "from .function_execution import validate_function_arguments\n"
+          new_import = (
+              "from .function_execution import (\n"
+              "    split_legacy_execution_delay,\n"
+              "    validate_function_arguments,\n"
+              ")\n"
+          )
+          if old_import in text:
+              text = text.replace(old_import, new_import, 1)
+          elif "split_legacy_execution_delay" not in text:
+              raise SystemExit("delayed_tools function_execution import marker not found")
+
+          old_hook = '''        arguments = validate_function_arguments(
+              function_tool.get("spec", {}), tool_input.tool_args
+          )
+          if getattr(llm_context, _DELAYED_EXECUTION_MARKER, False):
+              function_config = function_tool["function"]
+              function = get_function(function_config["type"])
+              result = await function.execute(
+                  entity.hass,
+                  function_config,
+                  arguments,
+                  llm_context,
+                  exposed_entities,
+              )
+              return conversation.ToolResultContent(
+                  agent_id=entity.entity_id,
+                  tool_call_id=tool_input.id,
+                  tool_name=tool_input.tool_name,
+                  tool_result={"result": str(result)},
+              )
+
+          if not entity.should_run_in_background(arguments):
+              return await original(
+                  entity,
+                  function_tool,
+                  tool_input,
+                  llm_context,
+                  exposed_entities,
+              )
+'''
+          new_hook = '''        spec = function_tool.get("spec", {})
+          arguments = validate_function_arguments(spec, tool_input.tool_args)
+          execution_arguments, execution_delay = split_legacy_execution_delay(
+              spec, arguments
+          )
+          if getattr(llm_context, _DELAYED_EXECUTION_MARKER, False):
+              function_config = function_tool["function"]
+              function = get_function(function_config["type"])
+              result = await function.execute(
+                  entity.hass,
+                  function_config,
+                  execution_arguments,
+                  llm_context,
+                  exposed_entities,
+              )
+              return conversation.ToolResultContent(
+                  agent_id=entity.entity_id,
+                  tool_call_id=tool_input.id,
+                  tool_name=tool_input.tool_name,
+                  tool_result={"result": str(result)},
+              )
+
+          if not entity.should_run_in_background(execution_delay):
+              return await original(
+                  entity,
+                  function_tool,
+                  tool_input,
+                  llm_context,
+                  exposed_entities,
+              )
+'''
+          if old_hook in text:
+              text = text.replace(old_hook, new_hook, 1)
+          elif "execution_arguments, execution_delay = split_legacy_execution_delay(" not in text:
+              raise SystemExit("delayed_tools execution hook marker not found")
+          delayed.write_text(text)
+
+          init = Path("custom_components/extended_openai_conversation_responses/__init__.py")
+          text = init.read_text()
+          import_marker = "from .debug import DebugOpenAIClientProxy, install_debug_instrumentation\n"
+          delayed_import = "from .delayed_tools import async_setup_delayed_tools\n"
+          if delayed_import not in text:
+              if import_marker not in text:
+                  raise SystemExit("__init__ delayed import marker not found")
+              text = text.replace(import_marker, import_marker + delayed_import, 1)
+
+          setup_marker = '''    # Install last so the gate wraps the effective post-optimization entry points.
+              install_agent_maintenance_barrier()
+'''
+          setup_replacement = setup_marker + '''    # Activate the durable delayed-tool scheduler after entity hardening so its
+              # execution hook wraps the final configured Function Tool seam.
+              await async_setup_delayed_tools(hass)
+'''
+          if "await async_setup_delayed_tools(hass)" not in text:
+              if setup_marker not in text:
+                  raise SystemExit("__init__ delayed setup marker not found")
+              text = text.replace(setup_marker, setup_replacement, 1)
+          init.write_text(text)
+
+      - name: Format and commit production changes
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+          ruff format custom_components/extended_openai_conversation_responses/delayed_tools.py custom_components/extended_openai_conversation_responses/__init__.py
+          if git diff --quiet -- custom_components/extended_openai_conversation_responses/delayed_tools.py custom_components/extended_openai_conversation_responses/__init__.py; then
+            echo "Production changes already applied"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/extended_openai_conversation_responses/delayed_tools.py custom_components/extended_openai_conversation_responses/__init__.py
+          git commit -m "Activate durable delayed Function Tool lifecycle"
+          git push origin HEAD:fix/durable-delayed-tool-lifecycle
