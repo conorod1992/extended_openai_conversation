@@ -212,9 +212,7 @@ class TemporaryMemory:
     async def async_delete(self, scope_id: str, memory_ids: list[str]) -> int:
         """Delete selected records only from the current scope."""
         if not memory_ids or len(memory_ids) > MAX_DELETE_RECORDS:
-            raise ValueError(
-                f"memory_ids must contain 1 to {MAX_DELETE_RECORDS} IDs"
-            )
+            raise ValueError(f"memory_ids must contain 1 to {MAX_DELETE_RECORDS} IDs")
         async with self._lock:
             deleted = 0
             for memory_id in set(memory_ids):

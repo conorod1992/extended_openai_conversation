@@ -316,7 +316,7 @@ class PersistentMemory:
                         if key_pair in seen_keys:
                             raise ValueError("duplicate canonical key in memory scope")
                         seen_keys.add(key_pair)
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     needs_save = True
                     _LOGGER.warning("Ignoring malformed persistent memory record")
                     continue
@@ -342,7 +342,11 @@ class PersistentMemory:
         changed = self._embedding_provider != provider or self._embedding_model != model
         self._embedding_provider = provider
         self._embedding_model = model
-        if changed and provider is not None and self._embedding_task_scheduler is not None:
+        if (
+            changed
+            and provider is not None
+            and self._embedding_task_scheduler is not None
+        ):
             # Legacy/injected schedulers get a deliberately empty-scope maintenance
             # coroutine. It exercises lifecycle scheduling without embedding Memory
             # content; normal production construction never supplies this hook.
@@ -686,7 +690,9 @@ class PersistentMemory:
             "key": key,
             "valid_from": valid_from,
         }
-        if any(field in clear and supplied_metadata[field] is not None for field in clear):
+        if any(
+            field in clear and supplied_metadata[field] is not None for field in clear
+        ):
             raise ValueError("a metadata field cannot be updated and cleared together")
 
         async with self._lock:
@@ -966,9 +972,7 @@ class PersistentMemory:
             self._invalidate_cached_embedding(current.memory_id)
         return updated
 
-    async def _async_refresh_missing_embeddings(
-        self, scope_ids: Sequence[str]
-    ) -> bool:
+    async def _async_refresh_missing_embeddings(self, scope_ids: Sequence[str]) -> bool:
         provider = self._embedding_provider
         if provider is None:
             return False
@@ -984,10 +988,15 @@ class PersistentMemory:
             batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
             vectors = await provider([_embedding_text(memory) for memory in batch])
             if len(vectors) != len(batch):
-                raise ValueError("embedding provider returned the wrong number of vectors")
+                raise ValueError(
+                    "embedding provider returned the wrong number of vectors"
+                )
             batch_generated = False
             async with self._lock:
-                if self._embedding_provider is not provider or self._embedding_model != model:
+                if (
+                    self._embedding_provider is not provider
+                    or self._embedding_model != model
+                ):
                     return False
                 for memory, vector in zip(batch, vectors, strict=True):
                     current = self._memories.get(memory.memory_id)
@@ -1526,9 +1535,10 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
     normalized_key = _clean_key(record.key)
     if normalized_key != record.key:
         raise ValueError("persistent memory key is not normalized")
-    if dt_util.parse_datetime(record.created_at) is None or dt_util.parse_datetime(
-        record.updated_at
-    ) is None:
+    if (
+        dt_util.parse_datetime(record.created_at) is None
+        or dt_util.parse_datetime(record.updated_at) is None
+    ):
         raise ValueError("persistent memory timestamp is invalid")
     for value in (record.valid_from, record.last_confirmed_at):
         if value is not None and (
