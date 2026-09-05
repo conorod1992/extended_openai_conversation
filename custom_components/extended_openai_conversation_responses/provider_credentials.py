@@ -88,10 +88,7 @@ async def async_replace_api_key(
             # A successfully loaded entry already owns its normal reload listener.
             # Do not schedule a second reload alongside it.
             reload_requested = True
-        elif (
-            entry.disabled_by is None
-            and state_before.recoverable
-        ):
+        elif entry.disabled_by is None and state_before.recoverable:
             # Startup authentication failures happen before our update listener is
             # registered. A validated replacement should recover that entry too.
             hass.config_entries.async_schedule_reload(entry.entry_id)
