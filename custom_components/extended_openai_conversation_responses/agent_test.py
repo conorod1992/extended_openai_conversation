@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, cast
 
-from openai import AuthenticationError, OpenAIError
+from openai import OpenAIError
 import yaml
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
@@ -37,6 +37,7 @@ from .helpers import (
 )
 from .memory import async_get_memory, memory_enabled
 from .provider_errors import (
+    classify_config_provider_error,
     ensure_successful_responses_result,
     provider_user_message,
     request_reauthentication,
@@ -260,24 +261,12 @@ async def async_test_agent(
             else:
                 kwargs["max_tokens"] = 16
             response = await client.chat.completions.create(**kwargs)
-    except AuthenticationError as err:
-        # Authentication recovery is more important than diagnostics bookkeeping.
-        # Request it first so a secondary usage-storage failure cannot suppress reauth.
-        request_reauthentication(hass, entry, err)
-        authentication_rejected = True
-        await usage_manager.async_record_request(successful=False)
-        authentication = next(
-            check for check in checks if check.name == "Authentication"
-        )
-        authentication.status = "Failed"
-        authentication.message = provider_user_message(err)
-        checks.append(_check("Model access", "Failed", "Authentication rejected"))
-        checks.append(_check("Function calling", "Failed", "Probe was rejected"))
     except OpenAIError as err:
-        # Keep Diagnostics aligned with runtime handling: some compatible clients
-        # may surface an HTTP 401 as a generic OpenAIError rather than the concrete
-        # AuthenticationError subclass.
-        if request_reauthentication(hass, entry, err):
+        is_authentication_failure = classify_config_provider_error(err) == "invalid_auth"
+        if is_authentication_failure:
+            # Authentication recovery is more important than diagnostics bookkeeping.
+            # Request it first so a secondary usage-storage failure cannot suppress reauth.
+            request_reauthentication(hass, entry, err)
             authentication_rejected = True
             await usage_manager.async_record_request(successful=False)
             authentication = next(
