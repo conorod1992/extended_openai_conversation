@@ -34,6 +34,7 @@ function apiModeLabel(configuredMode, effectiveMode) {
 
 function normalizedReviewState(state = {}) {
   return {
+    seen: state?.seen === true,
     dismissed: state?.dismissed === true,
     reviewed: Array.from(new Set(Array.isArray(state?.reviewed) ? state.reviewed.filter((item) => typeof item === "string") : [])),
   };
@@ -67,16 +68,22 @@ function writeOnboardingReviewState(agent, state, storage = defaultStorage()) {
   }
 }
 
+export function markOnboardingSeen(agent, storage = defaultStorage()) {
+  const current = readOnboardingReviewState(agent, storage);
+  if (current.seen) return true;
+  return writeOnboardingReviewState(agent, {...current, seen: true}, storage);
+}
+
 export function markOnboardingStepReviewed(agent, stepId, storage = defaultStorage()) {
   const current = readOnboardingReviewState(agent, storage);
   const reviewed = new Set(current.reviewed);
   reviewed.add(stepId);
-  return writeOnboardingReviewState(agent, {...current, reviewed: [...reviewed]}, storage);
+  return writeOnboardingReviewState(agent, {...current, seen: true, reviewed: [...reviewed]}, storage);
 }
 
 export function dismissOnboarding(agent, storage = defaultStorage()) {
   const current = readOnboardingReviewState(agent, storage);
-  return writeOnboardingReviewState(agent, {...current, dismissed: true}, storage);
+  return writeOnboardingReviewState(agent, {...current, seen: true, dismissed: true}, storage);
 }
 
 export function hasEstablishedUsage(result = {}) {
@@ -92,10 +99,10 @@ function usageStatusKnown(result = {}) {
 }
 
 export function buildGettingStarted({facts = {}, agent = {}, result = {}, reviewState = {}, isAdmin = false} = {}) {
-  if (!isAdmin || facts?.unavailable === true || !usageStatusKnown(result) || hasEstablishedUsage(result)) return null;
-
   const review = normalizedReviewState(reviewState);
-  if (review.dismissed) return null;
+  if (!isAdmin || facts?.unavailable === true || review.dismissed) return null;
+  if (!review.seen && (!usageStatusKnown(result) || hasEstablishedUsage(result))) return null;
+
   const reviewed = new Set(review.reviewed);
   const runtime = facts.provider_runtime || {};
   const model = String(runtime.model || agent.model || "").trim();
@@ -232,17 +239,19 @@ export function bindGettingStarted(panel) {
   root.querySelector("#eoc-getting-started")?.remove();
   const agent = panel._selectedAgent?.();
   const result = panel._result || {};
+  const reviewState = readOnboardingReviewState(agent);
   const model = buildGettingStarted({
     facts: result.setup_health || {},
     agent,
     result,
-    reviewState: readOnboardingReviewState(agent),
+    reviewState,
     isAdmin: panel._data?.is_admin === true,
   });
   if (!model) return;
   const intro = root.querySelector(".page-intro");
   if (!intro) return;
   ensureStyles(panel);
+  markOnboardingSeen(agent);
   const host = document.createElement("div");
   host.innerHTML = renderGettingStarted(panel, model).trim();
   const card = host.firstElementChild;
