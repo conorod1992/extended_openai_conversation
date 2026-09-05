@@ -1,0 +1,61 @@
+name: PR15 autofix
+
+on:
+  push:
+    branches:
+      - fix/pr15-function-tool-config-references
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pr15-function-tool-config-references
+      - name: Apply focused fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          request_rules = Path("custom_components/extended_openai_conversation_responses/request_rules.py")
+          text = request_rules.read_text()
+          old = "from copy import deepcopy\nfrom contextvars import ContextVar\n"
+          new = "from contextvars import ContextVar\nfrom copy import deepcopy\n"
+          if old not in text:
+              raise SystemExit("request_rules import block not found")
+          text = text.replace(old, new, 1)
+
+          old = '''            if (\n                isinstance(action, Mapping)\n                and action.get("action") == service_action\n                and isinstance(action.get("data"), Mapping)\n                and action["data"].get("function") == function_name\n            ):\n'''
+          new = '''            if isinstance(action, Mapping) and (\n                (\n                    action.get("action") == service_action\n                    or action.get("service") == service_action\n                )\n                and isinstance(action.get("data"), Mapping)\n                and action["data"].get("function") == function_name\n                or (\n                    action.get("type") == "function"\n                    and action.get("function") == function_name\n                )\n            ):\n'''
+          if old not in text:
+              raise SystemExit("function_references block not found")
+          text = text.replace(old, new, 1)
+
+          old = '''                if (\n                    isinstance(action, Mapping)\n                    and action.get("action") == service_action\n                    and isinstance(action.get("data"), Mapping)\n                    and action["data"].get("function") == old_name\n                ):\n                    action["data"] = {**action["data"], "function": new_name}\n                    changed += 1\n'''
+          new = '''                if not isinstance(action, dict):\n                    continue\n                if (\n                    (\n                        action.get("action") == service_action\n                        or action.get("service") == service_action\n                    )\n                    and isinstance(action.get("data"), Mapping)\n                    and action["data"].get("function") == old_name\n                ):\n                    action["data"] = {**action["data"], "function": new_name}\n                    changed += 1\n                elif (\n                    action.get("type") == "function"\n                    and action.get("function") == old_name\n                ):\n                    action["function"] = new_name\n                    changed += 1\n'''
+          if old not in text:
+              raise SystemExit("rename reference block not found")
+          text = text.replace(old, new, 1)
+          request_rules.write_text(text)
+
+          management_ui = Path("custom_components/extended_openai_conversation_responses/management_ui.py")
+          text = management_ui.read_text()
+          old = '''            original_tools = configured_function_tools_from_data(subentry.data)\n'''
+          new = '''            assert original_name is not None\n            original_tools = configured_function_tools_from_data(subentry.data)\n'''
+          if old not in text:
+              raise SystemExit("management_ui rename path not found")
+          text = text.replace(old, new, 1)
+          management_ui.write_text(text)
+          PY
+      - name: Remove one-shot workflow
+        run: rm .github/workflows/pr15-autofix.yml
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/extended_openai_conversation_responses/request_rules.py custom_components/extended_openai_conversation_responses/management_ui.py .github/workflows/pr15-autofix.yml
+          git commit -m "fix: resolve PR15 CI failures"
+          git push origin HEAD:fix/pr15-function-tool-config-references
