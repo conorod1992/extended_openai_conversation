@@ -512,7 +512,11 @@ class ExtendedOpenAIAgentEntity(
             )
         finally:
             try:
-                await asyncio.shield(self._continuity.async_release(resolution.key))
+                await asyncio.shield(
+                    self._continuity.async_release(
+                        resolution.key, resolution.claim_token
+                    )
+                )
             finally:
                 _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
 
@@ -632,6 +636,7 @@ class ExtendedOpenAIAgentEntity(
                         evaluation.response or "Done",
                         archive_session,
                         resolution.key,
+                        resolution.claim_token,
                         source_device_id,
                         successful=evaluation.successful,
                     )
@@ -668,7 +673,7 @@ class ExtendedOpenAIAgentEntity(
                         chat_log.content[-1], conversation.AssistantContent
                     ):
                         await continuity.async_record_success(
-                            resolution.key, chat_log.content
+                            resolution.key, resolution.claim_token, chat_log.content
                         )
                     return result
                 async with self._usage.async_run(
@@ -691,7 +696,7 @@ class ExtendedOpenAIAgentEntity(
                     )
                     if run.successful:
                         await continuity.async_record_success(
-                            resolution.key, chat_log.content
+                            resolution.key, resolution.claim_token, chat_log.content
                         )
                     return result
             finally:
@@ -926,6 +931,7 @@ class ExtendedOpenAIAgentEntity(
         response: str,
         archive_session: ArchiveSession | None,
         continuity_key: str | None,
+        continuity_claim_token: str | None,
         source_device_id: str | None,
         *,
         successful: bool = True,
@@ -958,10 +964,8 @@ class ExtendedOpenAIAgentEntity(
         assert self._continuity is not None
         if successful:
             await self._continuity.async_record_success(
-                continuity_key, chat_log.content
+                continuity_key, continuity_claim_token, chat_log.content
             )
-        else:
-            await self._continuity.async_release(continuity_key)
         return result
 
     async def _async_execute_request_rule_function(

@@ -156,6 +156,7 @@ async def test_ha_default_never_restores_history_between_distinct_ids() -> None:
     )
     await manager.async_record_success(
         first.key,
+        first.claim_token,
         [conversation.SystemContent(content="private first conversation")],
     )
     second = await manager.async_resolve(

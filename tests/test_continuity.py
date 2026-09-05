@@ -40,7 +40,7 @@ async def test_per_device_resume_isolated_and_reset() -> None:
         CONVERSATION_CONTINUITY_DEVICE, scope, "kitchen", None, 30
     )
     history = [conversation.SystemContent(content="system")]
-    await manager.async_record_success(first.key, history)
+    await manager.async_record_success(first.key, first.claim_token, history)
     resumed = await manager.async_resolve(
         CONVERSATION_CONTINUITY_DEVICE, scope, "kitchen", "fresh-ha-id", 30
     )
@@ -64,7 +64,7 @@ async def test_per_user_cross_device_and_safe_fallback() -> None:
         CONVERSATION_CONTINUITY_USER, known, "kitchen", None, 30
     )
     await manager.async_record_success(
-        first.key, [conversation.SystemContent(content="system")]
+        first.key, first.claim_token, [conversation.SystemContent(content="system")]
     )
     cross_device = await manager.async_resolve(
         CONVERSATION_CONTINUITY_USER, known, "study", None, 30
@@ -96,7 +96,7 @@ async def test_inactivity_and_success_reset_timer() -> None:
     first = await manager.async_resolve(
         CONVERSATION_CONTINUITY_USER, scope, None, None, 30
     )
-    await manager.async_release(first.key)
+    await manager.async_release(first.key, first.claim_token)
     manager._sessions[first.key].last_active = dt_util.utcnow() - timedelta(minutes=31)
     expired = await manager.async_resolve(
         CONVERSATION_CONTINUITY_USER, scope, None, None, 30
@@ -106,7 +106,9 @@ async def test_inactivity_and_success_reset_timer() -> None:
         minutes=29
     )
     await manager.async_record_success(
-        expired.key, [conversation.SystemContent(content="bounded")]
+        expired.key,
+        expired.claim_token,
+        [conversation.SystemContent(content="bounded")],
     )
     assert manager._sessions[expired.key].last_active > dt_util.utcnow() - timedelta(
         seconds=2
@@ -138,7 +140,7 @@ async def test_in_flight_session_is_not_pruned_until_released() -> None:
     await manager.async_list(1)
     assert active.key in manager._sessions
 
-    await manager.async_release(active.key)
+    await manager.async_release(active.key, active.claim_token)
     await manager.async_list(1)
     assert active.key not in manager._sessions
 
@@ -155,7 +157,7 @@ async def test_consecutive_guest_turns_resume_guest_history() -> None:
         namespace=GUEST_CONTINUITY_NAMESPACE,
     )
     history = [conversation.SystemContent(content="guest follow-up context")]
-    await manager.async_record_success(first.key, history)
+    await manager.async_record_success(first.key, first.claim_token, history)
 
     resumed = await manager.async_resolve(
         CONVERSATION_CONTINUITY_DEVICE,
@@ -179,7 +181,7 @@ async def test_owner_to_guest_never_inherits_owner_history() -> None:
         CONVERSATION_CONTINUITY_DEVICE, scope, "kitchen", None, 30
     )
     owner_history = [conversation.SystemContent(content="owner private history")]
-    await manager.async_record_success(owner.key, owner_history)
+    await manager.async_record_success(owner.key, owner.claim_token, owner_history)
 
     guest = await manager.async_resolve(
         CONVERSATION_CONTINUITY_DEVICE,
@@ -253,7 +255,9 @@ async def test_guest_continuity_respects_timeout_and_explicit_end() -> None:
         namespace=GUEST_CONTINUITY_NAMESPACE,
     )
     await manager.async_record_success(
-        first.key, [conversation.SystemContent(content="expired guest history")]
+        first.key,
+        first.claim_token,
+        [conversation.SystemContent(content="expired guest history")],
     )
     assert first.key is not None
     manager._sessions[first.key].last_active = dt_util.utcnow() - timedelta(minutes=31)
@@ -268,7 +272,7 @@ async def test_guest_continuity_respects_timeout_and_explicit_end() -> None:
     )
     assert expired.conversation_id != first.conversation_id
     assert expired.history == []
-    await manager.async_release(expired.key)
+    await manager.async_release(expired.key, expired.claim_token)
     assert expired.key is not None and await manager.async_end(expired.key)
 
     restarted = await manager.async_resolve(
@@ -281,3 +285,67 @@ async def test_guest_continuity_respects_timeout_and_explicit_end() -> None:
     )
     assert restarted.conversation_id != expired.conversation_id
     assert restarted.history == []
+
+
+async def test_stale_success_cannot_mutate_replacement_session() -> None:
+    manager = ConversationContinuity("agent")
+    scope = user_scope("alice", source="test")
+    first = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, scope, None, None, 30
+    )
+    assert first.key is not None
+    assert first.claim_token is not None
+    assert await manager.async_end(first.key)
+
+    replacement = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, scope, None, None, 30
+    )
+    assert replacement.key == first.key
+    assert replacement.claim_token is not None
+    assert replacement.claim_token != first.claim_token
+
+    stale_history = [conversation.SystemContent(content="stale")]
+    await manager.async_record_success(first.key, first.claim_token, stale_history)
+
+    active = manager._sessions[first.key]
+    assert active.history == []
+    assert active.in_flight is True
+    assert active.claim_token == replacement.claim_token
+
+    fresh_history = [conversation.SystemContent(content="fresh")]
+    await manager.async_record_success(
+        replacement.key, replacement.claim_token, fresh_history
+    )
+    assert active.history == fresh_history
+    assert active.in_flight is False
+    assert active.claim_token is None
+
+
+async def test_stale_release_cannot_clear_newer_claim() -> None:
+    manager = ConversationContinuity("agent")
+    scope = user_scope("alice", source="test")
+    first = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, scope, None, None, 30
+    )
+    assert first.key is not None
+    assert first.claim_token is not None
+    await manager.async_record_success(
+        first.key,
+        first.claim_token,
+        [conversation.SystemContent(content="first")],
+    )
+
+    second = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, scope, None, None, 30
+    )
+    assert second.claim_token is not None
+    assert second.claim_token != first.claim_token
+
+    await manager.async_release(first.key, first.claim_token)
+    active = manager._sessions[first.key]
+    assert active.in_flight is True
+    assert active.claim_token == second.claim_token
+
+    await manager.async_release(second.key, second.claim_token)
+    assert active.in_flight is False
+    assert active.claim_token is None

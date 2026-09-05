@@ -174,10 +174,14 @@ async def test_failed_local_rule_is_archived_and_recorded_as_failed() -> None:
             self.successes: list[str | None] = []
             self.releases: list[str | None] = []
 
-        async def async_record_success(self, key: str | None, _content: Any) -> None:
+        async def async_record_success(
+            self, key: str | None, _claim_token: str | None, _content: Any
+        ) -> None:
             self.successes.append(key)
 
-        async def async_release(self, key: str | None) -> None:
+        async def async_release(
+            self, key: str | None, _claim_token: str | None
+        ) -> None:
             self.releases.append(key)
 
     class Agent:
@@ -200,6 +204,7 @@ async def test_failed_local_rule_is_archived_and_recorded_as_failed() -> None:
         "Failed",
         None,
         "owner-key",
+        "claim-token",
         None,
         successful=False,
     )
@@ -209,7 +214,8 @@ async def test_failed_local_rule_is_archived_and_recorded_as_failed() -> None:
     assert agent._usage.run.successful is False
     assert agent._usage.run.error_type == "RequestRuleExecutionFailed"
     assert agent._continuity.successes == []
-    assert agent._continuity.releases == ["owner-key"]
+    # Release is owned by the outer request-finalization boundary, not this helper.
+    assert agent._continuity.releases == []
 
 
 def test_ending_continuity_clears_request_rule_routing_state() -> None:
