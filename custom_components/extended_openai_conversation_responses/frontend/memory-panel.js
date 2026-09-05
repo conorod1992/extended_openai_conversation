@@ -3,6 +3,7 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._memories = [];
+    this._temporaryMemories = [];
     this._activeCategory = "all";
     this._query = "";
     this._importanceFilter = "all";
@@ -117,6 +118,11 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
           padding: 0 16px;
         }
 
+        .secondary-button:disabled {
+          opacity: .45;
+          cursor: default;
+        }
+
         .danger-button {
           border: 1px solid var(--error-color);
           background: var(--error-color);
@@ -137,7 +143,7 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
         }
 
         .icon-button:hover,
-        .secondary-button:hover {
+        .secondary-button:hover:not(:disabled) {
           background: var(--secondary-background-color);
         }
 
@@ -312,6 +318,18 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
           gap: 10px;
         }
 
+        .temporary-section {
+          margin-top: 34px;
+        }
+
+        .section-copy {
+          margin: 5px 0 0;
+          color: var(--secondary-text-color);
+          line-height: 1.45;
+          font-size: 13px;
+          max-width: 700px;
+        }
+
         .memory-card {
           padding: 16px 18px;
           display: grid;
@@ -465,7 +483,8 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
 
           .page-header { flex-direction: column; }
           .memory-header { flex-wrap: wrap; }
-          .memory-header .primary-button { width: 100%; }
+          .memory-header .primary-button,
+          .temporary-section .secondary-button { width: 100%; }
 
           .agent-row select { min-width: 0; }
 
@@ -484,7 +503,7 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
         <header class="page-header">
           <div>
             <h1>OpenAI memories</h1>
-            <p class="subtitle">Manage your personal memories and, where enabled, facts deliberately shared with the household.</p>
+            <p class="subtitle">Manage persistent personal and household memories, plus short-lived temporary context associated directly with your Home Assistant user.</p>
           </div>
         </header>
 
@@ -499,7 +518,7 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
                 <button type="button" id="testButton">Test agent</button>
                 <div class="menu-divider"></div>
                 <button type="button" class="danger" id="clearCategoryButton">Clear selected category…</button>
-                <button type="button" class="danger" id="clearAllButton">Clear all memories…</button>
+                <button type="button" class="danger" id="clearAllButton">Clear all persistent memories…</button>
               </div>
             </details>
           </div>
@@ -524,6 +543,17 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
             <select id="scopeFilter" aria-label="Filter by scope"><option value="all">All scopes</option><option value="Personal">Personal</option><option value="Shared household">Shared household</option></select>
           </div>
           <div id="memories" class="memory-list"></div>
+        </section>
+
+        <section class="temporary-section" aria-labelledby="temporaryMemoryHeading">
+          <div class="memory-header">
+            <div>
+              <div id="temporaryMemoryHeading" class="memory-count">Temporary memory</div>
+              <p class="section-copy">Only active temporary memories associated directly with your authenticated Home Assistant user are shown here. Device- and conversation-scoped context is intentionally not exposed.</p>
+            </div>
+            <button type="button" class="secondary-button" id="clearTemporaryButton">Clear temporary memory</button>
+          </div>
+          <div id="temporaryMemories" class="memory-list"></div>
         </section>
       </main>
 
@@ -615,6 +645,7 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
       this._closeToolsMenu();
       this._clearAll();
     });
+    root.querySelector("#clearTemporaryButton").addEventListener("click", () => this._clearTemporary());
     root.querySelector("#search").addEventListener("input", (event) => {
       this._query = event.target.value.trim().toLocaleLowerCase();
       this._renderMemories();
@@ -697,7 +728,9 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
         await this._loadMemories();
       } else {
         this._memories = [];
+        this._temporaryMemories = [];
         this._renderMemories();
+        this._renderTemporaryMemories();
         this._status("No conversation agents are configured.", true);
       }
     } catch (err) {
@@ -711,11 +744,13 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
       this._status("");
       const result = await this._call("list", this._data());
       this._memories = Array.isArray(result.memories) ? result.memories : [];
+      this._temporaryMemories = Array.isArray(result.temporary_memories) ? result.temporary_memories : [];
       if (this._activeCategory !== "all" && !this._memories.some((memory) => memory.category === this._activeCategory)) {
         this._activeCategory = "all";
       }
       this._renderCategories();
       this._renderMemories();
+      this._renderTemporaryMemories();
     } catch (err) {
       this._status(err.message || String(err), true);
     }
@@ -886,6 +921,108 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     actions.append(edit, remove);
     card.append(body, actions);
     return card;
+  }
+
+  _renderTemporaryMemories() {
+    const container = this.shadowRoot.querySelector("#temporaryMemories");
+    const heading = this.shadowRoot.querySelector("#temporaryMemoryHeading");
+    const clear = this.shadowRoot.querySelector("#clearTemporaryButton");
+    const selected = this._selected();
+
+    heading.textContent = this._temporaryMemories.length === 1
+      ? "1 temporary memory"
+      : `${this._temporaryMemories.length} temporary memories`;
+    clear.disabled = !this._temporaryMemories.length;
+    container.replaceChildren();
+
+    if (!this._temporaryMemories.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      const title = document.createElement("strong");
+      title.textContent = "No user-scoped temporary memories";
+      const copy = document.createElement("div");
+      copy.textContent = selected?.temporary_memory_enabled
+        ? "Temporary context associated with your Home Assistant user will appear here until it expires."
+        : "Temporary Memory is disabled for this agent. Any previously stored user-scoped context remains manageable until it expires.";
+      empty.append(title, copy);
+      container.append(empty);
+      return;
+    }
+
+    for (const memory of this._temporaryMemories) {
+      container.append(this._temporaryMemoryCard(memory));
+    }
+  }
+
+  _temporaryMemoryCard(memory) {
+    const card = document.createElement("article");
+    card.className = "memory-card";
+
+    const body = document.createElement("div");
+    const content = document.createElement("p");
+    content.className = "memory-content";
+    content.textContent = memory.content || "";
+
+    const metadata = document.createElement("div");
+    metadata.className = "metadata";
+    const category = document.createElement("span");
+    category.className = "badge";
+    category.textContent = memory.category || "general";
+    const source = document.createElement("span");
+    source.textContent = this._formatSource(memory.source);
+    const expires = document.createElement("span");
+    expires.textContent = `Expires ${this._formatDate(memory.expires_at)}`;
+    const updated = document.createElement("span");
+    updated.textContent = `Updated ${this._formatDate(memory.updated_at)}`;
+    metadata.append(category, source, expires, updated);
+    body.append(content, metadata);
+
+    const actions = document.createElement("div");
+    actions.className = "memory-actions";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "icon-button danger";
+    remove.textContent = "×";
+    remove.title = "Delete temporary memory";
+    remove.setAttribute("aria-label", "Delete temporary memory");
+    remove.addEventListener("click", () => this._deleteTemporaryMemory(memory));
+    actions.append(remove);
+
+    card.append(body, actions);
+    return card;
+  }
+
+  async _deleteTemporaryMemory(memory) {
+    const confirmed = await this._confirm(
+      "Delete temporary memory?",
+      "This temporary memory will be removed from your user-scoped context for the selected agent.",
+      "Delete"
+    );
+    if (!confirmed) return;
+
+    try {
+      await this._call("temporary_delete", this._data({ memory_id: memory.memory_id }));
+      await this._loadMemories();
+    } catch (err) {
+      this._status(err.message || String(err), true);
+    }
+  }
+
+  async _clearTemporary() {
+    if (!this._temporaryMemories.length) return;
+    const confirmed = await this._confirm(
+      "Clear temporary memory?",
+      "All active temporary memories associated directly with your Home Assistant user for this agent will be removed. Device- and conversation-scoped context is unaffected.",
+      "Clear temporary memory"
+    );
+    if (!confirmed) return;
+
+    try {
+      await this._call("temporary_clear", this._data({ confirm: true }));
+      await this._loadMemories();
+    } catch (err) {
+      this._status(err.message || String(err), true);
+    }
   }
 
   _openMemoryDialog(memory = null) {
