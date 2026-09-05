@@ -21,7 +21,7 @@ from ..const import (
     SHELL_OUTPUT_LIMIT,
     SHELL_TIMEOUT,
 )
-from ..regex_execution import async_run_configurable_regex
+from ..regex_execution import async_search_configured_patterns
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -235,14 +235,23 @@ class BashFunction(Function):
         restrict_to_workspace: bool,
         allow_patterns: list[str] | None = None,
     ) -> None:
-        """Run command guards, including configured regex allowlists, off-loop."""
-        await async_run_configurable_regex(
-            hass,
+        """Run configured allowlist regex in a bounded child process."""
+        if allow_patterns:
+            matches = await async_search_configured_patterns(
+                hass,
+                [(pattern, command, re.IGNORECASE) for pattern in allow_patterns],
+            )
+            if not any(matches):
+                raise ValueError("Command blocked: not in allowlist")
+
+        # Built-in defensive patterns are fixed by the integration and remain on the
+        # ordinary executor fast path. Do not re-run administrator patterns here.
+        await hass.async_add_executor_job(
             self._guard_command,
             command,
             cwd,
             restrict_to_workspace,
-            allow_patterns,
+            None,
         )
 
     async def execute(

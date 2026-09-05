@@ -24,8 +24,8 @@ from homeassistant.util import dt as dt_util
 from .agent_config import configured_function_tools_from_data, function_tool_enabled
 from .const import DOMAIN
 from .function_execution import (
+    async_validate_function_arguments,
     split_legacy_execution_delay,
-    validate_function_arguments,
 )
 from .functions import get_function
 from .helpers import get_exposed_entities
@@ -489,7 +489,9 @@ def _install_execution_hook() -> None:
         exposed_entities: list[dict[str, Any]],
     ) -> conversation.ToolResultContent:
         spec = function_tool.get("spec", {})
-        arguments = validate_function_arguments(spec, tool_input.tool_args)
+        arguments = await async_validate_function_arguments(
+            entity.hass, spec, tool_input.tool_args
+        )
         execution_arguments, execution_delay = split_legacy_execution_delay(
             spec, arguments
         )
