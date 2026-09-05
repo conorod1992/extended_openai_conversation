@@ -164,8 +164,24 @@ async def test_disabled_entry_is_not_reloaded_implicitly() -> None:
     hass.config_entries.async_schedule_reload.assert_not_called()
 
 
-async def test_identical_key_does_not_claim_or_schedule_reload() -> None:
+async def test_unchanged_key_retries_failed_entry_after_successful_validation() -> None:
     entry = _entry(state=ConfigEntryState.SETUP_ERROR, update_listener=False)
+    hass = MagicMock()
+    hass.config_entries.async_update_entry = MagicMock(return_value=False)
+
+    with patch(
+        "custom_components.extended_openai_conversation_responses.provider_credentials.get_authenticated_client",
+        AsyncMock(return_value=object()),
+    ):
+        result = await async_replace_api_key(hass, entry, "old-key")
+
+    assert result["updated"] is False
+    assert result["reload_requested"] is True
+    hass.config_entries.async_schedule_reload.assert_called_once_with("entry-1")
+
+
+async def test_unchanged_key_does_not_reload_healthy_entry() -> None:
+    entry = _entry()
     hass = MagicMock()
     hass.config_entries.async_update_entry = MagicMock(return_value=False)
 
