@@ -39,11 +39,30 @@ function ensureStyles(panel) {
   root.append(style);
 }
 
+function dialogBusy(dialog) {
+  return dialog?.dataset.eocBusy === "true";
+}
+
+function setDialogBusy(dialog, busy) {
+  if (!dialog) return;
+  if (busy) {
+    dialog.dataset.eocBusy = "true";
+    dialog.setAttribute("aria-busy", "true");
+  } else {
+    delete dialog.dataset.eocBusy;
+    dialog.removeAttribute("aria-busy");
+  }
+  for (const id of ["#eoc-api-key-close", "#eoc-api-key-cancel", "#eoc-api-key-save"]) {
+    const control = dialog.querySelector(id);
+    if (control) control.disabled = busy;
+  }
+}
+
 function openApiKeyDialog(panel) {
   const dialog = panel.shadowRoot?.querySelector("#eoc-api-key-dialog");
   const input = dialog?.querySelector("#eoc-new-api-key");
   const error = dialog?.querySelector("#eoc-api-key-error");
-  if (!dialog || !input || !error) return;
+  if (!dialog || !input || !error || dialogBusy(dialog)) return;
   input.value = "";
   error.textContent = "";
   dialog.showModal();
@@ -52,9 +71,10 @@ function openApiKeyDialog(panel) {
 
 function closeApiKeyDialog(panel) {
   const dialog = panel.shadowRoot?.querySelector("#eoc-api-key-dialog");
-  const input = dialog?.querySelector("#eoc-new-api-key");
+  if (!dialog || dialogBusy(dialog)) return;
+  const input = dialog.querySelector("#eoc-new-api-key");
   if (input) input.value = "";
-  dialog?.close();
+  dialog.close();
 }
 
 function ensureApiKeyDialog(panel, agent) {
@@ -70,13 +90,14 @@ function ensureApiKeyDialog(panel, agent) {
       <div class="dialog-body">
         <p class="eoc-api-key-dialog-copy">Enter the replacement API key for ${panel._e(providerLabel(agent?.provider))}. Existing provider and endpoint settings are kept.</p>
         <p class="eoc-provider-scope"><strong>Affects this provider connection:</strong> ${panel._e(providerCredentialScope(agent))}</p>
-        <label>New API key<input id="eoc-new-api-key" class="eoc-api-key-input" type="password" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
+        <label>New API key<input id="eoc-new-api-key" class="eoc-api-key-input" type="password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
         <small>The saved key is never displayed here. Extended OpenAI validates the replacement before saving it unless this provider connection is explicitly configured to skip authentication.</small>
         <div id="eoc-api-key-error" class="inline-error eoc-api-key-error" role="alert"></div>
       </div>
       <div class="dialog-actions"><button type="button" class="secondary" id="eoc-api-key-cancel">Cancel</button><button type="submit" id="eoc-api-key-save">Validate & replace</button></div>
     </form>`;
-  root.append(dialog);
+  const dialogHost = root.querySelector("#eoc-dialog-host") || root;
+  dialogHost.append(dialog);
 
   dialog.querySelector("#eoc-api-key-close")?.addEventListener("click", () => closeApiKeyDialog(panel));
   dialog.querySelector("#eoc-api-key-cancel")?.addEventListener("click", () => closeApiKeyDialog(panel));
@@ -86,33 +107,41 @@ function ensureApiKeyDialog(panel, agent) {
   });
   dialog.querySelector("#eoc-api-key-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (dialogBusy(dialog)) return;
     const input = dialog.querySelector("#eoc-new-api-key");
     const error = dialog.querySelector("#eoc-api-key-error");
     const save = dialog.querySelector("#eoc-api-key-save");
-    const apiKey = input?.value || "";
+    if (!input || !error || !save) return;
+    const apiKey = input.value || "";
     if (!apiKey.trim()) {
       error.textContent = "Enter a new API key.";
-      input?.focus();
+      input.focus();
       return;
     }
     error.textContent = "";
-    save.disabled = true;
     const previousLabel = save.textContent;
+    setDialogBusy(dialog, true);
     save.textContent = "Validating…";
     try {
       const result = await panel._call("diagnostics", "update_api_key", {api_key: apiKey});
       input.value = "";
       dialog.close();
       const validationNote = result?.validation_performed === false
-        ? " This provider connection skips authentication validation."
+        ? " Authentication validation is skipped for this provider connection."
         : "";
-      panel._toast(`API key updated.${validationNote} Extended OpenAI is reloading the provider connection.`);
+      if (result?.updated === false) {
+        panel._toast(`API key unchanged.${validationNote}`);
+      } else if (result?.reload_requested === false) {
+        panel._toast(`API key updated.${validationNote} The provider connection was not reloaded automatically.`);
+      } else {
+        panel._toast(`API key updated.${validationNote} Extended OpenAI is reloading the provider connection.`);
+      }
     } catch (err) {
       error.textContent = err.message || String(err);
-      input?.focus();
-      input?.select();
+      input.focus();
+      input.select();
     } finally {
-      save.disabled = false;
+      setDialogBusy(dialog, false);
       save.textContent = previousLabel;
     }
   });
@@ -155,11 +184,24 @@ function syncAuthenticationRecovery(panel, result) {
   panel.shadowRoot?.querySelector("#eoc-auth-recovery")?.remove();
 }
 
+function stopDiagnosticsWatch(panel) {
+  panel._eocProviderCredentialObserver?.disconnect?.();
+  panel._eocProviderCredentialObserver = null;
+}
+
 function watchDiagnosticsResult(panel) {
   const output = panel.shadowRoot?.querySelector("#test-result");
-  if (!output || output.dataset.eocCredentialWatch) return;
-  output.dataset.eocCredentialWatch = "";
+  if (!output) return;
+  stopDiagnosticsWatch(panel);
+  let observer = null;
   const inspect = () => {
+    if (output !== panel.shadowRoot?.querySelector("#test-result")) {
+      observer?.disconnect();
+      if (panel._eocProviderCredentialObserver === observer) {
+        panel._eocProviderCredentialObserver = null;
+      }
+      return;
+    }
     try {
       const result = JSON.parse(output.textContent || "");
       syncAuthenticationRecovery(panel, result);
@@ -167,13 +209,18 @@ function watchDiagnosticsResult(panel) {
       // "Testing…" and plain error messages are not structured diagnostic results.
     }
   };
-  const observer = new MutationObserver(inspect);
+  observer = new MutationObserver(inspect);
+  panel._eocProviderCredentialObserver = observer;
   observer.observe(output, {childList: true, characterData: true, subtree: true});
   inspect();
 }
 
 function enhanceDiagnostics(panel) {
-  if (panel._page !== "usage-maintenance" || panel._subsection !== "diagnostics") return;
+  if (
+    panel._data?.is_admin === false
+    || panel._page !== "usage-maintenance"
+    || panel._subsection !== "diagnostics"
+  ) return;
   const agent = panel._selectedAgent?.();
   if (!agent || !panel.shadowRoot) return;
   ensureStyles(panel);
@@ -191,9 +238,16 @@ export function installManagementProviderCredentials(registry = globalThis.custo
 
     const originalRender = prototype._render;
     prototype._render = function(...args) {
+      stopDiagnosticsWatch(this);
       const result = originalRender.apply(this, args);
       enhanceDiagnostics(this);
       return result;
+    };
+
+    const originalDisconnected = prototype.disconnectedCallback;
+    prototype.disconnectedCallback = function(...args) {
+      stopDiagnosticsWatch(this);
+      return originalDisconnected?.apply(this, args);
     };
 
     prototype[PATCHED] = true;
