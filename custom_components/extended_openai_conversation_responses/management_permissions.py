@@ -12,7 +12,6 @@ from . import management_ui
 from .management_browser import install_management_browser
 from .management_configuration_guidance import install_management_configuration_guidance
 from .management_setup_health import install_management_setup_health
-from .provider_credentials import async_replace_api_key
 
 _PATCHED = "extended_openai_management_permissions"
 _OPTIMIZED_OVERVIEW_PATCHED = "extended_openai_management_overview_permissions"
@@ -57,15 +56,6 @@ def wrap_management_permissions(original: ManagementCommand) -> ManagementComman
         # boundary instead of needing an action-by-action allow-list.
         if section == "diagnostics":
             _require_admin(is_admin)
-            if action == "update_api_key":
-                entry_id = message.get("entry_id")
-                subentry_id = message.get("subentry_id")
-                if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
-                    raise HomeAssistantError("entry_id and subentry_id are required")
-                entry, _subentry = management_ui.entry_and_agent(
-                    hass, entry_id, subentry_id
-                )
-                return await async_replace_api_key(hass, entry, message.get("api_key"))
 
         # Usage details are also agent-global. Keep the harmless aggregate summary
         # available for Overview, but never expose the latest run metadata or any
