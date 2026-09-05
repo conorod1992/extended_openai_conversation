@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 from pathlib import Path
 import re
 from types import MappingProxyType
 from typing import Any, cast
+from uuid import uuid4
 
 import voluptuous as vol
 import yaml
@@ -89,6 +91,7 @@ from .const import (
     GUEST_POLICY_VERSION,
     MANAGEMENT_PANEL_TITLE,
     MANAGEMENT_PANEL_URL,
+    SERVICE_CALL_FUNCTION,
     TEMPORARY_MEMORY_OFF,
 )
 from .continuity import ConversationContinuity, async_get_continuity
@@ -606,35 +609,58 @@ def _parse_import_document(value: Any) -> dict[str, Any]:
     }
 
 
+def _prepare_request_rule(value: Any, rule_id: str | None = None) -> dict[str, Any]:
+    """Assign/preserve rule identity before canonical validation."""
+    if not isinstance(value, Mapping):
+        raise HomeAssistantError("rule must be an object")
+    raw = dict(value)
+    if rule_id is not None:
+        raw["id"] = rule_id
+    elif not isinstance(raw.get("id"), str) or not str(raw["id"]).strip():
+        raw["id"] = uuid4().hex
+    return validate_rule(raw)
+
+
 def _validate_request_rule_functions(
-    value: Any, configured_tools: list[dict[str, Any]]
+    rule: Mapping[str, Any], configured_tools: list[dict[str, Any]]
 ) -> None:
-    """Reject new rule references that are not currently selectable."""
-    rule = validate_rule(value)
+    """Validate configured Function references in canonical persisted actions."""
+    service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+    calls: list[Mapping[str, Any]] = []
+    for action in rule.get("action", {}).get("actions", []):
+        if not isinstance(action, Mapping):
+            continue
+        if action.get("action", action.get("service")) != service_action:
+            continue
+        data = action.get("data")
+        if not isinstance(data, Mapping) or not isinstance(data.get("function"), str):
+            raise HomeAssistantError("Configured Function action is invalid")
+        arguments = data.get("arguments", {})
+        if not isinstance(arguments, Mapping):
+            raise HomeAssistantError("Configured Function arguments must be an object")
+        calls.append(data)
+
     available = {
         tool["spec"]["name"] for tool in configured_tools if function_tool_enabled(tool)
     }
     missing = {
-        action["function"]
-        for action in rule.get("action", {}).get("actions", [])
-        if action.get("type") == "function" and action["function"] not in available
+        str(call["function"]) for call in calls if call["function"] not in available
     }
     if missing:
         raise HomeAssistantError(
             "Function Tool is unavailable or disabled: " + ", ".join(sorted(missing))
         )
     by_name = {tool["spec"]["name"]: tool for tool in configured_tools}
-    for action in rule.get("action", {}).get("actions", []):
-        if action.get("type") != "function" or action["function"] not in by_name:
-            continue
-        parameters = by_name[action["function"]]["spec"].get("parameters", {})
+    for call in calls:
+        function_name = str(call["function"])
+        parameters = by_name[function_name]["spec"].get("parameters", {})
         required = (
             parameters.get("required", []) if isinstance(parameters, dict) else []
         )
-        missing_inputs = set(required) - set(action.get("arguments", {}))
+        missing_inputs = set(required) - set(call.get("arguments", {}))
         if missing_inputs:
             raise HomeAssistantError(
-                f"Function Tool `{action['function']}` needs input: "
+                f"Function Tool `{function_name}` needs input: "
                 + ", ".join(sorted(missing_inputs))
             )
 
@@ -823,24 +849,26 @@ async def async_management_command(
                 )
             }
         if action == "create":
+            candidate = _prepare_request_rule(message.get("rule"))
             _validate_request_rule_functions(
-                message.get("rule"),
+                candidate,
                 configured_function_tools_from_data(subentry.data)
                 if hasattr(subentry, "data")
                 else [],
             )
-            return {"rule": await rules.async_create(message.get("rule"))}
+            return {"rule": await rules.async_create(candidate)}
         rule_id = message.get("rule_id")
         if not isinstance(rule_id, str):
             raise HomeAssistantError("rule_id is required")
         if action == "update":
+            candidate = _prepare_request_rule(message.get("rule"), rule_id)
             _validate_request_rule_functions(
-                message.get("rule"),
+                candidate,
                 configured_function_tools_from_data(subentry.data)
                 if hasattr(subentry, "data")
                 else [],
             )
-            return {"rule": await rules.async_update(rule_id, message.get("rule"))}
+            return {"rule": await rules.async_update(rule_id, candidate)}
         if action == "delete":
             if message.get("confirm") is not True:
                 raise HomeAssistantError("Explicit confirmation is required")
@@ -1157,10 +1185,10 @@ async def async_management_command(
         if action == "validate_current":
             return {"valid": True, "errors": {}}
         if action == "save":
-            candidate = message.get("tool")
-            if not isinstance(candidate, dict):
+            tool_candidate = message.get("tool")
+            if not isinstance(tool_candidate, dict):
                 raise HomeAssistantError("tool must be an object")
-            saved_tool = validate_function_tools([candidate])[0]
+            saved_tool = validate_function_tools([tool_candidate])[0]
             original_name = message.get("original_name")
             if original_name is not None and not isinstance(original_name, str):
                 raise HomeAssistantError("original_name must be a string")
@@ -1282,9 +1310,10 @@ async def async_management_command(
                 hass, entry, subentry, remaining, groups
             )
         if action == "save_group":
-            candidate = message.get("group")
-            if not isinstance(candidate, dict):
+            group_candidate = message.get("group")
+            if not isinstance(group_candidate, dict):
                 raise HomeAssistantError("group must be an object")
+            candidate = group_candidate
             candidate_functions = candidate.get("functions", [])
             if not isinstance(candidate_functions, list) or not all(
                 isinstance(name, str) for name in candidate_functions
