@@ -85,6 +85,26 @@ def test_backup_redacts_nested_function_tool_credentials() -> None:
     }
 
 
+@pytest.mark.parametrize("container_key", ["parameters", "properties", "items"])
+def test_backup_runtime_schema_named_containers_still_redact_credentials(
+    container_key: str,
+) -> None:
+    """Schema-like runtime key names do not disable credential redaction."""
+    safe = _safe_configuration(
+        {
+            container_key: {
+                "password": "runtime-password",
+                "token": "runtime-token",
+            }
+        }
+    )
+
+    assert safe[container_key] == {
+        "password": REDACTED_SECRET_SENTINEL,
+        "token": REDACTED_SECRET_SENTINEL,
+    }
+
+
 def test_backup_preserves_credential_named_schema_properties() -> None:
     """Credential-like property names remain valid inside JSON Schema definitions."""
     property_names = (

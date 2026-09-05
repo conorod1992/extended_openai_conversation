@@ -14,7 +14,6 @@ _SECRET_KEY_FAMILIES = ("apikey", "clientsecret", "accesstoken", "refreshtoken")
 _CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _KEY_SEPARATOR = re.compile(r"[^A-Za-z0-9]+")
 _LIKELY_SECRET = re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b")
-_SCHEMA_CONTAINER_KEYS = frozenset({"parameters", "properties", "items"})
 _DROP = object()
 
 
@@ -33,22 +32,46 @@ def _sentinel() -> dict[str, bool]:
     return dict(REDACTED_SECRET_SENTINEL)
 
 
-def redact_secrets(value: Any, *, schema: bool = False) -> Any:
-    """Redact credential values without deleting their surrounding keys/structure."""
+def _is_function_tool_schema_root(path: tuple[Any, ...]) -> bool:
+    """Return whether *path* is a configured Function Tool JSON Schema root."""
+    return (
+        len(path) >= 4
+        and path[-4] == "functions"
+        and isinstance(path[-3], int)
+        and path[-2] == "spec"
+        and path[-1] == "parameters"
+    )
+
+
+def _redact_secrets(value: Any, *, schema: bool, path: tuple[Any, ...]) -> Any:
+    """Recursively redact secrets while tracking structural schema context."""
     if isinstance(value, list):
-        return [redact_secrets(item, schema=schema) for item in value]
+        return [
+            _redact_secrets(item, schema=schema, path=(*path, index))
+            for index, item in enumerate(value)
+        ]
     if isinstance(value, str):
         return _LIKELY_SECRET.sub("[redacted]", value)
     if not isinstance(value, dict):
         return value
     result: dict[Any, Any] = {}
     for key, item in value.items():
-        child_schema = schema or key in _SCHEMA_CONTAINER_KEYS
+        child_path = (*path, key)
+        child_schema = schema or _is_function_tool_schema_root(child_path)
         if not schema and _is_secret_key(key):
             result[key] = _sentinel()
             continue
-        result[key] = redact_secrets(item, schema=child_schema)
+        result[key] = _redact_secrets(
+            item,
+            schema=child_schema,
+            path=child_path,
+        )
     return result
+
+
+def redact_secrets(value: Any, *, schema: bool = False) -> Any:
+    """Redact credential values without deleting their surrounding keys/structure."""
+    return _redact_secrets(value, schema=schema, path=())
 
 
 def _restore_redacted_secrets(value: Any) -> Any:
