@@ -41,19 +41,22 @@ const credentialResult = await updateProviderApiKey(
       },
     },
   },
-  {entry_id:"entry-1", subentry_id:"agent-1"},
+  {entry_id:"entry-1"},
   "candidate-secret",
 );
 assert.deepEqual(sentCredentialRequest, {
   type:"extended_openai_conversation_responses/management/update_api_key",
   entry_id:"entry-1",
-  subentry_id:"agent-1",
   api_key:"candidate-secret",
 });
 assert.equal(credentialResult.updated, true);
 await assert.rejects(
-  () => updateProviderApiKey({}, {entry_id:"entry-1", subentry_id:"agent-1"}, "candidate-secret"),
+  () => updateProviderApiKey({}, {entry_id:"entry-1"}, "candidate-secret"),
   /Home Assistant connection is unavailable/,
+);
+await assert.rejects(
+  () => updateProviderApiKey({_hass:{callWS:async () => ({})}}, {}, "candidate-secret"),
+  /Provider connection is unavailable/,
 );
 
 const source = await readFile(
@@ -77,6 +80,7 @@ assert.match(source, /panel\._data\?\.is_admin === false/);
 assert.match(source, /reload_requested === false/);
 assert.match(source, /syncAuthenticationRecovery\(panel, \{authentication_rejected: false\}\)/);
 assert.doesNotMatch(source, /panel\.hass\.callWS/);
+assert.doesNotMatch(source, /subentry_id: agent\.subentry_id/);
 assert.doesNotMatch(source, /root\.append\(dialog\)/);
 assert.doesNotMatch(source, /slice\([^)]*apiKey|substring\([^)]*apiKey/);
 
