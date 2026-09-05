@@ -18,6 +18,175 @@ _OBJECT_KEYWORDS = {
     "maxProperties",
 }
 _ARRAY_KEYWORDS = {"items", "minItems", "maxItems", "uniqueItems"}
+_STRING_KEYWORDS = {"minLength", "maxLength", "pattern"}
+_NUMBER_KEYWORDS = {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"}
+_COMMON_SCHEMA_KEYWORDS = {"type", "description", "enum", "const"}
+_SUPPORTED_SCHEMA_KEYWORDS = (
+    _COMMON_SCHEMA_KEYWORDS
+    | _OBJECT_KEYWORDS
+    | _ARRAY_KEYWORDS
+    | _STRING_KEYWORDS
+    | _NUMBER_KEYWORDS
+)
+
+
+def validate_function_schema(schema: Mapping[str, Any]) -> None:
+    """Validate the JSON-schema subset enforced by configured Function Tools.
+
+    The provider may understand a wider JSON-Schema vocabulary, but configured tools
+    are also validated locally before execution. Rejecting unsupported constraints at
+    configuration time prevents the provider and the local runtime from disagreeing
+    about what inputs are valid.
+    """
+    if not isinstance(schema, Mapping):
+        raise _schema_error("parameters must be an object schema")
+    _validate_schema_node("parameters", schema)
+    root_type = schema.get("type")
+    if root_type is not None and root_type != "object":
+        raise _schema_error("function parameters must describe an object")
+
+
+def _validate_schema_node(path: str, schema: Mapping[str, Any]) -> None:
+    """Validate one schema node recursively without validating a concrete value."""
+    unknown = set(schema) - _SUPPORTED_SCHEMA_KEYWORDS
+    if unknown:
+        raise _schema_error(
+            f"unsupported keyword at `{path}`: {', '.join(sorted(unknown))}"
+        )
+
+    description = schema.get("description")
+    if description is not None and not isinstance(description, str):
+        raise _schema_error(f"description at `{path}` must be a string")
+
+    expected = schema.get("type")
+    if expected is None:
+        object_hint = bool(_OBJECT_KEYWORDS.intersection(schema))
+        array_hint = bool(_ARRAY_KEYWORDS.intersection(schema))
+        if object_hint and array_hint:
+            raise _schema_error(f"schema at `{path}` mixes object and array keywords")
+        expected_types = {"object"} if object_hint else {"array"} if array_hint else set()
+    elif isinstance(expected, str):
+        if expected not in _JSON_TYPES:
+            raise _schema_error(f"unsupported type `{expected}` at `{path}`")
+        expected_types = {expected}
+    elif (
+        isinstance(expected, list)
+        and expected
+        and all(isinstance(item, str) and item in _JSON_TYPES for item in expected)
+    ):
+        expected_types = set(expected)
+    else:
+        raise _schema_error(
+            f"type at `{path}` must be a JSON type or non-empty list of JSON types"
+        )
+
+    for keywords, supported_types, label in (
+        (_OBJECT_KEYWORDS, {"object"}, "object"),
+        (_ARRAY_KEYWORDS, {"array"}, "array"),
+        (_STRING_KEYWORDS, {"string"}, "string"),
+        (_NUMBER_KEYWORDS, {"number", "integer"}, "numeric"),
+    ):
+        used = keywords.intersection(schema)
+        if used and not expected_types.intersection(supported_types):
+            raise _schema_error(
+                f"{', '.join(sorted(used))} at `{path}` requires a {label} schema"
+            )
+
+    choices = schema.get("enum")
+    if choices is not None and not isinstance(choices, list):
+        raise _schema_error(f"enum at `{path}` must be a list")
+
+    if "object" in expected_types:
+        properties = schema.get("properties", {})
+        if not isinstance(properties, Mapping):
+            raise _schema_error(f"properties at `{path}` must be an object")
+        for name, child_schema in properties.items():
+            if not isinstance(name, str):
+                raise _schema_error(f"property names at `{path}` must be strings")
+            if not isinstance(child_schema, Mapping):
+                raise _schema_error(
+                    f"schema for `{_field_name(path, name)}` must be an object"
+                )
+            _validate_schema_node(_field_name(path, name), child_schema)
+
+        required = schema.get("required", [])
+        if not isinstance(required, list) or not all(
+            isinstance(item, str) for item in required
+        ):
+            raise _schema_error(f"required at `{path}` must be a list of property names")
+        if len(required) != len(set(required)):
+            raise _schema_error(f"required at `{path}` contains duplicate names")
+
+        additional = schema.get("additionalProperties", True)
+        if not isinstance(additional, (bool, Mapping)):
+            raise _schema_error(
+                f"additionalProperties at `{path}` must be boolean or an object schema"
+            )
+        if isinstance(additional, Mapping):
+            _validate_schema_node(f"{path}.additionalProperties", additional)
+        _validate_schema_length_bounds(schema, path, "minProperties", "maxProperties")
+
+    if "array" in expected_types:
+        items = schema.get("items")
+        if items is not None:
+            if not isinstance(items, Mapping):
+                raise _schema_error(f"items at `{path}` must be an object schema")
+            _validate_schema_node(f"{path}.items", items)
+        unique = schema.get("uniqueItems")
+        if unique is not None and not isinstance(unique, bool):
+            raise _schema_error(f"uniqueItems at `{path}` must be boolean")
+        _validate_schema_length_bounds(schema, path, "minItems", "maxItems")
+
+    if "string" in expected_types:
+        _validate_schema_length_bounds(schema, path, "minLength", "maxLength")
+        pattern = schema.get("pattern")
+        if pattern is not None:
+            if not isinstance(pattern, str):
+                raise _schema_error(f"pattern at `{path}` must be a string")
+            try:
+                re.compile(pattern)
+            except re.error as err:
+                raise _schema_error(f"invalid pattern at `{path}`: {err}") from err
+
+    if expected_types.intersection({"number", "integer"}):
+        for keyword in _NUMBER_KEYWORDS:
+            if keyword not in schema:
+                continue
+            limit = schema[keyword]
+            if (
+                isinstance(limit, bool)
+                or not isinstance(limit, (int, float))
+                or not math.isfinite(float(limit))
+            ):
+                raise _schema_error(f"{keyword} at `{path}` must be a finite number")
+        _validate_numeric_bound_order(schema, path)
+
+
+def _validate_schema_length_bounds(
+    schema: Mapping[str, Any], path: str, minimum_key: str, maximum_key: str
+) -> None:
+    """Validate non-negative integer schema bounds and their ordering."""
+    minimum = schema.get(minimum_key)
+    maximum = schema.get(maximum_key)
+    for keyword, limit in ((minimum_key, minimum), (maximum_key, maximum)):
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or limit < 0
+        ):
+            raise _schema_error(
+                f"{keyword} at `{path}` must be a non-negative integer"
+            )
+    if minimum is not None and maximum is not None and minimum > maximum:
+        raise _schema_error(
+            f"{minimum_key} at `{path}` cannot exceed {maximum_key}"
+        )
+
+
+def _validate_numeric_bound_order(schema: Mapping[str, Any], path: str) -> None:
+    """Reject contradictory numeric lower/upper bounds."""
+    lower = schema.get("minimum", schema.get("exclusiveMinimum"))
+    upper = schema.get("maximum", schema.get("exclusiveMaximum"))
+    if lower is not None and upper is not None and lower > upper:
+        raise _schema_error(f"numeric lower bound at `{path}` exceeds upper bound")
 
 
 def validate_function_arguments(
