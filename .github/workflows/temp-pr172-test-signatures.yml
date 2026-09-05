@@ -1,0 +1,70 @@
+name: Temporary PR 172 test signature updater
+on:
+  push:
+    branches:
+      - fix/continuity-claim-ownership
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: fix/continuity-claim-ownership
+      - name: Update direct test call sites
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str, label: str) -> None:
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, got {count}")
+              path.write_text(text.replace(old, new, 1))
+
+          lifecycle = Path("tests/test_lifecycle_optimizations.py")
+          replace_once(
+              lifecycle,
+              '''    await manager.async_record_success(\n        first.key,\n        [conversation.SystemContent(content="private first conversation")],\n    )\n''',
+              '''    await manager.async_record_success(\n        first.key,\n        first.claim_token,\n        [conversation.SystemContent(content="private first conversation")],\n    )\n''',
+              "HA-default continuity call",
+          )
+
+          process = Path("tests/test_process_service.py")
+          replace_once(
+              process,
+              '''        archive_session,\n        "continuity-key",\n        "kitchen",\n''',
+              '''        archive_session,\n        "continuity-key",\n        "claim-token",\n        "kitchen",\n''',
+              "local-rule process call",
+          )
+
+          rules = Path("tests/test_request_rules_pr18.py")
+          replace_once(
+              rules,
+              '''        async def async_record_success(self, key: str | None, _content: Any) -> None:\n            self.successes.append(key)\n\n        async def async_release(self, key: str | None) -> None:\n            self.releases.append(key)\n''',
+              '''        async def async_record_success(\n            self, key: str | None, _claim_token: str | None, _content: Any\n        ) -> None:\n            self.successes.append(key)\n\n        async def async_release(\n            self, key: str | None, _claim_token: str | None\n        ) -> None:\n            self.releases.append(key)\n''',
+              "continuity stub signatures",
+          )
+          replace_once(
+              rules,
+              '''        None,\n        "owner-key",\n        None,\n        successful=False,\n''',
+              '''        None,\n        "owner-key",\n        "claim-token",\n        None,\n        successful=False,\n''',
+              "failed local-rule call",
+          )
+          replace_once(
+              rules,
+              '''    assert agent._continuity.successes == []\n    assert agent._continuity.releases == ["owner-key"]\n''',
+              '''    assert agent._continuity.successes == []\n    # Release is owned by the outer request-finalization boundary, not this helper.\n    assert agent._continuity.releases == []\n''',
+              "failed local-rule release expectation",
+          )
+          PY
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tests/test_lifecycle_optimizations.py tests/test_process_service.py tests/test_request_rules_pr18.py
+          git commit -m 'Update continuity ownership test call sites'
+          git push origin HEAD:fix/continuity-claim-ownership
