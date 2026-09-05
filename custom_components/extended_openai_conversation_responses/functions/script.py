@@ -39,7 +39,10 @@ class ScriptFunction(Function):
         )
 
         context = llm_context.context if llm_context else None
-        result = await script.async_run(run_variables=arguments, context=context)
-        if result is None:
-            return "Success"
-        return result.variables.get("_function_result", "Success")
+        try:
+            result = await script.async_run(run_variables=arguments, context=context)
+            if result is None:
+                return "Success"
+            return result.variables.get("_function_result", "Success")
+        finally:
+            await script.async_unload()
