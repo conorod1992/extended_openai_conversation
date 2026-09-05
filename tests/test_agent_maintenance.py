@@ -73,6 +73,29 @@ async def test_same_task_reader_can_reenter_while_writer_is_waiting() -> None:
     await writer
 
 
+async def test_child_task_reader_reenters_parent_lease_while_writer_waits() -> None:
+    """HA Script child work inherits the logical reader instead of deadlocking."""
+    gate = AgentMaintenanceGate()
+    writer_entered = asyncio.Event()
+    child_entered = asyncio.Event()
+
+    async with gate.shared():
+        writer = asyncio.create_task(_enter_writer(gate, writer_entered))
+        await asyncio.sleep(0)
+
+        async def child_reader() -> None:
+            async with gate.shared():
+                child_entered.set()
+
+        child = asyncio.create_task(child_reader())
+        await asyncio.wait_for(child_entered.wait(), timeout=1)
+        await child
+        assert not writer_entered.is_set()
+
+    await asyncio.wait_for(writer_entered.wait(), timeout=1)
+    await writer
+
+
 async def _enter_writer(gate: AgentMaintenanceGate, entered: asyncio.Event) -> None:
     async with gate.exclusive():
         entered.set()

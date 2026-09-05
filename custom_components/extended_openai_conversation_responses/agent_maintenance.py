@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from functools import wraps
 import inspect
 from typing import Any, cast
@@ -23,39 +24,50 @@ class AgentMaintenanceGate:
     def __init__(self) -> None:
         self._condition = asyncio.Condition()
         self._active_readers = 0
-        self._reader_depth: dict[asyncio.Task[Any], int] = {}
+        self._reader_owner: ContextVar[object | None] = ContextVar(
+            f"extended_openai_maintenance_reader_{id(self)}", default=None
+        )
+        self._reader_depth: dict[object, int] = {}
         self._waiting_writers = 0
         self._writer_active = False
 
     @asynccontextmanager
     async def shared(self) -> AsyncIterator[None]:
-        """Enter ordinary agent work, waiting behind pending maintenance."""
-        task = asyncio.current_task()
-        if task is None:  # pragma: no cover - asyncio always supplies one here
-            raise RuntimeError("Agent maintenance reader requires an asyncio task")
+        """Enter ordinary agent work, preserving a logical lease across child tasks."""
+        owner = self._reader_owner.get()
+        owner_token = None
 
         async with self._condition:
-            depth = self._reader_depth.get(task, 0)
+            depth = self._reader_depth.get(owner, 0) if owner is not None else 0
             if depth:
-                self._reader_depth[task] = depth + 1
+                # Context variables propagate into child tasks created by Home
+                # Assistant Script. Treat those descendants as part of the same
+                # logical request so a waiting writer cannot deadlock on its parent.
+                self._reader_depth[owner] = depth + 1
             else:
                 await self._condition.wait_for(
                     lambda: not self._writer_active and self._waiting_writers == 0
                 )
-                self._reader_depth[task] = 1
+                owner = object()
+                owner_token = self._reader_owner.set(owner)
+                self._reader_depth[owner] = 1
                 self._active_readers += 1
         try:
             yield
         finally:
+            if owner is None:  # pragma: no cover - every admitted reader owns a token
+                raise RuntimeError("Agent maintenance reader lease was not established")
             async with self._condition:
-                depth = self._reader_depth[task]
+                depth = self._reader_depth[owner]
                 if depth > 1:
-                    self._reader_depth[task] = depth - 1
+                    self._reader_depth[owner] = depth - 1
                 else:
-                    del self._reader_depth[task]
+                    del self._reader_depth[owner]
                     self._active_readers -= 1
                     if self._active_readers == 0:
                         self._condition.notify_all()
+            if owner_token is not None:
+                self._reader_owner.reset(owner_token)
 
     @asynccontextmanager
     async def exclusive(self) -> AsyncIterator[None]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, sentinel
 
@@ -9,9 +10,13 @@ import pytest
 
 import custom_components.extended_openai_conversation_responses as integration
 from custom_components.extended_openai_conversation_responses import delayed_tools
+from custom_components.extended_openai_conversation_responses.agent_maintenance import (
+    get_agent_maintenance_gate,
+)
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
     DATA_DELAYED_TOOL_MANAGER,
+    DelayedToolCall,
     DelayedToolManager,
     _DELAYED_EXECUTION_MARKER,
     _install_execution_hook,
@@ -205,3 +210,72 @@ async def test_recovered_delayed_execution_strips_scheduler_metadata(
     original.assert_not_awaited()
     function.execute.assert_awaited_once()
     assert function.execute.await_args.args[2] == {"value": 1}
+
+
+def _due_call(call_id: str = "call-due") -> DelayedToolCall:
+    now = delayed_tools.dt_util.utcnow().isoformat()
+    return DelayedToolCall(
+        call_id=call_id,
+        entry_id="entry-1",
+        subentry_id="agent-1",
+        tool_name="control_light",
+        arguments={"value": 1},
+        due_at=now,
+        created_at=now,
+    )
+
+
+async def test_due_delayed_tool_waits_behind_exclusive_restore(hass, monkeypatch) -> None:
+    """A due action cannot cross its live execution boundary during restore."""
+    manager = DelayedToolManager(hass)
+    manager._started = True
+    record = _due_call()
+    manager._records[record.call_id] = record
+    execute_due = AsyncMock(return_value=False)
+    monkeypatch.setattr(manager, "_async_execute_due", execute_due)
+    gate = get_agent_maintenance_gate(hass, record.entry_id, record.subentry_id)
+
+    async with gate.exclusive():
+        task = asyncio.create_task(manager._async_wait_and_execute(record.call_id))
+        await asyncio.sleep(0)
+        assert not execute_due.await_count
+
+    await asyncio.wait_for(task, timeout=1)
+    execute_due.assert_awaited_once_with(record.call_id)
+
+
+async def test_active_delayed_tool_holds_restore_until_execution_finishes(
+    hass, monkeypatch
+) -> None:
+    """Restore waits for an already-started delayed execution lease to drain."""
+    manager = DelayedToolManager(hass)
+    manager._started = True
+    record = _due_call("call-active")
+    manager._records[record.call_id] = record
+    execution_entered = asyncio.Event()
+    release_execution = asyncio.Event()
+    writer_entered = asyncio.Event()
+
+    async def execute_due(_call_id: str) -> bool:
+        execution_entered.set()
+        await release_execution.wait()
+        return False
+
+    monkeypatch.setattr(manager, "_async_execute_due", execute_due)
+    delayed = asyncio.create_task(manager._async_wait_and_execute(record.call_id))
+    await asyncio.wait_for(execution_entered.wait(), timeout=1)
+
+    gate = get_agent_maintenance_gate(hass, record.entry_id, record.subentry_id)
+
+    async def restore() -> None:
+        async with gate.exclusive():
+            writer_entered.set()
+
+    writer = asyncio.create_task(restore())
+    await asyncio.sleep(0)
+    assert not writer_entered.is_set()
+
+    release_execution.set()
+    await asyncio.wait_for(delayed, timeout=1)
+    await asyncio.wait_for(writer_entered.wait(), timeout=1)
+    await writer

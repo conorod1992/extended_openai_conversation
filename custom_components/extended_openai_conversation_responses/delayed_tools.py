@@ -22,6 +22,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .agent_config import configured_function_tools_from_data, function_tool_enabled
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import DOMAIN
 from .function_execution import (
     split_legacy_execution_delay,
@@ -269,7 +270,17 @@ class DelayedToolManager:
                         0.0, (dt_util.as_utc(due_at) - dt_util.utcnow()).total_seconds()
                     )
                 )
-                retry = await self._async_execute_due(call_id)
+                record = self._records.get(call_id)
+                if record is None or record.status != _PENDING:
+                    return
+                gate = get_agent_maintenance_gate(
+                    self.hass, record.entry_id, record.subentry_id
+                )
+                # Live resolution, the durable execution boundary, the external tool
+                # action and finalization form one ordinary-agent lease. Restore must
+                # not overlap any of them.
+                async with gate.shared():
+                    retry = await self._async_execute_due(call_id)
                 if not retry:
                     return
                 await asyncio.sleep(_AGENT_RETRY_SECONDS)
