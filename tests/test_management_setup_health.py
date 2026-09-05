@@ -51,6 +51,7 @@ def test_default_facts_are_side_effect_free_and_descriptive(monkeypatch) -> None
     facts = _facts()
 
     assert facts["provider_runtime"]["client_loaded"] is True
+    assert facts["provider_runtime"]["configured_api_mode"] == "auto"
     assert facts["prompt_state"] == "starter"
     assert facts["exposed_entity_count"] == 1
     assert facts["memory"] == {"mode": "off", "available": True}
@@ -122,5 +123,6 @@ def test_unavailable_counts_remain_unknown_facts(monkeypatch) -> None:
     assert facts["can_manage"] is False
 
 
-def test_overview_health_frontend_helper_is_registered() -> None:
+def test_overview_health_frontend_helpers_are_registered() -> None:
     assert "overview-health.js" in MANAGEMENT_FRONTEND_MODULES
+    assert "overview-onboarding.js" in MANAGEMENT_FRONTEND_MODULES
