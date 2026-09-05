@@ -27,7 +27,8 @@
       "provider_forbidden": "Provider rejected access for these credentials or account permissions.",
       "provider_rate_limited": "Provider rate limit reached. Try again later.",
       "provider_unavailable": "Provider is temporarily unavailable. Try again later.",
-      "provider_error": "Provider rejected the request. Check the provider settings and Home Assistant logs."
+      "provider_error": "Provider rejected the request. Check the provider settings and Home Assistant logs.",
+      "config_changed": "Provider settings changed while the API key was being validated. Nothing was overwritten; try again."
     }
   },
   "config_subentries": {
@@ -63,7 +64,7 @@
             "usage_run_retention_days": "Run detail retention (days)",
             "continue_conversation": "Continue conversation",
             "prompt": "Prompt Template",
-            "max_function_calls_per_conversation": "Maximum function calls per conversation",
+            "max_function_calls_per_conversation": "Maximum tool calls per request",
             "skills": "Skills",
             "functions": "Functions",
             "attach_username": "Attach Username to Message",
@@ -81,6 +82,7 @@
             "voice_scope_policy": "How unidentified voice requests are scoped. Do not retain is the privacy-conscious default.",
             "voice_device_mappings": "Map Home Assistant device IDs to user IDs, shared, or unretained.",
             "continue_conversation": "HA Default uses Home Assistant's normal punctuation-based behavior. Always listens again after successful responses. Conditional lets the language model decide when an immediate follow-up is expected.",
+            "max_function_calls_per_conversation": "Maximum model-requested tool executions allowed while producing one response to a user request.",
             "context_threshold": "Provider-reported input-token count that triggers context management.",
             "context_truncate_strategy": "Keep recent messages is recommended. Clear all preserves legacy behavior. Summarize makes one bounded model request and falls back to keeping recent messages if it fails."
           }
