@@ -83,7 +83,7 @@ async def test_chat_content_filter_without_refusal_is_error() -> None:
 
     try:
         with pytest.raises(HomeAssistantError, match="content filter"):
-            _ = [delta async for delta in transformed]
+            await anext(transformed)
     finally:
         await transformed.aclose()
 
