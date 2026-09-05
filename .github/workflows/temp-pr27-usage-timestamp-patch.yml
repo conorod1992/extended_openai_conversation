@@ -1,0 +1,39 @@
+name: Temporary PR27 usage timestamp patch
+
+on:
+  push:
+    branches:
+      - fix/usage-malformed-timestamps
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: fix/usage-malformed-timestamps
+      - name: Apply malformed timestamp recovery
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("custom_components/extended_openai_conversation_responses/usage.py")
+          text = path.read_text()
+          old = '''def _parse_time(value: str) -> datetime:\n    parsed = datetime.fromisoformat(value)\n    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_util.UTC)\n'''
+          new = '''def _parse_time(value: Any) -> datetime:\n    try:\n        parsed = datetime.fromisoformat(value)\n    except (TypeError, ValueError):\n        return datetime.min.replace(tzinfo=dt_util.UTC)\n    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_util.UTC)\n'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"expected one _parse_time block, got {count}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add custom_components/extended_openai_conversation_responses/usage.py
+          git commit -m 'Recover from malformed Usage timestamps'
+          git push origin HEAD:fix/usage-malformed-timestamps
