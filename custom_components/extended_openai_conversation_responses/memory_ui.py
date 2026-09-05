@@ -15,14 +15,24 @@ from homeassistant.exceptions import HomeAssistantError
 from .agent_test import async_test_agent
 from .const import (
     CONF_SHARED_MEMORY_MODE,
+    CONF_TEMPORARY_MEMORY,
     DEFAULT_SHARED_MEMORY_MODE,
+    DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
     MEMORY_PANEL_TITLE,
     MEMORY_PANEL_URL,
     SHARED_MEMORY_DISABLED,
+    TEMPORARY_MEMORY_OFF,
 )
 from .memory import async_get_memory, get_memory_mode, memory_as_dict
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
+from .temporary_memory import (
+    MAX_DELETE_RECORDS,
+    TemporaryMemory,
+    TemporaryMemoryRecord,
+    async_get_temporary_memory,
+    temporary_memory_as_dict,
+)
 
 WS_COMMAND = f"{DOMAIN}/manage"
 _UI_SETUP = f"{DOMAIN}.memory_ui_setup"
@@ -37,6 +47,17 @@ def _entry_and_agent(hass: HomeAssistant, entry_id: str, subentry_id: str):
     if subentry is None or subentry.subentry_type != "conversation":
         raise HomeAssistantError("Conversation agent not found")
     return entry, subentry
+
+
+async def _async_user_temporary_records(
+    temporary_memory: TemporaryMemory, scope_id: str
+) -> list[TemporaryMemoryRecord]:
+    """Return only active Temporary Memory owned by one exact user scope."""
+    return [
+        record
+        for record in await temporary_memory.async_list_all()
+        if record.scope_id == scope_id
+    ]
 
 
 async def async_manage_command(
@@ -57,6 +78,10 @@ async def async_manage_command(
                         CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE
                     )
                     != SHARED_MEMORY_DISABLED,
+                    "temporary_memory_enabled": subentry.data.get(
+                        CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY
+                    )
+                    != TEMPORARY_MEMORY_OFF,
                 }
                 for entry in hass.config_entries.async_entries(DOMAIN)
                 for subentry in entry.subentries.values()
@@ -72,6 +97,38 @@ async def async_manage_command(
 
     if action == "test_agent":
         return (await async_test_agent(hass, entry, subentry)).as_dict()
+
+    temporary_enabled = (
+        subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
+        != TEMPORARY_MEMORY_OFF
+    )
+    temporary_scope_id = f"user:{user_id}"
+    if action in {"temporary_delete", "temporary_clear"}:
+        if not temporary_enabled:
+            raise HomeAssistantError("Temporary Memory is disabled for this agent")
+        temporary_memory = await async_get_temporary_memory(hass, entry_id, subentry_id)
+        if action == "temporary_delete":
+            memory_id = message.get("memory_id")
+            if not isinstance(memory_id, str) or not memory_id:
+                raise HomeAssistantError("memory_id is required")
+            return {
+                "deleted": await temporary_memory.async_delete(
+                    temporary_scope_id, [memory_id]
+                )
+            }
+        if message.get("confirm") is not True:
+            raise HomeAssistantError("Explicit confirmation is required")
+        temporary_records_to_clear = await _async_user_temporary_records(
+            temporary_memory, temporary_scope_id
+        )
+        memory_ids = [record.memory_id for record in temporary_records_to_clear]
+        deleted = 0
+        for start in range(0, len(memory_ids), MAX_DELETE_RECORDS):
+            deleted += await temporary_memory.async_delete(
+                temporary_scope_id,
+                memory_ids[start : start + MAX_DELETE_RECORDS],
+            )
+        return {"deleted": deleted}
 
     memory = await async_get_memory(hass, entry_id, subentry_id)
     shared_enabled = (
@@ -92,17 +149,28 @@ async def async_manage_command(
     else:
         write_scope = user_id
     if action == "list":
-        records = await memory.async_list(
+        persistent_records = await memory.async_list(
             readable_scopes[0] if len(readable_scopes) == 1 else readable_scopes,
             message.get("category"),
             int(message.get("limit", 100)),
             int(message.get("offset", 0)),
         )
+        temporary_records: list[TemporaryMemoryRecord] = []
+        if temporary_enabled:
+            temporary_memory = await async_get_temporary_memory(
+                hass, entry_id, subentry_id
+            )
+            temporary_records = await _async_user_temporary_records(
+                temporary_memory, temporary_scope_id
+            )
         return {
             "memories": [
                 memory_as_dict(record, include_scope=True, personal_scope_id=user_id)
-                for record in records
-            ]
+                for record in persistent_records
+            ],
+            "temporary_memories": [
+                temporary_memory_as_dict(record) for record in temporary_records
+            ],
         }
     if action == "add":
         add_args = (
