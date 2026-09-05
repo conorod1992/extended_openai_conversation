@@ -36,71 +36,46 @@ jobs:
           elif "split_legacy_execution_delay" not in text:
               raise SystemExit("delayed_tools function_execution import marker not found")
 
-          old_hook = '''        arguments = validate_function_arguments(
-              function_tool.get("spec", {}), tool_input.tool_args
+          hook_marker = "def _install_execution_hook() -> None:\n"
+          if hook_marker not in text:
+              raise SystemExit("delayed_tools hook marker not found")
+          before, hook = text.split(hook_marker, 1)
+          old_header = (
+              "        arguments = validate_function_arguments(\n"
+              "            function_tool.get(\"spec\", {}), tool_input.tool_args\n"
+              "        )\n"
           )
-          if getattr(llm_context, _DELAYED_EXECUTION_MARKER, False):
-              function_config = function_tool["function"]
-              function = get_function(function_config["type"])
-              result = await function.execute(
-                  entity.hass,
-                  function_config,
-                  arguments,
-                  llm_context,
-                  exposed_entities,
-              )
-              return conversation.ToolResultContent(
-                  agent_id=entity.entity_id,
-                  tool_call_id=tool_input.id,
-                  tool_name=tool_input.tool_name,
-                  tool_result={"result": str(result)},
-              )
-
-          if not entity.should_run_in_background(arguments):
-              return await original(
-                  entity,
-                  function_tool,
-                  tool_input,
-                  llm_context,
-                  exposed_entities,
-              )
-'''
-          new_hook = '''        spec = function_tool.get("spec", {})
-          arguments = validate_function_arguments(spec, tool_input.tool_args)
-          execution_arguments, execution_delay = split_legacy_execution_delay(
-              spec, arguments
+          new_header = (
+              "        spec = function_tool.get(\"spec\", {})\n"
+              "        arguments = validate_function_arguments(spec, tool_input.tool_args)\n"
+              "        execution_arguments, execution_delay = split_legacy_execution_delay(\n"
+              "            spec, arguments\n"
+              "        )\n"
           )
-          if getattr(llm_context, _DELAYED_EXECUTION_MARKER, False):
-              function_config = function_tool["function"]
-              function = get_function(function_config["type"])
-              result = await function.execute(
-                  entity.hass,
-                  function_config,
-                  execution_arguments,
-                  llm_context,
-                  exposed_entities,
-              )
-              return conversation.ToolResultContent(
-                  agent_id=entity.entity_id,
-                  tool_call_id=tool_input.id,
-                  tool_name=tool_input.tool_name,
-                  tool_result={"result": str(result)},
-              )
+          if old_header in hook:
+              hook = hook.replace(old_header, new_header, 1)
+          elif "execution_arguments, execution_delay = split_legacy_execution_delay(" not in hook:
+              raise SystemExit("delayed_tools hook validation marker not found")
 
-          if not entity.should_run_in_background(execution_delay):
-              return await original(
-                  entity,
-                  function_tool,
-                  tool_input,
-                  llm_context,
-                  exposed_entities,
-              )
-'''
-          if old_hook in text:
-              text = text.replace(old_hook, new_hook, 1)
-          elif "execution_arguments, execution_delay = split_legacy_execution_delay(" not in text:
-              raise SystemExit("delayed_tools execution hook marker not found")
-          delayed.write_text(text)
+          old_execute_args = (
+              "                arguments,\n"
+              "                llm_context,\n"
+              "                exposed_entities,\n"
+              "            )\n"
+          )
+          new_execute_args = old_execute_args.replace("arguments", "execution_arguments", 1)
+          if old_execute_args in hook:
+              hook = hook.replace(old_execute_args, new_execute_args, 1)
+          elif "                execution_arguments,\n" not in hook:
+              raise SystemExit("delayed_tools delayed execution args marker not found")
+
+          old_background = "        if not entity.should_run_in_background(arguments):\n"
+          new_background = "        if not entity.should_run_in_background(execution_delay):\n"
+          if old_background in hook:
+              hook = hook.replace(old_background, new_background, 1)
+          elif new_background not in hook:
+              raise SystemExit("delayed_tools background marker not found")
+          delayed.write_text(before + hook_marker + hook)
 
           init = Path("custom_components/extended_openai_conversation_responses/__init__.py")
           text = init.read_text()
@@ -111,13 +86,15 @@ jobs:
                   raise SystemExit("__init__ delayed import marker not found")
               text = text.replace(import_marker, import_marker + delayed_import, 1)
 
-          setup_marker = '''    # Install last so the gate wraps the effective post-optimization entry points.
-              install_agent_maintenance_barrier()
-'''
-          setup_replacement = setup_marker + '''    # Activate the durable delayed-tool scheduler after entity hardening so its
-              # execution hook wraps the final configured Function Tool seam.
-              await async_setup_delayed_tools(hass)
-'''
+          setup_marker = (
+              "    # Install last so the gate wraps the effective post-optimization entry points.\n"
+              "    install_agent_maintenance_barrier()\n"
+          )
+          setup_replacement = setup_marker + (
+              "    # Activate the durable delayed-tool scheduler after entity hardening so its\n"
+              "    # execution hook wraps the final configured Function Tool seam.\n"
+              "    await async_setup_delayed_tools(hass)\n"
+          )
           if "await async_setup_delayed_tools(hass)" not in text:
               if setup_marker not in text:
                   raise SystemExit("__init__ delayed setup marker not found")
