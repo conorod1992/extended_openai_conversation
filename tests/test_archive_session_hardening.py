@@ -102,6 +102,7 @@ async def test_resume_failure_keeps_previous_active_session_and_retries() -> Non
             "conversation:test",
             previous.session_id,
             user_scope("alice", source="test"),
+            shared_archive_enabled=False,
         )
 
     assert archive.active_session("conversation:test") == previous
@@ -113,6 +114,7 @@ async def test_resume_failure_keeps_previous_active_session_and_retries() -> Non
         "conversation:test",
         previous.session_id,
         user_scope("alice", source="test"),
+        shared_archive_enabled=False,
     )
 
     assert resumed.session_id != previous.session_id

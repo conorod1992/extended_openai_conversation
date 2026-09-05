@@ -2055,7 +2055,14 @@ class ExtendedOpenAIAgentEntity(
             return await self._archive.async_make_private(session_id)
         if operation == "resume":
             session = await self._archive.async_resume_saving(
-                session_key, session_id, scope
+                session_key,
+                session_id,
+                scope,
+                shared_archive_enabled=bool(
+                    self.subentry.data.get(
+                        CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED
+                    )
+                ),
             )
             _ACTIVE_ARCHIVE.set((session_key, session.session_id))
             return {

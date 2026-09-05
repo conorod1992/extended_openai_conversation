@@ -29,6 +29,18 @@ MAX_EXCERPT_LENGTH = 500
 _ARCHIVE_MANAGERS = f"{DOMAIN}.archive_managers"
 _TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
+
+
+def _scope_retention_allowed(
+    scope: ResolvedDataScope, shared_archive_enabled: bool
+) -> bool:
+    """Return whether the current scope policy permits transcript retention."""
+    return bool(
+        scope.allows_retention
+        and (scope.scope_type != "shared" or shared_archive_enabled)
+    )
+
+
 _STOP_WORDS = {
     "a",
     "an",
@@ -207,9 +219,7 @@ class ConversationArchive:
             self._ensure_initialized()
             current = self._sessions.get(self._active.get(session_key, ""))
             now = dt_util.utcnow()
-            may_retain = scope.allows_retention
-            if scope.scope_type == "shared" and not shared_archive_enabled:
-                may_retain = False
+            may_retain = _scope_retention_allowed(scope, shared_archive_enabled)
             if current is not None:
                 expired = (
                     _parse_time(current.last_message_at)
@@ -222,6 +232,7 @@ class ConversationArchive:
                     and current.home_assistant_conversation_id
                     == home_assistant_conversation_id
                     and current.retention_state != "closed"
+                    and (may_retain or current.retention_state != "retained")
                 ):
                     return current
 
@@ -300,7 +311,12 @@ class ConversationArchive:
             }
 
     async def async_resume_saving(
-        self, session_key: str, previous_session_id: str, scope: ResolvedDataScope
+        self,
+        session_key: str,
+        previous_session_id: str,
+        scope: ResolvedDataScope,
+        *,
+        shared_archive_enabled: bool,
     ) -> ArchiveSession:
         """End a private boundary and create a fresh retained session."""
         async with self._lock:
@@ -318,7 +334,11 @@ class ConversationArchive:
                 last_message_at=timestamp,
                 title="",
                 turn_count=0,
-                retention_state="retained" if scope.allows_retention else "unretained",
+                retention_state=(
+                    "retained"
+                    if _scope_retention_allowed(scope, shared_archive_enabled)
+                    else "unretained"
+                ),
             )
             await self._async_publish_session_locked(session_key, session)
             return session
