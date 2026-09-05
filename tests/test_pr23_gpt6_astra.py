@@ -1,6 +1,7 @@
 """Regression coverage for GPT-6 Astra and composed structured-output schemas."""
 
 from copy import deepcopy
+from typing import Any
 
 import pytest
 
@@ -115,7 +116,7 @@ def test_gpt6_astra_chat_completions_uses_max_completion_tokens() -> None:
 
 def test_adjust_schema_handles_compositions_and_nested_array_items() -> None:
     """Composition nodes should be traversed without assuming every node has type."""
-    schema: dict[str, object] = {
+    schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             "choice": {
@@ -154,11 +155,10 @@ def test_adjust_schema_handles_compositions_and_nested_array_items() -> None:
         },
     }
 
-    _adjust_schema(schema)  # type: ignore[arg-type]
+    _adjust_schema(schema)
 
     assert schema["required"] == ["choice", "entries", "composed"]
     properties = schema["properties"]
-    assert isinstance(properties, dict)
 
     choice = properties["choice"]
     assert choice["anyOf"][-1] == {"type": "null"}
@@ -183,5 +183,5 @@ def test_adjust_schema_handles_compositions_and_nested_array_items() -> None:
     assert composed_object["properties"]["flag"]["type"] == ["boolean", "null"]
 
     adjusted_once = deepcopy(schema)
-    _adjust_schema(schema)  # type: ignore[arg-type]
+    _adjust_schema(schema)
     assert schema == adjusted_once
