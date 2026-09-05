@@ -74,6 +74,7 @@ async def test_unretained_request_has_no_active_temporary_memory_scope(monkeypat
     assert scope.allows_retention is False
 
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
+    entity.subentry = SimpleNamespace(data={"temporary_memory": "conversation"})
     active = AsyncMock(return_value=[])
     entity._temporary_memory = SimpleNamespace(async_active=active)
     monkeypatch.setattr(
