@@ -1,0 +1,29 @@
+name: Temporary PR179 formatter
+
+on:
+  push:
+    branches:
+      - fix/runtime-configuration-state
+    paths:
+      - .github/workflows/temp-pr179-format.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/runtime-configuration-state
+          fetch-depth: 0
+      - name: Apply repository Ruff formatting
+        run: |
+          python -m pip install ruff==0.16.6
+          ruff format custom_components/extended_openai_conversation_responses/conversation_archive.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/extended_openai_conversation_responses/conversation_archive.py
+          git diff --cached --quiet || git commit -m "Format runtime configuration fix"
+          git push origin HEAD:fix/runtime-configuration-state
