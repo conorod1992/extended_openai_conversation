@@ -1,0 +1,46 @@
+name: Temporary Bash group cleanup patch
+
+on:
+  push:
+    branches:
+      - fix/bash-process-group-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: fix/bash-process-group-cleanup
+      - name: Apply Bash cleanup fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('custom_components/extended_openai_conversation_responses/functions/bash.py')
+          text = path.read_text()
+          old = '''    def stop_process(*, terminate: bool) -> None:\n        if process.returncode is not None:\n            return\n        if os.name == "posix":\n            sig = signal.SIGTERM if terminate else signal.SIGKILL\n            with suppress(ProcessLookupError):\n                os.killpg(process.pid, sig)\n        elif terminate:\n            with suppress(ProcessLookupError):\n                process.terminate()\n        else:\n            with suppress(ProcessLookupError):\n                process.kill()\n\n    if process.returncode is None and graceful:\n        stop_process(terminate=True)\n        with suppress(TimeoutError):\n            await asyncio.wait_for(process.wait(), timeout=_SHELL_CANCEL_GRACE_SECONDS)\n\n    if process.returncode is None:\n        stop_process(terminate=False)\n\n    if process.returncode is None:\n        with suppress(TimeoutError):\n            await asyncio.wait_for(process.wait(), timeout=_SHELL_CLEANUP_WAIT_SECONDS)\n'''
+          new = '''    # POSIX descendants can outlive the shell leader, so ownership of the\n    # process group must not be inferred from the leader's return code.\n    process_group_id = process.pid if os.name == "posix" else None\n\n    def stop_process(*, terminate: bool) -> None:\n        if process_group_id is not None:\n            sig = signal.SIGTERM if terminate else signal.SIGKILL\n            with suppress(ProcessLookupError):\n                os.killpg(process_group_id, sig)\n            return\n        if process.returncode is not None:\n            return\n        if terminate:\n            with suppress(ProcessLookupError):\n                process.terminate()\n        else:\n            with suppress(ProcessLookupError):\n                process.kill()\n\n    if graceful:\n        stop_process(terminate=True)\n        if process_group_id is not None:\n            # There is no asyncio Process handle for surviving group descendants.\n            # Give SIGTERM a bounded grace period before enforcing group teardown.\n            await asyncio.sleep(_SHELL_CANCEL_GRACE_SECONDS)\n        elif process.returncode is None:\n            with suppress(TimeoutError):\n                await asyncio.wait_for(\n                    process.wait(), timeout=_SHELL_CANCEL_GRACE_SECONDS\n                )\n\n    if process_group_id is not None or process.returncode is None:\n        stop_process(terminate=False)\n\n    if process.returncode is None:\n        with suppress(TimeoutError):\n            await asyncio.wait_for(process.wait(), timeout=_SHELL_CLEANUP_WAIT_SECONDS)\n'''
+          if old not in text:
+              raise SystemExit('cleanup block not found')
+          path.write_text(text.replace(old, new, 1))
+
+          path = Path('tests/test_async_lifecycle_recovery.py')
+          text = path.read_text()
+          marker = '''async def test_broadcast_idle_transition_during_active_drain_is_rescheduled(\n'''
+          addition = '''async def test_bash_cleanup_signals_group_after_shell_leader_exits(\n    monkeypatch,\n) -> None:\n    """POSIX cleanup owns the process group even after its leader has exited."""\n    if bash.os.name != "posix":\n        pytest.skip("POSIX process-group behavior")\n\n    process = _FakeProcess()\n    process.returncode = 0\n    process._done.set()\n    stdout_task = asyncio.create_task(bash._async_read_stream(process.stdout))\n    stderr_task = asyncio.create_task(bash._async_read_stream(process.stderr))\n    signals = []\n\n    def kill_group(pid: int, sig) -> None:\n        signals.append((pid, sig))\n\n    monkeypatch.setattr(bash.os, "killpg", kill_group)\n\n    await bash._async_cleanup_process(\n        process, stdout_task, stderr_task, graceful=False\n    )\n\n    assert (process.pid, bash.signal.SIGKILL) in signals\n\n\n'''
+          if marker not in text:
+              raise SystemExit('bash test marker not found')
+          path.write_text(text.replace(marker, addition + marker, 1))
+          PY
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add custom_components/extended_openai_conversation_responses/functions/bash.py tests/test_async_lifecycle_recovery.py
+          git commit -m 'Clean up Bash process groups after leader exit'
+          git push origin HEAD:fix/bash-process-group-cleanup
