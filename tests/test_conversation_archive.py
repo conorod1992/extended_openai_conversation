@@ -193,7 +193,9 @@ async def test_private_mode_deletes_only_active_session_and_resume_is_new_bounda
         )
         is None
     )
-    resumed = await archive.async_resume_saving("browser", active.session_id, scope)
+    resumed = await archive.async_resume_saving(
+        "browser", active.session_id, scope, shared_archive_enabled=False
+    )
     assert resumed.session_id != active.session_id
     assert resumed.retention_state == "retained"
     assert archive.stats()["turn_count"] == 1

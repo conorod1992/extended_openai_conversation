@@ -61,7 +61,8 @@ async def async_replace_api_key(
     if not isinstance(api_key, str) or not api_key.strip():
         raise HomeAssistantError("Enter a new API key.")
 
-    candidate = dict(entry.data)
+    original_data = dict(entry.data)
+    candidate = dict(original_data)
     candidate[CONF_API_KEY] = api_key
     skip_authentication = bool(
         candidate.get(CONF_SKIP_AUTHENTICATION, DEFAULT_SKIP_AUTHENTICATION)
@@ -83,6 +84,12 @@ async def async_replace_api_key(
         raise HomeAssistantError(
             "The new API key could not be validated. The existing API key was not changed."
         ) from err
+
+    if dict(entry.data) != original_data:
+        raise HomeAssistantError(
+            "Provider settings changed while the new API key was being validated. "
+            "The API key was not changed by this operation. Try again."
+        )
 
     state_before = entry.state
     changed = hass.config_entries.async_update_entry(entry, data=candidate)
