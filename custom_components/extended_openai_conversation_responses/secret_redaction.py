@@ -15,6 +15,7 @@ _CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _KEY_SEPARATOR = re.compile(r"[^A-Za-z0-9]+")
 _LIKELY_SECRET = re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b")
 _SCHEMA_CONTAINER_KEYS = frozenset({"parameters", "properties", "items"})
+_DROP = object()
 
 
 def _is_secret_key(key: Any) -> bool:
@@ -50,20 +51,28 @@ def redact_secrets(value: Any, *, schema: bool = False) -> Any:
     return result
 
 
-def restore_redacted_secrets(value: Any) -> Any:
-    """Remove redaction sentinels before imported/restored data reaches runtime."""
+def _restore_redacted_secrets(value: Any) -> Any:
+    """Recursively remove only the explicit redaction sentinel."""
     if value == REDACTED_SECRET_SENTINEL:
-        return None
+        return _DROP
     if isinstance(value, list):
-        return [
-            restored
-            for item in value
-            if (restored := restore_redacted_secrets(item)) is not None
-        ]
+        result = []
+        for item in value:
+            restored = _restore_redacted_secrets(item)
+            if restored is not _DROP:
+                result.append(restored)
+        return result
     if not isinstance(value, dict):
         return value
-    return {
-        key: restored
-        for key, item in value.items()
-        if (restored := restore_redacted_secrets(item)) is not None
-    }
+    result: dict[Any, Any] = {}
+    for key, item in value.items():
+        restored = _restore_redacted_secrets(item)
+        if restored is not _DROP:
+            result[key] = restored
+    return result
+
+
+def restore_redacted_secrets(value: Any) -> Any:
+    """Remove redaction sentinels before imported/restored data reaches runtime."""
+    restored = _restore_redacted_secrets(value)
+    return None if restored is _DROP else restored
