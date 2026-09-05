@@ -118,6 +118,32 @@ async def test_bash_cancellation_terminates_child_and_reraises(
     assert process.returncode == -15
 
 
+async def test_bash_cleanup_signals_group_after_shell_leader_exits(
+    monkeypatch,
+) -> None:
+    """POSIX cleanup owns the process group even after its leader has exited."""
+    if bash.os.name != "posix":
+        pytest.skip("POSIX process-group behavior")
+
+    process = _FakeProcess()
+    process.returncode = 0
+    process._done.set()
+    stdout_task = asyncio.create_task(bash._async_read_stream(process.stdout))
+    stderr_task = asyncio.create_task(bash._async_read_stream(process.stderr))
+    signals = []
+
+    def kill_group(pid: int, sig) -> None:
+        signals.append((pid, sig))
+
+    monkeypatch.setattr(bash.os, "killpg", kill_group)
+
+    await bash._async_cleanup_process(
+        process, stdout_task, stderr_task, graceful=False
+    )
+
+    assert (process.pid, bash.signal.SIGKILL) in signals
+
+
 async def test_broadcast_idle_transition_during_active_drain_is_rescheduled(
     hass, monkeypatch
 ) -> None:
