@@ -64,7 +64,7 @@ def _tool_format_signature(tool: dict[str, Any]) -> str | None:
             separators=(",", ":"),
             sort_keys=True,
         )
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         # A malformed/non-JSON schema is outside the normal model payload contract.
         # Do not cache it by identity; let the formatter surface its normal error.
         return None
@@ -83,7 +83,9 @@ def cached_format_tools(
     signatures = tuple(_tool_format_signature(tool) for tool in function_tools)
     if any(signature is None for signature in signatures):
         return formatter(function_tools, api_mode)
-    stable_signatures = tuple(signature for signature in signatures if signature is not None)
+    stable_signatures = tuple(
+        signature for signature in signatures if signature is not None
+    )
     key = (api_mode, tuple(id(tool) for tool in function_tools))
     cached = cache.get(key)
     if cached is not None:
@@ -92,7 +94,9 @@ def cached_format_tools(
             len(original_tools) == len(function_tools)
             and all(
                 original is current
-                for original, current in zip(original_tools, function_tools, strict=True)
+                for original, current in zip(
+                    original_tools, function_tools, strict=True
+                )
             )
             and original_signatures == stable_signatures
         ):
