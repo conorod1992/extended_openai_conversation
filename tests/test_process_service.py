@@ -274,6 +274,7 @@ async def test_locally_consumed_rule_has_zero_usage_run_and_archive_turn():
         "handled here",
         archive_session,
         "continuity-key",
+        "claim-token",
         "kitchen",
     )
 
