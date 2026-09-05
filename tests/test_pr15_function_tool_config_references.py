@@ -20,6 +20,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
     CONF_GUEST_ALLOWED_FUNCTION_NAMES,
     DOMAIN,
+    FUNCTION_GROUP_LOADER_TOOL_NAME,
 )
 from custom_components.extended_openai_conversation_responses.function_tool_policy import (
     RESERVED_FUNCTION_TOOL_NAMES,
@@ -137,7 +138,7 @@ def test_reserved_function_tool_names_are_rejected_unconditionally() -> None:
         "temporary_memory_add",
         "knowledge_get",
         "conversation_search",
-        "load_function_group",
+        FUNCTION_GROUP_LOADER_TOOL_NAME,
         "guest_mode_restrict",
         "set_continue_conversation",
     } <= RESERVED_FUNCTION_TOOL_NAMES
