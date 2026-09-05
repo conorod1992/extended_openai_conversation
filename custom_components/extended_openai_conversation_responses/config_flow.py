@@ -54,6 +54,7 @@ from .const import (
     CONF_SKIP_AUTHENTICATION,
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    CONF_WEB_SEARCH,
     CONFIG_ENTRY_VERSION,
     DEFAULT_ADVANCED_OPTIONS,
     DEFAULT_AI_TASK_NAME,
@@ -72,6 +73,7 @@ from .const import (
     DEFAULT_SKIP_AUTHENTICATION,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
+    DEFAULT_WEB_SEARCH,
     DOMAIN,
     REASONING_EFFORT_OPTIONS,
     SERVICE_TIER_OPTIONS,
@@ -506,6 +508,10 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     CONF_MAX_TOKENS,
                     default=DEFAULT_MAX_TOKENS,
                 ): int,
+                vol.Optional(
+                    CONF_WEB_SEARCH,
+                    default=DEFAULT_WEB_SEARCH,
+                ): BooleanSelector(),
                 vol.Optional(
                     CONF_ADVANCED_OPTIONS,
                     default=DEFAULT_ADVANCED_OPTIONS,
