@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 import hashlib
 import json
@@ -59,7 +59,7 @@ IMPORTANCE_MULTIPLIERS = {"low": 0.85, "normal": 1.0, "high": 1.2}
 MIN_LEXICAL_RELEVANCE_SCORE = 0.08
 MIN_SEMANTIC_SIMILARITY = 0.55
 EmbeddingProvider = Callable[[list[str]], Awaitable[list[list[float]]]]
-EmbeddingTaskScheduler = Callable[[Coroutine[Any, Any, None]], asyncio.Future[Any]]
+EmbeddingTaskScheduler = Callable[[Awaitable[Any]], Any]
 
 
 class _UnsetType:
@@ -175,7 +175,7 @@ class EmbeddingCacheStorage(Protocol):
         """Load cached embeddings."""
 
     async def async_save(self, data: dict[str, Any]) -> None:
-        """Persist cached embeddings."""
+        """Save cached embeddings."""
 
 
 class MemoryStore(Store[dict[str, Any]]):
@@ -256,6 +256,7 @@ class PersistentMemory:
         self,
         storage: MemoryStorage,
         embedding_cache_storage: EmbeddingCacheStorage | None = None,
+        *,
         embedding_task_scheduler: EmbeddingTaskScheduler | None = None,
     ) -> None:
         """Initialize memory collection."""
@@ -268,32 +269,61 @@ class PersistentMemory:
         self._embedding_cache_storage = embedding_cache_storage
         self._embedding_cache: dict[str, EmbeddingCacheEntry] = {}
         self._embedding_cache_dirty = False
+        # Kept only for compatibility with the live-config lifecycle seam and its
+        # injected test scheduler. Production does not provide a scheduler, so
+        # configuring Hybrid retrieval never starts background prewarming.
         self._embedding_task_scheduler = embedding_task_scheduler
-        self._embedding_maintenance_task: asyncio.Future[Any] | None = None
         self._embedding_maintenance_requested = False
         self._lock = asyncio.Lock()
         self._initialized = False
 
     async def async_initialize(self) -> None:
-        """Load memory data once."""
+        """Load, validate, and self-heal memory data once."""
         async with self._lock:
             if self._initialized:
                 return
             data = await self._storage.async_load()
-            raw_memories = data.get("memories", []) if isinstance(data, Mapping) else []
+            needs_save = False
+            if data is None:
+                raw_memories: list[Any] = []
+            elif not isinstance(data, Mapping) or "memories" not in data:
+                raw_memories = []
+                needs_save = True
+            else:
+                candidate = data.get("memories")
+                if not isinstance(candidate, list):
+                    raw_memories = []
+                    needs_save = True
+                else:
+                    raw_memories = candidate
+                    if len(raw_memories) > MAX_MEMORIES_PER_AGENT:
+                        raw_memories = raw_memories[:MAX_MEMORIES_PER_AGENT]
+                        needs_save = True
+
             legacy_embeddings_found = False
+            seen_ids: set[str] = set()
+            seen_keys: set[tuple[str, str]] = set()
             for raw in raw_memories:
+                legacy_embeddings_found |= (
+                    isinstance(raw, Mapping) and "embedding" in raw
+                )
                 try:
-                    legacy_embeddings_found |= (
-                        isinstance(raw, Mapping) and "embedding" in raw
-                    )
-                    memory = MemoryRecord(**_migrate_raw_record(raw))
+                    memory = _validate_persistent_memory_record(raw)
+                    if memory.memory_id in seen_ids:
+                        raise ValueError("duplicate persistent memory ID")
+                    if memory.key is not None:
+                        key_pair = (memory.user_id, memory.key)
+                        if key_pair in seen_keys:
+                            raise ValueError("duplicate canonical key in memory scope")
+                        seen_keys.add(key_pair)
                 except TypeError, ValueError:
+                    needs_save = True
                     _LOGGER.warning("Ignoring malformed persistent memory record")
                     continue
+                seen_ids.add(memory.memory_id)
                 self._memories[memory.memory_id] = memory
                 self._index(memory)
-            if legacy_embeddings_found:
+            if legacy_embeddings_found or needs_save:
                 await self._storage.async_save(
                     {
                         "memories": [
@@ -309,16 +339,18 @@ class PersistentMemory:
         self, provider: EmbeddingProvider | None, model: str = "default"
     ) -> None:
         """Configure the optional provider used only by hybrid retrieval."""
+        changed = self._embedding_provider != provider or self._embedding_model != model
         self._embedding_provider = provider
         self._embedding_model = model
-        if provider is not None:
-            self._schedule_embedding_maintenance()
-
-    async def async_wait_for_embedding_maintenance(self) -> None:
-        """Wait for currently scheduled regenerable embedding maintenance."""
-        task = self._embedding_maintenance_task
-        if task is not None:
-            await asyncio.shield(task)
+        if (
+            changed
+            and provider is not None
+            and self._embedding_task_scheduler is not None
+        ):
+            # Legacy/injected schedulers get a deliberately empty-scope maintenance
+            # coroutine. It exercises lifecycle scheduling without embedding Memory
+            # content; normal production construction never supplies this hook.
+            self._embedding_task_scheduler(self._async_refresh_missing_embeddings(()))
 
     async def async_add(
         self,
@@ -371,7 +403,6 @@ class PersistentMemory:
             self._memories[memory.memory_id] = memory
             self._index(memory)
             await self._async_save_locked()
-            self._schedule_embedding_maintenance()
             return {"status": "created", "memory": memory_as_dict(memory)}
 
     async def async_upsert(
@@ -432,7 +463,6 @@ class PersistentMemory:
                     **changes,
                 )
                 await self._async_save_locked()
-                self._schedule_embedding_maintenance()
                 return {"status": "updated", "memory": memory_as_dict(updated)}
             duplicate = self._find_duplicate(user_id, content)
             if duplicate:
@@ -453,7 +483,6 @@ class PersistentMemory:
                     **changes,
                 )
                 await self._async_save_locked()
-                self._schedule_embedding_maintenance()
                 return {"status": "confirmed", "memory": memory_as_dict(confirmed)}
             candidate = self._find_related_candidate(
                 user_id,
@@ -493,7 +522,6 @@ class PersistentMemory:
             self._memories[memory.memory_id] = memory
             self._index(memory)
             await self._async_save_locked()
-            self._schedule_embedding_maintenance()
             return {"status": "created", "memory": memory_as_dict(memory)}
 
     async def async_search(
@@ -575,7 +603,7 @@ class PersistentMemory:
     async def async_prepare_hybrid(
         self, scope_ids: Sequence[str], query: str
     ) -> list[float] | None:
-        """Refresh missing embeddings and return one query embedding, or fall back."""
+        """Prepare embeddings only for searched scopes and return the query vector."""
         if self._embedding_provider is None:
             return None
         try:
@@ -641,8 +669,32 @@ class PersistentMemory:
         valid_from: str | None = None,
         refresh_confirmation: bool = True,
         target_user_id: str | None = None,
+        clear_fields: Sequence[str] | None = None,
     ) -> MemoryRecord:
         """Update a memory owned by one user scope."""
+        if clear_fields is None:
+            clear: set[str] = set()
+        elif isinstance(clear_fields, (str, bytes)) or not isinstance(
+            clear_fields, Sequence
+        ):
+            raise ValueError("clear_fields must be a list of metadata field names")
+        else:
+            if not all(isinstance(field, str) for field in clear_fields):
+                raise ValueError("clear_fields must be a list of metadata field names")
+            clear = set(clear_fields)
+        allowed_clear = {"subject", "key", "valid_from"}
+        if not clear <= allowed_clear:
+            raise ValueError("clear_fields may contain subject, key, or valid_from")
+        supplied_metadata = {
+            "subject": subject,
+            "key": key,
+            "valid_from": valid_from,
+        }
+        if any(
+            field in clear and supplied_metadata[field] is not None for field in clear
+        ):
+            raise ValueError("a metadata field cannot be updated and cleared together")
+
         async with self._lock:
             self._ensure_initialized()
             current = self._owned_memory(user_id, memory_id)
@@ -654,7 +706,13 @@ class PersistentMemory:
                 _clean_category(category) if category is not None else current.category
             )
             _validate_privacy(new_content, current.source)
-            new_key = _clean_key(key) if key is not None else current.key
+            new_key = (
+                None
+                if "key" in clear
+                else _clean_key(key)
+                if key is not None
+                else current.key
+            )
             if new_key and self._key_index.get((target_user_id, new_key)) not in {
                 None,
                 memory_id,
@@ -672,13 +730,17 @@ class PersistentMemory:
                     else current.importance
                 ),
                 subject=(
-                    _clean_optional(subject, "subject", MAX_SUBJECT_LENGTH)
+                    None
+                    if "subject" in clear
+                    else _clean_optional(subject, "subject", MAX_SUBJECT_LENGTH)
                     if subject is not None
                     else current.subject
                 ),
                 key=new_key,
                 valid_from=(
-                    _clean_timestamp(valid_from, "valid_from")
+                    None
+                    if "valid_from" in clear
+                    else _clean_timestamp(valid_from, "valid_from")
                     if valid_from is not None
                     else current.valid_from
                 ),
@@ -688,7 +750,6 @@ class PersistentMemory:
                 ),
             )
             await self._async_save_locked()
-            self._schedule_embedding_maintenance()
             return updated
 
     async def async_delete(self, user_id: str, memory_ids: list[str]) -> int:
@@ -807,66 +868,18 @@ class PersistentMemory:
             raise ValueError("persistent memory count is invalid")
         records: list[MemoryRecord] = []
         seen: set[str] = set()
-        for raw in raw_memories:
-            if not isinstance(raw, Mapping):
-                raise ValueError("persistent memory record must be an object")
-            try:
-                record = MemoryRecord(**_migrate_raw_record(raw))
-            except TypeError as err:
-                raise ValueError("persistent memory record is invalid") from err
-            if not all(
-                isinstance(value, str)
-                for value in (
-                    record.memory_id,
-                    record.user_id,
-                    record.content,
-                    record.category,
-                    record.source,
-                    record.created_at,
-                    record.updated_at,
-                    record.importance,
-                )
-            ):
-                raise ValueError("persistent memory fields must be strings")
-            if (
-                not record.memory_id
-                or len(record.memory_id) > 128
-                or record.memory_id in seen
-                or not record.user_id
-                or len(record.user_id) > 128
-                or record.source not in {"explicit", "implicit"}
-                or record.importance not in MEMORY_IMPORTANCES
-            ):
-                raise ValueError("persistent memory metadata is invalid")
-            _clean_content(record.content)
-            _clean_category(record.category)
-            _clean_optional(record.subject, "subject", MAX_SUBJECT_LENGTH)
-            normalized_key = _clean_key(record.key)
-            if normalized_key != record.key:
-                raise ValueError("persistent memory key is not normalized")
-            if (
-                dt_util.parse_datetime(record.created_at) is None
-                or dt_util.parse_datetime(record.updated_at) is None
-                or (
-                    record.valid_from is not None
-                    and dt_util.parse_datetime(record.valid_from) is None
-                )
-                or (
-                    record.last_confirmed_at is not None
-                    and dt_util.parse_datetime(record.last_confirmed_at) is None
-                )
-            ):
-                raise ValueError("persistent memory timestamp is invalid")
-            seen.add(record.memory_id)
-            records.append(record)
         keys: set[tuple[str, str]] = set()
-        for record in records:
-            if record.key is None:
-                continue
-            pair = (record.user_id, record.key)
-            if pair in keys:
-                raise ValueError("duplicate canonical key in memory scope")
-            keys.add(pair)
+        for raw in raw_memories:
+            record = _validate_persistent_memory_record(raw)
+            if record.memory_id in seen:
+                raise ValueError("persistent memory metadata is invalid")
+            seen.add(record.memory_id)
+            if record.key is not None:
+                pair = (record.user_id, record.key)
+                if pair in keys:
+                    raise ValueError("duplicate canonical key in memory scope")
+                keys.add(pair)
+            records.append(record)
         return records
 
     async def async_replace_backup(self, records: list[MemoryRecord]) -> None:
@@ -881,7 +894,6 @@ class PersistentMemory:
             for record in records:
                 self._index(record)
             await self._async_save_locked()
-            self._schedule_embedding_maintenance()
 
     def _find_duplicate(self, user_id: str, content: str) -> MemoryRecord | None:
         normalized = _normalize(content)
@@ -960,133 +972,53 @@ class PersistentMemory:
             self._invalidate_cached_embedding(current.memory_id)
         return updated
 
-    def _schedule_embedding_maintenance(self) -> None:
-        if (
-            self._embedding_provider is None
-            or self._embedding_task_scheduler is None
-            or not self._initialized
-        ):
-            return
-        task = self._embedding_maintenance_task
-        if task is not None and not task.done():
-            self._embedding_maintenance_requested = True
-            return
-        self._embedding_maintenance_requested = False
-        self._embedding_maintenance_task = self._embedding_task_scheduler(
-            self._async_run_embedding_maintenance()
-        )
-
-    async def _async_run_embedding_maintenance(self) -> None:
-        try:
-            while True:
-                self._embedding_maintenance_requested = False
-                await self._async_refresh_missing_embeddings(None, background=True)
-                if self._embedding_maintenance_requested:
-                    continue
-                return
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            _LOGGER.warning(
-                "Background hybrid memory embedding maintenance failed",
-                exc_info=True,
-            )
-        finally:
-            self._embedding_maintenance_task = None
-
-    async def _async_refresh_missing_embeddings(
-        self,
-        scope_ids: Sequence[str] | None,
-        *,
-        background: bool = False,
-    ) -> bool:
+    async def _async_refresh_missing_embeddings(self, scope_ids: Sequence[str]) -> bool:
         provider = self._embedding_provider
         if provider is None:
             return False
         model = self._embedding_model
-        allowed_scopes = set(scope_ids) if scope_ids is not None else None
+        allowed_scopes = set(scope_ids)
         missing = [
             memory
             for memory in self._memories.values()
-            if (allowed_scopes is None or memory.user_id in allowed_scopes)
+            if memory.user_id in allowed_scopes
             and self._cached_embedding(memory) is None
         ]
-        generated_entries: dict[str, EmbeddingCacheEntry] = {}
-        try:
-            for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
-                batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
-                vectors = await provider([_embedding_text(memory) for memory in batch])
-                if len(vectors) != len(batch):
-                    raise ValueError(
-                        "embedding provider returned the wrong number of vectors"
-                    )
-                batch_generated = False
-                async with self._lock:
+        for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
+            batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
+            vectors = await provider([_embedding_text(memory) for memory in batch])
+            if len(vectors) != len(batch):
+                raise ValueError(
+                    "embedding provider returned the wrong number of vectors"
+                )
+            batch_generated = False
+            async with self._lock:
+                if (
+                    self._embedding_provider is not provider
+                    or self._embedding_model != model
+                ):
+                    return False
+                for memory, vector in zip(batch, vectors, strict=True):
+                    current = self._memories.get(memory.memory_id)
                     if (
-                        self._embedding_provider is not provider
-                        or self._embedding_model != model
+                        current is None
+                        or _embedding_fingerprint(current)
+                        != _embedding_fingerprint(memory)
+                        or self._cached_embedding(current) is not None
                     ):
-                        if background and generated_entries:
-                            await self._async_commit_background_embeddings_locked(
-                                generated_entries
-                            )
-                        return False
-                    for memory, vector in zip(batch, vectors, strict=True):
-                        current = self._memories.get(memory.memory_id)
-                        if (
-                            current is None
-                            or _embedding_fingerprint(current)
-                            != _embedding_fingerprint(memory)
-                            or self._cached_embedding(current) is not None
-                        ):
-                            continue
-                        entry = EmbeddingCacheEntry(
-                            model=model,
-                            fingerprint=_embedding_fingerprint(memory),
-                            vector=_clean_embedding(vector),
-                        )
-                        self._embedding_cache[memory.memory_id] = entry
-                        generated_entries[memory.memory_id] = entry
-                        batch_generated = True
-                    if not batch_generated:
                         continue
-                    self._embedding_cache_dirty = True
-                    if (
-                        not background
-                        and not await self._async_save_embedding_cache_locked()
-                    ):
-                        return False
-        except Exception:
-            if background and generated_entries:
-                async with self._lock:
-                    await self._async_commit_background_embeddings_locked(
-                        generated_entries
+                    self._embedding_cache[memory.memory_id] = EmbeddingCacheEntry(
+                        model=model,
+                        fingerprint=_embedding_fingerprint(memory),
+                        vector=_clean_embedding(vector),
                     )
-            raise
-
-        if not background or not generated_entries:
-            return True
-        async with self._lock:
-            if (
-                self._embedding_provider is not provider
-                or self._embedding_model != model
-            ):
-                await self._async_commit_background_embeddings_locked(generated_entries)
-                return False
-            return await self._async_commit_background_embeddings_locked(
-                generated_entries
-            )
-
-    async def _async_commit_background_embeddings_locked(
-        self, generated_entries: Mapping[str, EmbeddingCacheEntry]
-    ) -> bool:
-        """Persist one background refresh and discard only its entries on failure."""
-        if await self._async_save_embedding_cache_locked():
-            return True
-        for memory_id, generated_entry in generated_entries.items():
-            if self._embedding_cache.get(memory_id) == generated_entry:
-                self._embedding_cache.pop(memory_id, None)
-        return False
+                    batch_generated = True
+                if not batch_generated:
+                    continue
+                self._embedding_cache_dirty = True
+                if not await self._async_save_embedding_cache_locked():
+                    return False
+        return True
 
     async def _async_save_locked(self) -> None:
         await self._storage.async_save(
@@ -1210,7 +1142,6 @@ async def async_get_memory(
         managers[key] = PersistentMemory(
             HomeAssistantMemoryStorage(hass, entry_id, subentry_id),
             HomeAssistantEmbeddingCacheStorage(hass, entry_id, subentry_id),
-            hass.async_create_task,
         )
     manager = managers[key]
     await manager.async_initialize()
@@ -1356,6 +1287,16 @@ def memory_tools() -> list[dict[str, Any]]:
                         "content": {"type": "string"},
                         "category": {"type": "string"},
                         **_memory_metadata_schema(include_scope=True),
+                        "clear_fields": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": ["subject", "key", "valid_from"],
+                            },
+                            "minItems": 1,
+                            "maxItems": 3,
+                            "description": "Optional metadata fields to clear explicitly.",
+                        },
                     },
                     "required": ["memory_id"],
                     "additionalProperties": False,
@@ -1555,6 +1496,56 @@ def _clean_embedding(value: Any) -> list[float]:
 
 def _record_as_storage_dict(memory: MemoryRecord) -> dict[str, Any]:
     return asdict(memory)
+
+
+def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
+    """Validate one stored record using the same contract as backup restore."""
+    if not isinstance(raw, Mapping):
+        raise ValueError("persistent memory record must be an object")
+    try:
+        record = MemoryRecord(**_migrate_raw_record(raw))
+    except (TypeError, ValueError) as err:
+        raise ValueError("persistent memory record is invalid") from err
+    if not all(
+        isinstance(value, str)
+        for value in (
+            record.memory_id,
+            record.user_id,
+            record.content,
+            record.category,
+            record.source,
+            record.created_at,
+            record.updated_at,
+            record.importance,
+        )
+    ):
+        raise ValueError("persistent memory fields must be strings")
+    if (
+        not record.memory_id
+        or len(record.memory_id) > 128
+        or not record.user_id
+        or len(record.user_id) > 128
+        or record.source not in {"explicit", "implicit"}
+        or record.importance not in MEMORY_IMPORTANCES
+    ):
+        raise ValueError("persistent memory metadata is invalid")
+    _clean_content(record.content)
+    _clean_category(record.category)
+    _clean_optional(record.subject, "subject", MAX_SUBJECT_LENGTH)
+    normalized_key = _clean_key(record.key)
+    if normalized_key != record.key:
+        raise ValueError("persistent memory key is not normalized")
+    if (
+        dt_util.parse_datetime(record.created_at) is None
+        or dt_util.parse_datetime(record.updated_at) is None
+    ):
+        raise ValueError("persistent memory timestamp is invalid")
+    for value in (record.valid_from, record.last_confirmed_at):
+        if value is not None and (
+            not isinstance(value, str) or dt_util.parse_datetime(value) is None
+        ):
+            raise ValueError("persistent memory timestamp is invalid")
+    return record
 
 
 def _migrate_raw_record(raw: Mapping[str, Any]) -> dict[str, Any]:

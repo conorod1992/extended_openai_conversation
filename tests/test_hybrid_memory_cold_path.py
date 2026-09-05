@@ -1,4 +1,4 @@
-"""Hybrid-memory cold-path maintenance tests."""
+"""Hybrid-memory on-demand embedding tests."""
 
 from __future__ import annotations
 
@@ -43,24 +43,27 @@ class FailingCacheStorage(FakeStorage):
         raise OSError("cache unavailable")
 
 
-async def _background_memory(cache=None) -> PersistentMemory:
-    memory = PersistentMemory(
-        FakeStorage(),
-        cache or FakeStorage(),
-        asyncio.create_task,
-    )
+async def _memory(cache=None) -> PersistentMemory:
+    memory = PersistentMemory(FakeStorage(), cache or FakeStorage())
     await memory.async_initialize()
     return memory
 
 
-async def test_provider_configuration_prewarms_existing_memories() -> None:
-    memory = await _background_memory()
+async def test_provider_configuration_does_not_prewarm_existing_memories() -> None:
+    memory = await _memory()
     await memory.async_add(
         "alice",
         "Oscar is a Cavachon.",
         "pets",
         "explicit",
         subject="Oscar",
+    )
+    await memory.async_add(
+        "bob",
+        "Milo is a Labrador.",
+        "pets",
+        "explicit",
+        subject="Milo",
     )
     calls: list[list[str]] = []
 
@@ -69,17 +72,19 @@ async def test_provider_configuration_prewarms_existing_memories() -> None:
         return [[1.0, 0.0] for _ in inputs]
 
     memory.set_embedding_provider(embeddings, "test-model")
-    await memory.async_wait_for_embedding_maintenance()
+    await asyncio.sleep(0)
 
-    assert calls == [["Oscar | pets | Oscar is a Cavachon."]]
-    calls.clear()
+    assert calls == []
     assert await memory.async_prepare_hybrid(["alice"], "What breed is Oscar?")
-    assert calls == [["What breed is Oscar?"]]
+    assert calls == [
+        ["Oscar | pets | Oscar is a Cavachon."],
+        ["What breed is Oscar?"],
+    ]
 
 
-async def test_background_warmup_coalesces_embedding_cache_writes() -> None:
+async def test_scope_warmup_batches_only_requested_scope() -> None:
     cache = CountingCacheStorage()
-    memory = await _background_memory(cache)
+    memory = await _memory(cache)
     memory_count = EMBEDDING_CACHE_BATCH_SIZE + 1
     for index in range(memory_count):
         await memory.async_add(
@@ -88,7 +93,9 @@ async def test_background_warmup_coalesces_embedding_cache_writes() -> None:
             "test",
             "explicit",
         )
-
+    await memory.async_add(
+        "bob", "Bob has an unrelated private memory.", "test", "explicit"
+    )
     calls: list[list[str]] = []
 
     async def embeddings(inputs: list[str]) -> list[list[float]]:
@@ -96,49 +103,49 @@ async def test_background_warmup_coalesces_embedding_cache_writes() -> None:
         return [[1.0, float(index + 1)] for index, _ in enumerate(inputs)]
 
     memory.set_embedding_provider(embeddings, "test-model")
-    await memory.async_wait_for_embedding_maintenance()
 
-    assert [len(batch) for batch in calls] == [EMBEDDING_CACHE_BATCH_SIZE, 1]
-    assert cache.save_calls == 1
+    assert await memory.async_prepare_hybrid(["alice"], "code")
+    assert [len(batch) for batch in calls] == [EMBEDDING_CACHE_BATCH_SIZE, 1, 1]
+    assert all("Bob has an unrelated private memory." not in text for batch in calls for text in batch)
+    assert cache.save_calls == 2
     assert len(cache.data["embeddings"]) == memory_count
 
 
-async def test_embedding_relevant_write_is_warmed_after_write_returns() -> None:
-    memory = await _background_memory()
-    provider_started = asyncio.Event()
-    release_provider = asyncio.Event()
+async def test_embedding_relevant_write_waits_for_next_scope_query() -> None:
+    memory = await _memory()
+    calls: list[list[str]] = []
 
     async def embeddings(inputs: list[str]) -> list[list[float]]:
-        provider_started.set()
-        await release_provider.wait()
+        calls.append(inputs)
         return [[1.0, 0.0] for _ in inputs]
 
     memory.set_embedding_provider(embeddings, "test-model")
-    await memory.async_wait_for_embedding_maintenance()
-
-    created = await asyncio.wait_for(
-        memory.async_add("alice", "Tea is kept in the pantry.", "home", "explicit"),
-        timeout=1,
+    created = await memory.async_add(
+        "alice", "Tea is kept in the pantry.", "home", "explicit"
     )
-    await asyncio.wait_for(provider_started.wait(), timeout=1)
-    release_provider.set()
-    await memory.async_wait_for_embedding_maintenance()
+    await asyncio.sleep(0)
+    assert calls == []
 
-    provider_started.clear()
-    release_provider.clear()
+    assert await memory.async_prepare_hybrid(["alice"], "tea")
+    assert calls == [["home | Tea is kept in the pantry."], ["tea"]]
+    calls.clear()
+
     await memory.async_update(
         "alice",
         created["memory"]["memory_id"],
         content="Tea is kept in the kitchen cupboard.",
     )
-    await asyncio.wait_for(provider_started.wait(), timeout=1)
-    release_provider.set()
-    await memory.async_wait_for_embedding_maintenance()
+    await asyncio.sleep(0)
+    assert calls == []
+
+    assert await memory.async_prepare_hybrid(["alice"], "tea")
+    assert calls == [["home | Tea is kept in the kitchen cupboard."], ["tea"]]
 
 
-async def test_model_change_prewarms_stale_cache_before_next_query() -> None:
-    memory = await _background_memory()
+async def test_model_change_reembeds_requested_scope_on_demand() -> None:
+    memory = await _memory()
     await memory.async_add("alice", "Oscar is a Cavachon.", "pets", "explicit")
+    await memory.async_add("bob", "Milo is a Labrador.", "pets", "explicit")
     calls: list[tuple[str, list[str]]] = []
     model = "first-model"
 
@@ -147,70 +154,38 @@ async def test_model_change_prewarms_stale_cache_before_next_query() -> None:
         return [[1.0, 0.0] for _ in inputs]
 
     memory.set_embedding_provider(embeddings, model)
-    await memory.async_wait_for_embedding_maintenance()
+    assert await memory.async_prepare_hybrid(["alice"], "breed")
     calls.clear()
 
     model = "second-model"
     memory.set_embedding_provider(embeddings, model)
-    await memory.async_wait_for_embedding_maintenance()
-    assert calls == [("second-model", ["pets | Oscar is a Cavachon."])]
+    await asyncio.sleep(0)
+    assert calls == []
 
-    calls.clear()
     assert await memory.async_prepare_hybrid(["alice"], "breed")
-    assert calls == [("second-model", ["breed"])]
+    assert calls == [
+        ("second-model", ["pets | Oscar is a Cavachon."]),
+        ("second-model", ["breed"]),
+    ]
 
 
-async def test_model_change_during_warmup_restarts_with_new_provider() -> None:
-    memory = await _background_memory()
+async def test_failed_request_time_warmup_falls_back_cleanly() -> None:
+    memory = await _memory()
     await memory.async_add("alice", "Oscar is a Cavachon.", "pets", "explicit")
-    first_started = asyncio.Event()
-    release_first = asyncio.Event()
-    second_calls: list[list[str]] = []
-
-    async def first_provider(inputs: list[str]) -> list[list[float]]:
-        first_started.set()
-        await release_first.wait()
-        return [[1.0, 0.0] for _ in inputs]
-
-    async def second_provider(inputs: list[str]) -> list[list[float]]:
-        second_calls.append(inputs)
-        return [[0.0, 1.0] for _ in inputs]
-
-    memory.set_embedding_provider(first_provider, "first-model")
-    await asyncio.wait_for(first_started.wait(), timeout=1)
-    memory.set_embedding_provider(second_provider, "second-model")
-    release_first.set()
-    await memory.async_wait_for_embedding_maintenance()
-
-    assert second_calls == [["pets | Oscar is a Cavachon."]]
-    second_calls.clear()
-    assert await memory.async_prepare_hybrid(["alice"], "breed")
-    assert second_calls == [["breed"]]
-
-
-async def test_failed_background_warmup_keeps_request_time_fallback() -> None:
-    memory = await _background_memory()
-    await memory.async_add("alice", "Oscar is a Cavachon.", "pets", "explicit")
-    fail = True
     calls: list[list[str]] = []
 
     async def embeddings(inputs: list[str]) -> list[list[float]]:
         calls.append(inputs)
-        if fail:
-            raise OSError("provider unavailable")
-        return [[1.0, 0.0] for _ in inputs]
+        raise OSError("provider unavailable")
 
     memory.set_embedding_provider(embeddings, "test-model")
-    await memory.async_wait_for_embedding_maintenance()
-    calls.clear()
 
-    fail = False
-    assert await memory.async_prepare_hybrid(["alice"], "breed")
-    assert calls == [["pets | Oscar is a Cavachon."], ["breed"]]
+    assert await memory.async_prepare_hybrid(["alice"], "breed") is None
+    assert calls == [["pets | Oscar is a Cavachon."]]
 
 
-async def test_failed_background_cache_save_does_not_change_cold_fallback() -> None:
-    memory = await _background_memory(FailingCacheStorage())
+async def test_failed_cache_save_keeps_request_time_fallback() -> None:
+    memory = await _memory(FailingCacheStorage())
     await memory.async_add("alice", "Oscar is a Cavachon.", "pets", "explicit")
     calls: list[list[str]] = []
 
@@ -219,8 +194,6 @@ async def test_failed_background_cache_save_does_not_change_cold_fallback() -> N
         return [[1.0, 0.0] for _ in inputs]
 
     memory.set_embedding_provider(embeddings, "test-model")
-    await memory.async_wait_for_embedding_maintenance()
-    calls.clear()
 
     assert await memory.async_prepare_hybrid(["alice"], "breed") is None
     assert calls == [["pets | Oscar is a Cavachon."]]

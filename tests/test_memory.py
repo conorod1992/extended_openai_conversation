@@ -393,7 +393,12 @@ async def test_automatic_retrieval_respects_runtime_options() -> None:
         await entity._async_retrieve_memories(context, "temperature units") == expected
     )
     entity._memory.async_search.assert_awaited_once_with(
-        "user-1", "temperature units", limit=2
+        "user-1",
+        "temperature units",
+        None,
+        2,
+        query_embedding=None,
+        hybrid=False,
     )
     assert {tool["spec"]["name"] for tool in entity._get_function_tools()} == (
         MEMORY_TOOL_NAMES
