@@ -58,6 +58,7 @@ SLOT_REFERENCE = re.compile(r"(?<!\{)\{([A-Za-z_][A-Za-z0-9_]{0,63})\}(?!\})")
 JINJA_SLOT_REFERENCE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]{0,63})\s*\}\}")
 ROUTING_SCOPES = ("request", "conversation")
 _REQUEST_RESET_SENTINEL = "__request_rule_reset__"
+_SENTENCE_MATCH_BOUNDARY = "zxqrequestboundaryqzx"
 DEFAULT_MATCHING = {
     "word_forms": True,
     "wording_alternatives": True,
@@ -101,6 +102,26 @@ class CompiledPhrase:
     normalized: str | None = None
     sentence: Sentence | None = None
     slot_lists: dict[str, SlotList] = field(default_factory=dict)
+
+
+def _match_compiled_sentence(
+    compiled: CompiledPhrase, text: str
+) -> dict[str, str] | None:
+    """Match one parsed Hassil sentence, including a trailing wildcard slot."""
+    if compiled.sentence is None:
+        return None
+    context = is_match(
+        f"{text} {_SENTENCE_MATCH_BOUNDARY}",
+        compiled.sentence,
+        slot_lists=compiled.slot_lists,
+        expansion_rules={},
+    )
+    if context is None:
+        return None
+    return {
+        entity.name: str(entity.value).strip()
+        for entity in context.entities
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -412,18 +433,9 @@ class RequestRules:
                     normalized_candidates[normalization_key] = candidate
             for compiled in phrases:
                 if compiled.sentence is not None:
-                    context = is_match(
-                        text,
-                        compiled.sentence,
-                        slot_lists=compiled.slot_lists,
-                        expansion_rules={},
-                    )
-                    if context is None:
+                    slots = _match_compiled_sentence(compiled, text)
+                    if slots is None:
                         continue
-                    slots = {
-                        entity.name: str(entity.value).strip()
-                        for entity in context.entities
-                    }
                     result = RuleMatch(rule, compiled.original, False, 100.0, slots)
                     deterministic.append(
                         (
@@ -1312,7 +1324,7 @@ def normalize_text(
 def _compile_sentence_pattern(pattern: str) -> CompiledPhrase:
     """Parse supported Hassil syntax and configure wildcard slot capture."""
     try:
-        sentence = parse_sentence(pattern)
+        sentence = parse_sentence(f"{pattern} {_SENTENCE_MATCH_BOUNDARY}")
     except Exception as err:
         raise ValueError(f"invalid sentence pattern: {err}") from err
 

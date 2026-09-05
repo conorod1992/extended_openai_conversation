@@ -287,18 +287,9 @@ def _install_request_rule_two_pass_matching() -> None:
             )
             for compiled in phrases:
                 if compiled.sentence is not None:
-                    context = rules.is_match(
-                        text,
-                        compiled.sentence,
-                        slot_lists=compiled.slot_lists,
-                        expansion_rules={},
-                    )
-                    if context is None:
+                    slots = rules._match_compiled_sentence(compiled, text)
+                    if slots is None:
                         continue
-                    slots = {
-                        entity.name: str(entity.value).strip()
-                        for entity in context.entities
-                    }
                     result = rules.RuleMatch(
                         rule, compiled.original, False, 100.0, slots
                     )
