@@ -412,7 +412,12 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
         function_config = tool.get("function")
         if not isinstance(spec, dict):
             raise AgentConfigError(f"{field}.spec", "must be an object")
-        unknown_spec_fields = set(spec) - {"name", "description", "parameters", "strict"}
+        unknown_spec_fields = set(spec) - {
+            "name",
+            "description",
+            "parameters",
+            "strict",
+        }
         if unknown_spec_fields:
             raise AgentConfigError(
                 f"{field}.spec",

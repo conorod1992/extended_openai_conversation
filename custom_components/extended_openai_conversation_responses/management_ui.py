@@ -539,7 +539,8 @@ def _function_reference_error(name: str, references: dict[str, Any]) -> str:
     if references.get("guest_mode"):
         parts.append("Guest Mode custom function access")
     return (
-        f"Function Tool `{name}` is still referenced by " + "; ".join(parts)
+        f"Function Tool `{name}` is still referenced by "
+        + "; ".join(parts)
         + ". Update those references before deleting it."
     )
 
@@ -1207,9 +1208,7 @@ async def async_management_command(
             rules, references = await _function_reference_state(
                 hass, entry_id, subentry_id, subentry.data, original_name
             )
-            guest_names = list(
-                subentry.data.get(CONF_GUEST_ALLOWED_FUNCTION_NAMES, [])
-            )
+            guest_names = list(subentry.data.get(CONF_GUEST_ALLOWED_FUNCTION_NAMES, []))
             renamed_guest_names = [
                 saved_name if name == original_name else name for name in guest_names
             ]
@@ -1219,9 +1218,7 @@ async def async_management_command(
                 subentry,
                 tools,
                 groups,
-                extra_updates={
-                    CONF_GUEST_ALLOWED_FUNCTION_NAMES: renamed_guest_names
-                },
+                extra_updates={CONF_GUEST_ALLOWED_FUNCTION_NAMES: renamed_guest_names},
             )
             try:
                 renamed_rule_references = await rules.async_rename_function_reference(

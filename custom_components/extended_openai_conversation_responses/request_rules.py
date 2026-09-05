@@ -217,7 +217,8 @@ class RequestRules:
                 for action in updated.get("action", {}).get("actions", []):
                     if (
                         isinstance(action, dict)
-                        and action.get("action", action.get("service")) == service_action
+                        and action.get("action", action.get("service"))
+                        == service_action
                         and isinstance(action.get("data"), Mapping)
                         and action["data"].get("function") == old_name
                     ):
