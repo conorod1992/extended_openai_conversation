@@ -28,11 +28,19 @@ jobs:
           marker = "          python - <<'PY'\n"
           end = "\n          PY\n"
           body = source.split(marker, 1)[1].split(end, 1)[0]
-          body = "\n".join(
-              line[10:] if line.startswith("          ") else line
-              for line in body.splitlines()
-          )
-          exec(compile(body, 'pr18-embedded-patch.py', 'exec'))
+          rebuilt = []
+          in_raw_string = False
+          for line in body.splitlines():
+              if in_raw_string:
+                  rebuilt.append(line)
+                  if line == "''')":
+                      in_raw_string = False
+                  continue
+              stripped = line[10:] if line.startswith("          ") else line
+              rebuilt.append(stripped)
+              if ".write_text(r'''" in stripped:
+                  in_raw_string = True
+          exec(compile("\n".join(rebuilt), 'pr18-embedded-patch.py', 'exec'))
           Path('.github/workflows/pr18-runner.yml').unlink(missing_ok=True)
           PY
       - name: Format changed Python
