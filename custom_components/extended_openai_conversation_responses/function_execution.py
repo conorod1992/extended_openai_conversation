@@ -64,7 +64,9 @@ def _validate_schema_node(path: str, schema: Mapping[str, Any]) -> None:
         array_hint = bool(_ARRAY_KEYWORDS.intersection(schema))
         if object_hint and array_hint:
             raise _schema_error(f"schema at `{path}` mixes object and array keywords")
-        expected_types = {"object"} if object_hint else {"array"} if array_hint else set()
+        expected_types = (
+            {"object"} if object_hint else {"array"} if array_hint else set()
+        )
     elif isinstance(expected, str):
         if expected not in _JSON_TYPES:
             raise _schema_error(f"unsupported type `{expected}` at `{path}`")
@@ -113,7 +115,9 @@ def _validate_schema_node(path: str, schema: Mapping[str, Any]) -> None:
         if not isinstance(required, list) or not all(
             isinstance(item, str) for item in required
         ):
-            raise _schema_error(f"required at `{path}` must be a list of property names")
+            raise _schema_error(
+                f"required at `{path}` must be a list of property names"
+            )
         if len(required) != len(set(required)):
             raise _schema_error(f"required at `{path}` contains duplicate names")
 
@@ -172,13 +176,9 @@ def _validate_schema_length_bounds(
         if limit is not None and (
             isinstance(limit, bool) or not isinstance(limit, int) or limit < 0
         ):
-            raise _schema_error(
-                f"{keyword} at `{path}` must be a non-negative integer"
-            )
+            raise _schema_error(f"{keyword} at `{path}` must be a non-negative integer")
     if minimum is not None and maximum is not None and minimum > maximum:
-        raise _schema_error(
-            f"{minimum_key} at `{path}` cannot exceed {maximum_key}"
-        )
+        raise _schema_error(f"{minimum_key} at `{path}` cannot exceed {maximum_key}")
 
 
 def _validate_numeric_bound_order(schema: Mapping[str, Any], path: str) -> None:
