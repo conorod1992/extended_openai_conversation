@@ -1,0 +1,68 @@
+name: PR17 management patch
+
+on:
+  push:
+    branches:
+      - fix/pr17-request-rule-determinism
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pr17-request-rule-determinism
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Apply narrow management patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('custom_components/extended_openai_conversation_responses/management_ui.py')
+          text = path.read_text()
+
+          def replace_once(old: str, new: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected exactly one match, got {count}: {old[:80]!r}')
+              text = text.replace(old, new)
+
+          replace_once(
+              'from __future__ import annotations\n\nimport json\nfrom pathlib import Path\nimport re\nfrom types import MappingProxyType\nfrom typing import Any, cast\n',
+              'from __future__ import annotations\n\nfrom collections.abc import Mapping\nimport json\nfrom pathlib import Path\nimport re\nfrom types import MappingProxyType\nfrom typing import Any, cast\nfrom uuid import uuid4\n',
+          )
+
+          replace_once(
+              '''def _validate_request_rule_functions(\n    value: Any, configured_tools: list[dict[str, Any]]\n) -> None:\n    """Reject new rule references that are not currently selectable."""\n    rule = validate_rule(value)\n    available = {\n        tool["spec"]["name"] for tool in configured_tools if function_tool_enabled(tool)\n    }\n    missing = {\n        action["function"]\n        for action in rule.get("action", {}).get("actions", [])\n        if action.get("type") == "function" and action["function"] not in available\n    }\n    if missing:\n        raise HomeAssistantError(\n            "Function Tool is unavailable or disabled: " + ", ".join(sorted(missing))\n        )\n    by_name = {tool["spec"]["name"]: tool for tool in configured_tools}\n    for action in rule.get("action", {}).get("actions", []):\n        if action.get("type") != "function" or action["function"] not in by_name:\n            continue\n        parameters = by_name[action["function"]]["spec"].get("parameters", {})\n        required = (\n            parameters.get("required", []) if isinstance(parameters, dict) else []\n        )\n        missing_inputs = set(required) - set(action.get("arguments", {}))\n        if missing_inputs:\n            raise HomeAssistantError(\n                f"Function Tool `{action['function']}` needs input: "\n                + ", ".join(sorted(missing_inputs))\n            )\n''',
+              '''def _prepare_request_rule(value: Any, rule_id: str | None = None) -> dict[str, Any]:\n    """Assign/preserve rule identity before canonical validation."""\n    if not isinstance(value, Mapping):\n        raise HomeAssistantError("rule must be an object")\n    raw = dict(value)\n    if rule_id is not None:\n        raw["id"] = rule_id\n    elif not isinstance(raw.get("id"), str) or not str(raw["id"]).strip():\n        raw["id"] = uuid4().hex\n    return validate_rule(raw)\n\n\ndef _validate_request_rule_functions(\n    rule: Mapping[str, Any], configured_tools: list[dict[str, Any]]\n) -> None:\n    """Validate configured Function references in canonical persisted actions."""\n    service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"\n    calls: list[Mapping[str, Any]] = []\n    for action in rule.get("action", {}).get("actions", []):\n        if not isinstance(action, Mapping):\n            continue\n        if action.get("action", action.get("service")) != service_action:\n            continue\n        data = action.get("data")\n        if not isinstance(data, Mapping) or not isinstance(data.get("function"), str):\n            raise HomeAssistantError("Configured Function action is invalid")\n        arguments = data.get("arguments", {})\n        if not isinstance(arguments, Mapping):\n            raise HomeAssistantError("Configured Function arguments must be an object")\n        calls.append(data)\n\n    available = {\n        tool["spec"]["name"] for tool in configured_tools if function_tool_enabled(tool)\n    }\n    missing = {\n        str(call["function"]) for call in calls if call["function"] not in available\n    }\n    if missing:\n        raise HomeAssistantError(\n            "Function Tool is unavailable or disabled: " + ", ".join(sorted(missing))\n        )\n    by_name = {tool["spec"]["name"]: tool for tool in configured_tools}\n    for call in calls:\n        function_name = str(call["function"])\n        parameters = by_name[function_name]["spec"].get("parameters", {})\n        required = (\n            parameters.get("required", []) if isinstance(parameters, dict) else []\n        )\n        missing_inputs = set(required) - set(call.get("arguments", {}))\n        if missing_inputs:\n            raise HomeAssistantError(\n                f"Function Tool `{function_name}` needs input: "\n                + ", ".join(sorted(missing_inputs))\n            )\n''',
+          )
+
+          replace_once(
+              '''        if action == "create":\n            _validate_request_rule_functions(\n                message.get("rule"),\n                configured_function_tools_from_data(subentry.data)\n                if hasattr(subentry, "data")\n                else [],\n            )\n            return {"rule": await rules.async_create(message.get("rule"))}\n''',
+              '''        if action == "create":\n            candidate = _prepare_request_rule(message.get("rule"))\n            _validate_request_rule_functions(\n                candidate,\n                configured_function_tools_from_data(subentry.data)\n                if hasattr(subentry, "data")\n                else [],\n            )\n            return {"rule": await rules.async_create(candidate)}\n''',
+          )
+
+          replace_once(
+              '''        if action == "update":\n            _validate_request_rule_functions(\n                message.get("rule"),\n                configured_function_tools_from_data(subentry.data)\n                if hasattr(subentry, "data")\n                else [],\n            )\n            return {"rule": await rules.async_update(rule_id, message.get("rule"))}\n''',
+              '''        if action == "update":\n            candidate = _prepare_request_rule(message.get("rule"), rule_id)\n            _validate_request_rule_functions(\n                candidate,\n                configured_function_tools_from_data(subentry.data)\n                if hasattr(subentry, "data")\n                else [],\n            )\n            return {"rule": await rules.async_update(rule_id, candidate)}\n''',
+          )
+
+          path.write_text(text)
+          PY
+      - name: Commit management patch
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add custom_components/extended_openai_conversation_responses/management_ui.py
+          git commit -m "Fix Request Rule management validation boundary"
+          git push origin HEAD:fix/pr17-request-rule-determinism
