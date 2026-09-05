@@ -31,11 +31,10 @@ function providerLabel(value) {
 export async function updateProviderApiKey(panel, agent, apiKey) {
   const connection = panel?._hass;
   if (!connection?.callWS) throw new Error("Home Assistant connection is unavailable.");
-  if (!agent?.entry_id || !agent?.subentry_id) throw new Error("Provider connection is unavailable.");
+  if (!agent?.entry_id) throw new Error("Provider connection is unavailable.");
   return connection.callWS({
     type: CREDENTIAL_COMMAND,
     entry_id: agent.entry_id,
-    subentry_id: agent.subentry_id,
     api_key: apiKey,
   });
 }
@@ -243,7 +242,7 @@ function enhanceDiagnostics(panel) {
     || panel._subsection !== "diagnostics"
   ) return;
   const agent = panel._selectedAgent?.();
-  if (!agent?.entry_id || !agent?.subentry_id || !panel.shadowRoot) return;
+  if (!agent?.entry_id || !panel.shadowRoot) return;
   ensureStyles(panel);
   ensureApiKeyDialog(panel, agent);
   ensureProviderCard(panel, agent);
