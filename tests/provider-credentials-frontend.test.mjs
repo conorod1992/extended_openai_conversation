@@ -4,6 +4,7 @@ import {readFile} from "node:fs/promises";
 import {
   diagnosticsAuthenticationRejected,
   providerCredentialScope,
+  updateProviderApiKey,
 } from "../custom_components/extended_openai_conversation_responses/frontend/management-provider-credentials.js";
 
 assert.equal(
@@ -30,6 +31,31 @@ assert.equal(diagnosticsAuthenticationRejected({
   checks:[{name:"Model access", status:"Failed", message:"Rate limited"}],
 }), false);
 
+let sentCredentialRequest = null;
+const credentialResult = await updateProviderApiKey(
+  {
+    _hass: {
+      callWS: async (message) => {
+        sentCredentialRequest = message;
+        return {updated:true, validation_performed:true, reload_requested:true};
+      },
+    },
+  },
+  {entry_id:"entry-1", subentry_id:"agent-1"},
+  "candidate-secret",
+);
+assert.deepEqual(sentCredentialRequest, {
+  type:"extended_openai_conversation_responses/management/update_api_key",
+  entry_id:"entry-1",
+  subentry_id:"agent-1",
+  api_key:"candidate-secret",
+});
+assert.equal(credentialResult.updated, true);
+await assert.rejects(
+  () => updateProviderApiKey({}, {entry_id:"entry-1", subentry_id:"agent-1"}, "candidate-secret"),
+  /Home Assistant connection is unavailable/,
+);
+
 const source = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/management-provider-credentials.js", import.meta.url),
   "utf8",
@@ -40,10 +66,8 @@ assert.match(source, /type="password"/);
 assert.match(source, /autocomplete="off"/);
 assert.match(source, /Validate & replace/);
 assert.match(source, /extended_openai_conversation_responses\/management\/update_api_key/);
-assert.match(source, /panel\.hass\.callWS\(\{/);
-assert.match(source, /entry_id: agent\.entry_id/);
-assert.match(source, /subentry_id: agent\.subentry_id/);
-assert.match(source, /api_key: apiKey/);
+assert.match(source, /const connection = panel\?\._hass/);
+assert.match(source, /updateProviderApiKey\(panel, agent, apiKey\)/);
 assert.match(source, /saved key is never displayed/i);
 assert.match(source, /Home Assistant's reauthentication flow if it is offered/);
 assert.match(source, /#eoc-dialog-host/);
@@ -51,6 +75,8 @@ assert.match(source, /setDialogBusy\(dialog, true\)/);
 assert.match(source, /stopDiagnosticsWatch\(this\)/);
 assert.match(source, /panel\._data\?\.is_admin === false/);
 assert.match(source, /reload_requested === false/);
+assert.match(source, /syncAuthenticationRecovery\(panel, \{authentication_rejected: false\}\)/);
+assert.doesNotMatch(source, /panel\.hass\.callWS/);
 assert.doesNotMatch(source, /root\.append\(dialog\)/);
 assert.doesNotMatch(source, /slice\([^)]*apiKey|substring\([^)]*apiKey/);
 
