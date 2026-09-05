@@ -1,0 +1,40 @@
+name: PR21 lint fix
+
+on:
+  push:
+    branches:
+      - fix/pr21-provider-failure-diagnostics
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pr21-provider-failure-diagnostics
+      - name: Move debug import into Ruff order
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("custom_components/extended_openai_conversation_responses/conversation.py")
+          text = p.read_text()
+          line = "from .debug import record_current_provider_failure\n"
+          if text.count(line) != 1:
+              raise SystemExit("unexpected debug import count")
+          text = text.replace(line, "")
+          anchor = "from .conversation_archive import ArchiveSession, ConversationArchive, async_get_archive\n"
+          if anchor not in text:
+              raise SystemExit("import anchor missing")
+          p.write_text(text.replace(anchor, anchor + line, 1))
+          PY
+          rm .github/workflows/pr21-lint-fix.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Fix provider diagnostics import order"
+          git push origin HEAD:fix/pr21-provider-failure-diagnostics
