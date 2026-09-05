@@ -79,9 +79,27 @@ async def async_replace_api_key(
             "The new API key could not be validated. The existing API key was not changed."
         ) from err
 
-    hass.config_entries.async_update_entry(entry, data=candidate)
+    state_before = entry.state
+    has_update_listener = bool(entry.update_listeners)
+    changed = hass.config_entries.async_update_entry(entry, data=candidate)
+    reload_requested = False
+    if changed:
+        if has_update_listener:
+            # A successfully loaded entry already owns its normal reload listener.
+            # Do not schedule a second reload alongside it.
+            reload_requested = True
+        elif (
+            entry.disabled_by is None
+            and state_before.recoverable
+        ):
+            # Startup authentication failures happen before our update listener is
+            # registered. A validated replacement should recover that entry too.
+            hass.config_entries.async_schedule_reload(entry.entry_id)
+            reload_requested = True
+
     return {
-        "updated": True,
+        "updated": changed,
         "validation_performed": not skip_authentication,
+        "reload_requested": reload_requested,
         "provider": str(candidate.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER)),
     }
