@@ -20,7 +20,7 @@ _OBJECT_KEYWORDS = {
 _ARRAY_KEYWORDS = {"items", "minItems", "maxItems", "uniqueItems"}
 _STRING_KEYWORDS = {"minLength", "maxLength", "pattern"}
 _NUMBER_KEYWORDS = {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"}
-_COMMON_SCHEMA_KEYWORDS = {"type", "description", "enum", "const"}
+_COMMON_SCHEMA_KEYWORDS = {"type", "description", "enum", "const", "default"}
 _SUPPORTED_SCHEMA_KEYWORDS = (
     _COMMON_SCHEMA_KEYWORDS
     | _OBJECT_KEYWORDS
