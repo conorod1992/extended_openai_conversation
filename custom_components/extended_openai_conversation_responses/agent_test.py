@@ -59,12 +59,14 @@ class AgentTestResult:
 
     status: str
     checks: list[TestCheck]
+    authentication_rejected: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         """Return a JSON-safe response for flows and WebSocket clients."""
         return {
             "status": self.status,
             "checks": [asdict(check) for check in self.checks],
+            "authentication_rejected": self.authentication_rejected,
         }
 
     def as_text(self) -> str:
@@ -109,6 +111,7 @@ async def async_test_agent(
 ) -> AgentTestResult:
     """Test one agent with local checks and at most one minimal live request."""
     checks: list[TestCheck] = []
+    authentication_rejected = False
     client = getattr(entry, "runtime_data", None)
     if client is None:
         checks.append(_check("Authentication", "Failed", "API client is unavailable"))
@@ -258,8 +261,11 @@ async def async_test_agent(
                 kwargs["max_tokens"] = 16
             response = await client.chat.completions.create(**kwargs)
     except AuthenticationError as err:
-        await usage_manager.async_record_request(successful=False)
+        # Authentication recovery is more important than diagnostics bookkeeping.
+        # Request it first so a secondary usage-storage failure cannot suppress reauth.
         request_reauthentication(hass, entry, err)
+        authentication_rejected = True
+        await usage_manager.async_record_request(successful=False)
         authentication = next(
             check for check in checks if check.name == "Authentication"
         )
@@ -291,4 +297,6 @@ async def async_test_agent(
         if web_search and web_search_compatible:
             checks.append(_check("Web Search", "Passed", "Hosted tool schema accepted"))
 
-    return AgentTestResult(_overall(checks), checks)
+    return AgentTestResult(
+        _overall(checks), checks, authentication_rejected=authentication_rejected
+    )
