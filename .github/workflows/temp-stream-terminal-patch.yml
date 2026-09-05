@@ -105,3 +105,5 @@ jobs:
           git add custom_components/extended_openai_conversation_responses/entity.py
           git commit -m "Require terminal Chat stream finish state"
           git push origin HEAD:fix/stream-terminal-correctness
+
+# Trigger after workflow exists on branch.
