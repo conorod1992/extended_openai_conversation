@@ -83,26 +83,38 @@ async def _async_cleanup_process(
 ) -> None:
     """Stop a subprocess and settle pipe readers with bounded waits."""
 
+    # POSIX descendants can outlive the shell leader, so ownership of the
+    # process group must not be inferred from the leader's return code.
+    process_group_id = process.pid if os.name == "posix" else None
+
     def stop_process(*, terminate: bool) -> None:
-        if process.returncode is not None:
-            return
-        if os.name == "posix":
+        if process_group_id is not None:
             sig = signal.SIGTERM if terminate else signal.SIGKILL
             with suppress(ProcessLookupError):
-                os.killpg(process.pid, sig)
-        elif terminate:
+                os.killpg(process_group_id, sig)
+            return
+        if process.returncode is not None:
+            return
+        if terminate:
             with suppress(ProcessLookupError):
                 process.terminate()
         else:
             with suppress(ProcessLookupError):
                 process.kill()
 
-    if process.returncode is None and graceful:
+    if graceful:
         stop_process(terminate=True)
-        with suppress(TimeoutError):
-            await asyncio.wait_for(process.wait(), timeout=_SHELL_CANCEL_GRACE_SECONDS)
+        if process_group_id is not None:
+            # There is no asyncio Process handle for surviving group descendants.
+            # Give SIGTERM a bounded grace period before enforcing group teardown.
+            await asyncio.sleep(_SHELL_CANCEL_GRACE_SECONDS)
+        elif process.returncode is None:
+            with suppress(TimeoutError):
+                await asyncio.wait_for(
+                    process.wait(), timeout=_SHELL_CANCEL_GRACE_SECONDS
+                )
 
-    if process.returncode is None:
+    if process_group_id is not None or process.returncode is None:
         stop_process(terminate=False)
 
     if process.returncode is None:
