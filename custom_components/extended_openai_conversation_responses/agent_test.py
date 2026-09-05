@@ -36,7 +36,11 @@ from .helpers import (
     supports_openai_hosted_tools,
 )
 from .memory import async_get_memory, memory_enabled
-from .provider_errors import ensure_successful_responses_result, provider_user_message
+from .provider_errors import (
+    ensure_successful_responses_result,
+    provider_user_message,
+    request_reauthentication,
+)
 from .usage import async_get_usage, extract_usage
 
 
@@ -255,6 +259,7 @@ async def async_test_agent(
             response = await client.chat.completions.create(**kwargs)
     except AuthenticationError as err:
         await usage_manager.async_record_request(successful=False)
+        request_reauthentication(hass, entry, err)
         authentication = next(
             check for check in checks if check.name == "Authentication"
         )
