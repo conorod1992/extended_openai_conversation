@@ -91,6 +91,7 @@ from .const import (
     GUEST_POLICY_VERSION,
     MANAGEMENT_PANEL_TITLE,
     MANAGEMENT_PANEL_URL,
+    SERVICE_CALL_FUNCTION,
     TEMPORARY_MEMORY_OFF,
 )
 from .continuity import ConversationContinuity, async_get_continuity
