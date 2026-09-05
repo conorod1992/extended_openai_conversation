@@ -184,6 +184,7 @@ async def test_responses_annotation_event_after_cited_text_is_observed(caplog) -
                 sequence_number=3,
                 annotation=annotation,
             ),
+            _event("response.completed", response=SimpleNamespace(usage=None)),
         ]
     )
     entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
@@ -765,6 +766,7 @@ async def test_responses_stream_supports_multiple_tool_calls() -> None:
                 _event("response.output_item.done", item=call),
             )
         ]
+        + [_event("response.completed", response=SimpleNamespace(usage=None))]
     )
     entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
 
@@ -793,6 +795,7 @@ async def test_responses_stream_preserves_web_search_and_citations() -> None:
             _event("response.output_item.added", item=message_item),
             _event("response.output_text.delta", delta="It is mild today."),
             _event("response.output_item.done", item=message_item),
+            _event("response.completed", response=SimpleNamespace(usage=None)),
         ]
     )
     entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
