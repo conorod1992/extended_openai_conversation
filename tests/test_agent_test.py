@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from openai import AuthenticationError
+from openai import AuthenticationError, OpenAIError
 import pytest
 
 from custom_components.extended_openai_conversation_responses.agent_test import (
@@ -125,6 +125,40 @@ async def test_invalid_authentication() -> None:
         for check in result.checks
     )
     reauth.assert_called_once_with(hass, entry, authentication_error)
+
+
+async def test_generic_openai_http_401_uses_runtime_reauth_rule() -> None:
+    class Generic401Error(OpenAIError):
+        status_code = 401
+
+    hass, entry, subentry, client, usage = _objects()
+    entry.async_start_reauth = MagicMock()
+    generic_401 = Generic401Error("generic authentication rejection")
+    client.chat.completions.create.side_effect = generic_401
+
+    with (
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.get_exposed_entities",
+            return_value=[SimpleNamespace()],
+        ),
+        patch(
+            "custom_components.extended_openai_conversation_responses.agent_test.async_get_usage",
+            AsyncMock(return_value=usage),
+        ),
+    ):
+        result = await async_test_agent(hass, entry, subentry)
+
+    assert result.status == "Failed"
+    assert result.authentication_rejected is True
+    entry.async_start_reauth.assert_called_once_with(hass)
+    authentication = next(
+        check for check in result.checks if check.name == "Authentication"
+    )
+    assert authentication.status == "Failed"
+    assert any(
+        check.name == "Model access" and check.message == "Authentication rejected"
+        for check in result.checks
+    )
 
 
 async def test_reauthentication_is_requested_before_usage_recording() -> None:
