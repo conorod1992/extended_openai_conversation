@@ -274,12 +274,26 @@ async def async_test_agent(
         checks.append(_check("Model access", "Failed", "Authentication rejected"))
         checks.append(_check("Function calling", "Failed", "Probe was rejected"))
     except OpenAIError as err:
-        await usage_manager.async_record_request(successful=False)
-        message = provider_user_message(err)
-        checks.append(_check("Model access", "Failed", message))
-        checks.append(_check("Function calling", "Failed", "Probe was rejected"))
-        if web_search and web_search_compatible:
-            checks.append(_check("Web Search", "Failed", message))
+        # Keep Diagnostics aligned with runtime handling: some compatible clients
+        # may surface an HTTP 401 as a generic OpenAIError rather than the concrete
+        # AuthenticationError subclass.
+        if request_reauthentication(hass, entry, err):
+            authentication_rejected = True
+            await usage_manager.async_record_request(successful=False)
+            authentication = next(
+                check for check in checks if check.name == "Authentication"
+            )
+            authentication.status = "Failed"
+            authentication.message = provider_user_message(err)
+            checks.append(_check("Model access", "Failed", "Authentication rejected"))
+            checks.append(_check("Function calling", "Failed", "Probe was rejected"))
+        else:
+            await usage_manager.async_record_request(successful=False)
+            message = provider_user_message(err)
+            checks.append(_check("Model access", "Failed", message))
+            checks.append(_check("Function calling", "Failed", "Probe was rejected"))
+            if web_search and web_search_compatible:
+                checks.append(_check("Web Search", "Failed", message))
     except Exception as err:
         await usage_manager.async_record_request(successful=False)
         checks.append(_check("Model access", "Failed", str(err)))
