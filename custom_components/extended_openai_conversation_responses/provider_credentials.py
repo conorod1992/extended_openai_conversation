@@ -85,22 +85,20 @@ async def async_replace_api_key(
         ) from err
 
     state_before = entry.state
-    has_update_listener = bool(entry.update_listeners)
     changed = hass.config_entries.async_update_entry(entry, data=candidate)
     reload_requested = False
-    if changed and has_update_listener:
-        # A successfully loaded entry already owns its normal reload listener.
-        # Do not schedule a second reload alongside it.
+    if changed and state_before is ConfigEntryState.LOADED:
+        # Successful setup registers this integration's normal update listener,
+        # which reloads the entry after a changed config-entry update.
         reload_requested = True
     elif (
-        not has_update_listener
+        state_before is not ConfigEntryState.LOADED
         and entry.disabled_by is None
         and state_before.recoverable
-        and (changed or state_before is not ConfigEntryState.LOADED)
     ):
-        # Startup authentication failures happen before our update listener is
-        # registered. Retry after successful validation even if the key string is
-        # unchanged, since provider-side access may have been repaired meanwhile.
+        # Startup authentication failures occur before the normal update listener
+        # is registered. Retry after successful validation even when the key string
+        # is unchanged, since provider-side access may have been repaired meanwhile.
         hass.config_entries.async_schedule_reload(entry.entry_id)
         reload_requested = True
 
