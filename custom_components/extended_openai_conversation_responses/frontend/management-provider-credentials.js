@@ -28,6 +28,18 @@ function providerLabel(value) {
   return normalized || "Provider";
 }
 
+export async function updateProviderApiKey(panel, agent, apiKey) {
+  const connection = panel?._hass;
+  if (!connection?.callWS) throw new Error("Home Assistant connection is unavailable.");
+  if (!agent?.entry_id || !agent?.subentry_id) throw new Error("Provider connection is unavailable.");
+  return connection.callWS({
+    type: CREDENTIAL_COMMAND,
+    entry_id: agent.entry_id,
+    subentry_id: agent.subentry_id,
+    api_key: apiKey,
+  });
+}
+
 function ensureStyles(panel) {
   const root = panel.shadowRoot;
   if (!root || root.querySelector("style[data-eoc-provider-credentials]")) return;
@@ -127,12 +139,7 @@ function ensureApiKeyDialog(panel, agent) {
     setDialogBusy(dialog, true);
     save.textContent = "Validating…";
     try {
-      const result = await panel.hass.callWS({
-        type: CREDENTIAL_COMMAND,
-        entry_id: agent.entry_id,
-        subentry_id: agent.subentry_id,
-        api_key: apiKey,
-      });
+      const result = await updateProviderApiKey(panel, agent, apiKey);
       input.value = "";
       dialog.close();
       const validationNote = result?.validation_performed === false
@@ -213,6 +220,9 @@ function watchDiagnosticsResult(panel) {
       }
       return;
     }
+    // Any new test supersedes the previous authentication result. Remove stale
+    // recovery UI first, then re-add it only for a structured auth rejection.
+    syncAuthenticationRecovery(panel, {authentication_rejected: false});
     try {
       const result = JSON.parse(output.textContent || "");
       syncAuthenticationRecovery(panel, result);
