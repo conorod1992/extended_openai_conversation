@@ -11,7 +11,6 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from . import management_ui
 from .const import (
     CONF_API_PROVIDER,
     CONF_API_VERSION,
@@ -24,7 +23,6 @@ from .const import (
 from .helpers import get_authenticated_client
 from .provider_errors import classify_config_provider_error
 
-_FRONTEND_MODULE = "management-provider-credentials.js"
 _VALIDATION_MESSAGES = {
     "invalid_auth": "The provider rejected the new API key.",
     "cannot_connect": "Could not connect to the configured provider while validating the new API key.",
@@ -33,17 +31,6 @@ _VALIDATION_MESSAGES = {
     "provider_unavailable": "The provider is temporarily unavailable, so the new API key could not be validated.",
     "provider_error": "The provider rejected the credential validation request.",
 }
-
-
-def _register_frontend_module() -> None:
-    """Expose the credential UI module before management static paths are created."""
-    modules = tuple(
-        dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE))
-    )
-    setattr(management_ui, "MANAGEMENT_FRONTEND_MODULES", modules)  # noqa: B010
-
-
-_register_frontend_module()
 
 
 def _validation_error(error: OpenAIError) -> HomeAssistantError:
