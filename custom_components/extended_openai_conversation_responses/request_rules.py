@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from copy import deepcopy
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
@@ -184,6 +185,50 @@ class RequestRules:
             "wording_groups": _copy_wording_groups(self._wording_groups),
             "rules": [dict(rule) for rule in self._rules],
         }
+
+    def function_references(self, function_name: str) -> list[dict[str, str]]:
+        """Return Request Rules that directly call one configured Function Tool."""
+        service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+        references: list[dict[str, str]] = []
+        for rule in self._rules:
+            actions = rule.get("action", {}).get("actions", [])
+            if any(
+                isinstance(action, Mapping)
+                and action.get("action") == service_action
+                and isinstance(action.get("data"), Mapping)
+                and action["data"].get("function") == function_name
+                for action in actions
+            ):
+                references.append({"id": rule["id"], "name": rule["name"]})
+        return references
+
+    async def async_rename_function_reference(
+        self, old_name: str, new_name: str
+    ) -> int:
+        """Rewrite exact configured-function references and persist once."""
+        if old_name == new_name:
+            return 0
+        service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+        async with self._lock:
+            changed = 0
+            updated_rules: list[dict[str, Any]] = []
+            for rule in self._rules:
+                updated = deepcopy(rule)
+                for action in updated.get("action", {}).get("actions", []):
+                    if (
+                        isinstance(action, Mapping)
+                        and action.get("action") == service_action
+                        and isinstance(action.get("data"), Mapping)
+                        and action["data"].get("function") == old_name
+                    ):
+                        action["data"] = {**action["data"], "function": new_name}
+                        changed += 1
+                updated_rules.append(validate_rule(updated))
+            if changed:
+                self._rules = updated_rules
+                self._sort_and_compile()
+                await self._async_save_locked()
+        return changed
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return durable Request Rule state for the per-agent backup."""
