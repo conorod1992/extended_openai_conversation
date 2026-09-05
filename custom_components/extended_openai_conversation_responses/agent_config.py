@@ -172,7 +172,7 @@ from .function_tool_policy import (
     RESERVED_FUNCTION_TOOL_NAMES,
 )
 from .functions import FUNCTIONS, get_function
-from .helpers import get_model_config
+from .helpers import get_model_config, get_reasoning_effort_options
 from .local_intents import (
     CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
     CONF_LOCAL_INTENT_EXCLUSIONS,
@@ -182,6 +182,9 @@ from .local_intents import (
     DEFAULT_LOCAL_INTENTS_ENABLED,
 )
 from .memory import get_memory_mode
+
+CONF_GUEST_WEB_SEARCH = "guest_web_search"
+DEFAULT_GUEST_WEB_SEARCH = False
 
 
 class AgentConfigError(HomeAssistantError):
@@ -254,6 +257,7 @@ AGENT_CONFIG_DEFAULTS = MappingProxyType(
         CONF_MEMORY_EMBEDDING_MODEL: DEFAULT_MEMORY_EMBEDDING_MODEL,
         CONF_KNOWLEDGE_ENABLED: DEFAULT_KNOWLEDGE_ENABLED,
         CONF_GUEST_MODE_ENABLED: DEFAULT_GUEST_MODE_ENABLED,
+        CONF_GUEST_WEB_SEARCH: DEFAULT_GUEST_WEB_SEARCH,
         CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
         CONF_GUEST_EXCLUDED_ENTITIES: [],
         CONF_GUEST_EXCLUDED_DOMAINS: [],
@@ -309,6 +313,7 @@ AGENT_CONFIG_FIELDS = frozenset(
 GUEST_V2_FIELDS = frozenset(
     {
         CONF_GUEST_POLICY_VERSION,
+        CONF_GUEST_WEB_SEARCH,
         CONF_GUEST_EXCLUDED_ENTITIES,
         CONF_GUEST_EXCLUDED_DOMAINS,
         CONF_GUEST_EXCLUDED_AREAS,
@@ -793,6 +798,7 @@ def normalize_agent_config(
             CONF_CURRENT_DATETIME_ENABLED,
             CONF_EXPOSED_ENTITIES_ENABLED,
             CONF_GUEST_MODE_ENABLED,
+            CONF_GUEST_WEB_SEARCH,
             CONF_GUEST_SHARED_MEMORY_READ,
             CONF_GUEST_SHARED_MEMORY_WRITE,
             CONF_GUEST_KNOWLEDGE_ENABLED,
@@ -862,7 +868,9 @@ def normalize_agent_config(
         CONF_CONTEXT_TRUNCATE_STRATEGY: [
             item["key"] for item in CONTEXT_TRUNCATE_STRATEGIES
         ],
-        CONF_REASONING_EFFORT: REASONING_EFFORT_OPTIONS,
+        CONF_REASONING_EFFORT: get_reasoning_effort_options(
+            str(result.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+        ),
         CONF_SERVICE_TIER: SERVICE_TIER_OPTIONS,
         CONF_GUEST_KNOWLEDGE_POLICY: GUEST_ACCESS_POLICIES,
         CONF_GUEST_FUNCTION_POLICY: GUEST_ACCESS_POLICIES,
@@ -1004,6 +1012,8 @@ def agent_config_snapshot(data: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def model_capabilities(model: str) -> dict[str, bool]:
-    """Return model-specific fields supported by the backend."""
-    return dict(get_model_config(model))
+def model_capabilities(model: str) -> dict[str, Any]:
+    """Return model-specific fields and choices supported by the backend."""
+    capabilities: dict[str, Any] = dict(get_model_config(model))
+    capabilities["reasoning_effort_options"] = get_reasoning_effort_options(model)
+    return capabilities
