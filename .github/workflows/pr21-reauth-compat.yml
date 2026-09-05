@@ -1,0 +1,65 @@
+name: PR21 reauth compatibility
+
+on:
+  push:
+    branches:
+      - fix/pr21-provider-failure-diagnostics
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pr21-provider-failure-diagnostics
+      - name: Make runtime reauth tolerant of partial agent objects
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              "custom_components/extended_openai_conversation_responses/conversation.py": [
+                  (
+                      "request_reauthentication(self.hass, self.entry, err)",
+                      "request_reauthentication(self.hass, getattr(self, \"entry\", None), err)",
+                  )
+              ],
+              "custom_components/extended_openai_conversation_responses/ai_task.py": [
+                  (
+                      "request_reauthentication(self.hass, self.entry, err)",
+                      "request_reauthentication(self.hass, getattr(self, \"entry\", None), err)",
+                  )
+              ],
+              "custom_components/extended_openai_conversation_responses/runtime_failure_hardening.py": [
+                  (
+                      "request_reauthentication(entity.hass, entity.entry, err)",
+                      "request_reauthentication(\n            entity.hass, getattr(entity, \"entry\", None), err\n        )",
+                  )
+              ],
+              "custom_components/extended_openai_conversation_responses/provider_errors.py": [
+                  (
+                      "    status = _integer(getattr(error, \"status_code\", None))\n    if not isinstance(error, AuthenticationError) and status != 401:\n        return False\n    try:\n        entry.async_start_reauth(hass)",
+                      "    status = _integer(getattr(error, \"status_code\", None))\n    if not isinstance(error, AuthenticationError) and status != 401:\n        return False\n    if entry is None:\n        return False\n    try:\n        entry.async_start_reauth(hass)",
+                  )
+              ],
+          }
+          for path, pairs in replacements.items():
+              p = Path(path)
+              text = p.read_text()
+              for old, new in pairs:
+                  if text.count(old) != 1:
+                      raise SystemExit(f"unexpected match count in {path}: {text.count(old)}")
+                  text = text.replace(old, new, 1)
+              p.write_text(text)
+          PY
+          rm .github/workflows/pr21-reauth-compat.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Make runtime reauth hook compatibility-safe"
+          git push origin HEAD:fix/pr21-provider-failure-diagnostics
