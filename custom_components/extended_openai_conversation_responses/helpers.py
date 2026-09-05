@@ -43,11 +43,14 @@ def get_api_mode(configured_mode: str, model: str) -> str:
 
     Auto deliberately has a conservative boundary so existing models and
     OpenAI-compatible providers keep using Chat Completions. GPT-5.6 and later
-    GPT-5 minor versions use Responses, where reasoning and function tools can
-    be used together.
+    GPT-5 minor versions, plus GPT-6 Astra, use Responses where reasoning and
+    function tools can be used together.
     """
     if configured_mode != API_MODE_AUTO:
         return configured_mode
+
+    if re.match(r"^gpt-6-astra(?:[-.]|$)", model, re.IGNORECASE):
+        return API_MODE_RESPONSES
 
     match = re.match(r"^gpt-5\.(\d+)(?:[-.]|$)", model, re.IGNORECASE)
     if match and int(match.group(1)) >= 6:

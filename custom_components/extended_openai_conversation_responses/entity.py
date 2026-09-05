@@ -96,6 +96,7 @@ _LOGGER = logging.getLogger(__name__)
 # Backward-compatible name for the absolute provider-loop safety ceiling. Ordinary
 # Function Tool executions are constrained separately by FunctionCallBudget.
 MAX_TOOL_ITERATIONS = MAX_PROVIDER_REQUESTS
+_SCHEMA_COMPOSITION_KEYS = ("anyOf", "oneOf", "allOf")
 
 
 def _shorten_tool_call_id(tool_call_id: str) -> str:
@@ -138,29 +139,86 @@ def _normalize_function_result(result: Any) -> Any:
     return result
 
 
+def _schema_explicitly_allows_null(schema: dict[str, Any]) -> bool:
+    """Return whether a schema explicitly accepts JSON null."""
+    schema_type = schema.get("type")
+    if schema_type == "null":
+        return True
+    if isinstance(schema_type, list) and "null" in schema_type:
+        return True
+
+    for keyword in ("anyOf", "oneOf"):
+        variants = schema.get(keyword)
+        if isinstance(variants, list) and any(
+            isinstance(variant, dict) and _schema_explicitly_allows_null(variant)
+            for variant in variants
+        ):
+            return True
+
+    variants = schema.get("allOf")
+    return bool(variants) and isinstance(variants, list) and all(
+        isinstance(variant, dict) and _schema_explicitly_allows_null(variant)
+        for variant in variants
+    )
+
+
+def _make_schema_nullable(schema: dict[str, Any]) -> None:
+    """Make one property schema nullable without assuming a direct type field."""
+    if _schema_explicitly_allows_null(schema):
+        return
+
+    if not any(keyword in schema for keyword in _SCHEMA_COMPOSITION_KEYS):
+        schema_type = schema.get("type")
+        if isinstance(schema_type, str):
+            schema["type"] = [schema_type, "null"]
+            return
+        if isinstance(schema_type, list):
+            schema["type"] = [*schema_type, "null"]
+            return
+
+    original = dict(schema)
+    schema.clear()
+    schema["anyOf"] = [original, {"type": "null"}]
+
+
 def _adjust_schema(schema: dict[str, Any]) -> None:
     """Adjust the schema to be compatible with OpenAI API."""
-    if schema["type"] == "object":
+    for keyword in _SCHEMA_COMPOSITION_KEYS:
+        variants = schema.get(keyword)
+        if isinstance(variants, list):
+            for variant in variants:
+                if isinstance(variant, dict):
+                    _adjust_schema(variant)
+
+    schema_type = schema.get("type")
+    schema_types = (
+        {schema_type}
+        if isinstance(schema_type, str)
+        else set(schema_type)
+        if isinstance(schema_type, list)
+        else set()
+    )
+
+    if "object" in schema_types:
         schema.setdefault("strict", True)
         schema.setdefault("additionalProperties", False)
-        if "properties" not in schema:
-            return
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            required = schema.setdefault("required", [])
 
-        if "required" not in schema:
-            schema["required"] = []
+            # Structured Outputs requires every declared property to be required.
+            for prop, prop_info in properties.items():
+                if not isinstance(prop_info, dict):
+                    continue
+                _adjust_schema(prop_info)
+                if prop not in required:
+                    _make_schema_nullable(prop_info)
+                    required.append(prop)
 
-        # Ensure all properties are required
-        for prop, prop_info in schema["properties"].items():
-            _adjust_schema(prop_info)
-            if prop not in schema["required"]:
-                prop_info["type"] = [prop_info["type"], "null"]
-                schema["required"].append(prop)
-
-    elif schema["type"] == "array":
-        if "items" not in schema:
-            return
-
-        _adjust_schema(schema["items"])
+    if "array" in schema_types:
+        items = schema.get("items")
+        if isinstance(items, dict):
+            _adjust_schema(items)
 
 
 def _format_structured_output(
