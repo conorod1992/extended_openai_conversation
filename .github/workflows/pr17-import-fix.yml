@@ -1,0 +1,37 @@
+name: PR17 import fix
+
+on:
+  push:
+    branches:
+      - fix/pr17-request-rule-determinism
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pr17-request-rule-determinism
+      - name: Add required management constant import
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('custom_components/extended_openai_conversation_responses/management_ui.py')
+          text = path.read_text()
+          old = '    MANAGEMENT_PANEL_TITLE,\n    MANAGEMENT_PANEL_URL,\n    TEMPORARY_MEMORY_OFF,\n'
+          new = '    MANAGEMENT_PANEL_TITLE,\n    MANAGEMENT_PANEL_URL,\n    SERVICE_CALL_FUNCTION,\n    TEMPORARY_MEMORY_OFF,\n'
+          if text.count(old) != 1:
+              raise SystemExit('Expected management const import block once')
+          path.write_text(text.replace(old, new))
+          PY
+      - name: Commit import fix
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add custom_components/extended_openai_conversation_responses/management_ui.py
+          git commit -m "Import Request Rule function service constant"
+          git push origin HEAD:fix/pr17-request-rule-determinism
