@@ -109,8 +109,7 @@ def _conversation_error_result(
         record_current_provider_failure(err)
         log_provider_failure(_LOGGER, "OpenAI request preparation failed", err)
         message = (
-            "Sorry, I had a problem talking to OpenAI: "
-            f"{provider_user_message(err)}"
+            f"Sorry, I had a problem talking to OpenAI: {provider_user_message(err)}"
         )
     else:
         _LOGGER.error("Error during conversation: %s", err, exc_info=True)

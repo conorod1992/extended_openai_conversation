@@ -190,7 +190,9 @@ def request_reauthentication(hass: Any, entry: Any, error: BaseException) -> boo
     return True
 
 
-def log_provider_failure(logger: logging.Logger, context: str, error: BaseException) -> None:
+def log_provider_failure(
+    logger: logging.Logger, context: str, error: BaseException
+) -> None:
     """Log only bounded, explicitly safe provider failure fields."""
     logger.error(
         "%s: %s",
