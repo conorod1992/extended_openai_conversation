@@ -132,7 +132,7 @@ def _normalize_function_result(result: Any) -> Any:
     """Preserve provider-serializable Function results, falling back compatibly."""
     try:
         orjson.dumps(result)
-    except (TypeError, OverflowError):
+    except TypeError, OverflowError:
         return str(result)
     return result
 
