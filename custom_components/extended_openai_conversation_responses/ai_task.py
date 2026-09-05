@@ -76,7 +76,7 @@ class ExtendedOpenAITaskEntity(
                 structure=task.structure,
             )
         except OpenAIError as err:
-            request_reauthentication(self.hass, self.entry, err)
+            request_reauthentication(self.hass, getattr(self, "entry", None), err)
             record_current_provider_failure(err)
             log_provider_failure(_LOGGER, "OpenAI AI Task request failed", err)
             raise

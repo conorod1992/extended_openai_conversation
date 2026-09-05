@@ -757,7 +757,7 @@ class ExtendedOpenAIAgentEntity(
         except OpenAIError as err:
             if self._usage is not None:
                 self._usage.mark_current_run_failed(type(err).__name__)
-            request_reauthentication(self.hass, self.entry, err)
+            request_reauthentication(self.hass, getattr(self, "entry", None), err)
             record_current_provider_failure(err)
             log_provider_failure(_LOGGER, "OpenAI conversation request failed", err)
             intent_response = intent.IntentResponse(language=user_input.language)

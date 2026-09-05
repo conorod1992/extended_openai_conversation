@@ -182,6 +182,8 @@ def request_reauthentication(hass: Any, entry: Any, error: BaseException) -> boo
     status = _integer(getattr(error, "status_code", None))
     if not isinstance(error, AuthenticationError) and status != 401:
         return False
+    if entry is None:
+        return False
     try:
         entry.async_start_reauth(hass)
     except Exception:
