@@ -1,4 +1,5 @@
 const PATCHED = Symbol.for("extended-openai.management-provider-credentials");
+const CREDENTIAL_COMMAND = "extended_openai_conversation_responses/management/update_api_key";
 
 export function providerCredentialScope(agent = {}) {
   const entryTitle = String(agent.entry_title || "").trim();
@@ -126,16 +127,23 @@ function ensureApiKeyDialog(panel, agent) {
     setDialogBusy(dialog, true);
     save.textContent = "Validating…";
     try {
-      const result = await panel._call("diagnostics", "update_api_key", {api_key: apiKey});
+      const result = await panel.hass.callWS({
+        type: CREDENTIAL_COMMAND,
+        entry_id: agent.entry_id,
+        subentry_id: agent.subentry_id,
+        api_key: apiKey,
+      });
       input.value = "";
       dialog.close();
       const validationNote = result?.validation_performed === false
         ? " Authentication validation is skipped for this provider connection."
         : "";
-      if (result?.updated === false) {
+      if (result?.updated === false && result?.reload_requested !== true) {
         panel._toast(`API key unchanged.${validationNote}`);
       } else if (result?.reload_requested === false) {
         panel._toast(`API key updated.${validationNote} The provider connection was not reloaded automatically.`);
+      } else if (result?.updated === false) {
+        panel._toast(`API key unchanged.${validationNote} Extended OpenAI is retrying the provider connection.`);
       } else {
         panel._toast(`API key updated.${validationNote} Extended OpenAI is reloading the provider connection.`);
       }
@@ -225,7 +233,7 @@ function enhanceDiagnostics(panel) {
     || panel._subsection !== "diagnostics"
   ) return;
   const agent = panel._selectedAgent?.();
-  if (!agent || !panel.shadowRoot) return;
+  if (!agent?.entry_id || !agent?.subentry_id || !panel.shadowRoot) return;
   ensureStyles(panel);
   ensureApiKeyDialog(panel, agent);
   ensureProviderCard(panel, agent);
