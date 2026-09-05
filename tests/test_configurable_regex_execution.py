@@ -6,6 +6,9 @@ import asyncio
 from pathlib import Path
 import threading
 
+from custom_components.extended_openai_conversation_responses.function_execution import (
+    async_validate_function_arguments,
+)
 from custom_components.extended_openai_conversation_responses.functions.bash import (
     BashFunction,
 )
@@ -59,6 +62,38 @@ async def test_configurable_regex_executor_keeps_event_loop_responsive() -> None
     await _assert_event_loop_progresses_while(run)
 
 
+async def test_function_argument_validation_uses_executor(monkeypatch) -> None:
+    """Configured Function regex validation now runs at the executor boundary."""
+    hass = _ExecutorHass()
+    started = threading.Event()
+    release = threading.Event()
+    original_search = __import__("re").search
+
+    def blocking_search(pattern, value):
+        started.set()
+        release.wait(1)
+        return original_search(pattern, value)
+
+    monkeypatch.setattr("re.search", blocking_search)
+    spec = {
+        "parameters": {
+            "type": "object",
+            "properties": {"value": {"type": "string", "pattern": r"^ok$"}},
+            "required": ["value"],
+        }
+    }
+    task = asyncio.create_task(async_validate_function_arguments(hass, spec, {"value": "ok"}))
+    for _ in range(100):
+        if started.is_set():
+            break
+        await asyncio.sleep(0.001)
+
+    assert started.is_set(), "Function regex validation never started"
+    assert not task.done(), "Function regex validation blocked the event loop"
+    release.set()
+    assert await task == {"value": "ok"}
+
+
 async def test_bash_guard_keeps_event_loop_responsive(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -99,7 +134,7 @@ async def test_bash_guard_keeps_event_loop_responsive(
 
 
 def test_runtime_regex_paths_are_installed() -> None:
-    """Speech and Function Tool runtime seams are both patched idempotently."""
+    """Only speech still needs a runtime monkey patch after PR16."""
     install_configurable_regex_isolation()
 
     from custom_components.extended_openai_conversation_responses.conversation import (
@@ -114,7 +149,7 @@ def test_runtime_regex_paths_are_installed() -> None:
         "_extended_openai_configurable_regex_executor",
         False,
     )
-    assert getattr(
+    assert not getattr(
         ExtendedOpenAIBaseLLMEntity._execute_function_tool,
         "_extended_openai_configurable_regex_executor",
         False,
