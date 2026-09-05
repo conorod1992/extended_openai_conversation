@@ -1017,6 +1017,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         current_tool_calls: dict[int, dict[str, Any]] = {}
         first_chunk = True
         refusal_seen = False
+        terminal_finish_seen = False
 
         async for chunk in result:
             _LOGGER.debug("Received chunk: %s", chunk)
@@ -1047,6 +1048,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             choice = chunk.choices[0]
             delta = choice.delta
+            finish_reason = choice.finish_reason
 
             if delta.content:
                 # Ensure content is a string (Mistral might return unexpected types)
@@ -1094,7 +1096,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 tool_call_delta.function.arguments
                             )
 
-            if current_tool_calls and (choice.finish_reason in {"tool_calls", "stop"}):
+            if current_tool_calls and (finish_reason in {"tool_calls", "stop"}):
                 # Yield all accumulated tool calls (marked as external since we handle them ourselves)
                 tool_calls_list = []
                 for idx in sorted(current_tool_calls.keys()):
@@ -1114,17 +1116,26 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if tool_calls_list:
                     yield {"tool_calls": tool_calls_list}
                 current_tool_calls.clear()
-            if choice.finish_reason == "length":
+            if finish_reason in {"stop", "tool_calls", "function_call"}:
+                terminal_finish_seen = True
+            if finish_reason == "length":
                 raise TokenLengthExceededError(
                     self.subentry.data.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
                 )
-            if choice.finish_reason == "content_filter" and not refusal_seen:
-                raise HomeAssistantError(
-                    "OpenAI response was blocked by the provider content filter"
-                )
+            if finish_reason == "content_filter":
+                if not refusal_seen:
+                    raise HomeAssistantError(
+                        "OpenAI response was blocked by the provider content filter"
+                    )
+                terminal_finish_seen = True
 
             # Keep consuming after the stop chunk so providers that honor
             # stream_options.include_usage can deliver their final usage-only chunk.
+
+        if not terminal_finish_seen:
+            raise HomeAssistantError(
+                "OpenAI Chat Completions stream ended before a terminal finish reason"
+            )
 
     async def _transform_responses_stream(
         self,
