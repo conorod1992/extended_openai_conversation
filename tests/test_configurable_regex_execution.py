@@ -1,10 +1,13 @@
-"""Regression tests for administrator-configured regex event-loop isolation."""
+"""Regression tests for administrator-configured regex process isolation."""
 
 from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-import threading
+
+import pytest
+
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses.function_execution import (
     async_validate_function_arguments,
@@ -13,7 +16,7 @@ from custom_components.extended_openai_conversation_responses.functions.bash imp
     BashFunction,
 )
 from custom_components.extended_openai_conversation_responses.regex_execution import (
-    async_run_configurable_regex,
+    async_search_configured_patterns,
     install_configurable_regex_isolation,
 )
 
@@ -25,56 +28,47 @@ class _ExecutorHass:
         return await asyncio.get_running_loop().run_in_executor(None, target, *args)
 
 
-async def _assert_event_loop_progresses_while(awaitable_factory) -> None:
-    """Prove deliberately blocking synchronous work does not occupy the event loop."""
-    started = threading.Event()
-    release = threading.Event()
-    finished = threading.Event()
-
-    def blocking_work() -> str:
-        started.set()
-        release.wait(1)
-        finished.set()
-        return "done"
-
-    task = asyncio.create_task(awaitable_factory(blocking_work))
-    for _ in range(100):
-        if started.is_set():
-            break
-        await asyncio.sleep(0.001)
-
-    assert started.is_set(), "blocking work never started"
-    await asyncio.sleep(0)
-    assert not finished.is_set(), "blocking work ran on the event loop"
-    assert not task.done(), "blocking work completed before the event loop could advance"
-
-    release.set()
-    assert await task == "done"
-
-
-async def test_configurable_regex_executor_keeps_event_loop_responsive() -> None:
-    """The shared regex seam must run synchronous matching outside the HA loop."""
+async def test_configured_pattern_search_returns_normal_results() -> None:
     hass = _ExecutorHass()
 
-    async def run(blocking_work):
-        return await async_run_configurable_regex(hass, blocking_work)  # type: ignore[arg-type]
+    assert await async_search_configured_patterns(
+        hass,
+        [(r"^hello", "hello world", 0), (r"^world", "hello world", 0)],
+    ) == [True, False]
 
-    await _assert_event_loop_progresses_while(run)
 
-
-async def test_function_argument_validation_uses_executor(monkeypatch) -> None:
-    """Configured Function regex validation now runs at the executor boundary."""
+async def test_pathological_function_pattern_is_bounded_without_stalling_loop() -> None:
+    """Catastrophic backtracking is killed outside the HA process at the deadline."""
     hass = _ExecutorHass()
-    started = threading.Event()
-    release = threading.Event()
-    original_search = __import__("re").search
+    spec = {
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "value": {"type": "string", "pattern": r"^(a+)+$"}
+            },
+            "required": ["value"],
+        }
+    }
 
-    def blocking_search(pattern, value):
-        started.set()
-        release.wait(1)
-        return original_search(pattern, value)
+    task = asyncio.create_task(
+        async_validate_function_arguments(
+            hass,
+            spec,
+            {"value": "a" * 30 + "!"},
+        )
+    )
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    await asyncio.sleep(0.02)
+    heartbeat_delay = loop.time() - started
 
-    monkeypatch.setattr("re.search", blocking_search)
+    assert heartbeat_delay < 0.2
+    with pytest.raises(HomeAssistantError, match="execution limit"):
+        await asyncio.wait_for(task, timeout=2)
+
+
+async def test_function_pattern_validation_preserves_valid_result() -> None:
+    hass = _ExecutorHass()
     spec = {
         "parameters": {
             "type": "object",
@@ -82,59 +76,37 @@ async def test_function_argument_validation_uses_executor(monkeypatch) -> None:
             "required": ["value"],
         }
     }
-    task = asyncio.create_task(async_validate_function_arguments(hass, spec, {"value": "ok"}))
-    for _ in range(100):
-        if started.is_set():
-            break
-        await asyncio.sleep(0.001)
 
-    assert started.is_set(), "Function regex validation never started"
-    assert not task.done(), "Function regex validation blocked the event loop"
-    release.set()
-    assert await task == {"value": "ok"}
+    assert await async_validate_function_arguments(hass, spec, {"value": "ok"}) == {
+        "value": "ok"
+    }
 
 
-async def test_bash_guard_keeps_event_loop_responsive(
-    monkeypatch, tmp_path: Path
-) -> None:
-    """Bash allow-pattern and defensive regex checks use the same executor seam."""
+async def test_bash_allow_pattern_is_bounded_without_stalling_loop(tmp_path: Path) -> None:
+    """Bash's administrator allowlist uses the same killable regex boundary."""
     hass = _ExecutorHass()
     function = BashFunction()
-    started = threading.Event()
-    release = threading.Event()
-    finished = threading.Event()
-
-    def blocking_guard(*_args, **_kwargs) -> None:
-        started.set()
-        release.wait(1)
-        finished.set()
-
-    monkeypatch.setattr(function, "_guard_command", blocking_guard)
     task = asyncio.create_task(
         function._async_guard_command(  # type: ignore[arg-type]
             hass,
-            "echo ready",
+            "a" * 30 + "!",
             tmp_path,
             False,
-            [r"^echo"],
+            [r"^(a+)+$"],
         )
     )
-    for _ in range(100):
-        if started.is_set():
-            break
-        await asyncio.sleep(0.001)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    await asyncio.sleep(0.02)
+    heartbeat_delay = loop.time() - started
 
-    assert started.is_set(), "Bash guard never started"
-    await asyncio.sleep(0)
-    assert not finished.is_set(), "Bash guard ran on the event loop"
-    assert not task.done(), "Bash guard completed before the event loop could advance"
-
-    release.set()
-    await task
+    assert heartbeat_delay < 0.2
+    with pytest.raises(HomeAssistantError, match="execution limit"):
+        await asyncio.wait_for(task, timeout=2)
 
 
 def test_runtime_regex_paths_are_installed() -> None:
-    """Only speech still needs a runtime monkey patch after PR16."""
+    """Only completed-response speech still needs a runtime monkey patch."""
     install_configurable_regex_isolation()
 
     from custom_components.extended_openai_conversation_responses.conversation import (
