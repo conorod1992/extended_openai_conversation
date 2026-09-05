@@ -51,3 +51,5 @@ jobs:
           git add custom_components/extended_openai_conversation_responses/request_static_cache.py tests/test_request_static_cache.py
           git commit -m 'Harden request-local tool schema cache keys'
           git push origin HEAD:fix/tool-schema-cache-key
+
+# trigger
