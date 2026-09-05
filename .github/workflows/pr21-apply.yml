@@ -17,6 +17,10 @@ jobs:
         with:
           ref: fix/pr21-provider-failure-diagnostics
           fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14.5'
+          allow-prereleases: true
       - name: Apply focused PR21 changes
         run: python scripts/pr21_apply.py
       - name: Verify and commit
