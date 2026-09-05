@@ -202,27 +202,13 @@
             }
         },
         "voice_scope_policy": {
-            "options": {
-                "unretained": "Do not retain",
-                "shared": "Shared household",
-                "default_user": "Selected user",
-                "device_mapping": "Per satellite mapping"
-            }
+            "options": {"unretained": "Do not retain", "shared": "Shared household", "default_user": "Selected user", "device_mapping": "Per satellite mapping"}
         },
         "voice_unmapped_policy": {
-            "options": {
-                "unretained": "Do not retain",
-                "shared": "Shared household",
-                "default_user": "Selected user",
-                "device_mapping": "Per satellite mapping"
-            }
+            "options": {"unretained": "Do not retain", "shared": "Shared household", "default_user": "Selected user", "device_mapping": "Per satellite mapping"}
         },
         "shared_memory_mode": {
-            "options": {
-                "disabled": "Disabled",
-                "explicit": "Explicit only",
-                "automatic": "Automatic"
-            }
+            "options": {"disabled": "Disabled", "explicit": "Explicit only", "automatic": "Automatic"}
         }
     },
     "entity": {
@@ -230,18 +216,10 @@
             "usage": {
                 "name": "Lifetime usage"
             },
-            "usage_today": {
-                "name": "Usage today"
-            },
-            "usage_month": {
-                "name": "Usage this month"
-            },
-            "last_response_usage": {
-                "name": "Last response usage"
-            },
-            "guest_mode": {
-                "name": "Guest Mode"
-            }
+            "usage_today": {"name": "Usage today"},
+            "usage_month": {"name": "Usage this month"},
+            "last_response_usage": {"name": "Last response usage"},
+            "guest_mode": {"name": "Guest Mode"}
         }
     },
     "services": {
@@ -282,30 +260,12 @@
             "name": "Process request directly",
             "description": "Sends text through the normal Extended OpenAI processing pipeline without re-entering Home Assistant conversation routing.",
             "fields": {
-                "text": {
-                    "name": "Text",
-                    "description": "The request to process."
-                },
-                "agent_id": {
-                    "name": "Conversation agent",
-                    "description": "Optional when only one Extended OpenAI conversation agent is available."
-                },
-                "conversation_id": {
-                    "name": "Conversation ID",
-                    "description": "Optional existing conversation to continue."
-                },
-                "device_id": {
-                    "name": "Device ID",
-                    "description": "Optional source device context."
-                },
-                "satellite_id": {
-                    "name": "Satellite ID",
-                    "description": "Optional Assist satellite context."
-                },
-                "language": {
-                    "name": "Language",
-                    "description": "Optional language code."
-                }
+                "text": {"name": "Text", "description": "The request to process."},
+                "agent_id": {"name": "Conversation agent", "description": "Optional when only one Extended OpenAI conversation agent is available."},
+                "conversation_id": {"name": "Conversation ID", "description": "Optional existing conversation to continue."},
+                "device_id": {"name": "Device ID", "description": "Optional source device context."},
+                "satellite_id": {"name": "Satellite ID", "description": "Optional Assist satellite context."},
+                "language": {"name": "Language", "description": "Optional language code."}
             }
         },
         "change_config": {
