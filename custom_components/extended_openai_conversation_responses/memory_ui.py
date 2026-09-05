@@ -106,9 +106,7 @@ async def async_manage_command(
     if action in {"temporary_delete", "temporary_clear"}:
         if not temporary_enabled:
             raise HomeAssistantError("Temporary Memory is disabled for this agent")
-        temporary_memory = await async_get_temporary_memory(
-            hass, entry_id, subentry_id
-        )
+        temporary_memory = await async_get_temporary_memory(hass, entry_id, subentry_id)
         if action == "temporary_delete":
             memory_id = message.get("memory_id")
             if not isinstance(memory_id, str) or not memory_id:
