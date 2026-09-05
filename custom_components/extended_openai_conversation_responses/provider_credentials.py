@@ -115,14 +115,10 @@ async def async_replace_api_key(
 async def _async_update_api_key_command(
     hass: HomeAssistant, message: dict[str, Any]
 ) -> dict[str, Any]:
-    """Resolve the exact parent entry addressed by one conversation subentry."""
-    # Import lazily so credential primitives remain independent of management UI
-    # module initialization while still reusing its canonical entry/scope resolver.
-    from .management_ui import entry_and_agent
-
-    entry, _subentry = entry_and_agent(
-        hass, message["entry_id"], message["subentry_id"]
-    )
+    """Resolve and update the exact parent integration entry."""
+    entry = hass.config_entries.async_get_entry(message["entry_id"])
+    if entry is None or entry.domain != DOMAIN:
+        raise HomeAssistantError("Integration entry not found")
     return await async_replace_api_key(hass, entry, message["api_key"])
 
 
@@ -130,7 +126,6 @@ async def _async_update_api_key_command(
     {
         vol.Required("type"): WS_UPDATE_API_KEY,
         vol.Required("entry_id"): str,
-        vol.Required("subentry_id"): str,
         vol.Required("api_key"): str,
     }
 )
@@ -141,7 +136,7 @@ async def websocket_update_api_key(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Validate and rotate a provider credential for an administrator."""
+    """Validate and rotate a parent provider credential for an administrator."""
     try:
         result = await _async_update_api_key_command(hass, msg)
     except (HomeAssistantError, RuntimeError, ValueError) as err:
