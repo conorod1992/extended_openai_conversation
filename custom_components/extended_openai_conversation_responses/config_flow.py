@@ -199,7 +199,8 @@ class ExtendedOpenAIOptionsFlow(OptionsFlow):
             data_schema=vol.Schema(
                 {
                     vol.Optional("report", default=self._test_report): TextSelector(
-                        TextSelectorConfig(multiline=True, read_only=True))
+                        TextSelectorConfig(multiline=True, read_only=True)
+                    )
                 }
             ),
         )
