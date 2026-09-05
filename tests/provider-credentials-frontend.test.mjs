@@ -12,6 +12,8 @@ assert.equal(
 );
 assert.match(providerCredentialScope({}), /parent provider connection/);
 
+assert.equal(diagnosticsAuthenticationRejected({authentication_rejected:true}), true);
+assert.equal(diagnosticsAuthenticationRejected({authentication_rejected:false}), false);
 assert.equal(diagnosticsAuthenticationRejected({
   checks:[
     {name:"Authentication", status:"Failed", message:"Incorrect API key"},
@@ -30,6 +32,7 @@ const source = await readFile(
   "utf8",
 );
 assert.match(source, /Provider credentials/);
+assert.match(source, /authentication_rejected === true/);
 assert.match(source, /type="password"/);
 assert.match(source, /autocomplete="off"/);
 assert.match(source, /Validate & replace/);
