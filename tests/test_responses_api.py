@@ -184,6 +184,7 @@ async def test_responses_annotation_event_after_cited_text_is_observed(caplog) -
                 sequence_number=3,
                 annotation=annotation,
             ),
+            _completed_event(),
         ]
     )
     entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)

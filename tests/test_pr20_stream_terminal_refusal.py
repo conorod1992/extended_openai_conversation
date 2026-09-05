@@ -66,7 +66,8 @@ async def test_chat_stream_surfaces_refusal_text() -> None:
     )
 
     deltas = [
-        delta async for delta in _entity()._transform_chat_stream(SimpleNamespace(), stream)
+        delta
+        async for delta in _entity()._transform_chat_stream(SimpleNamespace(), stream)
     ]
 
     assert deltas == [
@@ -98,7 +99,8 @@ async def test_chat_content_filter_with_refusal_preserves_refusal() -> None:
     )
 
     deltas = [
-        delta async for delta in _entity()._transform_chat_stream(SimpleNamespace(), stream)
+        delta
+        async for delta in _entity()._transform_chat_stream(SimpleNamespace(), stream)
     ]
 
     assert deltas[-1] == {"content": "I can't provide that."}
