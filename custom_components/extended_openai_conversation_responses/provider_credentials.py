@@ -6,7 +6,7 @@ from typing import Any
 
 from openai import OpenAIError
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -83,16 +83,21 @@ async def async_replace_api_key(
     has_update_listener = bool(entry.update_listeners)
     changed = hass.config_entries.async_update_entry(entry, data=candidate)
     reload_requested = False
-    if changed:
-        if has_update_listener:
-            # A successfully loaded entry already owns its normal reload listener.
-            # Do not schedule a second reload alongside it.
-            reload_requested = True
-        elif entry.disabled_by is None and state_before.recoverable:
-            # Startup authentication failures happen before our update listener is
-            # registered. A validated replacement should recover that entry too.
-            hass.config_entries.async_schedule_reload(entry.entry_id)
-            reload_requested = True
+    if changed and has_update_listener:
+        # A successfully loaded entry already owns its normal reload listener.
+        # Do not schedule a second reload alongside it.
+        reload_requested = True
+    elif (
+        not has_update_listener
+        and entry.disabled_by is None
+        and state_before.recoverable
+        and (changed or state_before is not ConfigEntryState.LOADED)
+    ):
+        # Startup authentication failures happen before our update listener is
+        # registered. Retry after successful validation even if the key string is
+        # unchanged, since provider-side access may have been repaired meanwhile.
+        hass.config_entries.async_schedule_reload(entry.entry_id)
+        reload_requested = True
 
     return {
         "updated": changed,
