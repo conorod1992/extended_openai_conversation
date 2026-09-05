@@ -50,12 +50,14 @@ MAX_PHRASES = 25
 MAX_ACTIONS = 20
 MAX_SCRIPT_NODES = 500
 MAX_SCRIPT_DEPTH = 12
+MAX_RULE_NAME_LENGTH = 120
 MATCH_TYPES = ("equals", "starts_with", "ends_with", "contains", "sentence_pattern")
 ACTION_TYPES = ("local_action", "model_routing")
 SLOT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 SLOT_REFERENCE = re.compile(r"(?<!\{)\{([A-Za-z_][A-Za-z0-9_]{0,63})\}(?!\})")
 JINJA_SLOT_REFERENCE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]{0,63})\s*\}\}")
 ROUTING_SCOPES = ("request", "conversation")
+_REQUEST_RESET_SENTINEL = "__request_rule_reset__"
 DEFAULT_MATCHING = {
     "word_forms": True,
     "wording_alternatives": True,
@@ -99,7 +101,6 @@ class CompiledPhrase:
     normalized: str | None = None
     sentence: Sentence | None = None
     slot_lists: dict[str, SlotList] = field(default_factory=dict)
-    slot_pattern: re.Pattern[str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,19 +145,26 @@ class RequestRules:
         self._initialized = False
 
     async def async_initialize(self) -> None:
-        """Load and validate stored rules once."""
+        """Load and validate stored rules once, self-healing malformed containers."""
         async with self._lock:
             if self._initialized:
                 return
             stored = await self._store.async_load()
             migrated = False
-            if isinstance(stored, Mapping):
+            raw_rules: Sequence[Any] = ()
+            if stored is None:
+                pass
+            elif not isinstance(stored, Mapping):
+                _LOGGER.warning("Resetting malformed stored Request Rules container")
+                migrated = True
+            else:
                 try:
                     self._defaults = validate_matching_settings(
                         stored.get("defaults", DEFAULT_MATCHING)
                     )
                 except ValueError:
                     _LOGGER.warning("Ignoring invalid stored Request Rule defaults")
+                    migrated = True
                 try:
                     self._wording_groups = validate_wording_groups(
                         stored.get("wording_groups", DEFAULT_WORDING_GROUPS)
@@ -165,14 +173,41 @@ class RequestRules:
                     _LOGGER.warning(
                         "Ignoring invalid stored Request Rule wording groups"
                     )
-                for raw in stored.get("rules", []):
-                    try:
-                        validated = validate_rule(raw)
-                        self._rules.append(validated)
-                        migrated = migrated or validated != raw
-                    except ValueError as err:
-                        _LOGGER.warning("Ignoring invalid stored Request Rule: %s", err)
-            self._sort_and_compile()
+                    migrated = True
+                stored_rules = stored.get("rules", [])
+                if not isinstance(stored_rules, Sequence) or isinstance(
+                    stored_rules, (str, bytes)
+                ):
+                    _LOGGER.warning("Resetting malformed stored Request Rules list")
+                    migrated = True
+                else:
+                    if len(stored_rules) > MAX_RULES:
+                        _LOGGER.warning(
+                            "Stored Request Rules exceed the supported limit; "
+                            "keeping the first %d",
+                            MAX_RULES,
+                        )
+                        migrated = True
+                    raw_rules = stored_rules[:MAX_RULES]
+
+            seen_ids: set[str] = set()
+            for raw in raw_rules:
+                try:
+                    validated = validate_rule(raw)
+                    if validated["id"] in seen_ids:
+                        _LOGGER.warning(
+                            "Ignoring duplicate stored Request Rule id: %s",
+                            validated["id"],
+                        )
+                        migrated = True
+                        continue
+                    seen_ids.add(validated["id"])
+                    self._rules.append(validated)
+                    migrated = migrated or validated != raw
+                except ValueError as err:
+                    _LOGGER.warning("Ignoring invalid stored Request Rule: %s", err)
+                    migrated = True
+            migrated = self._sort_and_compile() or migrated
             if migrated:
                 await self._async_save_locked()
             self._initialized = True
@@ -295,13 +330,13 @@ class RequestRules:
         """Create one rule."""
         if not isinstance(value, Mapping):
             raise ValueError("rule must be an object")
-        raw = dict(value)
-        raw.setdefault("id", uuid4().hex)
-        raw.setdefault("order", len(self._rules))
-        rule = validate_rule(raw)
         async with self._lock:
             if len(self._rules) >= MAX_RULES:
                 raise ValueError("Request Rule limit reached")
+            raw = dict(value)
+            raw.setdefault("id", uuid4().hex)
+            raw.setdefault("order", len(self._rules))
+            rule = validate_rule(raw)
             if any(item["id"] == rule["id"] for item in self._rules):
                 raise ValueError("rule id already exists")
             self._rules.append(rule)
@@ -336,13 +371,19 @@ class RequestRules:
     async def async_duplicate(self, rule_id: str) -> dict[str, Any]:
         """Duplicate one rule immediately after its source."""
         async with self._lock:
-            source = dict(self._rules[self._index(rule_id)])
-        source.update(
-            id=uuid4().hex,
-            name=f"{source['name']} copy",
-            order=int(source["order"]) + 1,
-        )
-        return await self.async_create(source)
+            if len(self._rules) >= MAX_RULES:
+                raise ValueError("Request Rule limit reached")
+            source = deepcopy(self._rules[self._index(rule_id)])
+            source.update(
+                id=uuid4().hex,
+                name=_duplicate_rule_name(source["name"], self._rules),
+                order=int(source["order"]) + 1,
+            )
+            rule = validate_rule(source)
+            self._rules.append(rule)
+            self._sort_and_compile()
+            await self._async_save_locked()
+        return dict(rule)
 
     def match(self, text: str) -> RuleMatch | None:
         """Select one deterministic winner, using fuzzy only as a fallback."""
@@ -371,27 +412,18 @@ class RequestRules:
                     normalized_candidates[normalization_key] = candidate
             for compiled in phrases:
                 if compiled.sentence is not None:
-                    if compiled.slot_pattern is not None:
-                        slot_match = compiled.slot_pattern.fullmatch(text)
-                        if slot_match is None:
-                            continue
-                        slots = {
-                            name: value.strip()
-                            for name, value in slot_match.groupdict().items()
-                        }
-                    else:
-                        context = is_match(
-                            text,
-                            compiled.sentence,
-                            slot_lists=compiled.slot_lists,
-                            expansion_rules={},
-                        )
-                        if context is None:
-                            continue
-                        slots = {
-                            entity.name: str(entity.value).strip()
-                            for entity in context.entities
-                        }
+                    context = is_match(
+                        text,
+                        compiled.sentence,
+                        slot_lists=compiled.slot_lists,
+                        expansion_rules={},
+                    )
+                    if context is None:
+                        continue
+                    slots = {
+                        entity.name: str(entity.value).strip()
+                        for entity in context.entities
+                    }
                     result = RuleMatch(rule, compiled.original, False, 100.0, slots)
                     deterministic.append(
                         (
@@ -433,8 +465,20 @@ class RequestRules:
                 return index
         raise ValueError("Request Rule not found")
 
-    def _sort_and_compile(self) -> None:
-        self._rules.sort(key=lambda item: (item["order"], item["name"].casefold()))
+    def _sort_and_compile(self) -> bool:
+        """Sort, reindex, and compile rules; return whether persisted order changed."""
+        self._rules.sort(
+            key=lambda item: (
+                item["order"],
+                item["name"].casefold(),
+                item["id"],
+            )
+        )
+        order_changed = False
+        for index, rule in enumerate(self._rules):
+            if rule["order"] != index:
+                rule["order"] = index
+                order_changed = True
         self._compiled = []
         for rule in self._rules:
             if not rule["enabled"]:
@@ -455,6 +499,7 @@ class RequestRules:
                 ]
             )
             self._compiled.append((rule, settings, phrases))
+        return order_changed
 
     async def _async_save_locked(self) -> None:
         await self._store.async_save(
@@ -518,10 +563,14 @@ class RequestRuleRuntime:
         timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     ) -> dict[str, Any]:
         """Apply documented request > conversation > configured precedence."""
+        request_values = dict(request_override or {})
+        reset_request = request_values.pop(_REQUEST_RESET_SENTINEL, None) == "1"
+        if reset_request:
+            return {**defaults, **request_values}
         return {
             **defaults,
             **self.get(session_id, timeout_minutes),
-            **dict(request_override or {}),
+            **request_values,
         }
 
 
@@ -581,6 +630,8 @@ def validate_wording_groups(value: Any) -> list[dict[str, Any]]:
         )
         terms = [canonical, *alternatives]
         normalized = [_basic_normalize(term) for term in terms]
+        if any(not term for term in normalized):
+            raise ValueError("wording phrases must contain searchable text")
         if len(set(normalized)) != len(normalized) or claimed.intersection(normalized):
             raise ValueError("wording groups contain an ambiguous duplicate phrase")
         claimed.update(normalized)
@@ -619,7 +670,7 @@ def validate_rule(value: Any) -> dict[str, Any]:
     if unknown:
         raise ValueError("unknown rule fields: " + ", ".join(sorted(unknown)))
     rule_id = _clean(value.get("id"), 64, "id")
-    name = _clean(value.get("name"), 120, "name")
+    name = _clean(value.get("name"), MAX_RULE_NAME_LENGTH, "name")
     phrases_value = value.get("phrases")
     if not isinstance(phrases_value, Sequence) or isinstance(phrases_value, str):
         raise ValueError("phrases must be a list")
@@ -732,11 +783,21 @@ def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
         effort = ""
     if not reset and not model and not effort:
         raise ValueError("model routing must set a model or reasoning effort")
-    if effort and effort not in REASONING_EFFORT_OPTIONS:
+    for routing_value in (model, effort):
+        if any(marker in routing_value for marker in ("{{", "{%", "{#")):
+            raise ValueError(
+                "model routing captured values must use simple {name} references"
+            )
+    model_dynamic = bool(SLOT_REFERENCE.search(model))
+    effort_dynamic = bool(SLOT_REFERENCE.search(effort))
+    if effort_dynamic and SLOT_REFERENCE.fullmatch(effort) is None:
+        raise ValueError("captured reasoning effort must be a single {name} reference")
+    if effort and not effort_dynamic and effort not in REASONING_EFFORT_OPTIONS:
         raise ValueError("unsupported reasoning effort")
     if (
         effort
         and model
+        and not model_dynamic
         and not get_model_config(model).get("supports_reasoning_effort")
     ):
         raise ValueError(f"model {model} does not support reasoning effort")
@@ -1062,6 +1123,14 @@ def _guest_script_allowed(
     return True
 
 
+def _resolved_routing_value(value: str, slots: Mapping[str, str], field: str) -> str:
+    """Resolve one deterministic captured routing value and reject empty results."""
+    resolved = resolve_slot_values(value, slots)
+    if not isinstance(resolved, str) or not resolved.strip():
+        raise HomeAssistantError(f"Captured routing {field} is empty")
+    return resolved.strip()
+
+
 async def async_evaluate_rule(
     hass: HomeAssistant,
     rules: RequestRules,
@@ -1133,18 +1202,39 @@ async def async_evaluate_rule(
         )
 
     if action["reset"]:
-        runtime.reset(session_id)
+        if action["scope"] == "conversation":
+            runtime.reset(session_id)
+            request_override = None
+        else:
+            request_override = {_REQUEST_RESET_SENTINEL: "1"}
         return RuleEvaluation(
             match,
             rule["match_type"] in {"equals", "sentence_pattern"},
             action["success_response"],
+            request_override,
         )
+
+    model = (
+        _resolved_routing_value(action["model"], match.slots, "model")
+        if action["model"]
+        else None
+    )
+    effort = (
+        _resolved_routing_value(
+            action["reasoning_effort"], match.slots, "reasoning effort"
+        )
+        if action["reasoning_effort"]
+        else None
+    )
+    if effort and effort not in REASONING_EFFORT_OPTIONS:
+        raise HomeAssistantError(f"Unsupported captured reasoning effort: {effort}")
+
     override = {}
-    if action["model"]:
-        override[CONF_CHAT_MODEL] = action["model"]
-    if action["reasoning_effort"]:
+    if model:
+        override[CONF_CHAT_MODEL] = model
+    if effort:
         selected_model = (
-            action["model"]
+            model
             or runtime.get(session_id, timeout_minutes).get(CONF_CHAT_MODEL)
             or configured_model
         )
@@ -1152,7 +1242,7 @@ async def async_evaluate_rule(
             raise HomeAssistantError(
                 f"Model {selected_model} does not support reasoning effort"
             )
-        override[CONF_REASONING_EFFORT] = action["reasoning_effort"]
+        override[CONF_REASONING_EFFORT] = effort
     combined_override = {
         **runtime.get(session_id, timeout_minutes),
         **override,
@@ -1237,53 +1327,7 @@ def _compile_sentence_pattern(pattern: str) -> CompiledPhrase:
         name: WildcardSlotList(name=name)
         for name in dict.fromkeys(sentence.list_names())
     }
-    return CompiledPhrase(
-        pattern,
-        sentence=sentence,
-        slot_lists=slot_lists,
-        slot_pattern=_compile_basic_slot_pattern(pattern) if slot_lists else None,
-    )
-
-
-def _compile_basic_slot_pattern(pattern: str) -> re.Pattern[str]:
-    """Compile the supported Hassil subset with non-greedy named captures."""
-
-    def compile_part(value: str) -> str:
-        result = ""
-        index = 0
-        while index < len(value):
-            char = value[index]
-            if char in "[{(":
-                closing = {"[": "]", "{": "}", "(": ")"}[char]
-                end = value.find(closing, index + 1)
-                if end < 0:
-                    raise ValueError("invalid sentence pattern")
-                inner = value[index + 1 : end]
-                if char == "{":
-                    if not SLOT_NAME.fullmatch(inner):
-                        raise ValueError("invalid captured value name")
-                    result += f"(?P<{inner}>.+?)"
-                elif char == "[":
-                    result += f"(?:{compile_part(inner)})?"
-                else:
-                    alternatives = inner.split("|")
-                    result += (
-                        "(?:"
-                        + "|".join(compile_part(item) for item in alternatives)
-                        + ")"
-                    )
-                index = end + 1
-                continue
-            if char.isspace():
-                while index + 1 < len(value) and value[index + 1].isspace():
-                    index += 1
-                result += r"\s+"
-            else:
-                result += re.escape(char)
-            index += 1
-        return result
-
-    return re.compile(r"\s*" + compile_part(pattern) + r"\s*", re.IGNORECASE)
+    return CompiledPhrase(pattern, sentence=sentence, slot_lists=slot_lists)
 
 
 def _singularize(token: str) -> str:
@@ -1334,6 +1378,21 @@ def _fuzzy_score(text: str, phrase: str, match_type: str) -> float:
         ),
         default=0.0,
     )
+
+
+def _duplicate_rule_name(
+    source_name: str, rules: Sequence[Mapping[str, Any]]
+) -> str:
+    """Return a unique duplicate name without exceeding the persisted limit."""
+    existing = {str(rule.get("name", "")).casefold() for rule in rules}
+    number = 1
+    while True:
+        suffix = " copy" if number == 1 else f" copy {number}"
+        base = source_name[: MAX_RULE_NAME_LENGTH - len(suffix)].rstrip()
+        candidate = f"{base}{suffix}"
+        if candidate.casefold() not in existing:
+            return candidate
+        number += 1
 
 
 def _clean(value: Any, limit: int, field: str) -> str:
