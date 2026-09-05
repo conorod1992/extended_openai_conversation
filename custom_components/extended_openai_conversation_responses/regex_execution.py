@@ -16,9 +16,6 @@ _DEFER_SPEECH_PROCESSING: ContextVar[bool] = ContextVar(
 _DEFERRED_SPEECH_INPUT: ContextVar[tuple[str, Mapping[str, Any]] | None] = ContextVar(
     "extended_openai_deferred_speech_input", default=None
 )
-_PREVALIDATED_ARGUMENTS: ContextVar[tuple[object, object, dict[str, Any]] | None] = (
-    ContextVar("extended_openai_prevalidated_arguments", default=None)
-)
 
 _INSTALLED = False
 
@@ -97,71 +94,10 @@ def _install_speech_regex_isolation() -> None:
     ExtendedOpenAIAgentEntity._async_handle_message = async_handle_message  # type: ignore[method-assign,assignment]
 
 
-def _install_function_argument_regex_isolation() -> None:
-    """Move configured Function Tool schema validation into the HA executor."""
-    from . import entity as entity_module
-    from .entity import ExtendedOpenAIBaseLLMEntity
-
-    current = ExtendedOpenAIBaseLLMEntity._execute_function_tool
-    if getattr(current, "_extended_openai_configurable_regex_executor", False):
-        return
-
-    original_execute = current
-    original_validate = entity_module.validate_function_arguments
-
-    def cached_validate(spec: Any, arguments: Any) -> dict[str, Any]:
-        cached = _PREVALIDATED_ARGUMENTS.get()
-        if cached is not None and cached[0] is spec and cached[1] is arguments:
-            return cached[2]
-        return original_validate(spec, arguments)
-
-    entity_module.validate_function_arguments = cached_validate
-
-    async def execute_function_tool(
-        entity: Any,
-        function_tool: dict[str, Any],
-        tool_input: Any,
-        llm_context: Any,
-        exposed_entities: list[dict[str, Any]],
-    ) -> Any:
-        spec = function_tool.get("spec")
-        if not isinstance(spec, Mapping):
-            return await original_execute(
-                entity,
-                function_tool,
-                tool_input,
-                llm_context,
-                exposed_entities,
-            )
-
-        arguments = tool_input.tool_args
-        validated = await async_run_configurable_regex(
-            entity.hass,
-            original_validate,
-            spec,
-            arguments,
-        )
-        token = _PREVALIDATED_ARGUMENTS.set((spec, arguments, validated))
-        try:
-            return await original_execute(
-                entity,
-                function_tool,
-                tool_input,
-                llm_context,
-                exposed_entities,
-            )
-        finally:
-            _PREVALIDATED_ARGUMENTS.reset(token)
-
-    execute_function_tool._extended_openai_configurable_regex_executor = True  # type: ignore[attr-defined]
-    ExtendedOpenAIBaseLLMEntity._execute_function_tool = execute_function_tool  # type: ignore[method-assign,assignment]
-
-
 def install_configurable_regex_isolation() -> None:
     """Install event-loop isolation for administrator-configured regex paths."""
     global _INSTALLED
     if _INSTALLED:
         return
     _install_speech_regex_isolation()
-    _install_function_argument_regex_isolation()
     _INSTALLED = True
