@@ -1,14 +1,15 @@
-"""Tests for provider credential rotation and management routing."""
+"""Tests for provider credential rotation and its dedicated WebSocket boundary."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from openai import AuthenticationError
 import pytest
+import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, Unauthorized
 
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_API_PROVIDER,
@@ -16,14 +17,15 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_ORGANIZATION,
     CONF_SKIP_AUTHENTICATION,
 )
-from custom_components.extended_openai_conversation_responses.management_permissions import (
-    wrap_management_permissions,
-)
 from custom_components.extended_openai_conversation_responses.management_ui import (
     MANAGEMENT_FRONTEND_MODULES,
 )
 from custom_components.extended_openai_conversation_responses.provider_credentials import (
+    WS_UPDATE_API_KEY,
+    _async_update_api_key_command,
     async_replace_api_key,
+    setup_provider_credentials_websocket,
+    websocket_update_api_key,
 )
 
 
@@ -196,14 +198,41 @@ async def test_unchanged_key_does_not_reload_healthy_entry() -> None:
     hass.config_entries.async_schedule_reload.assert_not_called()
 
 
-async def test_management_action_is_admin_only_and_validates_agent_scope() -> None:
-    original = AsyncMock(return_value={"unexpected": True})
-    wrapped = wrap_management_permissions(original)
+def test_credential_websocket_schema_is_strict_and_accepts_api_key() -> None:
+    schema = websocket_update_api_key._ws_schema
+    message = {
+        "id": 1,
+        "type": WS_UPDATE_API_KEY,
+        "entry_id": "entry-1",
+        "subentry_id": "agent-1",
+        "api_key": "candidate-secret",
+    }
+
+    assert schema(message) == message
+    with pytest.raises(vol.Invalid):
+        schema({**message, "unexpected": "not allowed"})
+
+
+def test_credential_websocket_rejects_non_admin_before_handler() -> None:
+    hass = MagicMock()
+    connection = MagicMock()
+    connection.user = SimpleNamespace(is_admin=False)
+    message = {
+        "id": 1,
+        "type": WS_UPDATE_API_KEY,
+        "entry_id": "entry-1",
+        "subentry_id": "agent-1",
+        "api_key": "candidate-secret",
+    }
+
+    with pytest.raises(Unauthorized):
+        websocket_update_api_key(hass, connection, message)
+
+
+async def test_credential_command_resolves_exact_agent_scope() -> None:
     hass = MagicMock()
     entry = _entry()
     message = {
-        "section": "diagnostics",
-        "action": "update_api_key",
         "entry_id": "entry-1",
         "subentry_id": "agent-1",
         "api_key": "new-key",
@@ -211,33 +240,30 @@ async def test_management_action_is_admin_only_and_validates_agent_scope() -> No
 
     with (
         patch(
-            "custom_components.extended_openai_conversation_responses.management_permissions.management_ui.entry_and_agent",
+            "custom_components.extended_openai_conversation_responses.management_ui.entry_and_agent",
             return_value=(entry, SimpleNamespace(subentry_id="agent-1")),
         ) as resolve,
         patch(
-            "custom_components.extended_openai_conversation_responses.management_permissions.async_replace_api_key",
+            "custom_components.extended_openai_conversation_responses.provider_credentials.async_replace_api_key",
             AsyncMock(return_value={"updated": True}),
         ) as replace,
     ):
-        result = await wrapped(hass, "admin", True, message)
+        result = await _async_update_api_key_command(hass, message)
 
     assert result == {"updated": True}
     resolve.assert_called_once_with(hass, "entry-1", "agent-1")
     replace.assert_awaited_once_with(hass, entry, "new-key")
-    original.assert_not_awaited()
-
-    with pytest.raises(HomeAssistantError, match="Administrator permission"):
-        await wrapped(hass, "normal-user", False, message)
 
 
-async def test_other_diagnostics_actions_still_use_existing_dispatcher() -> None:
-    original = AsyncMock(return_value={"status": "Passed"})
-    wrapped = wrap_management_permissions(original)
-    hass = MagicMock()
-    message = {"section": "diagnostics", "action": "test_agent"}
+def test_credential_websocket_registration_is_idempotent() -> None:
+    hass = SimpleNamespace(data={})
+    with patch(
+        "custom_components.extended_openai_conversation_responses.provider_credentials.websocket_api.async_register_command"
+    ) as register:
+        assert setup_provider_credentials_websocket(hass) is True
+        assert setup_provider_credentials_websocket(hass) is False
 
-    assert await wrapped(hass, "admin", True, message) == {"status": "Passed"}
-    original.assert_awaited_once_with(hass, "admin", True, message)
+    register.assert_called_once_with(hass, websocket_update_api_key)
 
 
 def test_provider_credential_frontend_module_is_registered() -> None:
