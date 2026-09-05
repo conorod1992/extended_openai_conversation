@@ -104,36 +104,14 @@ def test_agent_title_contract_is_shared_and_bounded() -> None:
 
 def test_import_uses_title_contract_and_removes_redaction_sentinel() -> None:
     config = agent_config_defaults()
-    config["voice_device_mappings"] = {
-        "device": None,
-    }
-    # Use a schema-shaped nested value to prove ordinary nulls are not confused
-    # with the explicit credential sentinel during import cleanup.
-    document = {
-        "format": "extended_openai_agent_config",
-        "version": 1,
-        "title": "  Imported  ",
-        "config": config,
-    }
-    # voice_device_mappings rejects null values after cleanup; ensure cleanup itself
-    # preserves the null before exercising a valid import below.
-    assert restore_redacted_secrets(document["config"])["voice_device_mappings"]["device"] is None
+    config["voice_device_mappings"] = {"device": None}
+    # Ordinary null values are not confused with the explicit credential sentinel.
+    assert restore_redacted_secrets(config)["voice_device_mappings"]["device"] is None
 
     valid_config = agent_config_defaults()
-    valid_config["function_tools"] = [
-        {
-            "spec": {
-                "name": "example",
-                "description": "Example",
-                "parameters": {"type": "object", "properties": {}},
-            },
-            "function": {
-                "type": "rest",
-                "resource": "https://example.invalid",
-                "headers": {"Authorization": REDACTED_SECRET_SENTINEL},
-            },
-        }
-    ]
+    # Export/backup redaction can leave a sentinel under a credential-like key.
+    # Import must remove that field before normal config validation sees it.
+    valid_config["api_key"] = REDACTED_SECRET_SENTINEL
     parsed = _parse_import_document(
         {
             "format": "extended_openai_agent_config",
@@ -143,7 +121,7 @@ def test_import_uses_title_contract_and_removes_redaction_sentinel() -> None:
         }
     )
     assert parsed["title"] == "Imported"
-    assert "Authorization" not in parsed["config"]["function_tools"]
+    assert "api_key" not in parsed["config"]
 
     with pytest.raises(AgentConfigError, match="must not be empty"):
         _parse_import_document(
