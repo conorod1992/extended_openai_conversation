@@ -213,7 +213,9 @@ async def async_validate_function_arguments(
     arguments: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Validate Function Tool arguments away from Home Assistant's event loop."""
-    return await hass.async_add_executor_job(validate_function_arguments, spec, arguments)
+    return await hass.async_add_executor_job(
+        validate_function_arguments, spec, arguments
+    )
 
 
 def _is_legacy_delay_schema(schema: object) -> bool:
