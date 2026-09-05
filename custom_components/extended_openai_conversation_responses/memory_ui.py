@@ -94,8 +94,14 @@ async def async_manage_command(
     if action == "test_agent":
         return (await async_test_agent(hass, entry, subentry)).as_dict()
 
+    temporary_enabled = (
+        subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
+        != TEMPORARY_MEMORY_OFF
+    )
     temporary_scope_id = f"user:{user_id}"
     if action in {"temporary_delete", "temporary_clear"}:
+        if not temporary_enabled:
+            raise HomeAssistantError("Temporary Memory is disabled for this agent")
         temporary_memory = await async_get_temporary_memory(
             hass, entry_id, subentry_id
         )
@@ -147,12 +153,14 @@ async def async_manage_command(
             int(message.get("limit", 100)),
             int(message.get("offset", 0)),
         )
-        temporary_memory = await async_get_temporary_memory(
-            hass, entry_id, subentry_id
-        )
-        temporary_records = await _async_user_temporary_records(
-            temporary_memory, temporary_scope_id
-        )
+        temporary_records = []
+        if temporary_enabled:
+            temporary_memory = await async_get_temporary_memory(
+                hass, entry_id, subentry_id
+            )
+            temporary_records = await _async_user_temporary_records(
+                temporary_memory, temporary_scope_id
+            )
         return {
             "memories": [
                 memory_as_dict(record, include_scope=True, personal_scope_id=user_id)
