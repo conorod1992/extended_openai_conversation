@@ -16,6 +16,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_BASE_URL,
     CONF_ORGANIZATION,
     CONF_SKIP_AUTHENTICATION,
+    DOMAIN,
 )
 from custom_components.extended_openai_conversation_responses.management_ui import (
     MANAGEMENT_FRONTEND_MODULES,
@@ -35,9 +36,11 @@ def _entry(
     state: ConfigEntryState = ConfigEntryState.LOADED,
     update_listener: bool = True,
     disabled_by=None,
+    domain: str = DOMAIN,
 ):
     return SimpleNamespace(
         entry_id="entry-1",
+        domain=domain,
         data={
             CONF_API_KEY: "old-key",
             CONF_API_PROVIDER: "openai",
@@ -204,7 +207,6 @@ def test_credential_websocket_schema_is_strict_and_accepts_api_key() -> None:
         "id": 1,
         "type": WS_UPDATE_API_KEY,
         "entry_id": "entry-1",
-        "subentry_id": "agent-1",
         "api_key": "candidate-secret",
     }
 
@@ -221,7 +223,6 @@ def test_credential_websocket_rejects_non_admin_before_handler() -> None:
         "id": 1,
         "type": WS_UPDATE_API_KEY,
         "entry_id": "entry-1",
-        "subentry_id": "agent-1",
         "api_key": "candidate-secret",
     }
 
@@ -229,30 +230,35 @@ def test_credential_websocket_rejects_non_admin_before_handler() -> None:
         websocket_update_api_key(hass, connection, message)
 
 
-async def test_credential_command_resolves_exact_agent_scope() -> None:
+async def test_credential_command_resolves_parent_entry_directly() -> None:
     hass = MagicMock()
     entry = _entry()
+    hass.config_entries.async_get_entry.return_value = entry
     message = {
         "entry_id": "entry-1",
-        "subentry_id": "agent-1",
         "api_key": "new-key",
     }
 
-    with (
-        patch(
-            "custom_components.extended_openai_conversation_responses.management_ui.entry_and_agent",
-            return_value=(entry, SimpleNamespace(subentry_id="agent-1")),
-        ) as resolve,
-        patch(
-            "custom_components.extended_openai_conversation_responses.provider_credentials.async_replace_api_key",
-            AsyncMock(return_value={"updated": True}),
-        ) as replace,
-    ):
+    with patch(
+        "custom_components.extended_openai_conversation_responses.provider_credentials.async_replace_api_key",
+        AsyncMock(return_value={"updated": True}),
+    ) as replace:
         result = await _async_update_api_key_command(hass, message)
 
     assert result == {"updated": True}
-    resolve.assert_called_once_with(hass, "entry-1", "agent-1")
+    hass.config_entries.async_get_entry.assert_called_once_with("entry-1")
     replace.assert_awaited_once_with(hass, entry, "new-key")
+
+
+async def test_credential_command_rejects_non_integration_entry() -> None:
+    hass = MagicMock()
+    hass.config_entries.async_get_entry.return_value = _entry(domain="other")
+
+    with pytest.raises(HomeAssistantError, match="Integration entry not found"):
+        await _async_update_api_key_command(
+            hass,
+            {"entry_id": "entry-1", "api_key": "new-key"},
+        )
 
 
 def test_credential_websocket_registration_is_idempotent() -> None:
