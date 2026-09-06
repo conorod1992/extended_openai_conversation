@@ -320,9 +320,8 @@ class TemporaryMemory:
                 )
             ):
                 raise ValueError("temporary memory fields must be strings")
-            if (
-                record.owner_scope_id is not None
-                and not isinstance(record.owner_scope_id, str)
+            if record.owner_scope_id is not None and not isinstance(
+                record.owner_scope_id, str
             ):
                 raise ValueError("temporary memory owner must be a string")
             if (
@@ -333,10 +332,7 @@ class TemporaryMemory:
                 or len(record.scope_id) > 128
                 or (
                     record.owner_scope_id is not None
-                    and (
-                        not record.owner_scope_id
-                        or len(record.owner_scope_id) > 128
-                    )
+                    and (not record.owner_scope_id or len(record.owner_scope_id) > 128)
                 )
                 or record.source != "automatic"
             ):
