@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 
@@ -17,6 +18,18 @@ class BackupSnapshotParticipant(Protocol):
 
     def backup_snapshot_locked(self) -> Any:
         """Copy JSON-compatible local state while backup_snapshot_lock is held."""
+
+
+@dataclass(slots=True)
+class BackupSnapshotAdapter:
+    """Expose an existing manager lock and synchronous copier to the boundary."""
+
+    backup_snapshot_lock: asyncio.Lock
+    snapshot_locked: Callable[[], Any]
+
+    def backup_snapshot_locked(self) -> Any:
+        """Copy the manager state while its existing mutation lock is held."""
+        return self.snapshot_locked()
 
 
 async def async_collect_point_in_time_snapshot(
