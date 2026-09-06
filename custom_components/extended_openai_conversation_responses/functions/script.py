@@ -8,10 +8,10 @@ from typing import Any
 from homeassistant.components.script import config as script_config
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm
-from homeassistant.helpers.script import Script
+from homeassistant.helpers.script import Script, async_validate_actions_config
 
 from ..const import DOMAIN
-from .base import Function
+from .base import Function, copy_runtime_function_config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,9 +29,18 @@ class ScriptFunction(Function):
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> Any:
+        # SCRIPT_ENTITY_SCHEMA performs the static validation and template hydration
+        # used by Home Assistant scripts. Complete the normal script-loading contract
+        # here with HA-aware validation for dynamic actions such as device actions,
+        # conditions, triggers, and nested sequences. Validate an isolated runtime-safe
+        # copy because Home Assistant may normalize the sequence in place.
+        sequence = await async_validate_actions_config(
+            hass,
+            copy_runtime_function_config(function_config["sequence"]),
+        )
         script = Script(
             hass,
-            function_config["sequence"],
+            sequence,
             DOMAIN,
             DOMAIN,
             running_description=f"[{DOMAIN}] function",
