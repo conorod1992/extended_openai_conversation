@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 import logging
@@ -195,24 +196,28 @@ class GuestModeManager:
         )
         self._schedule: GuestModeSchedule | None = None
         self._listeners: set[Callable[[], None]] = set()
+        self._lock = asyncio.Lock()
         self._initialized = False
 
     async def async_initialize(self) -> None:
         if self._initialized:
             return
-        try:
-            data = await self._store.async_load()
-            raw = data.get("schedule") if isinstance(data, Mapping) else None
-            if isinstance(raw, Mapping):
-                schedule = GuestModeSchedule(**dict(raw))
-                _parse_timestamp(self.hass, schedule.active_from, "active_from")
-                if schedule.active_until is not None:
-                    _parse_timestamp(self.hass, schedule.active_until, "active_until")
-                self._schedule = schedule
-        except Exception:
-            _LOGGER.warning("Ignoring malformed Guest Mode state", exc_info=True)
-            self._schedule = None
-        self._initialized = True
+        async with self._lock:
+            if self._initialized:
+                return
+            try:
+                data = await self._store.async_load()
+                raw = data.get("schedule") if isinstance(data, Mapping) else None
+                if isinstance(raw, Mapping):
+                    schedule = GuestModeSchedule(**dict(raw))
+                    _parse_timestamp(self.hass, schedule.active_from, "active_from")
+                    if schedule.active_until is not None:
+                        _parse_timestamp(self.hass, schedule.active_until, "active_until")
+                    self._schedule = schedule
+            except Exception:
+                _LOGGER.warning("Ignoring malformed Guest Mode state", exc_info=True)
+                self._schedule = None
+            self._initialized = True
 
     @property
     def schedule(self) -> GuestModeSchedule | None:
@@ -281,28 +286,29 @@ class GuestModeManager:
         if requested_end is not None and requested_end <= requested_start:
             raise ValueError("active_until must be later than active_from")
 
-        existing = self._live_or_future_schedule(current)
-        if existing is None:
-            start = requested_start
-            end = None if make_indefinite or active_until is None else requested_end
-        else:
-            existing_start = _parse_timestamp(
-                self.hass, existing.active_from, "active_from"
-            )
-            existing_end = (
-                _parse_timestamp(self.hass, existing.active_until, "active_until")
-                if existing.active_until is not None
-                else None
-            )
-            start = min(existing_start, requested_start)
-            if existing_end is None or make_indefinite:
-                end = None
-            elif requested_end is None:
-                end = existing_end
+        async with self._lock:
+            existing = self._live_or_future_schedule(current)
+            if existing is None:
+                start = requested_start
+                end = None if make_indefinite or active_until is None else requested_end
             else:
-                end = max(existing_end, requested_end)
-        await self._async_set(start, end, "llm")
-        return self.status(current)
+                existing_start = _parse_timestamp(
+                    self.hass, existing.active_from, "active_from"
+                )
+                existing_end = (
+                    _parse_timestamp(self.hass, existing.active_until, "active_until")
+                    if existing.active_until is not None
+                    else None
+                )
+                start = min(existing_start, requested_start)
+                if existing_end is None or make_indefinite:
+                    end = None
+                elif requested_end is None:
+                    end = existing_end
+                else:
+                    end = max(existing_end, requested_end)
+            await self._async_set(start, end, "llm")
+            return self.status(current)
 
     async def async_update_trusted(
         self,
@@ -328,19 +334,22 @@ class GuestModeManager:
         )
         if end is not None and end <= start:
             raise ValueError("active_until must be later than active_from")
-        await self._async_set(start, end, "home_assistant")
-        return self.status(current)
+        async with self._lock:
+            await self._async_set(start, end, "home_assistant")
+            return self.status(current)
 
     async def async_disable_trusted(self) -> dict[str, Any]:
         """End or cancel Guest Mode from a trusted HA control surface."""
-        self._schedule = None
-        await self._store.async_save({"schedule": None})
-        self._notify()
-        return self.status()
+        async with self._lock:
+            self._schedule = None
+            await self._store.async_save({"schedule": None})
+            self._notify()
+            return self.status()
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return JSON-compatible Guest Mode state for a private agent backup."""
-        return {"schedule": asdict(self._schedule) if self._schedule else None}
+        async with self._lock:
+            return {"schedule": asdict(self._schedule) if self._schedule else None}
 
     @staticmethod
     def validate_backup_data(value: Any) -> GuestModeSchedule | None:
@@ -376,11 +385,12 @@ class GuestModeManager:
 
     async def async_replace_backup(self, schedule: GuestModeSchedule | None) -> None:
         """Replace durable Guest Mode state during an atomic agent restore."""
-        self._schedule = schedule
-        await self._store.async_save(
-            {"schedule": asdict(schedule) if schedule is not None else None}
-        )
-        self._notify()
+        async with self._lock:
+            self._schedule = schedule
+            await self._store.async_save(
+                {"schedule": asdict(schedule) if schedule is not None else None}
+            )
+            self._notify()
 
     def async_add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         self._listeners.add(listener)
