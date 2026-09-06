@@ -55,7 +55,9 @@ async def test_temporary_memory_rejects_oversized_delete_without_partial_success
     ids = [f"memory-{index}" for index in range(MAX_DELETE_RECORDS + 1)]
 
     with pytest.raises(ValueError, match="1 to 50"):
-        await memory.async_delete("scope", ids)
+        await memory.async_delete(
+            "scope", ids, owner_scope_id="user:test-owner"
+        )
 
     delete_tool = next(
         tool
