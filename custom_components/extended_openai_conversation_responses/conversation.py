@@ -91,6 +91,13 @@ from .continuity import (
     async_get_continuity,
 )
 from .conversation_archive import ArchiveSession, ConversationArchive, async_get_archive
+from .conversation_lifecycle import (
+    async_reset_conversation_context,
+    begin_conversation_lifecycle,
+    end_conversation_lifecycle,
+    request_fresh_conversation,
+    requested_conversation_reset,
+)
 from .debug import record_current_provider_failure
 from .entity import ExtendedOpenAIBaseLLMEntity
 from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
@@ -583,6 +590,7 @@ class ExtendedOpenAIAgentEntity(
             function_group_token = _ACTIVE_FUNCTION_GROUP_SESSION.set(
                 function_group_session
             )
+            lifecycle_token = begin_conversation_lifecycle()
             if resolution.history and len(chat_log.content) <= 2:
                 # Core chat logs expire independently after five minutes. Restore the
                 # integration-owned bounded model history when Core recreates the log.
@@ -700,11 +708,27 @@ class ExtendedOpenAIAgentEntity(
                         )
                     return result
             finally:
-                _ACTIVE_FUNCTION_GROUP_SESSION.reset(function_group_token)
-                _ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
-                _ACTIVE_ARCHIVE.reset(archive_token)
-                _ACTIVE_MEMORY_SESSION.reset(memory_session_token)
-                _ACTIVE_SCOPE.reset(scope_token)
+                reset_request = requested_conversation_reset()
+                try:
+                    if reset_request is not None:
+                        await asyncio.shield(
+                            async_reset_conversation_context(
+                                self.hass,
+                                continuity,
+                                self.entry.entry_id,
+                                self.subentry.subentry_id,
+                                continuity_key=resolution.key,
+                                state_session_id=reset_request.state_session_id,
+                                memory_session_id=reset_request.memory_session_id,
+                            )
+                        )
+                finally:
+                    end_conversation_lifecycle(lifecycle_token)
+                    _ACTIVE_FUNCTION_GROUP_SESSION.reset(function_group_token)
+                    _ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
+                    _ACTIVE_ARCHIVE.reset(archive_token)
+                    _ACTIVE_MEMORY_SESSION.reset(memory_session_token)
+                    _ACTIVE_SCOPE.reset(scope_token)
 
     async def _async_handle_message(
         self,
@@ -774,7 +798,12 @@ class ExtendedOpenAIAgentEntity(
                 user_input, chat_log, status="error", error_type=type(err).__name__
             )
             return conversation.ConversationResult(
-                response=intent_response, conversation_id=user_input.conversation_id
+                response=intent_response,
+                conversation_id=(
+                    None
+                    if requested_conversation_reset() is not None
+                    else user_input.conversation_id
+                ),
             )
         except HomeAssistantError as err:
             if self._usage is not None:
@@ -789,7 +818,12 @@ class ExtendedOpenAIAgentEntity(
                 user_input, chat_log, status="error", error_type=type(err).__name__
             )
             return conversation.ConversationResult(
-                response=intent_response, conversation_id=user_input.conversation_id
+                response=intent_response,
+                conversation_id=(
+                    None
+                    if requested_conversation_reset() is not None
+                    else user_input.conversation_id
+                ),
             )
 
         # Fire conversation finished event
@@ -809,7 +843,11 @@ class ExtendedOpenAIAgentEntity(
 
         return ConversationResult(
             response=intent_response,
-            conversation_id=chat_log.conversation_id,
+            conversation_id=(
+                None
+                if requested_conversation_reset() is not None
+                else chat_log.conversation_id
+            ),
             continue_conversation=_resolve_continue_conversation(
                 continue_mode,
                 chat_log.continue_conversation,
@@ -1324,6 +1362,7 @@ class ExtendedOpenAIAgentEntity(
             "temporary_memory",
             "knowledge",
             "archive",
+            "conversation_lifecycle",
         }:
             tool_name = function_tool.get("spec", {}).get("name")
             latest_entry = self.hass.config_entries.async_get_entry(self.entry.entry_id)
@@ -1429,7 +1468,11 @@ class ExtendedOpenAIAgentEntity(
                 function_type, function_tool.get("function", {}).get("operation", "")
             ):
                 raise RuntimeError(GUEST_MODE_UNAVAILABLE)
-            if function_type == "archive":
+            if function_type == "conversation_lifecycle":
+                result = self._execute_conversation_lifecycle_tool(
+                    function_tool["function"]["operation"]
+                )
+            elif function_type == "archive":
                 result = await self._async_execute_archive_tool(
                     function_tool["function"]["operation"], tool_input.tool_args
                 )
@@ -1480,6 +1523,21 @@ class ExtendedOpenAIAgentEntity(
             tool_result={"result": json.dumps(result, ensure_ascii=False)},
         )
 
+    def _execute_conversation_lifecycle_tool(self, operation: str) -> dict[str, Any]:
+        """Schedule a lifecycle change for the exact active conversation."""
+        if operation != "start_fresh":
+            raise ValueError("unknown conversation lifecycle operation")
+        state_session = _ACTIVE_FUNCTION_GROUP_SESSION.get()
+        memory_session = _ACTIVE_MEMORY_SESSION.get()
+        request_fresh_conversation(
+            state_session.session_key if state_session is not None else None,
+            memory_session[0] if memory_session is not None else None,
+        )
+        return {
+            "status": "scheduled",
+            "message": "The next Assist request will start with fresh conversation context.",
+        }
+
     async def _async_execute_guest_mode_tool(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
@@ -1496,6 +1554,8 @@ class ExtendedOpenAIAgentEntity(
 
     def _guest_integration_allowed(self, function_type: str, operation: str) -> bool:
         policy = self._effective_guest_policy()
+        if function_type == "conversation_lifecycle":
+            return operation == "start_fresh"
         if function_type == "memory":
             return (
                 policy.shared_memory_read
