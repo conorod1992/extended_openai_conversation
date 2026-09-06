@@ -102,6 +102,43 @@ async def test_snapshot_boundary_blocks_mutation_until_all_copies_are_taken() ->
     assert first.value == 99
 
 
+async def test_snapshot_boundary_never_returns_mixed_time_versions() -> None:
+    first_lock = asyncio.Lock()
+    second_lock = asyncio.Lock()
+    state = {"first": 1, "second": 1}
+
+    participants = (
+        BackupSnapshotAdapter(first_lock, lambda: {"version": state["first"]}),
+        BackupSnapshotAdapter(second_lock, lambda: {"version": state["second"]}),
+    )
+
+    # Hold the second lock so the collector acquires the first and waits. A writer
+    # that updates both categories then cannot slip between the two snapshot copies.
+    await second_lock.acquire()
+    collector = asyncio.create_task(async_collect_point_in_time_snapshot(participants))
+    await asyncio.sleep(0)
+    assert first_lock.locked()
+
+    writer_started = asyncio.Event()
+
+    async def write_new_version() -> None:
+        writer_started.set()
+        async with first_lock:
+            state["first"] = 2
+        async with second_lock:
+            state["second"] = 2
+
+    writer = asyncio.create_task(write_new_version())
+    await writer_started.wait()
+    second_lock.release()
+
+    snapshots = await collector
+    await writer
+
+    assert snapshots == ({"version": 1}, {"version": 1})
+    assert state == {"first": 2, "second": 2}
+
+
 async def test_snapshot_boundary_releases_all_locks_when_copy_fails() -> None:
     first_lock = asyncio.Lock()
     second_lock = asyncio.Lock()
