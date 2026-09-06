@@ -21,6 +21,9 @@ from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
     MAX_TOOL_ITERATIONS,
 )
+from custom_components.extended_openai_conversation_responses.exceptions import (
+    FunctionNotFound,
+)
 from custom_components.extended_openai_conversation_responses.function_call_budget import (
     FunctionCallBudget,
 )
@@ -393,7 +396,7 @@ def test_latest_definition_is_selected_for_execution() -> None:
     agent._configured_function_tools_from_data.assert_called_once_with(latest_data)
 
 
-def test_deleted_definition_is_left_for_existing_fail_closed_executor() -> None:
+def test_deleted_definition_fails_closed_before_execution() -> None:
     stale = _tool("notify", {"type": "service", "service": "notify.old"})
     latest_data = {"revision": 2}
     latest_subentry = SimpleNamespace(data=latest_data)
@@ -409,4 +412,5 @@ def test_deleted_definition_is_left_for_existing_fail_closed_executor() -> None:
         _configured_function_tools_from_data=Mock(return_value=[]),
     )
 
-    assert latest_function_tool_for_execution(agent, stale) is stale
+    with pytest.raises(FunctionNotFound):
+        latest_function_tool_for_execution(agent, stale)

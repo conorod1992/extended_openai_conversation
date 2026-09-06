@@ -7,8 +7,9 @@ from typing import Any
 
 from homeassistant.exceptions import HomeAssistantError
 
-from .agent_config import validate_function_groups
+from .agent_config import function_tool_enabled, validate_function_groups
 from .const import CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS
+from .exceptions import FunctionNotFound
 
 # These definitions are owned by the integration runtime rather than the user's
 # persisted Function Tool catalogue. Their request-round objects are authoritative.
@@ -28,13 +29,12 @@ def latest_function_tool_for_execution(
     agent: Any,
     function_tool: dict[str, Any],
 ) -> dict[str, Any]:
-    """Return the newest persisted definition immediately before execution.
+    """Return the newest still-available definition immediately before execution.
 
     Configured Function Tools may be edited, disabled, deleted, or made unavailable
     through their Function Group after a provider request has already been emitted.
-    When the current definition still exists, execute that exact object. If it was
-    deleted, retain the request-round object so the conversation executor's existing
-    authoritative lookup fails closed.
+    Integration-owned runtime definitions remain authoritative for that request round;
+    persisted user tools must still exist and be enabled at dispatch time.
     """
     function = function_tool.get("function")
     if (
@@ -70,7 +70,9 @@ def latest_function_tool_for_execution(
         None,
     )
     if not isinstance(current_tool, dict):
-        return function_tool
+        raise FunctionNotFound(tool_name)
+    if not function_tool_enabled(current_tool):
+        raise HomeAssistantError(f"Function Tool `{tool_name}` is disabled")
 
     current_groups = validate_function_groups(
         latest_data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
