@@ -7,7 +7,7 @@ from contextvars import ContextVar
 from dataclasses import replace
 from functools import wraps
 import logging
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -256,7 +256,10 @@ def _install_manager_contract() -> None:
         )
         if owner is None:
             return []
-        return await current_snapshot(manager, scope_id, owner_scope_id=owner)
+        return cast(
+            list[TemporaryMemoryRecord],
+            await current_snapshot(manager, scope_id, owner_scope_id=owner),
+        )
 
     memory_cls.async_active_snapshot = async_active_snapshot
 
@@ -334,7 +337,7 @@ def _install_manager_contract() -> None:
 
     @wraps(current_stats)
     def stats(manager: TemporaryMemory) -> dict[str, int]:
-        result = current_stats(manager)
+        result = cast(dict[str, int], current_stats(manager))
         result["invalid_owner_records_pruned"] = getattr(
             manager, "invalid_owners_pruned", 0
         )
@@ -400,12 +403,15 @@ def _install_snapshot_contract() -> None:
         )
         if owner is None:
             return []
-        return await current(
-            hass,
-            entry_id,
-            subentry_id,
-            scope_id,
-            owner_scope_id=owner,
+        return cast(
+            list[TemporaryMemoryRecord],
+            await current(
+                hass,
+                entry_id,
+                subentry_id,
+                scope_id,
+                owner_scope_id=owner,
+            ),
         )
 
     temporary_any.async_read_temporary_memory_snapshot = read_snapshot
@@ -436,7 +442,7 @@ def _install_conversation_contract() -> None:
             return []
         token = _ACTIVE_OWNER_SCOPE_ID.set(owner)
         try:
-            return await current_retrieve(entity)
+            return cast(list[TemporaryMemoryRecord], await current_retrieve(entity))
         finally:
             _ACTIVE_OWNER_SCOPE_ID.reset(token)
 
@@ -451,7 +457,9 @@ def _install_conversation_contract() -> None:
             )
         token = _ACTIVE_OWNER_SCOPE_ID.set(owner)
         try:
-            return await current_tool(entity, operation, arguments)
+            return cast(
+                dict[str, Any], await current_tool(entity, operation, arguments)
+            )
         finally:
             _ACTIVE_OWNER_SCOPE_ID.reset(token)
 
@@ -480,7 +488,10 @@ def _install_management_contract() -> None:
     ) -> dict[str, Any]:
         token = _ACTIVE_OWNER_SCOPE_ID.set(f"user:{user_id}")
         try:
-            return await current_preview(hass, entry, subentry, candidate, user_id)
+            return cast(
+                dict[str, Any],
+                await current_preview(hass, entry, subentry, candidate, user_id),
+            )
         finally:
             _ACTIVE_OWNER_SCOPE_ID.reset(token)
 
@@ -561,9 +572,11 @@ def _install_management_contract() -> None:
                 | {"owner_scope_id": record.owner_scope_id}
             }
 
-        result = await current_command(hass, user_id, is_admin, message)
+        result = cast(
+            dict[str, Any], await current_command(hass, user_id, is_admin, message)
+        )
         if section == "scopes" and action == "catalog":
-            scopes = result.get("scopes") if isinstance(result, dict) else None
+            scopes = result.get("scopes")
             if isinstance(scopes, list):
                 entry_id = _required_message_string(message, "entry_id")
                 subentry_id = _required_message_string(message, "subentry_id")
