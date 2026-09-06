@@ -199,3 +199,17 @@ async def test_guest_mode_mutation_waits_for_snapshot_lock(hass) -> None:
     assert manager.schedule is not None
     assert manager.schedule.active_from == "2026-09-06T10:00:00+00:00"
     manager._store.async_save.assert_awaited_once()
+
+
+async def test_guest_mode_standalone_backup_waits_for_manager_lock(hass) -> None:
+    manager = GuestModeManager(hass, "entry", "agent")
+    manager._initialized = True
+
+    await manager._lock.acquire()
+    backup = asyncio.create_task(manager.async_backup_data())
+    await asyncio.sleep(0)
+
+    assert not backup.done()
+    manager._lock.release()
+
+    assert await backup == {"schedule": None}
