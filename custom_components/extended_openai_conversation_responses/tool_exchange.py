@@ -184,7 +184,9 @@ async def async_execute_tool_exchange(
                 chat_log,
                 entity.entity_id,
                 pending_tool_calls,
-                failed_call_id=resolving_call.id if resolving_call is not None else None,
+                failed_call_id=resolving_call.id
+                if resolving_call is not None
+                else None,
                 error=err,
             )
             raise
@@ -197,7 +199,9 @@ async def async_execute_tool_exchange(
                 tool_input.tool_name for _, tool_input in parallel_batch
             )
         except BaseException as err:
-            failed_index = 0 if remaining is None else min(remaining, len(parallel_batch) - 1)
+            failed_index = (
+                0 if remaining is None else min(remaining, len(parallel_batch) - 1)
+            )
             append_unresolved_tool_results(
                 chat_log,
                 entity.entity_id,
