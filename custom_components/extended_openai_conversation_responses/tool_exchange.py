@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from homeassistant.components import conversation
 from homeassistant.helpers import llm
+
+from .exceptions import FunctionNotFound
+from .function_call_budget import FunctionCallBudget
+from .function_tool_resolution import latest_function_tool_for_execution
+from .parallel_tool_execution import (
+    async_execute_parallel_safe_batch_outcomes,
+    resolve_parallel_safe_batch,
+)
 
 _MAX_ERROR_TEXT = 512
 
@@ -105,3 +114,158 @@ def append_unresolved_tool_results(
                 tool_result={"result": result},
             )
         )
+
+
+def _index_tools(function_tools: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Index effective Function Tools without changing first-definition precedence."""
+    indexed: dict[str, dict[str, Any]] = {}
+    for function_tool in function_tools:
+        name = function_tool.get("spec", {}).get("name")
+        if isinstance(name, str):
+            indexed.setdefault(name, function_tool)
+    return indexed
+
+
+def _resolve_current_tool(
+    entity: Any,
+    tool_input: llm.ToolInput,
+    request_tools_by_name: dict[str, dict[str, Any]],
+    function_tools_factory: Callable[[], list[dict[str, Any]]] | None,
+) -> dict[str, Any]:
+    """Resolve one request-round call against current effective availability."""
+    request_tool = request_tools_by_name.get(tool_input.tool_name)
+    if request_tool is None:
+        raise FunctionNotFound(tool_input.tool_name)
+
+    candidate = request_tool
+    if function_tools_factory is not None:
+        current_effective = _index_tools(function_tools_factory())
+        candidate = current_effective.get(tool_input.tool_name)
+        if candidate is None:
+            raise FunctionNotFound(tool_input.tool_name)
+
+    return latest_function_tool_for_execution(entity, candidate)
+
+
+async def async_execute_tool_exchange(
+    entity: Any,
+    chat_log: conversation.ChatLog,
+    pending_tool_calls: list[llm.ToolInput],
+    request_function_tools: list[dict[str, Any]],
+    function_call_budget: FunctionCallBudget,
+    llm_context: llm.LLMContext | None,
+    exposed_entities: list[dict[str, Any]],
+    *,
+    function_tools_factory: Callable[[], list[dict[str, Any]]] | None = None,
+) -> None:
+    """Execute one provider tool batch while keeping retained history complete."""
+    if not pending_tool_calls:
+        return
+
+    request_tools_by_name = _index_tools(request_function_tools)
+    potential_parallel = resolve_parallel_safe_batch(
+        pending_tool_calls, request_tools_by_name
+    )
+    parallel_batch = None
+
+    if potential_parallel is not None:
+        current_tools: dict[str, dict[str, Any]] = {}
+        resolving_call: llm.ToolInput | None = None
+        try:
+            for resolving_call in pending_tool_calls:
+                current_tools[resolving_call.tool_name] = _resolve_current_tool(
+                    entity,
+                    resolving_call,
+                    request_tools_by_name,
+                    function_tools_factory,
+                )
+        except BaseException as err:
+            append_unresolved_tool_results(
+                chat_log,
+                entity.entity_id,
+                pending_tool_calls,
+                failed_call_id=resolving_call.id if resolving_call is not None else None,
+                error=err,
+            )
+            raise
+        parallel_batch = resolve_parallel_safe_batch(pending_tool_calls, current_tools)
+
+    if parallel_batch is not None:
+        remaining = function_call_budget.remaining
+        try:
+            function_call_budget.claim_many(
+                tool_input.tool_name for _, tool_input in parallel_batch
+            )
+        except BaseException as err:
+            failed_index = 0 if remaining is None else min(remaining, len(parallel_batch) - 1)
+            append_unresolved_tool_results(
+                chat_log,
+                entity.entity_id,
+                pending_tool_calls,
+                failed_call_id=parallel_batch[failed_index][1].id,
+                error=err,
+            )
+            raise
+
+        try:
+            outcomes = await async_execute_parallel_safe_batch_outcomes(
+                parallel_batch,
+                lambda function_tool, tool_input: entity._execute_function_tool(
+                    function_tool,
+                    tool_input,
+                    llm_context,
+                    exposed_entities,
+                ),
+            )
+        except BaseException as err:
+            append_unresolved_tool_results(
+                chat_log,
+                entity.entity_id,
+                pending_tool_calls,
+                error=err,
+            )
+            raise
+
+        first_error: BaseException | None = None
+        for (_, tool_input), outcome in zip(parallel_batch, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                append_unresolved_tool_results(
+                    chat_log,
+                    entity.entity_id,
+                    [tool_input],
+                    failed_call_id=tool_input.id,
+                    error=outcome,
+                )
+                if first_error is None:
+                    first_error = outcome
+            else:
+                chat_log.async_add_assistant_content_without_tools(outcome)
+        if first_error is not None:
+            raise first_error
+        return
+
+    for tool_input in pending_tool_calls:
+        try:
+            function_tool = _resolve_current_tool(
+                entity,
+                tool_input,
+                request_tools_by_name,
+                function_tools_factory,
+            )
+            function_call_budget.claim(tool_input.tool_name)
+            tool_result_content = await entity._execute_function_tool(
+                function_tool,
+                tool_input,
+                llm_context,
+                exposed_entities,
+            )
+        except BaseException as err:
+            append_unresolved_tool_results(
+                chat_log,
+                entity.entity_id,
+                pending_tool_calls,
+                failed_call_id=tool_input.id,
+                error=err,
+            )
+            raise
+        chat_log.async_add_assistant_content_without_tools(tool_result_content)
