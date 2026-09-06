@@ -140,9 +140,9 @@ async def test_legacy_device_scope_is_not_claimed_by_a_resolved_owner() -> None:
     memory = TemporaryMemory(Storage({"records": [record]}))
     await memory.async_initialize()
 
-    assert await memory.async_active(
-        "device:kitchen", owner_scope_id="user:alice"
-    ) == []
+    assert (
+        await memory.async_active("device:kitchen", owner_scope_id="user:alice") == []
+    )
     assert [item.memory_id for item in await memory.async_active("device:kitchen")] == [
         "legacy-device"
     ]
