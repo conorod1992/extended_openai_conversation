@@ -270,7 +270,9 @@ class ConversationContinuity:
             self._ignored_conversation_ids.pop(conversation_id, None)
             self._ignored_conversation_ids[conversation_id] = None
             while len(self._ignored_conversation_ids) > _MAX_IGNORED_CONVERSATION_IDS:
-                self._ignored_conversation_ids.pop(next(iter(self._ignored_conversation_ids)))
+                self._ignored_conversation_ids.pop(
+                    next(iter(self._ignored_conversation_ids))
+                )
 
     async def async_clear_memory_bundle(self, session_key: str) -> bool:
         """Forget cached memory references without deleting any stored memories."""
