@@ -135,6 +135,7 @@ async def async_create_backup(
             knowledge_snapshot,
             archive_snapshot,
             usage_snapshot,
+            guest_mode_snapshot,
             request_rules_snapshot,
         ) = await async_collect_point_in_time_snapshot(
             manager_snapshot_participants(
@@ -143,12 +144,10 @@ async def async_create_backup(
                 knowledge,
                 archive,
                 usage,
+                guest_mode,
                 request_rules,
             )
         )
-        # Guest Mode joins this same lock-held boundary once its manager has a
-        # mutation lock. Until then PR3 remains draft and is not merge-ready.
-        guest_mode_snapshot = await guest_mode.async_backup_data()
         document = {
             "format": BACKUP_FORMAT,
             "version": BACKUP_VERSION,
