@@ -75,10 +75,13 @@ from .const import (
     DEFAULT_TOP_P,
     DEFAULT_WEB_SEARCH,
     DOMAIN,
-    REASONING_EFFORT_OPTIONS,
     SERVICE_TIER_OPTIONS,
 )
-from .helpers import get_authenticated_client, get_model_config
+from .helpers import (
+    get_authenticated_client,
+    get_model_config,
+    get_reasoning_effort_options,
+)
 from .provider_errors import classify_config_provider_error, log_provider_failure
 from .skills import SkillManager
 
@@ -314,7 +317,8 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="reauth_failed")
         errors: dict[str, str] = {}
         if user_input is not None:
-            updated = {**self._reauth_entry.data, **user_input}
+            original_data = dict(self._reauth_entry.data)
+            updated = {**original_data, **user_input}
             try:
                 await validate_input(self.hass, updated)
             except OpenAIError as err:
@@ -324,9 +328,12 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception during reauthentication")
                 errors["base"] = "unknown"
             else:
-                return self.async_update_reload_and_abort(
-                    self._reauth_entry, data=updated
-                )
+                if dict(self._reauth_entry.data) != original_data:
+                    errors["base"] = "config_changed"
+                else:
+                    return self.async_update_reload_and_abort(
+                        self._reauth_entry, data=updated
+                    )
         return self.async_show_form(
             step_id="reauth_confirm",
             data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
@@ -571,7 +578,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 )
             ] = NumberSelector(NumberSelectorConfig(min=0, max=2, step=0.05))
 
-        # Add reasoning_effort if supported (o1, o3, o4, gpt-5 models)
+        # Add reasoning_effort if supported (o1, o3, o4, gpt-5, gpt-6 models)
         if model_config.get("supports_reasoning_effort"):
             schema[
                 vol.Optional(
@@ -582,7 +589,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 SelectSelectorConfig(
                     options=[
                         SelectOptionDict(value=opt, label=opt.capitalize())
-                        for opt in REASONING_EFFORT_OPTIONS
+                        for opt in get_reasoning_effort_options(str(chat_model))
                     ],
                     mode=SelectSelectorMode.DROPDOWN,
                 )

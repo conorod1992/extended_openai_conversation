@@ -25,6 +25,7 @@ from .const import (
     DEFAULT_TOKEN_PARAM,
     MODEL_CONFIG_PATTERNS,
     MODEL_TOKEN_PARAMETER_SUPPORT,
+    REASONING_EFFORT_OPTIONS,
 )
 from .entity_context_cache import (
     get_entity_prompt_metadata,
@@ -76,6 +77,14 @@ def get_model_config(model: str) -> dict[str, bool]:
 
     # Default configuration for standard models (gpt-4, gpt-4o, etc.)
     return DEFAULT_MODEL_CONFIG
+
+
+def get_reasoning_effort_options(model: str) -> list[str]:
+    """Return only reasoning-effort values supported by the selected model."""
+    options = list(REASONING_EFFORT_OPTIONS)
+    if re.match(r"^gpt-6-astra(?:[-.]|$)", model, re.IGNORECASE):
+        options.extend(("xhigh", "max"))
+    return options
 
 
 def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:

@@ -15,11 +15,16 @@ export function freshGuestPolicyDraft(config = {}) {
     .forEach((key) => { draft[key] = []; });
   return Object.assign(draft, {
     guest_mode_enabled: true,
+    guest_web_search: false,
     guest_separate_control_restrictions: false,
     guest_knowledge_policy: "off",
     guest_function_policy: "off",
     guest_shared_memory_policy: "off",
   });
+}
+
+export function renderGuestWebSearchSetting(config = {}) {
+  return `<section class="content-card guest-hosted-capabilities"><div class="section-heading"><div><h2>Hosted capabilities</h2><p>Provider-hosted capabilities remain unavailable to guests unless you explicitly allow them.</p></div></div><label class="toggle"><span>Allow hosted Web Search</span><input id="guest-web-search" type="checkbox" ${config.guest_web_search ? "checked" : ""}></label><p class="help">Off by default. When enabled, Guest Mode may expose hosted Web Search only when this agent's provider, API mode, and Web Search configuration support it.</p></section>`;
 }
 
 export function formatManagementTimestamp(value, timeZone) {
@@ -183,6 +188,7 @@ export function installManagementBrowser(Panel) {
   const originalLoadSection = proto._loadSection;
   const originalMemories = proto._memories;
   const originalConversations = proto._conversations;
+  const originalGuestPolicyView = proto._guestPolicyView;
   const originalBindActions = proto._bindActions;
   const originalUpdateVisibleList = proto._updateVisibleList;
 
@@ -226,6 +232,14 @@ export function installManagementBrowser(Panel) {
     if (marker < 0) return html;
     const pagination = `<div class="section-actions"><button type="button" class="secondary" id="load-more-conversations">Load more ${state.archiveQuery ? "matches" : "conversations"}</button></div>`;
     return `${html.slice(0, marker)}${pagination}${html.slice(marker)}`;
+  };
+
+  proto._guestPolicyView = function(...args) {
+    const html = originalGuestPolicyView.apply(this, args);
+    const marker = '<section class="content-card"><div class="section-heading"><div><h2>Assistant permission</h2>';
+    if (!html.includes(marker)) return html;
+    const config = this._guestDraft || this._result?.config || {};
+    return html.replace(marker, `${renderGuestWebSearchSetting(config)}${marker}`);
   };
 
   proto._updateVisibleList = function() {
@@ -282,6 +296,9 @@ export function installManagementBrowser(Panel) {
     const value = originalBindActions.apply(this, args);
     this.shadowRoot.querySelector("#load-more-memories")?.addEventListener("click", (event) => loadMoreMemories(this, event.currentTarget));
     this.shadowRoot.querySelector("#load-more-conversations")?.addEventListener("click", (event) => loadMoreConversations(this, event.currentTarget));
+    this.shadowRoot.querySelector("#guest-web-search")?.addEventListener("change", (event) => {
+      if (this._guestDraft) this._guestDraft.guest_web_search = Boolean(event.currentTarget.checked);
+    });
     return value;
   };
 
