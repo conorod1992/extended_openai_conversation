@@ -8,7 +8,6 @@ from contextvars import ContextVar
 import json
 import logging
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Literal
 
 from openai import OpenAIError
@@ -25,7 +24,7 @@ from homeassistant.components.conversation import (
 from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import intent, llm
+from homeassistant.helpers import entity_registry as er, intent, llm
 from homeassistant.helpers.chat_session import async_get_chat_session
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -471,17 +470,16 @@ class ExtendedOpenAIAgentEntity(
 
     async def _async_process(self, user_input: ConversationInput) -> ConversationResult:
         """Shared processing pipeline for Assist and the direct process action."""
+        source_device_id = user_input.device_id
+        if source_device_id is None and user_input.satellite_id:
+            satellite_entry = er.async_get(self.hass).async_get(user_input.satellite_id)
+            if satellite_entry is not None:
+                source_device_id = satellite_entry.device_id
+        user_input.device_id = source_device_id
         llm_context = user_input.as_llm_context(DOMAIN)
         request_policy = self._resolve_live_guest_policy()
         guest_policy_token = _ACTIVE_GUEST_POLICY.set(request_policy)
-        source_device_id = user_input.satellite_id or user_input.device_id
-        scope = resolve_data_scope(
-            SimpleNamespace(
-                context=llm_context.context,
-                device_id=source_device_id,
-            ),
-            self.subentry.data,
-        )
+        scope = resolve_data_scope(llm_context, self.subentry.data)
         continuity_mode = self.subentry.data.get(
             CONF_CONVERSATION_CONTINUITY, DEFAULT_CONVERSATION_CONTINUITY
         )
@@ -491,7 +489,6 @@ class ExtendedOpenAIAgentEntity(
                 DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
             )
         )
-        source_device_id = source_device_id or scope.device_id
         assert self._continuity is not None
         try:
             resolution = await self._continuity.async_resolve(
