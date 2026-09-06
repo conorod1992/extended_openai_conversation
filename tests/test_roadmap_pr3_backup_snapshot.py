@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from unittest.mock import AsyncMock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses.backup_snapshot import (
     BackupSnapshotAdapter,
     async_collect_point_in_time_snapshot,
+)
+from custom_components.extended_openai_conversation_responses.guest_mode import (
+    GuestModeManager,
 )
 
 
@@ -172,3 +176,26 @@ async def test_snapshot_boundary_rejects_duplicate_manager_locks() -> None:
         await async_collect_point_in_time_snapshot(participants)
 
     assert not lock.locked()
+
+
+async def test_guest_mode_mutation_waits_for_snapshot_lock(hass) -> None:
+    manager = GuestModeManager(hass, "entry", "agent")
+    manager._initialized = True
+    manager._store.async_save = AsyncMock()
+
+    await manager._lock.acquire()
+    update = asyncio.create_task(
+        manager.async_update_trusted(
+            active_from="2026-09-06T10:00:00+00:00",
+            indefinite=True,
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert manager.schedule is None
+    manager._lock.release()
+    await update
+
+    assert manager.schedule is not None
+    assert manager.schedule.active_from == "2026-09-06T10:00:00+00:00"
+    manager._store.async_save.assert_awaited_once()
