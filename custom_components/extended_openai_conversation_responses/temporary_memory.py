@@ -43,6 +43,7 @@ class TemporaryMemoryRecord:
     expires_at: str
     created_at: str
     updated_at: str
+    owner_scope_id: str | None = None
 
 
 class TemporaryMemoryStore(Store[dict[str, Any]]):
@@ -68,7 +69,7 @@ class TemporaryMemory:
             raw_records = data.get("records", []) if isinstance(data, Mapping) else []
             for raw in raw_records:
                 try:
-                    record = TemporaryMemoryRecord(**raw)
+                    record = _record_from_storage(raw)
                     if _parse_expiry(record.expires_at) > dt_util.utcnow():
                         self._records[record.memory_id] = record
                     else:
@@ -79,31 +80,42 @@ class TemporaryMemory:
             if self.expired_pruned:
                 await self._async_save_locked()
 
-    async def async_active(self, scope_id: str) -> list[TemporaryMemoryRecord]:
+    async def async_active(
+        self, scope_id: str, owner_scope_id: str | None = None
+    ) -> list[TemporaryMemoryRecord]:
         """Return bounded active context and opportunistically prune expiry."""
         async with self._lock:
             await self._async_prune_locked()
-            return self._active_snapshot_locked(scope_id)
+            return self._active_snapshot_locked(scope_id, owner_scope_id)
 
-    async def async_active_snapshot(self, scope_id: str) -> list[TemporaryMemoryRecord]:
+    async def async_active_snapshot(
+        self, scope_id: str, owner_scope_id: str | None = None
+    ) -> list[TemporaryMemoryRecord]:
         """Return active context without pruning, saving, or changing counters."""
         async with self._lock:
-            return self._active_snapshot_locked(scope_id)
+            return self._active_snapshot_locked(scope_id, owner_scope_id)
 
-    def _active_snapshot_locked(self, scope_id: str) -> list[TemporaryMemoryRecord]:
+    def _active_snapshot_locked(
+        self, scope_id: str, owner_scope_id: str | None = None
+    ) -> list[TemporaryMemoryRecord]:
         """Select bounded, currently active records while the lock is held."""
-        return self.select_active_snapshot(self._records.values(), scope_id)
+        return self.select_active_snapshot(
+            self._records.values(), scope_id, owner_scope_id
+        )
 
     @staticmethod
     def select_active_snapshot(
-        records: Iterable[TemporaryMemoryRecord], scope_id: str
+        records: Iterable[TemporaryMemoryRecord],
+        scope_id: str,
+        owner_scope_id: str | None = None,
     ) -> list[TemporaryMemoryRecord]:
-        """Select the bounded active records for one scope without mutation."""
+        """Select bounded active records for one scope and optional owner."""
         now = dt_util.utcnow()
         records = [
             record
             for record in records
-            if record.scope_id == scope_id and _parse_expiry(record.expires_at) > now
+            if _matches_owner(record, scope_id, owner_scope_id)
+            and _parse_expiry(record.expires_at) > now
         ]
         records.sort(key=lambda item: (item.updated_at, item.expires_at), reverse=True)
         selected: list[TemporaryMemoryRecord] = []
@@ -124,10 +136,13 @@ class TemporaryMemory:
         content: str,
         expires_at: str,
         category: str = "general",
+        *,
+        owner_scope_id: str | None = None,
     ) -> dict[str, Any]:
-        """Add an automatic fact, coalescing an exact active duplicate."""
+        """Add an automatic fact, coalescing an exact owned active duplicate."""
         content = _clean(content, MAX_CONTENT_LENGTH, "content")
         category = _clean(category, MAX_CATEGORY_LENGTH, "category")
+        owner_scope_id = _clean_owner_scope_id(owner_scope_id)
         validate_memory_privacy(content, automatic=True)
         expiry = _parse_future_expiry(expires_at)
         async with self._lock:
@@ -135,7 +150,7 @@ class TemporaryMemory:
             now = dt_util.utcnow().isoformat()
             for current in self._records.values():
                 if (
-                    current.scope_id == scope_id
+                    _matches_owner(current, scope_id, owner_scope_id)
                     and current.content.casefold() == content.casefold()
                 ):
                     updated = TemporaryMemoryRecord(
@@ -147,6 +162,7 @@ class TemporaryMemory:
                         expiry.isoformat(),
                         current.created_at,
                         now,
+                        current.owner_scope_id,
                     )
                     self._records[current.memory_id] = updated
                     await self._async_save_locked()
@@ -165,6 +181,7 @@ class TemporaryMemory:
                 expiry.isoformat(),
                 now,
                 now,
+                owner_scope_id,
             )
             self._records[record.memory_id] = record
             await self._async_save_locked()
@@ -177,11 +194,14 @@ class TemporaryMemory:
         content: str | None,
         expires_at: str | None,
         category: str | None,
+        *,
+        owner_scope_id: str | None = None,
     ) -> TemporaryMemoryRecord:
-        """Update/supersede an owned temporary fact."""
+        """Update/supersede a temporary fact owned by the current request."""
+        owner_scope_id = _clean_owner_scope_id(owner_scope_id)
         async with self._lock:
             await self._async_prune_locked()
-            current = self._owned(scope_id, memory_id)
+            current = self._owned(scope_id, memory_id, owner_scope_id)
             new_content = (
                 _clean(content, MAX_CONTENT_LENGTH, "content")
                 if content is not None
@@ -204,29 +224,41 @@ class TemporaryMemory:
                 new_expiry,
                 current.created_at,
                 dt_util.utcnow().isoformat(),
+                current.owner_scope_id,
             )
             self._records[memory_id] = updated
             await self._async_save_locked()
             return updated
 
-    async def async_delete(self, scope_id: str, memory_ids: list[str]) -> int:
-        """Delete selected records only from the current scope."""
+    async def async_delete(
+        self,
+        scope_id: str,
+        memory_ids: list[str],
+        *,
+        owner_scope_id: str | None = None,
+    ) -> int:
+        """Delete selected records only from the current scope and optional owner."""
         if not memory_ids or len(memory_ids) > MAX_DELETE_RECORDS:
             raise ValueError(f"memory_ids must contain 1 to {MAX_DELETE_RECORDS} IDs")
+        owner_scope_id = _clean_owner_scope_id(owner_scope_id)
         async with self._lock:
             deleted = 0
             for memory_id in set(memory_ids):
                 record = self._records.get(memory_id)
-                if record is not None and record.scope_id == scope_id:
+                if record is not None and _matches_owner(
+                    record, scope_id, owner_scope_id
+                ):
                     del self._records[memory_id]
                     deleted += 1
             if deleted:
                 await self._async_save_locked()
             return deleted
 
-    async def async_list(self, scope_id: str) -> list[TemporaryMemoryRecord]:
+    async def async_list(
+        self, scope_id: str, owner_scope_id: str | None = None
+    ) -> list[TemporaryMemoryRecord]:
         """List active records for management."""
-        return await self.async_active(scope_id)
+        return await self.async_active(scope_id, owner_scope_id)
 
     async def async_list_all(self) -> list[TemporaryMemoryRecord]:
         """List bounded active records for administrator management."""
@@ -271,7 +303,7 @@ class TemporaryMemory:
             if not isinstance(raw, Mapping):
                 raise ValueError("temporary memory record must be an object")
             try:
-                record = TemporaryMemoryRecord(**raw)
+                record = _record_from_storage(raw)
             except TypeError as err:
                 raise ValueError("temporary memory record is invalid") from err
             if not all(
@@ -289,11 +321,23 @@ class TemporaryMemory:
             ):
                 raise ValueError("temporary memory fields must be strings")
             if (
+                record.owner_scope_id is not None
+                and not isinstance(record.owner_scope_id, str)
+            ):
+                raise ValueError("temporary memory owner must be a string")
+            if (
                 not record.memory_id
                 or len(record.memory_id) > 128
                 or record.memory_id in seen
                 or not record.scope_id
                 or len(record.scope_id) > 128
+                or (
+                    record.owner_scope_id is not None
+                    and (
+                        not record.owner_scope_id
+                        or len(record.owner_scope_id) > 128
+                    )
+                )
                 or record.source != "automatic"
             ):
                 raise ValueError("temporary memory metadata is invalid")
@@ -316,9 +360,14 @@ class TemporaryMemory:
             self._records = {record.memory_id: record for record in records}
             await self._async_save_locked()
 
-    def _owned(self, scope_id: str, memory_id: str) -> TemporaryMemoryRecord:
+    def _owned(
+        self,
+        scope_id: str,
+        memory_id: str,
+        owner_scope_id: str | None = None,
+    ) -> TemporaryMemoryRecord:
         record = self._records.get(memory_id)
-        if record is None or record.scope_id != scope_id:
+        if record is None or not _matches_owner(record, scope_id, owner_scope_id):
             raise ValueError("temporary memory not found")
         return record
 
@@ -339,6 +388,40 @@ class TemporaryMemory:
         await self._store.async_save(
             {"records": [asdict(record) for record in self._records.values()]}
         )
+
+
+def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
+    """Load a record while preserving safe compatibility with pre-owner storage."""
+    values = dict(raw)
+    if "owner_scope_id" not in values:
+        scope_id = values.get("scope_id")
+        values["owner_scope_id"] = (
+            scope_id
+            if isinstance(scope_id, str) and scope_id.startswith("user:")
+            else None
+        )
+    return TemporaryMemoryRecord(**values)
+
+
+def _matches_owner(
+    record: TemporaryMemoryRecord, scope_id: str, owner_scope_id: str | None
+) -> bool:
+    """Require both continuity scope and owner when an owner is resolved."""
+    return record.scope_id == scope_id and (
+        owner_scope_id is None or record.owner_scope_id == owner_scope_id
+    )
+
+
+def _clean_owner_scope_id(owner_scope_id: str | None) -> str | None:
+    """Validate a resolved owner without inventing one for legacy callers."""
+    if owner_scope_id is None:
+        return None
+    if not isinstance(owner_scope_id, str):
+        raise ValueError("owner_scope_id must be a string")
+    owner_scope_id = owner_scope_id.strip()
+    if not owner_scope_id or len(owner_scope_id) > 128:
+        raise ValueError("owner_scope_id must contain 1 to 128 characters")
+    return owner_scope_id
 
 
 def _parse_expiry(value: str):
@@ -478,7 +561,11 @@ def get_loaded_temporary_memory(
 
 
 async def async_read_temporary_memory_snapshot(
-    hass: Any, entry_id: str, subentry_id: str, scope_id: str
+    hass: Any,
+    entry_id: str,
+    subentry_id: str,
+    scope_id: str,
+    owner_scope_id: str | None = None,
 ) -> list[TemporaryMemoryRecord]:
     """Read active stored context without creating, pruning, or saving a manager."""
     data = await _temporary_memory_store(hass, entry_id, subentry_id).async_load()
@@ -486,12 +573,12 @@ async def async_read_temporary_memory_snapshot(
     records: list[TemporaryMemoryRecord] = []
     for raw in raw_records:
         try:
-            record = TemporaryMemoryRecord(**raw)
+            record = _record_from_storage(raw)
             _parse_expiry(record.expires_at)
             records.append(record)
         except TypeError, ValueError:
             continue
-    return TemporaryMemory.select_active_snapshot(records, scope_id)
+    return TemporaryMemory.select_active_snapshot(records, scope_id, owner_scope_id)
 
 
 async def async_get_temporary_memory(
