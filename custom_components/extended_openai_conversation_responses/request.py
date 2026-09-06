@@ -73,6 +73,31 @@ CONTINUE_CONVERSATION_TOOL = {
     }
 }
 
+START_FRESH_CONVERSATION_TOOL_NAME = "start_fresh_conversation"
+START_FRESH_CONVERSATION_TOOL = {
+    "spec": {
+        "name": START_FRESH_CONVERSATION_TOOL_NAME,
+        "description": (
+            "Start a fresh Assist conversation after this response when the user "
+            "explicitly asks to start over or reset the current discussion. This "
+            "clears only current conversation context and conversation-scoped "
+            "routing/tool state. It does not delete persistent memory, temporary "
+            "memory, Knowledge Library sources, or archived history."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "function": {
+        "type": "conversation_lifecycle",
+        "operation": "start_fresh",
+    },
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ProviderRequestSnapshot:
@@ -190,6 +215,12 @@ def assemble_integration_function_tools(
         memory_scope_available=memory_scope_available,
         guest_policy=guest_policy,
     )
+    if START_FRESH_CONVERSATION_TOOL_NAME in configured_names:
+        raise HomeAssistantError(
+            "Reserved conversation lifecycle tool name configured: "
+            f"{START_FRESH_CONVERSATION_TOOL_NAME}"
+        )
+    result.append(START_FRESH_CONVERSATION_TOOL)
     if capabilities.persistent_memory:
         conflicts = configured_names & MEMORY_TOOL_NAMES
         if conflicts:
