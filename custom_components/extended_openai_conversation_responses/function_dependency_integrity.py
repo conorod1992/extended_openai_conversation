@@ -31,7 +31,9 @@ _INSTALLED = False
 
 def _is_template_string(value: Any) -> bool:
     """Return whether a saved Request Rule value is resolved only at runtime."""
-    return isinstance(value, str) and any(marker in value for marker in _TEMPLATE_MARKERS)
+    return isinstance(value, str) and any(
+        marker in value for marker in _TEMPLATE_MARKERS
+    )
 
 
 def _contains_template(value: Any) -> bool:
@@ -133,7 +135,9 @@ async def _async_validate_static_descendants(
             child_schema = (
                 properties.get(key) if isinstance(properties, Mapping) else None
             )
-            if not isinstance(child_schema, Mapping) and isinstance(additional, Mapping):
+            if not isinstance(child_schema, Mapping) and isinstance(
+                additional, Mapping
+            ):
                 child_schema = additional
             if isinstance(child_schema, Mapping):
                 await _async_validate_static_descendants(hass, item, child_schema)
@@ -302,17 +306,20 @@ def wrap_persist_function_configuration(original):
                     ]
                 updates[CONF_GUEST_ALLOWED_GROUP_IDS] = list(dict.fromkeys(changed_ids))
 
-        return original(
-            hass,
-            entry,
-            subentry,
-            tools,
-            groups,
-            extra_updates=updates or None,
-            expected_revision=(
-                expected_revision
-                if expected_revision is not None
-                else _ACTIVE_CONFIG_REVISION.get()
+        return cast(
+            dict[str, Any],
+            original(
+                hass,
+                entry,
+                subentry,
+                tools,
+                groups,
+                extra_updates=updates or None,
+                expected_revision=(
+                    expected_revision
+                    if expected_revision is not None
+                    else _ACTIVE_CONFIG_REVISION.get()
+                ),
             ),
         )
 
@@ -380,8 +387,12 @@ def wrap_management_command(original):
         group_mutation: tuple[str, str | None] | None = None
         if action == "save_group":
             original_id = message.get("original_id")
-            candidate = message.get("group")
-            new_id = candidate.get("id") if isinstance(candidate, Mapping) else None
+            group_candidate = message.get("group")
+            new_id = (
+                group_candidate.get("id")
+                if isinstance(group_candidate, Mapping)
+                else None
+            )
             if (
                 isinstance(original_id, str)
                 and isinstance(new_id, str)
@@ -412,14 +423,20 @@ def install_function_dependency_integrity() -> None:
     if _INSTALLED:
         return
 
-    request_rules.RequestRules.function_references = (  # type: ignore[method-assign]
-        recursive_function_references
+    setattr(  # noqa: B010
+        request_rules.RequestRules,
+        "function_references",
+        recursive_function_references,
     )
-    request_rules.RequestRules.async_rename_function_reference = (  # type: ignore[method-assign]
-        async_rename_function_reference_recursive
+    setattr(  # noqa: B010
+        request_rules.RequestRules,
+        "async_rename_function_reference",
+        async_rename_function_reference_recursive,
     )
     management_ui._persist_function_configuration = (  # type: ignore[misc]
-        wrap_persist_function_configuration(management_ui._persist_function_configuration)
+        wrap_persist_function_configuration(
+            management_ui._persist_function_configuration
+        )
     )
     management_ui.async_management_command = wrap_management_command(  # type: ignore[misc]
         management_ui.async_management_command
