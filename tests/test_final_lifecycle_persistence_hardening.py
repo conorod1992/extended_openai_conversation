@@ -106,21 +106,30 @@ async def test_temporary_memory_save_failure_rolls_back_record() -> None:
     storage = ToggleStorage()
     manager = TemporaryMemory(storage)  # type: ignore[arg-type]
     await manager.async_initialize()
+    owner_scope_id = "user:test-owner"
     created = await manager.async_add(
         "user-1",
         "The parcel is by the door.",
         (dt_util.utcnow() + timedelta(days=30)).isoformat(),
         "errand",
+        owner_scope_id=owner_scope_id,
     )
     memory_id = created["memory"]["memory_id"]
 
     storage.fail_saves = True
     with pytest.raises(RuntimeError, match="simulated Store failure"):
         await manager.async_update(
-            "user-1", memory_id, "The parcel was collected.", None, None
+            "user-1",
+            memory_id,
+            "The parcel was collected.",
+            None,
+            None,
+            owner_scope_id=owner_scope_id,
         )
 
-    active = await manager.async_active_snapshot("user-1")
+    active = await manager.async_active_snapshot(
+        "user-1", owner_scope_id=owner_scope_id
+    )
     assert [item.content for item in active] == ["The parcel is by the door."]
 
 

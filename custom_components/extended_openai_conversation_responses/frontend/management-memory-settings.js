@@ -1,3 +1,4 @@
+import "./management-temporary-memory.js";
 import {bindMemorySettings, renderMemorySettings} from "./memory-settings-ui.js";
 
 const PATCHED = Symbol.for("extended-openai.management-memory-settings");

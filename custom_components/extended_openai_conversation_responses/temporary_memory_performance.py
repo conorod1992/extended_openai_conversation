@@ -19,6 +19,12 @@ def install_temporary_memory_read_fast_path() -> None:
     """Keep expiry filtering immediate while moving its Store write off reads."""
     global _INSTALLED
     if _INSTALLED:
+        # Ownership hardening deliberately wraps the final read implementation. Keep
+        # repeated startup/test installation idempotent without depending on which
+        # installer happened to run first in the process.
+        from .temporary_memory_ownership import install_temporary_memory_ownership
+
+        install_temporary_memory_ownership()
         return
     _INSTALLED = True
 
@@ -49,6 +55,12 @@ def install_temporary_memory_read_fast_path() -> None:
         return result
 
     manager_type.async_active = async_active
+
+    # Install after replacing async_active: this layer is the effective runtime read
+    # path, so ownership must wrap it rather than the superseded base method.
+    from .temporary_memory_ownership import install_temporary_memory_ownership
+
+    install_temporary_memory_ownership()
 
 
 def _schedule_pruned_state_save(manager: Any) -> None:

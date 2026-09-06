@@ -154,6 +154,7 @@ async def test_temporary_memory_expiry_save_runs_after_active_read_returns() -> 
     store = BlockingStorage()
     manager = TemporaryMemory(store)
     now = dt_util.utcnow()
+    owner_scope_id = "user:test-owner"
     manager._initialized = True
     manager._records["expired"] = TemporaryMemoryRecord(
         memory_id="expired",
@@ -164,9 +165,10 @@ async def test_temporary_memory_expiry_save_runs_after_active_read_returns() -> 
         expires_at=(now - timedelta(minutes=1)).isoformat(),
         created_at=(now - timedelta(hours=1)).isoformat(),
         updated_at=(now - timedelta(hours=1)).isoformat(),
+        owner_scope_id=owner_scope_id,
     )
 
-    result = await manager.async_active("scope")
+    result = await manager.async_active("scope", owner_scope_id=owner_scope_id)
 
     assert result == []
     assert manager.expired_pruned == 1
