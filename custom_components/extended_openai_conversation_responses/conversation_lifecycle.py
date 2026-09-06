@@ -20,27 +20,46 @@ class ConversationResetRequest:
     memory_session_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class ConversationLifecycleToken:
+    """Context tokens for one active conversation execution."""
+
+    active: Token[bool]
+    reset: Token[ConversationResetRequest | None]
+
+
+_LIFECYCLE_ACTIVE: ContextVar[bool] = ContextVar(
+    "extended_openai_conversation_lifecycle_active", default=False
+)
 _ACTIVE_RESET: ContextVar[ConversationResetRequest | None] = ContextVar(
     "extended_openai_conversation_reset", default=None
 )
 
 
-def begin_conversation_lifecycle() -> Token[ConversationResetRequest | None]:
+def begin_conversation_lifecycle() -> ConversationLifecycleToken:
     """Start one request-local lifecycle context."""
-    return _ACTIVE_RESET.set(None)
+    active_token = _LIFECYCLE_ACTIVE.set(True)
+    reset_token = _ACTIVE_RESET.set(None)
+    return ConversationLifecycleToken(active_token, reset_token)
 
 
-def end_conversation_lifecycle(
-    token: Token[ConversationResetRequest | None],
-) -> None:
+def end_conversation_lifecycle(token: ConversationLifecycleToken) -> None:
     """Restore the previous lifecycle context."""
-    _ACTIVE_RESET.reset(token)
+    _ACTIVE_RESET.reset(token.reset)
+    _LIFECYCLE_ACTIVE.reset(token.active)
+
+
+def conversation_lifecycle_active() -> bool:
+    """Return whether integration-owned conversation state is active in this context."""
+    return _LIFECYCLE_ACTIVE.get()
 
 
 def request_fresh_conversation(
     state_session_id: str | None, memory_session_id: str | None
 ) -> ConversationResetRequest:
     """Request a reset after the active response completes."""
+    if not conversation_lifecycle_active():
+        raise RuntimeError("No active conversation is available to reset")
     if state_session_id is None or memory_session_id is None:
         raise RuntimeError("No active conversation is available to reset")
     request = ConversationResetRequest(state_session_id, memory_session_id)
@@ -50,7 +69,7 @@ def request_fresh_conversation(
 
 def requested_conversation_reset() -> ConversationResetRequest | None:
     """Return the reset requested by the current execution context."""
-    return _ACTIVE_RESET.get()
+    return _ACTIVE_RESET.get() if conversation_lifecycle_active() else None
 
 
 async def async_reset_conversation_context(
