@@ -77,11 +77,7 @@ def latest_function_tool_for_execution(
         current_tools,
     )
     current_group = next(
-        (
-            group
-            for group in current_groups
-            if tool_name in group.get("functions", [])
-        ),
+        (group for group in current_groups if tool_name in group.get("functions", [])),
         None,
     )
     if current_group is not None and current_group.get("enabled", True) is not True:
