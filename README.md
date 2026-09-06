@@ -393,7 +393,9 @@ Provider payloads, attachments, tool data, and hidden reasoning are not stored a
 
 Skills are reusable instruction sets that can be made available to an agent.
 
-They are useful when you want the assistant to follow a particular workflow or set of instructions without adding all of that text permanently to the main prompt.
+They are useful when you want the assistant to follow a particular workflow or set of instructions without adding all of that text permanently to the main prompt. Selected Skills rely on the built-in `load_skill` Function Tool, so configuration changes that would make that loader unavailable are rejected rather than leaving Skills silently broken.
+
+The `download_skill` Home Assistant action normally downloads bundled example Skills from the Git tag matching the installed integration version. Development and testing installs can explicitly choose another source ref when needed.
 
 [Read about Skills](docs/features/skills.md)
 
@@ -424,6 +426,8 @@ A group can be:
 - **Load when needed**
 
 For a load-on-demand group, the model initially receives only a short description of the group. If it needs those functions, it can load their full definitions for the active conversation.
+
+A Function Group can also be disabled independently without changing the enabled state of its member Function Tools. While disabled, the group and its members are unavailable to the model. Re-enabling the group restores only the members that are individually enabled.
 
 This can reduce request size for agents with large tool collections, although the first use of a group may require an additional provider round-trip.
 
