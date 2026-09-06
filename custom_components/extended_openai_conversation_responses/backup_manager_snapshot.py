@@ -10,6 +10,7 @@ from homeassistant.util import dt as dt_util
 
 from .backup_snapshot import BackupSnapshotAdapter
 from .conversation_archive import ConversationArchive
+from .guest_mode import GuestModeManager
 from .knowledge import KnowledgeLibrary
 from .memory import PersistentMemory, _record_as_storage_dict
 from .request_rules import RequestRules, STORAGE_VERSION as REQUEST_RULES_STORAGE_VERSION
@@ -77,6 +78,11 @@ def _usage_snapshot(manager: UsageManager) -> dict[str, Any]:
     }
 
 
+def _guest_mode_snapshot(manager: GuestModeManager) -> dict[str, Any]:
+    _require_initialized(manager, "Guest Mode")
+    return {"schedule": asdict(manager._schedule) if manager._schedule else None}
+
+
 def _request_rules_snapshot(manager: RequestRules) -> dict[str, Any]:
     _require_initialized(manager, "Request Rules")
     return {
@@ -93,15 +99,10 @@ def manager_snapshot_participants(
     knowledge: KnowledgeLibrary,
     archive: ConversationArchive,
     usage: UsageManager,
+    guest_mode: GuestModeManager,
     request_rules: RequestRules,
 ) -> tuple[BackupSnapshotAdapter, ...]:
-    """Return deterministic adapters over managers that already own mutation locks.
-
-    Guest Mode is intentionally not included here because its current manager does
-    not yet serialize mutations behind an asyncio lock. PR3 must add that lock before
-    full-backup collection can claim a coherent point-in-time snapshot across every
-    durable category.
-    """
+    """Return deterministic adapters over all durable mutable agent managers."""
     return (
         BackupSnapshotAdapter(memory._lock, lambda: _memory_snapshot(memory)),
         BackupSnapshotAdapter(
@@ -111,6 +112,10 @@ def manager_snapshot_participants(
         BackupSnapshotAdapter(knowledge._lock, lambda: _knowledge_snapshot(knowledge)),
         BackupSnapshotAdapter(archive._lock, lambda: _archive_snapshot(archive)),
         BackupSnapshotAdapter(usage._lock, lambda: _usage_snapshot(usage)),
+        BackupSnapshotAdapter(
+            guest_mode._lock,
+            lambda: _guest_mode_snapshot(guest_mode),
+        ),
         BackupSnapshotAdapter(
             request_rules._lock,
             lambda: _request_rules_snapshot(request_rules),
