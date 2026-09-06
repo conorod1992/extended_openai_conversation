@@ -78,6 +78,7 @@ async def async_manage_knowledge_command(
             message.get("title", ""),
             message.get("description", ""),
             message.get("content", ""),
+            message.get("enabled", True),
         )
         return {"status": "created", "source": knowledge_source_as_dict(source)}
     if action == "update":
@@ -89,6 +90,7 @@ async def async_manage_knowledge_command(
             message.get("title"),
             message.get("description"),
             message.get("content"),
+            message.get("enabled"),
         )
         return {"status": "updated", "source": knowledge_source_as_dict(source)}
     if action == "delete":
@@ -111,6 +113,7 @@ async def async_manage_knowledge_command(
         vol.Optional("title"): str,
         vol.Optional("description"): str,
         vol.Optional("content"): str,
+        vol.Optional("enabled"): bool,
         vol.Optional("confirm"): bool,
     }
 )

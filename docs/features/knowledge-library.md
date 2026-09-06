@@ -31,9 +31,12 @@ Select a conversation agent, then use the panel to:
 
 - filter sources by title or description;
 - create a source with a title, description, and multiline content;
+- mark an individual source **Available to assistant** or disabled;
 - edit large source text in the resizable editor;
-- review character count and last-updated time;
+- review availability, character count and last-updated time;
 - delete a source after confirmation.
+
+New and existing sources are available by default. Disabling one source does **not** delete it. The source remains stored, visible, editable, included in backups, and can be re-enabled later. While disabled, it is excluded from the model-facing source catalogue, local search index and retrieval. `knowledge_get` cannot bypass the disabled state even if an exact source ID is supplied.
 
 Use a clear, specific title and a short description. Structure long content with headings, paragraphs, and one fact or procedure per line where practical. This improves lexical matching.
 
@@ -61,13 +64,13 @@ Safety glasses and ear defenders are in the PPE drawer.
 
 ## On-demand model tools
 
-When the feature is On and the selected agent has at least one source, the integration automatically supplies three built-in tools. They do not belong in custom-functions YAML.
+When the feature is On and the selected agent has at least one **available** source, the integration automatically supplies three built-in tools. They do not belong in custom-functions YAML.
 
-- `knowledge_search` searches titles, descriptions, and indexed content chunks. It returns bounded excerpts and source IDs, never whole large documents. Short subject keywords generally work better than full natural-language questions.
-- `knowledge_list` returns a bounded, pageable catalogue of source IDs, titles, descriptions, character counts, and update times. It never returns source content. The model can use it when a search fails or it does not know the terminology used by the library.
-- `knowledge_get` reads one source by exact ID. It returns at most 20,000 characters and includes pagination fields so the model can request another section.
+- `knowledge_search` searches titles, descriptions, and indexed content chunks of available sources. It returns bounded excerpts and source IDs, never whole large documents. Short subject keywords generally work better than full natural-language questions.
+- `knowledge_list` returns a bounded, pageable catalogue of available source IDs, titles, descriptions, character counts, and update times. It never returns source content. The model can use it when a search fails or it does not know the terminology used by the library.
+- `knowledge_get` reads one available source by exact ID. It returns at most 20,000 characters and includes pagination fields so the model can request another section.
 
-The tools work in both Responses and Chat Completions modes and use the existing maximum-function-call protection. No source catalogue or full source content is added to normal prompts. If the last source is deleted, the tools and Knowledge Library prompt instructions disappear on the next request.
+The tools work in both Responses and Chat Completions modes and use the existing maximum-function-call protection. No source catalogue or full source content is added to normal prompts. If the last available source is disabled or deleted, the tools and Knowledge Library prompt instructions disappear on the next request.
 
 ## Local storage and limits
 
@@ -85,7 +88,7 @@ Server-side limits are:
 
 ## Search behaviour and limitations
 
-This first version uses deterministic lexical retrieval. It normalizes words, indexes overlapping chunks, weights title and description matches, and boosts exact phrases. It works well when the question and source use related wording, but it does not understand synonyms as reliably as semantic embedding search.
+This version uses deterministic lexical retrieval. It normalizes words, indexes overlapping chunks, weights title and description matches, and boosts exact phrases. It works well when the question and source use related wording, but it does not understand synonyms as reliably as semantic embedding search.
 
 If expected information is not found:
 
@@ -93,9 +96,17 @@ If expected information is not found:
 - use explicit headings and terminology in the content;
 - split unrelated large material into focused sources;
 - verify that **Knowledge Library** is On for the same agent selected in the panel;
-- refresh the management panel and confirm the source is present.
+- refresh the management panel and confirm the source is marked **Available**.
 
-The assistant is instructed to start with short keyword searches, broaden an empty search once, and then use `knowledge_list` without a filter to inspect source metadata before concluding that the library lacks an answer. It must use only exact source IDs returned by Knowledge Library tools. Empty, blank, or unknown model-provided IDs are ignored; if none are valid, search falls back to the full agent library and reports that fallback in the tool result. If discovery still finds nothing relevant, the assistant should say so rather than inventing a household-specific detail.
+The assistant is instructed to start with short keyword searches, broaden an empty search once, and then use `knowledge_list` without a filter to inspect source metadata before concluding that the library lacks an answer. It must use only exact source IDs returned by Knowledge Library tools. Empty, blank, unknown, or disabled model-provided IDs are not treated as available sources. If discovery still finds nothing relevant, the assistant should say so rather than inventing a household-specific detail.
+
+## Guest Mode
+
+Guest Mode is an additional restriction on top of source availability. A guest allowlist can reduce the enabled sources visible to a guest, but it cannot make a disabled source available. To expose a source to a guest, the source itself must first be **Available to assistant** and then permitted by the applicable Guest Mode Knowledge policy.
+
+## Backup and restore
+
+The enabled/disabled state of each Knowledge source is included in agent backups and restored with the source. Backups created before per-source availability existed are compatible: sources without an availability field are restored as enabled.
 
 ## Trust and privacy
 

@@ -271,7 +271,9 @@ async def test_get_pagination_and_hard_limit() -> None:
 async def test_storage_migration_hook() -> None:
     store = KnowledgeStore.__new__(KnowledgeStore)
     old = [{"source_id": "one"}]
-    assert await store._async_migrate_func(0, 1, old) == {"sources": old}
+    assert await store._async_migrate_func(0, 1, old) == {
+        "sources": [{"source_id": "one", "enabled": True}]
+    }
     with pytest.raises(NotImplementedError):
         await store._async_migrate_func(99, 1, {})
 

@@ -379,7 +379,11 @@ async def test_replace_helpers_rebuild_canonical_state() -> None:
     knowledge = KnowledgeLibrary(FakeStorage({"sources": []}))
     await knowledge.async_initialize()
     await knowledge.async_replace_backup(knowledge_sources)
-    assert (await knowledge.async_backup_data()) == document["knowledge"]
+    knowledge_backup = await knowledge.async_backup_data()
+    assert knowledge_backup["sources"][0] == {
+        **document["knowledge"]["sources"][0],
+        "enabled": True,
+    }
 
     usage_manager = UsageManager(FakeStorage(), FakeStorage(), FakeStorage())
     await usage_manager.async_initialize()

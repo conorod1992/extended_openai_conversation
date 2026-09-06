@@ -43,5 +43,13 @@ export function renderGuide(panel) {
     .replaceAll(
       "Deleting a Function Group does not delete the functions inside it. Those functions simply return to the normal always-available collection unless you place them in another group.",
       "Disabling a Function Group does not disable its member Function Tools individually. Re-enabling the group restores only the members that are individually enabled. Deleting a Function Group is different: it does not delete the functions, but they become ungrouped and therefore return to the normal always-available collection unless you place them in another group. If an agent has Skills selected, Extended OpenAI also protects the built-in load_skill tool from becoming unavailable through tool state, group state, or a zero tool-call limit."
+    )
+    .replaceAll(
+      "Knowledge sources are stored with the agent and indexed locally so they can be searched. When Knowledge is enabled, the assistant can search the library, see which sources match and retrieve only the useful part of a source. The entire library is not added to every model request.",
+      "Knowledge sources are stored with the agent and indexed locally so they can be searched. Each source can also be disabled independently. A disabled source stays stored and editable, but it is removed from the assistant's Knowledge catalogue, search index and retrieval until you enable it again. When Knowledge is enabled, the assistant can search the available sources, see which sources match and retrieve only the useful part of a source. The entire library is not added to every model request."
+    )
+    .replaceAll(
+      "If you use Guest Mode, you can separately choose whether guests may use all Knowledge sources, no Knowledge sources, or only specific sources that you select.",
+      "If you use Guest Mode, you can separately choose whether guests may use all available Knowledge sources, no Knowledge sources, or only specific sources that you select. Guest permissions can only restrict availability further; they cannot make a disabled source available."
     );
 }

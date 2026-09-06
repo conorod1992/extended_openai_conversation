@@ -19,7 +19,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-STORAGE_VERSION = 1
+STORAGE_VERSION = 2
 STORAGE_KEY_PREFIX = f"{DOMAIN}.knowledge"
 MAX_SOURCES_PER_AGENT = 500
 MAX_TITLE_LENGTH = 120
@@ -51,6 +51,7 @@ class KnowledgeSource:
     content: str
     created_at: str
     updated_at: str
+    enabled: bool = True
 
 
 @dataclass(slots=True, frozen=True)
@@ -91,11 +92,8 @@ class KnowledgeStore(Store[dict[str, Any]]):
         self, old_major_version: int, old_minor_version: int, old_data: Any
     ) -> dict[str, Any]:
         """Migrate older knowledge payloads."""
-        if old_major_version == 0:
-            if isinstance(old_data, list):
-                return {"sources": old_data}
-            if isinstance(old_data, dict):
-                return {"sources": old_data.get("sources", [])}
+        if old_major_version in {0, 1}:
+            return _migrated_storage_payload(old_data)
         raise NotImplementedError
 
 
@@ -160,11 +158,18 @@ class KnowledgeLibrary:
 
     @property
     def source_count(self) -> int:
+        """Return the number of model-available sources."""
+        self._ensure_initialized()
+        return sum(source.enabled for source in self._sources.values())
+
+    @property
+    def total_source_count(self) -> int:
+        """Return all stored sources, including disabled sources."""
         self._ensure_initialized()
         return len(self._sources)
 
     async def async_list(self) -> list[dict[str, Any]]:
-        """List source metadata without returning source contents."""
+        """List all source metadata for management, including disabled sources."""
         self._ensure_initialized()
         sources = sorted(
             self._sources.values(), key=lambda source: source.updated_at, reverse=True
@@ -183,7 +188,7 @@ class KnowledgeLibrary:
         offset: int = 0,
         allowed_source_ids: frozenset[str] | None = None,
     ) -> dict[str, Any]:
-        """List bounded source metadata without scanning or returning content."""
+        """List bounded enabled source metadata without returning content."""
         self._ensure_initialized()
         if query is not None and not isinstance(query, str):
             raise ValueError("query must be a string")
@@ -199,7 +204,8 @@ class KnowledgeLibrary:
         sources = [
             source
             for source in self._sources.values()
-            if allowed_source_ids is None or source.source_id in allowed_source_ids
+            if source.enabled
+            and (allowed_source_ids is None or source.source_id in allowed_source_ids)
         ]
         if normalized_query:
             sources = [
@@ -226,10 +232,11 @@ class KnowledgeLibrary:
         }
 
     async def async_create(
-        self, title: str, description: str, content: str
+        self, title: str, description: str, content: str, enabled: bool = True
     ) -> KnowledgeSource:
         """Create and persist a source."""
         title, description, content = _validated_fields(title, description, content)
+        enabled = _validated_enabled(enabled)
         async with self._lock:
             self._ensure_initialized()
             if len(self._sources) >= MAX_SOURCES_PER_AGENT:
@@ -244,6 +251,7 @@ class KnowledgeLibrary:
                 content=content,
                 created_at=timestamp,
                 updated_at=timestamp,
+                enabled=enabled,
             )
             self._sources[source.source_id] = source
             self._index(source)
@@ -256,6 +264,7 @@ class KnowledgeLibrary:
         title: str | None = None,
         description: str | None = None,
         content: str | None = None,
+        enabled: bool | None = None,
     ) -> KnowledgeSource:
         """Update and immediately re-index one source."""
         async with self._lock:
@@ -266,6 +275,9 @@ class KnowledgeLibrary:
                 current.description if description is None else description,
                 current.content if content is None else content,
             )
+            new_enabled = (
+                current.enabled if enabled is None else _validated_enabled(enabled)
+            )
             self._unindex(source_id)
             updated = KnowledgeSource(
                 source_id=current.source_id,
@@ -274,6 +286,7 @@ class KnowledgeLibrary:
                 content=new_content,
                 created_at=current.created_at,
                 updated_at=dt_util.utcnow().isoformat(),
+                enabled=new_enabled,
             )
             self._sources[source_id] = updated
             self._index(updated)
@@ -297,7 +310,7 @@ class KnowledgeLibrary:
         source_ids: list[str] | None = None,
         limit: int = 5,
     ) -> list[SearchResult]:
-        """Search indexed chunks and return at most one excerpt per source."""
+        """Search enabled indexed chunks and return at most one excerpt per source."""
         self._ensure_initialized()
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise ValueError("limit must be an integer")
@@ -364,7 +377,7 @@ class KnowledgeLibrary:
     def resolve_source_filter(
         self, source_ids: list[str] | None
     ) -> tuple[set[str] | None, list[str]]:
-        """Resolve model-provided IDs, falling back safely when none are valid."""
+        """Resolve model-provided IDs against enabled sources only."""
         self._ensure_initialized()
         if not source_ids:
             return None, []
@@ -373,7 +386,8 @@ class KnowledgeLibrary:
         ignored: list[str] = []
         for requested_id in source_ids:
             normalized_id = requested_id.strip()
-            if normalized_id and normalized_id in self._sources:
+            source = self._sources.get(normalized_id)
+            if normalized_id and source is not None and source.enabled:
                 valid.add(normalized_id)
             else:
                 ignored.append(requested_id)
@@ -385,7 +399,7 @@ class KnowledgeLibrary:
         start_character: int = 0,
         max_characters: int = DEFAULT_GET_CHARACTERS,
     ) -> dict[str, Any]:
-        """Return a bounded, pageable source section for model use."""
+        """Return a bounded, pageable enabled source section for model use."""
         self._ensure_initialized()
         if not isinstance(start_character, int) or isinstance(start_character, bool):
             raise ValueError("start_character must be an integer")
@@ -394,7 +408,7 @@ class KnowledgeLibrary:
         if start_character < 0:
             raise ValueError("start_character must be at least 0")
         max_characters = max(500, min(max_characters, MAX_GET_CHARACTERS))
-        source = self._source(source_id)
+        source = self._available_source(source_id)
         total = len(source.content)
         start = min(start_character, total)
         content = source.content[start : start + max_characters]
@@ -420,6 +434,7 @@ class KnowledgeLibrary:
             "knowledge_backend": "home_assistant_store",
             "knowledge_storage_version": STORAGE_VERSION,
             "knowledge_source_count": len(self._sources),
+            "knowledge_enabled_source_count": self.source_count,
             "knowledge_total_character_count": sum(
                 len(source.content) for source in self._sources.values()
             ),
@@ -478,7 +493,16 @@ class KnowledgeLibrary:
             raise ValueError("knowledge source not found")
         return source
 
+    def _available_source(self, source_id: str) -> KnowledgeSource:
+        """Return a source only when it is available to model retrieval."""
+        source = self._sources.get(source_id)
+        if source is None or not source.enabled:
+            raise ValueError("knowledge source not found")
+        return source
+
     def _index(self, source: KnowledgeSource) -> None:
+        if not source.enabled:
+            return
         title_description_tokens = _tokens(f"{source.title} {source.description}")
         for chunk_id, (start, text) in enumerate(_split_chunks(source.content)):
             chunk = _Chunk(
@@ -545,7 +569,7 @@ async def async_get_knowledge(
     return library
 
 
-def knowledge_source_as_dict(source: KnowledgeSource) -> dict[str, str]:
+def knowledge_source_as_dict(source: KnowledgeSource) -> dict[str, Any]:
     """Serialize a complete source."""
     return asdict(source)
 
@@ -556,6 +580,7 @@ def source_summary(source: KnowledgeSource) -> dict[str, Any]:
         "source_id": source.source_id,
         "title": source.title,
         "description": source.description,
+        "enabled": source.enabled,
         "created_at": source.created_at,
         "updated_at": source.updated_at,
         "character_count": len(source.content),
@@ -676,9 +701,34 @@ def knowledge_tools() -> list[dict[str, Any]]:
     ]
 
 
+def _migrated_storage_payload(old_data: Any) -> dict[str, Any]:
+    """Normalize legacy stores and make previous sources explicitly enabled."""
+    raw_sources = (
+        old_data
+        if isinstance(old_data, list)
+        else old_data.get("sources", [])
+        if isinstance(old_data, Mapping)
+        else []
+    )
+    if not isinstance(raw_sources, list):
+        raw_sources = []
+    migrated: list[Any] = []
+    for raw in raw_sources:
+        if isinstance(raw, Mapping):
+            record = dict(raw)
+            record.setdefault("enabled", True)
+            migrated.append(record)
+        else:
+            migrated.append(raw)
+    return {"sources": migrated}
+
+
 def _source_from_stored(raw: Any) -> KnowledgeSource:
     if not isinstance(raw, Mapping):
         raise ValueError("record must be an object")
+    enabled = raw.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled must be a boolean")
     source = KnowledgeSource(
         source_id=raw["source_id"],
         title=raw["title"],
@@ -686,6 +736,7 @@ def _source_from_stored(raw: Any) -> KnowledgeSource:
         content=raw["content"],
         created_at=raw["created_at"],
         updated_at=raw["updated_at"],
+        enabled=enabled,
     )
     if not all(
         isinstance(value, str)
@@ -703,6 +754,12 @@ def _source_from_stored(raw: Any) -> KnowledgeSource:
     if not source.source_id or len(source.source_id) > 128:
         raise ValueError("invalid source ID")
     return source
+
+
+def _validated_enabled(value: Any) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError("enabled must be a boolean")
+    return value
 
 
 def _validated_fields(

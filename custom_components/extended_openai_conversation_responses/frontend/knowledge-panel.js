@@ -43,6 +43,7 @@ class ExtendedOpenAIKnowledgePanel extends HTMLElement {
         select, input, textarea, button { font:inherit; }
         select, input, textarea { width:100%; color:var(--primary-text-color); background:var(--card-background-color); border:1px solid var(--divider-color); border-radius:8px; padding:10px 12px; }
         select, input { min-height:42px; }
+        input[type="checkbox"] { width:auto; min-height:0; padding:0; }
         textarea { min-height:45vh; max-height:65vh; resize:vertical; line-height:1.5; font-family:var(--code-font-family, ui-monospace, monospace); }
         button { min-height:40px; border-radius:8px; padding:0 16px; cursor:pointer; }
         .primary { color:var(--text-primary-color, #fff); background:var(--primary-color); border:1px solid var(--primary-color); }
@@ -69,6 +70,8 @@ class ExtendedOpenAIKnowledgePanel extends HTMLElement {
         .dialog-title { padding:20px 22px 8px; font-size:20px; font-weight:500; }
         .dialog-body { padding:10px 22px 20px; overflow:auto; max-height:calc(100vh - 150px); }
         .field + .field { margin-top:14px; }
+        .availability-label { display:flex; align-items:center; gap:9px; color:var(--primary-text-color); font-size:14px; }
+        .field-help { color:var(--secondary-text-color); font-size:12px; line-height:1.4; margin-top:5px; }
         .counter { margin-top:5px; text-align:right; color:var(--secondary-text-color); font-size:12px; }
         .dialog-actions { display:flex; justify-content:flex-end; gap:8px; padding:12px 22px 18px; border-top:1px solid var(--divider-color); }
         .dialog-actions .danger { margin-right:auto; }
@@ -103,6 +106,7 @@ class ExtendedOpenAIKnowledgePanel extends HTMLElement {
           <div class="dialog-body">
             <div class="field"><label for="title">Title</label><input id="title" maxlength="120" required></div>
             <div class="field"><label for="description">Description</label><input id="description" maxlength="500"></div>
+            <div class="field"><label class="availability-label" for="enabled"><input id="enabled" type="checkbox" checked> Available to assistant</label><div class="field-help">Disabled sources stay stored and editable but are excluded from Knowledge search, browsing and retrieval.</div></div>
             <div class="field"><label for="content">Content</label><textarea id="content" maxlength="100000" required spellcheck="true"></textarea><div class="counter" id="counter">0 / 100,000 characters</div></div>
           </div>
           <div class="dialog-actions">
@@ -195,12 +199,15 @@ class ExtendedOpenAIKnowledgePanel extends HTMLElement {
       description.textContent = source.description || "No description";
       const metadata = document.createElement("div");
       metadata.className = "metadata";
+      const availability = document.createElement("span");
+      availability.className = "badge";
+      availability.textContent = source.enabled === false ? "Disabled" : "Available";
       const size = document.createElement("span");
       size.className = "badge";
       size.textContent = `${Number(source.character_count).toLocaleString()} characters`;
       const updated = document.createElement("span");
       updated.textContent = `Updated ${this._formatDate(source.updated_at)}`;
-      metadata.append(size, updated);
+      metadata.append(availability, size, updated);
       body.append(title, description, metadata);
       const actions = document.createElement("div");
       actions.className = "actions";
@@ -221,6 +228,7 @@ class ExtendedOpenAIKnowledgePanel extends HTMLElement {
     root.querySelector("#title").value = "";
     root.querySelector("#description").value = "";
     root.querySelector("#content").value = "";
+    root.querySelector("#enabled").checked = true;
     root.querySelector("#delete").hidden = true;
     root.querySelector("#editorTitle").textContent = "Add Knowledge source";
     if (sourceId) {
@@ -230,6 +238,7 @@ class ExtendedOpenAIKnowledgePanel extends HTMLElement {
         root.querySelector("#title").value = response.source.title;
         root.querySelector("#description").value = response.source.description;
         root.querySelector("#content").value = response.source.content;
+        root.querySelector("#enabled").checked = response.source.enabled !== false;
         root.querySelector("#delete").hidden = false;
         root.querySelector("#editorTitle").textContent = "Edit Knowledge source";
       } catch (error) { this._showStatus(error.message || String(error), true); return; }
@@ -246,6 +255,7 @@ class ExtendedOpenAIKnowledgePanel extends HTMLElement {
       title: root.querySelector("#title").value,
       description: root.querySelector("#description").value,
       content: root.querySelector("#content").value,
+      enabled: root.querySelector("#enabled").checked,
     };
     if (this._editing) data.source_id = this._editing.source_id;
     try {

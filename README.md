@@ -337,7 +337,7 @@ Examples might include:
 - inventories
 - reference documents
 
-The model can search the library when it needs information from it. Knowledge sources are read-only from the model's point of view.
+The model can search the library when it needs information from it. Knowledge sources are read-only from the model's point of view. Individual sources can be disabled without deleting them; disabled sources remain stored and editable but are unavailable to the model until re-enabled.
 
 [Read the Knowledge Library guide](docs/features/knowledge-library.md)
 
