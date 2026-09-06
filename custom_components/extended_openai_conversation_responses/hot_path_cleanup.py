@@ -254,7 +254,7 @@ def _install_broadcast_cold_path_guard() -> None:
 
 
 def _install_request_rule_two_pass_matching() -> None:
-    """Skip fuzzy scoring whenever deterministic Request Rule matching succeeds."""
+    """Keep deterministic-first matching while preserving bounded sentence work."""
     from . import request_rules as rules
 
     rank = {
@@ -266,7 +266,10 @@ def _install_request_rule_two_pass_matching() -> None:
     }
 
     def match(manager: Any, text: str) -> Any:
+        rules.validate_match_input(text)
         normalized_candidates: dict[tuple[bool, bool], str] = {}
+        sentence_text: Any = None
+        sentence_budget = rules.MatchBudget()
 
         def candidate(settings: dict[str, Any]) -> str:
             key = (
@@ -282,12 +285,17 @@ def _install_request_rule_two_pass_matching() -> None:
 
         deterministic: list[tuple[tuple[int, int, int], Any]] = []
         for rule, settings, phrases in manager._compiled:
-            normalized = (
-                "" if rule["match_type"] == "sentence_pattern" else candidate(settings)
-            )
+            if rule["match_type"] == "sentence_pattern":
+                if sentence_text is None:
+                    sentence_text = rules.prepare_match_text(text)
+                normalized = ""
+            else:
+                normalized = candidate(settings)
             for compiled in phrases:
-                if compiled.sentence is not None:
-                    slots = rules._match_compiled_sentence(compiled, text)
+                if compiled.sentence_pattern is not None:
+                    slots = rules._match_compiled_sentence(
+                        compiled, sentence_text, sentence_budget
+                    )
                     if slots is None:
                         continue
                     result = rules.RuleMatch(
@@ -324,8 +332,6 @@ def _install_request_rule_two_pass_matching() -> None:
                 continue
             normalized = candidate(settings)
             for compiled in phrases:
-                if compiled.sentence is not None:
-                    continue
                 phrase = cast(str, compiled.normalized)
                 score = rules._fuzzy_score(normalized, phrase, rule["match_type"])
                 if score >= settings["fuzzy_threshold"]:
@@ -337,5 +343,13 @@ def _install_request_rule_two_pass_matching() -> None:
             return max(fuzzy, key=lambda item: item[0])[1]
         return None
 
+    async def async_match(manager: Any, hass: Any, text: str) -> Any:
+        """Keep matcher CPU off-loop, including lightweight test doubles."""
+        executor = getattr(hass, "async_add_executor_job", None)
+        if callable(executor):
+            return await executor(manager.match, text)
+        return await asyncio.to_thread(manager.match, text)
+
     manager_type: Any = rules.RequestRules
     manager_type.match = match
+    manager_type.async_match = async_match
