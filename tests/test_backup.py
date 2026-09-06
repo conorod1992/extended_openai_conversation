@@ -1,5 +1,6 @@
 """Tests for versioned per-agent full backup and replacement restore."""
 
+import asyncio
 from copy import deepcopy
 from datetime import timedelta
 from types import SimpleNamespace
@@ -19,6 +20,9 @@ from custom_components.extended_openai_conversation_responses.backup import (
     async_create_backup,
     async_restore_backup,
     inspect_backup,
+)
+from custom_components.extended_openai_conversation_responses.backup_snapshot import (
+    BackupSnapshotAdapter,
 )
 from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeLibrary,
@@ -196,6 +200,7 @@ def _document() -> dict:
                 }
             ],
         },
+        "guest_mode": {"schedule": None},
         "request_rules": {
             "storage_version": 1,
             "defaults": {
@@ -316,22 +321,31 @@ async def test_create_full_backup_contains_only_durable_safe_state(
     config["prompt"] = "Never reveal sk-1234567890abcdef"
     entry = SimpleNamespace(entry_id="entry-1")
     subentry = SimpleNamespace(subentry_id="agent-1", title="Jarvis", data=config)
-    for getter, section in (
-        ("async_get_memory", "memories"),
-        ("async_get_temporary_memory", "temporary_memories"),
-        ("async_get_knowledge", "knowledge"),
-        ("async_get_archive", "archive"),
-        ("async_get_usage", "usage"),
-        ("async_get_request_rules", "request_rules"),
-    ):
-        monkeypatch.setattr(
-            f"custom_components.extended_openai_conversation_responses.backup.{getter}",
-            AsyncMock(
-                return_value=SimpleNamespace(
-                    async_backup_data=AsyncMock(return_value=source[section])
-                )
-            ),
+    managers = tuple(object() for _ in range(7))
+    sections = (
+        "memories",
+        "temporary_memories",
+        "knowledge",
+        "archive",
+        "usage",
+        "guest_mode",
+        "request_rules",
+    )
+    participants = tuple(
+        BackupSnapshotAdapter(
+            asyncio.Lock(),
+            lambda section=section: deepcopy(source[section]),
         )
+        for section in sections
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.backup._managers",
+        AsyncMock(return_value=managers),
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.backup.manager_snapshot_participants",
+        lambda *args: participants,
+    )
 
     result = await async_create_backup(hass, entry, subentry)
 
@@ -339,6 +353,7 @@ async def test_create_full_backup_contains_only_durable_safe_state(
     assert document["format"] == BACKUP_FORMAT
     assert document["agent"]["config"]["function_groups"][0]["id"] == "lighting"
     assert document["memories"]["memories"][0]["memory_id"] == "memory-1"
+    assert document["guest_mode"] == {"schedule": None}
     assert "sk-1234567890abcdef" not in result["json"]
     assert "loaded_function_groups" not in result["json"]
     assert result["filename"].startswith("jarvis-full-backup-")
