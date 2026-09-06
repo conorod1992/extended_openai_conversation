@@ -69,7 +69,7 @@ def latest_function_tool_for_execution(
         ),
         None,
     )
-    if current_tool is None:
+    if not isinstance(current_tool, dict):
         return function_tool
 
     current_groups = validate_function_groups(
