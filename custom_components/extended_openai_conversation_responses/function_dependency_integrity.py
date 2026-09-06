@@ -13,14 +13,12 @@ from homeassistant.exceptions import HomeAssistantError
 
 from . import management_ui, request_rules
 from .agent_config import configured_function_tools_from_data, function_tool_enabled
-from .const import (
-    CONF_GUEST_ALLOWED_GROUP_IDS,
-    DOMAIN,
-    SERVICE_CALL_FUNCTION,
-)
+from .const import CONF_GUEST_ALLOWED_GROUP_IDS, DOMAIN, SERVICE_CALL_FUNCTION
 from .function_execution import async_validate_function_arguments
 
-_TOOL_MUTATIONS = frozenset({"save", "set_enabled", "delete", "save_group", "delete_group"})
+_TOOL_MUTATIONS = frozenset(
+    {"save", "set_enabled", "delete", "save_group", "delete_group"}
+)
 _TEMPLATE_MARKERS = ("{{", "{%", "{#")
 _ACTIVE_CONFIG_REVISION: ContextVar[str | None] = ContextVar(
     "function_dependency_config_revision", default=None
@@ -81,7 +79,9 @@ def _mask_dynamic_schema(value: Any, schema: Mapping[str, Any]) -> dict[str, Any
             deepcopy(dict(properties)) if isinstance(properties, Mapping) else {}
         )
         for key, item in value.items():
-            child_schema = properties.get(key) if isinstance(properties, Mapping) else None
+            child_schema = (
+                properties.get(key) if isinstance(properties, Mapping) else None
+            )
             if isinstance(child_schema, Mapping):
                 masked_properties[key] = _mask_dynamic_schema(item, child_schema)
             elif isinstance(additional, Mapping):
@@ -103,8 +103,7 @@ def _mask_dynamic_schema(value: Any, schema: Mapping[str, Any]) -> dict[str, Any
         # The supported schema subset has a single items schema, so loosen it for
         # this structural pass. Static siblings are validated independently below.
         result["items"] = {}
-        if "uniqueItems" in result:
-            result.pop("uniqueItems", None)
+        result.pop("uniqueItems", None)
     return result
 
 
@@ -131,7 +130,9 @@ async def _async_validate_static_descendants(
         properties = schema.get("properties", {})
         additional = schema.get("additionalProperties", True)
         for key, item in value.items():
-            child_schema = properties.get(key) if isinstance(properties, Mapping) else None
+            child_schema = (
+                properties.get(key) if isinstance(properties, Mapping) else None
+            )
             if not isinstance(child_schema, Mapping) and isinstance(additional, Mapping):
                 child_schema = additional
             if isinstance(child_schema, Mapping):
@@ -175,7 +176,7 @@ def _rule_script_actions(rule: Mapping[str, Any]):
     actions = action.get("actions", []) if isinstance(action, Mapping) else []
     if not isinstance(actions, Sequence) or isinstance(actions, (str, bytes)):
         return iter(())
-    return request_rules._iter_script_actions(  # noqa: SLF001
+    return request_rules._iter_script_actions(
         cast(Sequence[Mapping[str, Any]], actions)
     )
 
@@ -296,7 +297,9 @@ def wrap_persist_function_configuration(original):
                 if new_id is None:
                     changed_ids = [item for item in current_ids if item != old_id]
                 else:
-                    changed_ids = [new_id if item == old_id else item for item in current_ids]
+                    changed_ids = [
+                        new_id if item == old_id else item for item in current_ids
+                    ]
                 updates[CONF_GUEST_ALLOWED_GROUP_IDS] = list(dict.fromkeys(changed_ids))
 
         return original(
@@ -347,7 +350,7 @@ def wrap_management_command(original):
                     hass, entry_id, subentry_id
                 )
                 rule_id = message.get("rule_id") if action == "update" else None
-                candidate = management_ui._prepare_request_rule(  # noqa: SLF001
+                candidate = management_ui._prepare_request_rule(
                     message.get("rule"), rule_id if isinstance(rule_id, str) else None
                 )
                 await async_validate_request_rule_functions(
@@ -372,9 +375,7 @@ def wrap_management_command(original):
         # Missing revisions remain accepted for older direct callers, but every current
         # management frontend mutation supplies one. When present it is checked both
         # now and again at the final persistence seam.
-        management_ui._require_agent_config_revision(  # noqa: SLF001
-            subentry, revision
-        )
+        management_ui._require_agent_config_revision(subentry, revision)
 
         group_mutation: tuple[str, str | None] | None = None
         if action == "save_group":
@@ -411,20 +412,16 @@ def install_function_dependency_integrity() -> None:
     if _INSTALLED:
         return
 
-    setattr(
-        request_rules.RequestRules,
-        "function_references",
-        recursive_function_references,
+    request_rules.RequestRules.function_references = (  # type: ignore[method-assign]
+        recursive_function_references
     )
-    setattr(
-        request_rules.RequestRules,
-        "async_rename_function_reference",
-        async_rename_function_reference_recursive,
+    request_rules.RequestRules.async_rename_function_reference = (  # type: ignore[method-assign]
+        async_rename_function_reference_recursive
     )
-    management_ui._persist_function_configuration = wrap_persist_function_configuration(  # type: ignore[attr-defined]
-        management_ui._persist_function_configuration  # noqa: SLF001
+    management_ui._persist_function_configuration = (  # type: ignore[misc]
+        wrap_persist_function_configuration(management_ui._persist_function_configuration)
     )
-    management_ui.async_management_command = wrap_management_command(
+    management_ui.async_management_command = wrap_management_command(  # type: ignore[misc]
         management_ui.async_management_command
     )
     _INSTALLED = True
