@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass
+from heapq import heappop, heappush
+from itertools import count
 import re
 import unicodedata
 
@@ -146,14 +147,78 @@ class CompiledSentencePattern:
         work = budget or MatchBudget()
         capture_index = {name: index for index, name in enumerate(self.capture_names)}
         empty_starts = (-1,) * len(self.capture_names)
+        empty_lengths = (-1,) * len(self.capture_names)
         empty_values: tuple[str | None, ...] = (None,) * len(self.capture_names)
-        queue: deque[
-            tuple[int, int, tuple[int, ...], tuple[str | None, ...]]
-        ] = deque([(self.start_state, 0, empty_starts, empty_values)])
+        serial = count()
+        queue: list[
+            tuple[
+                tuple[int, ...],
+                int,
+                int,
+                int,
+                int,
+                tuple[int, ...],
+                tuple[int, ...],
+                tuple[str | None, ...],
+            ]
+        ] = []
+
+        def push(
+            state_index: int,
+            pos: int,
+            starts: tuple[int, ...],
+            lengths: tuple[int, ...],
+            values: tuple[str | None, ...],
+            penalty: int,
+        ) -> None:
+            # Free-text captures are deterministic: prefer the shortest value for
+            # the earliest capture, then the shortest value for the next capture.
+            # The branch penalty keeps preferred NFA branches depth-first when no
+            # capture length distinguishes them, avoiding combinatorial optional
+            # exploration while preserving a hard shared work budget.
+            capture_priority = tuple(
+                lengths[index]
+                if lengths[index] >= 0
+                else max(0, pos - starts[index])
+                if starts[index] >= 0
+                else 0
+                for index in range(len(self.capture_names))
+            )
+            heappush(
+                queue,
+                (
+                    capture_priority,
+                    penalty,
+                    next(serial),
+                    state_index,
+                    pos,
+                    starts,
+                    lengths,
+                    values,
+                ),
+            )
+
+        push(
+            self.start_state,
+            0,
+            empty_starts,
+            empty_lengths,
+            empty_values,
+            0,
+        )
         seen: set[tuple[int, int, tuple[int, ...]]] = set()
 
         while queue:
-            state_index, pos, starts, values = queue.popleft()
+            (
+                _capture_priority,
+                penalty,
+                _serial,
+                state_index,
+                pos,
+                starts,
+                lengths,
+                values,
+            ) = heappop(queue)
             key = (state_index, pos, starts)
             if key in seen:
                 continue
@@ -172,20 +237,30 @@ class CompiledSentencePattern:
                 continue
 
             if state.kind == "split":
-                # out1 is preferred. Optional/capture exits are compiled there so
-                # omitted optionals and shortest viable free captures win ties.
+                # out1 is the compiler's preferred branch. out2 gets a small
+                # priority penalty so equivalent optional paths do not all fan out
+                # before the preferred path can finish.
                 if state.out1 is not None:
-                    queue.appendleft((state.out1, pos, starts, values))
+                    push(state.out1, pos, starts, lengths, values, penalty)
                 if state.out2 is not None:
-                    queue.append((state.out2, pos, starts, values))
+                    push(state.out2, pos, starts, lengths, values, penalty + 1)
                 continue
 
             if state.kind == "capture_start":
                 assert state.name is not None and state.out is not None
                 index = capture_index[state.name]
-                updated = list(starts)
-                updated[index] = pos
-                queue.appendleft((state.out, pos, tuple(updated), values))
+                updated_starts = list(starts)
+                updated_starts[index] = pos
+                updated_lengths = list(lengths)
+                updated_lengths[index] = -1
+                push(
+                    state.out,
+                    pos,
+                    tuple(updated_starts),
+                    tuple(updated_lengths),
+                    values,
+                    penalty,
+                )
                 continue
 
             if state.kind == "capture_end":
@@ -200,10 +275,17 @@ class CompiledSentencePattern:
                     continue
                 updated_starts = list(starts)
                 updated_starts[index] = -1
+                updated_lengths = list(lengths)
+                updated_lengths[index] = pos - start
                 updated_values = list(values)
                 updated_values[index] = captured
-                queue.appendleft(
-                    (state.out, pos, tuple(updated_starts), tuple(updated_values))
+                push(
+                    state.out,
+                    pos,
+                    tuple(updated_starts),
+                    tuple(updated_lengths),
+                    tuple(updated_values),
+                    penalty,
                 )
                 continue
 
@@ -213,7 +295,14 @@ class CompiledSentencePattern:
             if state.kind == "literal":
                 assert state.value is not None
                 if folded.startswith(state.value, pos):
-                    queue.append((state.out, pos + len(state.value), starts, values))
+                    push(
+                        state.out,
+                        pos + len(state.value),
+                        starts,
+                        lengths,
+                        values,
+                        penalty,
+                    )
                 continue
 
             if state.kind == "space":
@@ -222,21 +311,28 @@ class CompiledSentencePattern:
                 # at an input boundary. This makes natural `[optional] word`
                 # syntax work without allowing required middle separators to vanish.
                 if pos < len(folded) and folded[pos] == " ":
-                    queue.append((state.out, pos + 1, starts, values))
+                    push(state.out, pos + 1, starts, lengths, values, penalty)
                 if pos in {0, len(folded)} or (pos > 0 and folded[pos - 1] == " "):
-                    queue.appendleft((state.out, pos, starts, values))
+                    push(state.out, pos, starts, lengths, values, penalty)
                 continue
 
             if state.kind == "any":
                 if pos < len(folded):
-                    queue.append((state.out, pos + 1, starts, values))
+                    push(state.out, pos + 1, starts, lengths, values, penalty)
                 continue
 
             if state.kind == "enum":
                 for choice in state.values:
                     work.consume()
                     if folded.startswith(choice, pos):
-                        queue.append((state.out, pos + len(choice), starts, values))
+                        push(
+                            state.out,
+                            pos + len(choice),
+                            starts,
+                            lengths,
+                            values,
+                            penalty,
+                        )
                 continue
 
             if state.kind == "number":
@@ -246,7 +342,14 @@ class CompiledSentencePattern:
                 number = int(match.group())
                 assert state.minimum is not None and state.maximum is not None
                 if state.minimum <= number <= state.maximum:
-                    queue.append((state.out, match.end(), starts, values))
+                    push(
+                        state.out,
+                        match.end(),
+                        starts,
+                        lengths,
+                        values,
+                        penalty,
+                    )
                 continue
 
             raise SentenceMatchLimitError(f"unknown compiled state {state.kind}")
@@ -554,7 +657,7 @@ def _contains_adjacent_free_captures(expression: object) -> bool:
 def _required_fragments(expression: object) -> set[str]:
     if isinstance(expression, _Literal):
         value = expression.value.strip().casefold()
-        return {value} if len(value) >= 2 else set()
+        return {value} if value else set()
     if isinstance(expression, (_Optional, _Capture)):
         return set()
     if isinstance(expression, _Sequence):
