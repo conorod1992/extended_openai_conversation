@@ -1,8 +1,13 @@
 """Tests for ScrapeFunction using yaml definitions."""
 
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from bs4 import BeautifulSoup
 import pytest
+
+from homeassistant.components import scrape
+from homeassistant.const import CONF_VALUE_TEMPLATE
 
 # Import Tools and test helpers
 from custom_components.extended_openai_conversation_responses.functions import (
@@ -35,8 +40,6 @@ class TestScrapeFunctionYaml:
                 "custom_components.extended_openai_conversation_responses.functions.web.scrape.coordinator.ScrapeCoordinator"
             ) as mock_coordinator_class,
         ):
-            from bs4 import BeautifulSoup
-
             mock_rest_data = AsyncMock()
             mock_rest.return_value = mock_rest_data
 
@@ -71,3 +74,31 @@ class TestScrapeFunctionYaml:
 
             # Should return scraped data
             assert result is not None
+
+    async def test_html_extraction_uses_executor_before_template_render(self, function):
+        """Keep BeautifulSoup work off-loop while rendering HA templates on-loop."""
+        data = BeautifulSoup('<span class="value">raw value</span>', "html.parser")
+        value_template = MagicMock()
+        value_template.async_render_with_possible_json_value.return_value = "rendered"
+        sensor_config = {
+            scrape.const.CONF_SELECT: ".value",
+            CONF_VALUE_TEMPLATE: value_template,
+        }
+        arguments = {"query": "example"}
+
+        def execute_extraction(target, *args):
+            value_template.async_render_with_possible_json_value.assert_not_called()
+            return target(*args)
+
+        executor = AsyncMock(side_effect=execute_extraction)
+        fake_hass = SimpleNamespace(async_add_executor_job=executor)
+
+        result = await function._async_update_from_rest_data(
+            fake_hass, data, sensor_config, arguments
+        )
+
+        assert result == "rendered"
+        executor.assert_awaited_once_with(function._extract_value, data, sensor_config)
+        value_template.async_render_with_possible_json_value.assert_called_once_with(
+            "raw value", None, arguments
+        )
