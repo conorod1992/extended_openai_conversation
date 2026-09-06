@@ -90,6 +90,7 @@ from .context_summary_performance import install_deferred_context_summary
 from .debug import DebugOpenAIClientProxy, install_debug_instrumentation
 from .debug_ui import async_setup_debug_ui
 from .delayed_tools import async_setup_delayed_tools
+from .function_dependency_integrity import install_function_dependency_integrity
 from .guest_performance import install_guest_policy_fast_path
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import get_authenticated_client, supports_openai_hosted_tools
@@ -131,6 +132,7 @@ def _register_split_frontend_modules() -> None:
         "management-navigation-search.js",
         "usage-input-footprint.js",
         "management-provider-credentials.js",
+        "management-function-dependencies.js",
     )
     modules = tuple(
         dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
@@ -159,6 +161,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_management_loading_optimizations()
     install_input_footprint()
     install_management_permissions()
+    # Wrap the effective management dispatcher after permission/performance layers.
+    install_function_dependency_integrity()
     install_safety_hardening()
     install_configurable_regex_isolation()
     install_model_search_hardening()
