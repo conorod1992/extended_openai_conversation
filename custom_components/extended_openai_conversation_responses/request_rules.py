@@ -615,13 +615,21 @@ class RequestRules:
             )
             if rule["match_type"] == "sentence_pattern":
                 try:
-                    phrases = [_compile_sentence_pattern(item) for item in rule["phrases"]]
+                    phrases = [
+                        _compile_sentence_pattern(item) for item in rule["phrases"]
+                    ]
                     phrase_slots = [
-                        set(cast(CompiledSentencePattern, item.sentence_pattern).capture_names)
+                        set(
+                            cast(
+                                CompiledSentencePattern, item.sentence_pattern
+                            ).capture_names
+                        )
                         for item in phrases
                     ]
                     if any(names != phrase_slots[0] for names in phrase_slots[1:]):
-                        raise ValueError("all sentence variants must capture the same slots")
+                        raise ValueError(
+                            "all sentence variants must capture the same slots"
+                        )
                     state_count = sum(
                         cast(CompiledSentencePattern, item.sentence_pattern).state_count
                         for item in phrases
@@ -636,9 +644,7 @@ class RequestRules:
                 except ValueError as err:
                     diagnostic = f"Sentence pattern is inactive: {err}"
                     self._diagnostics[rule["id"]] = diagnostic
-                    _LOGGER.warning(
-                        "Request Rule %s is inactive: %s", rule["id"], err
-                    )
+                    _LOGGER.warning("Request Rule %s is inactive: %s", rule["id"], err)
                     continue
                 if rule["enabled"]:
                     total_pattern_states += state_count
@@ -846,13 +852,13 @@ def validate_rule(
             ]
         else:
             try:
-                phrase_slots = [set(sentence_capture_names(phrase)) for phrase in phrases]
+                phrase_slots = [
+                    set(sentence_capture_names(phrase)) for phrase in phrases
+                ]
             except SentencePatternError:
                 sentence_valid = False
                 phrase_slots = []
-        if phrase_slots and any(
-            names != phrase_slots[0] for names in phrase_slots[1:]
-        ):
+        if phrase_slots and any(names != phrase_slots[0] for names in phrase_slots[1:]):
             if validate_sentence_pattern:
                 raise ValueError("all sentence variants must capture the same slots")
             sentence_valid = False
