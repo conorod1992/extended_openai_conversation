@@ -410,7 +410,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 api_provider=new_data.get(CONF_API_PROVIDER),
             )
         except OpenAIError as err:
-            log_provider_failure(_LOGGER, "Provider configuration validation failed", err)
+            log_provider_failure(
+                _LOGGER, "Provider configuration validation failed", err
+            )
             raise HomeAssistantError(
                 f"Provider configuration validation failed: {provider_user_message(err)}"
             ) from err
