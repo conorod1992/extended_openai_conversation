@@ -164,14 +164,19 @@ async def test_ha_default_reset_ignores_returned_conversation_id_once() -> None:
 
 
 def test_lifecycle_tool_is_builtin_and_reserved() -> None:
-    tools = assemble_integration_function_tools(
-        {},
-        set(),
-        memory_scope_available=False,
-        temporary_scope_available=False,
-        knowledge_available=False,
-        archive_available=False,
-    )
+    token = begin_conversation_lifecycle()
+    try:
+        tools = assemble_integration_function_tools(
+            {},
+            set(),
+            memory_scope_available=False,
+            temporary_scope_available=False,
+            knowledge_available=False,
+            archive_available=False,
+        )
+    finally:
+        end_conversation_lifecycle(token)
+
     lifecycle = next(
         tool
         for tool in tools
