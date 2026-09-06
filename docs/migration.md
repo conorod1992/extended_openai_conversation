@@ -66,6 +66,12 @@ Automations and scripts that explicitly reference the original namespace will co
 
 For this fork, use the `extended_openai_conversation_responses` service/event namespace where applicable.
 
+## Legacy entry migration inside this fork
+
+Very early installations of this fork used a single legacy config-entry layout. When one of those genuine legacy entries is upgraded, its existing settings become the Conversation subentry and the migration also creates the default AI Task subentry that a fresh installation receives.
+
+This compatibility step applies only while converting that original legacy layout. It does not add a missing AI Task to modern entries, so an AI Task that was deliberately removed later is not recreated.
+
 ## Memory migration inside this fork
 
 When upgrading older versions of this fork, legacy memory settings migrate to **Off**, **Manual**, or **Automatic** without deleting existing memories.
