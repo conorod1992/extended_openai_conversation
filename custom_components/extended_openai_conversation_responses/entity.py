@@ -113,7 +113,7 @@ def _annotation_value(annotation: object, field: str) -> Any:
     return getattr(annotation, field, None)
 
 
-def _normalize_url_citation(annotation: object, field: str = "") -> dict[str, Any] | None:
+def _normalize_url_citation(annotation: object) -> dict[str, Any] | None:
     """Normalize the documented URL citation fields across SDK minor versions."""
     if _annotation_value(annotation, "type") != "url_citation":
         return None
@@ -749,15 +749,17 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 response_text = control_call.tool_args.get("response")
                 decision = control_call.tool_args.get("continue_conversation")
                 if not isinstance(response_text, str) or not isinstance(decision, bool):
-                    err = ParseArgumentsFailed(json.dumps(control_call.tool_args))
+                    parse_error = ParseArgumentsFailed(
+                        json.dumps(control_call.tool_args)
+                    )
                     append_unresolved_tool_results(
                         chat_log,
                         self.entity_id,
                         round_tool_calls,
                         failed_call_id=control_call.id,
-                        error=err,
+                        error=parse_error,
                     )
-                    raise err
+                    raise parse_error
 
                 # A finalizer emitted beside an action tool is premature. Remove it
                 # from history and wait for the post-tool response to decide.
