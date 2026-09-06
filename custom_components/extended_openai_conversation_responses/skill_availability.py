@@ -42,11 +42,7 @@ def function_group_for_tool(
 ) -> dict[str, Any] | None:
     """Return the configured group containing a tool, if any."""
     return next(
-        (
-            group
-            for group in groups
-            if tool_name in group.get("functions", [])
-        ),
+        (group for group in groups if tool_name in group.get("functions", [])),
         None,
     )
 
