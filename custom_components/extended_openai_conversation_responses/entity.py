@@ -62,19 +62,14 @@ from .context import (
     partition_history,
     select_summary_history,
 )
-from .exceptions import FunctionNotFound, ParseArgumentsFailed, TokenLengthExceededError
+from .exceptions import ParseArgumentsFailed, TokenLengthExceededError
 from .function_call_budget import FunctionCallBudget
 from .function_execution import (
     async_validate_function_arguments,
     split_legacy_execution_delay,
 )
-from .function_tool_resolution import latest_function_tool_for_execution
 from .functions import get_function
 from .helpers import get_api_mode, get_model_config
-from .parallel_tool_execution import (
-    async_execute_parallel_safe_batch,
-    resolve_parallel_safe_batch,
-)
 from .provider_errors import provider_stream_error, provider_transport_error
 from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
 from .request import (
@@ -86,6 +81,11 @@ from .request import (
 )
 from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
 from .speech import async_streaming_speech_cleanup
+from .tool_exchange import (
+    append_unresolved_tool_results,
+    async_execute_tool_exchange,
+    retained_tool_calls_since,
+)
 from .usage import RequestUsage, UsageManager, extract_usage
 
 if TYPE_CHECKING:
@@ -113,7 +113,7 @@ def _annotation_value(annotation: object, field: str) -> Any:
     return getattr(annotation, field, None)
 
 
-def _normalize_url_citation(annotation: object) -> dict[str, Any] | None:
+def _normalize_url_citation(annotation: object, field: str = "") -> dict[str, Any] | None:
     """Normalize the documented URL citation fields across SDK minor versions."""
     if _annotation_value(annotation, "type") != "url_citation":
         return None
@@ -572,6 +572,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             request_usage = RequestUsage()
             request_started = time.monotonic()
+            existing_content_ids = {id(content) for content in chat_log.content}
+            pending_tool_calls: list[llm.ToolInput] = []
             try:
                 if api_mode == API_MODE_RESPONSES:
                     responses_stream = cast(
@@ -598,9 +600,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         chat_log, chat_stream, request_usage
                     )
 
-                existing_content_ids = {id(content) for content in chat_log.content}
-                pending_tool_calls: list[llm.ToolInput] = []
-
                 with async_streaming_speech_cleanup(chat_log, options):
                     async for content in chat_log.async_add_delta_content_stream(
                         self.entity_id, transformed_stream
@@ -611,6 +610,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         ):
                             pending_tool_calls.extend(content.tool_calls)
             except BaseException as err:
+                append_unresolved_tool_results(
+                    chat_log,
+                    self.entity_id,
+                    retained_tool_calls_since(chat_log, existing_content_ids),
+                    error=err,
+                )
                 if self._usage is not None:
                     await self._usage.async_record_request(
                         successful=False,
@@ -628,26 +633,41 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     raise provider_transport_error(err) from err
                 raise
             else:
-                if self._usage is not None:
-                    await self._usage.async_record_request(
-                        successful=True,
-                        usage=request_usage,
-                        provider=getattr(self.entry, "data", {}).get(
-                            CONF_API_PROVIDER, DEFAULT_API_PROVIDER
-                        ),
-                        model=model,
-                        api_mode=api_mode,
-                        duration_ms=int((time.monotonic() - request_started) * 1000),
-                        request_stage="initial" if n_requests == 0 else "after_tool",
-                        tool_calls_requested=len(pending_tool_calls),
-                        web_search_used=any(
-                            getattr(content, "native", None) is not None
-                            and getattr(getattr(content, "native", None), "type", "")
-                            == "web_search_call"
-                            for content in chat_log.content
-                            if id(content) not in existing_content_ids
-                        ),
+                try:
+                    if self._usage is not None:
+                        await self._usage.async_record_request(
+                            successful=True,
+                            usage=request_usage,
+                            provider=getattr(self.entry, "data", {}).get(
+                                CONF_API_PROVIDER, DEFAULT_API_PROVIDER
+                            ),
+                            model=model,
+                            api_mode=api_mode,
+                            duration_ms=int(
+                                (time.monotonic() - request_started) * 1000
+                            ),
+                            request_stage=(
+                                "initial" if n_requests == 0 else "after_tool"
+                            ),
+                            tool_calls_requested=len(pending_tool_calls),
+                            web_search_used=any(
+                                getattr(content, "native", None) is not None
+                                and getattr(
+                                    getattr(content, "native", None), "type", ""
+                                )
+                                == "web_search_call"
+                                for content in chat_log.content
+                                if id(content) not in existing_content_ids
+                            ),
+                        )
+                except BaseException as err:
+                    append_unresolved_tool_results(
+                        chat_log,
+                        self.entity_id,
+                        pending_tool_calls,
+                        error=err,
                     )
+                    raise
                 observed_input_tokens = max(
                     observed_input_tokens,
                     request_usage.input_tokens or request_usage.total_tokens,
@@ -659,6 +679,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     len(pending_tool_calls),
                     ", ".join(call.tool_name for call in pending_tool_calls),
                 )
+            round_tool_calls = list(pending_tool_calls)
 
             control_calls = [
                 tool_input
@@ -688,20 +709,30 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             if loader_calls:
                 loader_rounds += 1
                 for loader_call in loader_calls:
-                    if function_group_loader is None:
-                        loader_result = {
-                            "status": "error",
-                            "error": "Function-group loading is unavailable",
-                        }
-                    elif loader_rounds > MAX_FUNCTION_GROUP_LOAD_ROUNDS:
-                        loader_result = {
-                            "status": "error",
-                            "error": "Function-group loader safety limit reached",
-                        }
-                    else:
-                        loader_result = function_group_loader(
-                            loader_call.tool_args.get("groups")
+                    try:
+                        if function_group_loader is None:
+                            loader_result = {
+                                "status": "error",
+                                "error": "Function-group loading is unavailable",
+                            }
+                        elif loader_rounds > MAX_FUNCTION_GROUP_LOAD_ROUNDS:
+                            loader_result = {
+                                "status": "error",
+                                "error": "Function-group loader safety limit reached",
+                            }
+                        else:
+                            loader_result = function_group_loader(
+                                loader_call.tool_args.get("groups")
+                            )
+                    except BaseException as err:
+                        append_unresolved_tool_results(
+                            chat_log,
+                            self.entity_id,
+                            round_tool_calls,
+                            failed_call_id=loader_call.id,
+                            error=err,
                         )
+                        raise
                     chat_log.async_add_assistant_content_without_tools(
                         conversation.ToolResultContent(
                             agent_id=self.entity_id,
@@ -718,7 +749,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 response_text = control_call.tool_args.get("response")
                 decision = control_call.tool_args.get("continue_conversation")
                 if not isinstance(response_text, str) or not isinstance(decision, bool):
-                    raise ParseArgumentsFailed(json.dumps(control_call.tool_args))
+                    err = ParseArgumentsFailed(json.dumps(control_call.tool_args))
+                    append_unresolved_tool_results(
+                        chat_log,
+                        self.entity_id,
+                        round_tool_calls,
+                        failed_call_id=control_call.id,
+                        error=err,
+                    )
+                    raise err
 
                 # A finalizer emitted beside an action tool is premature. Remove it
                 # from history and wait for the post-tool response to decide.
@@ -737,58 +776,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             if id(content) not in draft_content_ids
                         ]
 
-            function_tools_by_name = _index_function_tools(request_function_tools)
-            execution_tools_by_name: dict[str, dict[str, Any]] = {}
-            for tool_input in pending_tool_calls:
-                function_tool = function_tools_by_name.get(tool_input.tool_name)
-                if function_tool is None:
-                    continue
-                execution_tools_by_name[tool_input.tool_name] = (
-                    latest_function_tool_for_execution(self, function_tool)
-                )
-
-            parallel_batch = resolve_parallel_safe_batch(
-                pending_tool_calls, execution_tools_by_name
+            await async_execute_tool_exchange(
+                self,
+                chat_log,
+                pending_tool_calls,
+                request_function_tools,
+                function_call_budget,
+                llm_context,
+                exposed_entities,
+                function_tools_factory=function_tools_factory,
             )
-            if parallel_batch is not None:
-                function_call_budget.claim_many(
-                    tool_input.tool_name for _, tool_input in parallel_batch
-                )
-                _LOGGER.debug(
-                    "Executing %d integration-owned read-only tool calls concurrently",
-                    len(parallel_batch),
-                )
-                tool_results = await async_execute_parallel_safe_batch(
-                    parallel_batch,
-                    lambda function_tool, tool_input: self._execute_function_tool(
-                        function_tool,
-                        tool_input,
-                        llm_context,
-                        exposed_entities,
-                    ),
-                )
-                for tool_result_content in tool_results:
-                    chat_log.async_add_assistant_content_without_tools(
-                        tool_result_content
-                    )
-            else:
-                for tool_input in pending_tool_calls:
-                    function_tool = execution_tools_by_name.get(tool_input.tool_name)
-
-                    if function_tool is None:
-                        raise FunctionNotFound(tool_input.tool_name)
-
-                    function_call_budget.claim(tool_input.tool_name)
-                    tool_result_content = await self._execute_function_tool(
-                        function_tool,
-                        tool_input,
-                        llm_context,
-                        exposed_entities,
-                    )
-
-                    chat_log.async_add_assistant_content_without_tools(
-                        tool_result_content
-                    )
 
             if api_mode == API_MODE_RESPONSES:
                 messages.extend(
