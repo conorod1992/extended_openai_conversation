@@ -29,21 +29,21 @@ _ACTIVE_OWNER_SCOPE_ID: ContextVar[str | None] = ContextVar(
 _FRONTEND_MODULE = "management-temporary-memory.js"
 
 
-def _valid_owner_scope_id(value: Any) -> str | None:
+def _valid_owner_scope_id(value: object) -> str | None:
     """Return one canonical retained owner, or None when it is not valid."""
     if not isinstance(value, str):
         return None
-    value = value.strip()
-    if value == SHARED_HOUSEHOLD_SCOPE_ID:
-        return value
-    if value.startswith("user:"):
-        user_id = value[5:]
-        if user_id and len(value) <= 128:
-            return value
+    candidate = value.strip()
+    if candidate == SHARED_HOUSEHOLD_SCOPE_ID:
+        return candidate
+    if candidate.startswith("user:"):
+        user_id = candidate[5:]
+        if user_id and len(candidate) <= 128:
+            return candidate
     return None
 
 
-def _require_owner_scope_id(value: Any = None) -> str:
+def _require_owner_scope_id(value: object = None) -> str:
     """Resolve and validate the retained owner for one operation."""
     owner = value if value is not None else _ACTIVE_OWNER_SCOPE_ID.get()
     valid = _valid_owner_scope_id(owner)
@@ -54,7 +54,7 @@ def _require_owner_scope_id(value: Any = None) -> str:
     return valid
 
 
-def _owner_from_resolved_scope(scope: Any) -> str | None:
+def _owner_from_resolved_scope(scope: object) -> str | None:
     """Translate only the established data-scope contract into a retained owner."""
     if scope is None:
         return None
@@ -70,13 +70,15 @@ def _owner_from_resolved_scope(scope: Any) -> str | None:
 def _normalize_record_owner(
     record: TemporaryMemoryRecord,
 ) -> TemporaryMemoryRecord | None:
-    """Preserve proven ownership and conservatively migrate only canonical legacy data."""
+    """Preserve proven ownership and conservatively migrate canonical legacy data."""
     if record.owner_scope_id is not None:
         owner = _valid_owner_scope_id(record.owner_scope_id)
         if owner is None:
             return None
-        return record if owner == record.owner_scope_id else replace(
-            record, owner_scope_id=owner
+        return (
+            record
+            if owner == record.owner_scope_id
+            else replace(record, owner_scope_id=owner)
         )
 
     # Pre-owner records whose scope itself was a canonical retained scope are safe
@@ -117,13 +119,12 @@ async def _normalize_loaded_records(manager: TemporaryMemory) -> None:
 
         overflow = max(0, len(normalized) - MAX_ACTIVE_RECORDS)
         if overflow:
-            normalized = sorted(
-                normalized, key=_owner_record_sort_key, reverse=True
-            )[:MAX_ACTIVE_RECORDS]
+            normalized = sorted(normalized, key=_owner_record_sort_key, reverse=True)[
+                :MAX_ACTIVE_RECORDS
+            ]
 
         replacement = {record.memory_id: record for record in normalized}
-        changed = replacement != original
-        if not changed:
+        if replacement == original:
             return
 
         manager._records = replacement
@@ -133,10 +134,16 @@ async def _normalize_loaded_records(manager: TemporaryMemory) -> None:
             manager._records = original
             raise
 
-        manager.invalid_owners_pruned = (
-            getattr(manager, "invalid_owners_pruned", 0) + invalid
+        setattr(
+            manager,
+            "invalid_owners_pruned",
+            getattr(manager, "invalid_owners_pruned", 0) + invalid,
         )
-        manager.overflow_pruned = getattr(manager, "overflow_pruned", 0) + overflow
+        setattr(
+            manager,
+            "overflow_pruned",
+            getattr(manager, "overflow_pruned", 0) + overflow,
+        )
         if invalid:
             _LOGGER.warning(
                 "Removed %s Temporary Memory record(s) without a valid retained owner",
@@ -168,12 +175,22 @@ def _records_for_owner(
     return records
 
 
+def _required_message_string(message: dict[str, Any], key: str) -> str:
+    """Return one required WebSocket identifier."""
+    value = message.get(key)
+    if not isinstance(value, str) or not value:
+        raise HomeAssistantError(f"{key} is required")
+    return value
+
+
 def _install_manager_contract() -> None:
-    """Harden the effective TemporaryMemory methods after persistence/read wrappers."""
+    """Harden effective TemporaryMemory methods after persistence/read wrappers."""
     from . import temporary_memory as temporary_module
 
-    # Make owner matching authoritative. Continuity remains useful record metadata,
-    # but is not an authorization or ownership boundary.
+    temporary_any: Any = temporary_module
+    memory_cls: Any = TemporaryMemory
+
+    # Continuity remains useful record metadata, but never authorizes retained data.
     def matches_owner(
         record: TemporaryMemoryRecord,
         _scope_id: str,
@@ -185,23 +202,22 @@ def _install_manager_contract() -> None:
     def clean_owner(owner_scope_id: str | None) -> str:
         return _require_owner_scope_id(owner_scope_id)
 
-    temporary_module._matches_owner = matches_owner
-    temporary_module._clean_owner_scope_id = clean_owner
+    temporary_any._matches_owner = matches_owner
+    temporary_any._clean_owner_scope_id = clean_owner
 
-    current_initialize = TemporaryMemory.async_initialize
+    current_initialize = memory_cls.async_initialize
 
     @wraps(current_initialize)
     async def async_initialize(
         manager: TemporaryMemory, *args: Any, **kwargs: Any
-    ) -> Any:
-        result = await current_initialize(manager, *args, **kwargs)
+    ) -> None:
+        await current_initialize(manager, *args, **kwargs)
         await _normalize_loaded_records(manager)
-        return result
 
-    TemporaryMemory.async_initialize = async_initialize  # type: ignore[method-assign]
+    memory_cls.async_initialize = async_initialize
 
     def wrap_owner_method(name: str, *, read: bool = False) -> None:
-        current = getattr(TemporaryMemory, name)
+        current = getattr(memory_cls, name)
 
         @wraps(current)
         async def wrapped(
@@ -223,17 +239,17 @@ def _install_manager_contract() -> None:
                 )
             return await current(manager, *args, owner_scope_id=owner, **kwargs)
 
-        setattr(TemporaryMemory, name, wrapped)
+        setattr(memory_cls, name, wrapped)
 
     wrap_owner_method("async_active", read=True)
     wrap_owner_method("async_add")
     wrap_owner_method("async_update")
     wrap_owner_method("async_delete")
 
-    current_snapshot = TemporaryMemory.async_active_snapshot
+    current_snapshot = memory_cls.async_active_snapshot
 
     @wraps(current_snapshot)
-    def async_active_snapshot(
+    async def async_active_snapshot(
         manager: TemporaryMemory,
         scope_id: str,
         owner_scope_id: str | None = None,
@@ -245,9 +261,11 @@ def _install_manager_contract() -> None:
         )
         if owner is None:
             return []
-        return current_snapshot(manager, scope_id, owner)
+        return await current_snapshot(
+            manager, scope_id, owner_scope_id=owner
+        )
 
-    TemporaryMemory.async_active_snapshot = async_active_snapshot  # type: ignore[method-assign]
+    memory_cls.async_active_snapshot = async_active_snapshot
 
     async def async_list_owned(
         manager: TemporaryMemory, owner_scope_id: str
@@ -282,9 +300,7 @@ def _install_manager_contract() -> None:
     ) -> int:
         owner = _require_owner_scope_id(owner_scope_id)
         if not memory_ids or len(memory_ids) > MAX_DELETE_RECORDS:
-            raise ValueError(
-                f"memory_ids must contain 1 to {MAX_DELETE_RECORDS} IDs"
-            )
+            raise ValueError(f"memory_ids must contain 1 to {MAX_DELETE_RECORDS} IDs")
         return await manager.async_delete(owner, memory_ids, owner_scope_id=owner)
 
     def owner_counts(manager: TemporaryMemory) -> dict[str, int]:
@@ -297,13 +313,12 @@ def _install_manager_contract() -> None:
                 counts[owner] += 1
         return dict(counts)
 
-    TemporaryMemory.async_list_owned = async_list_owned  # type: ignore[attr-defined]
-    TemporaryMemory.async_update_owned = async_update_owned  # type: ignore[attr-defined]
-    TemporaryMemory.async_delete_owned = async_delete_owned  # type: ignore[attr-defined]
-    TemporaryMemory.owner_counts = owner_counts  # type: ignore[attr-defined]
+    memory_cls.async_list_owned = async_list_owned
+    memory_cls.async_update_owned = async_update_owned
+    memory_cls.async_delete_owned = async_delete_owned
+    memory_cls.owner_counts = owner_counts
 
-    # Existing list methods are management-facing. Make them owner-scoped and
-    # deliberately uncapped instead of reusing the model injection selector.
+    # Management listing deliberately ignores model-injection record/character caps.
     async def async_list(
         manager: TemporaryMemory,
         _scope_id: str | None = None,
@@ -319,10 +334,10 @@ def _install_manager_contract() -> None:
         owner = _require_owner_scope_id(owner_scope_id)
         return await async_list_owned(manager, owner)
 
-    TemporaryMemory.async_list = async_list  # type: ignore[method-assign]
-    TemporaryMemory.async_list_all = async_list_all  # type: ignore[method-assign]
+    memory_cls.async_list = async_list
+    memory_cls.async_list_all = async_list_all
 
-    current_stats = TemporaryMemory.stats
+    current_stats = memory_cls.stats
 
     @wraps(current_stats)
     def stats(manager: TemporaryMemory) -> dict[str, int]:
@@ -335,9 +350,9 @@ def _install_manager_contract() -> None:
         )
         return result
 
-    TemporaryMemory.stats = stats  # type: ignore[method-assign]
+    memory_cls.stats = stats
 
-    current_validate_backup = TemporaryMemory.validate_backup_data
+    current_validate_backup = memory_cls.validate_backup_data
 
     def validate_backup_data(payload: Any) -> list[TemporaryMemoryRecord]:
         records = current_validate_backup(payload)
@@ -347,11 +362,9 @@ def _install_manager_contract() -> None:
             if (migrated := _normalize_record_owner(record)) is not None
         ]
 
-    TemporaryMemory.validate_backup_data = staticmethod(  # type: ignore[method-assign]
-        validate_backup_data
-    )
+    memory_cls.validate_backup_data = staticmethod(validate_backup_data)
 
-    current_replace_backup = TemporaryMemory.async_replace_backup
+    current_replace_backup = memory_cls.async_replace_backup
 
     @wraps(current_replace_backup)
     async def async_replace_backup(
@@ -363,19 +376,22 @@ def _install_manager_contract() -> None:
             if (migrated := _normalize_record_owner(record)) is not None
         ]
         if len(normalized) > MAX_ACTIVE_RECORDS:
-            normalized = sorted(
-                normalized, key=_owner_record_sort_key, reverse=True
-            )[:MAX_ACTIVE_RECORDS]
+            normalized = sorted(normalized, key=_owner_record_sort_key, reverse=True)[
+                :MAX_ACTIVE_RECORDS
+            ]
         await current_replace_backup(manager, normalized)
 
-    TemporaryMemory.async_replace_backup = async_replace_backup  # type: ignore[method-assign]
+    memory_cls.async_replace_backup = async_replace_backup
 
 
 def _install_snapshot_contract() -> None:
     """Require owner context on the cold/read-only snapshot path as well."""
+    from . import management_ui
     from . import temporary_memory as temporary_module
 
-    current = temporary_module.async_read_temporary_memory_snapshot
+    temporary_any: Any = temporary_module
+    management: Any = management_ui
+    current = temporary_any.async_read_temporary_memory_snapshot
 
     @wraps(current)
     async def read_snapshot(
@@ -393,33 +409,33 @@ def _install_snapshot_contract() -> None:
         if owner is None:
             return []
         return await current(
-            hass, entry_id, subentry_id, scope_id, owner_scope_id=owner
+            hass,
+            entry_id,
+            subentry_id,
+            scope_id,
+            owner_scope_id=owner,
         )
 
-    temporary_module.async_read_temporary_memory_snapshot = read_snapshot
+    temporary_any.async_read_temporary_memory_snapshot = read_snapshot
 
-    # Replace imported aliases that the management preview module captured.
-    from . import management_ui
-
-    if getattr(management_ui, "async_read_temporary_memory_snapshot", None) is current:
-        management_ui.async_read_temporary_memory_snapshot = read_snapshot
+    # Replace imported aliases captured before this effective-path wrapper installs.
+    if getattr(management, "async_read_temporary_memory_snapshot", None) is current:
+        management.async_read_temporary_memory_snapshot = read_snapshot
 
 
 def _install_conversation_contract() -> None:
     """Bind the resolved Personal/Shared owner around effective live runtime calls."""
     from . import conversation
 
-    current_retrieve = (
-        conversation.ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories
-    )
-    current_tool = (
-        conversation.ExtendedOpenAIAgentEntity._async_execute_temporary_memory_tool
-    )
+    conversation_any: Any = conversation
+    entity_cls: Any = conversation.ExtendedOpenAIAgentEntity
+    current_retrieve = entity_cls._async_retrieve_temporary_memories
+    current_tool = entity_cls._async_execute_temporary_memory_tool
 
     def request_owner() -> str | None:
-        if conversation._ACTIVE_TEMPORARY_SCOPE.get() is None:
+        if conversation_any._ACTIVE_TEMPORARY_SCOPE.get() is None:
             return None
-        return _owner_from_resolved_scope(conversation._ACTIVE_SCOPE.get())
+        return _owner_from_resolved_scope(conversation_any._ACTIVE_SCOPE.get())
 
     @wraps(current_retrieve)
     async def retrieve(entity: Any) -> list[TemporaryMemoryRecord]:
@@ -447,24 +463,20 @@ def _install_conversation_contract() -> None:
         finally:
             _ACTIVE_OWNER_SCOPE_ID.reset(token)
 
-    conversation.ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories = (  # type: ignore[method-assign]
-        retrieve
-    )
-    conversation.ExtendedOpenAIAgentEntity._async_execute_temporary_memory_tool = (  # type: ignore[method-assign]
-        execute_tool
-    )
+    entity_cls._async_retrieve_temporary_memories = retrieve
+    entity_cls._async_execute_temporary_memory_tool = execute_tool
 
 
 def _install_management_contract() -> None:
     """Expose owner-scoped complete Temporary Memory management."""
     from . import management_ui
 
-    modules = tuple(
-        dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE))
+    management: Any = management_ui
+    management.MANAGEMENT_FRONTEND_MODULES = tuple(
+        dict.fromkeys((*management.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE))
     )
-    management_ui.MANAGEMENT_FRONTEND_MODULES = modules
 
-    current_preview = management_ui._async_preview_effective_request
+    current_preview = management._async_preview_effective_request
 
     @wraps(current_preview)
     async def preview(
@@ -480,14 +492,11 @@ def _install_management_contract() -> None:
         finally:
             _ACTIVE_OWNER_SCOPE_ID.reset(token)
 
-    management_ui._async_preview_effective_request = preview
-    if (
-        getattr(management_ui, "_async_preview_effective_prompt", None)
-        is current_preview
-    ):
-        management_ui._async_preview_effective_prompt = preview
+    management._async_preview_effective_request = preview
+    if getattr(management, "_async_preview_effective_prompt", None) is current_preview:
+        management._async_preview_effective_prompt = preview
 
-    current_command = management_ui.async_management_command
+    current_command = management.async_management_command
 
     async def command(
         hass: Any,
@@ -502,10 +511,10 @@ def _install_management_contract() -> None:
             "temporary_update",
             "temporary_delete",
         }:
-            entry, subentry = management_ui.entry_and_agent(
-                hass, message.get("entry_id"), message.get("subentry_id")
-            )
-            selected_scope_id = management_ui._selected_scope(
+            entry_id = _required_message_string(message, "entry_id")
+            subentry_id = _required_message_string(message, "subentry_id")
+            entry, subentry = management.entry_and_agent(hass, entry_id, subentry_id)
+            selected_scope_id = management._selected_scope(
                 user_id, is_admin, message.get("scope_id")
             )
             owner = _valid_owner_scope_id(selected_scope_id)
@@ -513,11 +522,12 @@ def _install_management_contract() -> None:
                 raise HomeAssistantError(
                     "Temporary Memory can only be managed in Personal or Shared scopes"
                 )
-            manager = await management_ui.async_get_temporary_memory(
+            manager = await management.async_get_temporary_memory(
                 hass, entry.entry_id, subentry.subentry_id
             )
+            manager_any: Any = manager
             if action == "temporary_list":
-                records = await manager.async_list_owned(owner)
+                records = await manager_any.async_list_owned(owner)
                 return {
                     "memories": [
                         temporary_memory_as_dict(record, include_scope=True)
@@ -531,14 +541,16 @@ def _install_management_contract() -> None:
             if not isinstance(memory_id, str) or not memory_id:
                 raise HomeAssistantError("memory_id is required")
             if action == "temporary_delete":
-                deleted = await manager.async_delete_owned(owner, [memory_id])
+                deleted = await manager_any.async_delete_owned(owner, [memory_id])
                 return {"deleted": deleted}
             content = message.get("content")
             category = message.get("category")
             expires_at = message.get("expires_at")
-            if (content is not None and not isinstance(content, str)) or (
-                category is not None and not isinstance(category, str)
-            ) or (expires_at is not None and not isinstance(expires_at, str)):
+            if (
+                (content is not None and not isinstance(content, str))
+                or (category is not None and not isinstance(category, str))
+                or (expires_at is not None and not isinstance(expires_at, str))
+            ):
                 raise HomeAssistantError(
                     "content, category, and expires_at must be strings when supplied"
                 )
@@ -547,7 +559,7 @@ def _install_management_contract() -> None:
                     "at least one Temporary Memory field is required"
                 )
             try:
-                record = await manager.async_update_owned(
+                record = await manager_any.async_update_owned(
                     owner, memory_id, content, expires_at, category
                 )
             except ValueError as err:
@@ -561,13 +573,16 @@ def _install_management_contract() -> None:
         if section == "scopes" and action == "catalog":
             scopes = result.get("scopes") if isinstance(result, dict) else None
             if isinstance(scopes, list):
-                entry, subentry = management_ui.entry_and_agent(
-                    hass, message.get("entry_id"), message.get("subentry_id")
+                entry_id = _required_message_string(message, "entry_id")
+                subentry_id = _required_message_string(message, "subentry_id")
+                entry, subentry = management.entry_and_agent(
+                    hass, entry_id, subentry_id
                 )
-                manager = await management_ui.async_get_temporary_memory(
+                manager = await management.async_get_temporary_memory(
                     hass, entry.entry_id, subentry.subentry_id
                 )
-                counts = manager.owner_counts()
+                manager_any = manager
+                counts = manager_any.owner_counts()
                 for scope in scopes:
                     if isinstance(scope, dict):
                         scope["temporary_memory_count"] = counts.get(
@@ -575,7 +590,7 @@ def _install_management_contract() -> None:
                         )
         return result
 
-    management_ui.async_management_command = command  # type: ignore[assignment]
+    management.async_management_command = command
 
 
 def install_temporary_memory_ownership() -> None:
