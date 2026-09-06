@@ -53,22 +53,26 @@ async def test_snapshot_boundary_blocks_mutation_until_all_copies_are_taken() ->
     mutation_started = asyncio.Event()
     mutation_finished = asyncio.Event()
 
-    async def mutate_second() -> None:
+    async def mutate_first() -> None:
         mutation_started.set()
-        async with second.backup_snapshot_lock:
-            second.value = 99
+        async with first.backup_snapshot_lock:
+            first.value = 99
         mutation_finished.set()
 
-    await first.backup_snapshot_lock.acquire()
+    # Make the collector acquire the first participant and wait on the second. A
+    # concurrent writer then has to wait behind the collector's already-held lock.
+    await second.backup_snapshot_lock.acquire()
     collector = asyncio.create_task(async_collect_point_in_time_snapshot(participants))
     await asyncio.sleep(0)
-    mutator = asyncio.create_task(mutate_second())
+    assert first.backup_snapshot_lock.locked()
+
+    mutator = asyncio.create_task(mutate_first())
     await mutation_started.wait()
     assert not mutation_finished.is_set()
 
-    first.backup_snapshot_lock.release()
+    second.backup_snapshot_lock.release()
     snapshots = await collector
     await mutator
 
     assert snapshots == ({"one": 10}, {"two": 20})
-    assert second.value == 99
+    assert first.value == 99
