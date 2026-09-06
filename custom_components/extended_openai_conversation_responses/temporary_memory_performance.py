@@ -24,7 +24,9 @@ def install_temporary_memory_read_fast_path() -> None:
 
     manager_type: Any = TemporaryMemory
 
-    async def async_active(manager: Any, scope_id: str) -> list[Any]:
+    async def async_active(
+        manager: Any, scope_id: str, owner_scope_id: str | None = None
+    ) -> list[Any]:
         expired_count = 0
         async with manager._lock:
             now = dt_util.utcnow()
@@ -38,7 +40,9 @@ def install_temporary_memory_read_fast_path() -> None:
             if expired:
                 expired_count = len(expired)
                 manager.expired_pruned += expired_count
-            result = cast(list[Any], manager._active_snapshot_locked(scope_id))
+            result = cast(
+                list[Any], manager._active_snapshot_locked(scope_id, owner_scope_id)
+            )
 
         if expired_count:
             _schedule_pruned_state_save(manager)
