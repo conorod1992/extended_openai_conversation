@@ -232,6 +232,11 @@ class ConversationContinuity:
                 self._memory_bundles.pop(f"continuity:{key}", None)
             return session is not None
 
+    async def async_clear_memory_bundle(self, session_key: str) -> bool:
+        """Forget cached memory references without deleting any stored memories."""
+        async with self._lock:
+            return self._memory_bundles.pop(session_key, None) is not None
+
     async def async_get_memory_bundle(
         self, session_key: str, timeout_minutes: int
     ) -> list[tuple[str, str]] | None:
