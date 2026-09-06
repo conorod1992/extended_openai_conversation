@@ -305,9 +305,7 @@ async def async_set_function_groups_enabled(
     for group in groups:
         if group["id"] in requested:
             group["enabled"] = enabled
-    normalized = merge_agent_config(
-        dict(subentry.data), {CONF_FUNCTION_GROUPS: groups}
-    )
+    normalized = merge_agent_config(dict(subentry.data), {CONF_FUNCTION_GROUPS: groups})
     hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
 
 
