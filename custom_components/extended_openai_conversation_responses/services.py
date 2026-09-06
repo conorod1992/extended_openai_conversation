@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import shutil
 from typing import Any, cast
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from uuid import uuid4
 
 from openai._exceptions import OpenAIError
@@ -31,8 +31,13 @@ from homeassistant.helpers import (
 )
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.loader import async_get_integration
 
-from .agent_config import merge_agent_config, validate_function_tools
+from .agent_config import (
+    merge_agent_config,
+    validate_function_groups,
+    validate_function_tools,
+)
 from .const import (
     API_MODE_OPTIONS,
     API_MODE_RESPONSES,
@@ -40,6 +45,7 @@ from .const import (
     CONF_API_PROVIDER,
     CONF_API_VERSION,
     CONF_BASE_URL,
+    CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_ORGANIZATION,
     CONF_SKIP_AUTHENTICATION,
@@ -79,6 +85,9 @@ from .skill_resource_limits import (
     async_read_bounded_json,
     async_read_bounded_response,
 )
+
+SERVICE_ENABLE_FUNCTION_GROUPS = "enable_function_groups"
+SERVICE_DISABLE_FUNCTION_GROUPS = "disable_function_groups"
 
 QUERY_IMAGE_SCHEMA = vol.Schema(
     {
@@ -128,6 +137,7 @@ CALL_FUNCTION_SCHEMA = vol.Schema(
 DOWNLOAD_SKILL_SCHEMA = vol.Schema(
     {
         vol.Required("skill_name"): cv.string,
+        vol.Optional("source_ref"): vol.All(cv.string, vol.Length(min=1, max=128)),
     }
 )
 
@@ -168,6 +178,15 @@ FUNCTION_TOOL_STATE_SCHEMA = vol.Schema(
         **MEMORY_AGENT_FIELDS,
         vol.Required("functions"): vol.All(
             cv.ensure_list, vol.Length(min=1, max=100), [cv.string]
+        ),
+    }
+)
+
+FUNCTION_GROUP_STATE_SCHEMA = vol.Schema(
+    {
+        **MEMORY_AGENT_FIELDS,
+        vol.Required("function_groups"): vol.All(
+            cv.ensure_list, vol.Length(min=1, max=50), [cv.string]
         ),
     }
 )
@@ -257,6 +276,57 @@ async def async_set_function_tools_enabled(
         dict(subentry.data), {CONF_FUNCTION_TOOLS: configured}
     )
     hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
+
+
+async def async_set_function_groups_enabled(
+    hass: HomeAssistant,
+    entry_id: str,
+    agent_reference: str,
+    group_ids: list[str],
+    enabled: bool,
+) -> None:
+    """Persist Function Group state without changing member Function Tool state."""
+    _, subentry_id = resolve_memory_agent(hass, entry_id, agent_reference)
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is None:
+        raise HomeAssistantError("Config entry not found")
+    subentry = entry.subentries[subentry_id]
+    configured = validate_function_tools(subentry.data.get(CONF_FUNCTION_TOOLS, []))
+    groups = validate_function_groups(
+        subentry.data.get(CONF_FUNCTION_GROUPS, []), configured
+    )
+    requested = list(dict.fromkeys(group_ids))
+    configured_ids = {group["id"] for group in groups}
+    missing = [group_id for group_id in requested if group_id not in configured_ids]
+    if missing:
+        raise HomeAssistantError(
+            "Function Group not found: " + ", ".join(sorted(missing))
+        )
+    for group in groups:
+        if group["id"] in requested:
+            group["enabled"] = enabled
+    normalized = merge_agent_config(
+        dict(subentry.data), {CONF_FUNCTION_GROUPS: groups}
+    )
+    hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
+
+
+async def async_skill_source_ref(
+    hass: HomeAssistant, requested_ref: str | None = None
+) -> str:
+    """Resolve a reproducible release ref unless a development ref is explicit."""
+    if requested_ref is not None:
+        source_ref = requested_ref.strip()
+        if not source_ref:
+            raise HomeAssistantError("Skill source ref cannot be empty")
+        return source_ref
+    integration = await async_get_integration(hass, DOMAIN)
+    if integration.version is not None:
+        version = str(integration.version).strip()
+        if version:
+            return version
+    # Custom development installs without version metadata retain an explicit fallback.
+    return GITHUB_SKILLS_BRANCH
 
 
 async def _async_require_service_admin(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -438,7 +508,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         }
 
     async def download_skill(call: ServiceCall) -> ServiceResponse:
-        """Download a skill from the GitHub repository."""
+        """Download a skill from the matching release or an explicit Git ref."""
         await _async_require_service_admin(hass, call)
         from .skills import SkillManager
 
@@ -447,14 +517,15 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             raise HomeAssistantError(
                 "Skill name may contain only letters, numbers, underscores, and hyphens"
             )
+        source_ref = await async_skill_source_ref(hass, call.data.get("source_ref"))
 
         session = async_get_clientsession(hass)
 
-        # Fetch skill directory contents from GitHub API.
+        # Stable installs fetch examples from the tag matching their installed version.
         api_url = (
             f"https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}"
             f"/contents/{GITHUB_SKILLS_PATH}/{skill_name}"
-            f"?ref={GITHUB_SKILLS_BRANCH}"
+            f"?ref={quote(source_ref, safe='')}"
         )
 
         downloaded_files: list[str] = []
@@ -476,7 +547,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             async with session.get(url) as resp:
                 if resp.status == 404:
                     raise HomeAssistantError(
-                        f"Skill `{skill_name}` not found in repository"
+                        f"Skill `{skill_name}` not found at source ref `{source_ref}`"
                     )
                 if resp.status != 200:
                     raise HomeAssistantError(
@@ -575,7 +646,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         backup_dir = skills_root / f".{skill_name}.bak-{nonce}"
         await hass.async_add_executor_job(_prepare_staging, skills_root, staging_dir)
 
-        _LOGGER.info("Downloading skill `%s`", skill_name)
+        _LOGGER.info("Downloading skill `%s` from `%s`", skill_name, source_ref)
 
         try:
             await _download_directory(api_url, staging_dir)
@@ -612,6 +683,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
         return {
             "skill_name": skill_name,
+            "source_ref": source_ref,
             "downloaded_files": downloaded_files,
             "target_directory": str(target_dir),
         }
@@ -682,6 +754,28 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             call.data["config_entry"],
             call.data["agent_id"],
             call.data["functions"],
+            False,
+        )
+
+    async def enable_function_groups(call: ServiceCall) -> None:
+        """Enable one or more configured Function Groups."""
+        await _async_require_service_admin(hass, call)
+        await async_set_function_groups_enabled(
+            hass,
+            call.data["config_entry"],
+            call.data["agent_id"],
+            call.data["function_groups"],
+            True,
+        )
+
+    async def disable_function_groups(call: ServiceCall) -> None:
+        """Disable one or more configured Function Groups."""
+        await _async_require_service_admin(hass, call)
+        await async_set_function_groups_enabled(
+            hass,
+            call.data["config_entry"],
+            call.data["agent_id"],
+            call.data["function_groups"],
             False,
         )
 
@@ -870,6 +964,20 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         SERVICE_DISABLE_FUNCTION_TOOLS,
         disable_function_tools,
         schema=FUNCTION_TOOL_STATE_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ENABLE_FUNCTION_GROUPS,
+        enable_function_groups,
+        schema=FUNCTION_GROUP_STATE_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_DISABLE_FUNCTION_GROUPS,
+        disable_function_groups,
+        schema=FUNCTION_GROUP_STATE_SCHEMA,
     )
 
     hass.services.async_register(
