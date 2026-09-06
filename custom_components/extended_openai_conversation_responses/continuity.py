@@ -20,6 +20,7 @@ from .scope import ResolvedDataScope
 
 GUEST_CONTINUITY_NAMESPACE = "guest"
 GUEST_CONVERSATION_ID_PREFIX = "extended-openai-guest-"
+_MAX_IGNORED_CONVERSATION_IDS = 64
 
 
 @dataclass(slots=True)
@@ -62,6 +63,8 @@ class ConversationContinuity:
         self._agent_id = agent_id
         self._sessions: dict[str, ActiveConversation] = {}
         self._memory_bundles: dict[str, ConversationMemoryBundle] = {}
+        self._pending_ends: set[str] = set()
+        self._ignored_conversation_ids: dict[str, None] = {}
         self._lock = asyncio.Lock()
         self.resume_count = 0
         self.new_session_count = 0
@@ -101,6 +104,11 @@ class ConversationContinuity:
         namespace: str | None = None,
     ) -> ContinuityResolution:
         """Resolve one request using a small lock and no network I/O."""
+        if incoming_conversation_id is not None:
+            async with self._lock:
+                if incoming_conversation_id in self._ignored_conversation_ids:
+                    self._ignored_conversation_ids.pop(incoming_conversation_id, None)
+                    incoming_conversation_id = None
         if namespace is None and self._is_guest_conversation_id(
             incoming_conversation_id
         ):
@@ -209,6 +217,9 @@ class ConversationContinuity:
             active = self._sessions.get(key)
             if active is None or active.claim_token != claim_token:
                 return
+            if key in self._pending_ends:
+                self._remove_session_locked(key)
+                return
             active.history = content.copy()
             active.last_active = dt_util.utcnow()
             active.in_flight = False
@@ -220,17 +231,53 @@ class ConversationContinuity:
             return
         async with self._lock:
             active = self._sessions.get(key)
-            if active is not None and active.claim_token == claim_token:
-                active.in_flight = False
-                active.claim_token = None
+            if active is None or active.claim_token != claim_token:
+                return
+            if key in self._pending_ends:
+                self._remove_session_locked(key)
+                return
+            active.in_flight = False
+            active.claim_token = None
 
     async def async_end(self, key: str) -> bool:
-        """End one active conversation."""
+        """End one active conversation immediately for explicit management."""
         async with self._lock:
-            session = self._sessions.pop(key, None)
-            if session is not None:
-                self._memory_bundles.pop(f"continuity:{key}", None)
-            return session is not None
+            session = self._sessions.get(key)
+            if session is None:
+                self._pending_ends.discard(key)
+                return False
+            self._remove_session_locked(key)
+            return True
+
+    async def async_request_end(self, key: str) -> bool:
+        """End when safe, deferring if a newer request currently owns the claim."""
+        async with self._lock:
+            session = self._sessions.get(key)
+            if session is None:
+                self._pending_ends.discard(key)
+                return False
+            if session.in_flight:
+                self._pending_ends.add(key)
+                return True
+            self._remove_session_locked(key)
+            return True
+
+    async def async_ignore_next_incoming_conversation_id(
+        self, conversation_id: str
+    ) -> None:
+        """Make one future HA-default resolution ignore a completed ChatLog ID."""
+        async with self._lock:
+            self._ignored_conversation_ids.pop(conversation_id, None)
+            self._ignored_conversation_ids[conversation_id] = None
+            while len(self._ignored_conversation_ids) > _MAX_IGNORED_CONVERSATION_IDS:
+                self._ignored_conversation_ids.pop(
+                    next(iter(self._ignored_conversation_ids))
+                )
+
+    async def async_clear_memory_bundle(self, session_key: str) -> bool:
+        """Forget cached memory references without deleting any stored memories."""
+        async with self._lock:
+            return self._memory_bundles.pop(session_key, None) is not None
 
     async def async_get_memory_bundle(
         self, session_key: str, timeout_minutes: int
@@ -294,11 +341,16 @@ class ConversationContinuity:
             "active_memory_bundles": len(self._memory_bundles),
         }
 
+    def _remove_session_locked(self, key: str) -> None:
+        """Remove one managed session and all continuity-owned ephemeral state."""
+        self._sessions.pop(key, None)
+        self._memory_bundles.pop(f"continuity:{key}", None)
+        self._pending_ends.discard(key)
+
     def _prune_locked(self, cutoff: Any) -> None:
         for key, session in list(self._sessions.items()):
             if not session.in_flight and session.last_active < cutoff:
-                del self._sessions[key]
-                self._memory_bundles.pop(f"continuity:{key}", None)
+                self._remove_session_locked(key)
 
     def _prune_memory_bundles_locked(self, cutoff: Any) -> None:
         for key, bundle in list(self._memory_bundles.items()):

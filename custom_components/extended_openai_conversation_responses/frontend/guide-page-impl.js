@@ -51,5 +51,9 @@ export function renderGuide(panel) {
     .replaceAll(
       "If you use Guest Mode, you can separately choose whether guests may use all Knowledge sources, no Knowledge sources, or only specific sources that you select.",
       "If you use Guest Mode, you can separately choose whether guests may use all available Knowledge sources, no Knowledge sources, or only specific sources that you select. Guest permissions can only restrict availability further; they cannot make a disabled source available."
+    )
+    .replaceAll(
+      "When Extended OpenAI is managing continuity itself, the conversation timeout controls how long a conversation can sit unused before the next request starts a new one. A shorter timeout reduces the chance of an old conversation being continued by mistake. A longer timeout makes it easier to return to a discussion later.",
+      "When Extended OpenAI is managing continuity itself, the conversation timeout controls how long a conversation can sit unused before the next request starts a new one. A shorter timeout reduces the chance of an old conversation being continued by mistake. A longer timeout makes it easier to return to a discussion later. Live continuity and its conversation-scoped Function Group and Request Rule state are intentionally kept in memory, so a Home Assistant restart also starts fresh. You can explicitly ask the assistant to start a fresh conversation; that reset takes effect after the current reply and clears only live context, loaded groups, conversation routing overrides and the conversation's automatic memory selection. It does not delete Persistent Memory, Temporary Memory, Knowledge Library sources or archived conversation history."
     );
 }

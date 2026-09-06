@@ -39,6 +39,7 @@ from .const import (
     DEFAULT_WEB_SEARCH_CONTEXT,
 )
 from .conversation_archive import archive_tools
+from .conversation_lifecycle import conversation_lifecycle_active
 from .guest_mode import GuestCapabilityPolicy, guest_mode_restrict_tool
 from .helpers import get_api_mode, get_model_config, supports_openai_hosted_tools
 from .knowledge import KNOWLEDGE_TOOL_NAMES, knowledge_tools
@@ -71,6 +72,31 @@ CONTINUE_CONVERSATION_TOOL = {
             "additionalProperties": False,
         },
     }
+}
+
+START_FRESH_CONVERSATION_TOOL_NAME = "start_fresh_conversation"
+START_FRESH_CONVERSATION_TOOL = {
+    "spec": {
+        "name": START_FRESH_CONVERSATION_TOOL_NAME,
+        "description": (
+            "Start a fresh Assist conversation after this response when the user "
+            "explicitly asks to start over or reset the current discussion. This "
+            "clears only current conversation context and conversation-scoped "
+            "routing/tool state. It does not delete persistent memory, temporary "
+            "memory, Knowledge Library sources, or archived history."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "function": {
+        "type": "conversation_lifecycle",
+        "operation": "start_fresh",
+    },
 }
 
 
@@ -190,6 +216,13 @@ def assemble_integration_function_tools(
         memory_scope_available=memory_scope_available,
         guest_policy=guest_policy,
     )
+    if START_FRESH_CONVERSATION_TOOL_NAME in configured_names:
+        raise HomeAssistantError(
+            "Reserved conversation lifecycle tool name configured: "
+            f"{START_FRESH_CONVERSATION_TOOL_NAME}"
+        )
+    if conversation_lifecycle_active():
+        result.append(START_FRESH_CONVERSATION_TOOL)
     if capabilities.persistent_memory:
         conflicts = configured_names & MEMORY_TOOL_NAMES
         if conflicts:
