@@ -122,12 +122,19 @@ refreshRequestRuleSlotSelectors(slotRoot, ["product", "list_name"]);
 assert.equal(functionSlot.value, "product");
 assert.match(requestRulesDialog(panel), /Rest of this conversation/);
 assert.match(requestRulesDialog(panel), /without asking the AI model/);
-assert.match(requestRulesDialog(panel), /Home Assistant sentence pattern/);
-assert.match(requestRulesDialog(panel), /Named expansions/);
+assert.match(requestRulesDialog(panel), /ExtendedOpenAI sentence pattern/);
+assert.doesNotMatch(requestRulesDialog(panel), /Home Assistant sentence pattern/);
+assert.match(requestRulesDialog(panel), /\{room=kitchen\|bedroom\}/);
+assert.match(requestRulesDialog(panel), /\{level=0\.\.100\}/);
+assert.match(requestRulesDialog(panel), /named expansions/i);
 assert.match(requestRulesDialog(panel), /1\. What will you say\?/);
 assert.match(requestRulesDialog(panel), /3\. What should the assistant say\?/);
 assert.match(requestRulesDialog(panel), /class="matching-setting"/);
 assert.match(requestRulesDialog(panel), /Treats simple variations such as “light” and “lights” as the same\./);
+
+const diagnosticHtml = renderRequestRules({...panel,_result:{...panel._result,diagnostics:{one:"Sentence pattern is inactive: permutations are not supported"}}});
+assert.match(diagnosticHtml, /Rule inactive/);
+assert.match(diagnosticHtml, /permutations are not supported/);
 
 const existing = {domain:"light",service:"turn_on",target:{entity_id:["light.lamp"],area_id:["kitchen"],device_id:"device-one",floor_id:["ground"],label_id:["ambient"],custom_target:"keep-me"},data:{brightness_pct:35,transition:2}};
 const advanced = JSON.stringify({target:existing.target,data:existing.data});
