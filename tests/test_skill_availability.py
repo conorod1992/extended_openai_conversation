@@ -12,8 +12,10 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 from custom_components.extended_openai_conversation_responses.const import (
     DEFAULT_CONF_FUNCTION_TOOLS,
 )
+from custom_components.extended_openai_conversation_responses.request_static_cache import (
+    tools_for_available_skills,
+)
 from custom_components.extended_openai_conversation_responses.skill_availability import (
-    filter_skill_loader_for_availability,
     skill_loader_status,
 )
 
@@ -88,9 +90,9 @@ def test_zero_usable_skills_hide_only_the_canonical_loader() -> None:
     canonical = _loader()
     other = deepcopy(canonical)
     other["spec"]["name"] = "read_other_file"
-    projected = filter_skill_loader_for_availability([canonical, other], False)
+    projected = tools_for_available_skills([canonical, other], False)
     assert [tool["spec"]["name"] for tool in projected] == ["read_other_file"]
-    assert filter_skill_loader_for_availability([canonical, other], True) == [
+    assert tools_for_available_skills([canonical, other], True) == [
         canonical,
         other,
     ]
