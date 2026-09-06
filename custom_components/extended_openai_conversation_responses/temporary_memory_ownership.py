@@ -134,16 +134,11 @@ async def _normalize_loaded_records(manager: TemporaryMemory) -> None:
             manager._records = original
             raise
 
-        setattr(
-            manager,
-            "invalid_owners_pruned",
-            getattr(manager, "invalid_owners_pruned", 0) + invalid,
+        manager_any: Any = manager
+        manager_any.invalid_owners_pruned = (
+            getattr(manager, "invalid_owners_pruned", 0) + invalid
         )
-        setattr(
-            manager,
-            "overflow_pruned",
-            getattr(manager, "overflow_pruned", 0) + overflow,
-        )
+        manager_any.overflow_pruned = getattr(manager, "overflow_pruned", 0) + overflow
         if invalid:
             _LOGGER.warning(
                 "Removed %s Temporary Memory record(s) without a valid retained owner",
@@ -261,9 +256,7 @@ def _install_manager_contract() -> None:
         )
         if owner is None:
             return []
-        return await current_snapshot(
-            manager, scope_id, owner_scope_id=owner
-        )
+        return await current_snapshot(manager, scope_id, owner_scope_id=owner)
 
     memory_cls.async_active_snapshot = async_active_snapshot
 
@@ -386,8 +379,7 @@ def _install_manager_contract() -> None:
 
 def _install_snapshot_contract() -> None:
     """Require owner context on the cold/read-only snapshot path as well."""
-    from . import management_ui
-    from . import temporary_memory as temporary_module
+    from . import management_ui, temporary_memory as temporary_module
 
     temporary_any: Any = temporary_module
     management: Any = management_ui
