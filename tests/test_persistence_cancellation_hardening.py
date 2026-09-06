@@ -114,6 +114,7 @@ async def _mutate(kind: str, manager: Any, marker: str) -> None:
             f"Temporary memory {marker}",
             (dt_util.utcnow() + timedelta(days=30)).isoformat(),
             "test",
+            owner_scope_id="user:test-owner",
         )
         return
     if kind == "knowledge":
