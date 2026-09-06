@@ -65,7 +65,7 @@ async def async_reset_conversation_context(
 ) -> None:
     """Discard only ephemeral state associated with one logical conversation."""
     if continuity_key is not None:
-        await continuity.async_end(continuity_key)
+        await continuity.async_request_end(continuity_key)
     elif state_session_id.startswith("conversation:"):
         conversation_id = state_session_id.removeprefix("conversation:")
         if conversation_id:
