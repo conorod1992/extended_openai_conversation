@@ -59,6 +59,8 @@ from .const import (
     CONF_VOICE_SCOPE_POLICY,
     CONF_VOICE_UNMAPPED_POLICY,
     CONFIG_ENTRY_VERSION,
+    DEFAULT_AI_TASK_NAME,
+    DEFAULT_AI_TASK_OPTIONS,
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -251,13 +253,25 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
             CONFIG_ENTRY_VERSION,
         )
         if entry.version == 1:
-            subentry = ConfigSubentry(
-                data=entry.options,
-                subentry_type="conversation",
-                title=entry.title,
-                unique_id=None,
-            )
-            hass.config_entries.async_add_subentry(entry, subentry)
+            existing_types = {
+                subentry.subentry_type for subentry in entry.subentries.values()
+            }
+            if "conversation" not in existing_types:
+                conversation_subentry = ConfigSubentry(
+                    data=entry.options,
+                    subentry_type="conversation",
+                    title=entry.title,
+                    unique_id=None,
+                )
+                hass.config_entries.async_add_subentry(entry, conversation_subentry)
+            if "ai_task_data" not in existing_types:
+                ai_task_subentry = ConfigSubentry(
+                    data=dict(DEFAULT_AI_TASK_OPTIONS),
+                    subentry_type="ai_task_data",
+                    title=DEFAULT_AI_TASK_NAME,
+                    unique_id=None,
+                )
+                hass.config_entries.async_add_subentry(entry, ai_task_subentry)
             hass.config_entries.async_update_entry(
                 entry, title=entry.title, options={}, version=2
             )
