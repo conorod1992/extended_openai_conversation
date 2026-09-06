@@ -38,6 +38,7 @@ ToolExecutor = Callable[
     [dict[str, Any], llm.ToolInput],
     Awaitable[conversation.ToolResultContent],
 ]
+ToolExecutionOutcome = conversation.ToolResultContent | BaseException
 
 
 def is_parallel_safe_integration_tool(tool: Mapping[str, Any]) -> bool:
@@ -95,3 +96,29 @@ async def async_execute_parallel_safe_batch(
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
     return results
+
+
+async def async_execute_parallel_safe_batch_outcomes(
+    resolved_calls: Sequence[ResolvedToolCall],
+    executor: ToolExecutor,
+) -> list[ToolExecutionOutcome]:
+    """Execute a safe batch while retaining every completed per-call outcome.
+
+    This variant is used by the provider loop when protocol-valid retained history
+    matters more than fail-fast result delivery. Read-only tasks still start together,
+    but a failure in one task does not discard successful results from its siblings.
+    Cancellation of the enclosing request still cancels and collects all child tasks
+    before it propagates.
+    """
+    tasks: list[asyncio.Future[conversation.ToolResultContent]] = [
+        asyncio.ensure_future(executor(function_tool, tool_input))
+        for function_tool, tool_input in resolved_calls
+    ]
+    try:
+        return list(await asyncio.gather(*tasks, return_exceptions=True))
+    except BaseException:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
