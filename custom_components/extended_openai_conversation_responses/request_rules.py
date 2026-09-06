@@ -1059,7 +1059,9 @@ def _validate_script_complexity(value: Any, *, depth: int = 0) -> int:
             for item in value.values()
         )
     elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        total = 1 + sum(_validate_script_complexity(item, depth=depth + 1) for item in value)
+        total = 1 + sum(
+            _validate_script_complexity(item, depth=depth + 1) for item in value
+        )
     else:
         total = 1
     if total > MAX_SCRIPT_NODES:
