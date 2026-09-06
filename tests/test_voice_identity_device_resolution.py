@@ -20,7 +20,6 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
 )
 from custom_components.extended_openai_conversation_responses.scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
-    user_scope,
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context
@@ -96,6 +95,7 @@ async def test_both_ids_use_device_registry_id_for_direct_processing(monkeypatch
     assert source_device_id == "registry-device"
     assert llm_context.device_id == "registry-device"
     assert entity._continuity.async_resolve.await_args.args[2] == "registry-device"
+    assert user_input.device_id == "registry-device"
     assert user_input.satellite_id == "assist_satellite.kitchen"
 
 
@@ -151,6 +151,7 @@ async def test_registry_device_drives_shared_unretained_and_authenticated_scope(
     assert scope.device_id == "registry-device"
     assert source_device_id == "registry-device"
     assert llm_context.device_id == "registry-device"
+    assert user_input.device_id == "registry-device"
 
 
 async def test_satellite_only_request_resolves_its_registry_device(monkeypatch) -> None:
@@ -161,9 +162,7 @@ async def test_satellite_only_request_resolves_its_registry_device(monkeypatch) 
     }
     entity = _processing_entity(options)
     registry = SimpleNamespace(
-        async_get=MagicMock(
-            return_value=SimpleNamespace(device_id="registry-device")
-        )
+        async_get=MagicMock(return_value=SimpleNamespace(device_id="registry-device"))
     )
     monkeypatch.setattr(agent_module.er, "async_get", lambda _hass: registry)
     user_input = _conversation_input(
@@ -179,7 +178,7 @@ async def test_satellite_only_request_resolves_its_registry_device(monkeypatch) 
     assert scope.device_id == "registry-device"
     assert source_device_id == "registry-device"
     assert llm_context.device_id == "registry-device"
-    assert user_input.device_id is None
+    assert user_input.device_id == "registry-device"
     assert user_input.satellite_id == "assist_satellite.kitchen"
 
 
@@ -208,6 +207,7 @@ async def test_missing_device_id_never_reinterprets_satellite_entity_id(
     assert scope.device_id is None
     assert source_device_id is None
     assert llm_context.device_id is None
+    assert user_input.device_id is None
     assert entity._continuity.async_resolve.await_args.args[2] is None
 
 
@@ -226,10 +226,10 @@ def _message_entity() -> ExtendedOpenAIAgentEntity:
 
 
 async def test_prompt_memory_and_provider_share_the_resolved_request_device() -> None:
-    """Prompt construction cannot drift from the scope selected at request entry."""
+    """Prompt, memory and provider contexts all receive the canonical request device."""
     entity = _message_entity()
     user_input = _conversation_input(
-        device_id=None,
+        device_id="registry-device",
         satellite_id="assist_satellite.kitchen",
     )
     user_input.conversation_id = "conversation-id"
@@ -248,13 +248,7 @@ async def test_prompt_memory_and_provider_share_the_resolved_request_device() ->
         return None
 
     entity._async_handle_chat_log = AsyncMock(side_effect=succeed)
-    scope_token = agent_module._ACTIVE_SCOPE.set(
-        user_scope("alice", source="test", device_id="registry-device")
-    )
-    try:
-        await entity._async_handle_message(user_input, chat_log)
-    finally:
-        agent_module._ACTIVE_SCOPE.reset(scope_token)
+    await entity._async_handle_message(user_input, chat_log)
 
     prompt_context = entity._build_system_prompt.call_args.args[1]
     memory_context = entity._async_retrieve_memories.call_args.args[0]
