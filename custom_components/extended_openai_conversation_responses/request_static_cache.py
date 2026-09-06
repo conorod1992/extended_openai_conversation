@@ -9,6 +9,7 @@ import json
 from typing import Any
 
 from .entity_context_cache import get_entity_prompt_metadata
+from .skill_availability import is_canonical_skill_loader
 
 _INSTALLED = False
 _SKILLS_AVAILABLE: ContextVar[bool | None] = ContextVar(
@@ -22,18 +23,6 @@ type _FormattedToolCacheEntry = tuple[
 _FORMATTED_TOOLS: ContextVar[
     dict[tuple[str, tuple[int, ...]], _FormattedToolCacheEntry] | None
 ] = ContextVar("extended_openai_formatted_tool_cache", default=None)
-_CANONICAL_SKILL_LOADER_PATH = "{{extended_openai.skill_dir(name)}}/{{file}}"
-
-
-def _is_canonical_skill_loader(tool: dict[str, Any]) -> bool:
-    """Identify only the integration's built-in skill loader, never by name alone."""
-    spec = tool.get("spec", {})
-    function = tool.get("function", {})
-    return bool(
-        spec.get("name") == "load_skill"
-        and function.get("type") == "read_file"
-        and function.get("path") == _CANONICAL_SKILL_LOADER_PATH
-    )
 
 
 def tools_for_available_skills(
@@ -42,7 +31,7 @@ def tools_for_available_skills(
     """Hide the canonical no-op skill loader only when zero skills are usable."""
     if skills_available is not False:
         return configured_tools
-    return [tool for tool in configured_tools if not _is_canonical_skill_loader(tool)]
+    return [tool for tool in configured_tools if not is_canonical_skill_loader(tool)]
 
 
 def _tool_format_signature(tool: dict[str, Any]) -> str | None:

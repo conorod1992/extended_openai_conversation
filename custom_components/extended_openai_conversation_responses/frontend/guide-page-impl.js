@@ -35,5 +35,13 @@ export function renderGuide(panel) {
     .replaceAll(
       "Word forms and editable wording alternatives let Extended OpenAI accept small, predictable wording differences. Fuzzy matching is a final fallback that can accept a slightly imperfect match, but it is only tried if no stricter rule matched first.",
       "Word forms and editable wording alternatives let Extended OpenAI accept small, predictable wording differences. Fuzzy matching is a final fallback that can accept a slightly imperfect match, but it is only tried if no stricter rule matched first. If otherwise equivalent rules still tie, their saved order is the final tie-breaker; moving a rule does not override match type or phrase specificity."
+    )
+    .replaceAll(
+      "Every Function Tool needs instructions that explain it to the model. If you have many tools, sending all of those instructions with every request can use unnecessary input tokens. Function Groups let you decide which tool instructions are always sent and which are loaded only when needed.",
+      "Every Function Tool needs instructions that explain it to the model. If you have many tools, sending all of those instructions with every request can use unnecessary input tokens. Function Groups let you decide which tool instructions are always sent and which are loaded only when needed. Each group can also be disabled independently: its member Function Tool settings are kept, but none of those tools are available to the model until the group is enabled again."
+    )
+    .replaceAll(
+      "Deleting a Function Group does not delete the functions inside it. Those functions simply return to the normal always-available collection unless you place them in another group.",
+      "Disabling a Function Group does not disable its member Function Tools individually. Re-enabling the group restores only the members that are individually enabled. Deleting a Function Group is different: it does not delete the functions, but they become ungrouped and therefore return to the normal always-available collection unless you place them in another group. If an agent has Skills selected, Extended OpenAI also protects the built-in load_skill tool from becoming unavailable through tool state, group state, or a zero tool-call limit."
     );
 }

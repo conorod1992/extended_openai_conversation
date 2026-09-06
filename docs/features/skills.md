@@ -23,6 +23,10 @@ Each conversation agent can choose which installed skills it is allowed to load.
 
 The Skills option is hidden when no skills are installed.
 
+Selected Skills depend on the integration's built-in `load_skill` Function Tool. Extended OpenAI protects that dependency when configuration is saved: the loader must still exist, be individually enabled, belong to an enabled/reachable Function Group if grouped, and the agent must allow at least one Function Tool call per request. If one of those settings would make selected Skills unusable, the configuration change is rejected with a specific error instead of leaving the agent in a broken state.
+
+The **Test agent** diagnostic also reports when a selected Skill is not installed or its loader is unavailable.
+
 ## Download a skill
 
 The integration provides a Home Assistant action for downloading supported skills. For example:
@@ -32,6 +36,19 @@ service: extended_openai_conversation_responses.download_skill
 data:
   skill_name: crypto
 ```
+
+For a normal installed release, the action downloads the example Skill from the Git tag matching the integration version. This keeps a released integration paired with the Skill files that were released with it instead of silently pulling later changes from the moving `develop` branch.
+
+Development and testing installs can deliberately choose another Git ref with `source_ref`:
+
+```yaml
+service: extended_openai_conversation_responses.download_skill
+data:
+  skill_name: crypto
+  source_ref: develop
+```
+
+Use `source_ref` only when you intentionally want Skill files from a different branch, tag, or commit in this repository.
 
 After installation, enable the skill for the relevant conversation agent in Options.
 

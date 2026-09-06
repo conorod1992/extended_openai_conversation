@@ -11,7 +11,7 @@ import yaml
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
 
-from .agent_config import configured_function_tools_from_data
+from .agent_config import configured_function_tools_from_data, validate_function_groups
 from .const import (
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
@@ -19,12 +19,16 @@ from .const import (
     CONF_API_PROVIDER,
     CONF_BASE_URL,
     CONF_CHAT_MODEL,
+    CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
+    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_SKILLS,
     CONF_WEB_SEARCH,
     DEFAULT_API_MODE,
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONF_FUNCTION_TOOLS,
+    DEFAULT_FUNCTION_GROUPS,
+    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_WEB_SEARCH,
 )
 from .functions import get_function
@@ -42,6 +46,8 @@ from .provider_errors import (
     provider_user_message,
     request_reauthentication,
 )
+from .skill_availability import skill_loader_status
+from .skills import SkillManager
 from .usage import async_get_usage, extract_usage
 
 
@@ -139,11 +145,12 @@ async def async_test_agent(
     guest_status = (
         guest_mode.status() if guest_mode is not None else {"state": "inactive"}
     )
+    configured_tools = configured_function_tools_from_data(subentry.data)
     guest_policy = resolve_guest_policy(
         hass,
         subentry.data,
         guest_mode,
-        configured_function_tools_from_data(subentry.data),
+        configured_tools,
     )
     policy = guest_policy.as_diagnostics()
     checks.append(
@@ -171,13 +178,64 @@ async def async_test_agent(
             str(entity_count),
         )
     )
-    checks.append(
-        _check(
-            "Skills",
-            "Passed",
-            f"{len(subentry.data.get(CONF_SKILLS, []) or [])} enabled",
-        )
-    )
+
+    selected_skills = list(subentry.data.get(CONF_SKILLS, []) or [])
+    if not selected_skills:
+        checks.append(_check("Skills", "Passed", "Disabled"))
+    else:
+        try:
+            groups = validate_function_groups(
+                subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
+                configured_tools,
+            )
+            loader_status = skill_loader_status(
+                selected_skills,
+                configured_tools,
+                groups,
+                max_function_calls=int(
+                    subentry.data.get(
+                        CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                        DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                    )
+                ),
+            )
+            if not loader_status.available:
+                checks.append(
+                    _check(
+                        "Skills",
+                        "Failed",
+                        loader_status.reason or "Selected Skills are not loadable",
+                    )
+                )
+            else:
+                skill_manager = await SkillManager.async_get_instance(hass)
+                installed_names = {
+                    skill.name for skill in skill_manager.get_all_skills()
+                }
+                missing = sorted(set(selected_skills) - installed_names)
+                if missing:
+                    checks.append(
+                        _check(
+                            "Skills",
+                            "Failed",
+                            "Selected but not installed: " + ", ".join(missing),
+                        )
+                    )
+                else:
+                    location = (
+                        f" through on-demand group `{loader_status.group_id}`"
+                        if loader_status.on_demand and loader_status.group_id
+                        else ""
+                    )
+                    checks.append(
+                        _check(
+                            "Skills",
+                            "Passed",
+                            f"{len(selected_skills)} enabled and loadable{location}",
+                        )
+                    )
+        except Exception as err:
+            checks.append(_check("Skills", "Failed", str(err)))
 
     if memory_enabled(subentry.data):
         try:

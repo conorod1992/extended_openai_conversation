@@ -29,6 +29,9 @@ from custom_components.extended_openai_conversation_responses.function_groups im
     load_function_groups,
     reset_function_group_runtime,
 )
+from custom_components.extended_openai_conversation_responses.function_tool_resolution import (
+    latest_function_tool_for_execution,
+)
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -47,6 +50,8 @@ def _group(
     group_id: str,
     functions: list[str],
     loading_mode: str = "on_demand",
+    *,
+    enabled: bool = True,
 ) -> dict:
     return {
         "id": group_id,
@@ -54,6 +59,7 @@ def _group(
         "description": f"Capabilities for {group_id}",
         "loading_mode": loading_mode,
         "functions": functions,
+        "enabled": enabled,
     }
 
 
@@ -64,6 +70,14 @@ def test_legacy_config_has_no_groups_and_keeps_all_tools(hass) -> None:
     assembly = assemble_function_tools(snapshot["functions"], [], set())
     assert [tool["spec"]["name"] for tool in assembly.tools] == ["one", "two"]
     assert assembly.configured_schemas_sent == 2
+
+
+def test_legacy_group_without_enabled_state_defaults_enabled() -> None:
+    legacy = _group("tools", ["one"])
+    legacy.pop("enabled")
+    assert validate_function_groups([legacy], [_tool("one")]) == [
+        _group("tools", ["one"])
+    ]
 
 
 def test_always_and_on_demand_assembly_is_compact(hass) -> None:
@@ -100,6 +114,39 @@ def test_always_and_on_demand_assembly_is_compact(hass) -> None:
         "required": ["groups"],
         "additionalProperties": False,
     }
+
+
+def test_disabled_group_hides_members_and_preserves_individual_tool_state() -> None:
+    enabled_tool = _tool("enabled")
+    disabled_tool = {**_tool("disabled"), "enabled": False}
+    group = _group("mixed", ["enabled", "disabled"], enabled=False)
+    session = FunctionGroupRuntime().begin("conversation:one", 30)
+    session.loaded_group_ids.add("mixed")
+
+    assembly = assemble_function_tools(
+        [enabled_tool, disabled_tool], [group], session.loaded_group_ids
+    )
+    assert assembly.tools == []
+    assert session.loaded_group_ids == set()
+    assert enabled_tool.get("enabled", True) is True
+    assert disabled_tool["enabled"] is False
+    assert load_function_groups(session, ["mixed"], [group], [enabled_tool])["status"] == "error"
+
+    group["enabled"] = True
+    available = assemble_function_tools(
+        [enabled_tool, disabled_tool], [group], session.loaded_group_ids
+    )
+    assert [tool["spec"]["name"] for tool in available.tools] == [
+        "load_function_groups"
+    ]
+    assert load_function_groups(
+        session, ["mixed"], [group], [enabled_tool, disabled_tool]
+    )["loaded"] == ["mixed"]
+    restored = assemble_function_tools(
+        [enabled_tool, disabled_tool], [group], session.loaded_group_ids
+    )
+    assert [tool["spec"]["name"] for tool in restored.tools] == ["enabled"]
+    assert disabled_tool["enabled"] is False
 
 
 def test_disabled_tools_stay_grouped_but_are_excluded_from_effective_assembly() -> None:
@@ -181,6 +228,31 @@ async def test_disabled_tool_is_rejected_at_execution_time(monkeypatch) -> None:
             None,
             [],
         )
+
+
+def test_disabled_group_is_rejected_when_execution_resolves_latest_state() -> None:
+    stale_tool = _tool("sensitive")
+    current_tool = _tool("sensitive")
+    latest_data = {
+        "function_groups": [
+            _group("protected", ["sensitive"], "always", enabled=False)
+        ]
+    }
+    persisted_subentry = SimpleNamespace(data=latest_data)
+    agent = SimpleNamespace(
+        entry=SimpleNamespace(entry_id="entry"),
+        subentry=SimpleNamespace(subentry_id="agent", data={}),
+        hass=SimpleNamespace(
+            config_entries=SimpleNamespace(
+                async_get_entry=lambda _entry_id: SimpleNamespace(
+                    subentries={"agent": persisted_subentry}
+                )
+            )
+        ),
+        _configured_function_tools_from_data=lambda _data: [current_tool],
+    )
+    with pytest.raises(HomeAssistantError, match=r"protected.*disabled"):
+        latest_function_tool_for_execution(agent, stale_tool)
 
 
 def test_runtime_diagnostics_name_configured_schema_measurements() -> None:
@@ -316,6 +388,13 @@ def test_group_validation_rejects_ambiguous_or_invalid_config(
 ) -> None:
     with pytest.raises(AgentConfigError, match=message):
         validate_function_groups(groups, [_tool("one")])
+
+
+def test_group_validation_rejects_non_boolean_enabled_state() -> None:
+    group = _group("one", ["one"])
+    group["enabled"] = "false"
+    with pytest.raises(AgentConfigError, match=r"enabled.*boolean"):
+        validate_function_groups([group], [_tool("one")])
 
 
 def test_group_round_trip_and_reserved_loader_name(hass) -> None:

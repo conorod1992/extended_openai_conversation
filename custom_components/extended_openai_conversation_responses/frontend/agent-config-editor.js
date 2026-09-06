@@ -14,6 +14,10 @@ export function reasoningEffortOptionsForResult(result = {}) {
   return supported.map((value) => ({value, label: String(value).charAt(0).toUpperCase() + String(value).slice(1)}));
 }
 
+export function isFunctionGroupEnabled(group = {}) {
+  return group?.enabled !== false;
+}
+
 function applyModelAwareReasoningOptions(panel) {
   if (!panel?._result?.options) return;
   panel._result.options = {
@@ -102,6 +106,29 @@ function simplifyConfigurationMarkup(panel, html) {
   return template.innerHTML;
 }
 
+function decorateFunctionGroups(panel, html) {
+  if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const groups = panel?._draft?.function_groups || panel?._result?.config?.function_groups || [];
+  for (const card of template.content.querySelectorAll(".function-group-card[data-group-id]")) {
+    const group = groups.find((item) => item.id === card.dataset.groupId);
+    if (!group) continue;
+    const enabled = isFunctionGroupEnabled(group);
+    card.classList.toggle("is-disabled", !enabled);
+    const title = card.querySelector(".tool-title");
+    if (!enabled && title && !title.querySelector(".group-disabled-badge")) title.insertAdjacentHTML("beforeend", '<span class="availability-badge group-disabled-badge">Disabled</span>');
+    const editButton = card.querySelector(".edit-group");
+    if (editButton) {
+      editButton.disabled = !enabled;
+      editButton.title = enabled ? "" : "Enable this Function Group before editing it";
+    }
+    const actions = card.querySelector(".function-group-heading .actions");
+    if (actions && !actions.querySelector(".group-enabled")) actions.insertAdjacentHTML("afterbegin", `<label class="compact-toggle" title="Disable the group without changing the enabled state of its member Function Tools"><input type="checkbox" class="group-enabled" data-group-id="${panel._e(group.id)}" ${enabled ? "checked" : ""}><span>Enabled</span></label>`);
+  }
+  return template.innerHTML;
+}
+
 function requiredImplementation(name) {
   const module = getAgentConfigModule();
   if (!module) throw new Error(`Agent configuration module is not loaded before ${name}`);
@@ -141,13 +168,29 @@ export function renderTools(panel) {
     queueRender(panel);
     return panel._loading?.() || '<div class="loading">Loading Functions…</div>';
   }
-  return module.renderTools(panel);
+  return decorateFunctionGroups(panel, module.renderTools(panel));
 }
 
 export function bindTools(panel) {
   const module = getAgentConfigModule();
   if (!module) return queueRender(panel);
-  return module.bindTools(panel);
+  const result = module.bindTools(panel);
+  panel?.shadowRoot?.querySelectorAll(".group-enabled").forEach((input) => input.addEventListener("change", async () => {
+    const group = (panel._draft.function_groups || []).find((item) => item.id === input.dataset.groupId);
+    if (!group) return;
+    input.disabled = true;
+    try {
+      const response = await panel._call("tools", "save_group", {group: {...group, enabled: input.checked}, original_id: group.id});
+      synchronizePersistedFunctions(panel, response);
+      panel._toast(input.checked ? "Function group enabled" : "Function group disabled; member Function Tool settings were kept");
+      panel._render();
+    } catch (err) {
+      input.checked = !input.checked;
+      input.disabled = false;
+      panel._toast(`Unable to update Function Group: ${err.message || String(err)}`, true);
+    }
+  }));
+  return result;
 }
 
 export function configurationDialogs(...args) {

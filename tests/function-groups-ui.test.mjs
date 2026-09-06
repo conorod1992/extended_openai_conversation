@@ -8,6 +8,7 @@ import {
   deleteFunctionGroup,
   functionGroupIdFromName,
   functionToolCountLabel,
+  isFunctionGroupEnabled,
   isFunctionToolEnabled,
   matchesFunctionSearch,
   saveBar,
@@ -18,8 +19,8 @@ const tool = (name) => ({spec: {name, description: name}, function: {type: "nati
 const config = {
   functions: [tool("general"), tool("remind"), tool("calendar")],
   function_groups: [
-    {id: "reminders", name: "Reminders", description: "Manage reminders", loading_mode: "on_demand", functions: ["remind"]},
-    {id: "calendar", name: "Calendar", description: "Manage calendars", loading_mode: "always", functions: ["calendar"]},
+    {id: "reminders", name: "Reminders", description: "Manage reminders", loading_mode: "on_demand", functions: ["remind"], enabled: true},
+    {id: "calendar", name: "Calendar", description: "Manage calendars", loading_mode: "always", functions: ["calendar"], enabled: true},
   ],
 };
 
@@ -34,6 +35,8 @@ assert.equal(matchesFunctionSearch("manage calendar", "Calendar Manage calendars
 assert.equal(matchesFunctionSearch("weather", "Reminders Manage reminders"), false);
 assert.equal(isFunctionToolEnabled(tool("enabled")), true);
 assert.equal(isFunctionToolEnabled({...tool("disabled"), enabled: false}), false);
+assert.equal(isFunctionGroupEnabled({id: "legacy"}), true);
+assert.equal(isFunctionGroupEnabled({id: "disabled", enabled: false}), false);
 assert.equal(functionToolCountLabel([tool("one"), {...tool("two"), enabled: false}]), "1 enabled · 1 disabled");
 assert.equal(canReplaceToolYamlWithoutConfirmation("", "starter"), true);
 assert.equal(canReplaceToolYamlWithoutConfirmation("starter", "starter"), true);
@@ -104,6 +107,9 @@ assert.match(editorSource, /_toast\("Configuration saved"\)/, "saving should use
 assert.doesNotMatch(editorSource, /Save tools and groups|Keep in draft|unsaved tool draft/i);
 assert.match(editorSource, />Save function<\/button>/);
 assert.match(editorSource, />Save group<\/button>/);
+assert.match(editorSource, /class=\"group-enabled\"/, "groups should expose an independent enabled switch");
+assert.match(editorSource, /editButton\.disabled = !enabled/, "disabled groups should not silently re-enable through the legacy editor");
+assert.match(editorSource, /member Function Tool settings were kept/, "group state changes should explain that member states are retained");
 for (const action of ["save","set_enabled","delete","save_group","delete_group"]) {
   assert.match(editorSource,new RegExp(`panel\\._call\\(\"tools\",\"${action}\"`));
 }
