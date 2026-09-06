@@ -329,6 +329,16 @@ def wrap_management_command(original):
         section = message.get("section")
         action = message.get("action")
 
+        if not is_admin and (
+            (section == "request_rules" and action in {"create", "update"})
+            or (section == "tools" and action in _TOOL_MUTATIONS)
+        ):
+            # Preserve the existing authorization boundary as the first observable
+            # failure instead of exposing validation or revision details.
+            return cast(
+                dict[str, Any], await original(hass, user_id, is_admin, message)
+            )
+
         if section == "request_rules" and action in {"create", "update"}:
             entry_id = message.get("entry_id")
             subentry_id = message.get("subentry_id")
