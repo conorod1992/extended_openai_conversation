@@ -40,7 +40,9 @@ async def test_snapshot_boundary_holds_all_manager_locks_while_copying() -> None
 
     assert snapshots == ({"memory": 1}, {"archive": 2}, {"usage": 3})
     assert all(participant.saw_all_locked for participant in participants)
-    assert all(not participant.backup_snapshot_lock.locked() for participant in participants)
+    assert all(
+        not participant.backup_snapshot_lock.locked() for participant in participants
+    )
 
 
 async def test_snapshot_boundary_blocks_mutation_until_all_copies_are_taken() -> None:
