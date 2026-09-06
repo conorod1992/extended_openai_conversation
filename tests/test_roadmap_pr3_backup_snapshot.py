@@ -122,3 +122,16 @@ async def test_snapshot_boundary_releases_all_locks_when_copy_fails() -> None:
 
     assert not first_lock.locked()
     assert not second_lock.locked()
+
+
+async def test_snapshot_boundary_rejects_duplicate_manager_locks() -> None:
+    lock = asyncio.Lock()
+    participants = (
+        BackupSnapshotAdapter(lock, lambda: {"one": 1}),
+        BackupSnapshotAdapter(lock, lambda: {"two": 2}),
+    )
+
+    with pytest.raises(ValueError, match="distinct locks"):
+        await async_collect_point_in_time_snapshot(participants)
+
+    assert not lock.locked()
