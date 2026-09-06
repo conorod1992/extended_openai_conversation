@@ -94,6 +94,7 @@ class MatchBudget:
     used: int = 0
 
     def consume(self, amount: int = 1) -> None:
+        """Charge deterministic matcher work and reject an exhausted budget."""
         self.used += amount
         if self.used > self.maximum:
             raise SentenceMatchLimitError(
@@ -215,6 +216,17 @@ class CompiledSentencePattern:
                     queue.append((state.out, pos + len(state.value), starts, values))
                 continue
 
+            if state.kind == "space":
+                # Input whitespace is normalized to one ASCII space. A pattern
+                # separator may share an already-consumed separator or disappear
+                # at an input boundary. This makes natural `[optional] word`
+                # syntax work without allowing required middle separators to vanish.
+                if pos < len(folded) and folded[pos] == " ":
+                    queue.append((state.out, pos + 1, starts, values))
+                if pos in {0, len(folded)} or (pos > 0 and folded[pos - 1] == " "):
+                    queue.appendleft((state.out, pos, starts, values))
+                continue
+
             if state.kind == "any":
                 if pos < len(folded):
                     queue.append((state.out, pos + 1, starts, values))
@@ -243,7 +255,7 @@ class CompiledSentencePattern:
 
 
 def validate_match_input(text: str) -> None:
-    """Validate one live/Preview utterance before any sentence-pattern work."""
+    """Validate one live/Preview utterance before any Request Rule work."""
     if not isinstance(text, str):
         raise SentenceMatchLimitError("Request Rule matching text must be a string")
     if len(text) > MAX_MATCH_INPUT_CHARS:
@@ -257,21 +269,15 @@ def validate_match_input(text: str) -> None:
 
 
 def sentence_capture_names(pattern: str) -> tuple[str, ...]:
-    """Return capture names without constructing the runtime automaton."""
-    if not isinstance(pattern, str) or not pattern.strip():
-        raise SentencePatternError("sentence pattern is required")
-    parser = _Parser(pattern.strip())
-    expression = parser.parse()
+    """Return capture names while applying the same grammar validation as runtime."""
+    parser, expression = _parse_pattern(pattern)
     _validate_expression(expression)
     return tuple(parser.capture_names)
 
 
 def compile_sentence_pattern(pattern: str) -> CompiledSentencePattern:
     """Parse and compile the documented ExtendedOpenAI sentence-pattern grammar."""
-    if not isinstance(pattern, str) or not pattern.strip():
-        raise SentencePatternError("sentence pattern is required")
-    parser = _Parser(pattern.strip())
-    expression = parser.parse()
+    parser, expression = _parse_pattern(pattern)
     _validate_expression(expression)
     compiler = _Compiler()
     fragment = compiler.compile(expression)
@@ -288,6 +294,13 @@ def compile_sentence_pattern(pattern: str) -> CompiledSentencePattern:
     )
 
 
+def _parse_pattern(pattern: str) -> tuple[_Parser, object]:
+    if not isinstance(pattern, str) or not pattern.strip():
+        raise SentencePatternError("sentence pattern is required")
+    parser = _Parser(pattern.strip())
+    return parser, parser.parse()
+
+
 class _Parser:
     def __init__(self, source: str) -> None:
         self.source = source
@@ -296,6 +309,7 @@ class _Parser:
         self.free_capture_count = 0
 
     def parse(self) -> object:
+        """Parse one complete pattern into the small supported expression tree."""
         expression = self._sequence(set(), 0)
         if self.pos != len(self.source):
             raise SentencePatternError(
@@ -387,6 +401,10 @@ class _Parser:
             self.pos += 1
         if len(branches) == 1:
             return branches[0]
+        if any(_can_match_empty(branch) for branch in branches):
+            raise SentencePatternError(
+                "alternative choices cannot be empty; use [optional] syntax instead"
+            )
         return _Alternative(tuple(branches))
 
     def _capture(self) -> _Capture:
@@ -499,25 +517,15 @@ def _has_required_anchor(expression: object) -> bool:
 
 def _can_match_empty(expression: object) -> bool:
     if isinstance(expression, _Literal):
-        return not expression.value
+        return not expression.value.strip()
+    if isinstance(expression, _Capture):
+        return False
     if isinstance(expression, _Optional):
         return True
     if isinstance(expression, _Alternative):
         return any(_can_match_empty(item) for item in expression.items)
     if isinstance(expression, _Sequence):
         return all(_can_match_empty(item) for item in expression.items)
-    return False
-
-
-def _only_separator(expression: object) -> bool:
-    if isinstance(expression, _Literal):
-        return not expression.value.strip()
-    if isinstance(expression, _Optional):
-        return _only_separator(expression.item)
-    if isinstance(expression, _Alternative):
-        return all(_only_separator(item) for item in expression.items)
-    if isinstance(expression, _Sequence):
-        return all(_only_separator(item) for item in expression.items)
     return False
 
 
@@ -530,18 +538,16 @@ def _contains_adjacent_free_captures(expression: object) -> bool:
         return False
     if any(_contains_adjacent_free_captures(item) for item in expression.items):
         return True
-    for left, item in enumerate(expression.items):
-        if not isinstance(item, _Capture) or item.kind != "free":
+
+    pending_free = False
+    for item in expression.items:
+        if isinstance(item, _Capture) and item.kind == "free":
+            if pending_free:
+                return True
+            pending_free = True
             continue
-        right = left + 1
-        while right < len(expression.items) and _only_separator(expression.items[right]):
-            right += 1
-        if (
-            right < len(expression.items)
-            and isinstance(expression.items[right], _Capture)
-            and expression.items[right].kind == "free"
-        ):
-            return True
+        if _has_required_anchor(item):
+            pending_free = False
     return False
 
 
@@ -584,8 +590,7 @@ class _Compiler:
 
     def compile(self, expression: object) -> _Fragment:
         if isinstance(expression, _Literal):
-            state = self.add(_State("literal", value=expression.value.casefold()))
-            return _Fragment(state, ((state, "out"),))
+            return self._compile_literal(expression.value.casefold())
         if isinstance(expression, _Sequence):
             fragment = self.compile(expression.items[0])
             for item in expression.items[1:]:
@@ -602,42 +607,66 @@ class _Compiler:
                 split = self.add(
                     _State("split", out1=fragment.start, out2=current.start)
                 )
-                current = _Fragment(split, fragment.outs + current.outs)
+                current = _Fragment(split, (*fragment.outs, *current.outs))
             return current
         if isinstance(expression, _Optional):
             fragment = self.compile(expression.item)
             split = self.add(_State("split", out1=fragment.start))
-            return _Fragment(split, fragment.outs + ((split, "out2"),))
+            return _Fragment(split, (*fragment.outs, (split, "out2")))
         if isinstance(expression, _Capture):
-            start = self.add(_State("capture_start", name=expression.name))
-            end = self.add(_State("capture_end", name=expression.name))
-            if expression.kind == "free":
-                any_state = self.add(_State("any"))
-                split = self.add(_State("split", out1=end, out2=any_state))
-                self.states[start].out = any_state
-                self.states[any_state].out = split
-                return _Fragment(start, ((end, "out"),))
-            if expression.kind == "enum":
-                matcher = self.add(
-                    _State(
-                        "enum",
-                        values=tuple(value.casefold() for value in expression.values),
-                    )
-                )
-            elif expression.kind == "number":
-                matcher = self.add(
-                    _State(
-                        "number",
-                        minimum=expression.minimum,
-                        maximum=expression.maximum,
-                    )
-                )
-            else:
-                raise SentencePatternError(f"unsupported capture kind {expression.kind}")
-            self.states[start].out = matcher
-            self.states[matcher].out = end
-            return _Fragment(start, ((end, "out"),))
+            return self._compile_capture(expression)
         raise SentencePatternError("unsupported sentence-pattern expression")
+
+    def _compile_literal(self, value: str) -> _Fragment:
+        """Compile literal text, keeping separators as independently mergeable states."""
+        parts = [part for part in re.split(r"( )", value) if part]
+        if not parts:
+            state = self.add(_State("literal", value=""))
+            return _Fragment(state, ((state, "out"),))
+
+        first: int | None = None
+        previous: int | None = None
+        for part in parts:
+            state = self.add(
+                _State("space") if part == " " else _State("literal", value=part)
+            )
+            if first is None:
+                first = state
+            if previous is not None:
+                self.states[previous].out = state
+            previous = state
+        assert first is not None and previous is not None
+        return _Fragment(first, ((previous, "out"),))
+
+    def _compile_capture(self, expression: _Capture) -> _Fragment:
+        start = self.add(_State("capture_start", name=expression.name))
+        end = self.add(_State("capture_end", name=expression.name))
+        if expression.kind == "free":
+            any_state = self.add(_State("any"))
+            split = self.add(_State("split", out1=end, out2=any_state))
+            self.states[start].out = any_state
+            self.states[any_state].out = split
+            return _Fragment(start, ((end, "out"),))
+        if expression.kind == "enum":
+            matcher = self.add(
+                _State(
+                    "enum",
+                    values=tuple(value.casefold() for value in expression.values),
+                )
+            )
+        elif expression.kind == "number":
+            matcher = self.add(
+                _State(
+                    "number",
+                    minimum=expression.minimum,
+                    maximum=expression.maximum,
+                )
+            )
+        else:
+            raise SentencePatternError(f"unsupported capture kind {expression.kind}")
+        self.states[start].out = matcher
+        self.states[matcher].out = end
+        return _Fragment(start, ((end, "out"),))
 
 
 def prepare_match_text(text: str) -> PreparedSentenceText:
