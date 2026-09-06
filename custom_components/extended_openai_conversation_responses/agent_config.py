@@ -182,6 +182,7 @@ from .local_intents import (
     DEFAULT_LOCAL_INTENTS_ENABLED,
 )
 from .memory import get_memory_mode
+from .skill_availability import skill_loader_status
 
 CONF_GUEST_WEB_SEARCH = "guest_web_search"
 DEFAULT_GUEST_WEB_SEARCH = False
@@ -550,6 +551,7 @@ def validate_function_groups(
         "loading_mode",
         "functions",
         "guest_allowed",
+        "enabled",
     }
     for index, group in enumerate(value):
         field = f"{CONF_FUNCTION_GROUPS}[{index}]"
@@ -594,6 +596,9 @@ def validate_function_groups(
         loading_mode = group.get("loading_mode")
         if loading_mode not in FUNCTION_GROUP_LOADING_MODES:
             raise AgentConfigError(f"{field}.loading_mode", "unsupported value")
+        enabled = group.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise AgentConfigError(f"{field}.enabled", "must be a boolean")
         guest_allowed = group.get("guest_allowed", False)
         if not isinstance(guest_allowed, bool):
             raise AgentConfigError(f"{field}.guest_allowed", "must be a boolean")
@@ -622,6 +627,7 @@ def validate_function_groups(
             "description": description,
             "loading_mode": loading_mode,
             "functions": list(functions),
+            "enabled": enabled,
         }
         if guest_allowed:
             normalized_group["guest_allowed"] = True
@@ -962,9 +968,21 @@ def normalize_agent_config(
         result[key] = list(dict.fromkeys(value.strip() for value in values))
 
     function_tools = validate_function_tools(result.get(CONF_FUNCTION_TOOLS, []))
-    result[CONF_FUNCTION_GROUPS] = validate_function_groups(
+    function_groups = validate_function_groups(
         result.get(CONF_FUNCTION_GROUPS, []), function_tools
     )
+    result[CONF_FUNCTION_GROUPS] = function_groups
+    loader_status = skill_loader_status(
+        skills,
+        function_tools,
+        function_groups,
+        max_function_calls=result[CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION],
+    )
+    if not loader_status.available:
+        raise AgentConfigError(
+            CONF_SKILLS,
+            loader_status.reason or "selected Skills are not loadable",
+        )
     if CONF_FUNCTION_TOOLS in data:
         result[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
             function_tools, sort_keys=False, allow_unicode=True
