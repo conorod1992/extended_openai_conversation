@@ -177,12 +177,17 @@ change_config:
           mode: dropdown
 download_skill:
   name: Download skill
-  description: Download a skill from the GitHub repository and install it to the user skills directory. Available skills can be found at https://github.com/conorod1992/extended_openai_conversation/tree/develop/examples/skills
+  description: Download a Skill from this integration's GitHub repository. Normal release installs use the Git tag matching the installed integration version so Skill files do not silently move with the develop branch.
   fields:
     skill_name:
       required: true
       example: crypto
-      description: Name of the skill to download (e.g., crypto, weather, calendar)
+      description: Name of the Skill to download, such as crypto, weather, or calendar.
+      selector:
+        text:
+    source_ref:
+      description: Optional Git branch, tag, or commit to use instead of the installed release version. Intended for development and testing, for example develop.
+      example: develop
       selector:
         text:
 reload_skills:
@@ -318,6 +323,52 @@ disable_function_tools:
     functions:
       required: true
       description: One or more configured model-facing Function Tool names.
+      selector:
+        text:
+          multiple: true
+enable_function_groups:
+  name: Enable Function Groups
+  description: Enable one or more configured Function Groups without changing the individual enabled state of any member Function Tool.
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: extended_openai_conversation_responses
+    agent_id:
+      required: true
+      description: Conversation agent. Legacy action calls may also use its subentry ID.
+      selector:
+        entity:
+          filter:
+            integration: extended_openai_conversation_responses
+            domain: conversation
+    function_groups:
+      required: true
+      description: One or more configured Function Group IDs.
+      selector:
+        text:
+          multiple: true
+disable_function_groups:
+  name: Disable Function Groups
+  description: Make one or more Function Groups and their members unavailable while retaining each member Function Tool's own enabled state.
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: extended_openai_conversation_responses
+    agent_id:
+      required: true
+      description: Conversation agent. Legacy action calls may also use its subentry ID.
+      selector:
+        entity:
+          filter:
+            integration: extended_openai_conversation_responses
+            domain: conversation
+    function_groups:
+      required: true
+      description: One or more configured Function Group IDs.
       selector:
         text:
           multiple: true
