@@ -17,9 +17,7 @@ _OPENAI_API_KEY = re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b")
 _LABELED_CREDENTIAL = re.compile(
     r"(?i)(\b(?:authorization|api[-_ ]?key)\b\s*[:=]\s*)(?:bearer\s+)?([^\s,;]+)"
 )
-_QUERY_CREDENTIAL = re.compile(
-    r"(?i)([?&](?:api[-_]?key|access_token)=)([^&#\s]+)"
-)
+_QUERY_CREDENTIAL = re.compile(r"(?i)([?&](?:api[-_]?key|access_token)=)([^&#\s]+)")
 _BASIC_AUTH_URL = re.compile(r"(?i)(https?://)([^\s/@:]+):([^\s/@]+)@")
 
 
