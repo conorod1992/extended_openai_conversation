@@ -96,6 +96,7 @@ def append_unresolved_tool_results(
     )
 
     for tool_call in unresolved:
+        result: dict[str, Any]
         if tool_call.id == actual_failed_id:
             result = {"status": "error", "error": failure_text}
         else:
@@ -140,9 +141,10 @@ def _resolve_current_tool(
     candidate = request_tool
     if function_tools_factory is not None:
         current_effective = _index_tools(function_tools_factory())
-        candidate = current_effective.get(tool_input.tool_name)
-        if candidate is None:
+        current_candidate = current_effective.get(tool_input.tool_name)
+        if current_candidate is None:
             raise FunctionNotFound(tool_input.tool_name)
+        candidate = current_candidate
 
     return latest_function_tool_for_execution(entity, candidate)
 
