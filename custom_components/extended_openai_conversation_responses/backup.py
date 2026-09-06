@@ -110,56 +110,74 @@ def _backup_lock(hass: HomeAssistant, entry_id: str, subentry_id: str) -> asynci
     return locks.setdefault((entry_id, subentry_id), asyncio.Lock())
 
 
+async def async_collect_backup_snapshot(
+    hass: HomeAssistant, entry: Any, subentry: Any
+) -> dict[str, Any]:
+    """Collect mutable agent state into one local snapshot."""
+    (
+        memory,
+        temporary,
+        knowledge,
+        archive,
+        usage,
+        guest_mode,
+        request_rules,
+    ) = await _managers(hass, entry.entry_id, subentry.subentry_id)
+    config_snapshot = preserve_legacy_guest_policy(
+        dict(subentry.data), agent_config_snapshot(subentry.data)
+    )
+    return {
+        "format": BACKUP_FORMAT,
+        "version": BACKUP_VERSION,
+        "created_at": dt_util.utcnow().isoformat(),
+        "integration_version": _integration_version(),
+        "agent": {
+            "title": subentry.title,
+            "source_entry_id": entry.entry_id,
+            "source_subentry_id": subentry.subentry_id,
+            "config": config_snapshot,
+        },
+        "memories": await memory.async_backup_data(),
+        "temporary_memories": await temporary.async_backup_data(),
+        "knowledge": await knowledge.async_backup_data(),
+        "archive": await archive.async_backup_data(),
+        "usage": await usage.async_backup_data(),
+        "guest_mode": await guest_mode.async_backup_data(),
+        "request_rules": await request_rules.async_backup_data(),
+    }
+
+
+def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Redact and serialize a previously collected local backup snapshot."""
+    document = {
+        **snapshot,
+        "agent": {
+            **snapshot["agent"],
+            "config": _safe_configuration(snapshot["agent"]["config"]),
+        },
+        "request_rules": _safe_configuration(snapshot["request_rules"]),
+    }
+    serialized = json.dumps(document, indent=2, ensure_ascii=False)
+    if len(serialized.encode("utf-8")) > MAX_BACKUP_BYTES:
+        raise BackupError("This agent backup is larger than the supported 16 MB limit")
+    title = str(document["agent"]["title"])
+    safe_title = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")
+    created_at = str(document["created_at"])
+    date = created_at[:10]
+    return {
+        "document": document,
+        "json": serialized,
+        "filename": f"{safe_title or 'conversation-agent'}-full-backup-{date}.json",
+    }
+
+
 async def async_create_backup(
     hass: HomeAssistant, entry: Any, subentry: Any
 ) -> dict[str, Any]:
     """Collect a private, JSON-compatible snapshot of one agent."""
     async with _backup_lock(hass, entry.entry_id, subentry.subentry_id):
-        (
-            memory,
-            temporary,
-            knowledge,
-            archive,
-            usage,
-            guest_mode,
-            request_rules,
-        ) = await _managers(hass, entry.entry_id, subentry.subentry_id)
-        config_snapshot = preserve_legacy_guest_policy(
-            dict(subentry.data), agent_config_snapshot(subentry.data)
-        )
-        document = {
-            "format": BACKUP_FORMAT,
-            "version": BACKUP_VERSION,
-            "created_at": dt_util.utcnow().isoformat(),
-            "integration_version": _integration_version(),
-            "agent": {
-                "title": subentry.title,
-                "source_entry_id": entry.entry_id,
-                "source_subentry_id": subentry.subentry_id,
-                "config": _safe_configuration(config_snapshot),
-            },
-            "memories": await memory.async_backup_data(),
-            "temporary_memories": await temporary.async_backup_data(),
-            "knowledge": await knowledge.async_backup_data(),
-            "archive": await archive.async_backup_data(),
-            "usage": await usage.async_backup_data(),
-            "guest_mode": await guest_mode.async_backup_data(),
-            "request_rules": _safe_configuration(
-                await request_rules.async_backup_data()
-            ),
-        }
-        serialized = json.dumps(document, indent=2, ensure_ascii=False)
-        if len(serialized.encode("utf-8")) > MAX_BACKUP_BYTES:
-            raise BackupError(
-                "This agent backup is larger than the supported 16 MB limit"
-            )
-        safe_title = re.sub(r"[^a-z0-9]+", "-", subentry.title.casefold()).strip("-")
-        date = dt_util.utcnow().date().isoformat()
-        return {
-            "document": document,
-            "json": serialized,
-            "filename": f"{safe_title or 'conversation-agent'}-full-backup-{date}.json",
-        }
+        snapshot = await async_collect_backup_snapshot(hass, entry, subentry)
+    return finalize_backup_snapshot(snapshot)
 
 
 def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
