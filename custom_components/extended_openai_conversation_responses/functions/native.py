@@ -43,6 +43,7 @@ _INDIRECT_TARGET_KEYS = (
     ATTR_LABEL_ID,
 )
 _AUTOMATION_WRITE_LOCK_KEY = f"{DOMAIN}.automation_write_lock"
+_UNCONDITIONAL_WRITE = object()
 _MAX_STATISTIC_IDS = 100
 
 
@@ -102,8 +103,26 @@ def _parse_automation_config(raw_config: str) -> dict[str, Any]:
     return config
 
 
-def _atomic_write_text(path: Path, content: str) -> None:
-    """Atomically replace a text file while preserving its existing mode."""
+def _read_optional_text(path: Path) -> str | None:
+    """Read a text file, distinguishing a missing file from an empty one."""
+    return path.read_text(encoding="utf-8") if path.exists() else None
+
+
+def _assert_automation_file_unchanged(path: Path, expected: str | None) -> None:
+    """Abort instead of overwriting an automation file changed by another writer."""
+    if _read_optional_text(path) != expected:
+        raise HomeAssistantError(
+            "automations.yaml changed while it was being updated; please retry"
+        )
+
+
+def _atomic_write_text(
+    path: Path,
+    content: str,
+    *,
+    expected_previous: str | None | object = _UNCONDITIONAL_WRITE,
+) -> None:
+    """Atomically replace text, optionally requiring an unchanged source file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = path.stat().st_mode if path.exists() else None
     temp_path = path.with_name(f".{path.name}.tmp-{uuid4().hex}")
@@ -114,6 +133,10 @@ def _atomic_write_text(path: Path, content: str) -> None:
             os.fsync(handle.fileno())
         if mode is not None:
             os.chmod(temp_path, mode)
+        if expected_previous is not _UNCONDITIONAL_WRITE:
+            _assert_automation_file_unchanged(
+                path, expected_previous if isinstance(expected_previous, str) else None
+            )
         os.replace(temp_path, path)
     finally:
         if temp_path.exists():
@@ -122,9 +145,9 @@ def _atomic_write_text(path: Path, content: str) -> None:
 
 def _append_automation_atomic(
     path: Path, config: dict[str, Any]
-) -> tuple[str | None, str]:
-    """Append one automation using an atomic whole-file replacement."""
-    previous = path.read_text(encoding="utf-8") if path.exists() else None
+) -> tuple[str | None, str, str]:
+    """Append one automation without overwriting a concurrent external edit."""
+    previous = _read_optional_text(path)
     existing_text = previous or ""
     if existing_text.strip():
         try:
@@ -157,17 +180,19 @@ def _append_automation_atomic(
                 [*current, config], allow_unicode=True, sort_keys=False
             )
 
-    _atomic_write_text(path, updated)
-    return previous, raw_config
+    _atomic_write_text(path, updated, expected_previous=previous)
+    return previous, raw_config, updated
 
 
-def _restore_automation_file(path: Path, previous: str | None) -> None:
-    """Restore the automation file after a failed reload."""
+def _restore_automation_file(
+    path: Path, previous: str | None, expected_current: str
+) -> None:
+    """Rollback only if no external writer changed our just-written file."""
     if previous is None:
-        if path.exists():
-            path.unlink()
+        _assert_automation_file_unchanged(path, expected_current)
+        path.unlink(missing_ok=True)
         return
-    _atomic_write_text(path, previous)
+    _atomic_write_text(path, previous, expected_previous=expected_current)
 
 
 class NativeFunction(Function):
@@ -264,7 +289,7 @@ class NativeFunction(Function):
         service_data: dict[str, Any],
         exposed_entities: list[dict[str, Any]],
     ) -> None:
-        """Resolve indirect HA targets and enforce the exposed-entity boundary."""
+        """Resolve HA selectors and require every selected entity to be exposed."""
         selection = {
             key: service_data[key]
             for key in _INDIRECT_TARGET_KEYS
@@ -378,7 +403,7 @@ class NativeFunction(Function):
         )
         lock = hass.data.setdefault(_AUTOMATION_WRITE_LOCK_KEY, asyncio.Lock())
         async with lock:
-            previous, raw_config = await hass.async_add_executor_job(
+            previous, raw_config, written = await hass.async_add_executor_job(
                 _append_automation_atomic, automation_path, config
             )
             try:
@@ -386,9 +411,15 @@ class NativeFunction(Function):
                     automation.config.DOMAIN, SERVICE_RELOAD, blocking=True
                 )
             except Exception:
-                await hass.async_add_executor_job(
-                    _restore_automation_file, automation_path, previous
-                )
+                try:
+                    await hass.async_add_executor_job(
+                        _restore_automation_file, automation_path, previous, written
+                    )
+                except HomeAssistantError as rollback_err:
+                    raise HomeAssistantError(
+                        "Automation reload failed and automations.yaml changed before "
+                        "rollback; external changes were preserved"
+                    ) from rollback_err
                 try:
                     await hass.services.async_call(
                         automation.config.DOMAIN, SERVICE_RELOAD, blocking=True
