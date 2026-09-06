@@ -42,7 +42,11 @@ async def async_collect_point_in_time_snapshot(
     slower validation, redaction, serialization, and file handling belong after this
     boundary has been released.
     """
+    locks = [participant.backup_snapshot_lock for participant in participants]
+    if len({id(lock) for lock in locks}) != len(locks):
+        raise ValueError("backup snapshot participants must use distinct locks")
+
     async with AsyncExitStack() as stack:
-        for participant in participants:
-            await stack.enter_async_context(participant.backup_snapshot_lock)
+        for lock in locks:
+            await stack.enter_async_context(lock)
         return tuple(participant.backup_snapshot_locked() for participant in participants)
