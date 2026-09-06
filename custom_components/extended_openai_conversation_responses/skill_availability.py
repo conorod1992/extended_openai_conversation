@@ -64,10 +64,7 @@ def skill_loader_status(
     if max_function_calls is not None and max_function_calls <= 0:
         return SkillLoaderStatus(
             available=False,
-            reason=(
-                "selected Skills require at least one Function Tool call per "
-                "conversation"
-            ),
+            reason="selected Skills require at least one Function Tool call per request",
         )
 
     loader = next((tool for tool in tools if is_canonical_skill_loader(tool)), None)
