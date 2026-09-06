@@ -287,13 +287,18 @@ class RequestRules:
         return references
 
     async def async_rename_function_reference(
-        self, old_name: str, new_name: str
+        self,
+        old_name: str,
+        new_name: str,
+        *,
+        expected_revision: str | None = None,
     ) -> int:
         """Rewrite exact configured-function references and persist once."""
         if old_name == new_name:
             return 0
         service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
         async with self._lock:
+            self._require_revision_locked(expected_revision)
             changed = 0
             updated_rules: list[dict[str, Any]] = []
             for rule in self._rules:
@@ -457,6 +462,32 @@ class RequestRules:
             self._sort_and_compile()
             await self._async_save_locked()
         return dict(rule)
+
+    async def async_move(
+        self,
+        rule_id: str,
+        direction: str,
+        *,
+        expected_revision: str | None = None,
+    ) -> dict[str, Any]:
+        """Move one rule by one position while preserving matching precedence."""
+        if direction not in {"up", "down"}:
+            raise ValueError("direction must be up or down")
+        async with self._lock:
+            self._require_revision_locked(expected_revision)
+            index = self._index(rule_id)
+            target = index - 1 if direction == "up" else index + 1
+            if target < 0 or target >= len(self._rules):
+                return dict(self._rules[index])
+            self._rules[index], self._rules[target] = (
+                self._rules[target],
+                self._rules[index],
+            )
+            for order, rule in enumerate(self._rules):
+                rule["order"] = order
+            self._sort_and_compile()
+            await self._async_save_locked()
+            return dict(self._rules[target])
 
     def match(self, text: str) -> RuleMatch | None:
         """Select one deterministic winner, using fuzzy only as a fallback."""

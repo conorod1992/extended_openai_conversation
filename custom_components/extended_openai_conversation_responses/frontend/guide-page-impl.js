@@ -23,5 +23,17 @@ export function renderGuide(panel) {
     .replaceAll(
       "Home Assistant Assist has its own Prefer local handling option. If that is enabled on a pipeline using this agent, Home Assistant may complete a command before it ever reaches Extended OpenAI. The settings page warns you about affected pipelines. Turn Home Assistant's pipeline option off if you want Extended OpenAI to control the order and apply its command-type exceptions.",
       "Home Assistant Assist has its own Prefer local handling option, which runs before the request reaches Extended OpenAI. That is simple and fast, but Extended OpenAI cannot then apply Request Rules or choose a Function Tool for that command. Extended OpenAI local handling runs after Request Rules instead, so you can keep simple commands local while making exceptions. For example, a normal light command can stay local while a delayed light command goes to a deferred-action Function Tool. Turn Home Assistant's pipeline option off if you want Extended OpenAI to control this order."
+    )
+    .replaceAll(
+      "Starts with, Ends with and Contains are broader. They can be useful when your trigger phrase may appear as part of a longer request.",
+      "Starts with, Ends with and Contains are broader. They can be useful when your trigger phrase may appear as part of a longer request. For AI-routing rules these matches only choose the route: the entire original request is still sent unchanged, and the matched words are not stripped."
+    )
+    .replaceAll(
+      "Home Assistant sentence patterns are for more flexible command shapes. They use Home Assistant's Hassil sentence format: square brackets such as [please] mean optional words, brackets such as (on|off) mean one of several choices, and slots such as {room} can capture part of the sentence.",
+      "Home Assistant sentence patterns are for more flexible command shapes. They use Home Assistant's Hassil sentence format: square brackets such as [please] mean optional words, brackets such as (on|off) mean one of several choices, and slots such as {room} can capture part of the sentence. For AI routing, an Equals or Home Assistant sentence-pattern match is a complete routing command: Extended OpenAI acknowledges it locally and applies the selected route to the rest of the current conversation instead of forwarding that command as a normal prompt."
+    )
+    .replaceAll(
+      "Word forms and editable wording alternatives let Extended OpenAI accept small, predictable wording differences. Fuzzy matching is a final fallback that can accept a slightly imperfect match, but it is only tried if no stricter rule matched first.",
+      "Word forms and editable wording alternatives let Extended OpenAI accept small, predictable wording differences. Fuzzy matching is a final fallback that can accept a slightly imperfect match, but it is only tried if no stricter rule matched first. If otherwise equivalent rules still tie, their saved order is the final tie-breaker; moving a rule does not override match type or phrase specificity."
     );
 }

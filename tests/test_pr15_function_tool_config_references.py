@@ -118,13 +118,24 @@ class _FakeRules:
         self.function_name = function_name
         self.referenced = referenced
         self.renames: list[tuple[str, str]] = []
+        self._revision = "rules-revision"
+
+    def revision(self) -> str:
+        return self._revision
 
     def function_references(self, function_name: str) -> list[dict[str, str]]:
         if self.referenced and function_name == self.function_name:
             return [{"id": "rule-1", "name": "Run configured function"}]
         return []
 
-    async def async_rename_function_reference(self, old_name: str, new_name: str) -> int:
+    async def async_rename_function_reference(
+        self,
+        old_name: str,
+        new_name: str,
+        *,
+        expected_revision: str | None = None,
+    ) -> int:
+        assert expected_revision == self._revision
         self.renames.append((old_name, new_name))
         if self.referenced and old_name == self.function_name:
             self.function_name = new_name
@@ -209,7 +220,9 @@ def test_function_tool_schema_accepts_locally_supported_nested_contract() -> Non
         "required": ["items"],
         "additionalProperties": False,
     }
-    assert validate_function_tools([_native_tool(parameters=parameters)])[0]["spec"] == _native_tool(parameters=parameters)["spec"]
+    assert validate_function_tools([_native_tool(parameters=parameters)])[0][
+        "spec"
+    ] == _native_tool(parameters=parameters)["spec"]
 
 
 def test_unknown_native_implementation_is_rejected() -> None:
@@ -257,7 +270,13 @@ async def test_request_rules_report_and_rename_exact_function_references() -> No
     ]
     assert rules.function_references("other_tool") == []
 
-    assert await rules.async_rename_function_reference("old_tool", "new_tool") == 1
+    revision = rules.revision()
+    assert (
+        await rules.async_rename_function_reference(
+            "old_tool", "new_tool", expected_revision=revision
+        )
+        == 1
+    )
     assert rules.function_references("old_tool") == []
     assert rules.function_references("new_tool") == [
         {"id": "rule-1", "name": "Run configured function"}

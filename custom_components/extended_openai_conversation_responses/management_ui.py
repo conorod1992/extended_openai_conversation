@@ -529,8 +529,10 @@ def _persist_function_configuration(
     groups: list[dict[str, Any]],
     *,
     extra_updates: dict[str, Any] | None = None,
+    expected_revision: str | None = None,
 ) -> dict[str, Any]:
-    """Persist only Function Tool fields against the latest saved subentry."""
+    """Persist Function Tool fields only if the source snapshot is still current."""
+    _require_agent_config_revision(subentry, expected_revision)
     updates: dict[str, Any] = {
         CONF_FUNCTION_TOOLS: tools,
         CONF_FUNCTION_GROUPS: groups,
@@ -546,6 +548,7 @@ def _persist_function_configuration(
     return {
         "functions": snapshot[CONF_FUNCTION_TOOLS],
         "function_groups": snapshot[CONF_FUNCTION_GROUPS],
+        "revision": _agent_config_revision(normalized, subentry.title),
     }
 
 
@@ -910,6 +913,16 @@ async def async_management_command(
                 rule_id, expected_revision=message.get("revision")
             )
             return {"rule": rule, "revision": rules.revision()}
+        if action == "move":
+            direction = message.get("direction")
+            if not isinstance(direction, str):
+                raise HomeAssistantError("direction is required")
+            rule = await rules.async_move(
+                rule_id,
+                direction,
+                expected_revision=message.get("revision"),
+            )
+            return {"rule": rule, "revision": rules.revision()}
         raise HomeAssistantError(f"Unknown Request Rules action: {action}")
 
     if section == "guest_mode":
@@ -1059,9 +1072,6 @@ async def async_management_command(
             _require_agent_config_revision(subentry, message.get("revision"))
             normalized = merge_agent_config(subentry.data, updates)
             if CONF_GUEST_POLICY_VERSION not in subentry.data:
-                # The general configuration editor must not implicitly accept
-                # the v2 Guest migration draft. Only Guest Mode's explicit save
-                # action crosses this boundary.
                 for key in GUEST_V2_FIELDS:
                     normalized.pop(key, None)
             requested_title = message.get("title")
@@ -1268,8 +1278,11 @@ async def async_management_command(
                 )
 
             assert original_name is not None
+            operation_revision = _agent_config_revision(subentry.data, subentry.title)
             original_tools = configured_function_tools_from_data(subentry.data)
-            original_groups = [dict(group) for group in groups]
+            original_groups = validate_function_groups(
+                subentry.data.get(CONF_FUNCTION_GROUPS, []), original_tools
+            )
             groups = [
                 {
                     **group,
@@ -1283,6 +1296,7 @@ async def async_management_command(
             rules, references = await _function_reference_state(
                 hass, entry_id, subentry_id, subentry.data, original_name
             )
+            rules_revision = rules.revision()
             guest_names = list(subentry.data.get(CONF_GUEST_ALLOWED_FUNCTION_NAMES, []))
             renamed_guest_names = [
                 saved_name if name == original_name else name for name in guest_names
@@ -1294,21 +1308,32 @@ async def async_management_command(
                 tools,
                 groups,
                 extra_updates={CONF_GUEST_ALLOWED_FUNCTION_NAMES: renamed_guest_names},
+                expected_revision=operation_revision,
             )
             try:
                 renamed_rule_references = await rules.async_rename_function_reference(
-                    original_name, saved_name
+                    original_name,
+                    saved_name,
+                    expected_revision=rules_revision,
                 )
-            except Exception:
-                _persist_function_configuration(
-                    hass,
-                    entry,
-                    subentry,
-                    original_tools,
-                    original_groups,
-                    extra_updates={CONF_GUEST_ALLOWED_FUNCTION_NAMES: guest_names},
-                )
-                raise
+            except Exception as err:
+                try:
+                    _persist_function_configuration(
+                        hass,
+                        entry,
+                        subentry,
+                        original_tools,
+                        original_groups,
+                        extra_updates={CONF_GUEST_ALLOWED_FUNCTION_NAMES: guest_names},
+                        expected_revision=result["revision"],
+                    )
+                except HomeAssistantError as rollback_err:
+                    raise HomeAssistantError(
+                        "Function Tool configuration changed while a related Request Rule "
+                        "rename failed. The newer configuration was preserved; reload "
+                        "before retrying."
+                    ) from rollback_err
+                raise err
             result["renamed_references"] = {
                 "request_rules": renamed_rule_references,
                 "guest_mode": references["guest_mode"],
@@ -1341,6 +1366,7 @@ async def async_management_command(
             remaining = [tool for tool in tools if tool["spec"]["name"] != name]
             if len(remaining) == len(tools):
                 raise HomeAssistantError("The Function Tool no longer exists")
+            operation_revision = _agent_config_revision(subentry.data, subentry.title)
             _rules, references = await _function_reference_state(
                 hass, entry_id, subentry_id, subentry.data, name
             )
@@ -1354,7 +1380,12 @@ async def async_management_command(
                 for group in groups
             ]
             return _persist_function_configuration(
-                hass, entry, subentry, remaining, groups
+                hass,
+                entry,
+                subentry,
+                remaining,
+                groups,
+                expected_revision=operation_revision,
             )
         if action == "save_group":
             group_candidate = message.get("group")
@@ -1732,6 +1763,8 @@ def asdict_or_none(value: Any) -> dict[str, Any] | None:
         vol.Optional("group_id"): str,
         vol.Optional("rule_id"): str,
         vol.Optional("rule"): dict,
+        vol.Optional("revision"): str,
+        vol.Optional("direction"): str,
         vol.Optional("pin"): str,
         vol.Optional("pin_repeat"): str,
         vol.Optional("text"): str,
