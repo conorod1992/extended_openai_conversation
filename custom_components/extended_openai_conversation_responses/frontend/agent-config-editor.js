@@ -118,6 +118,11 @@ function decorateFunctionGroups(panel, html) {
     card.classList.toggle("is-disabled", !enabled);
     const title = card.querySelector(".tool-title");
     if (!enabled && title && !title.querySelector(".group-disabled-badge")) title.insertAdjacentHTML("beforeend", '<span class="availability-badge group-disabled-badge">Disabled</span>');
+    const editButton = card.querySelector(".edit-group");
+    if (editButton) {
+      editButton.disabled = !enabled;
+      editButton.title = enabled ? "" : "Enable this Function Group before editing it";
+    }
     const actions = card.querySelector(".function-group-heading .actions");
     if (actions && !actions.querySelector(".group-enabled")) actions.insertAdjacentHTML("afterbegin", `<label class="compact-toggle" title="Disable the group without changing the enabled state of its member Function Tools"><input type="checkbox" class="group-enabled" data-group-id="${panel._e(group.id)}" ${enabled ? "checked" : ""}><span>Enabled</span></label>`);
   }
