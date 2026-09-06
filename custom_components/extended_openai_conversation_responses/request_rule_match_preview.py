@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from . import management_ui
+from .request_rule_patterns import SentenceMatchLimitError
 from .request_rules import RuleMatch, async_get_request_rules
 
 _PATCHED = "extended_openai_request_rule_match_preview"
@@ -81,7 +82,11 @@ def wrap_management_command(original: ManagementCommand) -> ManagementCommand:
         if not isinstance(text, str) or not text.strip():
             raise HomeAssistantError("Test request text is required")
         rules = await async_get_request_rules(hass, entry_id, subentry_id)
-        return request_rule_match_preview(rules.match(text.strip()))
+        try:
+            match = await rules.async_match(hass, text.strip())
+        except SentenceMatchLimitError as err:
+            raise HomeAssistantError(str(err)) from err
+        return request_rule_match_preview(match)
 
     return wrapped
 
