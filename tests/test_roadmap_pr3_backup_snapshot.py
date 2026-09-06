@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses.backup_snapshot import (
     BackupSnapshotAdapter,
     async_collect_point_in_time_snapshot,
@@ -98,3 +100,25 @@ async def test_snapshot_boundary_blocks_mutation_until_all_copies_are_taken() ->
 
     assert snapshots == ({"one": 10}, {"two": 20})
     assert first.value == 99
+
+
+async def test_snapshot_boundary_releases_all_locks_when_copy_fails() -> None:
+    first_lock = asyncio.Lock()
+    second_lock = asyncio.Lock()
+
+    def copy_first() -> dict[str, int]:
+        return {"one": 1}
+
+    def copy_second() -> dict[str, int]:
+        raise RuntimeError("copy failed")
+
+    participants = (
+        BackupSnapshotAdapter(first_lock, copy_first),
+        BackupSnapshotAdapter(second_lock, copy_second),
+    )
+
+    with pytest.raises(RuntimeError, match="copy failed"):
+        await async_collect_point_in_time_snapshot(participants)
+
+    assert not first_lock.locked()
+    assert not second_lock.locked()
