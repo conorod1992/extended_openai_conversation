@@ -292,7 +292,10 @@ async def test_serial_budget_failure_is_protocol_valid_on_following_turn(hass) -
     assert chat_log.unresponded_tool_results is False
 
 
-async def test_partial_provider_stream_closes_retained_call_without_execution(hass) -> None:
+async def test_partial_provider_stream_drops_uncommitted_tool_call_without_execution(
+    hass,
+) -> None:
+    """A stream failure must not create an orphan output for an uncommitted call."""
     entity = _entity(hass, [_partial_tool_then_failed_stream()])
     entity._execute_function_tool = AsyncMock()
     chat_log = _chat_log(hass)
@@ -301,10 +304,12 @@ async def test_partial_provider_stream_closes_retained_call_without_execution(ha
         await entity._async_handle_chat_log(chat_log, [_tool("first")], [])
 
     entity._execute_function_tool.assert_not_awaited()
-    results = _retained_results(chat_log)
-    assert len(results) == 1
-    assert results[0].tool_call_id == "partial-1"
-    assert results[0].tool_result["result"]["status"] == "error"
+    assert _retained_results(chat_log) == []
+    assert not any(
+        isinstance(content, conversation.AssistantContent) and content.tool_calls
+        for content in chat_log.content
+    )
+    assert chat_log.unresponded_tool_results is False
 
 
 async def test_provider_failure_after_execution_never_retries_side_effect(hass) -> None:
