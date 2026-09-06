@@ -98,3 +98,88 @@ class TestScriptFunctionYaml:
                 )
 
             mock_script.async_unload.assert_awaited_once_with()
+
+    async def test_execute_validates_dynamic_actions_before_script(
+        self, hass, function, exposed_entities, llm_context
+    ):
+        """HA-aware action validation runs before constructing the transient Script."""
+        original_action = {
+            "device_id": "device-id",
+            "domain": "light",
+            "entity_id": "entity-registry-id",
+            "type": "turn_on",
+        }
+        function_config = {"type": "script", "sequence": [original_action]}
+        validated_sequence = [
+            {
+                "device_id": "device-id",
+                "domain": "light",
+                "entity_id": "light.kitchen",
+                "type": "turn_on",
+            }
+        ]
+
+        async def validate_actions(_hass, sequence):
+            assert sequence is not function_config["sequence"]
+            assert sequence[0] is not original_action
+            sequence[0]["entity_id"] = "mutated-during-validation"
+            return validated_sequence
+
+        with (
+            patch(
+                "custom_components.extended_openai_conversation_responses.functions.script.async_validate_actions_config",
+                side_effect=validate_actions,
+            ) as mock_validate,
+            patch(
+                "custom_components.extended_openai_conversation_responses.functions.script.Script"
+            ) as mock_script_class,
+        ):
+            mock_script = AsyncMock()
+            mock_script.async_run = AsyncMock(return_value=None)
+            mock_script.async_unload = AsyncMock()
+            mock_script_class.return_value = mock_script
+
+            result = await function.execute(
+                hass, function_config, {}, llm_context, exposed_entities
+            )
+
+        assert result == "Success"
+        mock_validate.assert_awaited_once()
+        assert function_config["sequence"] == [original_action]
+        assert original_action["entity_id"] == "entity-registry-id"
+        assert mock_script_class.call_args.args[1] is validated_sequence
+        mock_script.async_run.assert_awaited_once()
+        mock_script.async_unload.assert_awaited_once_with()
+
+    async def test_execute_does_not_run_script_when_action_validation_fails(
+        self, hass, function, exposed_entities, llm_context
+    ):
+        """Invalid HA-aware actions fail before a transient Script is constructed."""
+        function_config = {
+            "type": "script",
+            "sequence": [
+                {
+                    "device_id": "missing-device",
+                    "domain": "light",
+                    "entity_id": "missing-entity",
+                    "type": "turn_on",
+                }
+            ],
+        }
+
+        with (
+            patch(
+                "custom_components.extended_openai_conversation_responses.functions.script.async_validate_actions_config",
+                new=AsyncMock(side_effect=RuntimeError("invalid device action")),
+            ) as mock_validate,
+            patch(
+                "custom_components.extended_openai_conversation_responses.functions.script.Script"
+            ) as mock_script_class,
+        ):
+            with pytest.raises(RuntimeError, match="invalid device action"):
+                await function.execute(
+                    hass, function_config, {}, llm_context, exposed_entities
+                )
+
+        mock_validate.assert_awaited_once()
+        mock_script_class.assert_not_called()
