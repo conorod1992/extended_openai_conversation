@@ -131,7 +131,9 @@ class CompiledSentencePattern:
         """Reject text missing a literal every successful path needs."""
         return all(fragment in prepared.folded for fragment in self.required_fragments)
 
-    def match(self, text: str, budget: MatchBudget | None = None) -> PatternMatch | None:
+    def match(
+        self, text: str, budget: MatchBudget | None = None
+    ) -> PatternMatch | None:
         """Match unprepared text with the same bounded runtime used by Request Rules."""
         return self.match_prepared(prepare_match_text(text), budget)
 
@@ -542,7 +544,9 @@ class _Parser:
                 "contain only letters, numbers, and underscores"
             )
         if name in self.capture_names:
-            raise SentencePatternError(f"captured value {name!r} is used more than once")
+            raise SentencePatternError(
+                f"captured value {name!r} is used more than once"
+            )
         self.capture_names.append(name)
         if len(self.capture_names) > MAX_PATTERN_CAPTURES:
             raise SentencePatternError(
