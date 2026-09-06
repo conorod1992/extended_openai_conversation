@@ -200,8 +200,11 @@ def _install_backup_guards() -> None:
             gate = get_agent_maintenance_gate(
                 hass, entry.entry_id, subentry.subentry_id
             )
-            async with gate.shared():
-                return await current_create(hass, entry, subentry)
+            async with gate.exclusive():
+                snapshot = await backup.async_collect_backup_snapshot(
+                    hass, entry, subentry
+                )
+            return backup.finalize_backup_snapshot(snapshot)
 
         guarded_create._extended_openai_maintenance_gate = True  # type: ignore[attr-defined]
         backup.async_create_backup = guarded_create
