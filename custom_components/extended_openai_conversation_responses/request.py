@@ -39,6 +39,7 @@ from .const import (
     DEFAULT_WEB_SEARCH_CONTEXT,
 )
 from .conversation_archive import archive_tools
+from .conversation_lifecycle import conversation_lifecycle_active
 from .guest_mode import GuestCapabilityPolicy, guest_mode_restrict_tool
 from .helpers import get_api_mode, get_model_config, supports_openai_hosted_tools
 from .knowledge import KNOWLEDGE_TOOL_NAMES, knowledge_tools
@@ -220,7 +221,8 @@ def assemble_integration_function_tools(
             "Reserved conversation lifecycle tool name configured: "
             f"{START_FRESH_CONVERSATION_TOOL_NAME}"
         )
-    result.append(START_FRESH_CONVERSATION_TOOL)
+    if conversation_lifecycle_active():
+        result.append(START_FRESH_CONVERSATION_TOOL)
     if capabilities.persistent_memory:
         conflicts = configured_names & MEMORY_TOOL_NAMES
         if conflicts:
