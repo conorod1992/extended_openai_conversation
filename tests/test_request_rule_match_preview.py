@@ -13,6 +13,9 @@ from custom_components.extended_openai_conversation_responses.request_rule_match
     request_rule_match_preview,
     wrap_management_command,
 )
+from custom_components.extended_openai_conversation_responses.request_rule_patterns import (
+    SentenceMatchLimitError,
+)
 from custom_components.extended_openai_conversation_responses.request_rules import RuleMatch
 from homeassistant.exceptions import HomeAssistantError
 
@@ -94,7 +97,7 @@ async def test_management_test_actions_never_delegate_to_real_processing(
         raise AssertionError("real management processing must not run")
 
     class Rules:
-        def match(self, text: str):
+        async def async_match(self, _hass, text: str):
             matched_text.append(text)
             return _local_match()
 
@@ -131,6 +134,48 @@ async def test_management_test_actions_never_delegate_to_real_processing(
     assert result["matched"] is True
     assert result["rule"]["name"] == "Good night"
     assert matched_text == ["good night kitchen"]
+    assert delegated == 0
+
+
+async def test_match_preview_reports_bounded_match_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preview should surface limits and never fall through to real processing."""
+    delegated = 0
+
+    async def original(*_args, **_kwargs):
+        nonlocal delegated
+        delegated += 1
+        raise AssertionError("real management processing must not run")
+
+    class Rules:
+        async def async_match(self, _hass, _text: str):
+            raise SentenceMatchLimitError("Request Rule matching supports at most 2048 characters")
+
+    monkeypatch.setattr(
+        preview_module.management_ui,
+        "entry_and_agent",
+        lambda _hass, _entry_id, _subentry_id: (object(), object()),
+    )
+
+    async def get_rules(_hass, _entry_id, _subentry_id):
+        return Rules()
+
+    monkeypatch.setattr(preview_module, "async_get_request_rules", get_rules)
+    wrapped = wrap_management_command(original)
+    with pytest.raises(HomeAssistantError, match="2048 characters"):
+        await wrapped(
+            SimpleNamespace(),
+            "admin-user",
+            True,
+            {
+                "section": "request_rules",
+                "action": "test_match",
+                "entry_id": "entry",
+                "subentry_id": "agent",
+                "text": "oversized",
+            },
+        )
     assert delegated == 0
 
 
