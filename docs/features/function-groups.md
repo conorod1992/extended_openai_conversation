@@ -18,11 +18,16 @@ Loading performs no Home Assistant action. The integration validates the request
 
 There is no separate classifier request, routing model, embedding lookup, or local keyword matching. The same conversational model chooses a group from its compact semantic description.
 
-## Availability modes
+## Availability modes and enabled state
 
-- **Always available** sends every member's complete schema immediately.
+- **Always available** sends every individually enabled member's complete schema immediately.
 - **Load when needed** withholds complete member schemas until the model requests the group.
 - **Ungrouped functions** remain always available for backwards compatibility.
+- **Disabled group** keeps the group and all of its member settings saved, but none of the group's members are available to the model and an on-demand group cannot be loaded.
+
+The group enabled switch is independent of each Function Tool's own enabled switch. Disabling a group does **not** disable its members individually. When the group is enabled again, only members that are individually enabled become available; individually disabled members stay disabled.
+
+Existing groups that were saved before the group enabled switch existed are treated as enabled, so no migration step is required from the user.
 
 A function belongs to at most one group. Group membership is stored separately from the function YAML, so the existing `spec` and `function` format does not change.
 
@@ -39,7 +44,26 @@ A function belongs to at most one group. Group membership is stored separately f
 
 The overview shows a distinct card for each group, its availability, member count, description, and expandable member list. Search matches groups and functions. Editing a group can move selected functions from another group without editing YAML.
 
+Use the **Enabled** switch on a group card when you want to temporarily make the entire group unavailable without changing member-tool settings. A disabled group remains visible. Enable it again before editing its membership or other group details.
+
 Deleting a group persists immediately and never deletes its functions. They become ungrouped and therefore **Always available**. Deleting a function removes its group assignment. Renaming a function through the editor updates its assignment. Function and group changes do not save or discard an unrelated settings draft.
+
+## Home Assistant actions
+
+Administrators and trusted Home Assistant automations can change group availability without changing member Function Tool state:
+
+```yaml
+service: extended_openai_conversation_responses.disable_function_groups
+data:
+  config_entry: YOUR_CONFIG_ENTRY_ID
+  agent_id: conversation.extended_openai_conversation_responses
+  function_groups:
+    - calendar
+```
+
+Use `extended_openai_conversation_responses.enable_function_groups` with the same fields to enable groups again. One action can name several group IDs.
+
+These actions change only group availability. The existing `enable_function_tools` and `disable_function_tools` actions continue to control individual Function Tool state.
 
 ## Lifecycle and follow-ups
 
@@ -51,6 +75,8 @@ Loaded groups persist for the same active conversation. For example:
 A separate or expired conversation starts with no on-demand groups loaded. State is isolated by provider entry, conversation agent, and active conversation key. It is stored explicitly rather than inferred from textual history, so context truncation does not unload a group halfway through a conversation.
 
 Loaded state is intentionally ephemeral and resets when Home Assistant or the integration restarts, when the agent is reconfigured/reloaded, or when its conversation state expires. The model can load the group again naturally after a reset. No separate function-group timeout is added.
+
+If an on-demand group is disabled while it is loaded, its loaded state is discarded and its members disappear from subsequent model requests. If a provider had already returned a call for one of those members before the change, Extended OpenAI re-checks the latest persisted group state immediately before execution and rejects the stale call.
 
 The loader does not consume the agent's **Maximum function calls** allowance because it performs no user action. It has a separate hard limit of five loader rounds within one model run, while the existing overall tool-loop bound remains in place.
 
@@ -76,9 +102,10 @@ The character count is labelled as serialized size, not a provider token count.
 
 ## Compatibility and limitations
 
-- Legacy configurations, imports, exports, and duplicated agents remain valid.
-- Groups and assignments are included in agent duplication and import/export.
+- Legacy configurations, imports, exports, and duplicated agents remain valid; existing groups default to enabled.
+- Groups, assignments, and group enabled state are included in agent duplication and import/export.
 - Responses and Chat Completions use the same integration-owned function loop, so grouping works in both modes when the selected model/provider supports function tools.
-- Built-in Web Search, memory, Knowledge Library, archive, temporary-memory, continuation, and skills capabilities are not placed in user function groups.
+- Built-in Web Search, memory, Knowledge Library, archive, temporary-memory and continuation capabilities are not placed in user Function Groups.
+- The built-in `load_skill` Function Tool may be grouped, including in an enabled on-demand group. If Skills are selected for the agent, configuration validation prevents that loader or its group from being disabled and prevents the tool-call budget from being set to zero.
 - Empty groups are allowed for drafting but do not appear in the loadable catalogue until they have members.
 - The first use of an on-demand group may add one model round-trip.
