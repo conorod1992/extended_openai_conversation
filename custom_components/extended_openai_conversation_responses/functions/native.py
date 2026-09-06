@@ -120,7 +120,7 @@ def _atomic_write_text(
     path: Path,
     content: str,
     *,
-    expected_previous: str | None | object = _UNCONDITIONAL_WRITE,
+    expected_previous: object = _UNCONDITIONAL_WRITE,
 ) -> None:
     """Atomically replace text, optionally requiring an unchanged source file."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -289,7 +289,7 @@ class NativeFunction(Function):
         service_data: dict[str, Any],
         exposed_entities: list[dict[str, Any]],
     ) -> None:
-        """Resolve HA selectors and require every selected entity to be exposed."""
+        """Resolve indirect HA targets and enforce the exposed-entity boundary."""
         selection = {
             key: service_data[key]
             for key in _INDIRECT_TARGET_KEYS
