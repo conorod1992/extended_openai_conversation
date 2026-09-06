@@ -20,6 +20,8 @@ from .agent_config import (
     preserve_legacy_guest_policy,
     validate_agent_title,
 )
+from .backup_manager_snapshot import manager_snapshot_participants
+from .backup_snapshot import async_collect_point_in_time_snapshot
 from .const import (
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
@@ -127,6 +129,26 @@ async def async_create_backup(
         config_snapshot = preserve_legacy_guest_policy(
             dict(subentry.data), agent_config_snapshot(subentry.data)
         )
+        (
+            memory_snapshot,
+            temporary_snapshot,
+            knowledge_snapshot,
+            archive_snapshot,
+            usage_snapshot,
+            request_rules_snapshot,
+        ) = await async_collect_point_in_time_snapshot(
+            manager_snapshot_participants(
+                memory,
+                temporary,
+                knowledge,
+                archive,
+                usage,
+                request_rules,
+            )
+        )
+        # Guest Mode joins this same lock-held boundary once its manager has a
+        # mutation lock. Until then PR3 remains draft and is not merge-ready.
+        guest_mode_snapshot = await guest_mode.async_backup_data()
         document = {
             "format": BACKUP_FORMAT,
             "version": BACKUP_VERSION,
@@ -138,15 +160,13 @@ async def async_create_backup(
                 "source_subentry_id": subentry.subentry_id,
                 "config": _safe_configuration(config_snapshot),
             },
-            "memories": await memory.async_backup_data(),
-            "temporary_memories": await temporary.async_backup_data(),
-            "knowledge": await knowledge.async_backup_data(),
-            "archive": await archive.async_backup_data(),
-            "usage": await usage.async_backup_data(),
-            "guest_mode": await guest_mode.async_backup_data(),
-            "request_rules": _safe_configuration(
-                await request_rules.async_backup_data()
-            ),
+            "memories": memory_snapshot,
+            "temporary_memories": temporary_snapshot,
+            "knowledge": knowledge_snapshot,
+            "archive": archive_snapshot,
+            "usage": usage_snapshot,
+            "guest_mode": guest_mode_snapshot,
+            "request_rules": _safe_configuration(request_rules_snapshot),
         }
         serialized = json.dumps(document, indent=2, ensure_ascii=False)
         if len(serialized.encode("utf-8")) > MAX_BACKUP_BYTES:
