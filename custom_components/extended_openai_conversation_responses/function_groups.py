@@ -13,6 +13,7 @@ from .const import (
     FUNCTION_GROUP_LOADING_ALWAYS,
     FUNCTION_GROUP_LOADING_ON_DEMAND,
 )
+from .skill_availability import function_group_enabled
 
 _RUNTIMES = "extended_openai_conversation_responses.function_group_runtimes"
 
@@ -160,13 +161,16 @@ def assemble_function_tools(
 ) -> FunctionToolAssembly:
     """Centralize the effective configured tool set for one provider request."""
     groups_by_id = {group["id"]: group for group in groups}
+    # Keep disabled groups in membership so their tools cannot fall through as
+    # ungrouped/always-available tools. Group state is independent of member state.
     membership = {
         function_name: group for group in groups for function_name in group["functions"]
     }
     current_on_demand_ids = {
         group_id
         for group_id, group in groups_by_id.items()
-        if group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
+        if function_group_enabled(group)
+        and group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
     }
     loaded_group_ids.intersection_update(current_on_demand_ids)
 
@@ -177,6 +181,8 @@ def assemble_function_tools(
     effective: list[dict[str, Any]] = []
     for tool in enabled_tools:
         group = membership.get(tool["spec"]["name"])
+        if group is not None and not function_group_enabled(group):
+            continue
         if (
             group is None
             or group["loading_mode"] == FUNCTION_GROUP_LOADING_ALWAYS
@@ -187,7 +193,8 @@ def assemble_function_tools(
     unloaded = [
         group
         for group in groups
-        if group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
+        if function_group_enabled(group)
+        and group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
         and group["id"] not in loaded_group_ids
         and any(name in enabled_names for name in group["functions"])
     ]
@@ -227,7 +234,8 @@ def load_function_groups(
     on_demand = {
         group["id"]: group
         for group in groups
-        if group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
+        if function_group_enabled(group)
+        and group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
         and (
             configured_tools is None
             or any(name in enabled_names for name in group["functions"])
@@ -236,8 +244,10 @@ def load_function_groups(
     always = {
         group["id"]
         for group in groups
-        if group["loading_mode"] == FUNCTION_GROUP_LOADING_ALWAYS
+        if function_group_enabled(group)
+        and group["loading_mode"] == FUNCTION_GROUP_LOADING_ALWAYS
     }
+    session.loaded_group_ids.intersection_update(on_demand)
     if (
         not isinstance(requested, list)
         or not requested
