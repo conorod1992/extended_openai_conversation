@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 
 from custom_components.extended_openai_conversation_responses.backup_snapshot import (
+    BackupSnapshotAdapter,
     async_collect_point_in_time_snapshot,
 )
 
@@ -26,6 +27,25 @@ class _Participant:
             for participant in self.all_participants
         )
         return {self.name: self.value}
+
+
+async def test_snapshot_adapter_reuses_existing_manager_lock_and_copier() -> None:
+    lock = asyncio.Lock()
+    state = {"value": 7}
+    saw_locked = False
+
+    def copy_state() -> dict[str, int]:
+        nonlocal saw_locked
+        saw_locked = lock.locked()
+        return dict(state)
+
+    participant = BackupSnapshotAdapter(lock, copy_state)
+
+    snapshots = await async_collect_point_in_time_snapshot((participant,))
+
+    assert snapshots == ({"value": 7},)
+    assert saw_locked
+    assert not lock.locked()
 
 
 async def test_snapshot_boundary_holds_all_manager_locks_while_copying() -> None:
