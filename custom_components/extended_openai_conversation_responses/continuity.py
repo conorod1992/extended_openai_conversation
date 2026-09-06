@@ -240,7 +240,17 @@ class ConversationContinuity:
             active.claim_token = None
 
     async def async_end(self, key: str) -> bool:
-        """End one active conversation without invalidating an in-flight claim."""
+        """End one active conversation immediately for explicit management."""
+        async with self._lock:
+            session = self._sessions.get(key)
+            if session is None:
+                self._pending_ends.discard(key)
+                return False
+            self._remove_session_locked(key)
+            return True
+
+    async def async_request_end(self, key: str) -> bool:
+        """End when safe, deferring if a newer request currently owns the claim."""
         async with self._lock:
             session = self._sessions.get(key)
             if session is None:
