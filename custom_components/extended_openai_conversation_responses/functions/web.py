@@ -228,8 +228,8 @@ class ScrapeFunction(Function):
 
         for sensor_config in function_config["sensor"]:
             name: Template = sensor_config.get(CONF_NAME)
-            value = self._async_update_from_rest_data(
-                coordinator.data, sensor_config, arguments
+            value = await self._async_update_from_rest_data(
+                hass, coordinator.data, sensor_config, arguments
             )
             new_arguments["value"] = value
             if name:
@@ -245,14 +245,17 @@ class ScrapeFunction(Function):
 
         return result
 
-    def _async_update_from_rest_data(
+    async def _async_update_from_rest_data(
         self,
+        hass: HomeAssistant,
         data: BeautifulSoup,
         sensor_config: dict[str, Any],
         arguments: dict[str, Any],
     ) -> Any:
-        """Update state from the rest data."""
-        value = self._extract_value(data, sensor_config)
+        """Extract one sensor value without blocking Home Assistant's event loop."""
+        value = await hass.async_add_executor_job(
+            self._extract_value, data, sensor_config
+        )
         value_template = sensor_config.get(CONF_VALUE_TEMPLATE)
 
         if value_template is not None:
@@ -263,7 +266,7 @@ class ScrapeFunction(Function):
         return value
 
     def _extract_value(self, data: BeautifulSoup, sensor_config: dict[str, Any]) -> Any:
-        """Parse the html extraction in the executor."""
+        """Parse HTML and extract one configured value."""
         value: str | list[str] | None
         select = sensor_config[scrape.const.CONF_SELECT]
         index = sensor_config.get(scrape.const.CONF_INDEX, 0)
