@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from types import MappingProxyType
 
 from openai import AsyncClient
 from openai._exceptions import AuthenticationError, OpenAIError
@@ -266,7 +267,7 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 hass.config_entries.async_add_subentry(entry, conversation_subentry)
             if "ai_task_data" not in existing_types:
                 ai_task_subentry = ConfigSubentry(
-                    data=dict(DEFAULT_AI_TASK_OPTIONS),
+                    data=MappingProxyType(dict(DEFAULT_AI_TASK_OPTIONS)),
                     subentry_type="ai_task_data",
                     title=DEFAULT_AI_TASK_NAME,
                     unique_id=None,
