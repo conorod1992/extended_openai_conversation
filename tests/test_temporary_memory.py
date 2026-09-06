@@ -56,6 +56,98 @@ async def test_active_records_are_scoped_persisted_and_bounded() -> None:
     )
 
 
+async def test_same_continuity_scope_is_isolated_by_resolved_owner() -> None:
+    memory = TemporaryMemory(Storage())
+    await memory.async_initialize()
+
+    alice = await memory.async_add(
+        "device:kitchen",
+        "Alice is waiting for a parcel",
+        future(),
+        "delivery",
+        owner_scope_id="user:alice",
+    )
+    bob = await memory.async_add(
+        "device:kitchen",
+        "Bob is cooking pasta",
+        future(),
+        "activity",
+        owner_scope_id="user:bob",
+    )
+
+    assert [
+        item.content
+        for item in await memory.async_active(
+            "device:kitchen", owner_scope_id="user:alice"
+        )
+    ] == ["Alice is waiting for a parcel"]
+    assert [
+        item.content
+        for item in await memory.async_active(
+            "device:kitchen", owner_scope_id="user:bob"
+        )
+    ] == ["Bob is cooking pasta"]
+
+    with pytest.raises(ValueError, match="temporary memory not found"):
+        await memory.async_update(
+            "device:kitchen",
+            bob["memory"]["memory_id"],
+            "Alice changed Bob's fact",
+            None,
+            None,
+            owner_scope_id="user:alice",
+        )
+    assert (
+        await memory.async_delete(
+            "device:kitchen",
+            [alice["memory"]["memory_id"]],
+            owner_scope_id="user:bob",
+        )
+        == 0
+    )
+
+
+async def test_legacy_user_scope_gains_matching_owner_on_load() -> None:
+    record = {
+        "memory_id": "legacy-user",
+        "scope_id": "user:alice",
+        "content": "Waiting for a parcel",
+        "category": "delivery",
+        "source": "automatic",
+        "expires_at": future(),
+        "created_at": dt_util.utcnow().isoformat(),
+        "updated_at": dt_util.utcnow().isoformat(),
+    }
+    memory = TemporaryMemory(Storage({"records": [record]}))
+    await memory.async_initialize()
+
+    active = await memory.async_active("user:alice", owner_scope_id="user:alice")
+    assert [item.memory_id for item in active] == ["legacy-user"]
+    assert active[0].owner_scope_id == "user:alice"
+
+
+async def test_legacy_device_scope_is_not_claimed_by_a_resolved_owner() -> None:
+    record = {
+        "memory_id": "legacy-device",
+        "scope_id": "device:kitchen",
+        "content": "Waiting for a parcel",
+        "category": "delivery",
+        "source": "automatic",
+        "expires_at": future(),
+        "created_at": dt_util.utcnow().isoformat(),
+        "updated_at": dt_util.utcnow().isoformat(),
+    }
+    memory = TemporaryMemory(Storage({"records": [record]}))
+    await memory.async_initialize()
+
+    assert await memory.async_active(
+        "device:kitchen", owner_scope_id="user:alice"
+    ) == []
+    assert [item.memory_id for item in await memory.async_active("device:kitchen")] == [
+        "legacy-device"
+    ]
+
+
 async def test_expiry_pruned_at_startup_and_before_injection() -> None:
     expired = {
         "memory_id": "old",
