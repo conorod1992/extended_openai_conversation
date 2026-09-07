@@ -24,7 +24,14 @@ from .const import (
     SHARED_MEMORY_DISABLED,
     TEMPORARY_MEMORY_OFF,
 )
-from .memory import async_get_memory, get_memory_mode, memory_as_dict
+from .memory import (
+    MAX_LIST_LIMIT,
+    PersistentMemory,
+    async_get_memory,
+    get_memory_mode,
+    memory_as_dict,
+    memory_revision,
+)
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .temporary_memory import (
     MAX_DELETE_RECORDS,
@@ -58,6 +65,27 @@ async def _async_user_temporary_records(
         for record in await temporary_memory.async_list_all()
         if record.scope_id == scope_id
     ]
+
+
+def _memory_ui_dict(record: Any, user_id: str) -> dict[str, Any]:
+    """Serialize a persistent memory with its management-only revision token."""
+    result = memory_as_dict(record, include_scope=True, personal_scope_id=user_id)
+    result["revision"] = memory_revision(record)
+    return result
+
+
+async def _async_memory_owner(
+    memory: PersistentMemory, readable_scopes: list[str], memory_id: str
+) -> str:
+    """Resolve a memory owner from server-side state within readable scopes."""
+    if not memory_id:
+        raise HomeAssistantError("memory_id is required")
+    records = await memory.async_get_many(
+        [(scope_id, memory_id) for scope_id in readable_scopes], readable_scopes
+    )
+    if len(records) != 1:
+        raise HomeAssistantError("Memory not found")
+    return records[0].user_id
 
 
 async def async_manage_command(
@@ -148,15 +176,26 @@ async def async_manage_command(
         write_scope = SHARED_HOUSEHOLD_SCOPE_ID
     else:
         write_scope = user_id
+
     if action == "list":
+        limit = message.get("limit", MAX_LIST_LIMIT)
+        offset = message.get("offset", 0)
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= MAX_LIST_LIMIT
+        ):
+            raise HomeAssistantError(f"limit must be 1 to {MAX_LIST_LIMIT}")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise HomeAssistantError("offset must be zero or greater")
         persistent_records = await memory.async_list(
             readable_scopes[0] if len(readable_scopes) == 1 else readable_scopes,
             message.get("category"),
-            int(message.get("limit", 100)),
-            int(message.get("offset", 0)),
+            limit,
+            offset,
         )
         temporary_records: list[TemporaryMemoryRecord] = []
-        if temporary_enabled:
+        if temporary_enabled and offset == 0:
             temporary_memory = await async_get_temporary_memory(
                 hass, entry_id, subentry_id
             )
@@ -165,13 +204,16 @@ async def async_manage_command(
             )
         return {
             "memories": [
-                memory_as_dict(record, include_scope=True, personal_scope_id=user_id)
-                for record in persistent_records
+                _memory_ui_dict(record, user_id) for record in persistent_records
             ],
             "temporary_memories": [
                 temporary_memory_as_dict(record) for record in temporary_records
             ],
+            "next_offset": offset + len(persistent_records)
+            if len(persistent_records) == limit
+            else None,
         }
+
     if action == "add":
         add_args = (
             write_scope,
@@ -192,46 +234,54 @@ async def async_manage_command(
         else:
             result = await memory.async_add(*add_args)
         return result
+
     if action == "update":
-        original_scope = message.get("original_scope")
-        if original_scope not in {None, "personal", "household"}:
-            raise HomeAssistantError("original_scope must be personal or household")
-        original_scope_id = (
-            SHARED_HOUSEHOLD_SCOPE_ID if original_scope == "household" else user_id
+        memory_id = message.get("memory_id")
+        if not isinstance(memory_id, str) or not memory_id:
+            raise HomeAssistantError("memory_id is required")
+        original_scope_id = await _async_memory_owner(
+            memory, readable_scopes, memory_id
         )
-        memory_id = str(message.get("memory_id", ""))
-        update_args = (
+        target_scope_id = original_scope_id if requested_scope is None else write_scope
+        clear_fields = message.get("clear_fields")
+        if clear_fields is not None and (
+            not isinstance(clear_fields, list)
+            or not all(isinstance(field, str) for field in clear_fields)
+        ):
+            raise HomeAssistantError("clear_fields must be a list")
+        expected_revision = message.get("expected_revision")
+        if expected_revision is not None and not isinstance(expected_revision, str):
+            raise HomeAssistantError("expected_revision must be a string")
+        refresh_confirmation = message.get("refresh_confirmation", False)
+        if not isinstance(refresh_confirmation, bool):
+            raise HomeAssistantError("refresh_confirmation must be true or false")
+        record = await memory.async_update(
             original_scope_id,
             memory_id,
-            message.get("content"),
-            message.get("category"),
+            content=message.get("content") if "content" in message else None,
+            category=message.get("category") if "category" in message else None,
+            importance=(message.get("importance") if "importance" in message else None),
+            subject=message.get("subject") if "subject" in message else None,
+            key=message.get("key") if "key" in message else None,
+            valid_from=(message.get("valid_from") if "valid_from" in message else None),
+            refresh_confirmation=refresh_confirmation,
+            target_user_id=target_scope_id,
+            clear_fields=clear_fields,
+            expected_revision=expected_revision,
         )
-        if any(
-            key in message for key in ("importance", "subject", "key", "valid_from")
-        ):
-            record = await memory.async_update(
-                *update_args,
-                message.get("importance"),
-                message.get("subject"),
-                message.get("key"),
-                message.get("valid_from"),
-                target_user_id=write_scope,
-            )
-        elif original_scope is not None:
-            record = await memory.async_update(*update_args, target_user_id=write_scope)
-        else:
-            record = await memory.async_update(*update_args)
         return {
             "status": "updated",
-            "memory": memory_as_dict(
-                record, include_scope=True, personal_scope_id=user_id
-            ),
+            "memory": _memory_ui_dict(record, user_id),
         }
+
     if action == "delete":
-        deleted = await memory.async_delete(
-            write_scope, [str(message.get("memory_id", ""))]
-        )
+        memory_id = message.get("memory_id")
+        if not isinstance(memory_id, str) or not memory_id:
+            raise HomeAssistantError("memory_id is required")
+        owner_scope_id = await _async_memory_owner(memory, readable_scopes, memory_id)
+        deleted = await memory.async_delete(owner_scope_id, [memory_id])
         return {"deleted": deleted}
+
     if action == "clear":
         if message.get("confirm") is not True:
             raise HomeAssistantError("Explicit confirmation is required")
@@ -239,6 +289,7 @@ async def async_manage_command(
         if category is not None and not isinstance(category, str):
             raise HomeAssistantError("category must be a string")
         return {"deleted": await memory.async_clear(write_scope, category)}
+
     raise HomeAssistantError(f"Unknown management action: {action}")
 
 
@@ -257,6 +308,9 @@ async def async_manage_command(
         vol.Optional("subject"): str,
         vol.Optional("key"): str,
         vol.Optional("valid_from"): str,
+        vol.Optional("clear_fields"): [vol.In(["subject", "key", "valid_from"])],
+        vol.Optional("expected_revision"): str,
+        vol.Optional("refresh_confirmation"): bool,
         vol.Optional("limit"): int,
         vol.Optional("offset"): int,
         vol.Optional("confirm"): bool,
@@ -282,22 +336,29 @@ async def async_setup_memory_ui(hass: HomeAssistant) -> None:
     if hass.data.get(_UI_SETUP):
         return
     hass.data[_UI_SETUP] = True
-    panel_file = Path(__file__).parent / "frontend" / "memory-panel.js"
+    frontend_dir = Path(__file__).parent / "frontend"
+    panel_file = frontend_dir / "memory-panel.js"
+    management_panel_file = frontend_dir / "memory-management-panel.js"
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
                 f"/{DOMAIN}/memory-panel.js",
                 str(panel_file),
                 cache_headers=False,
-            )
+            ),
+            StaticPathConfig(
+                f"/{DOMAIN}/memory-management-panel.js",
+                str(management_panel_file),
+                cache_headers=False,
+            ),
         ]
     )
     websocket_api.async_register_command(hass, websocket_manage)
     await panel_custom.async_register_panel(
         hass,
-        webcomponent_name="extended-openai-memory-panel",
+        webcomponent_name="extended-openai-memory-management-panel",
         frontend_url_path=MEMORY_PANEL_URL,
-        module_url=f"/{DOMAIN}/memory-panel.js",
+        module_url=f"/{DOMAIN}/memory-management-panel.js",
         sidebar_title=MEMORY_PANEL_TITLE,
         sidebar_icon="mdi:brain",
         require_admin=False,

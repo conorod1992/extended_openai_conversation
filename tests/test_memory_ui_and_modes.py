@@ -142,14 +142,21 @@ async def test_ui_backend_memory_crud_uses_authenticated_user_scope() -> None:
     hass, _, _ = _hass_and_agent()
     record = SimpleNamespace(
         memory_id="memory-1",
+        user_id="user-7",
         content="User prefers Celsius.",
         category="preferences",
         source="explicit",
         created_at="now",
         updated_at="now",
+        importance="normal",
+        subject=None,
+        key=None,
+        valid_from=None,
+        last_confirmed_at="now",
     )
     memory = SimpleNamespace(
         async_list=AsyncMock(return_value=[record]),
+        async_get_many=AsyncMock(return_value=[record]),
         async_add=AsyncMock(return_value={"status": "created"}),
         async_update=AsyncMock(return_value=record),
         async_delete=AsyncMock(return_value=1),
@@ -190,12 +197,25 @@ async def test_ui_backend_memory_crud_uses_authenticated_user_scope() -> None:
         )
 
     assert listed["memories"][0]["content"] == record.content
+    assert listed["next_offset"] is None
     memory.async_list.assert_awaited_once_with("user-7", None, 100, 0)
     memory.async_add.assert_awaited_once_with(
         "user-7", record.content, "preferences", "explicit"
     )
+    assert memory.async_get_many.await_count == 2
     memory.async_update.assert_awaited_once_with(
-        "user-7", "memory-1", "User prefers Fahrenheit.", "preferences"
+        "user-7",
+        "memory-1",
+        content="User prefers Fahrenheit.",
+        category="preferences",
+        importance=None,
+        subject=None,
+        key=None,
+        valid_from=None,
+        refresh_confirmation=False,
+        target_user_id="user-7",
+        clear_fields=None,
+        expected_revision=None,
     )
     memory.async_delete.assert_awaited_once_with("user-7", ["memory-1"])
 
