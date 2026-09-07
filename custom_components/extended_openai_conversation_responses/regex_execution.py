@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from contextlib import suppress
 from contextvars import ContextVar
 from functools import partial
 import json
@@ -136,6 +137,14 @@ def _run_regex_worker(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+async def _async_stop_regex_worker(process: asyncio.subprocess.Process) -> None:
+    """Kill and reap one worker without masking the triggering failure."""
+    if process.returncode is None:
+        with suppress(ProcessLookupError):
+            process.kill()
+    await process.wait()
+
+
 async def _async_run_regex_worker(payload: dict[str, Any]) -> dict[str, Any]:
     """Run a killable regex worker whose lifetime follows async cancellation."""
     process = await asyncio.create_subprocess_exec(
@@ -153,16 +162,12 @@ async def _async_run_regex_worker(payload: dict[str, Any]) -> dict[str, Any]:
             process.communicate(encoded), timeout=_CONFIGURED_REGEX_TIMEOUT_SECONDS
         )
     except TimeoutError as err:
-        if process.returncode is None:
-            process.kill()
-            await process.wait()
+        await _async_stop_regex_worker(process)
         raise HomeAssistantError(
             "Configured regular expression exceeded the 1 second execution limit"
         ) from err
     except BaseException:
-        if process.returncode is None:
-            process.kill()
-            await process.wait()
+        await _async_stop_regex_worker(process)
         raise
     return _decode_regex_worker_result(
         stdout.decode(errors="replace"),
