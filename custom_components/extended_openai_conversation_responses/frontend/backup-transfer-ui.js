@@ -179,7 +179,7 @@ export function decorateRestoreDialog(html) {
     .replace('id="restore-apply"', `id="${APPLY_ID}"`);
 }
 
-export function bindBackupTransfer(panel) {
+export function bindBackupTransfer(panel, summaryFormatter = () => []) {
   const root = panel?.shadowRoot;
   if (!root) return;
 
@@ -215,8 +215,7 @@ export function bindBackupTransfer(panel) {
       panel._backupTransferSession = result.session_id;
       root.querySelector("#restore-backup-name").textContent = result.title;
       root.querySelector("#restore-backup-meta").textContent = `Created ${new Date(result.summary.created_at).toLocaleString()} with integration ${result.summary.integration_version}`;
-      const summaryLines = panel._backupSummaryLines?.(result.summary) || [];
-      root.querySelector("#restore-summary").innerHTML = summaryLines.map((line) => `<li>${panel._e(line)}</li>`).join("");
+      root.querySelector("#restore-summary").innerHTML = summaryFormatter(result.summary).map((line) => `<li>${panel._e(line)}</li>`).join("");
       apply.disabled = false;
       root.querySelector("#restore-dialog").showModal();
     } catch (err) {
