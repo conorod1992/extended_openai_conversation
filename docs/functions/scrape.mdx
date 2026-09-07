@@ -18,24 +18,42 @@ function:
       value_template: "{{ value }}"
 ```
 
-<ParamField path="resource" type="string" required>
-  The URL of the web page to scrape
+<ParamField path="resource" type="string">
+  Literal URL of the web page to scrape. Supply either `resource` or `resource_template`.
+</ParamField>
+
+<ParamField path="resource_template" type="template">
+  URL template rendered with Home Assistant context and model/function arguments before the request.
 </ParamField>
 
 <ParamField path="sensor" type="array" required>
   List of data points to extract from the page
 </ParamField>
 
-<ParamField path="value_template" type="string" required>
-  Template that combines scraped sensor values into the function result
+<ParamField path="value_template" type="string">
+  Template that combines scraped sensor values into the function result. When omitted, the last sensor's value is returned.
 </ParamField>
+
+## Template stages
+
+Only configured template fields are rendered; the whole configuration is never recursively treated as Jinja. Every supported template renders once per execution, and its output is kept as data even if it contains `{{ ... }}`.
+
+| Field | Render stage and context |
+|-------|--------------------------|
+| `resource_template`, `payload_template` | Before the HTTP request, with Home Assistant context and function arguments. Use `payload` for a literal body. |
+| `headers` values, `params` values | Before the request, with the same context. Keys are literal. Query values retain HA's normal type conversion. |
+| Sensor `name` | After extraction, with Home Assistant context and function arguments. The result names a variable for the final template. |
+| Sensor `value_template` | After that sensor's extraction, with function arguments, `value`, and `value_json` when the extracted text is valid JSON. |
+| Top-level `value_template` | After all sensors, with function arguments, named sensor results, the last `value`, and `value_json` when it is valid JSON. |
+
+`resource`, `payload`, CSS `select`, `attribute`, authentication values, and other request/extraction options are literal configuration, not templates. Sensor `index` is a non-negative integer. Template syntax errors are rejected during configuration validation; execution-time template errors are returned as Function Tool errors.
 
 ## Sensor Configuration
 
 Each sensor extracts a piece of data from the page:
 
-<ParamField path="name" type="string" required>
-  Variable name to use in the main `value_template`
+<ParamField path="name" type="string">
+  Optional variable name to use in the main `value_template`; may be a template using function arguments
 </ParamField>
 
 <ParamField path="select" type="string" required>
@@ -108,13 +126,16 @@ Each sensor extracts a piece of data from the page:
   </Accordion>
 
   <Accordion title="Multiple Elements">
-    Extract all matching elements:
+    Select individual matching elements by zero-based index:
 
     ```yaml
     sensor:
-      - name: all_prices
+      - name: first_price
         select: ".price"
-        index: all  # Returns a list
+        index: 0
+      - name: second_price
+        select: ".price"
+        index: 1
     ```
   </Accordion>
 
@@ -247,7 +268,7 @@ Scrape the current version from home-assistant.io:
       - url
   function:
     type: scrape
-    resource: "{{ url }}"
+    resource_template: "{{ url }}"
     value_template: "Price: {{ price }}, In Stock: {{ stock }}"
     sensor:
       - name: price
@@ -274,14 +295,15 @@ Scrape the current version from home-assistant.io:
     resource: https://news.ycombinator.com
     value_template: >-
       Top Stories:
-      {% for i in range(1, 6) %}
-      {{ i }}. {{ headlines[i-1] }}
-      {% endfor %}
+      1. {{ first_headline }}
+      2. {{ second_headline }}
     sensor:
-      - name: headlines
+      - name: first_headline
         select: ".titleline > a"
-        value_template: '{{ value }}'
-        index: all
+        index: 0
+      - name: second_headline
+        select: ".titleline > a"
+        index: 1
 ```
 
 ## Comparison: Scrape vs REST

@@ -79,7 +79,7 @@ class TestScrapeFunctionYaml:
         """Keep BeautifulSoup work off-loop while rendering HA templates on-loop."""
         data = BeautifulSoup('<span class="value">raw value</span>', "html.parser")
         value_template = MagicMock()
-        value_template.async_render_with_possible_json_value.return_value = "rendered"
+        value_template.async_render.return_value = "rendered"
         sensor_config = {
             scrape.const.CONF_SELECT: ".value",
             CONF_VALUE_TEMPLATE: value_template,
@@ -87,7 +87,7 @@ class TestScrapeFunctionYaml:
         arguments = {"query": "example"}
 
         def execute_extraction(target, *args):
-            value_template.async_render_with_possible_json_value.assert_not_called()
+            value_template.async_render.assert_not_called()
             return target(*args)
 
         executor = AsyncMock(side_effect=execute_extraction)
@@ -99,6 +99,6 @@ class TestScrapeFunctionYaml:
 
         assert result == "rendered"
         executor.assert_awaited_once_with(function._extract_value, data, sensor_config)
-        value_template.async_render_with_possible_json_value.assert_called_once_with(
-            "raw value", None, arguments
+        value_template.async_render.assert_called_once_with(
+            {**arguments, "value": "raw value"}, parse_result=False
         )
