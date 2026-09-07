@@ -26,7 +26,9 @@ from .management_result_limits import (
 MAX_MANAGEMENT_HISTORY_OFFSET = 10_000
 
 
-def _bounded_mapping(value: Any, *, max_keys: int) -> tuple[dict[str, int], dict[str, Any]]:
+def _bounded_mapping(
+    value: Any, *, max_keys: int
+) -> tuple[dict[str, int], dict[str, Any]]:
     """Project one counter mapping without constructing another unbounded mapping."""
     if not isinstance(value, dict):
         return {}, {
@@ -40,7 +42,11 @@ def _bounded_mapping(value: Any, *, max_keys: int) -> tuple[dict[str, int], dict
     omitted_total = 0
     for raw_key, raw_amount in value.items():
         key = str(raw_key)
-        amount = raw_amount if isinstance(raw_amount, int) and not isinstance(raw_amount, bool) else 0
+        amount = (
+            raw_amount
+            if isinstance(raw_amount, int) and not isinstance(raw_amount, bool)
+            else 0
+        )
         if key in result:
             result[key] += max(0, amount)
         elif len(result) < max_keys:
@@ -130,9 +136,7 @@ def usage_runs_page(
         for run in reversed(manager.runs)
         if successful is None or run.successful == successful
     )
-    page, has_more = page_from_iterable(
-        matching, offset=safe_offset, limit=safe_limit
-    )
+    page, has_more = page_from_iterable(matching, offset=safe_offset, limit=safe_limit)
     runs = [asdict(run) for run in page]
     return {
         "runs": runs,
@@ -156,9 +160,7 @@ def usage_requests_page(
     safe_limit = max(1, min(int(limit), MANAGEMENT_USAGE_PAGE_MAX))
     safe_offset = max(0, int(offset))
     matching = (request for request in manager.requests if request.run_id == run_id)
-    page, has_more = page_from_iterable(
-        matching, offset=safe_offset, limit=safe_limit
-    )
+    page, has_more = page_from_iterable(matching, offset=safe_offset, limit=safe_limit)
     requests: list[dict[str, Any]] = []
     for request in page:
         item = asdict(request)
@@ -213,7 +215,11 @@ def usage_breakdowns(
             field_meta = metadata[output_key]
             for raw_key, raw_amount in values.items():
                 key = str(raw_key)
-                amount = raw_amount if isinstance(raw_amount, int) and not isinstance(raw_amount, bool) else 0
+                amount = (
+                    raw_amount
+                    if isinstance(raw_amount, int) and not isinstance(raw_amount, bool)
+                    else 0
+                )
                 amount = max(0, amount)
                 if key in bucket:
                     bucket[key] += amount
@@ -297,7 +303,12 @@ async def archive_list_page(
         offset, limit, MANAGEMENT_ARCHIVE_LIST_PAGE_MAX
     )
     return await _async_archive_query(
-        archive, _archive_list_sync, archive._sessions, scope_id, safe_offset, safe_limit
+        archive,
+        _archive_list_sync,
+        archive._sessions,
+        scope_id,
+        safe_offset,
+        safe_limit,
     )
 
 
@@ -329,7 +340,11 @@ def _archive_search_sync(
             normalized_combined = _normalize(combined)
             tokens = _tokens(combined)
             overlap = len(query_tokens & tokens)
-            if query_tokens and not overlap and normalized_query not in normalized_combined:
+            if (
+                query_tokens
+                and not overlap
+                and normalized_query not in normalized_combined
+            ):
                 continue
             score = overlap / max(1, len(query_tokens))
             if normalized_query and normalized_query in normalized_combined:
