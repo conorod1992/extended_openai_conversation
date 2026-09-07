@@ -239,7 +239,7 @@ def _active_agent(hass: HomeAssistant, entry_id: str, subentry_id: str) -> Any |
 
     try:
         registered = conversation.async_get_agent(hass, entry_id)
-    except (KeyError, ValueError):
+    except KeyError, ValueError:
         registered = None
     if matches(registered):
         return registered

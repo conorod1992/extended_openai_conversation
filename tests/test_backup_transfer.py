@@ -52,7 +52,7 @@ def test_archive_round_trip_uses_normal_backup_validation() -> None:
     finally:
         backup_transfer._remove_file(result["path"])
 
-    assert prepared.title == "Agent"
+    assert prepared.title == "Jarvis"
     assert prepared.summary()["persistent_memories"] == 1
     assert prepared.summary()["usage_requests"] == 1
 
@@ -65,7 +65,7 @@ def test_legacy_json_import_remains_supported(tmp_path) -> None:
         str(path), "legacy_json", "agent-new"
     )
 
-    assert prepared.title == "Agent"
+    assert prepared.title == "Jarvis"
     assert prepared.summary()["archive_sessions"] == 1
 
 
