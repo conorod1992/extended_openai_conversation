@@ -222,19 +222,32 @@ async def _apply_prepared(
 
 
 def _active_agent(hass: HomeAssistant, entry_id: str, subentry_id: str) -> Any | None:
-    """Return the currently registered agent only when it is the exact subentry."""
+    """Return the loaded conversation entity for one exact agent subentry."""
     from homeassistant.components import conversation
 
+    def matches(candidate: Any) -> bool:
+        return bool(
+            candidate is not None
+            and getattr(getattr(candidate, "entry", None), "entry_id", None) == entry_id
+            and getattr(getattr(candidate, "subentry", None), "subentry_id", None)
+            == subentry_id
+        )
+
     try:
-        agent = conversation.async_get_agent(hass, entry_id)
+        registered = conversation.async_get_agent(hass, entry_id)
     except KeyError, ValueError:
-        return None
-    if (
-        agent is None
-        or getattr(getattr(agent, "subentry", None), "subentry_id", None) != subentry_id
-    ):
-        return None
-    return agent
+        registered = None
+    if matches(registered):
+        return registered
+
+    # Several conversation subentries share one parent config-entry registration
+    # key. If another subentry currently owns that Core mapping, scan the loaded
+    # ConversationEntity platform so restore cleanup still reaches the exact agent.
+    component = hass.data.get(conversation.DATA_COMPONENT)
+    for candidate in getattr(component, "entities", ()):
+        if matches(candidate):
+            return candidate
+    return None
 
 
 def reset_restored_runtime(
