@@ -129,6 +129,24 @@ def _value(source: Any, key: str) -> Any:
     return source.get(key) if isinstance(source, dict) else getattr(source, key, None)
 
 
+def _totals_from_storage(stored: dict[str, Any] | None) -> UsageTotals:
+    """Load compatible persisted totals without silently accepting corruption."""
+    if not stored:
+        return UsageTotals()
+    values_source = stored.get("totals", stored)
+    if not isinstance(values_source, dict):
+        raise ValueError("usage totals storage is invalid")
+    allowed = {item.name for item in fields(UsageTotals)}
+    values = {key: values_source[key] for key in allowed if key in values_source}
+    if isinstance(values.get("details"), dict):
+        values["details"] = {
+            str(key): _integer(value)
+            for key, value in values["details"].items()
+            if _integer(value)
+        }
+    return UsageTotals(**values)
+
+
 def extract_usage(usage: Any) -> RequestUsage:
     """Normalize Chat Completions or Responses token metadata."""
     if usage is None:
@@ -197,6 +215,7 @@ class UsageManager:
         self.runs: list[UsageRun] = []
         self._listeners: set[Callable[[], None]] = set()
         self._lock = asyncio.Lock()
+        self._initialize_lock = asyncio.Lock()
         self._initialized = False
         self._current_run: ContextVar[UsageRun | None] = ContextVar(
             f"usage_run_{id(self)}", default=None
@@ -204,51 +223,73 @@ class UsageManager:
         self._run_started: dict[str, float] = {}
 
     async def async_initialize(self) -> None:
+        """Load persisted state transactionally and make retries idempotent."""
         if self._initialized:
             return
-        stored = await self._storage.async_load()
-        if stored:
-            # Version-one payloads were the totals object itself. Version two keeps
-            # the same compact shape, so migration cannot lose cumulative counters.
-            values_source = stored.get("totals", stored)
-            allowed = {item.name for item in fields(UsageTotals)}
-            values = {
-                key: values_source[key] for key in allowed if key in values_source
+        async with self._initialize_lock:
+            if self._initialized:
+                return
+
+            daily_data: dict[str, Any] = {}
+            if self._daily_storage is not None:
+                daily_data = await self._daily_storage.async_load() or {}
+                if not isinstance(daily_data, dict):
+                    raise ValueError("daily usage storage is invalid")
+
+            if "totals" in daily_data:
+                staged_totals = _totals_from_storage({"totals": daily_data["totals"]})
+            else:
+                staged_totals = _totals_from_storage(await self._storage.async_load())
+
+            staged_daily = {
+                str(key): deepcopy(value)
+                for key, value in daily_data.get("days", {}).items()
+                if isinstance(value, dict)
             }
-            if isinstance(values.get("details"), dict):
-                values["details"] = {
-                    str(k): _integer(v)
-                    for k, v in values["details"].items()
-                    if _integer(v)
-                }
-            self.totals = UsageTotals(**values)
-        if self._daily_storage is not None:
-            data = await self._daily_storage.async_load() or {}
-            self.daily = {
-                str(k): v
-                for k, v in data.get("days", {}).items()
-                if isinstance(v, dict)
-            }
-        if self._detail_storage is not None:
-            data = await self._detail_storage.async_load() or {}
-            for raw in data.get("requests", []):
-                try:
-                    self.requests.append(UsageRequest(**raw))
-                except TypeError, ValueError:
-                    continue
-            for raw in data.get("runs", []):
-                try:
-                    self.runs.append(UsageRun(**raw))
-                except TypeError, ValueError:
-                    continue
-        self._initialized = True
-        await self.async_prune_details(save=False)
+            staged_requests: list[UsageRequest] = []
+            staged_runs: list[UsageRun] = []
+            if self._detail_storage is not None:
+                detail_data = await self._detail_storage.async_load() or {}
+                if not isinstance(detail_data, dict):
+                    raise ValueError("usage detail storage is invalid")
+                for raw in detail_data.get("requests", []):
+                    try:
+                        staged_requests.append(UsageRequest(**raw))
+                    except TypeError, ValueError:
+                        continue
+                for raw in detail_data.get("runs", []):
+                    try:
+                        staged_runs.append(UsageRun(**raw))
+                    except TypeError, ValueError:
+                        continue
+
+            now = dt_util.utcnow()
+            request_cutoff = now - timedelta(days=max(0, self.request_retention_days))
+            run_cutoff = now - timedelta(days=max(0, self.run_retention_days))
+            staged_requests = [
+                request
+                for request in staged_requests
+                if self.request_retention_days > 0
+                and _parse_time(request.timestamp) >= request_cutoff
+            ]
+            staged_runs = [
+                run
+                for run in staged_runs
+                if self.run_retention_days > 0
+                and _parse_time(run.started_at) >= run_cutoff
+            ]
+
+            self.totals = staged_totals
+            self.daily = staged_daily
+            self.requests = staged_requests
+            self.runs = staged_runs
+            self._initialized = True
 
     async def async_record_conversation(self) -> None:
         """Compatibility API; new conversation code uses ``async_run``."""
         async with self._lock:
             self.totals.conversation_count += 1
-            await self._async_save_totals()
+            await self._async_save_aggregates()
 
     @asynccontextmanager
     async def async_run(
@@ -302,8 +343,9 @@ class UsageManager:
         web_search_used: bool = False,
         error_type: str | None = None,
     ) -> None:
-        """Count one request and optionally attach it to the current run."""
+        """Count exactly one completed provider request."""
         usage = usage or RequestUsage()
+        completed_at = dt_util.utcnow()
         async with self._lock:
             self.totals.api_request_count += 1
             if successful:
@@ -311,6 +353,17 @@ class UsageManager:
             else:
                 self.totals.failed_request_count += 1
             self._add_tokens(self.totals, usage)
+
+            day_key = _local_day_key(completed_at)
+            day = self.daily.setdefault(day_key, _empty_day(day_key))
+            _add_request_to_day(
+                day,
+                successful=successful,
+                usage=usage,
+                provider=provider,
+                model=model,
+                api_mode=api_mode,
+            )
 
             run = self._current_run.get()
             if run is not None:
@@ -335,7 +388,7 @@ class UsageManager:
                         UsageRequest(
                             request_id=uuid4().hex,
                             run_id=run.run_id,
-                            timestamp=dt_util.utcnow().isoformat(),
+                            timestamp=completed_at.isoformat(),
                             agent_subentry_id=self._agent_subentry_id,
                             provider=provider,
                             model=model,
@@ -354,7 +407,9 @@ class UsageManager:
                             details=dict(usage.details),
                         )
                     )
-            await self._async_save_safely("request totals", self._async_save_totals)
+            await self._async_save_safely(
+                "request aggregates", self._async_save_aggregates
+            )
             if self._detail_storage is not None and run is not None:
                 await self._async_save_safely(
                     "request details", self._async_save_details
@@ -365,7 +420,8 @@ class UsageManager:
         async with self._lock:
             if run.completed_at is not None:
                 return
-            run.completed_at = dt_util.utcnow().isoformat()
+            completed_at = dt_util.utcnow()
+            run.completed_at = completed_at.isoformat()
             run.duration_ms = max(
                 0,
                 int(
@@ -379,56 +435,53 @@ class UsageManager:
             self.totals.conversation_count += 1
             if self.run_retention_days > 0:
                 self.runs.append(run)
-            day_key = dt_util.now().date().isoformat()
+            day_key = _local_day_key(completed_at)
             day = self.daily.setdefault(day_key, _empty_day(day_key))
             _add_run_to_day(day, run)
-            await self._async_save_safely("run totals", self._async_save_totals)
-            daily_storage = self._daily_storage
-            if daily_storage is not None:
-                await self._async_save_safely(
-                    "daily run totals",
-                    lambda: daily_storage.async_save({"days": self.daily}),
-                )
+            await self._async_save_safely("run aggregates", self._async_save_aggregates)
             if self._detail_storage is not None:
                 await self._async_save_safely("run details", self._async_save_details)
             self._notify()
 
     async def async_prune_details(self, *, save: bool = True) -> dict[str, int]:
-        now = dt_util.utcnow()
-        request_cutoff = now - timedelta(days=max(0, self.request_retention_days))
-        run_cutoff = now - timedelta(days=max(0, self.run_retention_days))
-        old_request_count = len(self.requests)
-        old_run_count = len(self.runs)
-        self.requests = [
-            r
-            for r in self.requests
-            if self.request_retention_days > 0
-            and _parse_time(r.timestamp) >= request_cutoff
-        ]
-        self.runs = [
-            r
-            for r in self.runs
-            if self.run_retention_days > 0 and _parse_time(r.started_at) >= run_cutoff
-        ]
-        if save and self._detail_storage is not None:
-            await self._async_save_details()
-        return {
-            "deleted_requests": old_request_count - len(self.requests),
-            "deleted_runs": old_run_count - len(self.runs),
-        }
+        async with self._lock:
+            now = dt_util.utcnow()
+            request_cutoff = now - timedelta(days=max(0, self.request_retention_days))
+            run_cutoff = now - timedelta(days=max(0, self.run_retention_days))
+            old_request_count = len(self.requests)
+            old_run_count = len(self.runs)
+            self.requests = [
+                request
+                for request in self.requests
+                if self.request_retention_days > 0
+                and _parse_time(request.timestamp) >= request_cutoff
+            ]
+            self.runs = [
+                run
+                for run in self.runs
+                if self.run_retention_days > 0
+                and _parse_time(run.started_at) >= run_cutoff
+            ]
+            if save and self._detail_storage is not None:
+                await self._async_save_details()
+            return {
+                "deleted_requests": old_request_count - len(self.requests),
+                "deleted_runs": old_run_count - len(self.runs),
+            }
 
     async def async_clear_details(self, *, confirm: bool) -> dict[str, int]:
         if not confirm:
             raise ValueError("Explicit confirmation is required")
-        result = {
-            "deleted_requests": len(self.requests),
-            "deleted_runs": len(self.runs),
-        }
-        self.requests.clear()
-        self.runs.clear()
-        if self._detail_storage is not None:
-            await self._async_save_details()
-        return result
+        async with self._lock:
+            result = {
+                "deleted_requests": len(self.requests),
+                "deleted_runs": len(self.runs),
+            }
+            self.requests.clear()
+            self.runs.clear()
+            if self._detail_storage is not None:
+                await self._async_save_details()
+            return result
 
     def summary_for_date(self, date: str) -> dict[str, Any]:
         return dict(self.daily.get(date, _empty_day(date)))
@@ -590,9 +643,7 @@ class UsageManager:
             self.daily = deepcopy(daily)
             self.requests = list(requests)
             self.runs = list(runs)
-            await self._async_save_totals()
-            if self._daily_storage is not None:
-                await self._daily_storage.async_save({"days": self.daily})
+            await self._async_save_aggregates()
             if self._detail_storage is not None:
                 await self._async_save_details()
         await self.async_prune_details()
@@ -613,6 +664,24 @@ class UsageManager:
         if not self._initialized:
             raise RuntimeError("usage statistics have not been initialized")
         await self._storage.async_save(self.as_dict())
+
+    async def _async_save_aggregates(self) -> None:
+        """Persist lifetime and daily aggregates in one authoritative snapshot."""
+        if not self._initialized:
+            raise RuntimeError("usage statistics have not been initialized")
+        if self._daily_storage is None:
+            await self._async_save_totals()
+            return
+        await self._daily_storage.async_save(
+            {"totals": self.as_dict(), "days": self.daily}
+        )
+        try:
+            await self._async_save_totals()
+        except Exception:
+            _LOGGER.exception(
+                "Unable to update legacy usage totals mirror; aggregate snapshot "
+                "remains current"
+            )
 
     async def _async_save_details(self) -> None:
         if self._detail_storage is not None:
@@ -815,13 +884,18 @@ def _empty_day(date: str) -> dict[str, Any]:
     }
 
 
-def _add_run_to_day(day: dict[str, Any], run: UsageRun) -> None:
-    day["run_count"] += 1
-    day["successful_run_count"] += int(run.successful)
-    day["failed_run_count"] += int(not run.successful)
-    day["api_request_count"] += run.request_count
-    day["successful_request_count"] += run.successful_request_count
-    day["failed_request_count"] += run.failed_request_count
+def _add_request_to_day(
+    day: dict[str, Any],
+    *,
+    successful: bool,
+    usage: RequestUsage,
+    provider: str,
+    model: str,
+    api_mode: str,
+) -> None:
+    day["api_request_count"] += 1
+    day["successful_request_count"] += int(successful)
+    day["failed_request_count"] += int(not successful)
     for key in (
         "input_tokens",
         "output_tokens",
@@ -829,17 +903,24 @@ def _add_run_to_day(day: dict[str, Any], run: UsageRun) -> None:
         "cached_input_tokens",
         "reasoning_tokens",
     ):
-        day[key] += getattr(run, key)
+        day[key] += getattr(usage, key)
+    for key, value in (
+        ("provider_breakdown", provider),
+        ("model_breakdown", model),
+        ("api_mode_breakdown", api_mode),
+    ):
+        if value:
+            day[key][value] = day[key].get(value, 0) + usage.total_tokens
+    _calculate_averages(day)
+
+
+def _add_run_to_day(day: dict[str, Any], run: UsageRun) -> None:
+    day["run_count"] += 1
+    day["successful_run_count"] += int(run.successful)
+    day["failed_run_count"] += int(not run.successful)
     day["tool_call_count"] += run.tool_call_count
     day["web_search_run_count"] += int(run.web_search_used)
     day["total_run_duration_ms"] += run.duration_ms
-    for key, values in (
-        ("provider_breakdown", run.providers),
-        ("model_breakdown", run.models),
-        ("api_mode_breakdown", run.api_modes),
-    ):
-        for value in values:
-            day[key][value] = day[key].get(value, 0) + run.total_tokens
     _calculate_averages(day)
 
 
@@ -870,6 +951,11 @@ def _calculate_averages(day: dict[str, Any]) -> None:
         )
 
 
+def _local_day_key(timestamp: datetime) -> str:
+    """Return the Home Assistant local calendar date for an event timestamp."""
+    return dt_util.as_local(timestamp).date().isoformat()
+
+
 def _parse_time(value: Any) -> datetime:
     try:
         parsed = datetime.fromisoformat(value)
@@ -885,11 +971,17 @@ async def async_get_usage(
         _USAGE_MANAGERS, {}
     )
     key = (entry_id, subentry_id)
-    if key not in managers:
+    manager = managers.get(key)
+    if manager is None:
         prefix = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
         manager = UsageManager(
-            Store(hass, 1, prefix),
-            Store(hass, STORAGE_VERSION, f"{prefix}.daily"),
+            Store(hass, 1, prefix, atomic_writes=True),
+            Store(
+                hass,
+                STORAGE_VERSION,
+                f"{prefix}.daily",
+                atomic_writes=True,
+            ),
             Store(
                 hass,
                 STORAGE_VERSION,
@@ -900,6 +992,8 @@ async def async_get_usage(
             ),
             agent_subentry_id=subentry_id,
         )
-        await manager.async_initialize()
+        # Publish before the first await so every concurrent caller initializes and
+        # retains the same authoritative manager instance.
         managers[key] = manager
-    return managers[key]
+    await manager.async_initialize()
+    return manager

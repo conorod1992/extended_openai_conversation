@@ -57,6 +57,13 @@ async def async_get_usage_safely(
     try:
         return await _ORIGINAL_ASYNC_GET_USAGE(hass, entry_id, subentry_id)
     except Exception:
+        # The persistent getter publishes its manager before initialization. The
+        # outer runtime getter guard serializes this effective path, so discard the
+        # failed published instance before installing the one shared fallback.
+        persistent_managers = hass.data.get(usage_module._USAGE_MANAGERS)
+        if isinstance(persistent_managers, dict):
+            persistent_managers.pop(key, None)
+
         # Usage is diagnostic telemetry. A damaged/unavailable Store must not make
         # the conversation agent itself unavailable. Keep accounting in memory for
         # this HA runtime and retry persistent storage after the next restart.
