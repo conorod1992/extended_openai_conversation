@@ -17,8 +17,7 @@ from homeassistant.helpers.typing import ConfigType
 
 # Register exposed-attribute agent configuration before modules import snapshots of
 # the authoritative config field set or normalizer.
-from . import exposed_attributes as _exposed_attributes
-from . import management_ui as _management_ui
+from . import exposed_attributes as _exposed_attributes, management_ui as _management_ui
 from .agent_maintenance import install_agent_maintenance_barrier
 from .backup_transfer import setup_backup_transfer_websocket
 from .const import (
