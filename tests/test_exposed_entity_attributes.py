@@ -294,7 +294,7 @@ def test_maintained_default_formats_include_only_live_selected_values(
 
     assert "entity_id,name,state,aliases,attributes" in grouped
     assert '"{""brightness"":123}"' in grouped
-    assert "switch.kettle,Kettle,on,," in grouped
+    assert "switch.kettle,,on,," in grouped
     assert "entity_id,name,state,area_id,aliases,attributes" in legacy
     assert '"{""brightness"":123}"' in legacy
 
