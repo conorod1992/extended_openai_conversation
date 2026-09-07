@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from functools import wraps
-from typing import Any, Iterator
+from typing import Any
 
 from .agent_config import validate_function_groups
 from .const import (
