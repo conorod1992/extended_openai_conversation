@@ -166,9 +166,7 @@ def debug_run_summaries(manager: Any) -> list[dict[str, Any]]:
     return [_summary(trace) for trace in reversed(manager._runs)]
 
 
-def _provider_request(
-    request: Any, page_budget: _ProjectionBudget
-) -> dict[str, Any]:
+def _provider_request(request: Any, page_budget: _ProjectionBudget) -> dict[str, Any]:
     request_value, request_meta = _bounded_value(
         request.request, MANAGEMENT_DEBUG_VALUE_CHARACTERS, page_budget
     )
