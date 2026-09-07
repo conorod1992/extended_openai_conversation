@@ -248,7 +248,9 @@ async def _apply_prepared(
     await progress("temporary_memory")
     await knowledge.async_replace_backup(prepared.knowledge)
     await progress("knowledge")
-    await archive.async_replace_backup(prepared.archive_sessions, prepared.archive_turns)
+    await archive.async_replace_backup(
+        prepared.archive_sessions, prepared.archive_turns
+    )
     await progress("archive")
     await usage.async_replace_backup(
         prepared.usage_totals,
@@ -325,9 +327,7 @@ async def _rollback_transaction(
     await _set_phase(store, journal, _PHASE_ROLLING_BACK)
 
     async def progress(category: str) -> None:
-        await _save_progress(
-            store, journal, "rollback_completed_categories", category
-        )
+        await _save_progress(store, journal, "rollback_completed_categories", category)
 
     await _apply_prepared(managers, rollback, progress)
     await _update_configuration(hass, entry, subentry, rollback, progress)
@@ -453,9 +453,7 @@ def install_restore_recovery() -> None:
         async def recoverable_restore(
             hass: HomeAssistant, entry: Any, subentry: Any, value: Any
         ) -> dict[str, Any]:
-            return await async_restore_backup_recoverably(
-                hass, entry, subentry, value
-            )
+            return await async_restore_backup_recoverably(hass, entry, subentry, value)
 
         recoverable_restore._extended_openai_restart_recovery = True  # type: ignore[attr-defined]
         backup.async_restore_backup = recoverable_restore
