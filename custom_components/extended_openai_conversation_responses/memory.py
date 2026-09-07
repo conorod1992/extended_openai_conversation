@@ -70,6 +70,7 @@ _UNSET = _UnsetType()
 
 _TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
+_MEMORY_KEY_PATTERN = re.compile(r"^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$")
 _SECRET_PATTERN = re.compile(
     r"(?:password|passcode|api[_ -]?key|access[_ -]?token|auth[_ -]?token|"
     r"security[_ -]?code|secret|pin)\s*(?:is|:|=)\s*\S+|"
@@ -269,6 +270,12 @@ class PersistentMemory:
         self._embedding_cache_storage = embedding_cache_storage
         self._embedding_cache: dict[str, EmbeddingCacheEntry] = {}
         self._embedding_cache_dirty = False
+        self._hybrid_status: dict[str, Any] = {
+            "configured": False,
+            "status": "lexical_fallback",
+            "model": "default",
+            "reason": "provider_not_configured",
+        }
         # Kept only for compatibility with the live-config lifecycle seam and its
         # injected test scheduler. Production does not provide a scheduler, so
         # configuring Hybrid retrieval never starts background prewarming.
@@ -321,6 +328,7 @@ class PersistentMemory:
                     _LOGGER.warning("Ignoring malformed persistent memory record")
                     continue
                 seen_ids.add(memory.memory_id)
+                self._assert_key_available(memory)
                 self._memories[memory.memory_id] = memory
                 self._index(memory)
             if legacy_embeddings_found or needs_save:
@@ -339,9 +347,14 @@ class PersistentMemory:
         self, provider: EmbeddingProvider | None, model: str = "default"
     ) -> None:
         """Configure the optional provider used only by hybrid retrieval."""
+        model = str(model).strip() or "default"
         changed = self._embedding_provider != provider or self._embedding_model != model
         self._embedding_provider = provider
         self._embedding_model = model
+        self._set_hybrid_status(
+            "ready" if provider is not None else "lexical_fallback",
+            None if provider is not None else "provider_not_configured",
+        )
         if (
             changed
             and provider is not None
@@ -351,6 +364,10 @@ class PersistentMemory:
             # coroutine. It exercises lifecycle scheduling without embedding Memory
             # content; normal production construction never supplies this hook.
             self._embedding_task_scheduler(self._async_refresh_missing_embeddings(()))
+
+    def hybrid_status(self) -> dict[str, Any]:
+        """Return non-sensitive hybrid-retrieval availability diagnostics."""
+        return dict(self._hybrid_status)
 
     async def async_add(
         self,
@@ -363,7 +380,7 @@ class PersistentMemory:
         key: str | None = None,
         valid_from: str | None = None,
     ) -> dict[str, Any]:
-        """Add a memory, or return a likely duplicate."""
+        """Add a memory, or return a likely duplicate for an unkeyed fact."""
         content = _clean_content(content)
         category = _clean_category(category)
         importance = _clean_importance(importance)
@@ -375,11 +392,12 @@ class PersistentMemory:
         _validate_privacy(content, source)
         async with self._lock:
             self._ensure_initialized()
-            duplicate = self._find_duplicate(user_id, content)
-            if duplicate:
-                return {"status": "duplicate", "memory": memory_as_dict(duplicate)}
             if key and (user_id, key) in self._key_index:
                 raise ValueError("canonical key already exists in this memory scope")
+            if key is None:
+                duplicate = self._find_duplicate(user_id, content)
+                if duplicate:
+                    return {"status": "duplicate", "memory": memory_as_dict(duplicate)}
             if len(self._memories) >= MAX_MEMORIES_PER_AGENT:
                 raise ValueError(
                     "memory limit reached; delete memories before adding more"
@@ -400,6 +418,7 @@ class PersistentMemory:
                 valid_from=valid_from,
                 last_confirmed_at=timestamp,
             )
+            self._assert_key_available(memory)
             self._memories[memory.memory_id] = memory
             self._index(memory)
             await self._async_save_locked()
@@ -441,6 +460,7 @@ class PersistentMemory:
         async with self._lock:
             self._ensure_initialized()
             timestamp = dt_util.utcnow().isoformat()
+            keyed_identity = isinstance(cleaned_key, str)
             if isinstance(cleaned_key, str) and (
                 memory_id := self._key_index.get((user_id, cleaned_key))
             ):
@@ -449,7 +469,6 @@ class PersistentMemory:
                     "content": content,
                     "category": category,
                     "key": cleaned_key,
-                    "updated_at": timestamp,
                     "last_confirmed_at": timestamp,
                 }
                 if cleaned_importance is not _UNSET:
@@ -458,43 +477,42 @@ class PersistentMemory:
                     changes["subject"] = cleaned_subject
                 if cleaned_valid_from is not _UNSET:
                     changes["valid_from"] = cleaned_valid_from
-                updated = self._replace_record(
-                    current,
-                    **changes,
-                )
+                _set_updated_at_if_substantive(current, changes, timestamp)
+                updated = self._replace_record(current, **changes)
                 await self._async_save_locked()
                 return {"status": "updated", "memory": memory_as_dict(updated)}
-            duplicate = self._find_duplicate(user_id, content)
-            if duplicate:
-                changes = {
-                    "category": category,
-                    "last_confirmed_at": timestamp,
-                }
-                if cleaned_importance is not _UNSET:
-                    changes["importance"] = cleaned_importance
-                if cleaned_subject is not _UNSET:
-                    changes["subject"] = cleaned_subject
-                if cleaned_key is not _UNSET:
-                    changes["key"] = cleaned_key
-                if cleaned_valid_from is not _UNSET:
-                    changes["valid_from"] = cleaned_valid_from
-                confirmed = self._replace_record(
-                    duplicate,
-                    **changes,
+
+            if not keyed_identity:
+                duplicate = self._find_duplicate(user_id, content)
+                if duplicate:
+                    changes = {
+                        "category": category,
+                        "last_confirmed_at": timestamp,
+                    }
+                    if cleaned_importance is not _UNSET:
+                        changes["importance"] = cleaned_importance
+                    if cleaned_subject is not _UNSET:
+                        changes["subject"] = cleaned_subject
+                    if cleaned_key is not _UNSET:
+                        changes["key"] = cleaned_key
+                    if cleaned_valid_from is not _UNSET:
+                        changes["valid_from"] = cleaned_valid_from
+                    _set_updated_at_if_substantive(duplicate, changes, timestamp)
+                    confirmed = self._replace_record(duplicate, **changes)
+                    await self._async_save_locked()
+                    return {"status": "confirmed", "memory": memory_as_dict(confirmed)}
+                candidate = self._find_related_candidate(
+                    user_id,
+                    content,
+                    cleaned_subject if isinstance(cleaned_subject, str) else None,
+                    None,
                 )
-                await self._async_save_locked()
-                return {"status": "confirmed", "memory": memory_as_dict(confirmed)}
-            candidate = self._find_related_candidate(
-                user_id,
-                content,
-                cleaned_subject if isinstance(cleaned_subject, str) else None,
-                cleaned_key if isinstance(cleaned_key, str) else None,
-            )
-            if candidate is not None:
-                return {
-                    "status": "needs_resolution",
-                    "candidate": memory_as_dict(candidate),
-                }
+                if candidate is not None:
+                    return {
+                        "status": "needs_resolution",
+                        "candidate": memory_as_dict(candidate),
+                    }
+
             if len(self._memories) >= MAX_MEMORIES_PER_AGENT:
                 raise ValueError(
                     "memory limit reached; delete memories before adding more"
@@ -519,6 +537,7 @@ class PersistentMemory:
                 ),
                 last_confirmed_at=timestamp,
             )
+            self._assert_key_available(memory)
             self._memories[memory.memory_id] = memory
             self._index(memory)
             await self._async_save_locked()
@@ -605,16 +624,30 @@ class PersistentMemory:
     ) -> list[float] | None:
         """Prepare embeddings only for searched scopes and return the query vector."""
         if self._embedding_provider is None:
+            self._set_hybrid_status("lexical_fallback", "provider_not_configured")
             return None
         try:
             if not await self._async_refresh_missing_embeddings(scope_ids):
+                self._set_hybrid_status(
+                    "lexical_fallback", "embedding_preparation_failed"
+                )
                 return None
             provider = self._embedding_provider
             if provider is None:
+                self._set_hybrid_status("lexical_fallback", "provider_changed")
                 return None
             vectors = await provider([query])
-            return _clean_embedding(vectors[0]) if len(vectors) == 1 else None
-        except Exception:
+            if len(vectors) != 1:
+                raise ValueError(
+                    "embedding provider returned the wrong number of vectors"
+                )
+            vector = _clean_embedding(vectors[0])
+            self._set_hybrid_status("active")
+            return vector
+        except Exception as err:
+            self._set_hybrid_status(
+                "lexical_fallback", "provider_error", error_type=type(err).__name__
+            )
             _LOGGER.warning(
                 "Hybrid memory embeddings unavailable; using lexical retrieval",
                 exc_info=True,
@@ -713,42 +746,37 @@ class PersistentMemory:
                 if key is not None
                 else current.key
             )
-            if new_key and self._key_index.get((target_user_id, new_key)) not in {
-                None,
-                memory_id,
-            }:
-                raise ValueError("canonical key already exists in this memory scope")
             timestamp = dt_util.utcnow().isoformat()
-            updated = self._replace_record(
-                current,
-                user_id=target_user_id,
-                content=new_content,
-                category=new_category,
-                importance=(
+            changes: dict[str, Any] = {
+                "user_id": target_user_id,
+                "content": new_content,
+                "category": new_category,
+                "importance": (
                     _clean_importance(importance)
                     if importance is not None
                     else current.importance
                 ),
-                subject=(
+                "subject": (
                     None
                     if "subject" in clear
                     else _clean_optional(subject, "subject", MAX_SUBJECT_LENGTH)
                     if subject is not None
                     else current.subject
                 ),
-                key=new_key,
-                valid_from=(
+                "key": new_key,
+                "valid_from": (
                     None
                     if "valid_from" in clear
                     else _clean_timestamp(valid_from, "valid_from")
                     if valid_from is not None
                     else current.valid_from
                 ),
-                updated_at=timestamp,
-                last_confirmed_at=(
+                "last_confirmed_at": (
                     timestamp if refresh_confirmation else current.last_confirmed_at
                 ),
-            )
+            }
+            _set_updated_at_if_substantive(current, changes, timestamp)
+            updated = self._replace_record(current, **changes)
             await self._async_save_locked()
             return updated
 
@@ -834,6 +862,7 @@ class PersistentMemory:
             "storage_version": STORAGE_VERSION,
             "memory_count": len(self._memories),
             "user_scope_count": len({m.user_id for m in self._memories.values()}),
+            "hybrid_retrieval": self.hybrid_status(),
         }
 
     def scope_counts(self) -> dict[str, int]:
@@ -884,6 +913,17 @@ class PersistentMemory:
 
     async def async_replace_backup(self, records: list[MemoryRecord]) -> None:
         """Atomically replace all persistent memories with validated records."""
+        seen_ids: set[str] = set()
+        seen_keys: set[tuple[str, str]] = set()
+        for record in records:
+            if record.memory_id in seen_ids:
+                raise ValueError("persistent memory metadata is invalid")
+            seen_ids.add(record.memory_id)
+            if record.key is not None:
+                pair = (record.user_id, record.key)
+                if pair in seen_keys:
+                    raise ValueError("duplicate canonical key in memory scope")
+                seen_keys.add(pair)
         async with self._lock:
             self._ensure_initialized()
             self._memories = {record.memory_id: record for record in records}
@@ -940,13 +980,19 @@ class PersistentMemory:
             raise ValueError("memory not found")
         return memory
 
+    def _assert_key_available(self, memory: MemoryRecord) -> None:
+        """Reject a key collision before any derived index is mutated."""
+        if memory.key is None:
+            return
+        existing = self._key_index.get((memory.user_id, memory.key))
+        if existing is not None and existing != memory.memory_id:
+            raise ValueError("canonical key already exists in this memory scope")
+
     def _index(self, memory: MemoryRecord) -> None:
+        self._assert_key_available(memory)
         for token in _record_tokens(memory):
             self._token_index[(memory.user_id, token)].add(memory.memory_id)
         if memory.key:
-            existing = self._key_index.get((memory.user_id, memory.key))
-            if existing is not None and existing != memory.memory_id:
-                raise ValueError("canonical key already exists in this memory scope")
             self._key_index[(memory.user_id, memory.key)] = memory.memory_id
 
     def _unindex(self, memory: MemoryRecord) -> None:
@@ -959,16 +1005,24 @@ class PersistentMemory:
             if not ids:
                 del self._token_index[key]
         if memory.key:
-            self._key_index.pop((memory.user_id, memory.key), None)
+            pair = (memory.user_id, memory.key)
+            if self._key_index.get(pair) == memory.memory_id:
+                self._key_index.pop(pair, None)
 
     def _replace_record(self, current: MemoryRecord, **changes: Any) -> MemoryRecord:
-        self._unindex(current)
         values = asdict(current)
         values.update(changes)
         updated = MemoryRecord(**values)
+        self._assert_key_available(updated)
+        embedding_changed = _embedding_fingerprint(updated) != _embedding_fingerprint(
+            current
+        )
+        if updated == current:
+            return current
+        self._unindex(current)
         self._memories[current.memory_id] = updated
         self._index(updated)
-        if _embedding_fingerprint(updated) != _embedding_fingerprint(current):
+        if embedding_changed:
             self._invalidate_cached_embedding(current.memory_id)
         return updated
 
@@ -1099,6 +1153,21 @@ class PersistentMemory:
                 exc_info=True,
             )
             return False
+
+    def _set_hybrid_status(
+        self,
+        status: str,
+        reason: str | None = None,
+        *,
+        error_type: str | None = None,
+    ) -> None:
+        self._hybrid_status = {
+            "configured": self._embedding_provider is not None,
+            "status": status,
+            "model": self._embedding_model,
+            **({"reason": reason} if reason is not None else {}),
+            **({"error_type": error_type} if error_type is not None else {}),
+        }
 
     def _ensure_initialized(self) -> None:
         if not self._initialized:
@@ -1332,7 +1401,15 @@ def _memory_metadata_schema(*, include_scope: bool) -> dict[str, Any]:
     schema: dict[str, Any] = {
         "importance": {"type": "string", "enum": ["low", "normal", "high"]},
         "subject": {"type": "string"},
-        "key": {"type": "string"},
+        "key": {
+            "type": "string",
+            "maxLength": MAX_KEY_LENGTH,
+            "pattern": r"^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$",
+            "description": (
+                "Optional stable lowercase identifier such as pet.oscar.breed. "
+                "Use only a-z, 0-9, underscore, hyphen, and dot-separated components."
+            ),
+        },
         "valid_from": {
             "type": "string",
             "description": "ISO 8601 time when the fact became true, if known.",
@@ -1532,9 +1609,7 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
     _clean_content(record.content)
     _clean_category(record.category)
     _clean_optional(record.subject, "subject", MAX_SUBJECT_LENGTH)
-    normalized_key = _clean_key(record.key)
-    if normalized_key != record.key:
-        raise ValueError("persistent memory key is not normalized")
+    _clean_key(record.key)
     if (
         dt_util.parse_datetime(record.created_at) is None
         or dt_util.parse_datetime(record.updated_at) is None
@@ -1603,14 +1678,19 @@ def _clean_optional(value: str | None, field: str, maximum: int) -> str | None:
 
 
 def _clean_key(value: str | None) -> str | None:
-    cleaned = _clean_optional(value, "key", MAX_KEY_LENGTH)
-    if cleaned is None:
+    """Validate a stable memory identifier without lossy normalization."""
+    if value is None or value == "":
         return None
-    normalized = re.sub(r"[^a-z0-9._-]+", ".", cleaned.casefold()).strip(".")
-    normalized = re.sub(r"\.{2,}", ".", normalized)
-    if not normalized:
-        raise ValueError("key must contain letters or numbers")
-    return normalized
+    if not isinstance(value, str):
+        raise ValueError("key must be a string")
+    if len(value) > MAX_KEY_LENGTH:
+        raise ValueError(f"key must be at most {MAX_KEY_LENGTH} characters")
+    if not _MEMORY_KEY_PATTERN.fullmatch(value):
+        raise ValueError(
+            "key must be a lowercase dot-separated identifier using only a-z, "
+            "0-9, underscore, and hyphen (for example pet.oscar.breed)"
+        )
+    return value
 
 
 def _clean_timestamp(value: str | None, field: str) -> str | None:
@@ -1618,6 +1698,26 @@ def _clean_timestamp(value: str | None, field: str) -> str | None:
     if cleaned is not None and dt_util.parse_datetime(cleaned) is None:
         raise ValueError(f"{field} must be an ISO 8601 timestamp")
     return cleaned
+
+
+def _set_updated_at_if_substantive(
+    current: MemoryRecord, changes: dict[str, Any], timestamp: str
+) -> None:
+    substantive = {
+        "user_id",
+        "content",
+        "category",
+        "source",
+        "importance",
+        "subject",
+        "key",
+        "valid_from",
+    }
+    if any(
+        field in changes and changes[field] != getattr(current, field)
+        for field in substantive
+    ):
+        changes["updated_at"] = timestamp
 
 
 def _validate_privacy(content: str, source: str) -> None:
