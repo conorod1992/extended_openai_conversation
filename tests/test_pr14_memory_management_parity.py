@@ -1,4 +1,4 @@
-"""Regression tests for PR14 Memory management parity."""
+"""Regression tests for persistent Memory management parity."""
 
 from copy import deepcopy
 from datetime import timedelta
