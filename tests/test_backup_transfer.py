@@ -57,6 +57,18 @@ def test_archive_round_trip_uses_normal_backup_validation() -> None:
     assert prepared.summary()["usage_requests"] == 1
 
 
+def test_archive_build_uses_final_writer_position(monkeypatch) -> None:
+    def unexpected_getsize(_path) -> int:
+        raise AssertionError("archive creation must not restat its completed output")
+
+    monkeypatch.setattr(backup_transfer.os.path, "getsize", unexpected_getsize)
+    result = backup_transfer._build_archive_file(_document())
+    try:
+        assert result["size"] == os.stat(result["path"]).st_size
+    finally:
+        backup_transfer._remove_file(result["path"])
+
+
 def test_legacy_json_import_remains_supported(tmp_path) -> None:
     path = tmp_path / "old-full-backup.json"
     path.write_text(json.dumps(_document()), encoding="utf-8")
@@ -66,7 +78,7 @@ def test_legacy_json_import_remains_supported(tmp_path) -> None:
     )
 
     assert prepared.title == "Jarvis"
-    assert prepared.summary()["archive_sessions"] == 1
+    assert prepared.summary()["archive_sessions"] == 0
 
 
 @pytest.mark.parametrize("attack", ["traversal", "symlink", "extra_member"])

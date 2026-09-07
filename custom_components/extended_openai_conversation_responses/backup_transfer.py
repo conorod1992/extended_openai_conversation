@@ -94,9 +94,7 @@ def _imports(hass: HomeAssistant) -> dict[str, ImportSession]:
 
 
 def _registry_lock(hass: HomeAssistant) -> asyncio.Lock:
-    return cast(
-        asyncio.Lock, hass.data.setdefault(_REGISTRY_LOCK_KEY, asyncio.Lock())
-    )
+    return cast(asyncio.Lock, hass.data.setdefault(_REGISTRY_LOCK_KEY, asyncio.Lock()))
 
 
 def _start_lock(hass: HomeAssistant) -> asyncio.Lock:
@@ -148,15 +146,15 @@ async def _async_cleanup_expired(hass: HomeAssistant) -> None:
     expired: list[ExportSession | ImportSession] = []
     async with _registry_lock(hass):
         exports = _exports(hass)
-        for session_id, session in tuple(exports.items()):
-            if session.expires_at <= now:
-                expired.append(session)
-                exports.pop(session_id, None)
+        for export_session_id, export_session in tuple(exports.items()):
+            if export_session.expires_at <= now:
+                expired.append(export_session)
+                exports.pop(export_session_id, None)
         imports = _imports(hass)
-        for session_id, session in tuple(imports.items()):
-            if session.expires_at <= now:
-                expired.append(session)
-                imports.pop(session_id, None)
+        for import_session_id, import_session in tuple(imports.items()):
+            if import_session.expires_at <= now:
+                expired.append(import_session)
+                imports.pop(import_session_id, None)
     await _async_delete_sessions(hass, expired)
 
 
@@ -228,36 +226,38 @@ def _build_archive_file(snapshot: dict[str, Any]) -> dict[str, Any]:
         payload_hash = hashlib.sha256()
         payload_bytes = 0
         encoder = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"))
-        with zipfile.ZipFile(
-            path,
-            "w",
-            compression=zipfile.ZIP_DEFLATED,
-            compresslevel=6,
-            allowZip64=True,
-        ) as archive:
-            with archive.open(PAYLOAD_NAME, "w", force_zip64=True) as payload:
-                for text in encoder.iterencode(document):
-                    encoded = text.encode("utf-8")
-                    payload_bytes += len(encoded)
-                    if payload_bytes > MAX_BACKUP_UNCOMPRESSED_BYTES:
-                        raise backup.BackupError(
-                            "This full backup exceeds the 128 MB uncompressed safety limit"
-                        )
-                    payload_hash.update(encoded)
-                    payload.write(encoded)
-            manifest = {
-                "format": ARCHIVE_FORMAT,
-                "version": ARCHIVE_VERSION,
-                "payload": PAYLOAD_NAME,
-                "payload_bytes": payload_bytes,
-                "payload_sha256": payload_hash.hexdigest(),
-            }
-            archive.writestr(
-                MANIFEST_NAME,
-                json.dumps(manifest, ensure_ascii=True, separators=(",", ":")),
-                compress_type=zipfile.ZIP_STORED,
-            )
-        size = os.path.getsize(path)
+        with open(path, "w+b") as archive_file:
+            with zipfile.ZipFile(
+                archive_file,
+                "w",
+                compression=zipfile.ZIP_DEFLATED,
+                compresslevel=6,
+                allowZip64=True,
+            ) as archive:
+                with archive.open(PAYLOAD_NAME, "w", force_zip64=True) as payload:
+                    for text in encoder.iterencode(document):
+                        encoded = text.encode("utf-8")
+                        payload_bytes += len(encoded)
+                        if payload_bytes > MAX_BACKUP_UNCOMPRESSED_BYTES:
+                            raise backup.BackupError(
+                                "This full backup exceeds the 128 MB uncompressed safety limit"
+                            )
+                        payload_hash.update(encoded)
+                        payload.write(encoded)
+                manifest = {
+                    "format": ARCHIVE_FORMAT,
+                    "version": ARCHIVE_VERSION,
+                    "payload": PAYLOAD_NAME,
+                    "payload_bytes": payload_bytes,
+                    "payload_sha256": payload_hash.hexdigest(),
+                }
+                archive.writestr(
+                    MANIFEST_NAME,
+                    json.dumps(manifest, ensure_ascii=True, separators=(",", ":")),
+                    compress_type=zipfile.ZIP_STORED,
+                )
+            archive_file.flush()
+            size = archive_file.tell()
         if size > MAX_BACKUP_ARCHIVE_BYTES:
             raise backup.BackupError(
                 "This full backup exceeds the 64 MB compressed safety limit"
