@@ -1,8 +1,10 @@
 """Regression tests for PR14 Memory management parity."""
 
+from copy import deepcopy
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -15,6 +17,10 @@ from custom_components.extended_openai_conversation_responses.const import (
     SHARED_MEMORY_EXPLICIT,
     TEMPORARY_MEMORY_BALANCED,
 )
+from custom_components.extended_openai_conversation_responses.memory import (
+    PersistentMemory,
+    memory_as_dict,
+)
 from custom_components.extended_openai_conversation_responses.memory_ui import (
     async_manage_command,
 )
@@ -26,6 +32,21 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
 )
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
+
+
+class _Storage:
+    """Small detached store for optimistic-concurrency tests."""
+
+    def __init__(self, data: dict[str, Any] | None = None) -> None:
+        self.data = deepcopy(data)
+        self.save_count = 0
+
+    async def async_load(self) -> dict[str, Any] | None:
+        return deepcopy(self.data)
+
+    async def async_save(self, data: dict[str, Any]) -> None:
+        self.data = deepcopy(data)
+        self.save_count += 1
 
 
 def _hass_and_agent():
@@ -62,6 +83,23 @@ def _temporary_record(memory_id: str, scope_id: str) -> TemporaryMemoryRecord:
         expires_at=(now + timedelta(hours=1)).isoformat(),
         created_at=now.isoformat(),
         updated_at=now.isoformat(),
+    )
+
+
+def _persistent_record(memory_id: str, user_id: str = "user-7") -> SimpleNamespace:
+    return SimpleNamespace(
+        memory_id=memory_id,
+        user_id=user_id,
+        content=f"persistent {memory_id}",
+        category="context",
+        source="explicit",
+        created_at="2026-09-01T10:00:00+00:00",
+        updated_at="2026-09-01T10:00:00+00:00",
+        importance="normal",
+        subject=None,
+        key=None,
+        valid_from=None,
+        last_confirmed_at="2026-09-01T10:00:00+00:00",
     )
 
 
@@ -107,6 +145,7 @@ async def test_ui_lists_only_authenticated_user_temporary_scope() -> None:
             "updated_at": own.updated_at,
         }
     ]
+    assert result["next_offset"] is None
     assert "scope_id" not in result["temporary_memories"][0]
 
 
@@ -175,24 +214,17 @@ async def test_ui_temporary_clear_is_confirmed_scoped_and_batched() -> None:
     )
 
 
-async def test_ui_preserves_household_and_advanced_persistent_editing() -> None:
-    """Existing persistent parity remains user/household scoped with metadata edits."""
+async def test_ui_resolves_persistent_owner_server_side_and_forwards_metadata() -> None:
+    """A browser-provided original scope cannot select the record being edited."""
     hass = _hass_and_agent()
-    record = SimpleNamespace(
-        memory_id="memory-1",
-        user_id=SHARED_HOUSEHOLD_SCOPE_ID,
-        content="Bins go out Friday.",
-        category="home",
-        source="explicit",
-        created_at="2026-09-01T10:00:00+00:00",
-        updated_at="2026-09-01T10:00:00+00:00",
-        importance="high",
-        subject=None,
-        key=None,
-        valid_from=None,
-        last_confirmed_at="2026-09-01T10:00:00+00:00",
+    record = _persistent_record("memory-1", SHARED_HOUSEHOLD_SCOPE_ID)
+    record.content = "Bins go out Friday."
+    record.category = "home"
+    record.importance = "high"
+    persistent = SimpleNamespace(
+        async_get_many=AsyncMock(return_value=[record]),
+        async_update=AsyncMock(return_value=record),
     )
-    persistent = SimpleNamespace(async_update=AsyncMock(return_value=record))
     base = {"entry_id": "entry-1", "subentry_id": "agent-1"}
 
     with patch(
@@ -211,25 +243,149 @@ async def test_ui_preserves_household_and_advanced_persistent_editing() -> None:
                 "content": "Bins go out Friday.",
                 "category": "home",
                 "importance": "high",
-                "subject": "",
-                "key": "",
-                "valid_from": "",
+                "clear_fields": ["subject", "key", "valid_from"],
+                "expected_revision": "a" * 64,
             },
         )
 
+    persistent.async_get_many.assert_awaited_once_with(
+        [
+            ("user-7", "memory-1"),
+            (SHARED_HOUSEHOLD_SCOPE_ID, "memory-1"),
+        ],
+        ["user-7", SHARED_HOUSEHOLD_SCOPE_ID],
+    )
     persistent.async_update.assert_awaited_once_with(
-        "user-7",
+        SHARED_HOUSEHOLD_SCOPE_ID,
         "memory-1",
-        "Bins go out Friday.",
-        "home",
-        "high",
-        "",
-        "",
-        "",
+        content="Bins go out Friday.",
+        category="home",
+        importance="high",
+        subject=None,
+        key=None,
+        valid_from=None,
+        refresh_confirmation=True,
         target_user_id=SHARED_HOUSEHOLD_SCOPE_ID,
+        clear_fields=["subject", "key", "valid_from"],
+        expected_revision="a" * 64,
     )
     assert result["memory"]["scope"] == "Shared household"
     assert result["memory"]["importance"] == "high"
+    assert len(result["memory"]["revision"]) == 64
+
+
+async def test_ui_delete_ignores_spoofed_scope_and_uses_server_owner() -> None:
+    """Persistent deletion is authorized against the stored owner, not UI scope data."""
+    hass = _hass_and_agent()
+    record = _persistent_record("memory-1", SHARED_HOUSEHOLD_SCOPE_ID)
+    persistent = SimpleNamespace(
+        async_get_many=AsyncMock(return_value=[record]),
+        async_delete=AsyncMock(return_value=1),
+    )
+    base = {"entry_id": "entry-1", "subentry_id": "agent-1"}
+
+    with patch(
+        "custom_components.extended_openai_conversation_responses.memory_ui.async_get_memory",
+        AsyncMock(return_value=persistent),
+    ):
+        result = await async_manage_command(
+            hass,
+            "user-7",
+            {**base, "action": "delete", "memory_id": "memory-1", "scope": "personal"},
+        )
+
+    assert result == {"deleted": 1}
+    persistent.async_delete.assert_awaited_once_with(
+        SHARED_HOUSEHOLD_SCOPE_ID, ["memory-1"]
+    )
+
+
+async def test_ui_exposes_persistent_paging_continuation() -> None:
+    """A full page advertises the next offset so the browser cannot stop at 100."""
+    hass = _hass_and_agent()
+    records = [_persistent_record(f"memory-{index}") for index in range(100)]
+    persistent = SimpleNamespace(async_list=AsyncMock(return_value=records))
+    temporary = SimpleNamespace(async_list_all=AsyncMock(return_value=[]))
+    base = {"entry_id": "entry-1", "subentry_id": "agent-1"}
+
+    with (
+        patch(
+            "custom_components.extended_openai_conversation_responses.memory_ui.async_get_memory",
+            AsyncMock(return_value=persistent),
+        ),
+        patch(
+            "custom_components.extended_openai_conversation_responses.memory_ui.async_get_temporary_memory",
+            AsyncMock(return_value=temporary),
+        ),
+    ):
+        result = await async_manage_command(
+            hass, "user-7", {**base, "action": "list", "limit": 100, "offset": 0}
+        )
+
+    assert len(result["memories"]) == 100
+    assert result["next_offset"] == 100
+
+
+async def test_persistent_revision_rejects_stale_save_without_mutation() -> None:
+    """A stale editor cannot overwrite a newer substantive memory state."""
+    storage = _Storage()
+    memory = PersistentMemory(storage)
+    await memory.async_initialize()
+    created = await memory.async_add(
+        "user-7",
+        "Oscar is a Cavachon.",
+        "pets",
+        "explicit",
+        subject="Oscar",
+        key="pet.oscar.breed",
+    )
+    memory_id = created["memory"]["memory_id"]
+    first_revision = created["memory"]["revision"]
+
+    updated = await memory.async_update(
+        "user-7",
+        memory_id,
+        content="Oscar is a Cavachon dog.",
+        clear_fields=["subject"],
+        expected_revision=first_revision,
+        refresh_confirmation=False,
+    )
+    second_revision = memory_as_dict(updated)["revision"]
+    assert second_revision != first_revision
+    assert updated.subject is None
+
+    with pytest.raises(ValueError, match="changed since it was loaded"):
+        await memory.async_update(
+            "user-7",
+            memory_id,
+            content="Stale overwrite.",
+            expected_revision=first_revision,
+        )
+
+    current = (await memory.async_list("user-7"))[0]
+    assert current.content == "Oscar is a Cavachon dog."
+    assert current.subject is None
+    assert memory_as_dict(current)["revision"] == second_revision
+
+
+async def test_persistent_blank_update_is_rejected_without_mutation() -> None:
+    """Backend validation independently prevents a blank editor save."""
+    memory = PersistentMemory(_Storage())
+    await memory.async_initialize()
+    created = await memory.async_add(
+        "user-7", "Driving lessons are one hour.", "work", "explicit"
+    )
+    memory_id = created["memory"]["memory_id"]
+    revision = created["memory"]["revision"]
+
+    with pytest.raises(ValueError, match="content must be 1 to"):
+        await memory.async_update(
+            "user-7", memory_id, content="   ", expected_revision=revision
+        )
+
+    current = (await memory.async_list("user-7"))[0]
+    assert current.content == "Driving lessons are one hour."
+    assert memory_as_dict(current)["revision"] == revision
 
 
 async def test_agents_report_shared_and_temporary_management_capabilities() -> None:
