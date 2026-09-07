@@ -252,7 +252,7 @@ async def async_manage_command(
         expected_revision = message.get("expected_revision")
         if expected_revision is not None and not isinstance(expected_revision, str):
             raise HomeAssistantError("expected_revision must be a string")
-        refresh_confirmation = message.get("refresh_confirmation", True)
+        refresh_confirmation = message.get("refresh_confirmation", False)
         if not isinstance(refresh_confirmation, bool):
             raise HomeAssistantError("refresh_confirmation must be true or false")
         record = await memory.async_update(
