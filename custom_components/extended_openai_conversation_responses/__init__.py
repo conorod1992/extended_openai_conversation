@@ -109,6 +109,7 @@ from .regex_execution import install_configurable_regex_isolation
 from .request_rule_match_preview import install_request_rule_match_preview
 from .safety_hardening import install_safety_hardening
 from .services import async_setup_services
+from .skill_runtime_availability import install_skill_runtime_availability
 from .template import async_setup_templates, async_unload_templates
 from .voice_identity_runtime import install_voice_identity_runtime
 
@@ -153,6 +154,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     apply_openai_compatibility()
     install_persistence_transactions()
     install_performance_optimizations()
+    install_skill_runtime_availability()
     install_voice_identity_runtime()
     install_guest_policy_fast_path()
     install_deferred_context_summary()

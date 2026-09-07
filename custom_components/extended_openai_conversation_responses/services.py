@@ -506,7 +506,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         }
 
     async def download_skill(call: ServiceCall) -> ServiceResponse:
-        """Download a skill from the matching release or an explicit Git ref."""
+        """Download a Skill, then atomically publish it into the installed catalogue."""
         await _async_require_service_admin(hass, call)
         from .skills import SkillManager
 
@@ -516,21 +516,16 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 "Skill name may contain only letters, numbers, underscores, and hyphens"
             )
         source_ref = await async_skill_source_ref(hass, call.data.get("source_ref"))
-
         session = async_get_clientsession(hass)
-
-        # Stable installs fetch examples from the tag matching their installed version.
         api_url = (
             f"https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}"
             f"/contents/{GITHUB_SKILLS_PATH}/{skill_name}"
             f"?ref={quote(source_ref, safe='')}"
         )
-
         downloaded_files: list[str] = []
         download_budget = SkillDownloadBudget()
 
         def _safe_child(base: Path, name: str) -> Path:
-            """Resolve a downloaded child without allowing path traversal."""
             root = base.resolve()
             child = (root / name).resolve()
             if child != root and not child.is_relative_to(root):
@@ -540,7 +535,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         async def _download_directory(
             url: str, local_dir: Path, depth: int = 0
         ) -> None:
-            """Recursively download a bounded directory from GitHub."""
             download_budget.check_directory(depth)
             async with session.get(url) as resp:
                 if resp.status == 404:
@@ -554,12 +548,10 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 items = await async_read_bounded_json(
                     resp, f"GitHub listing for Skill `{skill_name}`"
                 )
-
             if not isinstance(items, list):
                 raise HomeAssistantError(
                     f"Unexpected response from GitHub for skill `{skill_name}`"
                 )
-
             for item in items:
                 if not isinstance(item, Mapping):
                     raise HomeAssistantError("Unexpected item in GitHub skill response")
@@ -585,7 +577,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                             f"Downloaded Skill file `{repo_path}`",
                         )
                     download_budget.record_file(repo_path, len(content))
-
                     await hass.async_add_executor_job(
                         _write_file_sync, item_path, content
                     )
@@ -597,7 +588,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                     await _download_directory(child_url, item_path, depth + 1)
 
         def _write_file_sync(file_path: Path, content: bytes) -> None:
-            """Write file content to disk (run in executor)."""
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(content)
 
@@ -606,28 +596,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             if staging.exists():
                 shutil.rmtree(staging)
             staging.mkdir(parents=True)
-
-        def _activate_staging(staging: Path, target: Path, backup: Path) -> bool:
-            if backup.exists():
-                shutil.rmtree(backup)
-            had_existing = target.exists()
-            if had_existing:
-                target.rename(backup)
-            try:
-                staging.rename(target)
-            except Exception:
-                if had_existing and backup.exists() and not target.exists():
-                    backup.rename(target)
-                raise
-            return had_existing
-
-        def _rollback_activation(
-            target: Path, backup: Path, had_existing: bool
-        ) -> None:
-            if target.exists():
-                shutil.rmtree(target)
-            if had_existing and backup.exists():
-                backup.rename(target)
 
         def _cleanup_path(path: Path) -> None:
             if path.exists():
@@ -639,11 +607,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         if target_dir == skills_root or not target_dir.is_relative_to(skills_root):
             raise HomeAssistantError("Skill target directory is unsafe")
 
-        nonce = uuid4().hex
-        staging_dir = skills_root / f".{skill_name}.tmp-{nonce}"
-        backup_dir = skills_root / f".{skill_name}.bak-{nonce}"
-        await hass.async_add_executor_job(_prepare_staging, skills_root, staging_dir)
-
+        staging_root = skill_manager.staging_dir.resolve()
+        staging_dir = staging_root / f"{skill_name}.download-{uuid4().hex}"
+        await hass.async_add_executor_job(_prepare_staging, staging_root, staging_dir)
         _LOGGER.info("Downloading skill `%s` from `%s`", skill_name, source_ref)
 
         try:
@@ -652,18 +618,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 raise HomeAssistantError(
                     f"Downloaded skill `{skill_name}` does not contain SKILL.md"
                 )
-            had_existing = await hass.async_add_executor_job(
-                _activate_staging, staging_dir, target_dir, backup_dir
-            )
-            try:
-                await skill_manager.async_load_skills()
-            except Exception:
-                await hass.async_add_executor_job(
-                    _rollback_activation, target_dir, backup_dir, had_existing
-                )
-                await skill_manager.async_load_skills()
-                raise
-            await hass.async_add_executor_job(_cleanup_path, backup_dir)
+            await skill_manager.async_publish_staged_skill(skill_name, staging_dir)
         except HomeAssistantError:
             await hass.async_add_executor_job(_cleanup_path, staging_dir)
             raise
@@ -678,7 +633,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             skill_name,
             len(downloaded_files),
         )
-
         return {
             "skill_name": skill_name,
             "source_ref": source_ref,
@@ -886,7 +840,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         schema=PROCESS_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_CALL_FUNCTION,
@@ -894,7 +847,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         schema=CALL_FUNCTION_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_QUERY_IMAGE,
@@ -902,14 +854,12 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         schema=QUERY_IMAGE_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
-
     hass.services.async_register(
         DOMAIN,
         "change_config",
         change_config,
         schema=CHANGE_CONFIG_SCHEMA,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_RELOAD_SKILLS,
@@ -917,7 +867,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         schema=RELOAD_SKILLS_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_DOWNLOAD_SKILL,
@@ -925,7 +874,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         schema=DOWNLOAD_SKILL_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_MEMORY_LIST,
@@ -933,7 +881,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         schema=MEMORY_LIST_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_MEMORY_DELETE,
@@ -941,7 +888,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         schema=MEMORY_DELETE_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_MEMORY_CLEAR,
@@ -949,35 +895,30 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         schema=MEMORY_CLEAR_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_ENABLE_FUNCTION_TOOLS,
         enable_function_tools,
         schema=FUNCTION_TOOL_STATE_SCHEMA,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_DISABLE_FUNCTION_TOOLS,
         disable_function_tools,
         schema=FUNCTION_TOOL_STATE_SCHEMA,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_ENABLE_FUNCTION_GROUPS,
         enable_function_groups,
         schema=FUNCTION_GROUP_STATE_SCHEMA,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_DISABLE_FUNCTION_GROUPS,
         disable_function_groups,
         schema=FUNCTION_GROUP_STATE_SCHEMA,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_GUEST_MODE_UPDATE,
@@ -985,7 +926,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         schema=GUEST_MODE_UPDATE_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_GUEST_MODE_DISABLE,

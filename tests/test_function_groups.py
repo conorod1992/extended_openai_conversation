@@ -130,7 +130,10 @@ def test_disabled_group_hides_members_and_preserves_individual_tool_state() -> N
     assert session.loaded_group_ids == set()
     assert enabled_tool.get("enabled", True) is True
     assert disabled_tool["enabled"] is False
-    assert load_function_groups(session, ["mixed"], [group], [enabled_tool])["status"] == "error"
+    assert (
+        load_function_groups(session, ["mixed"], [group], [enabled_tool])["status"]
+        == "error"
+    )
 
     group["enabled"] = True
     available = assemble_function_tools(
@@ -178,11 +181,13 @@ def test_empty_enabled_on_demand_group_is_omitted_then_reappears() -> None:
 
     tool["enabled"] = True
     enabled = assemble_function_tools([tool], groups, session.loaded_group_ids)
-    assert [item["spec"]["name"] for item in enabled.tools] == ["load_function_groups"]
+    assert [item["spec"]["name"] for item in enabled.tools] == [
+        "load_function_groups"
+    ]
     assert enabled.available_on_demand_groups == 1
 
 
-def test_loaded_group_state_tracks_enable_disable_without_stale_resurrection() -> None:
+def test_loaded_group_state_is_discarded_when_its_last_member_becomes_unavailable() -> None:
     tool = _tool("remind")
     groups = [_group("reminders", ["remind"])]
     session = FunctionGroupRuntime().begin("conversation:one", 30)
@@ -191,15 +196,76 @@ def test_loaded_group_state_tracks_enable_disable_without_stale_resurrection() -
 
     tool["enabled"] = False
     assert assemble_function_tools([tool], groups, session.loaded_group_ids).tools == []
-    assert session.loaded_group_ids == {"reminders"}
+    assert session.loaded_group_ids == set()
 
     tool["enabled"] = True
-    assert [
-        item["spec"]["name"]
-        for item in assemble_function_tools(
-            [tool], groups, session.loaded_group_ids
-        ).tools
-    ] == ["remind"]
+    available_again = assemble_function_tools(
+        [tool], groups, session.loaded_group_ids
+    )
+    assert [item["spec"]["name"] for item in available_again.tools] == [
+        "load_function_groups"
+    ]
+    assert load_function_groups(session, ["reminders"], groups, [tool])["loaded"] == [
+        "reminders"
+    ]
+    restored = assemble_function_tools([tool], groups, session.loaded_group_ids)
+    assert [item["spec"]["name"] for item in restored.tools] == ["remind"]
+
+
+def test_runtime_support_controls_group_and_loader_availability() -> None:
+    tool = _tool("remind")
+    groups = [_group("reminders", ["remind"])]
+    session = FunctionGroupRuntime().begin("conversation:one", 30)
+
+    no_tools = assemble_function_tools(
+        [tool],
+        groups,
+        session.loaded_group_ids,
+        function_tools_supported=False,
+    )
+    assert no_tools.tools == []
+    assert no_tools.available_on_demand_groups == 0
+
+    no_group_loader = assemble_function_tools(
+        [tool],
+        groups,
+        session.loaded_group_ids,
+        group_loader_supported=False,
+    )
+    assert no_group_loader.tools == []
+    assert no_group_loader.available_on_demand_groups == 0
+    assert (
+        load_function_groups(
+            session,
+            ["reminders"],
+            groups,
+            [tool],
+            group_loader_supported=False,
+        )["status"]
+        == "error"
+    )
+
+    available = assemble_function_tools([tool], groups, session.loaded_group_ids)
+    assert [item["spec"]["name"] for item in available.tools] == [
+        "load_function_groups"
+    ]
+
+
+def test_runtime_tool_predicate_invalidates_loaded_group_state() -> None:
+    tool = _tool("remind")
+    groups = [_group("reminders", ["remind"])]
+    session = FunctionGroupRuntime().begin("conversation:one", 30)
+    load_function_groups(session, ["reminders"], groups, [tool])
+    assert session.loaded_group_ids == {"reminders"}
+
+    blocked = assemble_function_tools(
+        [tool],
+        groups,
+        session.loaded_group_ids,
+        tool_available=lambda _tool: False,
+    )
+    assert blocked.tools == []
+    assert session.loaded_group_ids == set()
 
 
 async def test_disabled_tool_is_rejected_at_execution_time(monkeypatch) -> None:

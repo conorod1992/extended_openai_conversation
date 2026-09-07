@@ -20,12 +20,16 @@ There is no separate classifier request, routing model, embedding lookup, or loc
 
 ## Availability modes and enabled state
 
-- **Always available** sends every individually enabled member's complete schema immediately.
+- **Always available** sends every individually enabled and currently executable member's complete schema immediately.
 - **Load when needed** withholds complete member schemas until the model requests the group.
 - **Ungrouped functions** remain always available for backwards compatibility.
 - **Disabled group** keeps the group and all of its member settings saved, but none of the group's members are available to the model and an on-demand group cannot be loaded.
 
 The group enabled switch is independent of each Function Tool's own enabled switch. Disabling a group does **not** disable its members individually. When the group is enabled again, only members that are individually enabled become available; individually disabled members stay disabled.
+
+Availability is resolved from the effective runtime state, not merely from saved membership. An enabled on-demand group appears in `load_function_groups` only when it has at least one member that can currently execute and the group loader itself is usable. Individually disabled or otherwise unavailable members are omitted. If the last executable member of a loaded on-demand group becomes unavailable, its loaded state is discarded; if a member later becomes available again, the model must load that group again rather than silently regaining a previously hidden tool.
+
+This also applies to the built-in `load_skill` Function Tool. If it is grouped, the Skills group is loadable only while at least one selected installed Skill can actually be loaded. The live conversation path and the management **Preview** use the same effective availability rules.
 
 Existing groups that were saved before the group enabled switch existed are treated as enabled, so no migration step is required from the user.
 
@@ -76,7 +80,7 @@ A separate or expired conversation starts with no on-demand groups loaded. State
 
 Loaded state is intentionally ephemeral and resets when Home Assistant or the integration restarts, when the agent is reconfigured/reloaded, or when its conversation state expires. The model can load the group again naturally after a reset. No separate function-group timeout is added.
 
-If an on-demand group is disabled while it is loaded, its loaded state is discarded and its members disappear from subsequent model requests. If a provider had already returned a call for one of those members before the change, Extended OpenAI re-checks the latest persisted group state immediately before execution and rejects the stale call.
+If an on-demand group is disabled or loses all executable members while it is loaded, its loaded state is discarded and its members disappear from subsequent model requests. If a provider had already returned a call for a member before the change, Extended OpenAI re-checks the latest persisted tool/group state immediately before execution and rejects a stale disabled call.
 
 The loader does not consume the agent's **Maximum function calls** allowance because it performs no user action. It has a separate hard limit of five loader rounds within one model run, while the existing overall tool-loop bound remains in place.
 
@@ -104,8 +108,8 @@ The character count is labelled as serialized size, not a provider token count.
 
 - Legacy configurations, imports, exports, and duplicated agents remain valid; existing groups default to enabled.
 - Groups, assignments, and group enabled state are included in agent duplication and import/export.
-- Responses and Chat Completions use the same integration-owned function loop, so grouping works in both modes when the selected model/provider supports function tools.
+- Responses and Chat Completions use the same integration-owned function loop, so grouping works in both modes when Function Tools are available for the request.
 - Built-in Web Search, memory, Knowledge Library, archive, temporary-memory and continuation capabilities are not placed in user Function Groups.
-- The built-in `load_skill` Function Tool may be grouped, including in an enabled on-demand group. If Skills are selected for the agent, configuration validation prevents that loader or its group from being disabled and prevents the tool-call budget from being set to zero.
-- Empty groups are allowed for drafting but do not appear in the loadable catalogue until they have members.
+- The built-in `load_skill` Function Tool may be grouped, including in an enabled on-demand group. If Skills are selected for the agent, configuration validation prevents that loader or its group from being disabled and prevents the tool-call budget from being set to zero. Runtime availability additionally requires at least one selected Skill to be currently installed.
+- Empty groups, or groups whose members are all currently unavailable, do not appear in the loadable catalogue.
 - The first use of an on-demand group may add one model round-trip.

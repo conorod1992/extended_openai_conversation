@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 import json
 import time
@@ -16,6 +19,42 @@ from .const import (
 from .skill_availability import function_group_enabled
 
 _RUNTIMES = "extended_openai_conversation_responses.function_group_runtimes"
+type ToolAvailabilityPredicate = Callable[[dict[str, Any]], bool]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolRuntimeAvailability:
+    """Stable primitive runtime support used by configured-tool assembly."""
+
+    function_tools_supported: bool = True
+    group_loader_supported: bool = True
+    tool_available: ToolAvailabilityPredicate | None = None
+
+
+_ACTIVE_TOOL_RUNTIME: ContextVar[ToolRuntimeAvailability | None] = ContextVar(
+    "extended_openai_function_tool_runtime", default=None
+)
+
+
+@contextmanager
+def function_tool_runtime_scope(
+    *,
+    function_tools_supported: bool = True,
+    group_loader_supported: bool = True,
+    tool_available: ToolAvailabilityPredicate | None = None,
+) -> Iterator[None]:
+    """Apply one request/Preview availability snapshot without global mutation."""
+    token = _ACTIVE_TOOL_RUNTIME.set(
+        ToolRuntimeAvailability(
+            function_tools_supported=function_tools_supported,
+            group_loader_supported=group_loader_supported,
+            tool_available=tool_available,
+        )
+    )
+    try:
+        yield
+    finally:
+        _ACTIVE_TOOL_RUNTIME.reset(token)
 
 
 @dataclass(slots=True)
@@ -111,16 +150,111 @@ def remove_function_group_runtime(hass: Any, entry_id: str, subentry_id: str) ->
     managers.pop((entry_id, subentry_id), None)
 
 
-def _function_tool_available(tool: dict[str, Any]) -> bool:
-    """Return whether a configured tool may be presented for execution."""
+def function_tool_runtime_available(tool: dict[str, Any]) -> bool:
+    """Return whether a configured tool is individually executable."""
     if not function_tool_enabled(tool):
         return False
     function_config = tool.get("function", {})
     if function_config.get("type") == "bash":
-        # Bash is arbitrary process execution, not a sandboxed filesystem helper.
-        # Legacy definitions remain unavailable until explicitly acknowledged.
         return function_config.get("allow_unsafe_shell") is True
     return True
+
+
+def _effective_runtime(
+    function_tools_supported: bool,
+    group_loader_supported: bool,
+    tool_available: ToolAvailabilityPredicate | None,
+) -> ToolRuntimeAvailability:
+    """Combine explicit caller constraints with the active request snapshot."""
+    active = _ACTIVE_TOOL_RUNTIME.get()
+    if active is None:
+        return ToolRuntimeAvailability(
+            function_tools_supported=function_tools_supported,
+            group_loader_supported=group_loader_supported,
+            tool_available=tool_available,
+        )
+
+    active_predicate = active.tool_available
+    if tool_available is None:
+        combined = active_predicate
+    elif active_predicate is None:
+        combined = tool_available
+    else:
+
+        def combined_predicate(tool: dict[str, Any]) -> bool:
+            return tool_available(tool) and active_predicate(tool)
+
+        combined = combined_predicate
+    return ToolRuntimeAvailability(
+        function_tools_supported=(
+            function_tools_supported and active.function_tools_supported
+        ),
+        group_loader_supported=(
+            group_loader_supported and active.group_loader_supported
+        ),
+        tool_available=combined,
+    )
+
+
+def _tool_is_available(
+    tool: dict[str, Any],
+    *,
+    function_tools_supported: bool,
+    tool_available: ToolAvailabilityPredicate | None,
+) -> bool:
+    """Resolve primitive per-tool availability without consulting group state."""
+    return bool(
+        function_tools_supported
+        and function_tool_runtime_available(tool)
+        and (tool_available is None or tool_available(tool))
+    )
+
+
+def _available_group_sets(
+    configured_tools: list[dict[str, Any]] | None,
+    groups: list[dict[str, Any]],
+    *,
+    function_tools_supported: bool,
+    group_loader_supported: bool,
+    tool_available: ToolAvailabilityPredicate | None,
+) -> tuple[set[str], dict[str, dict[str, Any]], set[str]]:
+    """Resolve executable members plus reachable on-demand and always groups."""
+    runtime = _effective_runtime(
+        function_tools_supported, group_loader_supported, tool_available
+    )
+    if configured_tools is None:
+        available_names = (
+            {name for group in groups for name in group.get("functions", [])}
+            if runtime.function_tools_supported
+            else set()
+        )
+    else:
+        available_names = {
+            tool["spec"]["name"]
+            for tool in configured_tools
+            if _tool_is_available(
+                tool,
+                function_tools_supported=runtime.function_tools_supported,
+                tool_available=runtime.tool_available,
+            )
+        }
+
+    always = {
+        group["id"]
+        for group in groups
+        if function_group_enabled(group)
+        and group["loading_mode"] == FUNCTION_GROUP_LOADING_ALWAYS
+        and any(name in available_names for name in group["functions"])
+    }
+    on_demand = {
+        group["id"]: group
+        for group in groups
+        if runtime.group_loader_supported
+        and function_group_enabled(group)
+        and group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
+        and any(name in available_names for name in group["functions"])
+    }
+    return available_names, on_demand, always
 
 
 def build_loader_tool(groups: list[dict[str, Any]]) -> dict[str, Any]:
@@ -158,29 +292,32 @@ def assemble_function_tools(
     configured_tools: list[dict[str, Any]],
     groups: list[dict[str, Any]],
     loaded_group_ids: set[str],
+    *,
+    function_tools_supported: bool = True,
+    group_loader_supported: bool = True,
+    tool_available: ToolAvailabilityPredicate | None = None,
 ) -> FunctionToolAssembly:
     """Centralize the effective configured tool set for one provider request."""
-    groups_by_id = {group["id"]: group for group in groups}
-    # Keep disabled groups in membership so their tools cannot fall through as
-    # ungrouped/always-available tools. Group state is independent of member state.
     membership = {
         function_name: group for group in groups for function_name in group["functions"]
     }
-    current_on_demand_ids = {
-        group_id
-        for group_id, group in groups_by_id.items()
-        if function_group_enabled(group)
-        and group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
-    }
-    loaded_group_ids.intersection_update(current_on_demand_ids)
+    available_names, on_demand, _always = _available_group_sets(
+        configured_tools,
+        groups,
+        function_tools_supported=function_tools_supported,
+        group_loader_supported=group_loader_supported,
+        tool_available=tool_available,
+    )
 
-    enabled_tools = [
-        tool for tool in configured_tools if _function_tool_available(tool)
-    ]
-    enabled_names = {tool["spec"]["name"] for tool in enabled_tools}
+    # Never resurrect an old loaded state after the group becomes unavailable.
+    loaded_group_ids.intersection_update(on_demand)
+
     effective: list[dict[str, Any]] = []
-    for tool in enabled_tools:
-        group = membership.get(tool["spec"]["name"])
+    for tool in configured_tools:
+        tool_name = tool["spec"]["name"]
+        if tool_name not in available_names:
+            continue
+        group = membership.get(tool_name)
         if group is not None and not function_group_enabled(group):
             continue
         if (
@@ -193,10 +330,7 @@ def assemble_function_tools(
     unloaded = [
         group
         for group in groups
-        if function_group_enabled(group)
-        and group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
-        and group["id"] not in loaded_group_ids
-        and any(name in enabled_names for name in group["functions"])
+        if group["id"] in on_demand and group["id"] not in loaded_group_ids
     ]
     if unloaded:
         effective.append(build_loader_tool(unloaded))
@@ -224,29 +358,19 @@ def load_function_groups(
     requested: Any,
     groups: list[dict[str, Any]],
     configured_tools: list[dict[str, Any]] | None = None,
+    *,
+    function_tools_supported: bool = True,
+    group_loader_supported: bool = True,
+    tool_available: ToolAvailabilityPredicate | None = None,
 ) -> dict[str, Any]:
     """Validate and apply one model-requested group load operation."""
-    enabled_names = {
-        tool["spec"]["name"]
-        for tool in configured_tools or []
-        if _function_tool_available(tool)
-    }
-    on_demand = {
-        group["id"]: group
-        for group in groups
-        if function_group_enabled(group)
-        and group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
-        and (
-            configured_tools is None
-            or any(name in enabled_names for name in group["functions"])
-        )
-    }
-    always = {
-        group["id"]
-        for group in groups
-        if function_group_enabled(group)
-        and group["loading_mode"] == FUNCTION_GROUP_LOADING_ALWAYS
-    }
+    _available_names, on_demand, always = _available_group_sets(
+        configured_tools,
+        groups,
+        function_tools_supported=function_tools_supported,
+        group_loader_supported=group_loader_supported,
+        tool_available=tool_available,
+    )
     session.loaded_group_ids.intersection_update(on_demand)
     if (
         not isinstance(requested, list)

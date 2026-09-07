@@ -225,6 +225,26 @@ class ReadFileFunction(FileFunction):
         )
         super().__init__(schema)
 
+    async def _async_read(
+        self,
+        hass: HomeAssistant,
+        path_str: str,
+        allow_dirs: list[str],
+    ) -> dict[str, Any]:
+        """Resolve and read one bounded file through the existing security checks."""
+        try:
+            target_path = self._resolve_path(hass, path_str, allow_dirs)
+            if not target_path.exists():
+                return {"error": f"File not found: {path_str}"}
+            if not target_path.is_file():
+                return {"error": f"Not a file: {path_str}"}
+            file_size = target_path.stat().st_size
+            content = await hass.async_add_executor_job(_read_text_bounded, target_path)
+        except Exception as err:
+            _LOGGER.error(err)
+            return {"error": str(err)}
+        return {"content": content, "size": file_size}
+
     async def execute(
         self,
         hass: HomeAssistant,
@@ -235,46 +255,33 @@ class ReadFileFunction(FileFunction):
     ):
         """Read file contents."""
         path_template = function_config.get("path")
-        path_str = path_template.async_render(arguments, parse_result=False)
-
-        # The built-in load_skill tool predates strict per-tool allow directories.
-        # Detect that template and bind it to the resolved skill directory so a
-        # relative file such as ../other_skill/SKILL.md cannot cross skill roots.
         template_source = str(getattr(path_template, "template", ""))
+
+        # The canonical load_skill path is a view of the managed Skill catalogue.
+        # Hold the same boundary used for publish/remove from Skill lookup through
+        # the bounded file read, so a request sees either the old or new Skill.
         if "extended_openai.skill_dir" in template_source:
-            manager = SkillManager._instance
+            manager = SkillManager.get_loaded_instance()
             skill_name = arguments.get("name")
-            skill = manager.get_skill(str(skill_name)) if manager is not None else None
-            if skill is None:
+            if manager is None:
                 return {"error": f"Skill not found: {skill_name}"}
-            allow_dirs = [str(skill.path.parent.resolve())]
-        else:
-            allow_dirs = self._render_allow_dirs(
-                hass,
-                function_config.get("allow_dir", []),
-                arguments,
-                include_defaults=not function_config.get(
-                    "restrict_to_allow_dir", False
-                ),
-            )
+            async with manager.async_skill_read():
+                skill = manager.get_skill(str(skill_name))
+                if skill is None:
+                    return {"error": f"Skill not found: {skill_name}"}
+                path_str = path_template.async_render(arguments, parse_result=False)
+                return await self._async_read(
+                    hass, path_str, [str(skill.path.parent.resolve())]
+                )
 
-        try:
-            target_path = self._resolve_path(hass, path_str, allow_dirs)
-
-            if not target_path.exists():
-                return {"error": f"File not found: {path_str}"}
-
-            if not target_path.is_file():
-                return {"error": f"Not a file: {path_str}"}
-
-            file_size = target_path.stat().st_size
-            content = await hass.async_add_executor_job(_read_text_bounded, target_path)
-
-        except Exception as err:
-            _LOGGER.error(err)
-            return {"error": str(err)}
-
-        return {"content": content, "size": file_size}
+        path_str = path_template.async_render(arguments, parse_result=False)
+        allow_dirs = self._render_allow_dirs(
+            hass,
+            function_config.get("allow_dir", []),
+            arguments,
+            include_defaults=not function_config.get("restrict_to_allow_dir", False),
+        )
+        return await self._async_read(hass, path_str, allow_dirs)
 
 
 class WriteFileFunction(FileFunction):

@@ -27,6 +27,14 @@ Selected Skills depend on the integration's built-in `load_skill` Function Tool.
 
 The **Test agent** diagnostic also reports when a selected Skill is not installed or its loader is unavailable.
 
+## Runtime availability
+
+Saved selection and live availability are deliberately separate. A Skill can remain selected in an agent's configuration while its files are temporarily absent, for example after the Skill is removed or while it is being reinstalled. Only selected **and currently installed** Skills are advertised to the model.
+
+The built-in `load_skill` tool is likewise exposed only when at least one selected installed Skill can actually be loaded. If `load_skill` belongs to an on-demand Function Group, that group must itself be loadable; the model first loads the group and then receives `load_skill` on the next tool round. If the Function Tool runtime is unavailable, the Skill loader and any otherwise-empty Skill group are omitted rather than advertised as unusable capabilities.
+
+These checks affect the live conversation path and the effective-request Preview in the management UI, so Preview reflects the same currently usable Skill/tool set as a real request.
+
 ## Download a skill
 
 The integration provides a Home Assistant action for downloading supported skills. For example:
@@ -49,6 +57,8 @@ data:
 ```
 
 Use `source_ref` only when you intentionally want Skill files from a different branch, tag, or commit in this repository.
+
+Downloads are completed in a staging area outside the installed-Skills directory. A completed Skill is then published into the installed directory as one managed operation and the Skill catalogue is refreshed. Reloads, publication/removal, and canonical Skill reads share the same concurrency boundary, so a request does not discover a half-downloaded directory or cross a Skill replacement/removal halfway through reading it. A failed or cancelled publication is brought back to a stable old-or-new state before the boundary is released.
 
 After installation, enable the skill for the relevant conversation agent in Options.
 
