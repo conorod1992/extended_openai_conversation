@@ -25,7 +25,9 @@ from .skill_resource_limits import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-_SKILL_MANAGER_INSTANCE_LOCK = "extended_openai_conversation_responses.skill_manager_instance_lock"
+_SKILL_MANAGER_INSTANCE_LOCK = (
+    "extended_openai_conversation_responses.skill_manager_instance_lock"
+)
 
 
 @dataclass
@@ -65,7 +67,9 @@ class SkillMdParser:
         try:
             frontmatter = yaml.safe_load(match.group(1))
         except yaml.YAMLError as err:
-            _LOGGER.warning("Failed to parse YAML frontmatter in %s: %s", skill_path, err)
+            _LOGGER.warning(
+                "Failed to parse YAML frontmatter in %s: %s", skill_path, err
+            )
             return None
         if not isinstance(frontmatter, dict):
             _LOGGER.warning("Invalid frontmatter format in %s", skill_path)
@@ -220,13 +224,17 @@ class SkillManager:
         async with self._filesystem_lock:
             yield
 
-    async def async_publish_staged_skill(self, skill_name: str, staged_dir: Path) -> None:
+    async def async_publish_staged_skill(
+        self, skill_name: str, staged_dir: Path
+    ) -> None:
         """Publish a completed staged Skill and refresh the catalogue atomically."""
         self._validate_direct_skill_name(skill_name)
         staging_root = self.staging_dir.resolve()
         staged = staged_dir.resolve()
         if staged == staging_root or not staged.is_relative_to(staging_root):
-            raise HomeAssistantError("Skill staging path is outside the managed staging area")
+            raise HomeAssistantError(
+                "Skill staging path is outside the managed staging area"
+            )
         target = self.user_skills_dir / skill_name
         backup = self.staging_dir / f"{skill_name}.backup-{uuid4().hex}"
 
