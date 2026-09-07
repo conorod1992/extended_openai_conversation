@@ -27,9 +27,6 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
 from custom_components.extended_openai_conversation_responses.request_static_cache import (
     tools_for_available_skills,
 )
-from custom_components.extended_openai_conversation_responses.runtime_hardening import (
-    install_runtime_hardening,
-)
 from custom_components.extended_openai_conversation_responses.skill_availability import (
     effective_skill_loader_status,
     selected_installed_skill_names,
@@ -37,6 +34,7 @@ from custom_components.extended_openai_conversation_responses.skill_availability
 )
 from custom_components.extended_openai_conversation_responses.skill_runtime_availability import (
     effective_tool_runtime_scope,
+    install_skill_runtime_availability,
 )
 from custom_components.extended_openai_conversation_responses.skills import SkillManager
 
@@ -247,7 +245,7 @@ def test_live_entity_assembly_uses_effective_skill_availability(
     hass, monkeypatch
 ) -> None:
     """The installed runtime wrapper must affect the real agent assembly path."""
-    install_runtime_hardening()
+    install_skill_runtime_availability()
     loader = _loader()
     other = _other_tool()
     options = {
