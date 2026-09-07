@@ -233,7 +233,7 @@ async def test_unpersisted_commit_decision_rolls_back(monkeypatch) -> None:
             hass, entry, subentry, _document()
         )
 
-    assert selected == ["Agent", "Before restore"]
+    assert selected == ["Jarvis", "Before restore"]
     assert store.data is None
 
 
