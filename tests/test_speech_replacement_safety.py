@@ -72,10 +72,10 @@ async def test_malformed_stored_rules_fail_open() -> None:
 
 
 async def test_output_growth_limit_fails_open() -> None:
-    original = "x"
+    original = "x" * 10
     assert await _async_apply_speech_replacements(
         original,
-        [{"pattern": "x", "replacement": "y" * 5_000}],
+        [{"pattern": "x", "replacement": "y" * 500}],
     ) == original
 
 
@@ -90,6 +90,20 @@ async def test_oversized_input_skips_custom_replacements() -> None:
 async def test_worker_failure_fails_open(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fail(_payload):
         raise HomeAssistantError("worker unavailable")
+
+    monkeypatch.setattr(regex_execution, "_async_run_regex_worker", fail)
+    original = "HA is ready"
+    assert await _async_apply_speech_replacements(
+        original,
+        [{"pattern": "HA", "replacement": "Home Assistant"}],
+    ) == original
+
+
+async def test_unexpected_worker_failure_fails_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail(_payload):
+        raise RuntimeError("unexpected worker problem")
 
     monkeypatch.setattr(regex_execution, "_async_run_regex_worker", fail)
     original = "HA is ready"
@@ -158,7 +172,9 @@ async def test_worker_is_killed_when_parent_task_is_cancelled(
         return process
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
-    task = asyncio.create_task(_async_run_regex_worker({"op": "sub_many", "text": "x", "items": []}))
+    task = asyncio.create_task(
+        _async_run_regex_worker({"op": "sub_many", "text": "x", "items": []})
+    )
     await entered.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
