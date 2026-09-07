@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import logging
 from typing import Any, cast
 
@@ -13,8 +14,10 @@ import voluptuous as vol
 from homeassistant.components import rest, scrape
 from homeassistant.const import (
     CONF_ATTRIBUTE,
+    CONF_HEADERS,
     CONF_METHOD,
     CONF_NAME,
+    CONF_PARAMS,
     CONF_PAYLOAD,
     CONF_RESOURCE,
     CONF_RESOURCE_TEMPLATE,
@@ -26,7 +29,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, llm
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.template import Template
+from homeassistant.helpers.template import Template, render_complex
+from homeassistant.util.json import JSON_DECODE_EXCEPTIONS, json_loads
 
 from ..const import CONF_PAYLOAD_TEMPLATE
 from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
@@ -214,12 +218,23 @@ class ScrapeFunction(Function):
         exposed_entities: list[dict[str, Any]],
     ) -> Any:
         """Execute web scraping."""
-        rest_data = get_rest_data(hass, function_config, arguments)
+        # Resolve only schema-declared request templates, with this invocation's
+        # arguments. RestData's render_complex leaves these plain values alone.
+        request_config = dict(function_config)
+        for key in (CONF_HEADERS, CONF_PARAMS):
+            if key in request_config:
+                request_config[key] = render_complex(
+                    request_config[key], arguments, parse_result=key == CONF_PARAMS
+                )
+        rest_data = get_rest_data(hass, request_config, arguments)
         coordinator = scrape.coordinator.ScrapeCoordinator(
             hass,
             None,
             rest_data,
-            function_config,
+            # get_rest_data already resolved resource_template/payload_template.
+            # The coordinator owns fetching/parsing, not a second render without
+            # Function Tool arguments. Never pass source templates to it again.
+            {},
             scrape.const.DEFAULT_SCAN_INTERVAL,
         )
         await coordinator.async_refresh()
@@ -233,15 +248,13 @@ class ScrapeFunction(Function):
             )
             new_arguments["value"] = value
             if name:
-                new_arguments[name.async_render()] = value
+                new_arguments[name.async_render(arguments, parse_result=False)] = value
 
         result = new_arguments["value"]
         value_template = function_config.get(CONF_VALUE_TEMPLATE)
 
         if value_template is not None:
-            result = value_template.async_render_with_possible_json_value(
-                result, None, new_arguments
-            )
+            result = self._render_value(value_template, result, new_arguments)
 
         return result
 
@@ -259,11 +272,21 @@ class ScrapeFunction(Function):
         value_template = sensor_config.get(CONF_VALUE_TEMPLATE)
 
         if value_template is not None:
-            value = value_template.async_render_with_possible_json_value(
-                value, None, arguments
-            )
+            value = self._render_value(value_template, value, arguments)
 
         return value
+
+    @staticmethod
+    def _render_value(
+        value_template: Template, value: Any, arguments: dict[str, Any]
+    ) -> Any:
+        """Expose value/value_json while propagating HA template errors."""
+        variables = {**arguments, "value": value}
+        with suppress(*JSON_DECODE_EXCEPTIONS):
+            variables["value_json"] = json_loads(value)
+        # HA's async_render_with_possible_json_value silently returns a fallback
+        # on Jinja errors. Tools must surface them through the normal executor.
+        return value_template.async_render(variables, parse_result=False)
 
     def _extract_value(self, data: BeautifulSoup, sensor_config: dict[str, Any]) -> Any:
         """Parse HTML and extract one configured value."""
