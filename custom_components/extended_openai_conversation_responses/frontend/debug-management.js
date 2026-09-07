@@ -1,6 +1,7 @@
 const DEBUG_VIEW = "usage-maintenance/request-debug";
 const MANAGEMENT_TAG = "extended-openai-management-panel";
 const DEBUG_TAG = "extended-openai-debug-panel";
+const DEBUG_PROVIDER_PAGE_LIMIT = 5;
 let debugPanelPromise = null;
 
 function ensureDebugPanel() {
@@ -36,6 +37,30 @@ function sessionLabel(run) {
   return run.resolved_conversation_id ? "New session" : "—";
 }
 
+function providerPageMeta(trace) {
+  return trace?.management_projection?.provider_requests || {
+    offset: 0,
+    limit: DEBUG_PROVIDER_PAGE_LIMIT,
+    returned: trace?.provider_requests?.length || 0,
+    has_more: false,
+    next_offset: null,
+    total: trace?.provider_requests?.length || 0,
+  };
+}
+
+function providerPageLabel(trace) {
+  const meta = providerPageMeta(trace);
+  const offset = Math.max(0, Number(meta.offset) || 0);
+  const returned = Math.max(0, Number(meta.returned) || 0);
+  const total = Math.max(0, Number(meta.total) || 0);
+  if (!returned) return total ? `No provider requests on this page · ${total} total` : "No provider requests";
+  return `Provider requests ${offset + 1}–${offset + returned} of ${total}`;
+}
+
+function debugPageText(trace) {
+  return JSON.stringify(trace || {}, null, 2);
+}
+
 function installDebugPresentation() {
   const DebugPanel = customElements.get(DEBUG_TAG);
   if (!DebugPanel || DebugPanel.name !== "ExtendedOpenAIDebugPanel"
@@ -54,6 +79,73 @@ function installDebugPresentation() {
   };
 
   prototype._continuityLabel = sessionLabel;
+
+  prototype._getRun = async function(debugId, providerOffset = 0) {
+    return await this._call("get", {
+      debug_id: debugId,
+      provider_offset: Math.max(0, Number(providerOffset) || 0),
+      provider_limit: DEBUG_PROVIDER_PAGE_LIMIT,
+    });
+  };
+
+  prototype._viewRun = async function(debugId, providerOffset = 0) {
+    const dialog = this.shadowRoot.querySelector("#debug-dialog");
+    const title = this.shadowRoot.querySelector("#debug-dialog-title");
+    const body = this.shadowRoot.querySelector("#debug-json");
+    const copy = this.shadowRoot.querySelector("#copy-debug-log");
+    const previous = this.shadowRoot.querySelector("#debug-provider-previous");
+    const next = this.shadowRoot.querySelector("#debug-provider-next");
+    const status = this.shadowRoot.querySelector("#debug-provider-status");
+    const token = (this._eocDebugRunLoadToken || 0) + 1;
+    this._eocDebugRunLoadToken = token;
+    this._eocDebugId = debugId;
+    title.textContent = "Loading debug run…";
+    body.textContent = "Loading…";
+    copy.disabled = true;
+    copy.dataset.text = "";
+    if (previous) previous.disabled = true;
+    if (next) next.disabled = true;
+    if (!dialog.open) dialog.showModal();
+    try {
+      const result = await this._getRun(debugId, providerOffset);
+      if (this._eocDebugRunLoadToken !== token || !dialog.open) return;
+      const trace = result.trace || {};
+      const meta = providerPageMeta(trace);
+      const text = debugPageText(trace);
+      this._eocDebugProviderOffset = Math.max(0, Number(meta.offset) || 0);
+      this._eocDebugProviderMeta = meta;
+      title.textContent = `Debug run ${debugId.slice(0, 8)}`;
+      body.textContent = text;
+      copy.dataset.text = text;
+      copy.disabled = false;
+      if (status) {
+        status.textContent = `${providerPageLabel(trace)}${trace.management_projection?.truncated ? " · bounded/truncated management view" : ""}`;
+      }
+      if (previous) {
+        previous.disabled = this._eocDebugProviderOffset === 0;
+        previous.dataset.offset = String(Math.max(0, this._eocDebugProviderOffset - DEBUG_PROVIDER_PAGE_LIMIT));
+      }
+      if (next) {
+        next.disabled = !meta.has_more;
+        next.dataset.offset = String(meta.next_offset ?? (this._eocDebugProviderOffset + (Number(meta.returned) || 0)));
+      }
+    } catch (err) {
+      if (this._eocDebugRunLoadToken !== token || !dialog.open) return;
+      title.textContent = "Unable to load debug run";
+      body.textContent = err.message || String(err);
+      if (status) status.textContent = "";
+    }
+  };
+
+  prototype._copyRun = async function(debugId) {
+    try {
+      const result = await this._getRun(debugId, 0);
+      await this._copyText(debugPageText(result.trace));
+      this._toast("First debug page copied");
+    } catch (err) {
+      this._toast(`Unable to copy debug page: ${err.message || String(err)}`, true);
+    }
+  };
 
   const originalRender = prototype._render;
   prototype._render = function(...args) {
@@ -79,6 +171,51 @@ function installDebugPresentation() {
     const explanation = recentHeading?.parentElement?.querySelector("p");
     if (explanation) {
       explanation.textContent = "Times are measured locally. First text is relative to provider request dispatch. Session handling describes how this run resolved conversation history. Prompt-cache hits can be shared across separate sessions and do not imply shared conversation history.";
+    }
+
+    this.shadowRoot?.querySelectorAll("[data-copy]").forEach((button) => {
+      button.textContent = "Copy first page";
+    });
+    const dialogFoot = this.shadowRoot?.querySelector("#debug-dialog .dialog-foot");
+    const originalCopy = this.shadowRoot?.querySelector("#copy-debug-log");
+    if (dialogFoot && originalCopy) {
+      const status = document.createElement("span");
+      status.id = "debug-provider-status";
+      status.className = "status";
+      status.style.marginRight = "auto";
+      dialogFoot.prepend(status);
+
+      const previous = document.createElement("button");
+      previous.id = "debug-provider-previous";
+      previous.textContent = "Previous requests";
+      previous.disabled = true;
+      previous.addEventListener("click", () => {
+        if (this._eocDebugId) void this._viewRun(this._eocDebugId, Number(previous.dataset.offset) || 0);
+      });
+      originalCopy.before(previous);
+
+      const next = document.createElement("button");
+      next.id = "debug-provider-next";
+      next.textContent = "Next requests";
+      next.disabled = true;
+      next.addEventListener("click", () => {
+        if (this._eocDebugId) void this._viewRun(this._eocDebugId, Number(next.dataset.offset) || 0);
+      });
+      originalCopy.before(next);
+
+      // Clone away the base handler, whose legacy toast claimed the whole debug
+      // run had been copied. Management now copies exactly the visible bounded page.
+      const copy = originalCopy.cloneNode(true);
+      copy.textContent = "Copy visible page";
+      originalCopy.replaceWith(copy);
+      copy.addEventListener("click", async () => {
+        try {
+          await this._copyText(copy.dataset.text || "");
+          this._toast("Visible debug page copied");
+        } catch (err) {
+          this._toast(`Unable to copy debug page: ${err.message || String(err)}`, true);
+        }
+      });
     }
     return result;
   };
@@ -148,9 +285,9 @@ function installManagementSection() {
     return `<extended-openai-debug-panel embedded></extended-openai-debug-panel>`;
   };
 
-  const originalRender = prototype._render;
+  const originalManagementRender = prototype._render;
   prototype._render = function(...args) {
-    const result = originalRender.apply(this, args);
+    const result = originalManagementRender.apply(this, args);
     if (this._viewKey?.() !== DEBUG_VIEW) return result;
     const debugPanel = this.shadowRoot?.querySelector(DEBUG_TAG);
     if (debugPanel) {
@@ -164,4 +301,11 @@ function installManagementSection() {
 customElements.whenDefined(DEBUG_TAG).then(installDebugPresentation);
 customElements.whenDefined(MANAGEMENT_TAG).then(installManagementSection);
 
-export {ensureDebugPanel, installManagementSection, sessionLabel};
+export {
+  DEBUG_PROVIDER_PAGE_LIMIT,
+  debugPageText,
+  ensureDebugPanel,
+  installManagementSection,
+  providerPageLabel,
+  sessionLabel,
+};
