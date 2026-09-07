@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from typing import Any, Iterable
+from typing import Any
 
 from .const import FUNCTION_GROUP_LOADING_ON_DEMAND
 
