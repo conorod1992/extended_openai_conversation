@@ -184,6 +184,43 @@ async def test_worker_is_killed_when_parent_task_is_cancelled(
     assert process.waited is True
 
 
+async def test_worker_exit_race_does_not_mask_parent_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = asyncio.Event()
+
+    class FakeProcess:
+        returncode = None
+        waited = False
+
+        async def communicate(self, _payload):
+            entered.set()
+            await asyncio.Event().wait()
+
+        def kill(self):
+            self.returncode = 0
+            raise ProcessLookupError
+
+        async def wait(self):
+            self.waited = True
+            return self.returncode
+
+    process = FakeProcess()
+
+    async def create_process(*_args, **_kwargs):
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    task = asyncio.create_task(
+        _async_run_regex_worker({"op": "sub_many", "text": "x", "items": []})
+    )
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert process.waited is True
+
+
 async def test_live_and_preview_async_isolation_are_installed() -> None:
     install_configurable_regex_isolation()
 
