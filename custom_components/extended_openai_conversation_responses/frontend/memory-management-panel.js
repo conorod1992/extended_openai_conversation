@@ -24,6 +24,7 @@ class ExtendedOpenAIMemoryManagementPanel extends BaseMemoryPanel {
       let temporaryMemories = [];
       let offset = 0;
       let pages = 0;
+      let complete = false;
 
       while (pages < MAX_PAGES) {
         const result = await this._call("list", this._data({limit: PAGE_SIZE, offset}));
@@ -33,14 +34,17 @@ class ExtendedOpenAIMemoryManagementPanel extends BaseMemoryPanel {
           temporaryMemories = Array.isArray(result.temporary_memories) ? result.temporary_memories : [];
         }
         pages += 1;
-        if (result.next_offset == null) break;
+        if (result.next_offset == null) {
+          complete = true;
+          break;
+        }
         if (!Number.isInteger(result.next_offset) || result.next_offset <= offset) {
           throw new Error("Memory paging returned an invalid continuation offset.");
         }
         offset = result.next_offset;
       }
 
-      if (pages >= MAX_PAGES) {
+      if (!complete) {
         throw new Error("Memory paging exceeded the supported collection size.");
       }
 
