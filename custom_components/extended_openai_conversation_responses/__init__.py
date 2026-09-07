@@ -221,10 +221,13 @@ async def async_setup_entry(
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     try:
         await async_setup_templates(hass, entry.entry_id)
-    except Exception:
-        await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        entry.async_on_unload(entry.add_update_listener(update_listener))
+    except BaseException:
+        try:
+            await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        finally:
+            await async_unload_templates(hass, entry.entry_id)
         raise
-    entry.async_on_unload(entry.add_update_listener(update_listener))
     return True
 
 
