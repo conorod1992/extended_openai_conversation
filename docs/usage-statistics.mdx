@@ -3,9 +3,9 @@ title: "Usage statistics"
 description: "Inspect real provider-reported token and request usage"
 ---
 
-Each conversation agent has one disabled-by-default diagnostic **Usage** sensor. Enable it from the agent's device page when you want cumulative statistics without creating many entities.
+Each conversation agent has disabled-by-default diagnostic Usage entities for lifetime usage, the current Home Assistant local day, the current local month, and the latest response. Enable the entities you want from the agent's device page without creating a sensor per day, model, or request.
 
-The sensor state is total tokens. Its attributes distinguish:
+The lifetime Usage sensor state is total tokens. Its attributes distinguish:
 
 - Home Assistant conversation count.
 - API request count.
@@ -18,7 +18,17 @@ One Home Assistant conversation can make several API requests when the model cal
 
 The counters use only response metadata returned by the configured model provider. OpenAI-compatible providers can omit some or all usage fields. In that case, the integration still counts the request and its success or failure, while unavailable token fields remain unchanged.
 
-In the management panel, recent timestamps use the browser's locale and local timezone. Cached input is included in total tokens; it represents request content the provider can reuse and can be cheaper than uncached input when discounted caching is supported. It is not free or universally discounted.
+## History periods in the management panel
+
+The Usage page can show **7 days**, **30 days**, **90 days**, **Year to date**, or **All available**. Year to date means January 1 through the current Home Assistant local date, not the previous twelve months. The shorter periods are inclusive local-calendar ranges ending today.
+
+The selected period is applied consistently to aggregate token totals, charts, model/provider/API-mode breakdowns, and usage diagnostics. Date boundaries follow Home Assistant's configured timezone and use calendar-date arithmetic so browser UTC conversion and daylight-saving transitions do not shift a day.
+
+**All available** means all stored daily aggregate history. It is separate from the lifetime counter: lifetime usage can include accounting from before daily aggregate history became available, so those two totals can legitimately differ. The page shows the available daily-history span and explains any mismatch.
+
+Recent runs and provider-request details are retention-bounded diagnostic records. Selecting a longer aggregate-history period does not recreate expired detail or change the Today / This month sensor periods.
+
+Recent timestamps use the browser's locale with Home Assistant's configured timezone. Cached input is included in total tokens; it represents request content the provider can reuse and can be cheaper than uncached input when discounted caching is supported. It is not free or universally discounted.
 
 Usage is stored with Home Assistant's versioned `.storage` API separately for each conversation-agent subentry and survives restarts and integration reloads.
 
