@@ -50,7 +50,12 @@ def test_preview_summarizes_match_without_action_payloads() -> None:
         "fuzzy": False,
         "score": 100.0,
         "captured_values": {"room": "kitchen"},
-        "would_do": {"type": "local_action", "action_count": 2},
+        "would_do": {
+            "type": "local_action",
+            "action_count": 2,
+            "consumed": True,
+            "provider_input": "none",
+        },
     }
     assert "actions" not in result["would_do"]
 
@@ -79,6 +84,8 @@ def test_preview_summarizes_model_routing_and_no_match() -> None:
         "model": "gpt-5",
         "reasoning_effort": "high",
         "scope": "conversation",
+        "consumed": False,
+        "provider_input": "original",
     }
     assert request_rule_match_preview(match)["score"] == 93.5
     assert request_rule_match_preview(None) == {"matched": False}

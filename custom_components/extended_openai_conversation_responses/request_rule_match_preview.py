@@ -25,10 +25,16 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
 
     rule = match.rule
     action = rule["action"]
+    consumed = rule["action_type"] == "local_action" or rule["match_type"] in {
+        "equals",
+        "sentence_pattern",
+    }
     if rule["action_type"] == "local_action":
         would_do: dict[str, Any] = {
             "type": "local_action",
             "action_count": len(action.get("actions", [])),
+            "consumed": True,
+            "provider_input": "none",
         }
     else:
         would_do = {
@@ -37,6 +43,8 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
             "model": action.get("model"),
             "reasoning_effort": action.get("reasoning_effort"),
             "scope": action.get("scope"),
+            "consumed": consumed,
+            "provider_input": "none" if consumed else "original",
         }
 
     return {
