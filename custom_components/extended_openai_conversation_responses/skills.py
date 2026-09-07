@@ -30,18 +30,14 @@ _T = TypeVar("_T")
 
 @dataclass
 class Skill:
-    """Represents a skill loaded from SKILL.md.
+    """Represent metadata for one installed Skill."""
 
-    Only metadata (name, description) is loaded initially.
-    The full content (body) is loaded on-demand via load_skill function.
-    """
-
-    name: str  # Directory path used as identifier
+    name: str
     description: str
-    path: Path  # Path to SKILL.md file
+    path: Path
 
     def __post_init__(self) -> None:
-        """Validate skill fields."""
+        """Validate Skill metadata."""
         if not self.name:
             raise ValueError("Skill name is required")
         if len(self.name) > 64:
@@ -51,7 +47,7 @@ class Skill:
 
 
 class SkillMdParser:
-    """Parser for SKILL.md files following Agent Skills standard."""
+    """Parse SKILL.md files following the Agent Skills format."""
 
     FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
@@ -59,45 +55,39 @@ class SkillMdParser:
     def parse(
         cls, content: str, skill_path: Path, skills_base_dir: Path
     ) -> Skill | None:
-        """Parse SKILL.md content and return a Skill object."""
+        """Parse metadata without loading the Skill body into runtime state."""
         match = cls.FRONTMATTER_PATTERN.match(content)
         if not match:
             _LOGGER.warning(
                 "Invalid SKILL.md format in %s: missing frontmatter", skill_path
             )
             return None
-
         try:
             frontmatter = yaml.safe_load(match.group(1))
-        except yaml.YAMLError as e:
-            _LOGGER.warning("Failed to parse YAML frontmatter in %s: %s", skill_path, e)
+        except yaml.YAMLError as err:
+            _LOGGER.warning("Failed to parse YAML frontmatter in %s: %s", skill_path, err)
             return None
-
         if not isinstance(frontmatter, dict):
             _LOGGER.warning("Invalid frontmatter format in %s", skill_path)
             return None
-
         description = frontmatter.get("description")
         if not description:
             _LOGGER.warning("Missing required field (description) in %s", skill_path)
             return None
-
         skill_dir = skill_path.parent
         try:
-            relative_path = skill_dir.relative_to(skills_base_dir)
-            name = str(relative_path)
+            name = str(skill_dir.relative_to(skills_base_dir))
         except ValueError:
             name = skill_dir.name
-
         try:
             return Skill(name=name, description=description, path=skill_path)
-        except ValueError as e:
-            _LOGGER.warning("Invalid skill in %s: %s", skill_path, e)
+        except ValueError as err:
+            _LOGGER.warning("Invalid skill in %s: %s", skill_path, err)
             return None
 
     @classmethod
     def extract_body(cls, content: str) -> str:
-        """Extract the body content after frontmatter."""
+        """Extract the markdown body after frontmatter."""
         match = cls.FRONTMATTER_PATTERN.match(content)
         if not match:
             return content
@@ -105,25 +95,18 @@ class SkillMdParser:
 
 
 class SkillManager:
-    """Manage the globally installed Skill catalogue and filesystem boundary.
+    """Own installed-Skill discovery, publication, removal, and canonical reads.
 
-    Per-agent enabled Skill names remain in agent configuration. The manager owns one
-    shared lock only for installed-Skill discovery/publication and canonical Skill
-    reads. It deliberately does not replace the agent-maintenance gate, which remains
-    responsible for agent lifecycle/configuration operations.
+    The shared filesystem lock protects only the global installed-Skill resource.
+    Per-agent configuration and lifecycle operations remain under the existing agent
+    maintenance gate.
     """
 
     _instance: SkillManager | None = None
     filesystem_concurrency_safe = True
 
-    @classmethod
-    def get_loaded_instance(cls) -> SkillManager | None:
-        """Return the initialized singleton without performing discovery or I/O."""
-        manager = cls._instance
-        return manager if manager is not None and manager._initialized else None
-
     def __init__(self, hass: HomeAssistant) -> None:
-        """Initialize the skill manager."""
+        """Initialize the manager without performing filesystem I/O."""
         self._hass = hass
         self._skills: dict[str, Skill] = {}
         self._user_skills_dir: Path | None = None
@@ -131,10 +114,16 @@ class SkillManager:
         self._initialized = False
 
     @classmethod
+    def get_loaded_instance(cls) -> SkillManager | None:
+        """Return an initialized singleton without triggering discovery."""
+        manager = cls._instance
+        return manager if manager is not None and manager._initialized else None
+
+    @classmethod
     async def async_get_instance(
         cls, hass: HomeAssistant, user_skills_dir: str | None = None
     ) -> SkillManager:
-        """Get the singleton and ensure every concurrent first caller awaits discovery."""
+        """Return one singleton and make concurrent first callers await discovery."""
         manager = cls._instance
         if manager is None or manager._hass is not hass:
             manager = cls(hass)
@@ -143,13 +132,17 @@ class SkillManager:
             cls._instance = manager
         elif user_skills_dir and manager._user_skills_dir is None and not manager._initialized:
             manager._user_skills_dir = Path(user_skills_dir)
-
-        await manager.async_initialize()
+        try:
+            await manager.async_initialize()
+        except BaseException:
+            if not manager._initialized and cls._instance is manager:
+                cls._instance = None
+            raise
         return manager
 
     @property
     def user_skills_dir(self) -> Path:
-        """Get the installed-Skills directory scanned for published Skills."""
+        """Return the directory scanned as installed Skills."""
         if self._user_skills_dir is None:
             self._user_skills_dir = (
                 Path(self._hass.config.config_dir)
@@ -160,28 +153,25 @@ class SkillManager:
 
     @property
     def staging_dir(self) -> Path:
-        """Return a staging root outside the directory scanned as installed Skills."""
+        """Return a staging directory outside the installed-Skills scan root."""
         skills_dir = self.user_skills_dir
         return skills_dir.parent / f".{skills_dir.name}.staging"
 
     async def _async_run_locked(
         self, operation: Callable[[], Awaitable[_T]]
     ) -> _T:
-        """Run one filesystem operation without releasing the lock on cancellation."""
+        """Keep the mutation boundary owned until work reaches a stable state."""
         async with self._filesystem_lock:
             task = asyncio.create_task(operation())
             try:
                 return await asyncio.shield(task)
             except asyncio.CancelledError:
-                # Executor work cannot be stopped safely at an arbitrary rename/read.
-                # Keep the boundary owned until publication/rollback reaches a stable
-                # state, then propagate the caller's cancellation.
                 with suppress(BaseException):
                     await task
                 raise
 
     async def async_initialize(self) -> None:
-        """Perform first discovery exactly once for all concurrent callers."""
+        """Perform first discovery exactly once for concurrent callers."""
         async def initialize_locked() -> None:
             if self._initialized:
                 return
@@ -193,7 +183,7 @@ class SkillManager:
         await self._async_run_locked(initialize_locked)
 
     async def async_load_skills(self) -> None:
-        """Rescan Skills and atomically publish only a complete catalogue snapshot."""
+        """Rescan and atomically replace the published catalogue."""
         async def load_locked() -> None:
             loaded = await self._async_discover_skills_locked()
             self._skills = loaded
@@ -203,7 +193,7 @@ class SkillManager:
         await self._async_run_locked(load_locked)
 
     async def _async_discover_skills_locked(self) -> dict[str, Skill]:
-        """Build a complete catalogue while the caller owns the filesystem lock."""
+        """Build a complete catalogue while the filesystem boundary is owned."""
         skills_data = await self._hass.async_add_executor_job(
             self._load_skills_from_dir_sync, self.user_skills_dir
         )
@@ -220,18 +210,17 @@ class SkillManager:
 
     @asynccontextmanager
     async def async_skill_read(self) -> AsyncIterator[None]:
-        """Prevent canonical Skill file reads from crossing install/remove publication."""
+        """Prevent a canonical Skill read from crossing publish/remove."""
         async with self._filesystem_lock:
             yield
 
     async def async_publish_staged_skill(self, skill_name: str, staged_dir: Path) -> None:
-        """Atomically publish a completed staged Skill and refresh the catalogue."""
+        """Publish a completed staged Skill and refresh the catalogue atomically."""
         self._validate_direct_skill_name(skill_name)
         staging_root = self.staging_dir.resolve()
         staged = staged_dir.resolve()
         if staged == staging_root or not staged.is_relative_to(staging_root):
             raise HomeAssistantError("Skill staging path is outside the managed staging area")
-
         target = self.user_skills_dir / skill_name
         backup = self.staging_dir / f"{skill_name}.backup-{uuid4().hex}"
 
@@ -249,8 +238,7 @@ class SkillManager:
                 await self._hass.async_add_executor_job(
                     self._rollback_staged_skill_sync, target, backup
                 )
-                restored = await self._async_discover_skills_locked()
-                self._skills = restored
+                self._skills = await self._async_discover_skills_locked()
                 raise
             self._skills = loaded
             await self._hass.async_add_executor_job(self._remove_path_sync, backup)
@@ -258,14 +246,13 @@ class SkillManager:
         await self._async_run_locked(publish_locked)
 
     async def async_remove_skill(self, skill_name: str) -> bool:
-        """Remove one installed Skill without exposing a partially deleted directory."""
+        """Remove one Skill without exposing a partially deleted directory."""
         self._validate_direct_skill_name(skill_name)
         target = self.user_skills_dir / skill_name
         backup = self.staging_dir / f"{skill_name}.remove-{uuid4().hex}"
 
         async def remove_locked() -> bool:
-            exists = await self._hass.async_add_executor_job(target.exists)
-            if not exists:
+            if not await self._hass.async_add_executor_job(target.exists):
                 return False
             await self._hass.async_add_executor_job(
                 self._stage_removal_sync, target, backup
@@ -294,7 +281,7 @@ class SkillManager:
 
     @staticmethod
     def _activate_staged_skill_sync(staged: Path, target: Path, backup: Path) -> None:
-        """Publish staged directory with rollback-safe same-filesystem renames."""
+        """Publish using same-filesystem renames with rollback."""
         target.parent.mkdir(parents=True, exist_ok=True)
         backup.parent.mkdir(parents=True, exist_ok=True)
         SkillManager._remove_path_sync(backup)
@@ -334,7 +321,7 @@ class SkillManager:
                 path.unlink()
 
     def _load_skills_from_dir_sync(self, skills_dir: Path) -> list[tuple[Path, str]]:
-        """Read bounded Skill metadata files from the published directory only."""
+        """Read bounded metadata only from published, non-temporary Skill paths."""
         results: list[tuple[Path, str]] = []
         if not skills_dir.exists():
             _LOGGER.debug("Skills directory does not exist: %s", skills_dir)
@@ -342,7 +329,6 @@ class SkillManager:
         if not skills_dir.is_dir():
             _LOGGER.warning("Skills path is not a directory: %s", skills_dir)
             return results
-
         entries_seen = 0
         for skill_dir in skills_dir.iterdir():
             entries_seen += 1
@@ -354,7 +340,6 @@ class SkillManager:
                 break
             if not skill_dir.is_dir() or skill_dir.name.startswith("."):
                 continue
-
             skill_file = skill_dir / SKILL_FILE_NAME
             if not skill_file.exists():
                 _LOGGER.debug("No SKILL.md found in %s", skill_dir)
@@ -364,18 +349,24 @@ class SkillManager:
                     "Skill discovery stopped after %d Skills", MAX_DISCOVERED_SKILLS
                 )
                 break
-
             try:
-                content = read_bounded_skill_text(skill_file)
-                results.append((skill_file, content))
-            except HomeAssistantError as e:
-                _LOGGER.warning("Failed to read skill file %s: %s", skill_file, e)
+                results.append((skill_file, read_bounded_skill_text(skill_file)))
+            except HomeAssistantError as err:
+                _LOGGER.warning("Failed to read skill file %s: %s", skill_file, err)
         return results
 
     def get_skill(self, name: str) -> Skill | None:
-        """Get a Skill from the current atomic catalogue snapshot."""
+        """Get one Skill from the current atomic catalogue snapshot."""
         return self._skills.get(name)
 
     def get_all_skills(self) -> list[Skill]:
         """Get all Skills from the current atomic catalogue snapshot."""
         return list(self._skills.values())
+
+
+# runtime_hardening predates the manager-owned boundary. These markers preserve the
+# existing installation order while preventing it from replacing the authoritative
+# manager implementations with a second lock/catalogue path.
+SkillManager.async_load_skills._extended_openai_atomic_load = True  # type: ignore[attr-defined]
+SkillManager.async_get_instance.__func__._extended_openai_init_guard = True  # type: ignore[attr-defined]
+SkillManager.get_loaded_instance.__func__._extended_openai_loaded_guard = True  # type: ignore[attr-defined]
