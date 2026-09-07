@@ -19,6 +19,7 @@ const backend = readFileSync(
 assert.match(panel, /extends BaseMemoryPanel/);
 assert.match(panel, /result\.next_offset/);
 assert.match(panel, /expected_revision: this\._editingMemory\.revision/);
+assert.match(panel, /refresh_confirmation: false/);
 assert.match(panel, /payload\.clear_fields = clearFields/);
 assert.match(panel, /Memory content cannot be blank/);
 assert.match(panel, /meta\.textContent = message/);
