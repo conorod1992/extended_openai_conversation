@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 import logging
 from pathlib import Path
 import re
 import shutil
-from typing import AsyncIterator, Awaitable, Callable, TypeVar
 from uuid import uuid4
 
 import yaml
@@ -25,7 +25,6 @@ from .skill_resource_limits import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-_T = TypeVar("_T")
 _SKILL_MANAGER_INSTANCE_LOCK = "extended_openai_conversation_responses.skill_manager_instance_lock"
 
 
@@ -164,9 +163,7 @@ class SkillManager:
         skills_dir = self.user_skills_dir
         return skills_dir.parent / f".{skills_dir.name}.staging"
 
-    async def _async_run_locked(
-        self, operation: Callable[[], Awaitable[_T]]
-    ) -> _T:
+    async def _async_run_locked[T](self, operation: Callable[[], Awaitable[T]]) -> T:
         """Keep the mutation boundary owned until work reaches a stable state."""
         async with self._filesystem_lock:
             task = asyncio.create_task(operation())
