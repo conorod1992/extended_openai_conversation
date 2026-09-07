@@ -16,6 +16,8 @@ from custom_components.extended_openai_conversation_responses.request_static_cac
     tools_for_available_skills,
 )
 from custom_components.extended_openai_conversation_responses.skill_availability import (
+    effective_skill_loader_status,
+    selected_installed_skill_names,
     skill_loader_status,
 )
 
@@ -81,9 +83,74 @@ def test_selected_skills_require_reachable_enabled_group_and_tool_budget() -> No
     assert "per request" in str(no_budget.reason)
 
 
-def test_no_selected_skills_do_not_require_loader() -> None:
+def test_no_selected_skills_do_not_require_loader_for_persisted_config() -> None:
     status = skill_loader_status([], [], [], max_function_calls=0)
     assert status.available is True
+
+
+def test_selected_installed_skills_are_a_stable_deduplicated_primitive() -> None:
+    assert selected_installed_skill_names([], ["one"]) == ()
+    assert selected_installed_skill_names(["missing"], ["one"]) == ()
+    assert selected_installed_skill_names(
+        ["two", "one", "two", "missing"], ["one", "two", "other"]
+    ) == ("two", "one")
+
+
+def test_effective_loader_requires_at_least_one_selected_installed_skill() -> None:
+    zero = effective_skill_loader_status(
+        ["calendar"], ["weather"], [_loader()], [], max_function_calls=1
+    )
+    assert zero.available is False
+
+    one = effective_skill_loader_status(
+        ["calendar"], ["calendar"], [_loader()], [], max_function_calls=1
+    )
+    assert one.available is True
+    assert one.loadable_skills == ("calendar",)
+
+    multiple = effective_skill_loader_status(
+        ["calendar", "weather"],
+        ["calendar", "weather", "unused"],
+        [_loader()],
+        [],
+        max_function_calls=1,
+    )
+    assert multiple.available is True
+    assert multiple.loadable_skills == ("calendar", "weather")
+
+
+def test_effective_loader_accounts_for_runtime_and_group_loader_support() -> None:
+    unsupported = effective_skill_loader_status(
+        ["calendar"],
+        ["calendar"],
+        [_loader()],
+        [],
+        max_function_calls=1,
+        function_tools_supported=False,
+    )
+    assert unsupported.available is False
+    assert "runtime" in str(unsupported.reason)
+
+    unavailable_group_loader = effective_skill_loader_status(
+        ["calendar"],
+        ["calendar"],
+        [_loader()],
+        [_group()],
+        max_function_calls=1,
+        group_loader_supported=False,
+    )
+    assert unavailable_group_loader.available is False
+    assert unavailable_group_loader.group_id == "skills"
+
+    always_group = effective_skill_loader_status(
+        ["calendar"],
+        ["calendar"],
+        [_loader()],
+        [_group(loading_mode="always")],
+        max_function_calls=1,
+        group_loader_supported=False,
+    )
+    assert always_group.available is True
 
 
 def test_zero_usable_skills_hide_only_the_canonical_loader() -> None:
@@ -92,10 +159,7 @@ def test_zero_usable_skills_hide_only_the_canonical_loader() -> None:
     other["spec"]["name"] = "read_other_file"
     projected = tools_for_available_skills([canonical, other], False)
     assert [tool["spec"]["name"] for tool in projected] == ["read_other_file"]
-    assert tools_for_available_skills([canonical, other], True) == [
-        canonical,
-        other,
-    ]
+    assert tools_for_available_skills([canonical, other], True) == [canonical, other]
 
 
 def test_config_mutations_cannot_break_selected_skill_loader() -> None:
