@@ -1666,6 +1666,7 @@ async def async_management_command(
                 message.get("title", ""),
                 message.get("description", ""),
                 message.get("content", ""),
+                message.get("enabled", True),
             )
             return {
                 "status": "created",
@@ -1677,6 +1678,7 @@ async def async_management_command(
                 message.get("title"),
                 message.get("description"),
                 message.get("content"),
+                message.get("enabled"),
             )
             return {
                 "status": "updated",
