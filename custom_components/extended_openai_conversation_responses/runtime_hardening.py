@@ -53,34 +53,8 @@ def _manager_lock(manager: Any, attribute: str) -> asyncio.Lock:
 
 
 def _install_usage_hardening() -> None:
-    """Serialize first-use Usage initialization and leave failures retryable."""
+    """Serialize effective Usage getter selection across persistent/fallback state."""
     from . import usage as usage_module
-
-    manager_type = usage_module.UsageManager
-    current_initialize = manager_type.async_initialize
-    if not getattr(current_initialize, "_extended_openai_init_guard", False):
-        original_initialize = current_initialize
-
-        async def async_initialize(manager: Any) -> None:
-            lock = _manager_lock(manager, "_extended_openai_initialize_lock")
-            async with lock:
-                if manager._initialized:
-                    return
-                try:
-                    await original_initialize(manager)
-                except Exception:
-                    # The original loader appends retained detail records as it goes.
-                    # A partial load must never leak into a later retry.
-                    manager.totals = usage_module.UsageTotals()
-                    manager.daily = {}
-                    manager.requests = []
-                    manager.runs = []
-                    manager._run_started = {}
-                    manager._initialized = False
-                    raise
-
-        async_initialize._extended_openai_init_guard = True  # type: ignore[attr-defined]
-        manager_type.async_initialize = async_initialize  # type: ignore[method-assign,assignment]
 
     current_getter = usage_module.async_get_usage
     if not getattr(current_getter, "_extended_openai_getter_guard", False):
