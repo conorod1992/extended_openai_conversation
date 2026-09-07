@@ -40,7 +40,9 @@ def wrap_management_history_bounds(original: ManagementCommand) -> ManagementCom
     ) -> dict[str, Any]:
         section = message.get("section", "overview")
         action = message.get("action")
-        if section not in {"usage", "conversations"}:
+        if section not in {"overview", "usage", "conversations"}:
+            return await original(hass, user_id, is_admin, message)
+        if section == "overview" and action != "summary":
             return await original(hass, user_id, is_admin, message)
 
         entry_id = message.get("entry_id")
@@ -48,6 +50,16 @@ def wrap_management_history_bounds(original: ManagementCommand) -> ManagementCom
         if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
             raise HomeAssistantError("entry_id and subentry_id are required")
         management_ui.entry_and_agent(hass, entry_id, subentry_id)
+
+        if section == "overview":
+            result = await original(hass, user_id, is_admin, message)
+            # The optimized Overview path loads Usage directly, bypassing the
+            # section-specific dispatcher below. Re-project it only after that
+            # load succeeded so Overview's existing partial-failure behavior stays intact.
+            if result.get("usage"):
+                usage = await async_get_usage(hass, entry_id, subentry_id)
+                result = {**result, "usage": usage_summary(usage)}
+            return result
 
         if section == "usage":
             usage = await async_get_usage(hass, entry_id, subentry_id)
