@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import lru_cache
 from heapq import heappop, heappush
 from itertools import count
 import re
@@ -18,6 +19,8 @@ MAX_CONSTRAINED_VALUE_CHARS = 80
 MAX_PATTERN_STATES = 512
 MAX_AGENT_PATTERN_STATES = 50_000
 MAX_MATCH_WORK = 200_000
+MAX_PATTERN_CHARS = 200
+_SENTENCE_END = frozenset(".!?。؟")  # NFKC folds fullwidth punctuation to ASCII.
 
 _CAPTURE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _NUMERIC_RANGE = re.compile(r"^([+-]?\d+)\.\.([+-]?\d+)$")
@@ -68,7 +71,7 @@ class _Capture:
     maximum: int | None = None
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _State:
     kind: str
     out: int | None = None
@@ -146,6 +149,15 @@ class CompiledSentencePattern:
 
         display = prepared.display
         folded = prepared.folded
+        # Speech recognizers may append sentence-ending punctuation. Explicit
+        # punctuation literals still have to match; only the remaining suffix
+        # after a complete pattern is optional.
+        sentence_end = len(folded)
+        while sentence_end and folded[sentence_end - 1] in _SENTENCE_END:
+            sentence_end -= 1
+        nonspace = [0]
+        for char in folded:
+            nonspace.append(nonspace[-1] + (char != " "))
         work = budget or MatchBudget()
         capture_index = {name: index for index, name in enumerate(self.capture_names)}
         empty_starts = (-1,) * len(self.capture_names)
@@ -208,7 +220,7 @@ class CompiledSentencePattern:
             empty_values,
             0,
         )
-        seen: set[tuple[int, int, tuple[int, ...]]] = set()
+        seen: set[tuple[int, int, bool]] = set()
 
         while queue:
             (
@@ -221,7 +233,16 @@ class CompiledSentencePattern:
                 lengths,
                 values,
             ) = heappop(queue)
-            key = (state_index, pos, starts)
+            # At the same state/position every history has the same possible
+            # suffixes. The heap visits the best capture-length prefix first;
+            # future input extends the same active capture equally. Retain only
+            # that dominant history, distinguishing whitespace-only captures
+            # because they cannot yet take capture_end. This avoids enumerating
+            # every possible starting offset of later free captures.
+            has_capture_text = any(
+                start >= 0 and nonspace[pos] > nonspace[start] for start in starts
+            )
+            key = (state_index, pos, has_capture_text)
             if key in seen:
                 continue
             seen.add(key)
@@ -229,7 +250,7 @@ class CompiledSentencePattern:
             state = self.states[state_index]
 
             if state.kind == "match":
-                if pos == len(folded):
+                if pos >= sentence_end:
                     return PatternMatch(
                         {
                             name: values[index] or ""
@@ -250,6 +271,8 @@ class CompiledSentencePattern:
 
             if state.kind == "capture_start":
                 assert state.name is not None and state.out is not None
+                if not _display_boundary(prepared, pos):
+                    continue
                 index = capture_index[state.name]
                 updated_starts = list(starts)
                 updated_starts[index] = pos
@@ -267,6 +290,8 @@ class CompiledSentencePattern:
 
             if state.kind == "capture_end":
                 assert state.name is not None and state.out is not None
+                if not _display_boundary(prepared, pos):
+                    continue
                 index = capture_index[state.name]
                 start = starts[index]
                 if start < 0:
@@ -341,17 +366,22 @@ class CompiledSentencePattern:
                 match = _INTEGER_AT.match(folded, pos)
                 if match is None:
                     continue
-                number = int(match.group())
                 assert state.minimum is not None and state.maximum is not None
-                if state.minimum <= number <= state.maximum:
-                    push(
-                        state.out,
-                        match.end(),
-                        starts,
-                        lengths,
-                        values,
-                        penalty,
-                    )
+                negative = folded[pos] == "-"
+                digit_start = pos + (folded[pos] in "+-")
+                magnitude = 0
+                ceiling = -state.minimum if negative else state.maximum
+                # Try valid integer prefixes so an explicit numeric suffix can
+                # still match, e.g. {value=0..10}0 against 100. Account for every
+                # digit and stop once further digits cannot return to the range.
+                for end in range(digit_start, match.end()):
+                    work.consume()
+                    magnitude = magnitude * 10 + int(folded[end])
+                    if magnitude > ceiling:
+                        break
+                    number = -magnitude if negative else magnitude
+                    if state.minimum <= number <= state.maximum:
+                        push(state.out, end + 1, starts, lengths, values, penalty)
                 continue
 
             raise SentenceMatchLimitError(f"unknown compiled state {state.kind}")
@@ -380,6 +410,7 @@ def sentence_capture_names(pattern: str) -> tuple[str, ...]:
     return tuple(parser.capture_names)
 
 
+@lru_cache(maxsize=2048)
 def compile_sentence_pattern(pattern: str) -> CompiledSentencePattern:
     """Parse and compile the documented ExtendedOpenAI sentence-pattern grammar."""
     parser, expression = _parse_pattern(pattern)
@@ -402,6 +433,10 @@ def compile_sentence_pattern(pattern: str) -> CompiledSentencePattern:
 def _parse_pattern(pattern: str) -> tuple[_Parser, object]:
     if not isinstance(pattern, str) or not pattern.strip():
         raise SentencePatternError("sentence pattern is required")
+    if len(pattern) > MAX_PATTERN_CHARS:
+        raise SentencePatternError(
+            f"sentence patterns support at most {MAX_PATTERN_CHARS} characters"
+        )
     parser = _Parser(pattern.strip())
     return parser, parser.parse()
 
@@ -432,7 +467,9 @@ class _Parser:
 
         def flush() -> None:
             if literal:
-                value = "".join(literal)
+                # Normalize literal tokens only after recognizing syntax. NFKC
+                # can itself produce braces, brackets and other grammar marks.
+                value = _normalize_literal("".join(literal))
                 if value:
                     items.append(_Literal(value))
                 literal.clear()
@@ -521,7 +558,7 @@ class _Parser:
             char = self.source[self.pos]
             self.pos += 1
             if escaped:
-                body.append(char)
+                body.extend(("\\", char))
                 escaped = False
                 continue
             if char == "\\":
@@ -574,7 +611,24 @@ class _Parser:
                 )
             return _Capture(name, "number", minimum=minimum, maximum=maximum)
 
-        values = tuple(item.strip() for item in spec.split("|"))
+        choices: list[str] = []
+        choice: list[str] = []
+        escaped = False
+        for char in spec:
+            if escaped:
+                choice.append(char)
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == "|":
+                choices.append("".join(choice))
+                choice = []
+            else:
+                choice.append(char)
+        if escaped:
+            raise SentencePatternError("captured value ends with an escape")
+        choices.append("".join(choice))
+        values = tuple(_normalize_literal(item).strip() for item in choices)
         if any(not item for item in values):
             raise SentencePatternError(f"captured value {name!r} has an empty choice")
         if len(values) > MAX_CONSTRAINED_VALUES:
@@ -637,25 +691,33 @@ def _can_match_empty(expression: object) -> bool:
 
 
 def _contains_adjacent_free_captures(expression: object) -> bool:
-    if isinstance(expression, _Alternative):
-        return any(_contains_adjacent_free_captures(item) for item in expression.items)
-    if isinstance(expression, _Optional):
-        return _contains_adjacent_free_captures(expression.item)
-    if not isinstance(expression, _Sequence):
-        return False
-    if any(_contains_adjacent_free_captures(item) for item in expression.items):
-        return True
-
-    pending_free = False
-    for item in expression.items:
+    def visit(item: object, pending: set[bool]) -> tuple[set[bool], bool]:
         if isinstance(item, _Capture) and item.kind == "free":
-            if pending_free:
-                return True
-            pending_free = True
-            continue
-        if _has_required_anchor(item):
-            pending_free = False
-    return False
+            return {True}, True in pending
+        if isinstance(item, _Literal):
+            return ({False} if item.value.strip() else pending), False
+        if isinstance(item, _Capture):
+            return {False}, False
+        if isinstance(item, _Optional):
+            after, invalid = visit(item.item, pending)
+            return pending | after, invalid
+        if isinstance(item, _Alternative):
+            after = set()
+            invalid = False
+            for branch in item.items:
+                ends, bad = visit(branch, pending)
+                after.update(ends)
+                invalid |= bad
+            return after, invalid
+        if isinstance(item, _Sequence):
+            invalid = False
+            for child in item.items:
+                pending, bad = visit(child, pending)
+                invalid |= bad
+            return pending, invalid
+        return pending, False
+
+    return visit(expression, {False})[1]
 
 
 def _required_fragments(expression: object) -> set[str]:
@@ -693,7 +755,13 @@ class _Compiler:
 
     def patch(self, outs: tuple[tuple[int, str], ...], target: int) -> None:
         for index, attribute in outs:
-            setattr(self.states[index], attribute, target)
+            state = self.states[index]
+            if attribute == "out":
+                self.states[index] = replace(state, out=target)
+            elif attribute == "out2":
+                self.states[index] = replace(state, out2=target)
+            else:
+                raise SentencePatternError(f"invalid compiled patch field {attribute}")
 
     def compile(self, expression: object) -> _Fragment:
         if isinstance(expression, _Literal):
@@ -740,7 +808,7 @@ class _Compiler:
             if first is None:
                 first = state
             if previous is not None:
-                self.states[previous].out = state
+                self.states[previous] = replace(self.states[previous], out=state)
             previous = state
         assert first is not None and previous is not None
         return _Fragment(first, ((previous, "out"),))
@@ -751,8 +819,8 @@ class _Compiler:
         if expression.kind == "free":
             any_state = self.add(_State("any"))
             split = self.add(_State("split", out1=end, out2=any_state))
-            self.states[start].out = any_state
-            self.states[any_state].out = split
+            self.states[start] = replace(self.states[start], out=any_state)
+            self.states[any_state] = replace(self.states[any_state], out=split)
             return _Fragment(start, ((end, "out"),))
         if expression.kind == "enum":
             matcher = self.add(
@@ -771,15 +839,23 @@ class _Compiler:
             )
         else:
             raise SentencePatternError(f"unsupported capture kind {expression.kind}")
-        self.states[start].out = matcher
-        self.states[matcher].out = end
+        self.states[start] = replace(self.states[start], out=matcher)
+        self.states[matcher] = replace(self.states[matcher], out=end)
         return _Fragment(start, ((end, "out"),))
+
+
+def _normalize_literal(text: str) -> str:
+    """Normalize literal spelling without interpreting it as pattern syntax."""
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text))
 
 
 def prepare_match_text(text: str) -> PreparedSentenceText:
     """Normalize one utterance once while retaining capture offsets."""
     validate_match_input(text)
-    display = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text).strip())
+    display = _normalize_literal(text).strip()
+    # Compatibility characters and case folding can expand the supplied text.
+    validate_match_input(display)
+    validate_match_input(display.casefold())
     folded_parts: list[str] = []
     folded_to_display: list[int] = []
     for index, char in enumerate(display):
@@ -791,6 +867,12 @@ def prepare_match_text(text: str) -> PreparedSentenceText:
         folded="".join(folded_parts),
         folded_to_display=tuple(folded_to_display),
     )
+
+
+def _display_boundary(prepared: PreparedSentenceText, pos: int) -> bool:
+    """Captures cannot split a character expanded by case folding (e.g. ß)."""
+    mapping = prepared.folded_to_display
+    return pos in {0, len(mapping)} or mapping[pos - 1] != mapping[pos]
 
 
 def _display_span(

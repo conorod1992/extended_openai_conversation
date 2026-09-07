@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -115,6 +115,26 @@ class CompiledPhrase:
     sentence_pattern: CompiledSentencePattern | None = None
 
 
+_MATCH_RANK = {
+    "equals": 5,
+    "sentence_pattern": 4,
+    "starts_with": 3,
+    "ends_with": 2,
+    "contains": 1,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _MatchingSnapshot:
+    """One privately owned generation, published only after compilation finishes."""
+
+    phrases: tuple[tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...]
+    wording_groups: tuple[dict[str, Any], ...]
+    deterministic: tuple[
+        tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...
+    ] = ()
+
+
 def _match_compiled_sentence(
     compiled: CompiledPhrase,
     prepared: PreparedSentenceText,
@@ -163,9 +183,7 @@ class RequestRules:
         self._rules: list[dict[str, Any]] = []
         self._defaults = dict(DEFAULT_MATCHING)
         self._wording_groups = _copy_wording_groups(DEFAULT_WORDING_GROUPS)
-        self._compiled: list[
-            tuple[dict[str, Any], dict[str, Any], list[CompiledPhrase]]
-        ] = []
+        self._matching_snapshot = _MatchingSnapshot((), ())
         self._diagnostics: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
@@ -324,7 +342,9 @@ class RequestRules:
                     )
                 )
             if changed:
-                _validate_total_pattern_states(updated_rules)
+                _validate_total_pattern_states(
+                    updated_rules, inactive_rule_ids=self._diagnostics
+                )
                 self._rules = updated_rules
                 self._sort_and_compile()
                 await self._async_save_locked()
@@ -359,10 +379,11 @@ class RequestRules:
             raise ValueError("request_rules.rules must be a list")
         if len(raw_rules) > MAX_RULES:
             raise ValueError("Request Rule limit reached")
-        rules = [validate_rule(item) for item in raw_rules]
+        rules = [
+            validate_rule(item, validate_sentence_pattern=False) for item in raw_rules
+        ]
         if len({rule["id"] for rule in rules}) != len(rules):
             raise ValueError("duplicate Request Rule id")
-        _validate_total_pattern_states(rules)
         return {"defaults": defaults, "wording_groups": wording_groups, "rules": rules}
 
     async def async_replace_backup(self, value: Any) -> None:
@@ -416,7 +437,9 @@ class RequestRules:
             rule = validate_rule(raw)
             if any(item["id"] == rule["id"] for item in self._rules):
                 raise ValueError("rule id already exists")
-            _validate_total_pattern_states([*self._rules, rule])
+            _validate_total_pattern_states(
+                [*self._rules, rule], inactive_rule_ids=self._diagnostics
+            )
             self._rules.append(rule)
             self._sort_and_compile()
             await self._async_save_locked()
@@ -438,10 +461,19 @@ class RequestRules:
             raw = dict(value)
             raw["id"] = rule_id
             raw.setdefault("order", self._rules[index]["order"])
-            rule = validate_rule(raw)
+            previous = self._rules[index]
+            preserve_inactive = (
+                rule_id in self._diagnostics
+                and raw.get("phrases") == previous["phrases"]
+                and raw.get("match_type", "equals") == previous["match_type"]
+                and not raw.get("enabled", True)
+            )
+            rule = validate_rule(raw, validate_sentence_pattern=not preserve_inactive)
             prospective = [*self._rules]
             prospective[index] = rule
-            _validate_total_pattern_states(prospective)
+            _validate_total_pattern_states(
+                prospective, inactive_rule_ids=set(self._diagnostics) - {rule_id}
+            )
             self._rules[index] = rule
             self._sort_and_compile()
             await self._async_save_locked()
@@ -474,7 +506,9 @@ class RequestRules:
                 order=int(source["order"]) + 1,
             )
             rule = validate_rule(source)
-            _validate_total_pattern_states([*self._rules, rule])
+            _validate_total_pattern_states(
+                [*self._rules, rule], inactive_rule_ids=self._diagnostics
+            )
             self._rules.append(rule)
             self._sort_and_compile()
             await self._async_save_locked()
@@ -507,81 +541,62 @@ class RequestRules:
             return dict(self._rules[target])
 
     def match(self, text: str) -> RuleMatch | None:
-        """Select one deterministic winner, using fuzzy only as a fallback."""
+        """Use one generation and existing precedence, with fuzzy only as fallback."""
+        snapshot = self._matching_snapshot
         validate_match_input(text)
-        deterministic: list[tuple[tuple[int, int, int], RuleMatch]] = []
-        fuzzy: list[tuple[tuple[float, int, int], RuleMatch]] = []
         normalized_candidates: dict[tuple[bool, bool], str] = {}
         sentence_text: PreparedSentenceText | None = None
         sentence_budget = MatchBudget()
-        rank = {
-            "equals": 5,
-            "sentence_pattern": 4,
-            "starts_with": 3,
-            "ends_with": 2,
-            "contains": 1,
-        }
-        for rule, settings, phrases in self._compiled:
-            if rule["match_type"] == "sentence_pattern":
-                candidate = ""
+
+        def candidate(settings: dict[str, Any]) -> str:
+            key = (
+                bool(settings.get("word_forms")),
+                bool(settings.get("wording_alternatives")),
+            )
+            if key not in normalized_candidates:
+                normalized_candidates[key] = normalize_text(
+                    text, settings, snapshot.wording_groups
+                )
+            return normalized_candidates[key]
+
+        # Published phrases are already sorted by the original deterministic
+        # ranking. Once one succeeds, no unvisited phrase can change the winner.
+        for rule, settings, compiled in snapshot.deterministic:
+            if compiled.sentence_pattern is not None:
                 if sentence_text is None:
                     sentence_text = prepare_match_text(text)
-            else:
-                normalization_key = (
-                    bool(settings.get("word_forms")),
-                    bool(settings.get("wording_alternatives")),
+                slots = _match_compiled_sentence(
+                    compiled, sentence_text, sentence_budget
                 )
-                try:
-                    candidate = normalized_candidates[normalization_key]
-                except KeyError:
-                    candidate = normalize_text(text, settings, self._wording_groups)
-                    normalized_candidates[normalization_key] = candidate
-            for compiled in phrases:
-                if compiled.sentence_pattern is not None:
-                    assert sentence_text is not None
-                    slots = _match_compiled_sentence(
-                        compiled, sentence_text, sentence_budget
-                    )
-                    if slots is None:
-                        continue
-                    result = RuleMatch(rule, compiled.original, False, 100.0, slots)
-                    deterministic.append(
-                        (
-                            (
-                                rank[rule["match_type"]],
-                                len(compiled.original),
-                                -rule["order"],
-                            ),
-                            result,
-                        )
-                    )
-                    continue
-                phrase = cast(str, compiled.normalized)
-                if _deterministic_match(candidate, phrase, rule["match_type"]):
-                    result = RuleMatch(rule, compiled.original, False, 100.0)
-                    deterministic.append(
-                        (
-                            (rank[rule["match_type"]], len(phrase), -rule["order"]),
-                            result,
-                        )
-                    )
-                    continue
-                if settings["fuzzy"]:
-                    score = _fuzzy_score(candidate, phrase, rule["match_type"])
-                    if score >= settings["fuzzy_threshold"]:
-                        result = RuleMatch(rule, compiled.original, True, score)
-                        fuzzy.append(
-                            ((score, rank[rule["match_type"]], -rule["order"]), result)
-                        )
-        if deterministic:
-            return max(deterministic, key=lambda item: item[0])[1]
-        if fuzzy:
-            return max(fuzzy, key=lambda item: item[0])[1]
-        return None
+                if slots is not None:
+                    return RuleMatch(rule, compiled.original, False, 100.0, slots)
+            elif _deterministic_match(
+                candidate(settings), cast(str, compiled.normalized), rule["match_type"]
+            ):
+                return RuleMatch(rule, compiled.original, False, 100.0)
+
+        # Fuzzy ties historically use rule order, then phrase order, rather than
+        # phrase length. Restore that order after the deterministic pass.
+        fuzzy: list[tuple[tuple[float, int, int], RuleMatch]] = []
+        for rule, settings, compiled in snapshot.phrases:
+            if compiled.sentence_pattern is not None or not settings["fuzzy"]:
+                continue
+            score = _fuzzy_score(
+                candidate(settings), cast(str, compiled.normalized), rule["match_type"]
+            )
+            if score >= settings["fuzzy_threshold"]:
+                result = RuleMatch(rule, compiled.original, True, score)
+                fuzzy.append(
+                    ((score, _MATCH_RANK[rule["match_type"]], -rule["order"]), result)
+                )
+        return max(fuzzy, key=lambda item: item[0])[1] if fuzzy else None
 
     async def async_match(self, hass: HomeAssistant, text: str) -> RuleMatch | None:
-        """Run bounded matching outside Home Assistant's event loop."""
-        return await hass.async_add_executor_job(self.match, text)
+        """Run matching off-loop, including when used with lightweight hosts."""
+        executor = getattr(hass, "async_add_executor_job", None)
+        if callable(executor):
+            return cast(RuleMatch | None, await executor(self.match, text))
+        return await asyncio.to_thread(self.match, text)
 
     def _index(self, rule_id: str) -> int:
         for index, rule in enumerate(self._rules):
@@ -604,10 +619,11 @@ class RequestRules:
                 rule["order"] = index
                 order_changed = True
 
-        self._compiled = []
-        self._diagnostics = {}
+        compiled_rules: list[tuple[dict[str, Any], dict[str, Any], CompiledPhrase]] = []
+        diagnostics: dict[str, str] = {}
         total_pattern_states = 0
-        for rule in self._rules:
+        for stored_rule in self._rules:
+            rule = deepcopy(stored_rule)
             settings = (
                 self._defaults
                 if rule["matching_behavior"] == "defaults"
@@ -643,7 +659,7 @@ class RequestRules:
                         )
                 except ValueError as err:
                     diagnostic = f"Sentence pattern is inactive: {err}"
-                    self._diagnostics[rule["id"]] = diagnostic
+                    diagnostics[rule["id"]] = diagnostic
                     _LOGGER.warning("Request Rule %s is inactive: %s", rule["id"], err)
                     continue
                 if rule["enabled"]:
@@ -657,7 +673,28 @@ class RequestRules:
                 ]
 
             if rule["enabled"]:
-                self._compiled.append((rule, settings, phrases))
+                compiled_rules.extend(
+                    (rule, dict(settings), phrase) for phrase in phrases
+                )
+        deterministic = sorted(
+            compiled_rules,
+            key=lambda item: (
+                _MATCH_RANK[item[0]["match_type"]],
+                len(
+                    item[2].original
+                    if item[2].sentence_pattern is not None
+                    else cast(str, item[2].normalized)
+                ),
+                -item[0]["order"],
+            ),
+            reverse=True,
+        )
+        self._matching_snapshot = _MatchingSnapshot(
+            tuple(compiled_rules),
+            tuple(_copy_wording_groups(self._wording_groups)),
+            tuple(deterministic),
+        )
+        self._diagnostics = diagnostics
         return order_changed
 
     async def _async_save_locked(self) -> None:
@@ -930,23 +967,37 @@ def _stored_slot_names(value: Mapping[str, Any]) -> list[str]:
     return sorted(set(result))
 
 
-def _validate_total_pattern_states(rules: Sequence[Mapping[str, Any]]) -> None:
-    """Reject new/imported configs whose enabled compiled grammar is too large."""
+def _validate_total_pattern_states(
+    rules: Sequence[Mapping[str, Any]], *, inactive_rule_ids: Collection[str] = ()
+) -> None:
+    """Account in loader order, retaining unchanged inactive rules for repair."""
     total = 0
-    for rule in rules:
+    for rule in sorted(
+        rules, key=lambda item: (item["order"], item["name"].casefold(), item["id"])
+    ):
         if not rule.get("enabled") or rule.get("match_type") != "sentence_pattern":
             continue
         phrases = rule.get("phrases", [])
         if not isinstance(phrases, Sequence) or isinstance(phrases, str):
             continue
-        for phrase in phrases:
-            compiled = compile_sentence_pattern(str(phrase))
-            total += compiled.state_count
-            if total > MAX_AGENT_PATTERN_STATES:
+        try:
+            compiled = [compile_sentence_pattern(str(phrase)) for phrase in phrases]
+            if any(
+                set(item.capture_names) != set(compiled[0].capture_names)
+                for item in compiled[1:]
+            ):
+                raise ValueError("all sentence variants must capture the same slots")
+            state_count = sum(item.state_count for item in compiled)
+            if total + state_count > MAX_AGENT_PATTERN_STATES:
                 raise ValueError(
                     "enabled sentence patterns exceed the per-agent compiled "
                     f"state limit of {MAX_AGENT_PATTERN_STATES}"
                 )
+        except ValueError:
+            if rule.get("id") in inactive_rule_ids:
+                continue
+            raise
+        total += state_count
 
 
 def _validate_action(action_type: str, value: Any) -> dict[str, Any]:

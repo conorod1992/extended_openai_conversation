@@ -39,20 +39,6 @@ function renderAllRulesForInPlaceSearch(panel, module) {
   );
 }
 
-function applySentencePatternCopy(html) {
-  return html
-    .replaceAll("Home Assistant sentence pattern", "ExtendedOpenAI sentence pattern")
-    .replaceAll("Hassil grammar; fuzzy and normalization settings do not apply", "ExtendedOpenAI syntax; fuzzy and normalization settings do not apply")
-    .replace(
-      "Use <code>[optional words]</code>, <code>(one|two)</code>, and variable values such as <code>{room}</code>. Named expansions such as <code>&lt;name&gt;</code> are not supported.",
-      "Use <code>[optional words]</code>, <code>(one|two)</code>, free-text values such as <code>{room}</code>, constrained values such as <code>{room=kitchen|bedroom}</code>, and integer ranges such as <code>{level=0..100}</code>. Escape syntax characters with <code>\\</code>. This is ExtendedOpenAI syntax; named expansions and permutations are not supported.",
-    )
-    .replace(
-      "Sentence patterns always use Hassil grammar matching, so these controls do not apply.",
-      "Sentence patterns use ExtendedOpenAI's bounded matcher, so fuzzy matching, wording alternatives, and word-form normalization do not apply.",
-    );
-}
-
 function addRequestRuleManagementClarity(panel, html) {
   const rules = panel._result?.rules || [];
   const diagnostics = panel._result?.diagnostics || {};
@@ -79,10 +65,10 @@ export function renderRequestRules(panel) {
     queueRender(panel);
     return panel._loading?.() || '<div class="loading">Loading Request Rules…</div>';
   }
-  const html = applySentencePatternCopy(addRequestRuleManagementClarity(
+  const html = addRequestRuleManagementClarity(
     panel,
     renderAllRulesForInPlaceSearch(panel, module),
-  ));
+  );
   return transformRequestRulesMatchTester(html);
 }
 
@@ -110,10 +96,10 @@ export function bindRequestRules(panel) {
 
 export function requestRulesDialog(...args) {
   const dialog = getRequestRulesModule()?.requestRulesDialog(...args) || "";
-  return applySentencePatternCopy(dialog.replace(
+  return dialog.replace(
     '<div id="rule-routing-config" hidden>',
     '<div id="rule-routing-config" hidden><p class="help"><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> are complete routing commands and therefore apply to the rest of this conversation. Broader Starts/Ends/Contains matches preserve and send the entire original request; matched words are not stripped.</p>',
-  ));
+  );
 }
 
 export function friendlyFieldChange(...args) {

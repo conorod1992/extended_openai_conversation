@@ -83,7 +83,7 @@ def wrap_management_command(original: ManagementCommand) -> ManagementCommand:
             raise HomeAssistantError("Test request text is required")
         rules = await async_get_request_rules(hass, entry_id, subentry_id)
         try:
-            match = await rules.async_match(hass, text.strip())
+            match = await rules.async_match(hass, text)
         except SentenceMatchLimitError as err:
             raise HomeAssistantError(str(err)) from err
         return request_rule_match_preview(match)

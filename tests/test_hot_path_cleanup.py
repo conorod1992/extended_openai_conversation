@@ -25,7 +25,6 @@ from custom_components.extended_openai_conversation_responses.lifecycle_optimiza
     install_lifecycle_optimizations,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
-    CompiledPhrase,
     RequestRules,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
@@ -223,7 +222,9 @@ def test_debug_stream_event_is_converted_once() -> None:
     assert request.response_events[0]["delta"] == "hello"
 
 
-async def test_non_broadcast_local_intent_does_not_initialize_intercom(monkeypatch) -> None:
+async def test_non_broadcast_local_intent_does_not_initialize_intercom(
+    monkeypatch,
+) -> None:
     """Ordinary local intents should not pay the Broadcast Store cold-load cost."""
     install_hot_path_cleanup()
 
@@ -238,7 +239,7 @@ async def test_non_broadcast_local_intent_does_not_initialize_intercom(monkeypat
 
 
 def _compiled_manager() -> RequestRules:
-    manager = object.__new__(RequestRules)
+    manager = RequestRules(None)
     manager._wording_groups = []
     settings = {
         "word_forms": False,
@@ -246,18 +247,22 @@ def _compiled_manager() -> RequestRules:
         "fuzzy": True,
         "fuzzy_threshold": 80,
     }
-    manager._compiled = [
-        (
-            {"match_type": "equals", "order": 0},
-            settings,
-            [CompiledPhrase("turn on", normalized="turn on")],
-        ),
-        (
-            {"match_type": "contains", "order": 1},
-            settings,
-            [CompiledPhrase("something else", normalized="something else")],
-        ),
+    manager._rules = [
+        {
+            "id": str(order),
+            "name": phrase,
+            "enabled": True,
+            "match_type": kind,
+            "order": order,
+            "matching_behavior": "custom",
+            "matching": settings,
+            "phrases": [phrase],
+        }
+        for order, (kind, phrase) in enumerate(
+            [("equals", "turn on"), ("contains", "something else")]
+        )
     ]
+    manager._sort_and_compile()
     return manager
 
 

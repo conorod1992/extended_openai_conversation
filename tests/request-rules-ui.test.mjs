@@ -52,6 +52,12 @@ assert.match(requestRulesDialog(panel), /Conditions, delays, choose, repeat, par
 assert.match(requestRulesDialog(panel), /extended_openai_conversation_responses\.call_function/);
 assert.match(requestRulesDialog(panel), /\{\{ item \}\}/);
 const bindingSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js", import.meta.url), "utf8");
+const literalHelpWords = "Home Assistant sentence pattern";
+const literalHtml = renderRequestRules({...panel, _result: {...panel._result, rules: [
+  {...panel._result.rules[0], name: literalHelpWords, phrases: [literalHelpWords]},
+]}});
+assert.match(literalHtml, /<h2>Home Assistant sentence pattern<\/h2>/);
+assert.match(literalHtml, /<b>Equals<\/b> Home Assistant sentence pattern/);
 assert.match(bindingSource, /Value from request/);
 assert.match(bindingSource, /function_catalog/);
 assert.match(bindingSource, /Captured values:/);

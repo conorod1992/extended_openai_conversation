@@ -51,8 +51,8 @@ export function bindRequestRuleMatchTester(panel) {
   if (!input || !button || !output) return;
 
   const run = async () => {
-    const text = input.value.trim();
-    if (!text || button.disabled) return;
+    const text = input.value;
+    if (!text.trim() || button.disabled) return;
     button.disabled = true;
     output.textContent = "Checking…";
     try {

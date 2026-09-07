@@ -58,6 +58,8 @@ Choose **ExtendedOpenAI sentence pattern** when parts of a command can vary. Thi
 
 Sentence patterns are case-insensitive but otherwise use their own exact grammar path. Fuzzy matching, wording alternatives, and word-form normalization do not apply.
 
+Literal spelling and constrained choices use the same Unicode and whitespace normalization as the input. Sentence-ending punctuation (`.`, `!`, `?`, `。`, and `؟`, including fullwidth equivalents) may follow a complete command. Punctuation explicitly written in a pattern still has to match; punctuation in the middle of a command is literal.
+
 Supported syntax:
 
 | Syntax | Meaning | Example |
@@ -80,6 +82,8 @@ A constrained capture both validates and captures the selected value. For exampl
 ```
 
 `please switch bedroom lights on` captures `room = bedroom`. A value outside the listed choices does not match.
+
+Escapes also work inside constrained choices: `{value=a\|b|c}` accepts the literal values `a|b` and `c`, not separate `a` and `b` choices. Choices that become identical after Unicode, whitespace, and case normalization are rejected.
 
 Numeric captures accept integer digits (including a leading `+` or `-` where the configured range allows it) and validate the value without expanding the range into thousands of alternatives:
 
@@ -117,14 +121,18 @@ The current safety limits are:
 - 32 choices per constrained capture, with each choice limited to 80 characters;
 - 512 compiled states per pattern;
 - 50,000 enabled compiled sentence-pattern states per agent;
-- 2,048 characters and 256 words in a live or Match Preview input; and
+- 2,048 characters and 256 words in a live or Match Preview input, checked before and (for sentence matching) after Unicode normalization and case folding; and
 - a shared aggregate matcher-work budget across every sentence pattern considered for one request.
 
-The same parser, compiled matcher, input bounds, winner-selection rules, and aggregate work budget are used by live requests and Match Preview. Matching itself runs outside Home Assistant's main event loop.
+The same parser, compiled matcher, input bounds, winner-selection rules, and aggregate work budget are used by live requests and Match Preview. Matching itself runs outside Home Assistant's main event loop. Each match reads one complete configuration snapshot, even if rules or defaults are being saved concurrently. Compiled patterns are immutable and reused through a bounded cache.
+
+Candidates are evaluated in the existing precedence order. Once a match is certain to win, lower-ranked patterns are skipped. An unresolved candidate that could change the winner still causes the whole evaluation to fail safely if it exceeds the work budget.
 
 If a live request is larger than the matching limit or the aggregate work budget cannot safely complete, **no Request Rule action runs** and the original request continues through the normal AI path. The matcher never treats an interrupted higher-priority rule as a failed match and then executes a lower-priority local action. Match Preview instead reports the limit as an error.
 
 If an existing stored sentence pattern is no longer accepted by the documented grammar or its safety bounds, it is preserved rather than silently deleted. The Request Rules screen marks that rule inactive with an actionable diagnostic so it can be edited or removed.
+
+Inactive legacy rules can be disabled and repaired individually without blocking unrelated changes. Backups preserve them too; restoring a backup applies the same activation limits and diagnostics as loading stored rules. New or re-enabled rules must satisfy the current grammar and limits.
 
 ## Function actions
 

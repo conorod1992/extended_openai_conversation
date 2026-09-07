@@ -133,7 +133,7 @@ async def test_management_test_actions_never_delegate_to_real_processing(
     )
     assert result["matched"] is True
     assert result["rule"]["name"] == "Good night"
-    assert matched_text == ["good night kitchen"]
+    assert matched_text == ["  good night kitchen  "]
     assert delegated == 0
 
 

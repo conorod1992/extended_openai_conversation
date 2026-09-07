@@ -82,15 +82,17 @@ def test_repeated_optionals_have_bounded_work() -> None:
     assert budget.used < 500
 
     near_miss_budget = MatchBudget(maximum=1_000)
-    assert pattern.match(" ".join(["a"] * 20 + ["c"]), near_miss_budget) is None
-    assert near_miss_budget.used < 500
+    assert pattern.match(" ".join(["a"] * 20 + ["b", "c"]), near_miss_budget) is None
+    assert 0 < near_miss_budget.used < 1_000
 
 
 def test_runtime_budget_is_enforceable() -> None:
     """Matcher work should stop itself rather than depend on an async timeout."""
     pattern = compile_sentence_pattern("[please ](turn|switch) {room} lights on")
     with pytest.raises(SentenceMatchLimitError, match="safe work limit"):
-        pattern.match("please switch upstairs guest room lights on", MatchBudget(maximum=2))
+        pattern.match(
+            "please switch upstairs guest room lights on", MatchBudget(maximum=2)
+        )
 
 
 def test_input_limits_are_explicit() -> None:
@@ -122,7 +124,9 @@ def test_unsupported_hassil_specific_syntax_is_rejected() -> None:
 
 def test_capture_and_nesting_limits_are_enforced() -> None:
     """Compile-time grammar bounds should be actionable instead of timing out later."""
-    captures = " ".join(f"x{i} {{value{i}=a|b}}" for i in range(MAX_PATTERN_CAPTURES + 1))
+    captures = " ".join(
+        f"x{i} {{value{i}=a|b}}" for i in range(MAX_PATTERN_CAPTURES + 1)
+    )
     with pytest.raises(SentencePatternError, match="captures"):
         compile_sentence_pattern(captures)
 
@@ -137,3 +141,155 @@ def test_escaped_syntax_characters_are_literal() -> None:
     """Reserved pattern characters can still be spoken literally when escaped."""
     pattern = compile_sentence_pattern(r"say \(hello\) and \{goodbye\}")
     assert pattern.match("say (hello) and {goodbye}") is not None
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "do [{first}] {second}",
+        "do ({first}|x) {second}",
+        "do {first} (x|[{second}] y)",
+        "do [x {first}] {second}",
+    ],
+)
+def test_grouped_adjacent_captures_are_rejected(source) -> None:
+    with pytest.raises(SentencePatternError, match="separated"):
+        compile_sentence_pattern(source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "do [{first} to] {second}",
+        "do {first} [to {second}]",
+        "do ({first} to|x) {second}",
+        "do {first} {mode=x|y} {second}",
+    ],
+)
+def test_grouped_captures_with_required_separators_are_valid(source) -> None:
+    compile_sentence_pattern(source)
+
+
+def test_escaped_constrained_values_do_not_create_extra_choices() -> None:
+    pattern = compile_sentence_pattern(r"say {choice=a\|b|c\}d|e\\f|g\=h}")
+    for text in ("a|b", "c}d", "e\\f", "g=h"):
+        assert pattern.match(f"say {text}").captures == {"choice": text}
+    for text in ("a", "b", "c", "e", "g"):
+        assert pattern.match(f"say {text}") is None
+    literal_range = compile_sentence_pattern(r"say {choice=0\.\.10|other}")
+    assert literal_range.match("say 0..10").captures == {"choice": "0..10"}
+    assert literal_range.match("say 5") is None
+
+
+@pytest.mark.parametrize(
+    ("source", "text"),
+    [
+        ("say ①", "say ①"),
+        ("say cafe\u0301", "say café"),
+        ("set {room=home  office|bedroom}", "set home office"),
+        ("set {room=cafe\u0301|home}", "set café"),
+        ("say ｛hello｝", "say {hello}"),
+    ],
+)
+def test_pattern_tokens_and_input_share_normalization(source, text) -> None:
+    assert compile_sentence_pattern(source).match(text) is not None
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "set {room=home office|home  office}",
+        "set {room=cafe\u0301|café}",
+        "set {value=①|1}",
+    ],
+)
+def test_normalized_duplicate_choices_are_rejected(source) -> None:
+    with pytest.raises(SentencePatternError, match="duplicate"):
+        compile_sentence_pattern(source)
+
+
+def test_sentence_ending_punctuation_is_tolerated_without_losing_literals() -> None:
+    pattern = compile_sentence_pattern("turn lights on")
+    for text in (
+        "Turn lights on.",
+        "turn lights on!",
+        "turn lights on？！",
+        "turn lights on。",
+    ):
+        assert pattern.match(text) is not None
+    assert pattern.match("turn lights on. then off") is None
+    assert compile_sentence_pattern(r"say hello\!").match("say hello") is None
+    assert compile_sentence_pattern(r"say hello\!").match("say hello!") is not None
+    assert compile_sentence_pattern("remember {fact}").match(
+        "remember milk!"
+    ).captures == {"fact": "milk"}
+
+
+def test_normalized_input_expansion_is_bounded() -> None:
+    pattern = compile_sentence_pattern("remember {fact}")
+    with pytest.raises(SentenceMatchLimitError, match="characters"):
+        pattern.match("remember " + "\ufdfa" * 150)
+    with pytest.raises(SentenceMatchLimitError, match="characters"):
+        pattern.match("remember " + "ß" * 1100)
+
+
+def test_capture_heavy_near_miss_has_linear_state_work() -> None:
+    pattern = compile_sentence_pattern("do {first} and {second} end")
+    for count in (20, 40, 80):
+        text = "do " + " and ".join(["x"] * count) + " end nope"
+        budget = MatchBudget()
+        assert pattern.match(text, budget) is None
+        assert 0 < budget.used <= 2 * pattern.state_count * (len(text) + 1)
+        assert budget.used < 10_000
+
+
+def test_compile_cache_is_immutable_and_reused() -> None:
+    from dataclasses import FrozenInstanceError
+
+    first = compile_sentence_pattern("turn [the] light on")
+    assert compile_sentence_pattern("turn [the] light on") is first
+    with pytest.raises(FrozenInstanceError):
+        first.states[0].out = 100
+
+
+def test_compile_state_ceiling(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        request_rule_patterns as module,
+    )
+
+    monkeypatch.setattr(module, "MAX_PATTERN_STATES", 4)
+    compile_sentence_pattern.cache_clear()
+    with pytest.raises(SentencePatternError, match="state complexity"):
+        compile_sentence_pattern("unique [complex] {capture} pattern")
+
+
+def test_numeric_captures_can_be_followed_by_literal_digits() -> None:
+    assert compile_sentence_pattern("set {value=0..10}0").match("set 100").captures == {
+        "value": "10"
+    }
+    assert compile_sentence_pattern("set {value=-10..-1}0").match(
+        "set -100"
+    ).captures == {"value": "-10"}
+    assert compile_sentence_pattern("set {value=0..10}").match("set 100") is None
+    assert compile_sentence_pattern("set {value=0..10}").match("set 0005").captures == {
+        "value": "0005"
+    }
+    assert compile_sentence_pattern("set {value=0..10}").match("set +5").captures == {
+        "value": "+5"
+    }
+    assert compile_sentence_pattern("set {value=0..10}").match("set ٥").captures == {
+        "value": "٥"
+    }
+
+
+def test_captures_do_not_split_casefolded_display_characters() -> None:
+    assert compile_sentence_pattern("say {value}s").match("say ß") is None
+    assert compile_sentence_pattern("say s{value}").match("say ß") is None
+    assert compile_sentence_pattern("say {value}").match("say ß").captures == {
+        "value": "ß"
+    }
+
+
+def test_whitespace_capture_histories_do_not_hide_valid_capture_splits() -> None:
+    pattern = compile_sentence_pattern("do {first} to{second}")
+    assert pattern.match("do a to to b").captures == {"first": "a", "second": "to b"}

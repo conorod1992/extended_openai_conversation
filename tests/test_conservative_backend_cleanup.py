@@ -7,7 +7,6 @@ from custom_components.extended_openai_conversation_responses.entity import (
     _index_function_tools,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
-    CompiledPhrase,
     RequestRules,
 )
 
@@ -37,28 +36,29 @@ def test_request_rule_match_reuses_normalization_by_profile(monkeypatch: Any) ->
         **shared_settings,
         "word_forms": False,
     }
-    manager._compiled = [
-        (
-            {"match_type": "contains", "order": 0},
-            shared_settings,
-            [CompiledPhrase("alpha", normalized="alpha")],
-        ),
-        (
-            {"match_type": "contains", "order": 1},
-            dict(shared_settings),
-            [CompiledPhrase("beta", normalized="beta")],
-        ),
-        (
-            {"match_type": "contains", "order": 2},
-            alternate_settings,
-            [CompiledPhrase("gamma", normalized="gamma")],
-        ),
+    manager._rules = [
+        {
+            "id": str(order),
+            "name": phrase,
+            "enabled": True,
+            "match_type": "contains",
+            "order": order,
+            "matching_behavior": "custom",
+            "matching": settings,
+            "phrases": [phrase],
+        }
+        for order, (phrase, settings) in enumerate(
+            [
+                ("alpha", shared_settings),
+                ("beta", dict(shared_settings)),
+                ("gamma", alternate_settings),
+            ]
+        )
     ]
+    manager._sort_and_compile()
     calls: list[tuple[bool, bool]] = []
 
-    def fake_normalize(
-        text: str, settings: Any, wording_groups: Any
-    ) -> str:
+    def fake_normalize(text: str, settings: Any, wording_groups: Any) -> str:
         calls.append(
             (
                 bool(settings.get("word_forms")),
@@ -70,4 +70,4 @@ def test_request_rule_match_reuses_normalization_by_profile(monkeypatch: Any) ->
     monkeypatch.setattr(request_rules, "normalize_text", fake_normalize)
 
     assert manager.match("utterance") is None
-    assert calls == [(True, True), (False, True)]
+    assert sorted(calls) == [(False, True), (True, True)]
