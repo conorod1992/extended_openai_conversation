@@ -13,13 +13,22 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 from custom_components.extended_openai_conversation_responses.const import (
     DEFAULT_CONF_FUNCTION_TOOLS,
 )
+from custom_components.extended_openai_conversation_responses.conversation import (
+    ExtendedOpenAIAgentEntity,
+)
 from custom_components.extended_openai_conversation_responses.function_groups import (
     FunctionGroupRuntime,
     assemble_function_tools,
     load_function_groups,
 )
+from custom_components.extended_openai_conversation_responses.guest_mode import (
+    GuestCapabilityPolicy,
+)
 from custom_components.extended_openai_conversation_responses.request_static_cache import (
     tools_for_available_skills,
+)
+from custom_components.extended_openai_conversation_responses.runtime_hardening import (
+    install_runtime_hardening,
 )
 from custom_components.extended_openai_conversation_responses.skill_availability import (
     effective_skill_loader_status,
@@ -29,6 +38,7 @@ from custom_components.extended_openai_conversation_responses.skill_availability
 from custom_components.extended_openai_conversation_responses.skill_runtime_availability import (
     effective_tool_runtime_scope,
 )
+from custom_components.extended_openai_conversation_responses.skills import SkillManager
 
 
 def _loader(*, enabled: bool = True) -> dict:
@@ -231,6 +241,57 @@ def test_effective_runtime_scope_preserves_on_demand_skill_loader_semantics() ->
         loaded = assemble_function_tools([loader], [group], session.loaded_group_ids)
 
     assert [tool["spec"]["name"] for tool in loaded.tools] == ["load_skill"]
+
+
+def test_live_entity_assembly_uses_effective_skill_availability(
+    hass, monkeypatch
+) -> None:
+    """The installed runtime wrapper must affect the real agent assembly path."""
+    install_runtime_hardening()
+    loader = _loader()
+    other = _other_tool()
+    options = {
+        "skills": ["calendar"],
+        "function_groups": [],
+        "max_function_calls_per_conversation": 1,
+    }
+    manager = SkillManager(hass)
+    manager._initialized = True
+
+    entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
+    entity.subentry = SimpleNamespace(data=options)
+    entity.skill_manager = manager
+    entity._function_groups_runtime = None
+    entity._temporary_memory = None
+    entity._knowledge = None
+    entity._archive = None
+
+    monkeypatch.setattr(
+        ExtendedOpenAIAgentEntity,
+        "_get_configured_function_tools",
+        lambda _self: [loader, other],
+    )
+    monkeypatch.setattr(
+        ExtendedOpenAIAgentEntity,
+        "_effective_guest_policy",
+        lambda _self: GuestCapabilityPolicy.unrestricted(),
+    )
+    monkeypatch.setattr(
+        ExtendedOpenAIAgentEntity, "_current_memory_scope_id", lambda _self: None
+    )
+
+    missing_names = {
+        tool["spec"]["name"] for tool in entity._get_function_tools()
+    }
+    assert "other_tool" in missing_names
+    assert "load_skill" not in missing_names
+
+    manager._skills["calendar"] = SimpleNamespace(name="calendar")
+    installed_names = {
+        tool["spec"]["name"] for tool in entity._get_function_tools()
+    }
+    assert "other_tool" in installed_names
+    assert "load_skill" in installed_names
 
 
 def test_zero_usable_skills_hide_only_the_canonical_loader() -> None:
