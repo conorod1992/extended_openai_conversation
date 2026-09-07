@@ -44,7 +44,10 @@ def _usage_snapshot(manager: Any, category: str) -> dict[str, Any]:
     if category == "totals":
         return cast(dict[str, Any], manager.as_dict())
     if category == "daily":
-        return {"days": deepcopy(manager.daily)}
+        return {
+            "totals": deepcopy(cast(dict[str, Any], manager.as_dict())),
+            "days": deepcopy(manager.daily),
+        }
     if category == "details":
         return {
             "requests": [asdict(request) for request in manager.requests],
@@ -59,6 +62,29 @@ def _schedule_store_snapshot(store: Any, snapshot: dict[str, Any]) -> bool:
     if not callable(delay_save):
         return False
     delay_save(lambda snapshot=snapshot: snapshot, _USAGE_SAVE_DELAY_SECONDS)
+    return True
+
+
+def _schedule_usage_aggregate_snapshots(manager: Any) -> bool:
+    """Coalesce the authoritative aggregate snapshot and compatibility mirror."""
+    totals_store = manager._storage
+    daily_store = manager._daily_storage
+    if daily_store is None:
+        return _schedule_store_snapshot(
+            totals_store, _usage_snapshot(manager, "totals")
+        )
+
+    totals_delay_save = getattr(totals_store, "async_delay_save", None)
+    daily_delay_save = getattr(daily_store, "async_delay_save", None)
+    if not callable(totals_delay_save) or not callable(daily_delay_save):
+        return False
+
+    # Schedule the compatibility mirror first. If scheduling the authoritative
+    # daily snapshot then fails, the immediate fallback below will still leave
+    # the authoritative store current; a later stale mirror is ignored when
+    # that authoritative snapshot is present.
+    _schedule_store_snapshot(totals_store, _usage_snapshot(manager, "totals"))
+    _schedule_store_snapshot(daily_store, _usage_snapshot(manager, "daily"))
     return True
 
 
@@ -142,6 +168,18 @@ def _install_usage_persistence() -> None:
     original_finalize_run = manager_type._async_finalize_run
 
     async def async_save_safely(manager: Any, label: str, save: Any) -> None:
+        if label in {"request aggregates", "run aggregates"}:
+            try:
+                if _schedule_usage_aggregate_snapshots(manager):
+                    return
+            except Exception:
+                _LOGGER.exception(
+                    "Unable to schedule usage %s; falling back to immediate persistence",
+                    label,
+                )
+            await original_save_safely(manager, label, save)
+            return
+
         category = {
             "request totals": "totals",
             "run totals": "totals",
