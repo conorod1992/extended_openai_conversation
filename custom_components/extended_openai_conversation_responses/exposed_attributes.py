@@ -47,8 +47,7 @@ def _validate_preferences(value: Any) -> dict[str, list[str]]:
     for reference, attributes in value.items():
         entry_id = (
             reference.removeprefix(_REGISTRY_REF_PREFIX)
-            if isinstance(reference, str)
-            and reference.startswith(_REGISTRY_REF_PREFIX)
+            if isinstance(reference, str) and reference.startswith(_REGISTRY_REF_PREFIX)
             else ""
         )
         if (
@@ -122,7 +121,9 @@ def _register_agent_config_contract() -> None:
     agent_config.AGENT_CONFIG_FIELDS = frozenset(
         {*agent_config.AGENT_CONFIG_FIELDS, CONF_EXPOSED_ENTITY_ATTRIBUTES}
     )
-    agent_config.normalize_agent_config = _normalize_agent_config_with_exposed_attributes
+    agent_config.normalize_agent_config = (
+        _normalize_agent_config_with_exposed_attributes
+    )
 
 
 _register_agent_config_contract()
@@ -148,9 +149,7 @@ def _reference_for_entity(registry: Any, entity_id: str) -> str | None:
 def _entry_for_reference(registry: Any, reference: str) -> Any | None:
     if not reference.startswith(_REGISTRY_REF_PREFIX):
         return None
-    return _registry_entry_by_id(
-        registry, reference.removeprefix(_REGISTRY_REF_PREFIX)
-    )
+    return _registry_entry_by_id(registry, reference.removeprefix(_REGISTRY_REF_PREFIX))
 
 
 def _preferences_from_options(options: Mapping[str, Any] | Any) -> dict[str, list[str]]:
@@ -158,7 +157,7 @@ def _preferences_from_options(options: Mapping[str, Any] | Any) -> dict[str, lis
     try:
         value = options.get(CONF_EXPOSED_ENTITY_ATTRIBUTES, {})
         return _validate_preferences(value)
-    except (AttributeError, agent_config.AgentConfigError):
+    except AttributeError, agent_config.AgentConfigError:
         return {}
 
 
@@ -230,7 +229,7 @@ def _safe_attribute_value(value: Any) -> Any:
             separators=(",", ":"),
             default=str,
         )
-    except (TypeError, ValueError, RecursionError):
+    except TypeError, ValueError, RecursionError:
         encoded = json.dumps(str(value), ensure_ascii=False)
     if len(encoded) > MAX_ATTRIBUTE_VALUE_CHARACTERS:
         return f"<omitted: {len(encoded)} serialized characters>"
@@ -372,17 +371,13 @@ def _wrap_effective_prompt_renderer(original: Callable[..., Any]) -> Callable[..
         exposed = kwargs.get("exposed_entities")
         if isinstance(exposed, list):
             kwargs = dict(kwargs)
-            kwargs["exposed_entities"] = enrich_exposed_entities(
-                hass, options, exposed
-            )
+            kwargs["exposed_entities"] = enrich_exposed_entities(hass, options, exposed)
         return original(hass, options, *args, **kwargs)
 
     return wrapped
 
 
-def _decorate_configuration_result(
-    hass: Any, result: dict[str, Any]
-) -> dict[str, Any]:
+def _decorate_configuration_result(hass: Any, result: dict[str, Any]) -> dict[str, Any]:
     config = result.get("config")
     if not isinstance(config, dict):
         return result
@@ -419,9 +414,8 @@ def install_exposed_attribute_runtime() -> None:
         user_input: Any,
         skills: list[Any],
     ) -> str:
-        if (
-            raw == DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE
-            and _has_selected_values(exposed_entities)
+        if raw == DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE and _has_selected_values(
+            exposed_entities
         ):
             return _render_legacy_default_with_attributes(hass, exposed_entities)
         return original_template_renderer(
