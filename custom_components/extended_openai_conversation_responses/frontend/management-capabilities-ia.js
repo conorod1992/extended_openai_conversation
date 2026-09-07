@@ -52,6 +52,34 @@ function knowledgeAvailabilityMarkup(panel) {
   </section>`;
 }
 
+function knowledgeSourceAvailabilityBadge(source) {
+  const enabled = source?.enabled !== false;
+  return `<span class="${enabled ? "availability-badge" : "disabled-badge"} knowledge-source-availability-badge">${enabled ? "Available" : "Unavailable"}</span>`;
+}
+
+function decorateKnowledgeSources(panel, html, documentRef = globalThis.document) {
+  return transformConfiguration(html, (root) => {
+    const sources = panel._result?.sources || [];
+    root.querySelectorAll(".edit-source[data-id]").forEach((card) => {
+      const source = sources.find((item) => item.source_id === card.dataset.id);
+      const heading = card.querySelector("h3");
+      if (!source || !heading) return;
+      heading.insertAdjacentHTML("afterend", knowledgeSourceAvailabilityBadge(source));
+    });
+  }, documentRef);
+}
+
+function addKnowledgeSourceAvailabilityControl(html, documentRef = globalThis.document) {
+  return transformConfiguration(html, (root) => {
+    const content = root.querySelector("#knowledge-content")?.closest("label");
+    if (!content || root.querySelector("#knowledge-source-enabled")) return;
+    const setting = documentRef.createElement("div");
+    setting.className = "config-toggle setting knowledge-source-availability-setting";
+    setting.innerHTML = `<span class="setting-copy"><span class="setting-label-row"><label for="knowledge-source-enabled"><strong>Available to the assistant</strong></label></span><small>Turn this off to keep the source stored locally without including it in Knowledge retrieval.</small></span><label class="switch-control" for="knowledge-source-enabled"><input id="knowledge-source-enabled" type="checkbox" role="switch" checked><span class="switch-track" aria-hidden="true"></span></label>`;
+    content.before(setting);
+  }, documentRef);
+}
+
 async function saveKnowledgeAvailability(panel, input) {
   const desired = input.checked;
   input.disabled = true;
@@ -114,6 +142,42 @@ export function installManagementCapabilitiesIA(registry = globalThis.customElem
       return originalContent.call(this, agent);
     };
 
+    const originalKnowledge = prototype._knowledge;
+    prototype._knowledge = function(...args) {
+      return decorateKnowledgeSources(this, originalKnowledge.apply(this, args));
+    };
+
+    const originalDialogs = prototype._dialogs;
+    prototype._dialogs = function(...args) {
+      return addKnowledgeSourceAvailabilityControl(originalDialogs.apply(this, args));
+    };
+
+    const originalKnowledgeValues = prototype._knowledgeValues;
+    prototype._knowledgeValues = function(...args) {
+      const values = originalKnowledgeValues.apply(this, args);
+      const input = this.shadowRoot?.querySelector("#knowledge-source-enabled");
+      return {...values, enabled: input?.checked ?? true};
+    };
+
+    const originalSetKnowledgeEditorDisabled = prototype._setKnowledgeEditorDisabled;
+    prototype._setKnowledgeEditorDisabled = function(disabled) {
+      const result = originalSetKnowledgeEditorDisabled.call(this, disabled);
+      const input = this.shadowRoot?.querySelector("#knowledge-source-enabled");
+      if (input) input.disabled = disabled;
+      return result;
+    };
+
+    const originalOpenKnowledge = prototype._openKnowledge;
+    prototype._openKnowledge = async function(sourceId = null) {
+      const input = this.shadowRoot?.querySelector("#knowledge-source-enabled");
+      if (input) input.checked = true;
+      const result = await originalOpenKnowledge.call(this, sourceId);
+      const currentInput = this.shadowRoot?.querySelector("#knowledge-source-enabled");
+      if (currentInput) currentInput.checked = sourceId ? this._editingSource?.enabled !== false : true;
+      if (["create", "edit"].includes(this._knowledgeMode)) this._editorInitial = this._knowledgeValues();
+      return result;
+    };
+
     const originalBindActions = prototype._bindActions;
     prototype._bindActions = function(...args) {
       const result = originalBindActions.apply(this, args);
@@ -133,4 +197,11 @@ if (typeof document !== "undefined" && typeof customElements !== "undefined") {
   installManagementCapabilitiesIA();
 }
 
-export {knowledgeAvailabilityMarkup, stripLocalHandlingConfiguration, stripWebSkillsConfiguration};
+export {
+  addKnowledgeSourceAvailabilityControl,
+  decorateKnowledgeSources,
+  knowledgeAvailabilityMarkup,
+  knowledgeSourceAvailabilityBadge,
+  stripLocalHandlingConfiguration,
+  stripWebSkillsConfiguration,
+};
