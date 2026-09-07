@@ -24,6 +24,7 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 )
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
+    _format_structured_output,
 )
 from custom_components.extended_openai_conversation_responses.function_call_budget import (
     FunctionCallBudget,
@@ -674,3 +675,21 @@ async def test_mutated_dispatch_list_cannot_switch_the_validated_tool(hass):
             llm.ToolInput(tool_name="echo", tool_args={"value": "hello"})
         )
     assert not api.tools[0].calls
+
+
+async def test_ai_task_structured_output_uses_core_serializer_contract(hass):
+    api = TestAPI(hass)
+    instance = await api.async_get_api_instance(context())
+    marker = object()
+
+    def serializer(value):
+        if value is marker:
+            return {"type": "string", "enum": ["ready", "waiting"]}
+        return llm.selector_serializer(value)
+
+    instance.custom_serializer = serializer
+    schema = vol.Schema({vol.Required("state"): marker, vol.Required("count"): int})
+    result = _format_structured_output(schema, instance)
+    assert result["properties"]["state"]["enum"] == ["ready", "waiting"]
+    assert result["properties"]["count"]["type"] == "integer"
+    assert set(result["required"]) == {"state", "count"}

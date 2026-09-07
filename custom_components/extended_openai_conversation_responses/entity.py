@@ -230,7 +230,8 @@ def _format_structured_output(
     schema: vol.Schema, llm_api: llm.APIInstance | None
 ) -> dict[str, Any]:
     """Format the schema to be compatible with OpenAI API."""
-    result: dict[str, Any] = convert(
+    converter = getattr(llm, "to_openapi", convert)
+    result: dict[str, Any] = converter(
         schema,
         custom_serializer=(
             llm_api.custom_serializer if llm_api else llm.selector_serializer
