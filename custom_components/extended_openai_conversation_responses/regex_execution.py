@@ -10,7 +10,7 @@ import json
 import logging
 import subprocess
 import sys
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -260,7 +260,9 @@ async def _async_apply_speech_replacements(text: str, rules: object) -> str:
         return text
     if len(text) > MAX_SPEECH_REPLACEMENT_INPUT_CHARS:
         _LOGGER.warning(
-            "Skipping speech regex replacements because input exceeds %d characters",
+            (
+                "Skipping speech regex replacements because input exceeds %d characters"
+            ),
             MAX_SPEECH_REPLACEMENT_INPUT_CHARS,
         )
         return text
@@ -278,7 +280,9 @@ async def _async_apply_speech_replacements(text: str, rules: object) -> str:
             "Speech regex replacement failed; preserving spoken text: %s", err
         )
         return text
-    except (OSError, UnicodeError, ValueError) as err:
+    except Exception as err:
+        # Cancellation is a BaseException in supported Python versions and therefore
+        # still propagates. Ordinary worker/serialization failures remain fail-open.
         _LOGGER.warning(
             "Speech regex worker failed; preserving spoken text: %s", type(err).__name__
         )
@@ -311,7 +315,9 @@ async def _async_apply_speech_replacements(text: str, rules: object) -> str:
         return text
     if len(value) > _speech_output_limit(len(text)):
         _LOGGER.warning(
-            "Speech regex worker exceeded the output limit; preserving spoken text"
+            (
+                "Speech regex worker exceeded the output limit; preserving spoken text"
+            )
         )
         return text
     return value
@@ -353,7 +359,7 @@ def _deferred_process_speech_text_factory(original_process_speech_text: Any):
         ):
             _DEFERRED_SPEECH_INPUT.set((original_text, agent_config))
             return original_text
-        return original_process_speech_text(original_text, agent_config)
+        return cast(str, original_process_speech_text(original_text, agent_config))
 
     return deferred_process_speech_text
 
