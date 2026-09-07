@@ -164,10 +164,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # Wrap the effective management dispatcher after permission/performance layers.
     install_function_dependency_integrity()
     install_safety_hardening()
-    install_configurable_regex_isolation()
     install_model_search_hardening()
-    # Install last so the gate wraps the effective post-optimization entry points.
+    # Install the maintenance gate around durable management work first. Speech
+    # Preview post-processing is side-effect-free and should wrap the final dispatcher.
     install_agent_maintenance_barrier()
+    install_configurable_regex_isolation()
     # Activate the durable delayed-tool scheduler after entity hardening so its
     # execution hook wraps the final configured Function Tool seam.
     await async_setup_delayed_tools(hass)
@@ -278,7 +279,7 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                     title=DEFAULT_AI_TASK_NAME,
                     unique_id=None,
                 )
-                hass.config_entries.async_add_subentry(entry, ai_task_subentry)
+                hass.config_entries.async_add_subentry(entry, ai_task_data_subentry)
             hass.config_entries.async_update_entry(
                 entry, title=entry.title, options={}, version=2
             )
