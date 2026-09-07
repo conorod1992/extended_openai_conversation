@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +16,6 @@ from .const import DOMAIN
 from .debug import get_debug_manager
 from .debug_management_projection import debug_run_summaries, debug_trace_page
 from .management_result_limits import (
-    MANAGEMENT_DEBUG_COPY_CHARACTERS,
     MANAGEMENT_DEBUG_PROVIDER_PAGE_DEFAULT,
     MANAGEMENT_DEBUG_PROVIDER_PAGE_MAX,
 )
@@ -55,21 +53,6 @@ def _manager(hass: HomeAssistant, msg: dict[str, Any]):
     if subentry is None or subentry.subentry_type != "conversation":
         raise HomeAssistantError("Conversation agent not found")
     return get_debug_manager(hass, entry_id, subentry_id)
-
-
-def _debug_copy_preview(trace: dict[str, Any]) -> tuple[str, bool]:
-    """Keep the legacy copy field bounded and explicit when incomplete."""
-    text = json.dumps(trace, indent=2, ensure_ascii=False)
-    if len(text) <= MANAGEMENT_DEBUG_COPY_CHARACTERS:
-        return text, True
-    preview = {
-        "management_copy_truncated": True,
-        "original_characters": len(text),
-        "limit_characters": MANAGEMENT_DEBUG_COPY_CHARACTERS,
-        "note": "The debug management response is paged. Use provider_offset to request later provider requests.",
-        "trace_preview": text[:MANAGEMENT_DEBUG_COPY_CHARACTERS],
-    }
-    return json.dumps(preview, indent=2, ensure_ascii=False), False
 
 
 @websocket_api.websocket_command(
@@ -135,12 +118,9 @@ async def websocket_request_debug(
                 )
                 if trace is None:
                     raise HomeAssistantError("Debug run not found")
-                copy_text, copy_complete = _debug_copy_preview(trace)
-                result = {
-                    "trace": trace,
-                    "copy_text": copy_text,
-                    "copy_complete": copy_complete,
-                }
+                # Do not duplicate the projected trace as a second serialized
+                # copy. The frontend serializes exactly the visible bounded page.
+                result = {"trace": trace}
             elif action == "clear":
                 if msg.get("confirm") is not True:
                     raise HomeAssistantError("Explicit confirmation is required")
