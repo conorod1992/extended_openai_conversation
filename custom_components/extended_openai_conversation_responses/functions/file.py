@@ -164,6 +164,9 @@ class FileFunction(Function):
         workdir = self.get_working_dir(hass)
         target = self.to_absolute_path(hass, path, workdir).resolve()
 
+        # Resolve both sides and use a real path-component containment check.
+        # String prefixes are unsafe here: /config/workspace_backup starts with
+        # /config/workspace but is not inside it.
         allowed = False
         for allow_dir in allow_dirs:
             allowed_path = Path(allow_dir).resolve()
@@ -193,6 +196,7 @@ class FileFunction(Function):
             else []
         )
 
+        # Add custom allow_dir if specified.
         if allow_dirs:
             template_arguments = {
                 "config_dir": hass.config.config_dir,
@@ -281,7 +285,7 @@ class ReadFileFunction(FileFunction):
 
 
 class WriteFileFunction(FileFunction):
-    """Write file contents."""
+    """Write content to file."""
 
     def __init__(self) -> None:
         """Initialize write file tool."""
