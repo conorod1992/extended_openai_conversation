@@ -89,7 +89,9 @@ def install_skill_runtime_availability() -> None:
             manager = getattr(entity, "skill_manager", None)
             if not isinstance(manager, SkillManager):
                 manager = SkillManager.get_loaded_instance()
-            with effective_tool_runtime_scope(entity.subentry.data, configured, manager):
+            with effective_tool_runtime_scope(
+                entity.subentry.data, configured, manager
+            ):
                 return original_tools(entity)
 
         get_function_tools._extended_openai_skill_availability = True  # type: ignore[attr-defined]
@@ -105,7 +107,9 @@ def install_skill_runtime_availability() -> None:
             manager = getattr(entity, "skill_manager", None)
             if not isinstance(manager, SkillManager):
                 manager = SkillManager.get_loaded_instance()
-            with effective_tool_runtime_scope(entity.subentry.data, configured, manager):
+            with effective_tool_runtime_scope(
+                entity.subentry.data, configured, manager
+            ):
                 return original_loader(entity, requested)
 
         load_function_groups._extended_openai_skill_availability = True  # type: ignore[attr-defined]
