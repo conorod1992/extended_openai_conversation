@@ -4,22 +4,30 @@ export const REQUEST_RULE_MATCH_MAX_CHARS = 2048;
 
 function localActionSummary(response) {
   const count = Number(response?.would_do?.action_count || 0);
-  return `Would run ${count} local action${count === 1 ? "" : "s"}. Nothing was executed.`;
+  return `Would run ${count} local action${count === 1 ? "" : "s"} and consume the command locally. The AI provider would not receive it. Nothing was executed.`;
 }
 
 function routingSummary(response) {
   const action = response?.would_do || {};
-  if (action.reset) return "Would return the active conversation to the configured model settings. Nothing was changed.";
+  const consumed = Boolean(action.consumed);
+  const conversation = action.scope === "conversation";
+  if (action.reset) {
+    if (consumed) return "Would consume this command locally and return the rest of this conversation to the configured model settings. The AI provider would not receive this command. Nothing was changed.";
+    if (conversation) return "Would clear the conversation routing override, then send the original request unchanged to the AI provider using the configured model settings. Nothing was changed in this preview.";
+    return "Would send the original request unchanged to the AI provider using configured model settings for this request only. The saved conversation routing override would remain for the next request. Nothing was changed in this preview.";
+  }
   const changes = [];
   if (action.model) changes.push(`model ${action.model}`);
   if (action.reasoning_effort) changes.push(`${action.reasoning_effort} reasoning`);
-  const scope = action.scope === "conversation" ? "the rest of this conversation" : "this request";
-  return `Would apply ${changes.join(" and ") || "the routing override"} to ${scope}. Nothing was changed and the AI provider was not called.`;
+  const route = changes.join(" and ") || "the routing override";
+  if (consumed) return `Would consume this command locally and apply ${route} to the rest of this conversation. The AI provider would not receive this command. Nothing was changed.`;
+  const scope = conversation ? "this request and later requests in this conversation" : "this request only";
+  return `Would send the original request unchanged to the AI provider using ${route} for ${scope}. Nothing was changed in this preview.`;
 }
 
 export function formatRequestRuleMatchResult(panel, response) {
   if (!response?.matched) {
-    return '<div class="notice"><strong>No Request Rule matched</strong><p>The request would continue through the normal processing path. No Home Assistant action ran and the AI provider was not called.</p></div>';
+    return '<div class="notice"><strong>No Request Rule matched</strong><p>In a real request, processing would continue normally and the original request could reach the AI provider. This preview did not run a Home Assistant action or call the provider.</p></div>';
   }
   const rule = response.rule || {};
   const captured = Object.entries(response.captured_values || {});

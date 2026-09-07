@@ -32,13 +32,24 @@ If any action fails, the remaining actions do not run and the configured failure
 
 ## AI routing
 
-An **AI routing** rule keeps the provider pipeline but can override the model, reasoning effort, or both. Its scope can be **This request only** or **Rest of this conversation**:
+An **AI routing** rule can override the model, reasoning effort, or both. The exact effect of its scope depends on whether the matched phrase is itself a complete command or is only selecting a route for a broader request.
+
+Routing precedence for a provider request is:
 
 `single-request override > conversation override > configured agent default`
 
-Conversation overrides use the current conversation/continuity identity and expire with it. They do not change the saved agent configuration. A rule can also reset the active conversation to configured defaults.
+Conversation overrides use the current conversation/continuity identity and expire with it. They do not change the saved agent configuration.
 
-Equals and sentence-pattern routing commands are complete commands and are acknowledged locally. They must use conversation scope. Broader matches keep the original request wording unchanged; the matched prefix or substring is not removed.
+**Equals** and **ExtendedOpenAI sentence pattern** routing rules are complete routing commands. ExtendedOpenAI acknowledges these locally and does **not** send the routing command itself to the AI provider. Because there is no provider request for that command to modify, these rules must use **Rest of this conversation** scope. This applies to both model changes and resets.
+
+**Starts with**, **Ends with**, and **Contains** routing rules are different: they select a route while the original request continues to the provider unchanged. These broader rules can use either scope:
+
+- **This request only** applies the selected model/reasoning only to that provider call.
+- **Rest of this conversation** applies it to that provider call and later requests in the same conversation.
+
+A reset follows the same distinction. A broad **This request only** reset uses the configured agent defaults for that one provider call but deliberately leaves any saved conversation override in place, so the next normal request returns to the conversation route. A **Rest of this conversation** reset clears the saved conversation override.
+
+Reasoning effort is validated against the model that will actually receive it, including a model supplied by another active conversation override. Model-specific values are supported where the model allows them; for example, GPT-6 Astra routing can use `xhigh` and `max` in addition to the normal reasoning levels.
 
 ## Matching modes
 

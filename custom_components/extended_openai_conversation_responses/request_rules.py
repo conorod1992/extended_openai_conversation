@@ -29,7 +29,6 @@ from .const import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DOMAIN,
-    REASONING_EFFORT_OPTIONS,
     SERVICE_CALL_FUNCTION,
 )
 from .guest_mode import (
@@ -38,7 +37,7 @@ from .guest_mode import (
     GuestModeDenied,
     guest_arguments_allowed_runtime,
 )
-from .helpers import get_model_config
+from .helpers import get_model_config, get_reasoning_effort_options
 from .request_rule_patterns import (
     MAX_AGENT_PATTERN_STATES,
     CompiledSentencePattern,
@@ -175,6 +174,22 @@ class RequestRuleStore(Store[dict[str, Any]]):
         raise NotImplementedError
 
 
+def _normalize_legacy_consumed_request_scope(value: Any) -> tuple[Any, bool]:
+    """Preserve complete routing commands saved with now-meaningless request scope."""
+    if not isinstance(value, Mapping):
+        return value, False
+    if value.get("action_type", "local_action") != "model_routing":
+        return value, False
+    if value.get("match_type", "equals") not in {"equals", "sentence_pattern"}:
+        return value, False
+    action = value.get("action")
+    if not isinstance(action, Mapping) or action.get("scope", "request") != "request":
+        return value, False
+    normalized = deepcopy(dict(value))
+    normalized["action"] = {**dict(action), "scope": "conversation"}
+    return normalized, True
+
+
 class RequestRules:
     """Concurrency-safe persisted rules with precomputed matcher state."""
 
@@ -237,7 +252,21 @@ class RequestRules:
             seen_ids: set[str] = set()
             for raw in raw_rules:
                 try:
-                    validated = validate_rule(raw, validate_sentence_pattern=False)
+                    candidate, scope_migrated = (
+                        _normalize_legacy_consumed_request_scope(raw)
+                    )
+                    if scope_migrated:
+                        _LOGGER.warning(
+                            "Migrating stored complete Request Rule %s from request "
+                            "scope to conversation scope",
+                            raw.get("id", "<unknown>")
+                            if isinstance(raw, Mapping)
+                            else "<unknown>",
+                        )
+                        migrated = True
+                    validated = validate_rule(
+                        candidate, validate_sentence_pattern=False
+                    )
                     if validated["id"] in seen_ids:
                         _LOGGER.warning(
                             "Ignoring duplicate stored Request Rule id: %s",
@@ -379,9 +408,10 @@ class RequestRules:
             raise ValueError("request_rules.rules must be a list")
         if len(raw_rules) > MAX_RULES:
             raise ValueError("Request Rule limit reached")
-        rules = [
-            validate_rule(item, validate_sentence_pattern=False) for item in raw_rules
-        ]
+        rules = []
+        for item in raw_rules:
+            candidate, _ = _normalize_legacy_consumed_request_scope(item)
+            rules.append(validate_rule(candidate, validate_sentence_pattern=False))
         if len({rule["id"] for rule in rules}) != len(rules):
             raise ValueError("duplicate Request Rule id")
         return {"defaults": defaults, "wording_groups": wording_groups, "rules": rules}
@@ -499,17 +529,22 @@ class RequestRules:
             self._require_revision_locked(expected_revision)
             if len(self._rules) >= MAX_RULES:
                 raise ValueError("Request Rule limit reached")
-            source = deepcopy(self._rules[self._index(rule_id)])
+            source_index = self._index(rule_id)
+            source = deepcopy(self._rules[source_index])
             source.update(
                 id=uuid4().hex,
                 name=_duplicate_rule_name(source["name"], self._rules),
-                order=int(source["order"]) + 1,
+                order=source_index + 1,
             )
             rule = validate_rule(source)
+            prospective = [*self._rules]
+            prospective.insert(source_index + 1, rule)
+            for order, item in enumerate(prospective):
+                item["order"] = order
             _validate_total_pattern_states(
-                [*self._rules, rule], inactive_rule_ids=self._diagnostics
+                prospective, inactive_rule_ids=self._diagnostics
             )
-            self._rules.append(rule)
+            self._rules = prospective
             self._sort_and_compile()
             await self._async_save_locked()
         return dict(rule)
@@ -921,10 +956,10 @@ def validate_rule(
         action_type == "model_routing"
         and match_type in {"equals", "sentence_pattern"}
         and action["scope"] == "request"
-        and not action["reset"]
     ):
         raise ValueError(
-            "Exact AI routing commands must apply to the rest of the conversation"
+            "Equals and Sentence pattern AI routing commands are consumed locally; "
+            "use the rest of the conversation scope"
         )
     behavior = value.get("matching_behavior", "defaults")
     if behavior not in {"defaults", "custom"}:
@@ -1059,15 +1094,19 @@ def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
     effort_dynamic = bool(SLOT_REFERENCE.search(effort))
     if effort_dynamic and SLOT_REFERENCE.fullmatch(effort) is None:
         raise ValueError("captured reasoning effort must be a single {name} reference")
-    if effort and not effort_dynamic and effort not in REASONING_EFFORT_OPTIONS:
-        raise ValueError("unsupported reasoning effort")
-    if (
-        effort
-        and model
-        and not model_dynamic
-        and not get_model_config(model).get("supports_reasoning_effort")
-    ):
-        raise ValueError(f"model {model} does not support reasoning effort")
+    if effort and not effort_dynamic:
+        if model and not model_dynamic:
+            if not get_model_config(model).get("supports_reasoning_effort"):
+                raise ValueError(f"model {model} does not support reasoning effort")
+            if effort not in get_reasoning_effort_options(model):
+                raise ValueError(
+                    f"reasoning effort {effort} is not supported by model {model}"
+                )
+        elif effort not in get_reasoning_effort_options("gpt-6-astra"):
+            # The effective model may come from the configured/conversation route.
+            # Accept every currently supported value here; runtime validates it
+            # against that effective model before publishing any route change.
+            raise ValueError("unsupported reasoning effort")
     return {
         "model": model or None,
         "reasoning_effort": effort or None,
@@ -1438,6 +1477,20 @@ def _resolved_routing_value(value: str, slots: Mapping[str, str], field: str) ->
     return resolved.strip()
 
 
+def _validate_effective_reasoning(
+    model: str, effort: str, *, captured: bool = False
+) -> None:
+    """Validate a resolved reasoning value against the model that will receive it."""
+    if not get_model_config(model).get("supports_reasoning_effort"):
+        raise HomeAssistantError(f"Model {model} does not support reasoning effort")
+    if effort not in get_reasoning_effort_options(model):
+        if captured:
+            raise HomeAssistantError(f"Unsupported captured reasoning effort: {effort}")
+        raise HomeAssistantError(
+            f"Reasoning effort {effort} is not supported by model {model}"
+        )
+
+
 async def async_evaluate_rule(
     hass: HomeAssistant,
     rules: RequestRules,
@@ -1547,36 +1600,34 @@ async def async_evaluate_rule(
         if action["reasoning_effort"]
         else None
     )
-    if effort and effort not in REASONING_EFFORT_OPTIONS:
-        raise HomeAssistantError(f"Unsupported captured reasoning effort: {effort}")
+    conversation_override = runtime.get(session_id, timeout_minutes)
+    selected_model = (
+        model or conversation_override.get(CONF_CHAT_MODEL) or configured_model
+    )
+    if effort:
+        captured_effort = bool(
+            action["reasoning_effort"]
+            and SLOT_REFERENCE.fullmatch(action["reasoning_effort"])
+        )
+        captured_model = bool(
+            action["model"] and SLOT_REFERENCE.search(action["model"])
+        )
+        _validate_effective_reasoning(
+            selected_model,
+            effort,
+            captured=captured_effort and not captured_model,
+        )
 
     override = {}
     if model:
         override[CONF_CHAT_MODEL] = model
     if effort:
-        selected_model = (
-            model
-            or runtime.get(session_id, timeout_minutes).get(CONF_CHAT_MODEL)
-            or configured_model
-        )
-        if not get_model_config(selected_model).get("supports_reasoning_effort"):
-            raise HomeAssistantError(
-                f"Model {selected_model} does not support reasoning effort"
-            )
         override[CONF_REASONING_EFFORT] = effort
-    combined_override = {
-        **runtime.get(session_id, timeout_minutes),
-        **override,
-    }
+    combined_override = {**conversation_override, **override}
     combined_model = combined_override.get(CONF_CHAT_MODEL, configured_model)
-    if (
-        combined_model
-        and combined_override.get(CONF_REASONING_EFFORT)
-        and not get_model_config(combined_model).get("supports_reasoning_effort")
-    ):
-        raise HomeAssistantError(
-            f"Model {combined_model} does not support reasoning effort"
-        )
+    combined_effort = combined_override.get(CONF_REASONING_EFFORT)
+    if combined_effort:
+        _validate_effective_reasoning(combined_model, combined_effort)
     if action["scope"] == "conversation":
         runtime.set(session_id, override, timeout_minutes)
         request_override = None
