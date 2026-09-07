@@ -24,7 +24,13 @@ from .const import (
     SHARED_MEMORY_DISABLED,
     TEMPORARY_MEMORY_OFF,
 )
-from .memory import MAX_LIST_LIMIT, async_get_memory, get_memory_mode, memory_as_dict
+from .memory import (
+    MAX_LIST_LIMIT,
+    async_get_memory,
+    get_memory_mode,
+    memory_as_dict,
+    memory_revision,
+)
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .temporary_memory import (
     MAX_DELETE_RECORDS,
@@ -58,6 +64,13 @@ async def _async_user_temporary_records(
         for record in await temporary_memory.async_list_all()
         if record.scope_id == scope_id
     ]
+
+
+def _memory_ui_dict(record: Any, user_id: str) -> dict[str, Any]:
+    """Serialize a persistent memory with its management-only revision token."""
+    result = memory_as_dict(record, include_scope=True, personal_scope_id=user_id)
+    result["revision"] = memory_revision(record)
+    return result
 
 
 async def _async_memory_owner(memory, readable_scopes: list[str], memory_id: str) -> str:
@@ -179,7 +192,7 @@ async def async_manage_command(
             offset,
         )
         temporary_records: list[TemporaryMemoryRecord] = []
-        if temporary_enabled:
+        if temporary_enabled and offset == 0:
             temporary_memory = await async_get_temporary_memory(
                 hass, entry_id, subentry_id
             )
@@ -188,8 +201,7 @@ async def async_manage_command(
             )
         return {
             "memories": [
-                memory_as_dict(record, include_scope=True, personal_scope_id=user_id)
-                for record in persistent_records
+                _memory_ui_dict(record, user_id) for record in persistent_records
             ],
             "temporary_memories": [
                 temporary_memory_as_dict(record) for record in temporary_records
@@ -256,9 +268,7 @@ async def async_manage_command(
         )
         return {
             "status": "updated",
-            "memory": memory_as_dict(
-                record, include_scope=True, personal_scope_id=user_id
-            ),
+            "memory": _memory_ui_dict(record, user_id),
         }
 
     if action == "delete":
