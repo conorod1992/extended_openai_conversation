@@ -58,7 +58,7 @@ Example advanced rules:
   replacement: 'Home Assistant'
 ```
 
-Rules use standard Python regex syntax and run sequentially on the completed response. Because arbitrary patterns can depend on text that has not arrived yet, configuring any custom replacement disables progressive TTS for that agent. Invalid rules are rejected on save and skipped defensively at runtime. Use the frontend speech preview to test the exact completed-response pipeline.
+Rules use standard Python regex syntax and run sequentially on the completed response in a bounded isolated worker. Because arbitrary patterns can depend on text that has not arrived yet, configuring any custom replacement disables progressive TTS for that agent. Invalid rules are rejected on save. At runtime, malformed or invalid persisted rules, timeouts, worker failures, oversized input, or excessive output growth cause the whole custom-replacement stage to fail open atomically to the pre-replacement speech text; a partial replacement result is never spoken. Use the frontend speech preview to test the exact completed-response pipeline.
 
 Conversation-agent options are available from the assistant/integration configuration in Home Assistant. Most users can start with the defaults and change only the model.
 

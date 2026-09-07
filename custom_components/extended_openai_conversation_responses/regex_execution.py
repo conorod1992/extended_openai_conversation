@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
+from contextlib import suppress
 from contextvars import ContextVar
 from functools import partial
 import json
 import logging
 import subprocess
 import sys
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -21,6 +23,9 @@ from .const import (
     DEFAULT_SPEECH_REGEX_REPLACEMENTS,
     DEFAULT_SPEECH_STRIP_MARKDOWN,
     DEFAULT_SPEECH_STRIP_URLS,
+    MAX_SPEECH_REGEX_PATTERN_LENGTH,
+    MAX_SPEECH_REGEX_REPLACEMENT_LENGTH,
+    MAX_SPEECH_REGEX_RULES,
 )
 from .speech import (
     _built_in_cleanup,
@@ -30,10 +35,14 @@ from .speech import (
 
 _LOGGER = logging.getLogger(__name__)
 _CONFIGURED_REGEX_TIMEOUT_SECONDS = 1.0
+MAX_SPEECH_REPLACEMENT_INPUT_CHARS = 32_768
+MAX_SPEECH_REPLACEMENT_OUTPUT_CHARS = 65_536
+MAX_SPEECH_REPLACEMENT_EXPANSION = 4
+MIN_SPEECH_REPLACEMENT_OUTPUT_ALLOWANCE = 4_096
 
 # Keep the child interpreter deliberately tiny: it imports only stdlib modules and
 # receives data over stdin. A catastrophic Python ``re`` match can therefore hold
-# only the child's GIL, and subprocess.run can terminate that child at the deadline.
+# only the child's GIL, and the parent can terminate the child at the deadline.
 _REGEX_WORKER = r"""
 import json
 import re
@@ -55,14 +64,26 @@ if op == "search_many":
             invalid.append([index, str(err)])
     output = {"results": results, "invalid": invalid}
 elif op == "sub_many":
-    text = payload.get("text", "")
+    original = payload.get("text", "")
+    text = original
     invalid = []
+    overflow = False
+    max_output_chars = int(payload.get("max_output_chars", 0))
     for item in payload.get("items", []):
         try:
-            text = re.sub(item["pattern"], item["replacement"], text)
+            candidate = re.sub(item["pattern"], item["replacement"], text)
         except re.error as err:
             invalid.append([item["index"], str(err)])
-    output = {"text": text, "invalid": invalid}
+            break
+        if max_output_chars > 0 and len(candidate) > max_output_chars:
+            overflow = True
+            break
+        text = candidate
+    output = {
+        "text": original if invalid or overflow else text,
+        "invalid": invalid,
+        "overflow": overflow,
+    }
 else:
     raise SystemExit("unsupported regex worker operation")
 json.dump(output, sys.stdout)
@@ -76,6 +97,24 @@ _DEFERRED_SPEECH_INPUT: ContextVar[tuple[str, Mapping[str, Any]] | None] = Conte
 )
 
 _INSTALLED = False
+
+
+def _decode_regex_worker_result(
+    stdout: str, stderr: str, returncode: int
+) -> dict[str, Any]:
+    """Validate one child-process result without trusting worker output."""
+    if returncode != 0:
+        detail = stderr.strip() or "regex worker failed"
+        raise HomeAssistantError(f"Configured regular expression failed: {detail}")
+    try:
+        result = json.loads(stdout)
+    except (TypeError, ValueError) as err:
+        raise HomeAssistantError(
+            "Configured regular expression returned invalid data"
+        ) from err
+    if not isinstance(result, dict):
+        raise HomeAssistantError("Configured regular expression returned invalid data")
+    return result
 
 
 def _run_regex_worker(payload: dict[str, Any]) -> dict[str, Any]:
@@ -93,18 +132,48 @@ def _run_regex_worker(payload: dict[str, Any]) -> dict[str, Any]:
         raise HomeAssistantError(
             "Configured regular expression exceeded the 1 second execution limit"
         ) from err
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or "regex worker failed"
-        raise HomeAssistantError(f"Configured regular expression failed: {detail}")
+    return _decode_regex_worker_result(
+        completed.stdout, completed.stderr, completed.returncode
+    )
+
+
+async def _async_stop_regex_worker(process: asyncio.subprocess.Process) -> None:
+    """Kill and reap one worker without masking the triggering failure."""
+    if process.returncode is None:
+        with suppress(ProcessLookupError):
+            process.kill()
+    await process.wait()
+
+
+async def _async_run_regex_worker(payload: dict[str, Any]) -> dict[str, Any]:
+    """Run a killable regex worker whose lifetime follows async cancellation."""
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-I",
+        "-c",
+        _REGEX_WORKER,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    encoded = json.dumps(payload, ensure_ascii=False).encode()
     try:
-        result = json.loads(completed.stdout)
-    except (TypeError, ValueError) as err:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(encoded), timeout=_CONFIGURED_REGEX_TIMEOUT_SECONDS
+        )
+    except TimeoutError as err:
+        await _async_stop_regex_worker(process)
         raise HomeAssistantError(
-            "Configured regular expression returned invalid data"
+            "Configured regular expression exceeded the 1 second execution limit"
         ) from err
-    if not isinstance(result, dict):
-        raise HomeAssistantError("Configured regular expression returned invalid data")
-    return result
+    except BaseException:
+        await _async_stop_regex_worker(process)
+        raise
+    return _decode_regex_worker_result(
+        stdout.decode(errors="replace"),
+        stderr.decode(errors="replace"),
+        process.returncode or 0,
+    )
 
 
 async def async_search_configured_patterns(
@@ -143,55 +212,126 @@ async def async_search_configured_patterns(
     return matches
 
 
-async def _async_apply_speech_replacements(
-    hass: HomeAssistant,
-    text: str,
-    rules: object,
-) -> str:
-    """Apply configured speech substitutions in one bounded child process."""
-    if not isinstance(rules, list) or not rules:
-        return text
+def _speech_replacement_items(rules: object) -> list[dict[str, Any]] | None:
+    """Return a bounded runtime rule payload, or None for malformed stored data."""
+    if not isinstance(rules, list):
+        return None
+    if not rules:
+        return []
+    if len(rules) > MAX_SPEECH_REGEX_RULES:
+        return None
     items: list[dict[str, Any]] = []
     for index, rule in enumerate(rules):
-        try:
-            if not isinstance(rule, Mapping):
-                raise TypeError("rule is not an object")
-            items.append(
-                {
-                    "index": index,
-                    "pattern": str(rule["pattern"]),
-                    "replacement": str(rule["replacement"]),
-                }
-            )
-        except KeyError, TypeError:
-            _LOGGER.warning("Skipping invalid speech regex replacement %s", index)
-    if not items:
-        return text
-    result = await hass.async_add_executor_job(
-        _run_regex_worker,
-        {"op": "sub_many", "text": text, "items": items},
+        if not isinstance(rule, Mapping):
+            return None
+        pattern = rule.get("pattern")
+        replacement = rule.get("replacement")
+        if not isinstance(pattern, str) or not pattern:
+            return None
+        if not isinstance(replacement, str):
+            return None
+        if len(pattern) > MAX_SPEECH_REGEX_PATTERN_LENGTH:
+            return None
+        if len(replacement) > MAX_SPEECH_REGEX_REPLACEMENT_LENGTH:
+            return None
+        items.append(
+            {
+                "index": index,
+                "pattern": pattern,
+                "replacement": replacement,
+            }
+        )
+    return items
+
+
+def _speech_output_limit(input_chars: int) -> int:
+    """Bound replacement expansion while allowing useful short-text substitutions."""
+    return min(
+        MAX_SPEECH_REPLACEMENT_OUTPUT_CHARS,
+        max(
+            MIN_SPEECH_REPLACEMENT_OUTPUT_ALLOWANCE,
+            input_chars * MAX_SPEECH_REPLACEMENT_EXPANSION,
+        ),
     )
+
+
+async def _async_apply_speech_replacements(text: str, rules: object) -> str:
+    """Apply all custom substitutions atomically or fail open to the input text."""
+    items = _speech_replacement_items(rules)
+    if items == []:
+        return text
+    if items is None:
+        _LOGGER.warning(
+            "Ignoring malformed speech regex replacements and preserving spoken text"
+        )
+        return text
+    if len(text) > MAX_SPEECH_REPLACEMENT_INPUT_CHARS:
+        _LOGGER.warning(
+            ("Skipping speech regex replacements because input exceeds %d characters"),
+            MAX_SPEECH_REPLACEMENT_INPUT_CHARS,
+        )
+        return text
+    try:
+        result = await _async_run_regex_worker(
+            {
+                "op": "sub_many",
+                "text": text,
+                "items": items,
+                "max_output_chars": _speech_output_limit(len(text)),
+            }
+        )
+    except HomeAssistantError as err:
+        _LOGGER.warning(
+            "Speech regex replacement failed; preserving spoken text: %s", err
+        )
+        return text
+    except Exception as err:
+        # Cancellation is a BaseException in supported Python versions and therefore
+        # still propagates. Ordinary worker/serialization failures remain fail-open.
+        _LOGGER.warning(
+            "Speech regex worker failed; preserving spoken text: %s", type(err).__name__
+        )
+        return text
+
     invalid = result.get("invalid")
-    if isinstance(invalid, list):
-        for item in invalid:
-            invalid_index = item[0] if isinstance(item, list) and item else "unknown"
-            _LOGGER.warning(
-                "Skipping invalid speech regex replacement %s", invalid_index
-            )
+    if not isinstance(invalid, list):
+        _LOGGER.warning(
+            "Speech regex worker returned invalid diagnostics; preserving spoken text"
+        )
+        return text
+    if invalid:
+        first = invalid[0]
+        invalid_index = first[0] if isinstance(first, list) and first else "unknown"
+        _LOGGER.warning(
+            "Speech regex replacement %s is invalid; preserving spoken text",
+            invalid_index,
+        )
+        return text
+    if result.get("overflow") is True:
+        _LOGGER.warning(
+            "Speech regex replacements exceeded the output growth limit; preserving spoken text"
+        )
+        return text
     value = result.get("text")
     if not isinstance(value, str):
-        raise HomeAssistantError(
-            "Configured speech regular expression returned invalid data"
+        _LOGGER.warning(
+            "Speech regex worker returned invalid text; preserving spoken text"
         )
+        return text
+    if len(value) > _speech_output_limit(len(text)):
+        _LOGGER.warning(
+            "Speech regex worker exceeded the output limit; preserving spoken text"
+        )
+        return text
     return value
 
 
-async def _async_process_speech_text(
+async def async_process_speech_text(
     hass: HomeAssistant,
     original_text: str,
     agent_config: Mapping[str, Any],
 ) -> str:
-    """Preserve the completed-response speech pipeline with isolated custom regex."""
+    """Run the bounded completed-response speech pipeline used by live and Preview."""
     text = await hass.async_add_executor_job(
         partial(
             _built_in_cleanup,
@@ -203,7 +343,6 @@ async def _async_process_speech_text(
         )
     )
     text = await _async_apply_speech_replacements(
-        hass,
         text,
         agent_config.get(
             CONF_SPEECH_REGEX_REPLACEMENTS, DEFAULT_SPEECH_REGEX_REPLACEMENTS
@@ -212,17 +351,8 @@ async def _async_process_speech_text(
     return await hass.async_add_executor_job(_final_whitespace_cleanup, text)
 
 
-def _install_speech_regex_isolation() -> None:
-    """Defer completed-response custom speech regex until after the async handler."""
-    from . import conversation as conversation_module
-    from .conversation import ExtendedOpenAIAgentEntity
-
-    current = ExtendedOpenAIAgentEntity._async_handle_message
-    if getattr(current, "_extended_openai_configurable_regex_executor", False):
-        return
-
-    original_handle_message = current
-    original_process_speech_text = conversation_module.process_speech_text
+def _deferred_process_speech_text_factory(original_process_speech_text: Any):
+    """Create the synchronous shim that only records custom-regex speech input."""
 
     def deferred_process_speech_text(
         original_text: str, agent_config: Mapping[str, Any]
@@ -232,9 +362,25 @@ def _install_speech_regex_isolation() -> None:
         ):
             _DEFERRED_SPEECH_INPUT.set((original_text, agent_config))
             return original_text
-        return original_process_speech_text(original_text, agent_config)
+        return cast(str, original_process_speech_text(original_text, agent_config))
 
-    conversation_module.process_speech_text = deferred_process_speech_text
+    return deferred_process_speech_text
+
+
+def _install_speech_regex_isolation() -> None:
+    """Defer live custom regex until after ChatLog has retained original content."""
+    from . import conversation as conversation_module
+    from .conversation import ExtendedOpenAIAgentEntity
+
+    current = ExtendedOpenAIAgentEntity._async_handle_message
+    if getattr(current, "_extended_openai_configurable_regex_executor", False):
+        return
+
+    original_handle_message = current
+    original_process_speech_text = conversation_module.process_speech_text
+    conversation_module.process_speech_text = _deferred_process_speech_text_factory(
+        original_process_speech_text
+    )
 
     async def async_handle_message(
         agent: Any,
@@ -257,15 +403,54 @@ def _install_speech_regex_isolation() -> None:
             _DEFER_SPEECH_PROCESSING.reset(defer_token)
 
         if deferred_input is not None:
-            speech_text = await _async_process_speech_text(
-                agent.hass,
-                *deferred_input,
-            )
+            speech_text = await async_process_speech_text(agent.hass, *deferred_input)
             result.response.async_set_speech(speech_text)
         return result
 
     async_handle_message._extended_openai_configurable_regex_executor = True  # type: ignore[attr-defined]
     ExtendedOpenAIAgentEntity._async_handle_message = async_handle_message  # type: ignore[method-assign,assignment]
+
+
+def _install_speech_preview_isolation() -> None:
+    """Run Speech Preview through the same async bounded engine as live speech."""
+    from . import management_ui
+
+    current = management_ui.async_management_command
+    if getattr(current, "_extended_openai_speech_preview_executor", False):
+        return
+
+    original_command = current
+    original_process_speech_text = management_ui.process_speech_text
+    management_ui.process_speech_text = _deferred_process_speech_text_factory(
+        original_process_speech_text
+    )
+
+    async def async_management_command(
+        hass: HomeAssistant,
+        user_id: str,
+        is_admin: bool,
+        message: dict[str, Any],
+    ) -> dict[str, Any]:
+        defer = message.get("action") == "speech_preview"
+        defer_token = _DEFER_SPEECH_PROCESSING.set(defer)
+        input_token = _DEFERRED_SPEECH_INPUT.set(None)
+        deferred_input: tuple[str, Mapping[str, Any]] | None = None
+        try:
+            result = await original_command(hass, user_id, is_admin, message)
+            deferred_input = _DEFERRED_SPEECH_INPUT.get()
+        finally:
+            _DEFERRED_SPEECH_INPUT.reset(input_token)
+            _DEFER_SPEECH_PROCESSING.reset(defer_token)
+
+        if deferred_input is not None:
+            result = dict(result)
+            result["speech_text"] = await async_process_speech_text(
+                hass, *deferred_input
+            )
+        return result
+
+    async_management_command._extended_openai_speech_preview_executor = True  # type: ignore[attr-defined]
+    management_ui.async_management_command = async_management_command  # type: ignore[assignment]
 
 
 def install_configurable_regex_isolation() -> None:
@@ -274,4 +459,5 @@ def install_configurable_regex_isolation() -> None:
     if _INSTALLED:
         return
     _install_speech_regex_isolation()
+    _install_speech_preview_isolation()
     _INSTALLED = True
