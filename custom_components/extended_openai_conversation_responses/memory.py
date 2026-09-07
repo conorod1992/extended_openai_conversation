@@ -222,7 +222,7 @@ class HomeAssistantMemoryStorage:
         return await self._store.async_load()
 
     async def async_save(self, data: dict[str, Any]) -> None:
-        """Save data."""
+        """Persist data."""
         await self._store.async_save(data)
 
 
@@ -246,7 +246,7 @@ class HomeAssistantEmbeddingCacheStorage:
         return await self._store.async_load()
 
     async def async_save(self, data: dict[str, Any]) -> None:
-        """Save cache data."""
+        """Save cached embeddings."""
         await self._store.async_save(data)
 
 
@@ -703,8 +703,14 @@ class PersistentMemory:
         refresh_confirmation: bool = True,
         target_user_id: str | None = None,
         clear_fields: Sequence[str] | None = None,
+        expected_revision: str | None = None,
     ) -> MemoryRecord:
         """Update a memory owned by one user scope."""
+        if expected_revision is not None and (
+            not isinstance(expected_revision, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_revision)
+        ):
+            raise ValueError("expected_revision is invalid")
         if clear_fields is None:
             clear: set[str] = set()
         elif isinstance(clear_fields, (str, bytes)) or not isinstance(
@@ -731,6 +737,13 @@ class PersistentMemory:
         async with self._lock:
             self._ensure_initialized()
             current = self._owned_memory(user_id, memory_id)
+            if (
+                expected_revision is not None
+                and _memory_revision(current) != expected_revision
+            ):
+                raise ValueError(
+                    "memory changed since it was loaded; reopen it before saving"
+                )
             target_user_id = target_user_id or user_id
             new_content = (
                 _clean_content(content) if content is not None else current.content
@@ -1242,6 +1255,7 @@ def memory_as_dict(
         "key": getattr(memory, "key", None),
         "valid_from": getattr(memory, "valid_from", None),
         "last_confirmed_at": getattr(memory, "last_confirmed_at", None),
+        "revision": _memory_revision(memory),
     }
     if include_scope:
         owner = getattr(memory, "user_id", personal_scope_id)
@@ -1547,6 +1561,26 @@ def _embedding_text(memory: MemoryRecord) -> str:
     return " | ".join(
         filter(None, (memory.subject, memory.key, memory.category, memory.content))
     )
+
+
+def _memory_revision(memory: MemoryRecord) -> str:
+    """Return a stable optimistic-concurrency token for substantive memory state."""
+    payload = json.dumps(
+        [
+            memory.memory_id,
+            memory.user_id,
+            memory.content,
+            memory.category,
+            memory.source,
+            memory.importance,
+            memory.subject,
+            memory.key,
+            memory.valid_from,
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def _embedding_fingerprint(memory: MemoryRecord) -> str:
