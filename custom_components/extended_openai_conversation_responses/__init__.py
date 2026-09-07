@@ -124,6 +124,7 @@ def _register_split_frontend_modules() -> None:
     """Add implementation modules used by the management frontend wrappers."""
     extras = (
         "agent-config-editor-base.js",
+        "ha-llm-tools.js",
         "agent-config-loader.js",
         "exposed-attributes-ui.js",
         "backup-transfer-ui.js",

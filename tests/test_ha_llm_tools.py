@@ -333,6 +333,9 @@ async def test_caller_api_uses_existing_exchange_budget_and_single_execution(has
         )
         for i in range(2)
     ]
+    chat_log.async_add_assistant_content_without_tools(
+        conversation.AssistantContent(agent_id="conversation.test", tool_calls=calls)
+    )
     with (
         tool_snapshot_scope(snapshot),
         pytest.raises(HomeAssistantError, match="limit"),

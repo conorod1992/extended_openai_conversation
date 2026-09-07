@@ -680,7 +680,7 @@ class ExtendedOpenAIAgentEntity(
                     result = (
                         self._local_intent_result(user_input, chat_log, local_intent)
                         if local_intent is not None
-                        else await self._async_handle_message(
+                        else await self._async_handle_message_with_ha_tools(
                             user_input, chat_log, request_options
                         )
                     )
@@ -698,7 +698,7 @@ class ExtendedOpenAIAgentEntity(
                     result = (
                         self._local_intent_result(user_input, chat_log, local_intent)
                         if local_intent is not None
-                        else await self._async_handle_message(
+                        else await self._async_handle_message_with_ha_tools(
                             user_input, chat_log, request_options
                         )
                     )
@@ -737,7 +737,7 @@ class ExtendedOpenAIAgentEntity(
                     _ACTIVE_MEMORY_SESSION.reset(memory_session_token)
                     _ACTIVE_SCOPE.reset(scope_token)
 
-    async def _async_handle_message(
+    async def _async_handle_message_with_ha_tools(
         self,
         user_input: ConversationInput,
         chat_log: ChatLog,
@@ -756,11 +756,11 @@ class ExtendedOpenAIAgentEntity(
                 self.hass, user_input.as_llm_context(DOMAIN), references
             )
         with tool_snapshot_scope(snapshot):
-            return await self._async_handle_message_with_ha_tools(
+            return await self._async_handle_message(
                 user_input, chat_log, request_options
             )
 
-    async def _async_handle_message_with_ha_tools(
+    async def _async_handle_message(
         self,
         user_input: ConversationInput,
         chat_log: ChatLog,

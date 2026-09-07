@@ -497,9 +497,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 }
 
         finalization_retry_attempted = False
-        base_system_prompt = cast(
-            conversation.SystemContent, chat_log.content[0]
-        ).content
+        base_system_prompt = (
+            cast(conversation.SystemContent, chat_log.content[0]).content
+            if chat_log.content
+            else ""
+        )
         ha_prompt_applied = False
         draft_content_ids: set[int] = set()
         observed_input_tokens = 0
