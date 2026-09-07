@@ -192,11 +192,18 @@ def install_request_static_caching() -> None:
         configured_tools: list[dict[str, Any]],
         groups: list[dict[str, Any]],
         loaded_group_ids: set[str],
+        *,
+        function_tools_supported: bool = True,
+        group_loader_supported: bool = True,
+        tool_available: Callable[[dict[str, Any]], bool] | None = None,
     ) -> Any:
         return original_assemble_function_tools(
             tools_for_available_skills(configured_tools, _SKILLS_AVAILABLE.get()),
             groups,
             loaded_group_ids,
+            function_tools_supported=function_tools_supported,
+            group_loader_supported=group_loader_supported,
+            tool_available=tool_available,
         )
 
     def load_function_groups_projected(
@@ -204,13 +211,25 @@ def install_request_static_caching() -> None:
         requested: Any,
         groups: list[dict[str, Any]],
         configured_tools: list[dict[str, Any]] | None = None,
+        *,
+        function_tools_supported: bool = True,
+        group_loader_supported: bool = True,
+        tool_available: Callable[[dict[str, Any]], bool] | None = None,
     ) -> dict[str, Any]:
         projected = (
             None
             if configured_tools is None
             else tools_for_available_skills(configured_tools, _SKILLS_AVAILABLE.get())
         )
-        return original_load_function_groups(session, requested, groups, projected)
+        return original_load_function_groups(
+            session,
+            requested,
+            groups,
+            projected,
+            function_tools_supported=function_tools_supported,
+            group_loader_supported=group_loader_supported,
+            tool_available=tool_available,
+        )
 
     conversation.ExtendedOpenAIAgentEntity._async_process = (  # type: ignore[method-assign]
         process_with_fresh_formatted_tool_cache
