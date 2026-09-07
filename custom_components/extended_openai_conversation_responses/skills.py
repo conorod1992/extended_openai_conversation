@@ -26,6 +26,7 @@ from .skill_resource_limits import (
 
 _LOGGER = logging.getLogger(__name__)
 _T = TypeVar("_T")
+_SKILL_MANAGER_INSTANCE_LOCK = "extended_openai_conversation_responses.skill_manager_instance_lock"
 
 
 @dataclass
@@ -124,21 +125,27 @@ class SkillManager:
         cls, hass: HomeAssistant, user_skills_dir: str | None = None
     ) -> SkillManager:
         """Return one singleton and make concurrent first callers await discovery."""
-        manager = cls._instance
-        if manager is None or manager._hass is not hass:
-            manager = cls(hass)
-            if user_skills_dir:
+        lock = hass.data.setdefault(_SKILL_MANAGER_INSTANCE_LOCK, asyncio.Lock())
+        async with lock:
+            manager = cls._instance
+            if manager is None or manager._hass is not hass:
+                manager = cls(hass)
+                if user_skills_dir:
+                    manager._user_skills_dir = Path(user_skills_dir)
+                cls._instance = manager
+            elif (
+                user_skills_dir
+                and manager._user_skills_dir is None
+                and not manager._initialized
+            ):
                 manager._user_skills_dir = Path(user_skills_dir)
-            cls._instance = manager
-        elif user_skills_dir and manager._user_skills_dir is None and not manager._initialized:
-            manager._user_skills_dir = Path(user_skills_dir)
-        try:
-            await manager.async_initialize()
-        except BaseException:
-            if not manager._initialized and cls._instance is manager:
-                cls._instance = None
-            raise
-        return manager
+            try:
+                await manager.async_initialize()
+            except BaseException:
+                if not manager._initialized and cls._instance is manager:
+                    cls._instance = None
+                raise
+            return manager
 
     @property
     def user_skills_dir(self) -> Path:
@@ -172,6 +179,7 @@ class SkillManager:
 
     async def async_initialize(self) -> None:
         """Perform first discovery exactly once for concurrent callers."""
+
         async def initialize_locked() -> None:
             if self._initialized:
                 return
@@ -184,6 +192,7 @@ class SkillManager:
 
     async def async_load_skills(self) -> None:
         """Rescan and atomically replace the published catalogue."""
+
         async def load_locked() -> None:
             loaded = await self._async_discover_skills_locked()
             self._skills = loaded
