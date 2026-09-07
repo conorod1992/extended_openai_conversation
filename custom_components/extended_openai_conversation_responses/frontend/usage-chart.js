@@ -3,6 +3,75 @@ const tokenCount = (value) => {
   return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
 };
 
+const USAGE_WINDOW_OPTIONS = [
+  {id: "7", label: "7 days"},
+  {id: "30", label: "30 days"},
+  {id: "90", label: "90 days"},
+  {id: "year", label: "Year to date"},
+  {id: "all", label: "All available"},
+];
+const DEFAULT_USAGE_WINDOW = "30";
+const DAILY_PAGE_SIZE = 366;
+const MAX_DAILY_PAGES = 128;
+const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function normalizeUsageWindow(value) {
+  const key = String(value || "");
+  return USAGE_WINDOW_OPTIONS.some((item) => item.id === key) ? key : DEFAULT_USAGE_WINDOW;
+}
+
+function dateParts(value) {
+  const match = DATE_KEY.exec(String(value || ""));
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) return null;
+  return {year, month, day};
+}
+
+function dateKeyFromUtc(date) {
+  return `${String(date.getUTCFullYear()).padStart(4, "0")}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+export function addUsageCalendarDays(value, amount) {
+  const parts = dateParts(value);
+  if (!parts || !Number.isInteger(amount)) return null;
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  date.setUTCDate(date.getUTCDate() + amount);
+  return dateKeyFromUtc(date);
+}
+
+export function localUsageDateKey(value = new Date(), timeZone = undefined) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  try {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-US", {
+        year: "numeric", month: "2-digit", day: "2-digit", timeZone,
+      }).formatToParts(date).filter((item) => item.type !== "literal").map((item) => [item.type, item.value]),
+    );
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  } catch (_) {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+export function usageWindowBounds(window, today) {
+  const id = normalizeUsageWindow(window);
+  const validToday = dateParts(today) ? today : localUsageDateKey();
+  const label = USAGE_WINDOW_OPTIONS.find((item) => item.id === id)?.label || "30 days";
+  if (id === "all") return {id, label, startDate: null, endDate: validToday};
+  if (id === "year") return {id, label, startDate: `${validToday.slice(0, 4)}-01-01`, endDate: validToday};
+  const days = Number(id);
+  return {id, label, startDate: addUsageCalendarDays(validToday, -(days - 1)), endDate: validToday};
+}
+
 export function tokenBreakdown(totalTokens, cachedInputTokens) {
   const total = tokenCount(totalTokens);
   const cached = Math.min(total, tokenCount(cachedInputTokens));
@@ -31,6 +100,20 @@ export function formatUsageTimestamp(value, locales = undefined, timeZone = unde
     };
   } catch (_) {
     return {display: date.toLocaleString(), datetime: exact};
+  }
+}
+
+function formatUsageDate(value, locales = undefined, monthOnly = false) {
+  const parts = dateParts(monthOnly ? `${value}-01` : value);
+  if (!parts) return String(value || "");
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12));
+  try {
+    return new Intl.DateTimeFormat(locales, monthOnly
+      ? {year: "numeric", month: "short", timeZone: "UTC"}
+      : {year: "numeric", month: "short", day: "numeric", timeZone: "UTC"}
+    ).format(date);
+  } catch (_) {
+    return String(value || "");
   }
 }
 
@@ -68,6 +151,94 @@ export function summarizeUsageDiagnostics(days = []) {
   return summary;
 }
 
+export function selectUsageHistory(days = [], window = DEFAULT_USAGE_WINDOW, today = localUsageDateKey()) {
+  const bounds = usageWindowBounds(window, today);
+  const byDate = new Map();
+  for (const day of Array.isArray(days) ? days : []) {
+    const date = String(day?.date || "");
+    if (!dateParts(date) || date > bounds.endDate) continue;
+    byDate.set(date, day);
+  }
+  const availableDays = [...byDate.values()].sort((left, right) => String(left.date).localeCompare(String(right.date)));
+  const selectedDays = bounds.startDate
+    ? availableDays.filter((day) => day.date >= bounds.startDate && day.date <= bounds.endDate)
+    : availableDays;
+  return {
+    ...bounds,
+    days: selectedDays,
+    summary: summarizeUsageDiagnostics(selectedDays),
+    allSummary: summarizeUsageDiagnostics(availableDays),
+    availableStart: availableDays[0]?.date || null,
+    availableEnd: availableDays.at(-1)?.date || null,
+    partialStart: Boolean(bounds.startDate && availableDays[0]?.date && availableDays[0].date > bounds.startDate),
+  };
+}
+
+export function usageLifetimeDiffersFromDaily(lifetime = {}, dailySummary = {}) {
+  return [
+    ["conversation_count", "run_count"],
+    ["api_request_count", "api_request_count"],
+    ["successful_request_count", "successful_request_count"],
+    ["failed_request_count", "failed_request_count"],
+    ["input_tokens", "input_tokens"],
+    ["output_tokens", "output_tokens"],
+    ["total_tokens", "total_tokens"],
+    ["cached_input_tokens", "cached_input_tokens"],
+    ["reasoning_tokens", "reasoning_tokens"],
+  ].some(([lifetimeKey, dailyKey]) => tokenCount(lifetime?.[lifetimeKey]) !== tokenCount(dailySummary?.[dailyKey]));
+}
+
+export function usageChartBuckets(days = [], window = DEFAULT_USAGE_WINDOW) {
+  const id = normalizeUsageWindow(window);
+  if (!["year", "all"].includes(id)) {
+    return (Array.isArray(days) ? days : []).map((day) => ({
+      label: String(day?.date || ""),
+      firstDate: String(day?.date || ""),
+      lastDate: String(day?.date || ""),
+      total_tokens: tokenCount(day?.total_tokens),
+      cached_input_tokens: tokenCount(day?.cached_input_tokens),
+    }));
+  }
+  const buckets = new Map();
+  for (const day of Array.isArray(days) ? days : []) {
+    const date = String(day?.date || "");
+    if (!dateParts(date)) continue;
+    const key = date.slice(0, 7);
+    const bucket = buckets.get(key) || {
+      label: key,
+      firstDate: date,
+      lastDate: date,
+      total_tokens: 0,
+      cached_input_tokens: 0,
+    };
+    bucket.lastDate = date;
+    bucket.total_tokens += tokenCount(day?.total_tokens);
+    bucket.cached_input_tokens += tokenCount(day?.cached_input_tokens);
+    buckets.set(key, bucket);
+  }
+  return [...buckets.values()];
+}
+
+export async function loadAllUsageDays(callPage, {pageSize = DAILY_PAGE_SIZE, maxPages = MAX_DAILY_PAGES} = {}) {
+  const rows = [];
+  let startDate = "0000-01-01";
+  const endDate = "9999-12-31";
+  for (let page = 0; page < maxPages; page += 1) {
+    const response = await callPage(startDate, endDate);
+    const current = Array.isArray(response?.days) ? response.days : [];
+    rows.push(...current);
+    if (current.length < pageSize) {
+      const unique = new Map(rows.map((day) => [String(day?.date || ""), day]));
+      return {days: [...unique.values()].sort((left, right) => String(left.date).localeCompare(String(right.date)))};
+    }
+    const lastDate = String(current.at(-1)?.date || "");
+    const nextDate = addUsageCalendarDays(lastDate, 1);
+    if (!nextDate || nextDate <= startDate || nextDate > endDate) break;
+    startDate = nextDate;
+  }
+  throw new Error("Daily usage history is larger than the bounded management transfer can safely load");
+}
+
 export function sortedUsageBreakdown(values = {}) {
   return Object.entries(values || {})
     .map(([name, tokens]) => ({name, tokens: tokenCount(tokens)}))
@@ -95,19 +266,37 @@ function breakdownList(panel, title, values) {
   return `<section class="usage-breakdown"><h3>${panel._e(title)}</h3>${rows.length ? `<div class="usage-breakdown-list">${rows.map((row) => {
     const share = total ? row.tokens / total * 100 : 0;
     return `<div class="usage-breakdown-row"><span title="${panel._e(row.name)}">${panel._e(row.name)}</span><strong>${formatUsageNumber(row.tokens)}</strong><small>${panel._e(formatPercent(share))}</small></div>`;
-  }).join("")}</div>` : `<p class="usage-diagnostic-empty">No recorded data in this window.</p>`}</section>`;
+  }).join("")}</div>` : `<p class="usage-diagnostic-empty">No recorded data in this period.</p>`}</section>`;
+}
+
+function resultToday(result, panel) {
+  const configured = String(result?.summary?.today?.date || "");
+  if (dateParts(configured)) return configured;
+  const rows = result?.days?.days || [];
+  const lastStored = String(rows.at(-1)?.date || "");
+  if (dateParts(lastStored)) return lastStored;
+  return localUsageDateKey(new Date(), panel?._hass?.config?.time_zone);
+}
+
+function historyRangeLabel(history) {
+  if (history.id === "all") {
+    return history.availableStart
+      ? `${history.label} · ${history.availableStart} to ${history.availableEnd}`
+      : `${history.label} · no recorded daily aggregates`;
+  }
+  return `${history.label} · ${history.startDate} to ${history.endDate}`;
 }
 
 export function renderUsageDiagnostics(panel, result = {}) {
-  const days = result.days?.days || [];
-  const visibleDays = days.slice(-31);
-  const summary = summarizeUsageDiagnostics(visibleDays);
+  const history = selectUsageHistory(
+    result.days?.days || [],
+    panel._usageHistoryWindow || DEFAULT_USAGE_WINDOW,
+    resultToday(result, panel),
+  );
+  const summary = history.summary;
   const recentRuns = result.runs?.runs || [];
   const failedRuns = recentRuns.filter((run) => run.successful === false).slice(0, 5);
   const recentLocalRuns = recentRuns.filter((run) => tokenCount(run.request_count) === 0).length;
-  const windowLabel = visibleDays.length
-    ? `${visibleDays[0].date} to ${visibleDays[visibleDays.length - 1].date}`
-    : "No daily usage recorded yet";
   const cacheDetail = summary.input_tokens
     ? `${formatUsageNumber(summary.cached_input_tokens)} of ${formatUsageNumber(summary.input_tokens)} input tokens`
     : "No provider-reported input tokens";
@@ -131,7 +320,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
       @media(max-width:680px){.usage-diagnostics-heading{display:grid}.usage-window{white-space:normal}.usage-diagnostic-grid,.usage-diagnostic-columns,.usage-facts{grid-template-columns:1fr}.usage-failure{grid-template-columns:1fr}.usage-run-details{width:100%}}
     </style>
     <section class="content-card usage-diagnostics" aria-label="Usage diagnostics">
-      <div class="usage-diagnostics-heading"><div><h2>Usage diagnostics</h2><p>Use these figures to spot repeated provider calls, slow turns, failures, and how much input is being served from cache.</p></div><span class="usage-window">${panel._e(windowLabel)}</span></div>
+      <div class="usage-diagnostics-heading"><div><h2>Usage diagnostics</h2><p>Use these figures to spot repeated provider calls, slow turns, failures, and how much input is being served from cache.</p></div><span class="usage-window">${panel._e(historyRangeLabel(history))}</span></div>
       <div class="usage-diagnostic-grid">
         ${diagnosticMetric(panel, "Cached input", formatPercent(summary.cache_percent), cacheDetail)}
         ${diagnosticMetric(panel, "Run success", formatPercent(summary.run_success_percent), `${formatUsageNumber(summary.failed_run_count)} failed run${summary.failed_run_count === 1 ? "" : "s"}`)}
@@ -152,7 +341,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
           <div class="usage-fact"><span>Provider requests</span><strong>${formatUsageNumber(summary.api_request_count)}</strong></div>
           <div class="usage-fact"><span>Tool calls</span><strong>${formatUsageNumber(summary.tool_call_count)}</strong></div>
           <div class="usage-fact"><span>Web-search runs</span><strong>${formatUsageNumber(summary.web_search_run_count)}</strong></div>
-          <div class="usage-fact"><span>Recent zero-request runs</span><strong>${formatUsageNumber(recentLocalRuns)}</strong></div>
+          <div class="usage-fact"><span>Retained zero-request runs</span><strong>${formatUsageNumber(recentLocalRuns)}</strong></div>
           <div class="usage-fact"><span>Failed provider requests</span><strong>${formatUsageNumber(summary.failed_request_count)}</strong></div>
         </div></section>
       </div>
@@ -161,11 +350,11 @@ export function renderUsageDiagnostics(panel, result = {}) {
         ${breakdownList(panel, "Providers", summary.provider_breakdown)}
         ${breakdownList(panel, "API modes", summary.api_mode_breakdown)}
       </div>
-      <section class="usage-diagnostic-panel"><h3>Recent failed runs</h3>${failedRuns.length ? `<div class="usage-failures">${failedRuns.map((run) => {
+      <section class="usage-diagnostic-panel"><h3>Recent failed runs (retained detail)</h3>${failedRuns.length ? `<div class="usage-failures">${failedRuns.map((run) => {
         const completed = formatUsageTimestamp(run.completed_at, undefined, panel._hass?.config?.time_zone);
         return `<div class="usage-failure"><div><p><strong>${panel._e(run.error_type || "Failed")}</strong></p><small>${panel._e(completed.display)} · ${formatUsageNumber(run.request_count)} request${run.request_count === 1 ? "" : "s"} · ${panel._e(formatDuration(run.duration_ms))}</small></div><button type="button" class="usage-run-details" data-usage-run-id="${panel._e(run.run_id)}">View requests</button></div>`;
       }).join("")}</div>` : `<p class="usage-diagnostic-empty">No failed runs are present in the retained recent-run details.</p>`}</section>
-      <p class="help">The diagnostics use the same visible daily window as the chart. “Recent zero-request runs” uses the retained recent-run list and can include requests handled locally without a provider call. Figures show provider-reported usage only; they do not estimate API cost or expose prompt, response, tool-argument, or reasoning content.</p>
+      <p class="help">Token, request, run, model, provider, and API-mode diagnostics all use the selected daily-aggregate period shown above. Retained recent-run details are separate and can be shorter than that period. Figures show provider-reported usage only; they do not estimate API cost or expose prompt, response, tool-argument, or reasoning content.</p>
     </section>`;
 }
 
@@ -182,6 +371,67 @@ function renderRequestDetails(panel, requests) {
   }).join("")}</div>`;
 }
 
+function renderUsageBar(panel, bucket, max) {
+  const {total, cached, uncached} = tokenBreakdown(bucket.total_tokens, bucket.cached_input_tokens);
+  const height = Math.max(2, total / max * 100);
+  const cachedShare = total ? cached / total * 100 : 0;
+  const uncachedShare = total ? uncached / total * 100 : 0;
+  const period = bucket.firstDate === bucket.lastDate ? bucket.firstDate : `${bucket.firstDate} to ${bucket.lastDate}`;
+  const details = `${period} · ${formatUsageNumber(total)} total · ${formatUsageNumber(cached)} cached input · ${formatUsageNumber(uncached)} uncached`;
+  return `<span class="chart-column" tabindex="0" aria-label="${panel._e(details)}" data-tooltip="${panel._e(details)}" style="height:${height}%"><span class="chart-segment cached" style="height:${cachedShare}%"></span><span class="chart-segment uncached" style="height:${uncachedShare}%"></span></span>`;
+}
+
+function renderUsagePage(panel, result = {}) {
+  const today = resultToday(result, panel);
+  const history = selectUsageHistory(result.days?.days || [], panel._usageHistoryWindow || DEFAULT_USAGE_WINDOW, today);
+  const summary = history.summary;
+  const lifetime = result.summary?.lifetime || {};
+  const latest = result.summary?.latest || null;
+  const buckets = usageChartBuckets(history.days, history.id);
+  const chartMax = Math.max(1, ...buckets.map((bucket) => bucket.total_tokens));
+  const chartByMonth = ["year", "all"].includes(history.id);
+  const chartAxis = buckets.length ? `<div class="chart-axis" aria-hidden="true"><span>${panel._e(formatUsageDate(buckets[0].label, undefined, chartByMonth))}</span><span>${panel._e(formatUsageDate(buckets[Math.floor((buckets.length - 1) / 2)].label, undefined, chartByMonth))}</span><span>${panel._e(formatUsageDate(buckets.at(-1).label, undefined, chartByMonth))}</span></div>` : "";
+  const cachedMeta = (value) => `${formatUsageNumber(value || 0)} cached input`;
+  const loadWarnings = (result.load_errors || []).map((issue) => `<div class="notice"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)} Other usage information is still shown where available.</p></div>`).join("");
+  const recentRows = (result.runs?.runs || []).map((run) => {
+    const tokens = tokenBreakdown(run.total_tokens, run.cached_input_tokens);
+    const completed = formatUsageTimestamp(run.completed_at, undefined, panel._hass?.config?.time_zone);
+    return `<tr><td><time datetime="${panel._e(completed.datetime)}" title="${panel._e(completed.datetime)}">${panel._e(completed.display)}</time></td><td>${formatUsageNumber(tokens.total)}</td><td>${formatUsageNumber(tokens.cached)}</td><td>${formatUsageNumber(tokens.uncached)}</td><td>${formatUsageNumber(run.request_count)}</td><td>${panel._e(`${formatUsageNumber(run.duration_ms)} ms`)}</td><td>${panel._e(run.successful ? "Success" : run.error_type || "Failed")}</td></tr>`;
+  }).join("");
+  const dailyMismatch = usageLifetimeDiffersFromDaily(lifetime, history.allSummary);
+  const availableText = history.availableStart
+    ? `${formatUsageDate(history.availableStart)} to ${formatUsageDate(history.availableEnd)}`
+    : "No recorded daily aggregates yet";
+  const selectedText = history.id === "all"
+    ? availableText
+    : `${formatUsageDate(history.startDate)} to ${formatUsageDate(history.endDate)}`;
+  const gapText = dailyMismatch
+    ? " Lifetime counters contain accounting that is not represented exactly by the stored daily aggregates; this can include usage recorded before daily aggregate history became available."
+    : " Lifetime counters are stored separately from daily history even when their current totals agree.";
+  const partialText = history.partialStart
+    ? ` The first stored daily aggregate is ${formatUsageDate(history.availableStart)}, after the selected period begins.`
+    : "";
+  const options = USAGE_WINDOW_OPTIONS.map((item) => `<option value="${item.id}" ${item.id === history.id ? "selected" : ""}>${panel._e(item.label)}</option>`).join("");
+
+  return `<style>
+      .usage-range-card{display:flex;align-items:end;justify-content:space-between;gap:20px}.usage-range-copy{display:grid;gap:6px}.usage-range-copy h2,.usage-range-copy p{margin:0}.usage-range-copy p{color:var(--secondary-text-color)}.usage-range-control{min-width:190px}.usage-range-control select{width:100%;min-height:42px}.usage-history-note{line-height:1.5}.usage-history-note strong{display:block;margin-bottom:4px}
+      @media(max-width:680px){.usage-range-card{display:grid}.usage-range-control{min-width:0;width:100%}}
+    </style>${loadWarnings}
+    <section class="content-card usage-range-card"><div class="usage-range-copy"><h2>Usage period</h2><p>Totals, chart data, and model/provider/API-mode breakdowns use this same Home Assistant local-calendar period.</p><small>${panel._e(historyRangeLabel(history))}</small></div><label class="usage-range-control">History window<select id="usage-window">${options}</select></label></section>
+    <section class="metric-grid compact">
+      ${panel._metric(history.label, summary.total_tokens || 0, cachedMeta(summary.cached_input_tokens))}
+      ${panel._metric("Input tokens", summary.input_tokens || 0, `${formatUsageNumber(summary.output_tokens || 0)} output`)}
+      ${panel._metric("Provider requests", summary.api_request_count || 0, `${formatUsageNumber(summary.run_count || 0)} conversation runs`)}
+      ${panel._metric("Lifetime tokens", lifetime.total_tokens || 0, "Separate cumulative counter")}
+      ${panel._metric("Latest response", latest?.total_tokens ?? "—", latest ? cachedMeta(latest.cached_input_tokens) : "Retained run detail")}
+    </section>
+    <section class="content-card"><div class="chart-heading"><h2>Tokens by ${chartByMonth ? "month" : "recorded day"}</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" aria-label="Token usage for the selected period; cached input tokens are included within each total">${buckets.map((bucket) => renderUsageBar(panel, bucket, chartMax)).join("") || panel._empty("No daily usage is recorded in this period.")}</div>${chartAxis}<p class="chart-note"><strong>Cached input</strong> is request content the provider has seen before and can reuse. It is included in the total token count, but cached input is usually cheaper than uncached input when the provider supports discounted caching.</p></section>
+    <section class="notice usage-history-note"><strong>Daily aggregate history: ${panel._e(availableText)}</strong><p>The selected period is ${panel._e(selectedText)}.${panel._e(partialText)}${panel._e(gapText)} “All available” therefore means all stored daily aggregate history, not necessarily the same value as lifetime usage.</p></section>
+    ${renderUsageDiagnostics(panel, result)}
+    <section class="content-card"><h2>Recent runs</h2><p class="help">This table uses retained run detail and is not expanded by the selected aggregate-history period.</p><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody>${recentRows || `<tr><td colspan="7">No retained recent runs.</td></tr>`}</tbody></table></div></section>
+    ${panel._data?.is_admin ? `<section class="content-card"><h2>Usage detail maintenance</h2><p>Retention is available in the local Retention & maintenance subsection.</p><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Daily, monthly, selected-period, and lifetime aggregates are never removed by detail pruning.</small></section>` : ""}`;
+}
+
 function installUsageDiagnostics() {
   if (typeof customElements === "undefined") return;
   customElements.whenDefined("extended-openai-management-panel").then(() => {
@@ -190,12 +440,23 @@ function installUsageDiagnostics() {
     if (!prototype || prototype.__usageDiagnosticsInstalled) return;
     prototype.__usageDiagnosticsInstalled = true;
 
-    const originalUsage = prototype._usage;
+    const originalCall = prototype._call;
+    prototype._call = function(section, action, extra = {}) {
+      if (section === "usage" && action === "daily" && !extra.start_date && !extra.end_date) {
+        const agent = this._selectedAgent?.();
+        const identity = agent ? {entry_id: agent.entry_id, subentry_id: agent.subentry_id} : {};
+        return loadAllUsageDays((startDate, endDate) => originalCall.call(this, section, action, {
+          ...extra,
+          ...identity,
+          start_date: startDate,
+          end_date: endDate,
+        }));
+      }
+      return originalCall.call(this, section, action, extra);
+    };
+
     prototype._usage = function() {
-      const html = originalUsage.call(this);
-      const diagnostics = renderUsageDiagnostics(this, this._result || {});
-      const maintenance = '<section class="content-card"><h2>Usage detail maintenance</h2>';
-      return html.includes(maintenance) ? html.replace(maintenance, `${diagnostics}${maintenance}`) : `${html}${diagnostics}`;
+      return renderUsagePage(this, this._result || {});
     };
 
     const originalDialogs = prototype._dialogs;
@@ -207,6 +468,10 @@ function installUsageDiagnostics() {
     prototype._bindActions = function() {
       originalBindActions.call(this);
       const root = this.shadowRoot;
+      root.querySelector("#usage-window")?.addEventListener("change", (event) => {
+        this._usageHistoryWindow = normalizeUsageWindow(event.target.value);
+        this._render();
+      });
       root.querySelectorAll(".close-usage-requests").forEach((button) => button.addEventListener("click", () => root.querySelector("#usage-request-dialog")?.close()));
       root.querySelector("#usage-request-dialog")?.addEventListener("cancel", (event) => { event.preventDefault(); root.querySelector("#usage-request-dialog")?.close(); });
       root.querySelectorAll(".usage-run-details").forEach((button) => button.addEventListener("click", async () => {
