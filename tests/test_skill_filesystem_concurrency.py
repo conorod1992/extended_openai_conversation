@@ -183,3 +183,47 @@ async def test_cancelled_publication_finishes_to_stable_state_before_unlock(
     async with manager.async_skill_read():
         assert manager.get_skill("demo") is not None
     assert (manager.user_skills_dir / "demo" / "SKILL.md").is_file()
+
+
+async def test_repeated_cancellation_keeps_lock_until_reload_settles(
+    hass, tmp_path, monkeypatch
+) -> None:
+    """Repeated cancellation cannot cancel the owned operation or release its lock."""
+    manager = await _manager(hass, tmp_path)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = asyncio.Event()
+    read_acquired = asyncio.Event()
+
+    async def blocked_discover():
+        started.set()
+        await release.wait()
+        completed.set()
+        return {}
+
+    async def competing_read() -> None:
+        async with manager.async_skill_read():
+            read_acquired.set()
+
+    monkeypatch.setattr(manager, "_async_discover_skills_locked", blocked_discover)
+    task = asyncio.create_task(manager.async_load_skills())
+    await started.wait()
+
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
+
+    reader = asyncio.create_task(competing_read())
+    await asyncio.sleep(0)
+    assert not task.done()
+    assert not completed.is_set()
+    assert not read_acquired.is_set()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert completed.is_set()
+
+    await asyncio.wait_for(read_acquired.wait(), timeout=1)
+    await reader
