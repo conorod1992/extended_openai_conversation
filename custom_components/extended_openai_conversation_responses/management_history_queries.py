@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import asdict
 from heapq import heappush, heapreplace
@@ -236,7 +237,9 @@ def _validate_archive_page(offset: int, limit: int, maximum: int) -> tuple[int, 
     return safe_offset, max(1, min(int(limit), maximum))
 
 
-async def _async_archive_query(archive: Any, query: Any, *args: Any) -> Any:
+async def _async_archive_query[T](
+    archive: Any, query: Callable[..., T], *args: Any
+) -> T:
     """Keep archive state immutable while a CPU-heavy query runs off-loop."""
     async with archive._lock:
         archive._ensure_initialized()
@@ -410,7 +413,9 @@ async def archive_get_page(
     """Return one management turn page with explicit continuation metadata."""
     safe_start = max(0, int(start_turn))
     safe_limit = max(1, min(int(limit), MANAGEMENT_ARCHIVE_TURN_PAGE_MAX))
-    result = await archive.async_get(scope_id, session_id, safe_start, safe_limit)
+    result: dict[str, Any] = await archive.async_get(
+        scope_id, session_id, safe_start, safe_limit
+    )
     returned = len(result.get("turns", []))
     result.update(
         page_metadata(
