@@ -16,10 +16,7 @@ from .const import (
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
 )
 from .function_groups import function_tool_runtime_scope
-from .skill_availability import (
-    effective_skill_loader_status,
-    is_canonical_skill_loader,
-)
+from .skill_availability import effective_skill_loader_status, is_canonical_skill_loader
 from .skills import SkillManager
 
 _INSTALLED = False
