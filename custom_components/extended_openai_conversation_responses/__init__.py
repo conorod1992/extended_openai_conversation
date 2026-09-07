@@ -279,7 +279,7 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                     title=DEFAULT_AI_TASK_NAME,
                     unique_id=None,
                 )
-                hass.config_entries.async_add_subentry(entry, ai_task_data_subentry)
+                hass.config_entries.async_add_subentry(entry, ai_task_subentry)
             hass.config_entries.async_update_entry(
                 entry, title=entry.title, options={}, version=2
             )
