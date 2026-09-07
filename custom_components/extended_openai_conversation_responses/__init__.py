@@ -125,6 +125,7 @@ def _register_split_frontend_modules() -> None:
     extras = (
         "agent-config-editor-base.js",
         "agent-config-loader.js",
+        "exposed-attributes-ui.js",
         "backup-transfer-ui.js",
         "guide-page-base.js",
         "request-rules-match-test-ui.js",
