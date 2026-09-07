@@ -975,8 +975,13 @@ async def async_get_usage(
     if manager is None:
         prefix = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
         manager = UsageManager(
-            Store(hass, 1, prefix),
-            Store(hass, STORAGE_VERSION, f"{prefix}.daily"),
+            Store(hass, 1, prefix, atomic_writes=True),
+            Store(
+                hass,
+                STORAGE_VERSION,
+                f"{prefix}.daily",
+                atomic_writes=True,
+            ),
             Store(
                 hass,
                 STORAGE_VERSION,
