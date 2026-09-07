@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from copy import deepcopy
 from functools import wraps
 import json
 from types import MappingProxyType
@@ -23,6 +22,7 @@ MAX_CONFIGURED_ENTITIES = 1000
 MAX_ATTRIBUTES_PER_ENTITY = 64
 MAX_ATTRIBUTE_NAME_LENGTH = 255
 MAX_ATTRIBUTE_VALUE_CHARACTERS = 4096
+MAX_TOTAL_ATTRIBUTE_CONTEXT_CHARACTERS = 32768
 _FRONTEND_MODULE = "exposed-attributes-ui.js"
 _INSTALLED = False
 
@@ -45,10 +45,16 @@ def _validate_preferences(value: Any) -> dict[str, list[str]]:
 
     result: dict[str, list[str]] = {}
     for reference, attributes in value.items():
+        entry_id = (
+            reference.removeprefix(_REGISTRY_REF_PREFIX)
+            if isinstance(reference, str)
+            and reference.startswith(_REGISTRY_REF_PREFIX)
+            else ""
+        )
         if (
             not isinstance(reference, str)
-            or not reference.startswith(_REGISTRY_REF_PREFIX)
-            or not reference.removeprefix(_REGISTRY_REF_PREFIX).strip()
+            or not entry_id
+            or entry_id != entry_id.strip()
             or len(reference) > len(_REGISTRY_REF_PREFIX) + 255
         ):
             raise agent_config.AgentConfigError(
@@ -234,6 +240,17 @@ def _safe_attribute_value(value: Any) -> Any:
         return str(value)[:MAX_ATTRIBUTE_VALUE_CHARACTERS]
 
 
+def _attribute_item_size(name: str, value: Any) -> int:
+    """Return a conservative serialized character cost for one attribute item."""
+    return len(
+        json.dumps(
+            {name: value},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    )
+
+
 def enrich_exposed_entities(
     hass: Any,
     options: Mapping[str, Any] | Any,
@@ -258,6 +275,7 @@ def enrich_exposed_entities(
     if not selected_by_entity_id:
         return exposed_entities
 
+    remaining = MAX_TOTAL_ATTRIBUTE_CONTEXT_CHARACTERS
     result: list[dict[str, Any]] = []
     for entity in exposed_entities:
         entity_id = str(entity.get("entity_id", ""))
@@ -269,16 +287,23 @@ def enrich_exposed_entities(
         if state is None:
             result.append(entity)
             continue
-        live = {
-            name: _safe_attribute_value(state.attributes[name])
-            for name in selected
-            if name in state.attributes
-        }
+        live: dict[str, Any] = {}
+        for name in selected:
+            if name not in state.attributes:
+                continue
+            safe_value = _safe_attribute_value(state.attributes[name])
+            item_size = _attribute_item_size(name, safe_value)
+            if item_size > remaining:
+                continue
+            live[name] = safe_value
+            remaining -= item_size
         result.append({**entity, **({"attributes": live} if live else {})})
     return result
 
 
 def _attributes_json(entity: dict[str, Any]) -> str:
+    if "attributes" not in entity:
+        return ""
     value = json.dumps(
         entity.get("attributes") or {},
         ensure_ascii=False,
