@@ -315,9 +315,7 @@ async def _async_apply_speech_replacements(text: str, rules: object) -> str:
         return text
     if len(value) > _speech_output_limit(len(text)):
         _LOGGER.warning(
-            (
-                "Speech regex worker exceeded the output limit; preserving spoken text"
-            )
+            "Speech regex worker exceeded the output limit; preserving spoken text"
         )
         return text
     return value
