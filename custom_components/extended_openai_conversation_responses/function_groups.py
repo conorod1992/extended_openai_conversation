@@ -189,7 +189,9 @@ def _effective_runtime(
         function_tools_supported=(
             function_tools_supported and active.function_tools_supported
         ),
-        group_loader_supported=(group_loader_supported and active.group_loader_supported),
+        group_loader_supported=(
+            group_loader_supported and active.group_loader_supported
+        ),
         tool_available=combined,
     )
 
