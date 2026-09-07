@@ -265,36 +265,72 @@ async def _apply_prepared(
     await progress("request_rules")
 
 
+def _active_agent(hass: HomeAssistant, entry_id: str, subentry_id: str) -> Any | None:
+    """Return the currently registered agent only when it is the exact subentry."""
+    from homeassistant.components import conversation
+
+    try:
+        agent = conversation.async_get_agent(hass, entry_id)
+    except (KeyError, ValueError):
+        return None
+    if (
+        agent is None
+        or getattr(getattr(agent, "subentry", None), "subentry_id", None)
+        != subentry_id
+    ):
+        return None
+    return agent
+
+
 def reset_restored_runtime(
-    hass: HomeAssistant, entry_id: str, subentry_id: str
+    hass: HomeAssistant,
+    entry_id: str,
+    subentry_id: str,
+    managers: tuple[Any, ...] | None = None,
 ) -> None:
-    """Discard transient state that may encode the pre-restore runtime generation."""
+    """Reset transient state without splitting live agents from manager registries."""
     from . import continuity, function_groups, request_rules, runtime_failure_hardening
 
     key = (entry_id, subentry_id)
+    agent = _active_agent(hass, entry_id, subentry_id)
 
-    continuity_managers = hass.data.get(continuity._MANAGERS, {})
-    continuity_manager = continuity_managers.pop(key, None)
-    if continuity_manager is not None:
-        continuity_manager._sessions.clear()
-        continuity_manager._memory_bundles.clear()
-        continuity_manager._pending_ends.clear()
-        continuity_manager._ignored_conversation_ids.clear()
+    continuity_managers = hass.data.setdefault(continuity._MANAGERS, {})
+    continuity_manager = continuity_managers.get(key)
+    agent_continuity = getattr(agent, "_continuity", None)
+    for current in {id(item): item for item in (continuity_manager, agent_continuity) if item is not None}.values():
+        current._sessions.clear()
+        current._memory_bundles.clear()
+        current._pending_ends.clear()
+        current._ignored_conversation_ids.clear()
+    if agent_continuity is not None:
+        continuity_managers[key] = agent_continuity
 
-    rule_runtimes = hass.data.get(request_rules._RUNTIMES, {})
-    rule_runtime = rule_runtimes.pop(key, None)
-    if rule_runtime is not None:
-        rule_runtime._conversation_overrides.clear()
+    rule_runtimes = hass.data.setdefault(request_rules._RUNTIMES, {})
+    rule_runtime = rule_runtimes.get(key)
+    agent_rule_runtime = getattr(agent, "_request_rule_runtime", None)
+    for current in {id(item): item for item in (rule_runtime, agent_rule_runtime) if item is not None}.values():
+        current._conversation_overrides.clear()
+    if agent_rule_runtime is not None:
+        rule_runtimes[key] = agent_rule_runtime
 
-    group_runtimes = hass.data.get(function_groups._RUNTIMES, {})
-    group_runtime = group_runtimes.pop(key, None)
-    if group_runtime is not None:
-        group_runtime._sessions.clear()
-        group_runtime._last_request.clear()
+    group_runtimes = hass.data.setdefault(function_groups._RUNTIMES, {})
+    group_runtime = group_runtimes.get(key)
+    agent_group_runtime = getattr(agent, "_function_groups_runtime", None)
+    for current in {id(item): item for item in (group_runtime, agent_group_runtime) if item is not None}.values():
+        current._sessions.clear()
+        current._last_request.clear()
+    if agent_group_runtime is not None:
+        group_runtimes[key] = agent_group_runtime
 
     # A previous Store startup failure may have left the active entity using a
-    # volatile Usage manager. Do not let that fallback survive a durable restore.
-    hass.data.get(runtime_failure_hardening._VOLATILE_USAGE_MANAGERS, {}).pop(key, None)
+    # volatile Usage manager. Replace that exact stale pointer with the restored
+    # durable manager rather than merely deleting the fallback registry entry.
+    fallback = hass.data.get(runtime_failure_hardening._VOLATILE_USAGE_MANAGERS, {}).pop(
+        key, None
+    )
+    if fallback is not None and managers is not None and agent is not None:
+        if getattr(agent, "_usage", None) is fallback:
+            agent._usage = managers[4]
 
     statuses = hass.data.get(SUBSYSTEM_STATUS_KEY)
     if isinstance(statuses, dict):
@@ -330,8 +366,8 @@ async def _rollback_transaction(
         await _save_progress(store, journal, "rollback_completed_categories", category)
 
     await _apply_prepared(managers, rollback, progress)
+    reset_restored_runtime(hass, entry.entry_id, subentry.subentry_id, managers)
     await _update_configuration(hass, entry, subentry, rollback, progress)
-    reset_restored_runtime(hass, entry.entry_id, subentry.subentry_id)
     await store.async_remove()
 
 
@@ -350,16 +386,20 @@ async def async_restore_backup_recoverably(
         journal = _new_journal(entry_id, subentry_id, prepared, rollback)
 
         # This is the write-ahead boundary. If it fails, no category has changed.
-        await store.async_save(deepcopy(journal))
+        try:
+            await store.async_save(deepcopy(journal))
+        except Exception as err:
+            raise backup.BackupError(
+                "Restore could not start because its recovery journal could not be saved"
+            ) from err
 
         async def progress(category: str) -> None:
             await _save_progress(store, journal, "completed_categories", category)
 
         try:
             await _apply_prepared(managers, prepared, progress)
-            await _update_configuration(hass, entry, subentry, prepared, progress)
-            # Once committed is durable, every recovery pass finishes the target;
-            # before this point every recovery pass rolls back the old snapshot.
+            # This is the durable commit decision. Configuration changes can schedule
+            # an HA reload task, so do not expose them while rollback is still valid.
             await _set_phase(store, journal, _PHASE_COMMITTED)
         except Exception as err:
             try:
@@ -377,12 +417,13 @@ async def async_restore_backup_recoverably(
             ) from err
 
         try:
-            reset_restored_runtime(hass, entry_id, subentry_id)
+            reset_restored_runtime(hass, entry_id, subentry_id, managers)
+            await _update_configuration(hass, entry, subentry, prepared, progress)
             await store.async_remove()
         except Exception as err:
-            _LOGGER.exception("Agent restore committed but cleanup remains pending")
+            _LOGGER.exception("Agent restore committed but completion remains pending")
             raise backup.BackupError(
-                "Restore committed successfully, but cleanup is pending; restart "
+                "Restore committed successfully, but completion is pending; restart "
                 "Home Assistant to finish recovery"
             ) from err
 
@@ -415,8 +456,8 @@ async def async_recover_pending_restore(
 
         try:
             await _apply_prepared(managers, selected, progress)
+            reset_restored_runtime(hass, entry_id, subentry_id, managers)
             await _update_configuration(hass, entry, subentry, selected, progress)
-            reset_restored_runtime(hass, entry_id, subentry_id)
             await store.async_remove()
         except Exception as err:
             _LOGGER.exception(
