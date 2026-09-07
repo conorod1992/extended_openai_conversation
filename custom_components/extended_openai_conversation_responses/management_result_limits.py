@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from itertools import islice
-from typing import Any, TypeVar
+from typing import Any
 
 MANAGEMENT_USAGE_PAGE_MAX = 100
 MANAGEMENT_DAILY_PAGE_MAX = 366
@@ -19,10 +19,8 @@ MANAGEMENT_DEBUG_VALUE_CHARACTERS = 64_000
 MANAGEMENT_DEBUG_SUMMARY_VALUE_CHARACTERS = 2_000
 MANAGEMENT_USAGE_BREAKDOWN_KEYS = 100
 
-T = TypeVar("T")
 
-
-def page_from_iterable(
+def page_from_iterable[T](
     items: Iterable[T], *, offset: int, limit: int
 ) -> tuple[list[T], bool]:
     """Read only one page plus one sentinel item from an iterable."""
