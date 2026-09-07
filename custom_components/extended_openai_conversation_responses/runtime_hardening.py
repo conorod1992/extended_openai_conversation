@@ -39,9 +39,6 @@ def install_runtime_hardening() -> None:
         return
     _install_usage_hardening()
     _install_skill_hardening()
-    from .skill_runtime_availability import install_skill_runtime_availability
-
-    install_skill_runtime_availability()
     _install_guest_mode_hardening()
     _install_tool_result_hardening()
     _INSTALLED = True
@@ -72,6 +69,8 @@ def _install_usage_hardening() -> None:
                 try:
                     await original_initialize(manager)
                 except Exception:
+                    # The original loader appends retained detail records as it goes.
+                    # A partial load must never leak into a later retry.
                     manager.totals = usage_module.UsageTotals()
                     manager.daily = {}
                     manager.requests = []
@@ -101,6 +100,9 @@ def _install_usage_hardening() -> None:
         async_get_usage._extended_openai_getter_guard = True  # type: ignore[attr-defined]
         usage_module.async_get_usage = async_get_usage
 
+        # ``management_ui`` and ``backup`` are imported before async_setup runs.
+        # Replace any already-bound aliases; future imports naturally see the
+        # guarded function in the usage module.
         package_prefix = f"{__package__}."
         for module_name, module in tuple(sys.modules.items()):
             if (
@@ -112,7 +114,7 @@ def _install_usage_hardening() -> None:
 
 
 def _install_skill_hardening() -> None:
-    """Keep compatibility with managers predating the owned filesystem boundary."""
+    """Make first skill discovery awaitable by every caller and reload atomically."""
     from .skills import SkillManager, SkillMdParser
 
     current_load = SkillManager.async_load_skills
@@ -136,6 +138,8 @@ def _install_skill_hardening() -> None:
                         _LOGGER.exception(
                             "Unexpected error loading skill from %s", skill_path
                         )
+                # Publish only a complete discovery result. A failed executor read
+                # leaves the previous catalogue untouched.
                 manager._skills = loaded
                 manager.__dict__["_extended_openai_skills_initialized"] = True
                 _LOGGER.info("Loaded %d skills", len(loaded))
@@ -213,6 +217,8 @@ def _install_guest_mode_hardening() -> None:
         async with lock:
             if manager._initialized:
                 return
+            # Storage I/O failures are not malformed state. Propagate them so a
+            # later getter/setup can retry instead of silently disabling Guest Mode.
             data = await manager._store.async_load()
             raw = data.get("schedule") if isinstance(data, Mapping) else None
             schedule = None
@@ -246,6 +252,7 @@ def _install_guest_mode_hardening() -> None:
             source=source,
             updated_at=updated,
         )
+        # Persist before publishing the new policy in memory.
         await manager._store.async_save({"schedule": asdict(schedule)})
         manager._schedule = schedule
         manager._notify()
@@ -301,6 +308,7 @@ def _install_tool_result_hardening() -> None:
         install_execution_hook._extended_openai_result_install_guard = True  # type: ignore[attr-defined]
         delayed_tools._install_execution_hook = install_execution_hook
 
+    # Tests or reload paths may already have imported the conversation platform.
     if f"{__package__}.conversation" in sys.modules:
         _wrap_conversation_tool_results()
 
