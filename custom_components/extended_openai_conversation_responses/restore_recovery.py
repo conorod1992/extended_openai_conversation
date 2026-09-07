@@ -227,12 +227,11 @@ def _active_agent(hass: HomeAssistant, entry_id: str, subentry_id: str) -> Any |
 
     try:
         agent = conversation.async_get_agent(hass, entry_id)
-    except (KeyError, ValueError):
+    except KeyError, ValueError:
         return None
     if (
         agent is None
-        or getattr(getattr(agent, "subentry", None), "subentry_id", None)
-        != subentry_id
+        or getattr(getattr(agent, "subentry", None), "subentry_id", None) != subentry_id
     ):
         return None
     return agent
@@ -293,9 +292,9 @@ def reset_restored_runtime(
     # A previous Store startup failure may have left the active entity using a
     # volatile Usage manager. Replace that exact stale pointer with the restored
     # durable manager rather than merely deleting the fallback registry entry.
-    fallback = hass.data.get(runtime_failure_hardening._VOLATILE_USAGE_MANAGERS, {}).pop(
-        key, None
-    )
+    fallback = hass.data.get(
+        runtime_failure_hardening._VOLATILE_USAGE_MANAGERS, {}
+    ).pop(key, None)
     if (
         fallback is not None
         and managers is not None
