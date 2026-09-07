@@ -19,7 +19,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from custom_components.extended_openai_conversation_responses.memory import (
     PersistentMemory,
-    memory_as_dict,
+    memory_revision,
 )
 from custom_components.extended_openai_conversation_responses.memory_ui import (
     async_manage_command,
@@ -245,6 +245,7 @@ async def test_ui_resolves_persistent_owner_server_side_and_forwards_metadata() 
                 "importance": "high",
                 "clear_fields": ["subject", "key", "valid_from"],
                 "expected_revision": "a" * 64,
+                "refresh_confirmation": False,
             },
         )
 
@@ -264,7 +265,7 @@ async def test_ui_resolves_persistent_owner_server_side_and_forwards_metadata() 
         subject=None,
         key=None,
         valid_from=None,
-        refresh_confirmation=True,
+        refresh_confirmation=False,
         target_user_id=SHARED_HOUSEHOLD_SCOPE_ID,
         clear_fields=["subject", "key", "valid_from"],
         expected_revision="a" * 64,
@@ -339,8 +340,10 @@ async def test_persistent_revision_rejects_stale_save_without_mutation() -> None
         subject="Oscar",
         key="pet.oscar.breed",
     )
+    assert "revision" not in created["memory"]
     memory_id = created["memory"]["memory_id"]
-    first_revision = created["memory"]["revision"]
+    original = (await memory.async_list("user-7"))[0]
+    first_revision = memory_revision(original)
 
     updated = await memory.async_update(
         "user-7",
@@ -350,7 +353,7 @@ async def test_persistent_revision_rejects_stale_save_without_mutation() -> None
         expected_revision=first_revision,
         refresh_confirmation=False,
     )
-    second_revision = memory_as_dict(updated)["revision"]
+    second_revision = memory_revision(updated)
     assert second_revision != first_revision
     assert updated.subject is None
 
@@ -365,7 +368,7 @@ async def test_persistent_revision_rejects_stale_save_without_mutation() -> None
     current = (await memory.async_list("user-7"))[0]
     assert current.content == "Oscar is a Cavachon dog."
     assert current.subject is None
-    assert memory_as_dict(current)["revision"] == second_revision
+    assert memory_revision(current) == second_revision
 
 
 async def test_persistent_blank_update_is_rejected_without_mutation() -> None:
@@ -376,7 +379,8 @@ async def test_persistent_blank_update_is_rejected_without_mutation() -> None:
         "user-7", "Driving lessons are one hour.", "work", "explicit"
     )
     memory_id = created["memory"]["memory_id"]
-    revision = created["memory"]["revision"]
+    original = (await memory.async_list("user-7"))[0]
+    revision = memory_revision(original)
 
     with pytest.raises(ValueError, match="content must be 1 to"):
         await memory.async_update(
@@ -385,7 +389,7 @@ async def test_persistent_blank_update_is_rejected_without_mutation() -> None:
 
     current = (await memory.async_list("user-7"))[0]
     assert current.content == "Driving lessons are one hour."
-    assert memory_as_dict(current)["revision"] == revision
+    assert memory_revision(current) == revision
 
 
 async def test_agents_report_shared_and_temporary_management_capabilities() -> None:
