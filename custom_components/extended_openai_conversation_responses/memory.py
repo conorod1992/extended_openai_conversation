@@ -323,7 +323,7 @@ class PersistentMemory:
                         if key_pair in seen_keys:
                             raise ValueError("duplicate canonical key in memory scope")
                         seen_keys.add(key_pair)
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     needs_save = True
                     _LOGGER.warning("Ignoring malformed persistent memory record")
                     continue
