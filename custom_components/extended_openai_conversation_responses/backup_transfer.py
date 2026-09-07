@@ -47,6 +47,7 @@ TRANSFER_TTL_SECONDS = 15 * 60
 _MAX_BASE64_CHUNK_CHARS = 4 * math.ceil(BACKUP_CHUNK_BYTES / 3) + 4
 _EXPORTS_KEY = f"{DOMAIN}.backup_transfer_exports"
 _IMPORTS_KEY = f"{DOMAIN}.backup_transfer_imports"
+_REGISTRY_LOCK_KEY = f"{DOMAIN}.backup_transfer_registry_lock"
 _WS_SETUP_KEY = f"{DOMAIN}.backup_transfer_ws_setup"
 _HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -63,6 +64,7 @@ class ExportSession:
     size: int
     sha256: str
     expires_at: float
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 @dataclass(slots=True)
@@ -90,27 +92,32 @@ def _imports(hass: HomeAssistant) -> dict[str, ImportSession]:
     return hass.data.setdefault(_IMPORTS_KEY, {})
 
 
+def _registry_lock(hass: HomeAssistant) -> asyncio.Lock:
+    return hass.data.setdefault(_REGISTRY_LOCK_KEY, asyncio.Lock())
+
+
 def _remove_file(path: str) -> None:
     with suppress(FileNotFoundError):
         os.unlink(path)
 
 
-def _remove_files(paths: list[str]) -> None:
-    for path in paths:
-        _remove_file(path)
+async def _async_delete_session_file(hass: HomeAssistant, session: Any) -> None:
+    async with session.lock:
+        await hass.async_add_executor_job(_remove_file, session.path)
 
 
 async def _async_cleanup_expired(hass: HomeAssistant) -> None:
     """Discard abandoned transfer files without a perpetual cleanup task."""
     now = time.monotonic()
-    paths: list[str] = []
-    for sessions in (_exports(hass), _imports(hass)):
-        for session_id, session in tuple(sessions.items()):
-            if session.expires_at <= now:
-                paths.append(session.path)
-                sessions.pop(session_id, None)
-    if paths:
-        await hass.async_add_executor_job(_remove_files, paths)
+    expired: list[ExportSession | ImportSession] = []
+    async with _registry_lock(hass):
+        for sessions in (_exports(hass), _imports(hass)):
+            for session_id, session in tuple(sessions.items()):
+                if session.expires_at <= now:
+                    expired.append(session)
+                    sessions.pop(session_id, None)
+    for session in expired:
+        await _async_delete_session_file(hass, session)
 
 
 def _temporary_bytes(hass: HomeAssistant) -> int:
@@ -245,6 +252,8 @@ def _read_file_chunk_base64(path: str, offset: int, length: int) -> str:
     with open(path, "rb") as file_handle:
         file_handle.seek(offset)
         data = file_handle.read(length)
+    if len(data) != length:
+        raise backup.BackupError("The staged backup archive is incomplete")
     return base64.b64encode(data).decode("ascii")
 
 
@@ -299,13 +308,41 @@ def _member_is_safe(info: zipfile.ZipInfo) -> bool:
     )
 
 
+def _read_archive_member_bounded(
+    archive: zipfile.ZipFile,
+    name: str,
+    limit: int,
+    overflow_message: str,
+    corruption_message: str,
+) -> bytes:
+    """Read one member while enforcing the actual decompressed byte count."""
+    data = bytearray()
+    try:
+        with archive.open(name, "r") as member:
+            while True:
+                chunk = member.read(min(1024 * 1024, limit + 1 - len(data)))
+                if not chunk:
+                    break
+                data.extend(chunk)
+                if len(data) > limit:
+                    raise backup.BackupError(overflow_message)
+    except backup.BackupError:
+        raise
+    except (RuntimeError, zipfile.BadZipFile, OSError, EOFError) as err:
+        raise backup.BackupError(corruption_message) from err
+    return bytes(data)
+
+
 def _load_archive_document(path: str) -> dict[str, Any]:
-    size = os.path.getsize(path)
+    try:
+        size = os.path.getsize(path)
+    except OSError as err:
+        raise backup.BackupError("The staged backup archive is unavailable") from err
     if size > MAX_BACKUP_ARCHIVE_BYTES:
         raise backup.BackupError("The compressed backup exceeds the 64 MB safety limit")
     try:
         archive = zipfile.ZipFile(path, "r")
-    except zipfile.BadZipFile as err:
+    except (zipfile.BadZipFile, OSError) as err:
         raise backup.BackupError("The backup archive is incomplete or corrupted") from err
     with archive:
         members = archive.infolist()
@@ -328,8 +365,15 @@ def _load_archive_document(path: str) -> dict[str, Any]:
         payload_info = archive.getinfo(PAYLOAD_NAME)
         if manifest_info.file_size > MAX_MANIFEST_BYTES:
             raise backup.BackupError("The backup archive manifest is too large")
+        manifest_payload = _read_archive_member_bounded(
+            archive,
+            MANIFEST_NAME,
+            MAX_MANIFEST_BYTES,
+            "The backup archive manifest is too large",
+            "The backup archive manifest is corrupted",
+        )
         try:
-            manifest = json.loads(archive.read(MANIFEST_NAME))
+            manifest = json.loads(manifest_payload)
         except (UnicodeDecodeError, json.JSONDecodeError) as err:
             raise backup.BackupError("The backup archive manifest is invalid") from err
         if not isinstance(manifest, dict) or set(manifest) != {
@@ -355,10 +399,13 @@ def _load_archive_document(path: str) -> dict[str, Any]:
             or _HEX_SHA256.fullmatch(payload_sha256) is None
         ):
             raise backup.BackupError("The backup archive manifest is invalid")
-        try:
-            payload = archive.read(PAYLOAD_NAME)
-        except (RuntimeError, zipfile.BadZipFile, OSError) as err:
-            raise backup.BackupError("The backup archive payload is corrupted") from err
+        payload = _read_archive_member_bounded(
+            archive,
+            PAYLOAD_NAME,
+            MAX_BACKUP_UNCOMPRESSED_BYTES,
+            "The backup archive exceeds the uncompressed safety limit",
+            "The backup archive payload is corrupted",
+        )
         if len(payload) != payload_bytes:
             raise backup.BackupError("The backup archive payload is incomplete")
         if hashlib.sha256(payload).hexdigest() != payload_sha256:
@@ -373,14 +420,19 @@ def _load_archive_document(path: str) -> dict[str, Any]:
 
 
 def _load_legacy_json_document(path: str) -> dict[str, Any]:
-    size = os.path.getsize(path)
-    if size > MAX_BACKUP_UNCOMPRESSED_BYTES:
-        raise backup.BackupError("The JSON backup exceeds the 128 MB safety limit")
     try:
+        size = os.path.getsize(path)
+        if size > MAX_BACKUP_UNCOMPRESSED_BYTES:
+            raise backup.BackupError("The JSON backup exceeds the 128 MB safety limit")
         with open(path, "rb") as file_handle:
             payload = file_handle.read(MAX_BACKUP_UNCOMPRESSED_BYTES + 1)
-        if len(payload) > MAX_BACKUP_UNCOMPRESSED_BYTES:
-            raise backup.BackupError("The JSON backup exceeds the 128 MB safety limit")
+    except backup.BackupError:
+        raise
+    except OSError as err:
+        raise backup.BackupError("The staged JSON backup is unavailable") from err
+    if len(payload) > MAX_BACKUP_UNCOMPRESSED_BYTES:
+        raise backup.BackupError("The JSON backup exceeds the 128 MB safety limit")
+    try:
         document = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as err:
         raise backup.BackupError("The JSON backup is incomplete or corrupted") from err
@@ -390,8 +442,11 @@ def _load_legacy_json_document(path: str) -> dict[str, Any]:
 
 
 def _load_uploaded_document(path: str, kind: str) -> dict[str, Any]:
-    with open(path, "rb") as file_handle:
-        signature = file_handle.read(4)
+    try:
+        with open(path, "rb") as file_handle:
+            signature = file_handle.read(4)
+    except OSError as err:
+        raise backup.BackupError("The staged backup upload is unavailable") from err
     is_zip = signature.startswith(b"PK")
     if kind == "archive" and not is_zip:
         raise backup.BackupError("The selected ZIP backup is incomplete or corrupted")
@@ -404,22 +459,26 @@ def _load_prepared_restore(
     path: str, kind: str, target_subentry_id: str
 ) -> backup.PreparedRestore:
     document = _load_uploaded_document(path, kind)
-    return backup.inspect_backup(document, target_subentry_id)
+    return backup.inspect_backup(
+        document, target_subentry_id, max_bytes=MAX_BACKUP_UNCOMPRESSED_BYTES
+    )
 
 
 async def _discard_export(hass: HomeAssistant, session_id: str) -> bool:
-    session = _exports(hass).pop(session_id, None)
+    async with _registry_lock(hass):
+        session = _exports(hass).pop(session_id, None)
     if session is None:
         return False
-    await hass.async_add_executor_job(_remove_file, session.path)
+    await _async_delete_session_file(hass, session)
     return True
 
 
 async def _discard_import(hass: HomeAssistant, session_id: str) -> bool:
-    session = _imports(hass).pop(session_id, None)
+    async with _registry_lock(hass):
+        session = _imports(hass).pop(session_id, None)
     if session is None:
         return False
-    await hass.async_add_executor_job(_remove_file, session.path)
+    await _async_delete_session_file(hass, session)
     return True
 
 
@@ -434,16 +493,18 @@ async def _start_export(
     hass: HomeAssistant, entry: Any, subentry: Any
 ) -> dict[str, Any]:
     await _async_cleanup_expired(hass)
-    _ensure_session_capacity(hass)
+    async with _registry_lock(hass):
+        _ensure_session_capacity(hass)
     gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
     async with gate.exclusive():
         snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
-    result = await _async_build_archive_file(hass, snapshot)
-    if _temporary_bytes(hass) + result["size"] > MAX_TRANSFER_TEMP_BYTES:
-        await hass.async_add_executor_job(_remove_file, result["path"])
-        raise backup.BackupError(
-            "Full backup transfers would exceed the temporary storage quota"
-        )
+    try:
+        result = await _async_build_archive_file(hass, snapshot)
+    except backup.BackupError:
+        raise
+    except Exception as err:
+        raise backup.BackupError("The full backup archive could not be created safely") from err
+
     session_id = uuid4().hex
     session = ExportSession(
         session_id=session_id,
@@ -455,7 +516,13 @@ async def _start_export(
         sha256=result["sha256"],
         expires_at=time.monotonic() + TRANSFER_TTL_SECONDS,
     )
-    _exports(hass)[session_id] = session
+    try:
+        async with _registry_lock(hass):
+            _ensure_session_capacity(hass, session.size)
+            _exports(hass)[session_id] = session
+    except BaseException:
+        await hass.async_add_executor_job(_remove_file, session.path)
+        raise
     return {
         "session_id": session_id,
         "filename": session.filename,
@@ -485,15 +552,23 @@ async def _export_chunk(
     if session is None:
         raise backup.BackupError("The backup transfer has expired or does not exist")
     _require_session_identity(session, entry_id, subentry_id)
-    chunk_count = math.ceil(session.size / BACKUP_CHUNK_BYTES)
-    if index >= chunk_count:
-        raise backup.BackupError("The backup chunk index is out of range")
-    offset = index * BACKUP_CHUNK_BYTES
-    length = min(BACKUP_CHUNK_BYTES, session.size - offset)
-    encoded = await hass.async_add_executor_job(
-        _read_file_chunk_base64, session.path, offset, length
-    )
-    session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
+    async with session.lock:
+        if _exports(hass).get(session_id) is not session:
+            raise backup.BackupError("The backup transfer has expired or was cancelled")
+        session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
+        chunk_count = math.ceil(session.size / BACKUP_CHUNK_BYTES)
+        if index >= chunk_count:
+            raise backup.BackupError("The backup chunk index is out of range")
+        offset = index * BACKUP_CHUNK_BYTES
+        length = min(BACKUP_CHUNK_BYTES, session.size - offset)
+        try:
+            encoded = await hass.async_add_executor_job(
+                _read_file_chunk_base64, session.path, offset, length
+            )
+        except backup.BackupError:
+            raise
+        except OSError as err:
+            raise backup.BackupError("The staged backup archive is unavailable") from err
     return {
         "session_id": session_id,
         "index": index,
@@ -525,8 +600,10 @@ async def _start_import(
         raise backup.BackupError(
             f"The {label} backup exceeds the {limit // (1024 * 1024)} MB safety limit"
         )
-    _ensure_session_capacity(hass, size)
-    path = await hass.async_add_executor_job(_create_upload_file)
+    try:
+        path = await hass.async_add_executor_job(_create_upload_file)
+    except OSError as err:
+        raise backup.BackupError("A temporary backup upload file could not be created") from err
     session_id = uuid4().hex
     session = ImportSession(
         session_id=session_id,
@@ -538,7 +615,13 @@ async def _start_import(
         kind=kind,
         expires_at=time.monotonic() + TRANSFER_TTL_SECONDS,
     )
-    _imports(hass)[session_id] = session
+    try:
+        async with _registry_lock(hass):
+            _ensure_session_capacity(hass, size)
+            _imports(hass)[session_id] = session
+    except BaseException:
+        await hass.async_add_executor_job(_remove_file, path)
+        raise
     return {
         "session_id": session_id,
         "chunk_size": BACKUP_CHUNK_BYTES,
@@ -570,6 +653,9 @@ async def _import_chunk(
     _require_session_identity(session, entry_id, subentry_id)
     try:
         async with session.lock:
+            if _imports(hass).get(session_id) is not session:
+                raise backup.BackupError("The backup upload has expired or was cancelled")
+            session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
             if index != session.next_index:
                 raise backup.BackupError(
                     f"Expected backup chunk {session.next_index}, received {index}"
@@ -583,7 +669,6 @@ async def _import_chunk(
             )
             session.received += written
             session.next_index += 1
-            session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
     except asyncio.CancelledError:
         await _discard_import(hass, session_id)
         raise
@@ -625,11 +710,31 @@ async def _inspect_import(
     session = _completed_import(
         hass, data.get("session_id"), entry_id, subentry_id
     )
-    prepared = await hass.async_add_executor_job(
-        _load_prepared_restore, session.path, session.kind, subentry_id
-    )
-    session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
+    async with session.lock:
+        if _imports(hass).get(session.session_id) is not session:
+            raise backup.BackupError("The backup upload has expired or was cancelled")
+        session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
+        prepared = await hass.async_add_executor_job(
+            _load_prepared_restore, session.path, session.kind, subentry_id
+        )
     return {"valid": True, "title": prepared.title, "summary": prepared.summary()}
+
+
+async def _take_completed_import(
+    hass: HomeAssistant,
+    session_id: Any,
+    entry_id: str,
+    subentry_id: str,
+) -> ImportSession:
+    session = _completed_import(hass, session_id, entry_id, subentry_id)
+    async with session.lock:
+        async with _registry_lock(hass):
+            if _imports(hass).get(session.session_id) is not session:
+                raise backup.BackupError("The backup upload has expired or was cancelled")
+            if session.received != session.expected_size:
+                raise backup.BackupError("The backup upload is incomplete")
+            _imports(hass).pop(session.session_id, None)
+    return session
 
 
 async def _restore_import(
@@ -639,7 +744,7 @@ async def _restore_import(
     data: dict[str, Any],
 ) -> dict[str, Any]:
     await _async_cleanup_expired(hass)
-    session = _completed_import(
+    session = await _take_completed_import(
         hass, data.get("session_id"), entry.entry_id, subentry.subentry_id
     )
     try:
@@ -653,7 +758,7 @@ async def _restore_import(
         # this with restart recovery and the per-agent maintenance barrier.
         return await backup.async_restore_backup(hass, entry, subentry, prepared)
     finally:
-        await _discard_import(hass, session.session_id)
+        await hass.async_add_executor_job(_remove_file, session.path)
 
 
 async def async_backup_transfer_command(
@@ -725,13 +830,15 @@ async def websocket_backup_transfer(
 
 
 async def _async_cleanup_all(hass: HomeAssistant) -> None:
-    paths = [session.path for session in _exports(hass).values()] + [
-        session.path for session in _imports(hass).values()
-    ]
-    _exports(hass).clear()
-    _imports(hass).clear()
-    if paths:
-        await hass.async_add_executor_job(_remove_files, paths)
+    async with _registry_lock(hass):
+        sessions: list[ExportSession | ImportSession] = [
+            *_exports(hass).values(),
+            *_imports(hass).values(),
+        ]
+        _exports(hass).clear()
+        _imports(hass).clear()
+    for session in sessions:
+        await _async_delete_session_file(hass, session)
 
 
 def setup_backup_transfer_websocket(hass: HomeAssistant) -> bool:
