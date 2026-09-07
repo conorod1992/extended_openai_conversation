@@ -323,7 +323,7 @@ class PersistentMemory:
                         if key_pair in seen_keys:
                             raise ValueError("duplicate canonical key in memory scope")
                         seen_keys.add(key_pair)
-                except TypeError, ValueError:
+                except (TypeError, ValueError):
                     needs_save = True
                     _LOGGER.warning("Ignoring malformed persistent memory record")
                     continue
@@ -739,7 +739,7 @@ class PersistentMemory:
             current = self._owned_memory(user_id, memory_id)
             if (
                 expected_revision is not None
-                and _memory_revision(current) != expected_revision
+                and memory_revision(current) != expected_revision
             ):
                 raise ValueError(
                     "memory changed since it was loaded; reopen it before saving"
@@ -1255,7 +1255,6 @@ def memory_as_dict(
         "key": getattr(memory, "key", None),
         "valid_from": getattr(memory, "valid_from", None),
         "last_confirmed_at": getattr(memory, "last_confirmed_at", None),
-        "revision": _memory_revision(memory),
     }
     if include_scope:
         owner = getattr(memory, "user_id", personal_scope_id)
@@ -1268,6 +1267,26 @@ def memory_as_dict(
             else "Personal"
         )
     return result
+
+
+def memory_revision(memory: MemoryRecord) -> str:
+    """Return a stable optimistic-concurrency token for substantive memory state."""
+    payload = json.dumps(
+        [
+            memory.memory_id,
+            memory.user_id,
+            memory.content,
+            memory.category,
+            memory.source,
+            memory.importance,
+            memory.subject,
+            memory.key,
+            memory.valid_from,
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def validate_memory_privacy(content: str, *, automatic: bool) -> None:
@@ -1561,26 +1580,6 @@ def _embedding_text(memory: MemoryRecord) -> str:
     return " | ".join(
         filter(None, (memory.subject, memory.key, memory.category, memory.content))
     )
-
-
-def _memory_revision(memory: MemoryRecord) -> str:
-    """Return a stable optimistic-concurrency token for substantive memory state."""
-    payload = json.dumps(
-        [
-            memory.memory_id,
-            memory.user_id,
-            memory.content,
-            memory.category,
-            memory.source,
-            memory.importance,
-            memory.subject,
-            memory.key,
-            memory.valid_from,
-        ],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def _embedding_fingerprint(memory: MemoryRecord) -> str:
