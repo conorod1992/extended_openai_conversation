@@ -180,7 +180,11 @@ def _effective_runtime(
     elif active_predicate is None:
         combined = tool_available
     else:
-        combined = lambda tool: tool_available(tool) and active_predicate(tool)
+
+        def combined_predicate(tool: dict[str, Any]) -> bool:
+            return tool_available(tool) and active_predicate(tool)
+
+        combined = combined_predicate
     return ToolRuntimeAvailability(
         function_tools_supported=(
             function_tools_supported and active.function_tools_supported
