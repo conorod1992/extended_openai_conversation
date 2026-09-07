@@ -10,6 +10,7 @@ import pytest
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import regex_execution
+from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.regex_execution import (
     MAX_SPEECH_REPLACEMENT_INPUT_CHARS,
     _async_apply_speech_replacements,
@@ -183,7 +184,7 @@ async def test_worker_is_killed_when_parent_task_is_cancelled(
     assert process.waited is True
 
 
-def test_live_and_preview_async_isolation_are_installed() -> None:
+async def test_live_and_preview_async_isolation_are_installed() -> None:
     install_configurable_regex_isolation()
 
     from custom_components.extended_openai_conversation_responses import management_ui
@@ -196,11 +197,43 @@ def test_live_and_preview_async_isolation_are_installed() -> None:
         "_extended_openai_configurable_regex_executor",
         False,
     )
-    assert getattr(
-        management_ui.async_management_command,
-        "_extended_openai_speech_preview_executor",
-        False,
+
+    subentry = SimpleNamespace(
+        subentry_id="agent-id",
+        subentry_type="conversation",
+        title="Agent",
+        data=_config([{"pattern": "HA", "replacement": "Home Assistant"}]),
     )
+    entry = SimpleNamespace(
+        entry_id="entry-id",
+        domain=DOMAIN,
+        title="Entry",
+        data={},
+        subentries={subentry.subentry_id: subentry},
+    )
+
+    class ConfigEntries:
+        def async_get_entry(self, entry_id):
+            return entry if entry_id == entry.entry_id else None
+
+    hass = _ExecutorHass()
+    hass.data = {}
+    hass.config_entries = ConfigEntries()
+
+    result = await management_ui.async_management_command(
+        hass,
+        "user-id",
+        True,
+        {
+            "section": "configuration",
+            "action": "speech_preview",
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+            "sample_text": "HA is ready",
+            "config": {},
+        },
+    )
+    assert result["speech_text"] == "Home Assistant is ready"
 
 
 def test_custom_regex_still_disables_progressive_tts() -> None:
