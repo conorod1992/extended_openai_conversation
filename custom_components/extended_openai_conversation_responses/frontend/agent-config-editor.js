@@ -1,5 +1,6 @@
 import "./management-bootstrap.js";
 import { bindBackupTransfer, decorateBackupMarkup, decorateRestoreDialog } from "./backup-transfer-ui.js";
+import { bindExposedAttributeSettings, renderExposedAttributeSettings } from "./exposed-attributes-ui.js";
 const {ensureAgentConfigModule, getAgentConfigModule} = await import("./agent-config-loader.js");
 
 if (typeof document === "undefined") await ensureAgentConfigModule();
@@ -107,6 +108,19 @@ function simplifyConfigurationMarkup(panel, html) {
   return template.innerHTML;
 }
 
+function decorateExposedAttributesMarkup(panel, html) {
+  const markup = renderExposedAttributeSettings(panel);
+  if (typeof document === "undefined" || typeof document.createElement !== "function") {
+    return html.replace('<details class="advanced-context-formatting"', `${markup}<details class="advanced-context-formatting"`);
+  }
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const prompt = template.content.querySelector("#config-prompt");
+  const exposedToggle = prompt?.querySelector('[data-field="exposed_entities_enabled"]');
+  exposedToggle?.insertAdjacentHTML("afterend", markup);
+  return template.innerHTML;
+}
+
 function decorateFunctionGroups(panel, html) {
   if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
   const template = document.createElement("template");
@@ -153,7 +167,7 @@ export function renderConfiguration(panel) {
     return panel._loading?.() || '<div class="loading">Loading configuration…</div>';
   }
   applyModelAwareReasoningOptions(panel);
-  return decorateBackupMarkup(simplifyConfigurationMarkup(panel, module.renderConfiguration(panel)));
+  return decorateBackupMarkup(decorateExposedAttributesMarkup(panel, simplifyConfigurationMarkup(panel, module.renderConfiguration(panel))));
 }
 
 export function bindConfiguration(panel) {
@@ -162,6 +176,7 @@ export function bindConfiguration(panel) {
   normalizeReasoningBeforeModelValidation(panel);
   const result = module.bindConfiguration(panel);
   bindBackupTransfer(panel, backupSummaryLines);
+  bindExposedAttributeSettings(panel);
   return result;
 }
 

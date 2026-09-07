@@ -15,7 +15,9 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
-from . import management_ui as _management_ui
+# Register exposed-attribute agent configuration before modules import snapshots of
+# the authoritative config field set or normalizer.
+from . import exposed_attributes as _exposed_attributes, management_ui as _management_ui
 from .agent_maintenance import install_agent_maintenance_barrier
 from .backup_transfer import setup_backup_transfer_websocket
 from .const import (
@@ -123,6 +125,7 @@ def _register_split_frontend_modules() -> None:
     extras = (
         "agent-config-editor-base.js",
         "agent-config-loader.js",
+        "exposed-attributes-ui.js",
         "backup-transfer-ui.js",
         "guide-page-base.js",
         "request-rules-match-test-ui.js",
@@ -165,6 +168,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_debug_instrumentation()
     install_request_rule_match_preview()
     install_management_loading_optimizations()
+    # Install after prompt/management performance wrappers so selected attributes
+    # enrich the actual effective request and optimized management dispatcher.
+    _exposed_attributes.install_exposed_attribute_runtime()
     install_input_footprint()
     install_management_permissions()
     # Wrap the effective management dispatcher after permission/performance layers.
