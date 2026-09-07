@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from weakref import WeakKeyDictionary
 
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.template import TemplateEnvironment
 
@@ -25,6 +27,7 @@ TEMPLATE_EXTENDED_OPENAI = "extended_openai"
 TEMPLATE_GET_ENTITIES = "exposed_entities"
 TEMPLATE_WORKING_DIRECTORY = "working_directory"
 TEMPLATE_SKILL_DIR = "skill_dir"
+_MISSING = object()
 
 
 async def async_setup_templates(hass: HomeAssistant, entry_id: str) -> bool:
@@ -43,7 +46,8 @@ async def async_setup_templates(hass: HomeAssistant, entry_id: str) -> bool:
         domain_data[DATA_TEMPLATE_MANAGER] = manager
         try:
             await manager.async_setup()
-        except Exception:
+        except BaseException:
+            await manager.async_on_unload()
             if domain_data.get(DATA_TEMPLATE_MANAGER) is manager:
                 domain_data.pop(DATA_TEMPLATE_MANAGER, None)
             raise
@@ -79,7 +83,12 @@ class ExtendedOpenAITemplateManager:
             TEMPLATE_WORKING_DIRECTORY: self._get_working_directory,
             TEMPLATE_SKILL_DIR: self._get_skill_dir,
         }
-        self._original_init = None
+        self._original_init: Callable[..., None] | None = None
+        self._replacement_init: Callable[..., None] | None = None
+        self._remove_stop_listener: Callable[[], None] | None = None
+        self._environments: WeakKeyDictionary[TemplateEnvironment, Any] = (
+            WeakKeyDictionary()
+        )
         self._entry_ids: set[str] = set()
 
     @property
@@ -133,14 +142,10 @@ class ExtendedOpenAITemplateManager:
             "Setting up Extended OpenAI Conversation (Responses) template functions"
         )
 
-        # Register in existing environments
-        if "template.environment" in self.hass.data:
-            self.hass.data["template.environment"].globals[TEMPLATE_EXTENDED_OPENAI] = (
-                self._extended_openai
-            )
-
-        # Patch TemplateEnvironment
-        self._original_init = TemplateEnvironment.__init__  # type: ignore[assignment]
+        # Capture an immutable delegate: a later wrapper may retain ours even
+        # after unload, when it must remain a working, inactive pass-through.
+        original_init = TemplateEnvironment.__init__
+        self._original_init = original_init
 
         def template_environment_init(
             template_env_self: TemplateEnvironment,
@@ -149,14 +154,41 @@ class ExtendedOpenAITemplateManager:
             strict: bool | None = False,
             log_fn: Callable[[int, str], None] | None = None,
         ) -> None:
-            if self._original_init:
-                self._original_init(template_env_self, hass, limited, strict, log_fn)  # type: ignore[unreachable]
-            if hass:
-                template_env_self.globals[TEMPLATE_EXTENDED_OPENAI] = (
-                    self._extended_openai
-                )
+            original_init(template_env_self, hass, limited, strict, log_fn)
+            if (
+                self._replacement_init is template_environment_init
+                and hass is self.hass
+            ):
+                self._register_environment(template_env_self)
 
+        self._replacement_init = template_environment_init
         TemplateEnvironment.__init__ = template_environment_init  # type: ignore[method-assign,assignment]
+        for key in (
+            "template.environment",
+            "template.environment_limited",
+            "template.environment_strict",
+        ):
+            if key in self.hass.data:
+                self._register_environment(self.hass.data[key])
+        self._remove_stop_listener = self.hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_STOP, self._async_stop
+        )
+
+    def _register_environment(self, environment: TemplateEnvironment) -> None:
+        """Remember exactly what this manager replaced in each environment."""
+        if environment in self._environments:
+            return
+        self._environments[environment] = environment.globals.get(
+            TEMPLATE_EXTENDED_OPENAI, _MISSING
+        )
+        environment.globals[TEMPLATE_EXTENDED_OPENAI] = self._extended_openai
+
+    async def _async_stop(self, _event: Any) -> None:
+        """Release process globals even when HA stops without unloading entries."""
+        await self.async_on_unload()
+        domain_data = self.hass.data.get(DOMAIN, {})
+        if domain_data.get(DATA_TEMPLATE_MANAGER) is self:
+            domain_data.pop(DATA_TEMPLATE_MANAGER, None)
 
     async def async_on_unload(self) -> None:
         """Tear down the template functions."""
@@ -165,11 +197,23 @@ class ExtendedOpenAITemplateManager:
         )
 
         self._entry_ids.clear()
-        if self._original_init:
-            TemplateEnvironment.__init__ = self._original_init  # type: ignore[unreachable]
-            self._original_init = None
-
-        if "template.environment" in self.hass.data:
-            self.hass.data["template.environment"].globals.pop(
-                TEMPLATE_EXTENDED_OPENAI, None
-            )
+        if (
+            self._original_init is not None
+            and TemplateEnvironment.__init__ is self._replacement_init
+        ):
+            TemplateEnvironment.__init__ = self._original_init  # type: ignore[method-assign]
+        self._replacement_init = None
+        self._original_init = None
+        if self._remove_stop_listener is not None:
+            self._remove_stop_listener()
+            self._remove_stop_listener = None
+        for environment, original in self._environments.items():
+            if (
+                environment.globals.get(TEMPLATE_EXTENDED_OPENAI)
+                is self._extended_openai
+            ):
+                if original is _MISSING:
+                    environment.globals.pop(TEMPLATE_EXTENDED_OPENAI, None)
+                else:
+                    environment.globals[TEMPLATE_EXTENDED_OPENAI] = original
+        self._environments.clear()
