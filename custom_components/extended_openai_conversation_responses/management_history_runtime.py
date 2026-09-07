@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -134,9 +134,10 @@ def wrap_management_history_bounds(original: ManagementCommand) -> ManagementCom
 
 def _register_frontend_module() -> None:
     """Expose the pagination extension through the existing management asset route."""
-    management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(
+    frontend_modules: tuple[str, ...] = tuple(
         dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE))
     )
+    cast(Any, management_ui).MANAGEMENT_FRONTEND_MODULES = frontend_modules
 
 
 def install_management_history_bounds() -> bool:
