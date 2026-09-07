@@ -53,10 +53,9 @@ def selected_installed_skill_names(
 ) -> tuple[str, ...]:
     """Return selected Skills that exist in the published installed catalogue.
 
-    This is deliberately independent of Function Tool and group availability. It is
-    the stable filesystem/configuration primitive from which model loadability is
-    derived, avoiding a cycle where the loader needs a loadable Skill while a Skill
-    needs an already-exposed loader.
+    This filesystem/configuration primitive deliberately does not consult either
+    loader. Loader exposure and Skill loadability can therefore both be derived from
+    it without a circular dependency.
     """
     installed = set(installed_skills)
     return tuple(dict.fromkeys(name for name in selected_skills if name in installed))
@@ -69,11 +68,11 @@ def skill_loader_status(
     *,
     max_function_calls: int | None = None,
 ) -> SkillLoaderStatus:
-    """Return structural/model availability of the maintained Skill loader.
+    """Return structural availability of the maintained Skill loader.
 
-    This validator intentionally does not inspect the filesystem. Persisted
-    configuration must remain valid when an installed Skill is temporarily absent;
-    runtime loadability is resolved by :func:`effective_skill_loader_status`.
+    Persisted configuration validation intentionally does not inspect the filesystem.
+    A selected Skill can remain configured while temporarily absent; live loadability
+    is resolved separately by :func:`effective_skill_loader_status`.
     """
     if not selected_skills:
         return SkillLoaderStatus(available=True)
@@ -109,9 +108,6 @@ def skill_loader_status(
             group_id=group_id or None,
         )
 
-    # Function Groups are flat: the integration-owned `load_function_groups` tool is
-    # generated from primitive group/member state rather than from configured loader
-    # visibility, so an enabled on-demand group does not create a circular dependency.
     return SkillLoaderStatus(
         available=True,
         group_id=group_id or None,
@@ -126,6 +122,7 @@ def effective_skill_loader_status(
     groups: list[dict[str, Any]],
     *,
     max_function_calls: int | None = None,
+    function_tools_supported: bool = True,
     group_loader_supported: bool = True,
 ) -> SkillLoaderStatus:
     """Resolve whether any selected installed Skill is actually model-loadable."""
@@ -134,6 +131,12 @@ def effective_skill_loader_status(
         return SkillLoaderStatus(
             available=False,
             reason="no selected installed Skills are currently available",
+        )
+    if not function_tools_supported:
+        return SkillLoaderStatus(
+            available=False,
+            reason="Function Tools are unavailable for this runtime",
+            loadable_skills=usable,
         )
 
     status = skill_loader_status(
@@ -150,5 +153,6 @@ def effective_skill_loader_status(
             reason="the Function Group loader is unavailable for this runtime",
             group_id=status.group_id,
             on_demand=True,
+            loadable_skills=usable,
         )
     return replace(status, loadable_skills=usable)
