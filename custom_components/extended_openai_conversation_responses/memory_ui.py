@@ -26,6 +26,7 @@ from .const import (
 )
 from .memory import (
     MAX_LIST_LIMIT,
+    PersistentMemory,
     async_get_memory,
     get_memory_mode,
     memory_as_dict,
@@ -73,7 +74,9 @@ def _memory_ui_dict(record: Any, user_id: str) -> dict[str, Any]:
     return result
 
 
-async def _async_memory_owner(memory, readable_scopes: list[str], memory_id: str) -> str:
+async def _async_memory_owner(
+    memory: PersistentMemory, readable_scopes: list[str], memory_id: str
+) -> str:
     """Resolve a memory owner from server-side state within readable scopes."""
     if not memory_id:
         raise HomeAssistantError("memory_id is required")
