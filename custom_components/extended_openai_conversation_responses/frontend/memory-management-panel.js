@@ -91,6 +91,7 @@ class ExtendedOpenAIMemoryManagementPanel extends BaseMemoryPanel {
           importance,
           scope,
           expected_revision: this._editingMemory.revision,
+          refresh_confirmation: false,
         };
         const clearFields = [];
         for (const [field, value] of Object.entries({subject, key, valid_from: validFrom})) {
