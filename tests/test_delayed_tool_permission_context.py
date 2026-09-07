@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
@@ -113,5 +114,7 @@ async def test_recovered_due_call_rebinds_originating_user_permissions(
     assert observed_exposure == [{"entity_id": "light.allowed"}]
     assert permission_denied is True
     side_effect.assert_not_awaited()
-    restricted_user.permissions.check_entity.assert_called_with("light.secret", "control")
+    restricted_user.permissions.check_entity.assert_called_with(
+        "light.secret", POLICY_CONTROL
+    )
     assert record.call_id not in manager._records
