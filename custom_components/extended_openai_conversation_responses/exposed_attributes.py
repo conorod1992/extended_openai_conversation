@@ -23,7 +23,6 @@ MAX_ATTRIBUTES_PER_ENTITY = 64
 MAX_ATTRIBUTE_NAME_LENGTH = 255
 MAX_ATTRIBUTE_VALUE_CHARACTERS = 4096
 MAX_TOTAL_ATTRIBUTE_CONTEXT_CHARACTERS = 32768
-_FRONTEND_MODULE = "exposed-attributes-ui.js"
 _INSTALLED = False
 
 _ORIGINAL_NORMALIZE_AGENT_CONFIG = agent_config.normalize_agent_config
@@ -200,12 +199,12 @@ def exposed_attribute_catalog(
         if reference in current_references:
             continue
         entry = _entry_for_reference(registry, reference)
-        entity_id = getattr(entry, "entity_id", None)
+        saved_entity_id = getattr(entry, "entity_id", None)
         saved_unexposed.append(
             {
                 "reference": reference,
-                "entity_id": entity_id,
-                "name": entity_id or "Unavailable entity",
+                "entity_id": saved_entity_id,
+                "name": saved_entity_id or "Unavailable entity",
                 "selected_attributes": list(selected),
                 "registry_entry_exists": entry is not None,
             }
@@ -455,6 +454,3 @@ def install_exposed_attribute_runtime() -> None:
         return result
 
     management_ui.async_management_command = management_command
-    management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(
-        dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE))
-    )
