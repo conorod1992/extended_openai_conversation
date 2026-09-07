@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import management_ui
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_KNOWLEDGE_ENABLED,
 )
@@ -208,6 +209,94 @@ async def test_management_api_can_create_and_toggle_disabled_sources() -> None:
         )
         assert updated["source"]["enabled"] is True
         assert library.source_count == 1
+
+
+async def test_unified_management_preserves_knowledge_availability() -> None:
+    subentry = SimpleNamespace(
+        subentry_id="agent-1",
+        subentry_type="conversation",
+        title="Assistant",
+        data={CONF_KNOWLEDGE_ENABLED: True},
+    )
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        domain="extended_openai_conversation_responses",
+        title="OpenAI",
+        subentries={"agent-1": subentry},
+    )
+    hass = MagicMock()
+    hass.config_entries.async_get_entry.return_value = entry
+    library = await _library()
+    base = {
+        "section": "knowledge",
+        "entry_id": "entry-1",
+        "subentry_id": "agent-1",
+    }
+
+    with patch.object(
+        management_ui,
+        "async_get_knowledge",
+        AsyncMock(return_value=library),
+    ):
+        created = await management_ui.async_management_command(
+            hass,
+            "admin-user",
+            True,
+            {
+                **base,
+                "action": "create",
+                "title": "Manual",
+                "description": "Reference",
+                "content": "Service procedure",
+                "enabled": False,
+            },
+        )
+        source_id = created["source"]["source_id"]
+        assert created["source"]["enabled"] is False
+        assert library.source_count == 0
+
+        updated = await management_ui.async_management_command(
+            hass,
+            "admin-user",
+            True,
+            {
+                **base,
+                "action": "update",
+                "source_id": source_id,
+                "title": "Renamed manual",
+            },
+        )
+        assert updated["source"]["title"] == "Renamed manual"
+        assert updated["source"]["enabled"] is False
+        assert library.source_count == 0
+
+        reenabled = await management_ui.async_management_command(
+            hass,
+            "admin-user",
+            True,
+            {
+                **base,
+                "action": "update",
+                "source_id": source_id,
+                "enabled": True,
+            },
+        )
+        assert reenabled["source"]["enabled"] is True
+        assert library.source_count == 1
+
+        defaulted = await management_ui.async_management_command(
+            hass,
+            "admin-user",
+            True,
+            {
+                **base,
+                "action": "create",
+                "title": "Default",
+                "description": "",
+                "content": "Enabled by default",
+            },
+        )
+        assert defaulted["source"]["enabled"] is True
 
 
 async def test_enabled_field_requires_boolean() -> None:
