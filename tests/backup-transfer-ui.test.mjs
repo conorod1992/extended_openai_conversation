@@ -6,6 +6,7 @@ import {
   decorateBackupMarkup,
   decorateRestoreDialog,
   downloadFullBackup,
+  openBackupPicker,
   uploadFullBackup,
   WS_BACKUP_TRANSFER,
 } from "../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js";
@@ -103,6 +104,32 @@ assert.deepEqual([...base64ToBytes(bytesToBase64(new Uint8Array([0, 1, 127, 128,
   assert.equal(result.title, "Agent");
   assert.deepEqual(received, [...source]);
   assert.deepEqual(calls, ["import_start", "import_chunk", "import_chunk", "import_chunk", "import_inspect"]);
+}
+
+{
+  let resolveCleanup;
+  const calls = [];
+  const panel = makePanel((message) => {
+    calls.push(message);
+    return new Promise((resolve) => { resolveCleanup = resolve; });
+  });
+  panel._backupTransferSession = "old-import";
+  let clicked = false;
+  const input = {
+    value: "stale",
+    click() { clicked = true; },
+  };
+
+  openBackupPicker(panel, input);
+
+  assert.equal(clicked, true);
+  assert.equal(input.value, "");
+  assert.equal(panel._backupTransferSession, null);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].action, "import_cancel");
+  assert.equal(calls[0].data.session_id, "old-import");
+  resolveCleanup({cancelled: true});
+  await Promise.resolve();
 }
 
 {
