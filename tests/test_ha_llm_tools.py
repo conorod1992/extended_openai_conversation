@@ -380,15 +380,14 @@ async def test_source_schema_validates_before_side_effect(hass):
 
 
 async def test_mixed_group_prompt_tracks_actual_provider_rounds(hass):
-    from test_tool_exchange_protocol import (
+    from custom_components.extended_openai_conversation_responses.const import (
+        FUNCTION_GROUP_LOADER_TOOL_NAME,
+    )
+    from tests.test_tool_exchange_protocol import (
         _chat_log,
         _entity,
         _final_stream,
         _function_call_stream,
-    )
-
-    from custom_components.extended_openai_conversation_responses.const import (
-        FUNCTION_GROUP_LOADER_TOOL_NAME,
     )
 
     api = register(hass, TestAPI(hass))
@@ -529,7 +528,8 @@ async def test_real_provider_exchange_executes_ha_tool_once_and_removes_budgeted
     hass, mode
 ):
     from openai.types.chat import ChatCompletionChunk
-    from test_tool_exchange_protocol import (
+
+    from tests.test_tool_exchange_protocol import (
         FakeStream,
         _chat_log,
         _entity,

@@ -4,7 +4,6 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
-from test_ha_llm_tools import Echo, TestAPI, reference, register
 
 from custom_components.extended_openai_conversation_responses import management_ui
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -16,6 +15,7 @@ from custom_components.extended_openai_conversation_responses.ha_llm_tools impor
     new_reference_tool,
 )
 from homeassistant.exceptions import HomeAssistantError
+from tests.test_ha_llm_tools import Echo, TestAPI, reference, register
 
 
 def setup_agent(hass, monkeypatch):
@@ -122,11 +122,10 @@ def test_existing_export_import_keeps_unavailable_references():
 
 
 def test_existing_full_backup_validation_keeps_unavailable_references():
-    from test_backup import _document
-
     from custom_components.extended_openai_conversation_responses.backup import (
         inspect_backup,
     )
+    from tests.test_backup import _document
 
     saved = new_reference_tool(reference(source="not_installed"), set())
     document = _document()
