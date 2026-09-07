@@ -107,6 +107,7 @@ from .persistence_hardening import install_persistence_transactions
 from .provider_credentials import setup_provider_credentials_websocket
 from .regex_execution import install_configurable_regex_isolation
 from .request_rule_match_preview import install_request_rule_match_preview
+from .restore_recovery import async_recover_pending_restores, install_restore_recovery
 from .safety_hardening import install_safety_hardening
 from .services import async_setup_services
 from .skill_runtime_availability import install_skill_runtime_availability
@@ -153,6 +154,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Extended OpenAI Conversation (Responses)."""
     apply_openai_compatibility()
     install_persistence_transactions()
+    install_restore_recovery()
     install_performance_optimizations()
     install_skill_runtime_availability()
     install_voice_identity_runtime()
@@ -174,6 +176,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # execution hook wraps the final configured Function Tool seam.
     await async_setup_delayed_tools(hass)
     await async_migrate_integration(hass)
+    # Resolve any interrupted cross-store restore before conversation agents load.
+    await async_recover_pending_restores(hass)
     await async_setup_ha_permissions(hass)
     await async_setup_services(hass, config)
     await async_setup_intercom_services(hass)
