@@ -17,6 +17,7 @@ from homeassistant.helpers.typing import ConfigType
 
 from . import management_ui as _management_ui
 from .agent_maintenance import install_agent_maintenance_barrier
+from .backup_transfer import setup_backup_transfer_websocket
 from .const import (
     CONF_API_PROVIDER,
     CONF_API_VERSION,
@@ -122,6 +123,7 @@ def _register_split_frontend_modules() -> None:
     extras = (
         "agent-config-editor-base.js",
         "agent-config-loader.js",
+        "backup-transfer-ui.js",
         "guide-page-base.js",
         "request-rules-match-test-ui.js",
         "management-permission-boundaries.js",
@@ -181,9 +183,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_setup_ha_permissions(hass)
     await async_setup_services(hass, config)
     await async_setup_intercom_services(hass)
-    # Register the narrow admin credential command separately from the broad
-    # management command before exposing the management panel.
+    # Register narrow admin-only commands separately from the broad management
+    # command before exposing the management panel.
     setup_provider_credentials_websocket(hass)
+    setup_backup_transfer_websocket(hass)
     # The management bootstrap imports debug-management.js, so register the
     # debug assets before exposing the panel itself.
     await async_setup_debug_ui(hass)

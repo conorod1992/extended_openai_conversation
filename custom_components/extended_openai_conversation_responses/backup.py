@@ -47,7 +47,12 @@ from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_
 
 BACKUP_FORMAT = "extended_openai_conversation_backup"
 BACKUP_VERSION = 5
-MAX_BACKUP_BYTES = 16 * 1024 * 1024
+# The management UI uses the chunked transfer path for large files. Keep validation
+# bounded even when a document was reconstructed from many small WebSocket frames.
+MAX_BACKUP_BYTES = 128 * 1024 * 1024
+# The old one-message JSON transport remains for API compatibility only. It must
+# never grow into a WebSocket frame large enough to destabilize Home Assistant.
+MAX_LEGACY_EXPORT_BYTES = 16 * 1024 * 1024
 _BACKUP_LOCKS = f"{DOMAIN}.backup_locks"
 _LOGGER = logging.getLogger(__name__)
 
@@ -148,7 +153,7 @@ async def async_collect_backup_snapshot(
 
 
 def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Redact and serialize a previously collected local backup snapshot."""
+    """Redact and serialize a small legacy one-message JSON backup."""
     document = {
         **snapshot,
         "agent": {
@@ -158,8 +163,11 @@ def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "request_rules": _safe_configuration(snapshot["request_rules"]),
     }
     serialized = json.dumps(document, indent=2, ensure_ascii=False)
-    if len(serialized.encode("utf-8")) > MAX_BACKUP_BYTES:
-        raise BackupError("This agent backup is larger than the supported 16 MB limit")
+    if len(serialized.encode("utf-8")) > MAX_LEGACY_EXPORT_BYTES:
+        raise BackupError(
+            "This backup is too large for the legacy one-message JSON export; "
+            "use the full backup transfer interface"
+        )
     title = str(document["agent"]["title"])
     safe_title = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")
     created_at = str(document["created_at"])
@@ -180,11 +188,26 @@ async def async_create_backup(
     return finalize_backup_snapshot(snapshot)
 
 
-def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
+def inspect_backup(
+    value: Any,
+    target_agent_id: str,
+    *,
+    max_bytes: int = MAX_LEGACY_EXPORT_BYTES,
+) -> PreparedRestore:
     """Parse and validate every category without mutating agent state."""
+    if isinstance(value, PreparedRestore):
+        return value
+    if (
+        isinstance(max_bytes, bool)
+        or not isinstance(max_bytes, int)
+        or max_bytes < 1
+        or max_bytes > MAX_BACKUP_BYTES
+    ):
+        raise ValueError("Backup validation byte limit is invalid")
+    limit_mb = max_bytes // (1024 * 1024)
     if isinstance(value, str):
-        if len(value.encode("utf-8")) > MAX_BACKUP_BYTES:
-            raise BackupError("The backup file exceeds the 16 MB size limit")
+        if len(value.encode("utf-8")) > max_bytes:
+            raise BackupError(f"The backup exceeds the {limit_mb} MB safety limit")
         try:
             value = json.loads(value)
         except json.JSONDecodeError as err:
@@ -198,8 +221,8 @@ def inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
             )
         except (TypeError, ValueError) as err:
             raise BackupError("The backup is incomplete or corrupted") from err
-        if encoded_size > MAX_BACKUP_BYTES:
-            raise BackupError("The backup file exceeds the 16 MB size limit")
+        if encoded_size > max_bytes:
+            raise BackupError(f"The backup exceeds the {limit_mb} MB safety limit")
     if not isinstance(value, dict):
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
     if value.get("format") != BACKUP_FORMAT:

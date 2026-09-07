@@ -1,4 +1,4 @@
-"""Roadmap PR3 regression tests for point-in-time backup snapshots."""
+"""Regression tests for point-in-time full-backup snapshots."""
 
 from __future__ import annotations
 
