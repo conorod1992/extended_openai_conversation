@@ -461,7 +461,7 @@ class PersistentMemory:
             self._ensure_initialized()
             timestamp = dt_util.utcnow().isoformat()
             keyed_identity = isinstance(cleaned_key, str)
-            if keyed_identity and (
+            if isinstance(cleaned_key, str) and (
                 memory_id := self._key_index.get((user_id, cleaned_key))
             ):
                 current = self._memories[memory_id]
@@ -638,7 +638,9 @@ class PersistentMemory:
                 return None
             vectors = await provider([query])
             if len(vectors) != 1:
-                raise ValueError("embedding provider returned the wrong number of vectors")
+                raise ValueError(
+                    "embedding provider returned the wrong number of vectors"
+                )
             vector = _clean_embedding(vectors[0])
             self._set_hybrid_status("active")
             return vector

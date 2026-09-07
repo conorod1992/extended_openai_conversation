@@ -68,7 +68,7 @@ async def test_metadata_defaults_freshness_and_backup_round_trip() -> None:
         "pets",
         "explicit",
         subject="Oscar",
-        key="Pet Oscar Breed",
+        key="pet.oscar.breed",
         valid_from="2025-01-01T00:00:00+00:00",
     )
     record = (await memory.async_list("alice"))[0]
