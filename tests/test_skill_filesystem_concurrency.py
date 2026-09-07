@@ -46,6 +46,60 @@ async def test_runtime_hardening_keeps_manager_owned_boundary(hass, tmp_path) ->
     assert not hasattr(manager, "_extended_openai_skill_load_lock")
 
 
+async def test_concurrent_initialization_retry_cannot_create_parallel_managers(
+    hass, tmp_path, monkeypatch
+) -> None:
+    """A failed first load cannot race a waiting retry against a new singleton."""
+    skills_dir = tmp_path / "published-skills"
+    original_discover = SkillManager._async_discover_skills_locked
+    calls = 0
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    retry_started = asyncio.Event()
+    release_retry = asyncio.Event()
+
+    async def controlled_discover(manager: SkillManager):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_started.set()
+            await release_first.wait()
+            raise RuntimeError("simulated initial discovery failure")
+        if calls == 2:
+            retry_started.set()
+            await release_retry.wait()
+        return await original_discover(manager)
+
+    monkeypatch.setattr(
+        SkillManager, "_async_discover_skills_locked", controlled_discover
+    )
+
+    first = asyncio.create_task(
+        SkillManager.async_get_instance(hass, user_skills_dir=str(skills_dir))
+    )
+    await first_started.wait()
+    second = asyncio.create_task(
+        SkillManager.async_get_instance(hass, user_skills_dir=str(skills_dir))
+    )
+    release_first.set()
+    with pytest.raises(RuntimeError, match="simulated initial discovery failure"):
+        await first
+
+    await retry_started.wait()
+    third = asyncio.create_task(
+        SkillManager.async_get_instance(hass, user_skills_dir=str(skills_dir))
+    )
+    await asyncio.sleep(0)
+    assert calls == 2
+    assert not third.done()
+
+    release_retry.set()
+    second_manager, third_manager = await asyncio.gather(second, third)
+    assert second_manager is third_manager
+    assert SkillManager._instance is second_manager
+    assert calls == 2
+
+
 async def test_staging_is_outside_discovery_and_incomplete_paths_stay_hidden(
     hass, tmp_path
 ) -> None:
