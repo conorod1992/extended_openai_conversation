@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +14,11 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .debug import get_debug_manager
+from .debug_management_projection import debug_run_summaries, debug_trace_page
+from .management_result_limits import (
+    MANAGEMENT_DEBUG_PROVIDER_PAGE_DEFAULT,
+    MANAGEMENT_DEBUG_PROVIDER_PAGE_MAX,
+)
 from .request_diagnostics import install_payload_latency_diagnostics
 
 DEBUG_WS_COMMAND = f"{DOMAIN}/request_debug"
@@ -60,6 +64,8 @@ def _manager(hass: HomeAssistant, msg: dict[str, Any]):
         vol.Optional("debug_id"): str,
         vol.Optional("enabled"): bool,
         vol.Optional("limit"): int,
+        vol.Optional("provider_offset"): int,
+        vol.Optional("provider_limit"): int,
         vol.Optional("confirm"): bool,
     }
 )
@@ -88,18 +94,31 @@ async def websocket_request_debug(
                 )
                 result = manager.status()
             elif action == "runs":
-                result = {"runs": manager.summaries(), **manager.status()}
+                result = {"runs": debug_run_summaries(manager), **manager.status()}
             elif action == "get":
                 debug_id = msg.get("debug_id")
                 if not isinstance(debug_id, str):
                     raise HomeAssistantError("debug_id is required")
-                trace = manager.get(debug_id)
+                trace = debug_trace_page(
+                    manager,
+                    debug_id,
+                    provider_offset=max(0, int(msg.get("provider_offset", 0))),
+                    provider_limit=max(
+                        1,
+                        min(
+                            int(
+                                msg.get(
+                                    "provider_limit",
+                                    MANAGEMENT_DEBUG_PROVIDER_PAGE_DEFAULT,
+                                )
+                            ),
+                            MANAGEMENT_DEBUG_PROVIDER_PAGE_MAX,
+                        ),
+                    ),
+                )
                 if trace is None:
                     raise HomeAssistantError("Debug run not found")
-                result = {
-                    "trace": trace,
-                    "copy_text": json.dumps(trace, indent=2, ensure_ascii=False),
-                }
+                result = {"trace": trace}
             elif action == "clear":
                 if msg.get("confirm") is not True:
                     raise HomeAssistantError("Explicit confirmation is required")
