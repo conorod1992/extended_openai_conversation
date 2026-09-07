@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 import json
 import time
@@ -18,6 +20,41 @@ from .skill_availability import function_group_enabled
 
 _RUNTIMES = "extended_openai_conversation_responses.function_group_runtimes"
 type ToolAvailabilityPredicate = Callable[[dict[str, Any]], bool]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolRuntimeAvailability:
+    """Stable primitive runtime support used by configured-tool assembly."""
+
+    function_tools_supported: bool = True
+    group_loader_supported: bool = True
+    tool_available: ToolAvailabilityPredicate | None = None
+
+
+_ACTIVE_TOOL_RUNTIME: ContextVar[ToolRuntimeAvailability | None] = ContextVar(
+    "extended_openai_function_tool_runtime", default=None
+)
+
+
+@contextmanager
+def function_tool_runtime_scope(
+    *,
+    function_tools_supported: bool = True,
+    group_loader_supported: bool = True,
+    tool_available: ToolAvailabilityPredicate | None = None,
+) -> Iterator[None]:
+    """Apply one request/Preview availability snapshot without global mutation."""
+    token = _ACTIVE_TOOL_RUNTIME.set(
+        ToolRuntimeAvailability(
+            function_tools_supported=function_tools_supported,
+            group_loader_supported=group_loader_supported,
+            tool_available=tool_available,
+        )
+    )
+    try:
+        yield
+    finally:
+        _ACTIVE_TOOL_RUNTIME.reset(token)
 
 
 @dataclass(slots=True)
@@ -119,10 +156,38 @@ def function_tool_runtime_available(tool: dict[str, Any]) -> bool:
         return False
     function_config = tool.get("function", {})
     if function_config.get("type") == "bash":
-        # Bash is arbitrary process execution, not a sandboxed filesystem helper.
-        # Legacy definitions remain unavailable until explicitly acknowledged.
         return function_config.get("allow_unsafe_shell") is True
     return True
+
+
+def _effective_runtime(
+    function_tools_supported: bool,
+    group_loader_supported: bool,
+    tool_available: ToolAvailabilityPredicate | None,
+) -> ToolRuntimeAvailability:
+    """Combine explicit caller constraints with the active request snapshot."""
+    active = _ACTIVE_TOOL_RUNTIME.get()
+    if active is None:
+        return ToolRuntimeAvailability(
+            function_tools_supported=function_tools_supported,
+            group_loader_supported=group_loader_supported,
+            tool_available=tool_available,
+        )
+
+    active_predicate = active.tool_available
+    if tool_available is None:
+        combined = active_predicate
+    elif active_predicate is None:
+        combined = tool_available
+    else:
+        combined = lambda tool: tool_available(tool) and active_predicate(tool)
+    return ToolRuntimeAvailability(
+        function_tools_supported=(
+            function_tools_supported and active.function_tools_supported
+        ),
+        group_loader_supported=(group_loader_supported and active.group_loader_supported),
+        tool_available=combined,
+    )
 
 
 def _tool_is_available(
@@ -147,20 +212,14 @@ def _available_group_sets(
     group_loader_supported: bool,
     tool_available: ToolAvailabilityPredicate | None,
 ) -> tuple[set[str], dict[str, dict[str, Any]], set[str]]:
-    """Resolve executable member names plus reachable on-demand/always groups.
-
-    The group loader's support is a primitive supplied by the runtime. On-demand
-    availability therefore never depends on whether a generated loader happens to be
-    present in the assembled tool list, avoiding circular availability.
-    """
+    """Resolve executable members plus reachable on-demand and always groups."""
+    runtime = _effective_runtime(
+        function_tools_supported, group_loader_supported, tool_available
+    )
     if configured_tools is None:
         available_names = (
-            {
-                name
-                for group in groups
-                for name in group.get("functions", [])
-            }
-            if function_tools_supported
+            {name for group in groups for name in group.get("functions", [])}
+            if runtime.function_tools_supported
             else set()
         )
     else:
@@ -169,8 +228,8 @@ def _available_group_sets(
             for tool in configured_tools
             if _tool_is_available(
                 tool,
-                function_tools_supported=function_tools_supported,
-                tool_available=tool_available,
+                function_tools_supported=runtime.function_tools_supported,
+                tool_available=runtime.tool_available,
             )
         }
 
@@ -184,7 +243,7 @@ def _available_group_sets(
     on_demand = {
         group["id"]: group
         for group in groups
-        if group_loader_supported
+        if runtime.group_loader_supported
         and function_group_enabled(group)
         and group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
         and any(name in available_names for name in group["functions"])
@@ -233,8 +292,6 @@ def assemble_function_tools(
     tool_available: ToolAvailabilityPredicate | None = None,
 ) -> FunctionToolAssembly:
     """Centralize the effective configured tool set for one provider request."""
-    # Keep disabled groups in membership so their tools cannot fall through as
-    # ungrouped/always-available tools. Group state is independent of member state.
     membership = {
         function_name: group for group in groups for function_name in group["functions"]
     }
@@ -246,9 +303,7 @@ def assemble_function_tools(
         tool_available=tool_available,
     )
 
-    # A loaded on-demand group is meaningful only while that exact group is still
-    # reachable and contains at least one executable member. If configuration makes
-    # it unavailable, discard the ephemeral load rather than resurrecting it later.
+    # Never resurrect an old loaded state after the group becomes unavailable.
     loaded_group_ids.intersection_update(on_demand)
 
     effective: list[dict[str, Any]] = []
