@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import datetime
+from functools import wraps
 import hashlib
 import json
 import time
@@ -601,6 +602,7 @@ def install_debug_instrumentation() -> None:
     original_build_prompt = ExtendedOpenAIAgentEntity._build_system_prompt
     original_resolve = ConversationContinuity.async_resolve
 
+    @wraps(original_process)
     async def traced_process(self: Any, user_input: Any) -> Any:
         manager = get_debug_manager(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
@@ -626,6 +628,7 @@ def install_debug_instrumentation() -> None:
         finally:
             _ACTIVE_DEBUG_TRACE.reset(token)
 
+    @wraps(original_handle_message)
     async def traced_handle_message(self: Any, *args: Any, **kwargs: Any) -> Any:
         trace = current_debug_trace()
         started = time.monotonic()
@@ -641,6 +644,7 @@ def install_debug_instrumentation() -> None:
                     (time.monotonic() - started) * 1000
                 )
 
+    @wraps(original_retrieve_memories)
     async def traced_retrieve_memories(self: Any, *args: Any, **kwargs: Any) -> Any:
         trace = current_debug_trace()
         started = time.monotonic()
@@ -653,6 +657,7 @@ def install_debug_instrumentation() -> None:
             trace.memory["persistent_records"] = _jsonable(result)
         return result
 
+    @wraps(original_retrieve_temporary)
     async def traced_retrieve_temporary(self: Any, *args: Any, **kwargs: Any) -> Any:
         trace = current_debug_trace()
         started = time.monotonic()
@@ -665,6 +670,7 @@ def install_debug_instrumentation() -> None:
             trace.memory["temporary_records"] = _jsonable(result)
         return result
 
+    @wraps(original_build_prompt)
     def traced_build_prompt(self: Any, *args: Any, **kwargs: Any) -> str:
         trace = current_debug_trace()
         started = time.monotonic()
@@ -680,6 +686,7 @@ def install_debug_instrumentation() -> None:
             }
         return prompt
 
+    @wraps(original_resolve)
     async def traced_resolve(
         self: Any,
         mode: str,
