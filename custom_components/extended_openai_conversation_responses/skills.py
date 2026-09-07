@@ -173,10 +173,17 @@ class SkillManager:
             task: asyncio.Future[T] = asyncio.ensure_future(operation())
             try:
                 return await asyncio.shield(task)
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as cancelled:
+                while not task.done():
+                    try:
+                        await asyncio.shield(task)
+                    except asyncio.CancelledError:
+                        continue
+                    except BaseException:
+                        break
                 with suppress(BaseException):
-                    await task
-                raise
+                    task.result()
+                raise cancelled
 
     async def async_initialize(self) -> None:
         """Perform first discovery exactly once for concurrent callers."""
