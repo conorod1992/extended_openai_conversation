@@ -69,6 +69,7 @@ from .function_execution import (
     split_legacy_execution_delay,
 )
 from .functions import get_function
+from .ha_llm_tools import async_discover, current_snapshot, is_ha_tool, reference_key
 from .helpers import get_api_mode, get_model_config
 from .provider_errors import provider_stream_error, provider_transport_error
 from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
@@ -496,6 +497,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 }
 
         finalization_retry_attempted = False
+        base_system_prompt = cast(
+            conversation.SystemContent, chat_log.content[0]
+        ).content
+        ha_prompt_applied = False
         draft_content_ids: set[int] = set()
         observed_input_tokens = 0
         loader_rounds = 0
@@ -562,6 +567,27 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     [CONTINUE_CONVERSATION_TOOL], api_mode
                 )
                 tool_kwargs["tool_choice"] = "required"
+
+            ha_prompt = current_snapshot().prompt_for(
+                [] if force_finalizer_only else request_function_tools
+            )
+            if ha_prompt or ha_prompt_applied:
+                ha_prompt_applied = bool(ha_prompt)
+                effective_prompt = "\n".join(
+                    part for part in (base_system_prompt, ha_prompt) if part
+                )
+                chat_log.content[0] = conversation.SystemContent(
+                    content=effective_prompt
+                )
+                # Keep attachments/history intact while updating the system item in
+                # both provider formats. This is the actual diagnostic input too.
+                messages[0] = (
+                    _convert_content_to_responses_param([chat_log.content[0]])
+                    if api_mode == API_MODE_RESPONSES
+                    else _convert_content_to_param(
+                        [chat_log.content[0]], shorten_tool_call_id
+                    )
+                )[0]
 
             _LOGGER.info(
                 "Sending provider request for %s using %s with %d input items",
@@ -1323,6 +1349,38 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
     ) -> conversation.ToolResultContent:
         """Execute a configured Function Tool."""
         try:
+            if is_ha_tool(function_tool):
+                if llm_context is None:
+                    raise HomeAssistantError("HA tool request context unavailable")
+                reference = function_tool["function"]
+                snapshot = current_snapshot()
+                if not snapshot.caller_provided:
+                    snapshot = await async_discover(self.hass, llm_context, [reference])
+                live = snapshot.tools.get(reference_key(reference))
+                if live is None:
+                    raise HomeAssistantError(
+                        "HA tool unavailable in the current request"
+                    )
+                if llm_context.context and llm_context.context.user_id:
+                    user = await self.hass.auth.async_get_user(
+                        llm_context.context.user_id
+                    )
+                    if user is None or not user.is_active:
+                        raise HomeAssistantError("HA tool caller is no longer active")
+                # Recheck after discovery/auth awaits, immediately before dispatch.
+                from .function_tool_resolution import latest_function_tool_for_execution
+
+                latest_function_tool_for_execution(self, function_tool)
+                guest_policy = getattr(self, "_effective_guest_policy", None)
+                if callable(guest_policy) and guest_policy().guest_active:
+                    raise HomeAssistantError("HA tools are unavailable in Guest Mode")
+                ha_result = await live.async_call(tool_input)
+                return conversation.ToolResultContent(
+                    agent_id=self.entity_id,
+                    tool_call_id=tool_input.id,
+                    tool_name=tool_input.tool_name,
+                    tool_result={"result": _normalize_function_result(ha_result)},
+                )
             spec = function_tool.get("spec", {})
             arguments = await async_validate_function_arguments(
                 self.hass, spec, tool_input.tool_args

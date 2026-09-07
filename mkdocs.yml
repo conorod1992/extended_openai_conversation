@@ -60,6 +60,7 @@ nav:
   - Custom functions:
       - Overview: functions/index.md
       - Function types and examples: functions/function-types.md
+      - Home Assistant LLM Tools: functions/home-assistant-llm-tools.md
   - Reference:
       - Compatibility: reference/compatibility.md
       - Logging: reference/logging.md

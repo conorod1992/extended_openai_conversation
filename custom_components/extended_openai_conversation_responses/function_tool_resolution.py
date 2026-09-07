@@ -87,4 +87,9 @@ def latest_function_tool_for_execution(
             f"Function Tool `{tool_name}` is unavailable because Function Group "
             f"`{current_group['id']}` is disabled"
         )
+    # A saved HA reference owns exposure settings, not the live request schema.
+    if function.get("type") == "ha_llm":
+        if current_tool.get("function") != function:
+            raise FunctionNotFound(tool_name)
+        return function_tool
     return current_tool

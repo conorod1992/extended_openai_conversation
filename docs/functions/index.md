@@ -66,6 +66,12 @@ The integration supports several implementation types:
 
 See [Function types and examples](function-types.md) for details.
 
+Use **Add LLM Tools** to select capabilities supplied by Home Assistant or installed
+services, including registered MCP APIs. These are live references, with the same
+enabled controls and Function Groups, rather than editable Function YAML. Bulk
+addition saves only the individual tools selected now; future source tools are not
+automatically exposed. See [Home Assistant LLM Tools](home-assistant-llm-tools.md).
+
 ## Prefer ordinary Home Assistant features where possible
 
 Before writing a large custom function, consider whether the cleanest solution is:

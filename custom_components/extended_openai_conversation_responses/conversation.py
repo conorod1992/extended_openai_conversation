@@ -126,6 +126,13 @@ from .guest_mode import (
     guest_mode_denial_result,
     resolve_guest_policy,
 )
+from .ha_llm_tools import (
+    ToolSnapshot,
+    async_discover,
+    current_snapshot,
+    is_ha_tool,
+    tool_snapshot_scope,
+)
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
@@ -736,6 +743,29 @@ class ExtendedOpenAIAgentEntity(
         chat_log: ChatLog,
         request_options: Mapping[str, Any] | None = None,
     ) -> ConversationResult:
+        """Resolve HA references in this request's user/device scope only."""
+        configured = self._configured_function_tools_from_data(self.subentry.data)
+        references = [
+            tool["function"]
+            for tool in configured
+            if is_ha_tool(tool) and function_tool_enabled(tool)
+        ]
+        snapshot = ToolSnapshot()
+        if references and not self._effective_guest_policy().guest_active:
+            snapshot = await async_discover(
+                self.hass, user_input.as_llm_context(DOMAIN), references
+            )
+        with tool_snapshot_scope(snapshot):
+            return await self._async_handle_message_with_ha_tools(
+                user_input, chat_log, request_options
+            )
+
+    async def _async_handle_message_with_ha_tools(
+        self,
+        user_input: ConversationInput,
+        chat_log: ChatLog,
+        request_options: Mapping[str, Any] | None = None,
+    ) -> ConversationResult:
         """Call the API."""
         # Create LLM context
         llm_context = user_input.as_llm_context(DOMAIN)
@@ -1278,7 +1308,9 @@ class ExtendedOpenAIAgentEntity(
 
     def _get_configured_function_tools(self) -> list[dict[str, Any]]:
         """Parse and validate only user-configured tools without changing storage."""
-        return self._configured_function_tools_from_data(self.subentry.data)
+        return current_snapshot().project(
+            self._configured_function_tools_from_data(self.subentry.data)
+        )
 
     def _configured_function_tools_from_data(self, data: Any) -> list[dict[str, Any]]:
         """Parse configured tools from one current or persisted data mapping."""
@@ -1318,7 +1350,8 @@ class ExtendedOpenAIAgentEntity(
         configured_tools = [
             tool
             for tool in configured_tools
-            if policy.allows_configured_tool(tool["spec"]["name"])
+            if not is_ha_tool(tool)
+            and policy.allows_configured_tool(tool["spec"]["name"])
             and (
                 not policy.legacy_function_flags
                 or (
@@ -1351,6 +1384,8 @@ class ExtendedOpenAIAgentEntity(
         """Execute an integration-owned tool or a configured tool."""
         function_type = function_tool.get("function", {}).get("type")
         policy = self._effective_guest_policy()
+        if function_type == "ha_llm" and policy.guest_active:
+            return self._tool_result(tool_input, guest_mode_denial_result())
         if function_type == "guest_mode":
             try:
                 result = await self._async_execute_guest_mode_tool(tool_input.tool_args)

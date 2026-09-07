@@ -1,6 +1,6 @@
 const PANEL_TAG = "extended-openai-management-panel";
 const PATCHED = Symbol.for("extended-openai.management-function-dependencies");
-const TOOL_MUTATIONS = new Set(["save", "set_enabled", "delete", "save_group", "delete_group"]);
+const TOOL_MUTATIONS = new Set(["save", "set_enabled", "delete", "save_group", "delete_group", "ha_add"]);
 const REQUEST_RULE_CACHE_KEY = "capabilities/request-rules";
 
 export function installFunctionDependencyIntegrity(registry = globalThis.customElements) {

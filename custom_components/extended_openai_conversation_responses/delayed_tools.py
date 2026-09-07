@@ -322,7 +322,11 @@ class DelayedToolManager:
             ),
             None,
         )
-        if current_tool is None or not function_tool_enabled(current_tool):
+        if (
+            current_tool is None
+            or not function_tool_enabled(current_tool)
+            or current_tool.get("function", {}).get("type") == "ha_llm"
+        ):
             return not await self._async_discard(
                 call_id, "Function Tool was removed or disabled"
             )
@@ -499,6 +503,14 @@ def _install_execution_hook() -> None:
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> conversation.ToolResultContent:
+        if function_tool.get("function", {}).get("type") == "ha_llm":
+            if getattr(llm_context, _DELAYED_EXECUTION_MARKER, False):
+                raise HomeAssistantError(
+                    "HA LLM Tools cannot execute in the delayed scheduler"
+                )
+            return await original(
+                entity, function_tool, tool_input, llm_context, exposed_entities
+            )
         spec = function_tool.get("spec", {})
         arguments = await async_validate_function_arguments(
             entity.hass, spec, tool_input.tool_args
