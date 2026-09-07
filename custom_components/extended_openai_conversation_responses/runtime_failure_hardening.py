@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator, Mapping
 from dataclasses import replace
 from functools import wraps
@@ -30,6 +31,7 @@ from .usage import UsageManager
 _LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
 _VOLATILE_USAGE_MANAGERS = f"{DOMAIN}.volatile_usage_managers"
+_USAGE_INIT_LOCKS = f"{DOMAIN}.usage_init_locks"
 _ORIGINAL_ASYNC_GET_USAGE = usage_module.async_get_usage
 
 
@@ -46,32 +48,46 @@ class _VolatileUsageStorage:
 async def async_get_usage_safely(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> UsageManager:
-    """Return persistent Usage when possible, otherwise one shared volatile manager."""
+    """Return one persistent or shared volatile Usage manager for an agent."""
     key = (entry_id, subentry_id)
     fallbacks: dict[tuple[str, str], UsageManager] = hass.data.setdefault(
         _VOLATILE_USAGE_MANAGERS, {}
     )
-    if key in fallbacks:
-        return fallbacks[key]
+    locks: dict[tuple[str, str], asyncio.Lock] = hass.data.setdefault(
+        _USAGE_INIT_LOCKS, {}
+    )
+    lock = locks.setdefault(key, asyncio.Lock())
 
-    try:
-        return await _ORIGINAL_ASYNC_GET_USAGE(hass, entry_id, subentry_id)
-    except Exception:
-        # Usage is diagnostic telemetry. A damaged/unavailable Store must not make
-        # the conversation agent itself unavailable. Keep accounting in memory for
-        # this HA runtime and retry persistent storage after the next restart.
-        _LOGGER.exception(
-            "Unable to initialize Usage storage; continuing with volatile accounting"
-        )
-        manager = UsageManager(
-            _VolatileUsageStorage(),
-            _VolatileUsageStorage(),
-            _VolatileUsageStorage(),
-            agent_subentry_id=subentry_id,
-        )
-        await manager.async_initialize()
-        fallbacks[key] = manager
-        return manager
+    async with lock:
+        if key in fallbacks:
+            return fallbacks[key]
+
+        try:
+            return await _ORIGINAL_ASYNC_GET_USAGE(hass, entry_id, subentry_id)
+        except Exception:
+            # The persistent getter publishes its manager before initialization so
+            # concurrent callers share one object. If initialization still fails,
+            # discard that stale unpublished runtime before installing the one
+            # volatile fallback used for the rest of this HA runtime.
+            persistent_managers = hass.data.get(usage_module._USAGE_MANAGERS)
+            if isinstance(persistent_managers, dict):
+                persistent_managers.pop(key, None)
+
+            # Usage is diagnostic telemetry. A damaged/unavailable Store must not make
+            # the conversation agent itself unavailable. Keep accounting in memory for
+            # this HA runtime and retry persistent storage after the next restart.
+            _LOGGER.exception(
+                "Unable to initialize Usage storage; continuing with volatile accounting"
+            )
+            manager = UsageManager(
+                _VolatileUsageStorage(),
+                _VolatileUsageStorage(),
+                _VolatileUsageStorage(),
+                agent_subentry_id=subentry_id,
+            )
+            await manager.async_initialize()
+            fallbacks[key] = manager
+            return manager
 
 
 def _install_usage_startup_fallback() -> None:
