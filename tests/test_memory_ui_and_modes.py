@@ -212,7 +212,7 @@ async def test_ui_backend_memory_crud_uses_authenticated_user_scope() -> None:
         subject=None,
         key=None,
         valid_from=None,
-        refresh_confirmation=True,
+        refresh_confirmation=False,
         target_user_id="user-7",
         clear_fields=None,
         expected_revision=None,
