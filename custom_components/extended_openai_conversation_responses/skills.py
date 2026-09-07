@@ -166,7 +166,7 @@ class SkillManager:
     async def _async_run_locked[T](self, operation: Callable[[], Awaitable[T]]) -> T:
         """Keep the mutation boundary owned until work reaches a stable state."""
         async with self._filesystem_lock:
-            task = asyncio.create_task(operation())
+            task: asyncio.Future[T] = asyncio.ensure_future(operation())
             try:
                 return await asyncio.shield(task)
             except asyncio.CancelledError:
