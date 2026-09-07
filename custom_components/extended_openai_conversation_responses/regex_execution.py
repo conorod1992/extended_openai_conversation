@@ -98,7 +98,9 @@ _DEFERRED_SPEECH_INPUT: ContextVar[tuple[str, Mapping[str, Any]] | None] = Conte
 _INSTALLED = False
 
 
-def _decode_regex_worker_result(stdout: str, stderr: str, returncode: int) -> dict[str, Any]:
+def _decode_regex_worker_result(
+    stdout: str, stderr: str, returncode: int
+) -> dict[str, Any]:
     """Validate one child-process result without trusting worker output."""
     if returncode != 0:
         detail = stderr.strip() or "regex worker failed"
@@ -260,9 +262,7 @@ async def _async_apply_speech_replacements(text: str, rules: object) -> str:
         return text
     if len(text) > MAX_SPEECH_REPLACEMENT_INPUT_CHARS:
         _LOGGER.warning(
-            (
-                "Skipping speech regex replacements because input exceeds %d characters"
-            ),
+            ("Skipping speech regex replacements because input exceeds %d characters"),
             MAX_SPEECH_REPLACEMENT_INPUT_CHARS,
         )
         return text
