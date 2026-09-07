@@ -1,4 +1,5 @@
 import "./management-bootstrap.js";
+import { bindBackupTransfer, decorateBackupMarkup, decorateRestoreDialog } from "./backup-transfer-ui.js";
 const {ensureAgentConfigModule, getAgentConfigModule} = await import("./agent-config-loader.js");
 
 if (typeof document === "undefined") await ensureAgentConfigModule();
@@ -152,14 +153,16 @@ export function renderConfiguration(panel) {
     return panel._loading?.() || '<div class="loading">Loading configuration…</div>';
   }
   applyModelAwareReasoningOptions(panel);
-  return simplifyConfigurationMarkup(panel, module.renderConfiguration(panel));
+  return decorateBackupMarkup(simplifyConfigurationMarkup(panel, module.renderConfiguration(panel)));
 }
 
 export function bindConfiguration(panel) {
   const module = getAgentConfigModule();
   if (!module) return queueRender(panel);
   normalizeReasoningBeforeModelValidation(panel);
-  return module.bindConfiguration(panel);
+  const result = module.bindConfiguration(panel);
+  bindBackupTransfer(panel, backupSummaryLines);
+  return result;
 }
 
 export function renderTools(panel) {
@@ -198,7 +201,7 @@ export function configurationDialogs(...args) {
 }
 
 export function restoreDialog(...args) {
-  return getAgentConfigModule()?.restoreDialog(...args) || "";
+  return decorateRestoreDialog(getAgentConfigModule()?.restoreDialog(...args) || "");
 }
 
 export function configurationChoiceLabel(...args) {
