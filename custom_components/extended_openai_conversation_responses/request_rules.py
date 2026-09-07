@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -16,9 +16,6 @@ from time import monotonic
 from typing import Any, cast
 import unicodedata
 from uuid import uuid4
-
-from hassil import SlotList, WildcardSlotList, is_match, parse_sentence
-from hassil.expression import Group, RuleReference, Sentence
 
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -42,6 +39,18 @@ from .guest_mode import (
     guest_arguments_allowed_runtime,
 )
 from .helpers import get_model_config
+from .request_rule_patterns import (
+    MAX_AGENT_PATTERN_STATES,
+    CompiledSentencePattern,
+    MatchBudget,
+    PreparedSentenceText,
+    SentenceMatchLimitError,
+    SentencePatternError,
+    compile_sentence_pattern,
+    prepare_match_text,
+    sentence_capture_names,
+    validate_match_input,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,7 +71,6 @@ JINJA_SLOT_REFERENCE = re.compile(
 )
 ROUTING_SCOPES = ("request", "conversation")
 _REQUEST_RESET_SENTINEL = "__request_rule_reset__"
-_SENTENCE_MATCH_BOUNDARY = "zxqrequestboundaryqzx"
 DEFAULT_MATCHING = {
     "word_forms": True,
     "wording_alternatives": True,
@@ -70,7 +78,7 @@ DEFAULT_MATCHING = {
     "fuzzy_threshold": 90,
 }
 
-# Phrase mappings are deliberately small and directional.  Both sides normalize to
+# Phrase mappings are deliberately small and directional. Both sides normalize to
 # the same canonical wording, which keeps matching predictable and extensible.
 DEFAULT_WORDING_GROUPS: tuple[dict[str, Any], ...] = (
     {"canonical": "turn on", "alternatives": ["switch on"]},
@@ -100,29 +108,43 @@ class RuleMatch:
 
 @dataclass(frozen=True, slots=True)
 class CompiledPhrase:
-    """One normalized phrase or parsed Hassil sentence pattern."""
+    """One normalized phrase or compiled ExtendedOpenAI sentence pattern."""
 
     original: str
     normalized: str | None = None
-    sentence: Sentence | None = None
-    slot_lists: dict[str, SlotList] = field(default_factory=dict)
+    sentence_pattern: CompiledSentencePattern | None = None
+
+
+_MATCH_RANK = {
+    "equals": 5,
+    "sentence_pattern": 4,
+    "starts_with": 3,
+    "ends_with": 2,
+    "contains": 1,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _MatchingSnapshot:
+    """One privately owned generation, published only after compilation finishes."""
+
+    phrases: tuple[tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...]
+    wording_groups: tuple[dict[str, Any], ...]
+    deterministic: tuple[
+        tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...
+    ] = ()
 
 
 def _match_compiled_sentence(
-    compiled: CompiledPhrase, text: str
+    compiled: CompiledPhrase,
+    prepared: PreparedSentenceText,
+    budget: MatchBudget,
 ) -> dict[str, str] | None:
-    """Match one parsed Hassil sentence, including a trailing wildcard slot."""
-    if compiled.sentence is None:
+    """Match one compiled sentence pattern with the shared request budget."""
+    if compiled.sentence_pattern is None:
         return None
-    context = is_match(
-        f"{text} {_SENTENCE_MATCH_BOUNDARY}",
-        compiled.sentence,
-        slot_lists=compiled.slot_lists,
-        expansion_rules={},
-    )
-    if context is None:
-        return None
-    return {entity.name: str(entity.value).strip() for entity in context.entities}
+    result = compiled.sentence_pattern.match_prepared(prepared, budget)
+    return None if result is None else dict(result.captures)
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,14 +183,13 @@ class RequestRules:
         self._rules: list[dict[str, Any]] = []
         self._defaults = dict(DEFAULT_MATCHING)
         self._wording_groups = _copy_wording_groups(DEFAULT_WORDING_GROUPS)
-        self._compiled: list[
-            tuple[dict[str, Any], dict[str, Any], list[CompiledPhrase]]
-        ] = []
+        self._matching_snapshot = _MatchingSnapshot((), ())
+        self._diagnostics: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
 
     async def async_initialize(self) -> None:
-        """Load and validate stored rules once, self-healing malformed containers."""
+        """Load stored rules while preserving newly unsupported patterns for repair."""
         async with self._lock:
             if self._initialized:
                 return
@@ -216,7 +237,7 @@ class RequestRules:
             seen_ids: set[str] = set()
             for raw in raw_rules:
                 try:
-                    validated = validate_rule(raw)
+                    validated = validate_rule(raw, validate_sentence_pattern=False)
                     if validated["id"] in seen_ids:
                         _LOGGER.warning(
                             "Ignoring duplicate stored Request Rule id: %s",
@@ -268,6 +289,7 @@ class RequestRules:
             "defaults": dict(self._defaults),
             "wording_groups": _copy_wording_groups(self._wording_groups),
             "rules": [dict(rule) for rule in self._rules],
+            "diagnostics": dict(self._diagnostics),
         }
 
     def function_references(self, function_name: str) -> list[dict[str, str]]:
@@ -313,17 +335,26 @@ class RequestRules:
                     ):
                         action["data"] = {**action["data"], "function": new_name}
                         changed += 1
-                updated_rules.append(validate_rule(updated))
+                updated_rules.append(
+                    validate_rule(
+                        updated,
+                        validate_sentence_pattern=rule["id"] not in self._diagnostics,
+                    )
+                )
             if changed:
+                _validate_total_pattern_states(
+                    updated_rules, inactive_rule_ids=self._diagnostics
+                )
                 self._rules = updated_rules
                 self._sort_and_compile()
                 await self._async_save_locked()
         return changed
 
     async def async_backup_data(self) -> dict[str, Any]:
-        """Return durable Request Rule state without the management revision token."""
+        """Return durable Request Rule state without management-only fields."""
         snapshot = self.snapshot()
         snapshot.pop("revision", None)
+        snapshot.pop("diagnostics", None)
         return snapshot
 
     @staticmethod
@@ -348,7 +379,9 @@ class RequestRules:
             raise ValueError("request_rules.rules must be a list")
         if len(raw_rules) > MAX_RULES:
             raise ValueError("Request Rule limit reached")
-        rules = [validate_rule(item) for item in raw_rules]
+        rules = [
+            validate_rule(item, validate_sentence_pattern=False) for item in raw_rules
+        ]
         if len({rule["id"] for rule in rules}) != len(rules):
             raise ValueError("duplicate Request Rule id")
         return {"defaults": defaults, "wording_groups": wording_groups, "rules": rules}
@@ -404,6 +437,9 @@ class RequestRules:
             rule = validate_rule(raw)
             if any(item["id"] == rule["id"] for item in self._rules):
                 raise ValueError("rule id already exists")
+            _validate_total_pattern_states(
+                [*self._rules, rule], inactive_rule_ids=self._diagnostics
+            )
             self._rules.append(rule)
             self._sort_and_compile()
             await self._async_save_locked()
@@ -425,7 +461,19 @@ class RequestRules:
             raw = dict(value)
             raw["id"] = rule_id
             raw.setdefault("order", self._rules[index]["order"])
-            rule = validate_rule(raw)
+            previous = self._rules[index]
+            preserve_inactive = (
+                rule_id in self._diagnostics
+                and raw.get("phrases") == previous["phrases"]
+                and raw.get("match_type", "equals") == previous["match_type"]
+                and not raw.get("enabled", True)
+            )
+            rule = validate_rule(raw, validate_sentence_pattern=not preserve_inactive)
+            prospective = [*self._rules]
+            prospective[index] = rule
+            _validate_total_pattern_states(
+                prospective, inactive_rule_ids=set(self._diagnostics) - {rule_id}
+            )
             self._rules[index] = rule
             self._sort_and_compile()
             await self._async_save_locked()
@@ -458,6 +506,9 @@ class RequestRules:
                 order=int(source["order"]) + 1,
             )
             rule = validate_rule(source)
+            _validate_total_pattern_states(
+                [*self._rules, rule], inactive_rule_ids=self._diagnostics
+            )
             self._rules.append(rule)
             self._sort_and_compile()
             await self._async_save_locked()
@@ -490,69 +541,62 @@ class RequestRules:
             return dict(self._rules[target])
 
     def match(self, text: str) -> RuleMatch | None:
-        """Select one deterministic winner, using fuzzy only as a fallback."""
-        deterministic: list[tuple[tuple[int, int, int], RuleMatch]] = []
-        fuzzy: list[tuple[tuple[float, int, int], RuleMatch]] = []
+        """Use one generation and existing precedence, with fuzzy only as fallback."""
+        snapshot = self._matching_snapshot
+        validate_match_input(text)
         normalized_candidates: dict[tuple[bool, bool], str] = {}
-        rank = {
-            "equals": 5,
-            "sentence_pattern": 4,
-            "starts_with": 3,
-            "ends_with": 2,
-            "contains": 1,
-        }
-        for rule, settings, phrases in self._compiled:
-            if rule["match_type"] == "sentence_pattern":
-                candidate = ""
-            else:
-                normalization_key = (
-                    bool(settings.get("word_forms")),
-                    bool(settings.get("wording_alternatives")),
+        sentence_text: PreparedSentenceText | None = None
+        sentence_budget = MatchBudget()
+
+        def candidate(settings: dict[str, Any]) -> str:
+            key = (
+                bool(settings.get("word_forms")),
+                bool(settings.get("wording_alternatives")),
+            )
+            if key not in normalized_candidates:
+                normalized_candidates[key] = normalize_text(
+                    text, settings, snapshot.wording_groups
                 )
-                try:
-                    candidate = normalized_candidates[normalization_key]
-                except KeyError:
-                    candidate = normalize_text(text, settings, self._wording_groups)
-                    normalized_candidates[normalization_key] = candidate
-            for compiled in phrases:
-                if compiled.sentence is not None:
-                    slots = _match_compiled_sentence(compiled, text)
-                    if slots is None:
-                        continue
-                    result = RuleMatch(rule, compiled.original, False, 100.0, slots)
-                    deterministic.append(
-                        (
-                            (
-                                rank[rule["match_type"]],
-                                len(compiled.original),
-                                -rule["order"],
-                            ),
-                            result,
-                        )
-                    )
-                    continue
-                phrase = cast(str, compiled.normalized)
-                if _deterministic_match(candidate, phrase, rule["match_type"]):
-                    result = RuleMatch(rule, compiled.original, False, 100.0)
-                    deterministic.append(
-                        (
-                            (rank[rule["match_type"]], len(phrase), -rule["order"]),
-                            result,
-                        )
-                    )
-                    continue
-                if settings["fuzzy"]:
-                    score = _fuzzy_score(candidate, phrase, rule["match_type"])
-                    if score >= settings["fuzzy_threshold"]:
-                        result = RuleMatch(rule, compiled.original, True, score)
-                        fuzzy.append(
-                            ((score, rank[rule["match_type"]], -rule["order"]), result)
-                        )
-        if deterministic:
-            return max(deterministic, key=lambda item: item[0])[1]
-        if fuzzy:
-            return max(fuzzy, key=lambda item: item[0])[1]
-        return None
+            return normalized_candidates[key]
+
+        # Published phrases are already sorted by the original deterministic
+        # ranking. Once one succeeds, no unvisited phrase can change the winner.
+        for rule, settings, compiled in snapshot.deterministic:
+            if compiled.sentence_pattern is not None:
+                if sentence_text is None:
+                    sentence_text = prepare_match_text(text)
+                slots = _match_compiled_sentence(
+                    compiled, sentence_text, sentence_budget
+                )
+                if slots is not None:
+                    return RuleMatch(rule, compiled.original, False, 100.0, slots)
+            elif _deterministic_match(
+                candidate(settings), cast(str, compiled.normalized), rule["match_type"]
+            ):
+                return RuleMatch(rule, compiled.original, False, 100.0)
+
+        # Fuzzy ties historically use rule order, then phrase order, rather than
+        # phrase length. Restore that order after the deterministic pass.
+        fuzzy: list[tuple[tuple[float, int, int], RuleMatch]] = []
+        for rule, settings, compiled in snapshot.phrases:
+            if compiled.sentence_pattern is not None or not settings["fuzzy"]:
+                continue
+            score = _fuzzy_score(
+                candidate(settings), cast(str, compiled.normalized), rule["match_type"]
+            )
+            if score >= settings["fuzzy_threshold"]:
+                result = RuleMatch(rule, compiled.original, True, score)
+                fuzzy.append(
+                    ((score, _MATCH_RANK[rule["match_type"]], -rule["order"]), result)
+                )
+        return max(fuzzy, key=lambda item: item[0])[1] if fuzzy else None
+
+    async def async_match(self, hass: HomeAssistant, text: str) -> RuleMatch | None:
+        """Run matching off-loop, including when used with lightweight hosts."""
+        executor = getattr(hass, "async_add_executor_job", None)
+        if callable(executor):
+            return cast(RuleMatch | None, await executor(self.match, text))
+        return await asyncio.to_thread(self.match, text)
 
     def _index(self, rule_id: str) -> int:
         for index, rule in enumerate(self._rules):
@@ -561,7 +605,7 @@ class RequestRules:
         raise ValueError("Request Rule not found")
 
     def _sort_and_compile(self) -> bool:
-        """Sort, reindex, and compile rules; return whether persisted order changed."""
+        """Sort, reindex, compile safe rules, and retain diagnostics for unsafe ones."""
         self._rules.sort(
             key=lambda item: (
                 item["order"],
@@ -574,26 +618,83 @@ class RequestRules:
             if rule["order"] != index:
                 rule["order"] = index
                 order_changed = True
-        self._compiled = []
-        for rule in self._rules:
-            if not rule["enabled"]:
-                continue
+
+        compiled_rules: list[tuple[dict[str, Any], dict[str, Any], CompiledPhrase]] = []
+        diagnostics: dict[str, str] = {}
+        total_pattern_states = 0
+        for stored_rule in self._rules:
+            rule = deepcopy(stored_rule)
             settings = (
                 self._defaults
                 if rule["matching_behavior"] == "defaults"
                 else rule["matching"]
             )
-            phrases = (
-                [_compile_sentence_pattern(phrase) for phrase in rule["phrases"]]
-                if rule["match_type"] == "sentence_pattern"
-                else [
-                    CompiledPhrase(
-                        phrase, normalize_text(phrase, settings, self._wording_groups)
+            if rule["match_type"] == "sentence_pattern":
+                try:
+                    phrases = [
+                        _compile_sentence_pattern(item) for item in rule["phrases"]
+                    ]
+                    phrase_slots = [
+                        set(
+                            cast(
+                                CompiledSentencePattern, item.sentence_pattern
+                            ).capture_names
+                        )
+                        for item in phrases
+                    ]
+                    if any(names != phrase_slots[0] for names in phrase_slots[1:]):
+                        raise ValueError(
+                            "all sentence variants must capture the same slots"
+                        )
+                    state_count = sum(
+                        cast(CompiledSentencePattern, item.sentence_pattern).state_count
+                        for item in phrases
                     )
-                    for phrase in rule["phrases"]
+                    if rule["enabled"] and (
+                        total_pattern_states + state_count > MAX_AGENT_PATTERN_STATES
+                    ):
+                        raise ValueError(
+                            "enabled sentence patterns exceed the per-agent compiled "
+                            f"state limit of {MAX_AGENT_PATTERN_STATES}"
+                        )
+                except ValueError as err:
+                    diagnostic = f"Sentence pattern is inactive: {err}"
+                    diagnostics[rule["id"]] = diagnostic
+                    _LOGGER.warning("Request Rule %s is inactive: %s", rule["id"], err)
+                    continue
+                if rule["enabled"]:
+                    total_pattern_states += state_count
+            else:
+                phrases = [
+                    CompiledPhrase(
+                        item, normalize_text(item, settings, self._wording_groups)
+                    )
+                    for item in rule["phrases"]
                 ]
-            )
-            self._compiled.append((rule, settings, phrases))
+
+            if rule["enabled"]:
+                compiled_rules.extend(
+                    (rule, dict(settings), phrase) for phrase in phrases
+                )
+        deterministic = sorted(
+            compiled_rules,
+            key=lambda item: (
+                _MATCH_RANK[item[0]["match_type"]],
+                len(
+                    item[2].original
+                    if item[2].sentence_pattern is not None
+                    else cast(str, item[2].normalized)
+                ),
+                -item[0]["order"],
+            ),
+            reverse=True,
+        )
+        self._matching_snapshot = _MatchingSnapshot(
+            tuple(compiled_rules),
+            tuple(_copy_wording_groups(self._wording_groups)),
+            tuple(deterministic),
+        )
+        self._diagnostics = diagnostics
         return order_changed
 
     async def _async_save_locked(self) -> None:
@@ -744,7 +845,9 @@ def _copy_wording_groups(value: Sequence[Mapping[str, Any]]) -> list[dict[str, A
     ]
 
 
-def validate_rule(value: Any) -> dict[str, Any]:
+def validate_rule(
+    value: Any, *, validate_sentence_pattern: bool = True
+) -> dict[str, Any]:
     """Validate and normalize the persisted rule contract."""
     if not isinstance(value, Mapping):
         raise ValueError("rule must be an object")
@@ -775,16 +878,36 @@ def validate_rule(value: Any) -> dict[str, Any]:
     match_type = value.get("match_type", "equals")
     if match_type not in MATCH_TYPES:
         raise ValueError("unsupported match type")
+
+    sentence_valid = True
     if match_type == "sentence_pattern":
-        compiled_phrases = [_compile_sentence_pattern(phrase) for phrase in phrases]
-        phrase_slots = [set(item.slot_lists) for item in compiled_phrases]
-        if any(names != phrase_slots[0] for names in phrase_slots[1:]):
-            raise ValueError("all sentence variants must capture the same slots")
-        slot_names = sorted(phrase_slots[0])
+        if validate_sentence_pattern:
+            compiled_phrases = [_compile_sentence_pattern(phrase) for phrase in phrases]
+            phrase_slots = [
+                set(cast(CompiledSentencePattern, item.sentence_pattern).capture_names)
+                for item in compiled_phrases
+            ]
+        else:
+            try:
+                phrase_slots = [
+                    set(sentence_capture_names(phrase)) for phrase in phrases
+                ]
+            except SentencePatternError:
+                sentence_valid = False
+                phrase_slots = []
+        if phrase_slots and any(names != phrase_slots[0] for names in phrase_slots[1:]):
+            if validate_sentence_pattern:
+                raise ValueError("all sentence variants must capture the same slots")
+            sentence_valid = False
+        if sentence_valid and phrase_slots:
+            slot_names = sorted(phrase_slots[0])
+        else:
+            slot_names = _stored_slot_names(value)
     else:
         slot_names = []
         if any(SLOT_REFERENCE.search(phrase) for phrase in phrases):
-            raise ValueError("variable values require Home Assistant sentence matching")
+            raise ValueError("variable values require Sentence pattern matching")
+
     action_type = value.get("action_type", "local_action")
     if action_type not in ACTION_TYPES:
         raise ValueError("unsupported action type")
@@ -792,7 +915,7 @@ def validate_rule(value: Any) -> dict[str, Any]:
     action = _validate_action(action_type, raw_action)
     referenced_slots = _referenced_slots(action) | _legacy_action_slots(raw_action)
     unknown_slots = referenced_slots - set(slot_names)
-    if unknown_slots:
+    if unknown_slots and (validate_sentence_pattern or sentence_valid):
         raise ValueError("unknown captured value: " + ", ".join(sorted(unknown_slots)))
     if (
         action_type == "model_routing"
@@ -824,8 +947,57 @@ def validate_rule(value: Any) -> dict[str, Any]:
         "matching_behavior": behavior,
         "matching": matching,
         "order": order,
-        "slots": [{"name": name} for name in slot_names],
+        "slots": [{"name": item} for item in slot_names],
     }
+
+
+def _stored_slot_names(value: Mapping[str, Any]) -> list[str]:
+    """Recover prior capture metadata when a stored legacy pattern cannot parse."""
+    result: list[str] = []
+    raw_slots = value.get("slots", [])
+    if not isinstance(raw_slots, Sequence) or isinstance(raw_slots, (str, bytes)):
+        return result
+    for slot in raw_slots:
+        if (
+            isinstance(slot, Mapping)
+            and isinstance(slot.get("name"), str)
+            and SLOT_NAME.fullmatch(str(slot["name"]))
+        ):
+            result.append(str(slot["name"]))
+    return sorted(set(result))
+
+
+def _validate_total_pattern_states(
+    rules: Sequence[Mapping[str, Any]], *, inactive_rule_ids: Collection[str] = ()
+) -> None:
+    """Account in loader order, retaining unchanged inactive rules for repair."""
+    total = 0
+    for rule in sorted(
+        rules, key=lambda item: (item["order"], item["name"].casefold(), item["id"])
+    ):
+        if not rule.get("enabled") or rule.get("match_type") != "sentence_pattern":
+            continue
+        phrases = rule.get("phrases", [])
+        if not isinstance(phrases, Sequence) or isinstance(phrases, str):
+            continue
+        try:
+            compiled = [compile_sentence_pattern(str(phrase)) for phrase in phrases]
+            if any(
+                set(item.capture_names) != set(compiled[0].capture_names)
+                for item in compiled[1:]
+            ):
+                raise ValueError("all sentence variants must capture the same slots")
+            state_count = sum(item.state_count for item in compiled)
+            if total + state_count > MAX_AGENT_PATTERN_STATES:
+                raise ValueError(
+                    "enabled sentence patterns exceed the per-agent compiled "
+                    f"state limit of {MAX_AGENT_PATTERN_STATES}"
+                )
+        except ValueError:
+            if rule.get("id") in inactive_rule_ids:
+                continue
+            raise
+        total += state_count
 
 
 def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
@@ -1279,7 +1451,11 @@ async def async_evaluate_rule(
     context: Context | None = None,
 ) -> RuleEvaluation | None:
     """Match and apply local side effects or model-routing state."""
-    match = rules.match(text)
+    try:
+        match = await rules.async_match(hass, text)
+    except SentenceMatchLimitError as err:
+        _LOGGER.warning("Skipping Request Rules for bounded matching failure: %s", err)
+        return None
     if match is None:
         return None
     rule = match.rule
@@ -1455,28 +1631,12 @@ def normalize_text(
 
 
 def _compile_sentence_pattern(pattern: str) -> CompiledPhrase:
-    """Parse supported Hassil syntax and configure wildcard slot capture."""
+    """Compile the documented ExtendedOpenAI sentence-pattern syntax."""
     try:
-        sentence = parse_sentence(f"{pattern} {_SENTENCE_MATCH_BOUNDARY}")
-    except Exception as err:
+        sentence_pattern = compile_sentence_pattern(pattern)
+    except SentencePatternError as err:
         raise ValueError(f"invalid sentence pattern: {err}") from err
-
-    def has_rule_reference(expression: Any) -> bool:
-        if isinstance(expression, RuleReference):
-            return True
-        if isinstance(expression, Group):
-            return any(has_rule_reference(item) for item in expression.items)
-        return False
-
-    if has_rule_reference(sentence.expression):
-        raise ValueError(
-            "named expansion rules (<name>) are not supported in Request Rules"
-        )
-    slot_lists: dict[str, SlotList] = {
-        name: WildcardSlotList(name=name)
-        for name in dict.fromkeys(sentence.list_names())
-    }
-    return CompiledPhrase(pattern, sentence=sentence, slot_lists=slot_lists)
+    return CompiledPhrase(pattern, sentence_pattern=sentence_pattern)
 
 
 def _singularize(token: str) -> str:

@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, cast
+from typing import Any
 
 from homeassistant.util import dt as dt_util
 
@@ -27,7 +27,6 @@ def install_hot_path_cleanup() -> None:
     _install_usage_lazy_snapshots_and_background_prune()
     _install_debug_single_conversion()
     _install_broadcast_cold_path_guard()
-    _install_request_rule_two_pass_matching()
     _INSTALLED = True
 
 
@@ -251,91 +250,3 @@ def _install_broadcast_cold_path_guard() -> None:
         return await original(hass, user_input)
 
     local_intents._async_try_targeted_broadcast = try_targeted_broadcast
-
-
-def _install_request_rule_two_pass_matching() -> None:
-    """Skip fuzzy scoring whenever deterministic Request Rule matching succeeds."""
-    from . import request_rules as rules
-
-    rank = {
-        "equals": 5,
-        "sentence_pattern": 4,
-        "starts_with": 3,
-        "ends_with": 2,
-        "contains": 1,
-    }
-
-    def match(manager: Any, text: str) -> Any:
-        normalized_candidates: dict[tuple[bool, bool], str] = {}
-
-        def candidate(settings: dict[str, Any]) -> str:
-            key = (
-                bool(settings.get("word_forms")),
-                bool(settings.get("wording_alternatives")),
-            )
-            try:
-                return normalized_candidates[key]
-            except KeyError:
-                value = rules.normalize_text(text, settings, manager._wording_groups)
-                normalized_candidates[key] = value
-                return value
-
-        deterministic: list[tuple[tuple[int, int, int], Any]] = []
-        for rule, settings, phrases in manager._compiled:
-            normalized = (
-                "" if rule["match_type"] == "sentence_pattern" else candidate(settings)
-            )
-            for compiled in phrases:
-                if compiled.sentence is not None:
-                    slots = rules._match_compiled_sentence(compiled, text)
-                    if slots is None:
-                        continue
-                    result = rules.RuleMatch(
-                        rule, compiled.original, False, 100.0, slots
-                    )
-                    deterministic.append(
-                        (
-                            (
-                                rank[rule["match_type"]],
-                                len(compiled.original),
-                                -rule["order"],
-                            ),
-                            result,
-                        )
-                    )
-                    continue
-
-                phrase = cast(str, compiled.normalized)
-                if rules._deterministic_match(normalized, phrase, rule["match_type"]):
-                    result = rules.RuleMatch(rule, compiled.original, False, 100.0)
-                    deterministic.append(
-                        (
-                            (rank[rule["match_type"]], len(phrase), -rule["order"]),
-                            result,
-                        )
-                    )
-
-        if deterministic:
-            return max(deterministic, key=lambda item: item[0])[1]
-
-        fuzzy: list[tuple[tuple[float, int, int], Any]] = []
-        for rule, settings, phrases in manager._compiled:
-            if rule["match_type"] == "sentence_pattern" or not settings["fuzzy"]:
-                continue
-            normalized = candidate(settings)
-            for compiled in phrases:
-                if compiled.sentence is not None:
-                    continue
-                phrase = cast(str, compiled.normalized)
-                score = rules._fuzzy_score(normalized, phrase, rule["match_type"])
-                if score >= settings["fuzzy_threshold"]:
-                    result = rules.RuleMatch(rule, compiled.original, True, score)
-                    fuzzy.append(
-                        ((score, rank[rule["match_type"]], -rule["order"]), result)
-                    )
-        if fuzzy:
-            return max(fuzzy, key=lambda item: item[0])[1]
-        return None
-
-    manager_type: Any = rules.RequestRules
-    manager_type.match = match

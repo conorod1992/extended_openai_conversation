@@ -141,6 +141,9 @@ async def test_guest_denial_happens_before_script_execution(
         def match(self, _text: str) -> RuleMatch:
             return RuleMatch(rule, "run it", False, 100.0)
 
+        async def async_match(self, _hass: Any, text: str) -> RuleMatch:
+            return self.match(text)
+
     evaluation = await async_evaluate_rule(
         SimpleNamespace(),
         Rules(),  # type: ignore[arg-type]

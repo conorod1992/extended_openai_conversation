@@ -320,7 +320,7 @@ def _reset_request_rules(manager: Any) -> None:
     manager._defaults = dict(DEFAULT_MATCHING)
     manager._wording_groups = deepcopy(list(DEFAULT_WORDING_GROUPS))
     manager._rules = []
-    manager._compiled = []
+    manager._sort_and_compile()
     manager._initialized = False
     if hasattr(manager, _COMMITTED_STATE):
         delattr(manager, _COMMITTED_STATE)

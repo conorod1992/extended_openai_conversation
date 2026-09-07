@@ -52,6 +52,12 @@ assert.match(requestRulesDialog(panel), /Conditions, delays, choose, repeat, par
 assert.match(requestRulesDialog(panel), /extended_openai_conversation_responses\.call_function/);
 assert.match(requestRulesDialog(panel), /\{\{ item \}\}/);
 const bindingSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js", import.meta.url), "utf8");
+const literalHelpWords = "Home Assistant sentence pattern";
+const literalHtml = renderRequestRules({...panel, _result: {...panel._result, rules: [
+  {...panel._result.rules[0], name: literalHelpWords, phrases: [literalHelpWords]},
+]}});
+assert.match(literalHtml, /<h2>Home Assistant sentence pattern<\/h2>/);
+assert.match(literalHtml, /<b>Equals<\/b> Home Assistant sentence pattern/);
 assert.match(bindingSource, /Value from request/);
 assert.match(bindingSource, /function_catalog/);
 assert.match(bindingSource, /Captured values:/);
@@ -122,12 +128,19 @@ refreshRequestRuleSlotSelectors(slotRoot, ["product", "list_name"]);
 assert.equal(functionSlot.value, "product");
 assert.match(requestRulesDialog(panel), /Rest of this conversation/);
 assert.match(requestRulesDialog(panel), /without asking the AI model/);
-assert.match(requestRulesDialog(panel), /Home Assistant sentence pattern/);
-assert.match(requestRulesDialog(panel), /Named expansions/);
+assert.match(requestRulesDialog(panel), /ExtendedOpenAI sentence pattern/);
+assert.doesNotMatch(requestRulesDialog(panel), /Home Assistant sentence pattern/);
+assert.match(requestRulesDialog(panel), /\{room=kitchen\|bedroom\}/);
+assert.match(requestRulesDialog(panel), /\{level=0\.\.100\}/);
+assert.match(requestRulesDialog(panel), /named expansions/i);
 assert.match(requestRulesDialog(panel), /1\. What will you say\?/);
 assert.match(requestRulesDialog(panel), /3\. What should the assistant say\?/);
 assert.match(requestRulesDialog(panel), /class="matching-setting"/);
 assert.match(requestRulesDialog(panel), /Treats simple variations such as “light” and “lights” as the same\./);
+
+const diagnosticHtml = renderRequestRules({...panel,_result:{...panel._result,diagnostics:{one:"Sentence pattern is inactive: permutations are not supported"}}});
+assert.match(diagnosticHtml, /Rule inactive/);
+assert.match(diagnosticHtml, /permutations are not supported/);
 
 const existing = {domain:"light",service:"turn_on",target:{entity_id:["light.lamp"],area_id:["kitchen"],device_id:"device-one",floor_id:["ground"],label_id:["ambient"],custom_target:"keep-me"},data:{brightness_pct:35,transition:2}};
 const advanced = JSON.stringify({target:existing.target,data:existing.data});

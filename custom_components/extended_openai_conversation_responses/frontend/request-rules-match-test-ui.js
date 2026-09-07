@@ -1,5 +1,7 @@
 const matchLabel = (value) => ({equals:"Equals",starts_with:"Starts with",ends_with:"Ends with",contains:"Contains",sentence_pattern:"Sentence pattern"}[value] || value);
 
+export const REQUEST_RULE_MATCH_MAX_CHARS = 2048;
+
 function localActionSummary(response) {
   const count = Number(response?.would_do?.action_count || 0);
   return `Would run ${count} local action${count === 1 ? "" : "s"}. Nothing was executed.`;
@@ -30,7 +32,7 @@ export function formatRequestRuleMatchResult(panel, response) {
 }
 
 export function renderRequestRuleMatchTester() {
-  return `<section class="content-card" id="rule-match-tester"><h2>Test matching</h2><p>Check which enabled Request Rule would win for some text using the same matcher as real requests.</p><div class="notice on"><strong>Safe preview only</strong><p>This checks matching only. It does not run Home Assistant actions, change conversation routing, or call the AI provider.</p></div><div class="search-row"><input id="rule-match-test-text" type="text" placeholder="Turn off the kitchen light" aria-label="Request text to test against Request Rules"><button type="button" id="rule-match-test">Test match</button></div><div id="rule-match-test-result" aria-live="polite"></div></section>`;
+  return `<section class="content-card" id="rule-match-tester"><h2>Test matching</h2><p>Check which enabled Request Rule would win for some text using the same bounded matcher as real requests.</p><div class="notice on"><strong>Safe preview only</strong><p>This checks matching only. It does not run Home Assistant actions, change conversation routing, or call the AI provider.</p></div><div class="search-row"><input id="rule-match-test-text" type="text" maxlength="${REQUEST_RULE_MATCH_MAX_CHARS}" placeholder="Turn off the kitchen light" aria-label="Request text to test against Request Rules"><button type="button" id="rule-match-test">Test match</button></div><p class="help">Preview and live Request Rule matching inspect at most ${REQUEST_RULE_MATCH_MAX_CHARS} characters (and 256 words).</p><div id="rule-match-test-result" aria-live="polite"></div></section>`;
 }
 
 export function transformRequestRulesMatchTester(html) {
@@ -49,8 +51,8 @@ export function bindRequestRuleMatchTester(panel) {
   if (!input || !button || !output) return;
 
   const run = async () => {
-    const text = input.value.trim();
-    if (!text || button.disabled) return;
+    const text = input.value;
+    if (!text.trim() || button.disabled) return;
     button.disabled = true;
     output.textContent = "Checking…";
     try {
