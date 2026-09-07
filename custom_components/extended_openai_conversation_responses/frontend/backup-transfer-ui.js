@@ -134,15 +134,24 @@ export async function uploadFullBackup(panel, file) {
   }
 }
 
-export async function cancelBackupImport(panel) {
-  const sessionId = panel?._backupTransferSession;
-  panel._backupTransferSession = null;
+export async function cancelBackupImport(panel, sessionId = panel?._backupTransferSession) {
   if (!sessionId) return;
+  if (panel?._backupTransferSession === sessionId) panel._backupTransferSession = null;
   try {
     await callBackupTransfer(panel, "import_cancel", {session_id: sessionId});
   } catch (_err) {
     // Closing the dialog should remain reliable; the server expires the session.
   }
+}
+
+export function openBackupPicker(panel, input) {
+  const previousSession = panel?._backupTransferSession;
+  if (previousSession && panel) panel._backupTransferSession = null;
+  input.value = "";
+  // Keep the picker invocation in the original click task. Awaiting server cleanup
+  // first can consume the browser's transient user-activation permission.
+  input.click();
+  if (previousSession) void cancelBackupImport(panel, previousSession);
 }
 
 function decorateBackupMarkupDom(html) {
@@ -197,11 +206,8 @@ export function bindBackupTransfer(panel, summaryFormatter = () => []) {
     }
   });
 
-  root.querySelector(`#${RESTORE_ID}`)?.addEventListener("click", async () => {
-    await cancelBackupImport(panel);
-    const input = root.querySelector(`#${FILE_ID}`);
-    input.value = "";
-    input.click();
+  root.querySelector(`#${RESTORE_ID}`)?.addEventListener("click", () => {
+    openBackupPicker(panel, root.querySelector(`#${FILE_ID}`));
   });
 
   root.querySelector(`#${FILE_ID}`)?.addEventListener("change", async (event) => {
