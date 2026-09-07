@@ -80,7 +80,7 @@ def _project_value(value: Any, budget: _ProjectionBudget, depth: int = 0) -> Any
         budget.remaining -= allowance
         return value
     if isinstance(value, dict):
-        result: dict[str, Any] = {}
+        dict_result: dict[str, Any] = {}
         for index, (raw_key, item) in enumerate(value.items()):
             if index >= _MAX_CONTAINER_ITEMS or budget.remaining <= 0:
                 budget.truncated = True
@@ -88,20 +88,20 @@ def _project_value(value: Any, budget: _ProjectionBudget, depth: int = 0) -> Any
             key = str(raw_key)
             if not budget.consume(len(key)):
                 break
-            result[key] = _project_value(item, budget, depth + 1)
-        if len(result) < len(value):
-            result["__management_truncated__"] = True
-        return result
+            dict_result[key] = _project_value(item, budget, depth + 1)
+        if len(dict_result) < len(value):
+            dict_result["__management_truncated__"] = True
+        return dict_result
     if isinstance(value, (list, tuple)):
-        result: list[Any] = []
+        list_result: list[Any] = []
         for index, item in enumerate(value):
             if index >= _MAX_CONTAINER_ITEMS or budget.remaining <= 0:
                 budget.truncated = True
                 break
-            result.append(_project_value(item, budget, depth + 1))
-        if len(result) < len(value):
-            result.append(_TRUNCATED_TEXT)
-        return result
+            list_result.append(_project_value(item, budget, depth + 1))
+        if len(list_result) < len(value):
+            list_result.append(_TRUNCATED_TEXT)
+        return list_result
     return _project_value(str(value), budget, depth + 1)
 
 
