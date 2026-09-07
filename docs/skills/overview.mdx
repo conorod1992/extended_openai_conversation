@@ -62,6 +62,16 @@ Skills extend your AI assistant with:
 Skills are enabled per conversation entity. You can have different skills enabled for different assistants.
 </Note>
 
+## Live availability
+
+A saved Skill selection does not by itself make the Skill loadable. Only Skills that are both selected for the agent and currently installed are advertised to the model.
+
+The built-in `load_skill` Function Tool is exposed only while at least one selected installed Skill can actually use it. If `load_skill` is placed in an on-demand Function Group, that group must also be loadable; the model loads the group first and receives `load_skill` on the following tool round. If Function Tools are unavailable for the request, the Skill loader and an otherwise-empty Skill group are omitted rather than advertised as unusable capabilities.
+
+The same effective availability rules are used for live conversations and the management **Preview**, so the previewed tool set matches what a real request can currently use.
+
+Skill downloads are completed in a staging area outside the installed-Skills scan directory and published only after the download is complete. Reload, publish/remove, and canonical Skill reads use one shared concurrency boundary, preventing a request from discovering a partial download or crossing a replacement/removal halfway through a read.
+
 ## System Prompt
 
 To use skills, you need to add this prompt to your assistant's system message:
