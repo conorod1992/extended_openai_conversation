@@ -851,15 +851,14 @@ async def _take_completed_import(
     subentry_id: str,
 ) -> ImportSession:
     session = _completed_import(hass, session_id, entry_id, subentry_id)
-    async with session.lock:
-        async with _registry_lock(hass):
-            if _imports(hass).get(session.session_id) is not session:
-                raise backup.BackupError(
-                    "The backup upload has expired or was cancelled"
-                )
-            if session.received != session.expected_size:
-                raise backup.BackupError("The backup upload is incomplete")
-            _imports(hass).pop(session.session_id, None)
+    async with session.lock, _registry_lock(hass):
+        if _imports(hass).get(session.session_id) is not session:
+            raise backup.BackupError(
+                "The backup upload has expired or was cancelled"
+            )
+        if session.received != session.expected_size:
+            raise backup.BackupError("The backup upload is incomplete")
+        _imports(hass).pop(session.session_id, None)
     return session
 
 
