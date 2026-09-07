@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import Any, Iterable
 
 from .const import FUNCTION_GROUP_LOADING_ON_DEMAND
 
@@ -19,6 +19,7 @@ class SkillLoaderStatus:
     reason: str | None = None
     group_id: str | None = None
     on_demand: bool = False
+    loadable_skills: tuple[str, ...] = ()
 
 
 def is_canonical_skill_loader(tool: dict[str, Any]) -> bool:
@@ -47,14 +48,33 @@ def function_group_for_tool(
     )
 
 
+def selected_installed_skill_names(
+    selected_skills: Iterable[str], installed_skills: Iterable[str]
+) -> tuple[str, ...]:
+    """Return selected Skills that exist in the published installed catalogue.
+
+    This is deliberately independent of Function Tool and group availability. It is
+    the stable filesystem/configuration primitive from which model loadability is
+    derived, avoiding a cycle where the loader needs a loadable Skill while a Skill
+    needs an already-exposed loader.
+    """
+    installed = set(installed_skills)
+    return tuple(dict.fromkeys(name for name in selected_skills if name in installed))
+
+
 def skill_loader_status(
-    selected_skills: list[str],
+    selected_skills: list[str] | tuple[str, ...],
     tools: list[dict[str, Any]],
     groups: list[dict[str, Any]],
     *,
     max_function_calls: int | None = None,
 ) -> SkillLoaderStatus:
-    """Return the structural/model availability of the maintained Skill loader."""
+    """Return structural/model availability of the maintained Skill loader.
+
+    This validator intentionally does not inspect the filesystem. Persisted
+    configuration must remain valid when an installed Skill is temporarily absent;
+    runtime loadability is resolved by :func:`effective_skill_loader_status`.
+    """
     if not selected_skills:
         return SkillLoaderStatus(available=True)
     if max_function_calls is not None and max_function_calls <= 0:
@@ -90,10 +110,45 @@ def skill_loader_status(
         )
 
     # Function Groups are flat: the integration-owned `load_function_groups` tool is
-    # generated independently of configured groups, so an enabled on-demand group
-    # containing `load_skill` remains reachable without a circular dependency.
+    # generated from primitive group/member state rather than from configured loader
+    # visibility, so an enabled on-demand group does not create a circular dependency.
     return SkillLoaderStatus(
         available=True,
         group_id=group_id or None,
         on_demand=group.get("loading_mode") == FUNCTION_GROUP_LOADING_ON_DEMAND,
     )
+
+
+def effective_skill_loader_status(
+    selected_skills: Iterable[str],
+    installed_skills: Iterable[str],
+    tools: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+    *,
+    max_function_calls: int | None = None,
+    group_loader_supported: bool = True,
+) -> SkillLoaderStatus:
+    """Resolve whether any selected installed Skill is actually model-loadable."""
+    usable = selected_installed_skill_names(selected_skills, installed_skills)
+    if not usable:
+        return SkillLoaderStatus(
+            available=False,
+            reason="no selected installed Skills are currently available",
+        )
+
+    status = skill_loader_status(
+        usable,
+        tools,
+        groups,
+        max_function_calls=max_function_calls,
+    )
+    if not status.available:
+        return status
+    if status.on_demand and not group_loader_supported:
+        return SkillLoaderStatus(
+            available=False,
+            reason="the Function Group loader is unavailable for this runtime",
+            group_id=status.group_id,
+            on_demand=True,
+        )
+    return replace(status, loadable_skills=usable)
