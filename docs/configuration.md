@@ -203,7 +203,7 @@ Only controls supported by the selected model are shown.
 
 ### Temperature and Top P
 
-Control response variation for models that support these parameters. Avoid changing both unless you understand the interaction.
+Control response variation for models that support these parameters. Avoid changing both unless you understand the interaction between them.
 
 ### Reasoning effort
 
