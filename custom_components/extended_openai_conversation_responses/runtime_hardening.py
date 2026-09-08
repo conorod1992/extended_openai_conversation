@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from dataclasses import asdict
 import logging
 from pathlib import Path
 import sys
-from typing import Any, cast
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 
@@ -175,16 +174,13 @@ def _install_skill_hardening() -> None:
 
 
 def _install_guest_mode_hardening() -> None:
-    """Keep Guest Mode state serialized, durable, and retryable on Store failures."""
+    """Keep Guest Mode initialization retryable on Store failures."""
     from . import guest_mode as guest_module
 
     manager_type = guest_module.GuestModeManager
     current_initialize = manager_type.async_initialize
     if getattr(current_initialize, "_extended_openai_guest_guard", False):
         return
-
-    original_restrict = manager_type.async_restrict
-    original_update = manager_type.async_update_trusted
 
     async def async_initialize(manager: Any) -> None:
         lock = _manager_lock(manager, "_extended_openai_guest_state_lock")
@@ -214,57 +210,8 @@ def _install_guest_mode_hardening() -> None:
             manager._schedule = schedule
             manager._initialized = True
 
-    async def _async_set(
-        manager: Any, start: Any, end: Any | None, source: str
-    ) -> None:
-        updated = guest_module.dt_util.utcnow().isoformat()
-        schedule = guest_module.GuestModeSchedule(
-            active_from=guest_module._as_utc(start).isoformat(),
-            active_until=(
-                guest_module._as_utc(end).isoformat() if end is not None else None
-            ),
-            source=source,
-            updated_at=updated,
-        )
-        # Persist before publishing the new policy in memory.
-        await manager._store.async_save({"schedule": asdict(schedule)})
-        manager._schedule = schedule
-        manager._notify()
-
-    async def async_restrict(manager: Any, **kwargs: Any) -> dict[str, Any]:
-        lock = _manager_lock(manager, "_extended_openai_guest_state_lock")
-        async with lock:
-            return await original_restrict(manager, **kwargs)
-
-    async def async_update_trusted(manager: Any, **kwargs: Any) -> dict[str, Any]:
-        lock = _manager_lock(manager, "_extended_openai_guest_state_lock")
-        async with lock:
-            return await original_update(manager, **kwargs)
-
-    async def async_disable_trusted(manager: Any) -> dict[str, Any]:
-        lock = _manager_lock(manager, "_extended_openai_guest_state_lock")
-        async with lock:
-            await manager._store.async_save({"schedule": None})
-            manager._schedule = None
-            manager._notify()
-            return cast(dict[str, Any], manager.status())
-
-    async def async_replace_backup(manager: Any, schedule: Any) -> None:
-        lock = _manager_lock(manager, "_extended_openai_guest_state_lock")
-        async with lock:
-            await manager._store.async_save(
-                {"schedule": asdict(schedule) if schedule is not None else None}
-            )
-            manager._schedule = schedule
-            manager._notify()
-
     async_initialize._extended_openai_guest_guard = True  # type: ignore[attr-defined]
     manager_type.async_initialize = async_initialize  # type: ignore[method-assign,assignment]
-    manager_type._async_set = _async_set  # type: ignore[method-assign,assignment]
-    manager_type.async_restrict = async_restrict  # type: ignore[method-assign,assignment]
-    manager_type.async_update_trusted = async_update_trusted  # type: ignore[method-assign,assignment]
-    manager_type.async_disable_trusted = async_disable_trusted  # type: ignore[method-assign,assignment]
-    manager_type.async_replace_backup = async_replace_backup  # type: ignore[method-assign,assignment]
 
 
 def _install_tool_result_hardening() -> None:
