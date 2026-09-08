@@ -446,7 +446,13 @@ async def _recover_failed_apply(
 async def async_restore_backup_recoverably(
     hass: HomeAssistant, entry: Any, subentry: Any, value: Any
 ) -> dict[str, Any]:
-    """Restore one agent with a durable cross-category commit decision."""
+    """Restore one agent with a durable cross-category commit decision.
+
+    Live callers must already hold the agent's exclusive maintenance lease and
+    defer cancellation until this operation finishes. This inner path acquires
+    only the backup lock; both full and selective restores share its journal and
+    rollback implementation without nesting maintenance-gate ownership.
+    """
     prepared = backup.inspect_backup(value, subentry.subentry_id)
     entry_id = entry.entry_id
     subentry_id = subentry.subentry_id
