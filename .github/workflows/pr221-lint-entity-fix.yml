@@ -1,0 +1,46 @@
+name: PR221 lint entity fix
+
+on:
+  push:
+    branches:
+      - feature/correctable-function-tool-recovery
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/correctable-function-tool-recovery
+          fetch-depth: 0
+
+      - name: Apply guarded Ruff fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("custom_components/extended_openai_conversation_responses/entity.py")
+          text = path.read_text()
+          old = '''                with bind_tool_recovery_state(recovery_state):\n                    with async_streaming_speech_cleanup(chat_log, options):\n                        async for content in chat_log.async_add_delta_content_stream(\n'''
+          new = '''                with (\n                    bind_tool_recovery_state(recovery_state),\n                    async_streaming_speech_cleanup(chat_log, options),\n                ):\n                    async for content in chat_log.async_add_delta_content_stream(\n'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"expected exactly one nested context match, found {count}")
+          path.write_text(text.replace(old, new, 1))
+          Path(".github/workflows/pr221-lint-entity-fix.yml").unlink()
+          PY
+
+      - name: Commit entity lint fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Fix recovery context manager lint"
+          git push origin HEAD:feature/correctable-function-tool-recovery
