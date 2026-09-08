@@ -27,10 +27,9 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 
-from . import backup
+from . import backup, transfer
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import DOMAIN
-from . import transfer
 
 WS_BACKUP_TRANSFER = f"{DOMAIN}/management/backup_transfer"
 ARCHIVE_FORMAT = "extended_openai_conversation_backup_archive"

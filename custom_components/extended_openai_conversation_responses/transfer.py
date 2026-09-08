@@ -24,13 +24,26 @@ from .agent_config import (
     validate_agent_title,
 )
 from .const import AGENT_CONFIG_EXPORT_VERSION, DOMAIN, SERVICE_CALL_FUNCTION
-from .conversation_archive import ArchiveSession, ArchiveTurn, ConversationArchive, async_get_archive
+from .conversation_archive import (
+    ArchiveSession,
+    ArchiveTurn,
+    ConversationArchive,
+    async_get_archive,
+)
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
 from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
 from .memory import MemoryRecord, PersistentMemory, async_get_memory
 from .request_rules import RequestRules, async_get_request_rules
-from .secret_redaction import REDACTED_SECRET_SENTINEL, redact_secrets, restore_redacted_secrets
-from .temporary_memory import TemporaryMemory, TemporaryMemoryRecord, async_get_temporary_memory
+from .secret_redaction import (
+    REDACTED_SECRET_SENTINEL,
+    redact_secrets,
+    restore_redacted_secrets,
+)
+from .temporary_memory import (
+    TemporaryMemory,
+    TemporaryMemoryRecord,
+    async_get_temporary_memory,
+)
 from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
 
 TRANSFER_FORMAT = "extended_openai_conversation_transfer"
@@ -113,12 +126,16 @@ class PreparedTransfer:
 
     def summary(self) -> dict[str, Any]:
         """Return a bounded, frontend-friendly description of available content."""
-        sections = [section for section in SECTION_ORDER if section in self.available_sections]
+        sections = [
+            section for section in SECTION_ORDER if section in self.available_sections
+        ]
         return {
             "source_kind": self.source_kind,
             "mode": self.mode,
             "sections": sections,
-            "section_labels": {section: SECTION_LABELS[section] for section in sections},
+            "section_labels": {
+                section: SECTION_LABELS[section] for section in sections
+            },
             "configuration": SECTION_CONFIGURATION in self.available_sections,
             "request_rules": (
                 len(self.request_rules.get("rules", []))
@@ -179,7 +196,9 @@ def validate_section_selection(
 
 
 def _safe_title(title: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-") or "conversation-agent"
+    return (
+        re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-") or "conversation-agent"
+    )
 
 
 def _new_transfer_document(entry: Any, subentry: Any, mode: str) -> dict[str, Any]:
@@ -221,7 +240,9 @@ async def async_collect_transfer_snapshot(
             dict(subentry.data), agent_config_snapshot(subentry.data)
         )
     if SECTION_REQUEST_RULES in selected:
-        manager = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
+        manager = await async_get_request_rules(
+            hass, entry.entry_id, subentry.subentry_id
+        )
         payload[SECTION_REQUEST_RULES] = await manager.async_backup_data()
     if SECTION_PERSISTENT_MEMORY in selected:
         manager = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
@@ -259,8 +280,7 @@ def _normalize_redaction_placeholders(value: Any) -> Any:
         return [_normalize_redaction_placeholders(item) for item in value]
     if isinstance(value, dict):
         return {
-            key: _normalize_redaction_placeholders(item)
-            for key, item in value.items()
+            key: _normalize_redaction_placeholders(item) for key, item in value.items()
         }
     return value
 
@@ -577,7 +597,9 @@ def _inspect_legacy_setup(value: Mapping[str, Any]) -> PreparedTransfer:
     )
 
 
-def _inspect_full_backup(value: Mapping[str, Any], target_agent_id: str) -> PreparedTransfer:
+def _inspect_full_backup(
+    value: Mapping[str, Any], target_agent_id: str
+) -> PreparedTransfer:
     prepared = backup.inspect_backup(
         value, target_agent_id, max_bytes=backup.MAX_BACKUP_BYTES
     )
@@ -594,11 +616,13 @@ def _inspect_full_backup(value: Mapping[str, Any], target_agent_id: str) -> Prep
         available.add(SECTION_GUEST_MODE)
     if isinstance(version, int) and version >= 3 and "request_rules" in value:
         available.add(SECTION_REQUEST_RULES)
-    raw_config = value.get("agent", {}).get("config") if isinstance(value.get("agent"), Mapping) else None
+    raw_config = (
+        value.get("agent", {}).get("config")
+        if isinstance(value.get("agent"), Mapping)
+        else None
+    )
     raw_rules = value.get("request_rules")
-    redacted = [
-        f"configuration.{path}" for path in _collect_secret_paths(raw_config)
-    ]
+    redacted = [f"configuration.{path}" for path in _collect_secret_paths(raw_config)]
     if raw_rules is not None:
         redacted.extend(
             f"request_rules.{path}" for path in _collect_secret_paths(raw_rules)
@@ -611,7 +635,9 @@ def _inspect_full_backup(value: Mapping[str, Any], target_agent_id: str) -> Prep
         created_at=prepared.created_at,
         integration_version=prepared.integration_version,
         config=prepared.config,
-        request_rules=prepared.request_rules if SECTION_REQUEST_RULES in available else None,
+        request_rules=prepared.request_rules
+        if SECTION_REQUEST_RULES in available
+        else None,
         memories=prepared.memories,
         temporary_memories=prepared.temporary_memories,
         knowledge=prepared.knowledge,
@@ -674,7 +700,9 @@ def _request_rule_function_dependencies(
             if action.get("action", action.get("service")) != service_action:
                 continue
             data = action.get("data")
-            if not isinstance(data, Mapping) or not isinstance(data.get("function"), str):
+            if not isinstance(data, Mapping) or not isinstance(
+                data.get("function"), str
+            ):
                 raise backup.BackupError(
                     f"Request Rule `{rule.get('name', rule.get('id', 'unnamed'))}` has an invalid Function Tool action"
                 )
@@ -690,7 +718,11 @@ def _request_rule_function_dependencies(
                     f"Request Rule Function Tool `{name}` arguments must be an object"
                 )
             parameters = tool.get("spec", {}).get("parameters", {})
-            required = parameters.get("required", []) if isinstance(parameters, Mapping) else []
+            required = (
+                parameters.get("required", [])
+                if isinstance(parameters, Mapping)
+                else []
+            )
             missing = set(required) - set(arguments)
             if missing:
                 raise backup.BackupError(
@@ -876,7 +908,9 @@ def inspection_for_frontend(prepared: PreparedTransfer) -> dict[str, Any]:
         "source_kind": prepared.source_kind,
         "mode": prepared.mode,
         "available_sections": [
-            section for section in SECTION_ORDER if section in prepared.available_sections
+            section
+            for section in SECTION_ORDER
+            if section in prepared.available_sections
         ],
         "summary": prepared.summary(),
         "can_create_new_agent": prepared.available_sections.issubset(SETUP_SECTIONS)
