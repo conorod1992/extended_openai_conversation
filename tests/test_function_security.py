@@ -359,8 +359,19 @@ async def test_request_rule_function_uses_structured_outcome(
     outcome, error_type, message
 ) -> None:
     tool = {"spec": {"name": "control"}}
+    latest_data = {"function_groups": []}
+    latest_entry = SimpleNamespace(
+        subentries={"agent-1": SimpleNamespace(data=latest_data)}
+    )
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
-    entity._get_configured_function_tools = lambda: [tool]
+    entity.hass = SimpleNamespace(
+        config_entries=SimpleNamespace(
+            async_get_entry=lambda _entry_id: latest_entry
+        )
+    )
+    entity.entry = SimpleNamespace(entry_id="entry-1")
+    entity.subentry = SimpleNamespace(subentry_id="agent-1", data=latest_data)
+    entity._configured_function_tools_from_data = lambda _data: [tool]
     entity._get_exposed_entities = lambda: []
     entity._execute_function_tool = AsyncMock(
         return_value=SimpleNamespace(tool_result={"result": json.dumps(outcome)})

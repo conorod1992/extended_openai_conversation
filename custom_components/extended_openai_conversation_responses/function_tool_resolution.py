@@ -25,31 +25,14 @@ _INTEGRATION_TOOL_TYPES = frozenset(
 )
 
 
-def latest_function_tool_for_execution(
+def configured_function_tool_for_execution(
     agent: Any,
-    function_tool: dict[str, Any],
+    tool_name: str,
 ) -> dict[str, Any]:
-    """Return the newest still-available definition immediately before execution.
-
-    Configured Function Tools may be edited, disabled, deleted, or made unavailable
-    through their Function Group after a provider request has already been emitted.
-    Integration-owned runtime definitions remain authoritative for that request round;
-    persisted user tools must still exist and be enabled at dispatch time.
-    """
-    function = function_tool.get("function")
-    if (
-        not isinstance(function, Mapping)
-        or function.get("type") in _INTEGRATION_TOOL_TYPES
-    ):
-        return function_tool
-
-    tool_name = function_tool.get("spec", {}).get("name")
-    if not isinstance(tool_name, str) or not tool_name:
-        return function_tool
-
+    """Return the current configured tool after live availability checks."""
     resolver = getattr(agent, "_configured_function_tools_from_data", None)
     if not callable(resolver):
-        return function_tool
+        raise FunctionNotFound(tool_name)
 
     latest_entry = agent.hass.config_entries.async_get_entry(agent.entry.entry_id)
     latest_subentry = (
@@ -87,6 +70,37 @@ def latest_function_tool_for_execution(
             f"Function Tool `{tool_name}` is unavailable because Function Group "
             f"`{current_group['id']}` is disabled"
         )
+    return current_tool
+
+
+def latest_function_tool_for_execution(
+    agent: Any,
+    function_tool: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the newest still-available definition immediately before execution.
+
+    Configured Function Tools may be edited, disabled, deleted, or made unavailable
+    through their Function Group after a provider request has already been emitted.
+    Integration-owned runtime definitions remain authoritative for that request round;
+    persisted user tools must still exist and be enabled at dispatch time.
+    """
+    function = function_tool.get("function")
+    if (
+        not isinstance(function, Mapping)
+        or function.get("type") in _INTEGRATION_TOOL_TYPES
+    ):
+        return function_tool
+
+    tool_name = function_tool.get("spec", {}).get("name")
+    if not isinstance(tool_name, str) or not tool_name:
+        return function_tool
+
+    resolver = getattr(agent, "_configured_function_tools_from_data", None)
+    if not callable(resolver):
+        return function_tool
+
+    current_tool = configured_function_tool_for_execution(agent, tool_name)
+
     # A saved HA reference owns exposure settings, not the live request schema.
     if function.get("type") == "ha_llm":
         if current_tool.get("function") != function:
