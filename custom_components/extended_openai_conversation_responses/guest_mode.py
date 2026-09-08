@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 import logging
@@ -195,6 +196,7 @@ class GuestModeManager:
         )
         self._schedule: GuestModeSchedule | None = None
         self._listeners: set[Callable[[], None]] = set()
+        self._mutation_lock = asyncio.Lock()
         self._initialized = False
 
     async def async_initialize(self) -> None:
@@ -281,28 +283,30 @@ class GuestModeManager:
         if requested_end is not None and requested_end <= requested_start:
             raise ValueError("active_until must be later than active_from")
 
-        existing = self._live_or_future_schedule(current)
-        if existing is None:
-            start = requested_start
-            end = None if make_indefinite or active_until is None else requested_end
-        else:
-            existing_start = _parse_timestamp(
-                self.hass, existing.active_from, "active_from"
-            )
-            existing_end = (
-                _parse_timestamp(self.hass, existing.active_until, "active_until")
-                if existing.active_until is not None
-                else None
-            )
-            start = min(existing_start, requested_start)
-            if existing_end is None or make_indefinite:
-                end = None
-            elif requested_end is None:
-                end = existing_end
+        async with self._mutation_lock:
+            existing = self._live_or_future_schedule(current)
+            if existing is None:
+                start = requested_start
+                end = None if make_indefinite or active_until is None else requested_end
             else:
-                end = max(existing_end, requested_end)
-        await self._async_set(start, end, "llm")
-        return self.status(current)
+                existing_start = _parse_timestamp(
+                    self.hass, existing.active_from, "active_from"
+                )
+                existing_end = (
+                    _parse_timestamp(self.hass, existing.active_until, "active_until")
+                    if existing.active_until is not None
+                    else None
+                )
+                start = min(existing_start, requested_start)
+                if existing_end is None or make_indefinite:
+                    end = None
+                elif requested_end is None:
+                    end = existing_end
+                else:
+                    end = max(existing_end, requested_end)
+            schedule = self._schedule_value(start, end, "llm")
+            await self._async_commit_schedule(schedule)
+            return self.status(current)
 
     async def async_update_trusted(
         self,
@@ -328,15 +332,16 @@ class GuestModeManager:
         )
         if end is not None and end <= start:
             raise ValueError("active_until must be later than active_from")
-        await self._async_set(start, end, "home_assistant")
-        return self.status(current)
+        schedule = self._schedule_value(start, end, "home_assistant")
+        async with self._mutation_lock:
+            await self._async_commit_schedule(schedule)
+            return self.status(current)
 
     async def async_disable_trusted(self) -> dict[str, Any]:
         """End or cancel Guest Mode from a trusted HA control surface."""
-        self._schedule = None
-        await self._store.async_save({"schedule": None})
-        self._notify()
-        return self.status()
+        async with self._mutation_lock:
+            await self._async_commit_schedule(None)
+            return self.status()
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return JSON-compatible Guest Mode state for a private agent backup."""
@@ -376,11 +381,8 @@ class GuestModeManager:
 
     async def async_replace_backup(self, schedule: GuestModeSchedule | None) -> None:
         """Replace durable Guest Mode state during an atomic agent restore."""
-        self._schedule = schedule
-        await self._store.async_save(
-            {"schedule": asdict(schedule) if schedule is not None else None}
-        )
-        self._notify()
+        async with self._mutation_lock:
+            await self._async_commit_schedule(schedule)
 
     def async_add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         self._listeners.add(listener)
@@ -390,16 +392,45 @@ class GuestModeManager:
 
         return remove
 
-    async def _async_set(self, start: Any, end: Any | None, source: str) -> None:
-        updated = dt_util.utcnow().isoformat()
-        self._schedule = GuestModeSchedule(
+    @staticmethod
+    def _schedule_value(start: Any, end: Any | None, source: str) -> GuestModeSchedule:
+        return GuestModeSchedule(
             active_from=_as_utc(start).isoformat(),
             active_until=_as_utc(end).isoformat() if end is not None else None,
             source=source,
-            updated_at=updated,
+            updated_at=dt_util.utcnow().isoformat(),
         )
-        await self._store.async_save({"schedule": asdict(self._schedule)})
+
+    async def _async_commit_schedule(self, schedule: GuestModeSchedule | None) -> None:
+        """Persist one schedule before publishing it to live Guest Mode readers."""
+        payload = {"schedule": asdict(schedule) if schedule is not None else None}
+        save_task = asyncio.ensure_future(self._store.async_save(payload))
+        cancellation: asyncio.CancelledError | None = None
+
+        while not save_task.done():
+            try:
+                await asyncio.shield(save_task)
+            except asyncio.CancelledError as err:
+                if save_task.cancelled():
+                    raise
+                if cancellation is None:
+                    cancellation = err
+            except Exception:
+                break
+
+        try:
+            save_task.result()
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            if cancellation is not None:
+                raise cancellation from err
+            raise
+
+        self._schedule = schedule
         self._notify()
+        if cancellation is not None:
+            raise cancellation
 
     def _live_or_future_schedule(self, now: Any) -> GuestModeSchedule | None:
         schedule = self._schedule
