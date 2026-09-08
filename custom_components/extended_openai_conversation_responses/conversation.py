@@ -374,7 +374,7 @@ class ExtendedOpenAIAgentEntity(
                 self._set_subsystem_status("persistent_memory", True, healthy=True)
 
     async def _async_initialize_archive(self, configured: bool) -> None:
-        """Initialize archive storage without taking the conversation agent down."""
+        """Initialize archive storage without taking down the conversation agent."""
         self._set_subsystem_status("archive", configured)
         try:
             self._archive = await async_get_archive(
@@ -1418,7 +1418,9 @@ class ExtendedOpenAIAgentEntity(
                     if latest_subentry is not None
                     else self.subentry.data
                 )
-                current_configured = self._configured_function_tools_from_data(latest_data)
+                current_configured = self._configured_function_tools_from_data(
+                    latest_data
+                )
                 current_tool = next(
                     (
                         tool
