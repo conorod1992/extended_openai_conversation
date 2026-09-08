@@ -109,6 +109,10 @@ from .function_groups import (
     remove_function_group_runtime,
     reset_function_group_runtime,
 )
+from .function_tool_resolution import (
+    configured_function_tool_for_execution,
+    latest_function_tool_for_execution,
+)
 from .functions.security import (
     FunctionSecurity,
     classify_tool,
@@ -1043,17 +1047,7 @@ class ExtendedOpenAIAgentEntity(
         llm_context: llm.LLMContext | None,
     ) -> Any:
         """Execute a configured function through the model-tool security seam."""
-        current_tools = self._get_configured_function_tools()
-        function_tool = next(
-            (
-                tool
-                for tool in current_tools
-                if tool.get("spec", {}).get("name") == function_name
-            ),
-            None,
-        )
-        if function_tool is None:
-            raise HomeAssistantError(f"Function Tool `{function_name}` is unavailable")
+        function_tool = configured_function_tool_for_execution(self, function_name)
         result = await self._execute_function_tool(
             function_tool,
             llm.ToolInput(
@@ -1400,46 +1394,50 @@ class ExtendedOpenAIAgentEntity(
             "conversation_lifecycle",
         }:
             tool_name = function_tool.get("spec", {}).get("name")
-            latest_entry = self.hass.config_entries.async_get_entry(self.entry.entry_id)
-            latest_subentry = (
-                latest_entry.subentries.get(self.subentry.subentry_id)
-                if latest_entry is not None
-                else None
-            )
-            latest_data = (
-                latest_subentry.data
-                if latest_subentry is not None
-                else self.subentry.data
-            )
-            current_configured = self._configured_function_tools_from_data(latest_data)
-            current_tool = next(
-                (
-                    tool
-                    for tool in current_configured
-                    if tool.get("spec", {}).get("name") == tool_name
-                ),
-                None,
-            )
-            if current_tool is None:
+            try:
+                resolved_tool = latest_function_tool_for_execution(self, function_tool)
+            except FunctionNotFound:
                 if policy.guest_active:
                     return self._tool_result(
                         tool_input,
                         guest_mode_denial_result(),
                     )
-                raise FunctionNotFound(str(tool_name))
-            if policy.guest_active and (
-                (
-                    policy.legacy_function_flags
-                    and current_tool.get("guest_allowed") is not True
-                )
-                or not policy.allows_configured_tool(str(tool_name))
-                or self._is_guest_unscopable_tool(current_tool)
-            ):
-                return self._tool_result(
-                    tool_input,
-                    guest_mode_denial_result(),
-                )
+                raise
+            guest_entities = exposed_entities
             if policy.guest_active:
+                latest_entry = self.hass.config_entries.async_get_entry(
+                    self.entry.entry_id
+                )
+                latest_subentry = (
+                    latest_entry.subentries.get(self.subentry.subentry_id)
+                    if latest_entry is not None
+                    else None
+                )
+                latest_data = (
+                    latest_subentry.data
+                    if latest_subentry is not None
+                    else self.subentry.data
+                )
+                current_configured = self._configured_function_tools_from_data(latest_data)
+                current_tool = next(
+                    (
+                        tool
+                        for tool in current_configured
+                        if tool.get("spec", {}).get("name") == tool_name
+                    ),
+                    None,
+                )
+                if current_tool is None:
+                    return self._tool_result(tool_input, guest_mode_denial_result())
+                if (
+                    (
+                        policy.legacy_function_flags
+                        and current_tool.get("guest_allowed") is not True
+                    )
+                    or not policy.allows_configured_tool(str(tool_name))
+                    or self._is_guest_unscopable_tool(current_tool)
+                ):
+                    return self._tool_result(tool_input, guest_mode_denial_result())
                 current_groups = validate_function_groups(
                     latest_data.get(
                         CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)
@@ -1452,42 +1450,24 @@ class ExtendedOpenAIAgentEntity(
                 if str(tool_name) not in {
                     tool["spec"]["name"] for tool in allowed_tools
                 }:
-                    return self._tool_result(
-                        tool_input,
-                        guest_mode_denial_result(),
-                    )
-            if not function_tool_enabled(function_tool) or not function_tool_enabled(
-                current_tool
-            ):
-                raise HomeAssistantError(f"Function Tool `{tool_name}` is disabled")
-            guest_entities = exposed_entities
-            if policy.guest_active:
+                    return self._tool_result(tool_input, guest_mode_denial_result())
                 control = self._is_control_tool(current_tool)
                 if control and contains_indirect_service_call(tool_input.tool_args):
-                    return self._tool_result(
-                        tool_input,
-                        guest_mode_denial_result(),
-                    )
+                    return self._tool_result(tool_input, guest_mode_denial_result())
                 if not self._guest_arguments_allowed_runtime(
                     tool_input.tool_args, policy, control=control
                 ):
-                    return self._tool_result(
-                        tool_input,
-                        guest_mode_denial_result(),
-                    )
+                    return self._tool_result(tool_input, guest_mode_denial_result())
                 if control and not self._guest_arguments_allowed_runtime(
                     current_tool.get("function", {}), policy, control=True
                 ):
-                    return self._tool_result(
-                        tool_input,
-                        guest_mode_denial_result(),
-                    )
+                    return self._tool_result(tool_input, guest_mode_denial_result())
                 guest_entities = self._filter_guest_entities(
                     get_exposed_entities(self.hass), control=control
                 )
             try:
                 return await super()._execute_function_tool(
-                    function_tool, tool_input, llm_context, guest_entities
+                    resolved_tool, tool_input, llm_context, guest_entities
                 )
             except Exception:
                 if policy.guest_active:
