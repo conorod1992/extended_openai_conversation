@@ -27,7 +27,7 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 
-from . import backup
+from . import backup, transfer
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import DOMAIN
 
@@ -192,6 +192,8 @@ def _resolve_agent(
 
 
 def _redacted_document(snapshot: dict[str, Any]) -> dict[str, Any]:
+    if snapshot.get("format") == transfer.TRANSFER_FORMAT:
+        return transfer.redact_transfer_document(snapshot)
     return {
         **snapshot,
         "agent": {
@@ -206,7 +208,12 @@ def _safe_export_filename(document: dict[str, Any]) -> str:
     title = str(document["agent"]["title"])
     safe_title = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")
     date = str(document["created_at"])[:10]
-    return f"{safe_title or 'conversation-agent'}-full-backup-{date}.zip"
+    label = (
+        "custom-backup"
+        if document.get("format") == transfer.TRANSFER_FORMAT
+        else "full-backup"
+    )
+    return f"{safe_title or 'conversation-agent'}-{label}-{date}.zip"
 
 
 def _hash_file(path: str) -> str:
@@ -533,11 +540,9 @@ def _load_uploaded_document(path: str, kind: str) -> dict[str, Any]:
 
 def _load_prepared_restore(
     path: str, kind: str, target_subentry_id: str
-) -> backup.PreparedRestore:
+) -> transfer.PreparedTransfer:
     document = _load_uploaded_document(path, kind)
-    return backup.inspect_backup(
-        document, target_subentry_id, max_bytes=MAX_BACKUP_UNCOMPRESSED_BYTES
-    )
+    return transfer.inspect_transfer(document, target_subentry_id)
 
 
 async def _discard_export(hass: HomeAssistant, session_id: str) -> bool:
@@ -566,8 +571,12 @@ def _require_session_identity(
 
 
 async def _start_export(
-    hass: HomeAssistant, entry: Any, subentry: Any
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    data = data or {}
     async with _start_lock(hass):
         await _async_cleanup_expired(hass)
         # Reserve the worst-case archive footprint before doing any expensive work.
@@ -576,9 +585,22 @@ async def _start_export(
         async with _registry_lock(hass):
             _ensure_session_capacity(hass, MAX_BACKUP_ARCHIVE_BYTES)
 
+        mode = data.get("mode", "full")
+        if mode not in {"full", "custom"}:
+            raise backup.BackupError("Export mode must be full or custom")
         gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
         async with gate.exclusive():
-            snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+            snapshot = (
+                await backup.async_collect_backup_snapshot(hass, entry, subentry)
+                if mode == "full"
+                else await transfer.async_collect_transfer_snapshot(
+                    hass,
+                    entry,
+                    subentry,
+                    mode="custom",
+                    sections=data.get("sections"),
+                )
+            )
         try:
             result = await _async_build_archive_file(hass, snapshot)
         except backup.BackupError:
@@ -611,6 +633,7 @@ async def _start_export(
     return {
         "session_id": session_id,
         "filename": session.filename,
+        "mode": mode,
         "content_type": "application/zip",
         "size": session.size,
         "sha256": session.sha256,
@@ -826,10 +849,13 @@ async def _inspect_import(
         prepared = await hass.async_add_executor_job(
             _load_prepared_restore, session.path, session.kind, subentry_id
         )
+    entry, subentry = _resolve_agent(hass, entry_id, subentry_id)
+    _target, preview = await transfer.async_materialize_restore(
+        hass, entry, subentry, prepared, sections=data.get("sections")
+    )
     return {
-        "valid": True,
-        "title": prepared.title,
-        "summary": prepared.summary(),
+        **transfer.inspection_for_frontend(prepared),
+        "preview": preview,
     }
 
 
@@ -866,9 +892,11 @@ async def _restore_import(
             session.kind,
             subentry.subentry_id,
         )
-        # Resolve the live effective restore callable here. Startup hardening wraps
-        # this with restart recovery and the per-agent maintenance barrier.
-        return await backup.async_restore_backup(hass, entry, subentry, prepared)
+        # Selective restore is materialized into one complete target snapshot, then
+        # delegated to the existing restart-safe full transaction.
+        return await transfer.async_restore_transfer(
+            hass, entry, subentry, prepared, sections=data.get("sections")
+        )
     finally:
         await _async_remove_path(hass, session.path)
 
@@ -885,8 +913,10 @@ async def async_backup_transfer_command(
     if not isinstance(data, dict):
         raise backup.BackupError("Backup transfer data must be an object")
 
+    if action == "setup_export":
+        return await transfer.async_create_setup_export(hass, entry, subentry)
     if action == "export_start":
-        return await _start_export(hass, entry, subentry)
+        return await _start_export(hass, entry, subentry, data)
     if action == "export_chunk":
         return await _export_chunk(hass, entry_id, subentry_id, data)
     if action == "export_cancel":
@@ -913,7 +943,7 @@ async def async_backup_transfer_command(
                 _require_session_identity(import_session, entry_id, subentry_id)
             return {"cancelled": await _discard_import(hass, session_id)}
         return {"cancelled": False}
-    raise backup.BackupError("Unsupported full backup transfer action")
+    raise backup.BackupError("Unsupported export/import transfer action")
 
 
 @websocket_api.websocket_command(
@@ -932,7 +962,7 @@ async def websocket_backup_transfer(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Transfer a private full backup in bounded authenticated WebSocket frames."""
+    """Transfer bounded authenticated export/import files."""
     try:
         result = await async_backup_transfer_command(hass, msg)
     except (HomeAssistantError, RuntimeError, ValueError) as err:
