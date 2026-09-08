@@ -37,6 +37,7 @@ from .const import (
     CONF_CHAT_MODEL,
     CONF_CONTEXT_THRESHOLD,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
+    CONF_FUNCTION_TOOL_ERROR_RECOVERY,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MAX_TOKENS,
     CONF_SHORTEN_TOOL_CALL_ID,
@@ -48,6 +49,7 @@ from .const import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONTEXT_THRESHOLD,
     DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
+    DEFAULT_FUNCTION_TOOL_ERROR_RECOVERY,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MAX_TOKENS,
     DEFAULT_SHORTEN_TOOL_CALL_ID,
@@ -67,6 +69,12 @@ from .function_call_budget import FunctionCallBudget
 from .function_execution import (
     async_validate_function_arguments,
     split_legacy_execution_delay,
+)
+from .function_tool_recovery import (
+    MalformedToolArguments,
+    ToolRecoveryState,
+    provider_argument_text,
+    strict_execution_failures_enabled,
 )
 from .functions import get_function
 from .ha_llm_tools import async_discover, current_snapshot, is_ha_tool, reference_key
@@ -268,8 +276,10 @@ def _convert_content_to_param(
                         "type": "function",
                         "function": {
                             "name": tool_call.tool_name,
-                            "arguments": json.dumps(
-                                tool_call.tool_args, separators=(",", ":")
+                            "arguments": (
+                                provider_argument_text(tool_call.tool_args)
+                                if isinstance(tool_call.tool_args, MalformedToolArguments)
+                                else json.dumps(tool_call.tool_args, separators=(",", ":"))
                             ),
                         },
                     }
@@ -361,8 +371,10 @@ def _convert_content_to_responses_param(
                         "type": "function_call",
                         "call_id": tool_call.id,
                         "name": tool_call.tool_name,
-                        "arguments": json.dumps(
-                            tool_call.tool_args, separators=(",", ":")
+                        "arguments": (
+                            provider_argument_text(tool_call.tool_args)
+                            if isinstance(tool_call.tool_args, MalformedToolArguments)
+                            else json.dumps(tool_call.tool_args, separators=(",", ":"))
                         ),
                     }
                 )
@@ -456,6 +468,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
         )
         function_call_budget = FunctionCallBudget(int(max_function_calls))
+        recovery_state = ToolRecoveryState(
+            enabled=options.get(
+                CONF_FUNCTION_TOOL_ERROR_RECOVERY,
+                DEFAULT_FUNCTION_TOOL_ERROR_RECOVERY,
+            )
+            is True
+        )
         shorten_tool_call_id = options.get(
             CONF_SHORTEN_TOOL_CALL_ID,
             DEFAULT_SHORTEN_TOOL_CALL_ID,
@@ -614,7 +633,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         ),
                     )
                     transformed_stream = self._transform_responses_stream(
-                        chat_log, responses_stream, request_usage
+                        chat_log, responses_stream, request_usage, recovery_state
                     )
                 else:
                     chat_stream = cast(
@@ -626,7 +645,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         ),
                     )
                     transformed_stream = self._transform_chat_stream(
-                        chat_log, chat_stream, request_usage
+                        chat_log, chat_stream, request_usage, recovery_state
                     )
 
                 with async_streaming_speech_cleanup(chat_log, options):
@@ -816,6 +835,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 llm_context,
                 exposed_entities,
                 function_tools_factory=function_tools_factory,
+                recovery_state=recovery_state,
             )
 
             if api_mode == API_MODE_RESPONSES:
@@ -1037,6 +1057,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         result: AsyncStream[ChatCompletionChunk],
         request_usage: RequestUsage | None = None,
+        recovery_state: ToolRecoveryState | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
@@ -1132,7 +1153,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     try:
                         args = json.loads(tool_call["arguments"])
                     except json.JSONDecodeError as err:
-                        raise ParseArgumentsFailed(tool_call["arguments"]) from err
+                        if recovery_state is None or not recovery_state.enabled:
+                            raise ParseArgumentsFailed(tool_call["arguments"]) from err
+                        args = recovery_state.remember_malformed(
+                            tool_call["id"], tool_call["arguments"]
+                        )
                     tool_calls_list.append(
                         llm.ToolInput(
                             id=tool_call["id"],
@@ -1170,6 +1195,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         result: AsyncStream[Any],
         request_usage: RequestUsage | None = None,
+        recovery_state: ToolRecoveryState | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
@@ -1279,7 +1305,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     try:
                         arguments = json.loads(item.arguments)
                     except json.JSONDecodeError as err:
-                        raise ParseArgumentsFailed(item.arguments) from err
+                        if recovery_state is None or not recovery_state.enabled:
+                            raise ParseArgumentsFailed(item.arguments) from err
+                        arguments = recovery_state.remember_malformed(
+                            item.call_id, item.arguments
+                        )
                     yield {
                         "tool_calls": [
                             llm.ToolInput(
@@ -1421,6 +1451,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     exposed_entities,
                 )
         except HomeAssistantError as err:
+            if strict_execution_failures_enabled():
+                raise
             _LOGGER.warning("Function Tool `%s` failed: %s", tool_input.tool_name, err)
             result = {"status": "error", "error": str(err)}
 
