@@ -13,6 +13,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from custom_components.extended_openai_conversation_responses.scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
+    bind_active_voice_identity_users,
     memory_scope_id,
     resolve_data_scope,
 )
@@ -81,3 +82,63 @@ def test_default_owner_shared_and_unretained_fallbacks() -> None:
     assert shared.scope_type == "shared"
     assert unretained.scope_type == "unretained"
     assert memory_scope_id(unretained) is None
+
+
+def test_stale_device_mapping_follows_shared_unmapped_policy() -> None:
+    with bind_active_voice_identity_users(frozenset()):
+        scope = resolve_data_scope(
+            _context(device_id="kitchen"),
+            {
+                CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_DEVICE_MAPPING,
+                CONF_VOICE_DEVICE_MAPPINGS: {"kitchen": "user:deleted-user"},
+                CONF_VOICE_UNMAPPED_POLICY: VOICE_POLICY_SHARED,
+            },
+        )
+
+    assert scope.scope_id == SHARED_HOUSEHOLD_SCOPE_ID
+    assert scope.source == "shared_voice_policy"
+
+
+def test_stale_device_mapping_can_fall_back_to_active_default_user() -> None:
+    with bind_active_voice_identity_users(frozenset({"default-user"})):
+        scope = resolve_data_scope(
+            _context(device_id="kitchen"),
+            {
+                CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_DEVICE_MAPPING,
+                CONF_VOICE_DEVICE_MAPPINGS: {"kitchen": "user:deleted-user"},
+                CONF_VOICE_UNMAPPED_POLICY: VOICE_POLICY_DEFAULT_USER,
+                CONF_VOICE_DEFAULT_USER_ID: "default-user",
+            },
+        )
+
+    assert (scope.user_id, scope.source) == ("default-user", "agent_default_user")
+
+
+def test_stale_default_user_fails_closed_to_unretained() -> None:
+    with bind_active_voice_identity_users(frozenset()):
+        scope = resolve_data_scope(
+            _context(device_id="bedroom"),
+            {
+                CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_DEFAULT_USER,
+                CONF_VOICE_DEFAULT_USER_ID: "deleted-user",
+            },
+        )
+
+    assert scope.scope_type == "unretained"
+    assert memory_scope_id(scope) is None
+
+
+def test_authenticated_user_remains_authoritative_when_configured_users_are_stale() -> None:
+    with bind_active_voice_identity_users(frozenset()):
+        scope = resolve_data_scope(
+            _context("authenticated-user", "kitchen"),
+            {
+                CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_DEVICE_MAPPING,
+                CONF_VOICE_DEVICE_MAPPINGS: {"kitchen": "user:deleted-user"},
+            },
+        )
+
+    assert (scope.user_id, scope.source) == (
+        "authenticated-user",
+        "authenticated_user",
+    )
