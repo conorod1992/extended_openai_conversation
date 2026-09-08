@@ -19,6 +19,9 @@ from custom_components.extended_openai_conversation_responses.exceptions import 
 from custom_components.extended_openai_conversation_responses.function_call_budget import (
     FunctionCallBudget,
 )
+from custom_components.extended_openai_conversation_responses.function_execution import (
+    async_validate_function_arguments,
+)
 from custom_components.extended_openai_conversation_responses.function_tool_recovery import (
     ToolRecoveryState,
 )
@@ -119,6 +122,26 @@ async def test_regex_validation_infrastructure_failure_is_not_recoverable(
     assert len(results) == 1
     assert results[0].tool_result["result"]["status"] == "error"
     assert results[0].tool_result["result"].get("reason") != "correctable_tool_error"
+
+
+async def test_disabled_validation_preserves_original_infrastructure_error(
+    hass, monkeypatch
+) -> None:
+    """The ordinary validator keeps its pre-recovery exception contract."""
+
+    async def unavailable(_hass: Any, _checks: Any) -> list[bool]:
+        raise HomeAssistantError("regex worker unavailable")
+
+    monkeypatch.setattr(regex_execution, "async_search_configured_patterns", unavailable)
+
+    with pytest.raises(HomeAssistantError, match="regex worker unavailable") as caught:
+        await async_validate_function_arguments(
+            hass,
+            _tool()["spec"],
+            {"mode": "on"},
+        )
+
+    assert type(caught.value) is HomeAssistantError
 
 
 async def test_regex_argument_mismatch_remains_correctable(hass, monkeypatch) -> None:
