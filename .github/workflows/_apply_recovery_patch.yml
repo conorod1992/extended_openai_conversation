@@ -1,0 +1,162 @@
+name: Apply recovery integration patch
+
+on:
+  push:
+    branches:
+      - feature/correctable-function-tool-recovery
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/correctable-function-tool-recovery
+      - name: Apply focused source edits
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one anchor, found {count}: {old[:80]!r}")
+              p.write_text(text.replace(old, new))
+
+          base = Path("custom_components/extended_openai_conversation_responses")
+
+          # Per-agent default-off configuration contract.
+          const = base / "const.py"
+          replace(
+              const,
+              'CONF_WEB_SEARCH = "web_search"\nDEFAULT_WEB_SEARCH = False\n',
+              'CONF_WEB_SEARCH = "web_search"\nDEFAULT_WEB_SEARCH = False\nCONF_FUNCTION_TOOL_ERROR_RECOVERY = "function_tool_error_recovery"\nDEFAULT_FUNCTION_TOOL_ERROR_RECOVERY = False\n',
+          )
+
+          agent = base / "agent_config.py"
+          replace(
+              agent,
+              '    CONF_FUNCTION_GROUPS,\n    CONF_FUNCTION_TOOLS,\n',
+              '    CONF_FUNCTION_GROUPS,\n    CONF_FUNCTION_TOOL_ERROR_RECOVERY,\n    CONF_FUNCTION_TOOLS,\n',
+          )
+          replace(
+              agent,
+              '    DEFAULT_FUNCTION_GROUPS,\n    DEFAULT_GUEST_ENTITY_SELECTORS,\n',
+              '    DEFAULT_FUNCTION_GROUPS,\n    DEFAULT_FUNCTION_TOOL_ERROR_RECOVERY,\n    DEFAULT_GUEST_ENTITY_SELECTORS,\n',
+          )
+          replace(
+              agent,
+              '        CONF_FUNCTION_GROUPS: list(DEFAULT_FUNCTION_GROUPS),\n',
+              '        CONF_FUNCTION_GROUPS: list(DEFAULT_FUNCTION_GROUPS),\n        CONF_FUNCTION_TOOL_ERROR_RECOVERY: DEFAULT_FUNCTION_TOOL_ERROR_RECOVERY,\n',
+          )
+          replace(
+              agent,
+              '            CONF_EXPOSED_ENTITIES_ENABLED,\n            CONF_GUEST_MODE_ENABLED,\n',
+              '            CONF_EXPOSED_ENTITIES_ENABLED,\n            CONF_FUNCTION_TOOL_ERROR_RECOVERY,\n            CONF_GUEST_MODE_ENABLED,\n',
+          )
+
+          entity = base / "entity.py"
+          replace(
+              entity,
+              '    CONF_CONTEXT_TRUNCATE_STRATEGY,\n    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,\n',
+              '    CONF_CONTEXT_TRUNCATE_STRATEGY,\n    CONF_FUNCTION_TOOL_ERROR_RECOVERY,\n    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,\n',
+          )
+          replace(
+              entity,
+              '    DEFAULT_CONTEXT_TRUNCATE_STRATEGY,\n    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,\n',
+              '    DEFAULT_CONTEXT_TRUNCATE_STRATEGY,\n    DEFAULT_FUNCTION_TOOL_ERROR_RECOVERY,\n    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,\n',
+          )
+          replace(
+              entity,
+              'from .functions import get_function\n',
+              'from .function_tool_recovery import (\n    MalformedToolArguments,\n    ToolRecoveryState,\n    provider_argument_text,\n    strict_execution_failures_enabled,\n)\nfrom .functions import get_function\n',
+          )
+          replace(
+              entity,
+              '                            "arguments": json.dumps(\n                                tool_call.tool_args, separators=(",", ":")\n                            ),\n',
+              '                            "arguments": (\n                                provider_argument_text(tool_call.tool_args)\n                                if isinstance(tool_call.tool_args, MalformedToolArguments)\n                                else json.dumps(tool_call.tool_args, separators=(",", ":"))\n                            ),\n',
+          )
+          # The Responses converter contains the same normal JSON encoding once.
+          replace(
+              entity,
+              '                        "arguments": json.dumps(\n                            tool_call.tool_args, separators=(",", ":")\n                        ),\n',
+              '                        "arguments": (\n                            provider_argument_text(tool_call.tool_args)\n                            if isinstance(tool_call.tool_args, MalformedToolArguments)\n                            else json.dumps(tool_call.tool_args, separators=(",", ":"))\n                        ),\n',
+          )
+          replace(
+              entity,
+              '        function_call_budget = FunctionCallBudget(int(max_function_calls))\n',
+              '        function_call_budget = FunctionCallBudget(int(max_function_calls))\n        recovery_state = ToolRecoveryState(\n            enabled=options.get(\n                CONF_FUNCTION_TOOL_ERROR_RECOVERY,\n                DEFAULT_FUNCTION_TOOL_ERROR_RECOVERY,\n            )\n            is True\n        )\n',
+          )
+          replace(
+              entity,
+              '                    transformed_stream = self._transform_responses_stream(\n                        chat_log, responses_stream, request_usage\n                    )\n',
+              '                    transformed_stream = self._transform_responses_stream(\n                        chat_log, responses_stream, request_usage, recovery_state\n                    )\n',
+          )
+          replace(
+              entity,
+              '                    transformed_stream = self._transform_chat_stream(\n                        chat_log, chat_stream, request_usage\n                    )\n',
+              '                    transformed_stream = self._transform_chat_stream(\n                        chat_log, chat_stream, request_usage, recovery_state\n                    )\n',
+          )
+          replace(
+              entity,
+              '                function_tools_factory=function_tools_factory,\n            )\n',
+              '                function_tools_factory=function_tools_factory,\n                recovery_state=recovery_state,\n            )\n',
+          )
+          replace(
+              entity,
+              '        request_usage: RequestUsage | None = None,\n    ) -> AsyncGenerator[\n',
+              '        request_usage: RequestUsage | None = None,\n        recovery_state: ToolRecoveryState | None = None,\n    ) -> AsyncGenerator[\n',
+          )
+          # There are two transformer signatures with the same tail; patch the second separately.
+          replace(
+              entity,
+              '        request_usage = request_usage or RequestUsage()\n        response_text_lengths:',
+              '        request_usage = request_usage or RequestUsage()\n        response_text_lengths:',
+          )
+          # Chat malformed JSON.
+          replace(
+              entity,
+              '                    try:\n                        args = json.loads(tool_call["arguments"])\n                    except json.JSONDecodeError as err:\n                        raise ParseArgumentsFailed(tool_call["arguments"]) from err\n',
+              '                    try:\n                        args = json.loads(tool_call["arguments"])\n                    except json.JSONDecodeError as err:\n                        if recovery_state is None or not recovery_state.enabled:\n                            raise ParseArgumentsFailed(tool_call["arguments"]) from err\n                        args = recovery_state.remember_malformed(\n                            tool_call["id"], tool_call["arguments"]\n                        )\n',
+          )
+          # Responses transformer signature is unique by method header.
+          replace(
+              entity,
+              '    async def _transform_responses_stream(\n        self,\n        chat_log: conversation.ChatLog,\n        result: AsyncStream[Any],\n        request_usage: RequestUsage | None = None,\n    ) -> AsyncGenerator[\n',
+              '    async def _transform_responses_stream(\n        self,\n        chat_log: conversation.ChatLog,\n        result: AsyncStream[Any],\n        request_usage: RequestUsage | None = None,\n        recovery_state: ToolRecoveryState | None = None,\n    ) -> AsyncGenerator[\n',
+          )
+          # The earlier generic signature replacement changed only Chat because it appears first.
+          replace(
+              entity,
+              '                elif item_type == "function_call":\n                    try:\n                        arguments = json.loads(item.arguments)\n                    except json.JSONDecodeError as err:\n                        raise ParseArgumentsFailed(item.arguments) from err\n',
+              '                elif item_type == "function_call":\n                    try:\n                        arguments = json.loads(item.arguments)\n                    except json.JSONDecodeError as err:\n                        if recovery_state is None or not recovery_state.enabled:\n                            raise ParseArgumentsFailed(item.arguments) from err\n                        arguments = recovery_state.remember_malformed(\n                            item.call_id, item.arguments\n                        )\n',
+          )
+          replace(
+              entity,
+              '        except HomeAssistantError as err:\n            _LOGGER.warning("Function Tool `%s` failed: %s", tool_input.tool_name, err)\n            result = {"status": "error", "error": str(err)}\n',
+              '        except HomeAssistantError as err:\n            if strict_execution_failures_enabled():\n                raise\n            _LOGGER.warning("Function Tool `%s` failed: %s", tool_input.tool_name, err)\n            result = {"status": "error", "error": str(err)}\n',
+          )
+
+          frontend = base / "frontend" / "agent-config-editor-base.js"
+          replace(
+              frontend,
+              '${field(panel,"max_function_calls_per_conversation","Maximum tool calls per conversation",config.max_function_calls_per_conversation,"number","Stops the assistant after this many tool calls in one conversation to prevent runaway actions.")}${select(panel,"continue_conversation"',
+              '${field(panel,"max_function_calls_per_conversation","Maximum tool calls per conversation",config.max_function_calls_per_conversation,"number","Stops the assistant after this many tool calls in one conversation to prevent runaway actions.")}${toggle(panel,"function_tool_error_recovery","Recover from correctable tool errors",config.function_tool_error_recovery,"Lets the model correct a tool call only when Extended OpenAI can prove the failure happened before any action could start. It does not retry arbitrary failed actions.")}${select(panel,"continue_conversation"',
+          )
+
+          # Remove this one-shot helper from the final branch tree.
+          Path('.github/workflows/_apply_recovery_patch.yml').unlink()
+      - name: Commit focused edits
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Wire safe Function Tool error recovery"
+          git push origin HEAD:feature/correctable-function-tool-recovery
