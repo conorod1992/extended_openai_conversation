@@ -43,11 +43,11 @@ def _write_archive(path, payload: bytes, *, payload_info=None, manifest=None, ex
             archive.writestr(extra[0], extra[1])
 
 
-def test_archive_round_trip_uses_normal_backup_validation() -> None:
+async def test_archive_round_trip_uses_normal_backup_validation(hass) -> None:
     result = backup_transfer._build_archive_file(_document())
     try:
-        prepared = backup_transfer._load_prepared_restore(
-            result["path"], "archive", "agent-new"
+        prepared = await backup_transfer._async_load_prepared_restore(
+            hass, result["path"], "archive", "agent-new"
         )
     finally:
         backup_transfer._remove_file(result["path"])
@@ -69,16 +69,50 @@ def test_archive_build_uses_final_writer_position(monkeypatch) -> None:
         backup_transfer._remove_file(result["path"])
 
 
-def test_legacy_json_import_remains_supported(tmp_path) -> None:
+async def test_legacy_json_import_remains_supported(hass, tmp_path) -> None:
     path = tmp_path / "old-full-backup.json"
     path.write_text(json.dumps(_document()), encoding="utf-8")
 
-    prepared = backup_transfer._load_prepared_restore(
-        str(path), "legacy_json", "agent-new"
+    prepared = await backup_transfer._async_load_prepared_restore(
+        hass, str(path), "legacy_json", "agent-new"
     )
 
     assert prepared.title == "Jarvis"
     assert prepared.summary()["archive_sessions"] == 0
+
+
+async def test_uploaded_template_function_tool_validates_on_event_loop(
+    hass, tmp_path
+) -> None:
+    document = _document()
+    document["agent"]["config"]["functions"] = [
+        {
+            "enabled": True,
+            "spec": {
+                "name": "render_greeting",
+                "description": "Render a greeting",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                },
+            },
+            "function": {
+                "type": "template",
+                "value_template": "Hello {{ name }}",
+            },
+        }
+    ]
+    document["agent"]["config"]["function_groups"] = []
+    path = tmp_path / "template-tool-backup.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    prepared = await backup_transfer._async_load_prepared_restore(
+        hass, str(path), "legacy_json", "agent-new"
+    )
+
+    assert prepared.title == "Jarvis"
+    assert "value_template" in prepared.config["functions"]
+    assert "render_greeting" in prepared.config["functions"]
 
 
 @pytest.mark.parametrize("attack", ["traversal", "symlink", "extra_member"])

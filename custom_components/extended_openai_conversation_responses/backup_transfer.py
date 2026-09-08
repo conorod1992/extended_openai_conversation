@@ -538,10 +538,17 @@ def _load_uploaded_document(path: str, kind: str) -> dict[str, Any]:
     return _load_archive_document(path) if is_zip else _load_legacy_json_document(path)
 
 
-def _load_prepared_restore(
-    path: str, kind: str, target_subentry_id: str
+async def _async_load_prepared_restore(
+    hass: HomeAssistant,
+    path: str,
+    kind: str,
+    target_subentry_id: str,
 ) -> transfer.PreparedTransfer:
-    document = _load_uploaded_document(path, kind)
+    """Decode an upload off-loop, then run HA-aware validation on the event loop."""
+    document = await hass.async_add_executor_job(_load_uploaded_document, path, kind)
+    # inspect_transfer ultimately validates configured Function Tools. Some Home
+    # Assistant validators used by those schemas (notably cv.template) require the
+    # event-loop context, so only file I/O/decompression belongs in the executor.
     return transfer.inspect_transfer(document, target_subentry_id)
 
 
@@ -717,7 +724,6 @@ async def _start_import(
         raise backup.BackupError(
             f"The {label} backup exceeds the {limit // (1024 * 1024)} MB safety limit"
         )
-
     async with _start_lock(hass):
         await _async_cleanup_expired(hass)
         async with _registry_lock(hass):
@@ -846,8 +852,8 @@ async def _inspect_import(
         if _imports(hass).get(session.session_id) is not session:
             raise backup.BackupError("The backup upload has expired or was cancelled")
         session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
-        prepared = await hass.async_add_executor_job(
-            _load_prepared_restore, session.path, session.kind, subentry_id
+        prepared = await _async_load_prepared_restore(
+            hass, session.path, session.kind, subentry_id
         )
     entry, subentry = _resolve_agent(hass, entry_id, subentry_id)
     _target, preview = await transfer.async_materialize_restore(
@@ -886,14 +892,9 @@ async def _restore_import(
         hass, data.get("session_id"), entry.entry_id, subentry.subentry_id
     )
     try:
-        prepared = await hass.async_add_executor_job(
-            _load_prepared_restore,
-            session.path,
-            session.kind,
-            subentry.subentry_id,
+        prepared = await _async_load_prepared_restore(
+            hass, session.path, session.kind, subentry.subentry_id
         )
-        # Selective restore is materialized into one complete target snapshot, then
-        # delegated to the existing restart-safe full transaction.
         return await transfer.async_restore_transfer(
             hass, entry, subentry, prepared, sections=data.get("sections")
         )
