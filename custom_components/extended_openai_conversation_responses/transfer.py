@@ -910,12 +910,25 @@ async def async_restore_transfer(
     *,
     sections: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    """Apply a validated transfer through the existing restart-safe full transaction."""
-    target, preview = await async_materialize_restore(
-        hass, entry, subentry, imported, sections=sections
+    """Preserve unselected state and commit under one shielded exclusive lease."""
+    from .agent_maintenance import (
+        _async_run_exclusive_operation,
+        get_agent_maintenance_gate,
     )
-    result = await backup.async_restore_backup(hass, entry, subentry, target)
-    return {**result, "transfer": preview}
+    from .restore_recovery import async_restore_backup_recoverably
+
+    async def restore_exclusively_owned() -> dict[str, Any]:
+        target, preview = await async_materialize_restore(
+            hass, entry, subentry, imported, sections=sections
+        )
+        # Exclusivity already covers the destination snapshot. Call the journaled
+        # inner restore directly: the public backup wrapper would reacquire this
+        # non-reentrant gate. Lock order remains maintenance gate -> backup lock.
+        result = await async_restore_backup_recoverably(hass, entry, subentry, target)
+        return {**result, "transfer": preview}
+
+    gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
+    return await _async_run_exclusive_operation(gate, restore_exclusively_owned)
 
 
 def inspection_for_frontend(prepared: PreparedTransfer) -> dict[str, Any]:
