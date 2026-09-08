@@ -654,9 +654,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         chat_log, chat_stream, request_usage
                     )
 
-                with bind_tool_recovery_state(recovery_state):
-                    with async_streaming_speech_cleanup(chat_log, options):
-                        async for content in chat_log.async_add_delta_content_stream(
+                with (
+                    bind_tool_recovery_state(recovery_state),
+                    async_streaming_speech_cleanup(chat_log, options),
+                ):
+                    async for content in chat_log.async_add_delta_content_stream(
                             self.entity_id, transformed_stream
                         ):
                             if (
