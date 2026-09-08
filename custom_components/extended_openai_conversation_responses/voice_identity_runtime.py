@@ -59,9 +59,7 @@ async def _user_is_active(agent: Any, user_id: str) -> bool:
     return user is not None and user.is_active
 
 
-async def _active_configured_users(
-    agent: Any, user_input: Any
-) -> frozenset[str]:
+async def _active_configured_users(agent: Any, user_input: Any) -> frozenset[str]:
     """Validate only configured users that can own this request's selected scope."""
     request_context = getattr(user_input, "context", None)
     if getattr(request_context, "user_id", None):
