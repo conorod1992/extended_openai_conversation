@@ -162,11 +162,7 @@ def resolve_data_scope(context: Any, options: Mapping[str, Any]) -> ResolvedData
 
     if policy == VOICE_POLICY_DEFAULT_USER:
         owner = options.get(CONF_VOICE_DEFAULT_USER_ID)
-        if (
-            isinstance(owner, str)
-            and owner
-            and _configured_voice_user_available(owner)
-        ):
+        if isinstance(owner, str) and owner and _configured_voice_user_available(owner):
             return user_scope(owner, source="agent_default_user", device_id=device_id)
     if policy == VOICE_POLICY_SHARED:
         return shared_scope(source="shared_voice_policy", device_id=device_id)
