@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+import csv
 from functools import wraps
+from io import StringIO
 import json
 from types import MappingProxyType
 from typing import Any
@@ -238,15 +240,32 @@ def _safe_attribute_value(value: Any) -> Any:
         return str(value)[:MAX_ATTRIBUTE_VALUE_CHARACTERS]
 
 
-def _attribute_item_size(name: str, value: Any) -> int:
-    """Return a conservative serialized character cost for one attribute item."""
-    return len(
-        json.dumps(
-            {name: value},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
+def _csv_row(fields: list[Any] | tuple[Any, ...]) -> str:
+    """Encode one RFC-style CSV row with deterministic Unix line endings."""
+    output = StringIO(newline="")
+    csv.writer(output, lineterminator="\n").writerow(fields)
+    return output.getvalue().removesuffix("\n")
+
+
+def _attributes_json_value(attributes: Mapping[str, Any]) -> str:
+    """Return the compact JSON value placed in the maintained attributes column."""
+    return json.dumps(
+        attributes,
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
+
+
+def _attribute_context_size(attributes: Mapping[str, Any]) -> int:
+    """Return the actual CSV-encoded character cost of one attributes cell."""
+    if not attributes:
+        return 0
+    return len(_csv_row([_attributes_json_value(attributes)]))
+
+
+def _attribute_item_size(name: str, value: Any) -> int:
+    """Return the encoded cost of one attribute in an otherwise empty cell."""
+    return _attribute_context_size({name: value})
 
 
 def enrich_exposed_entities(
@@ -286,15 +305,19 @@ def enrich_exposed_entities(
             result.append(entity)
             continue
         live: dict[str, Any] = {}
+        live_cost = 0
         for name in selected:
             if name not in state.attributes:
                 continue
             safe_value = _safe_attribute_value(state.attributes[name])
-            item_size = _attribute_item_size(name, safe_value)
-            if item_size > remaining:
+            candidate = {**live, name: safe_value}
+            candidate_cost = _attribute_context_size(candidate)
+            added_cost = candidate_cost - live_cost
+            if added_cost > remaining:
                 continue
-            live[name] = safe_value
-            remaining -= item_size
+            live = candidate
+            live_cost = candidate_cost
+            remaining -= added_cost
         result.append({**entity, **({"attributes": live} if live else {})})
     return result
 
@@ -302,18 +325,16 @@ def enrich_exposed_entities(
 def _attributes_json(entity: dict[str, Any]) -> str:
     if "attributes" not in entity:
         return ""
-    value = json.dumps(
-        entity.get("attributes") or {},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return '"' + value.replace('"', '""') + '"'
+    return _attributes_json_value(entity.get("attributes") or {})
 
 
-def _render_grouped_default_with_attributes(
-    hass: Any, exposed_entities: list[dict[str, Any]]
+def _render_grouped_default(
+    hass: Any,
+    exposed_entities: list[dict[str, Any]],
+    *,
+    include_attributes: bool,
 ) -> str:
-    """Preserve the maintained grouped default while adding one compact column."""
+    """Render the maintained grouped device context with structurally safe CSV rows."""
     from . import prompt
 
     grouped: dict[str | None, list[dict[str, Any]]] = {}
@@ -326,16 +347,58 @@ def _render_grouped_default_with_attributes(
         )
         grouped.setdefault(area_id, []).append(entity)
 
-    lines = ["## Available Devices", "entity_id,name,state,aliases,attributes"]
+    header = ["entity_id", "name", "state", "aliases"]
+    if include_attributes:
+        header.append("attributes")
+    lines = ["## Available Devices", _csv_row(header)]
     for area_id, entities in grouped.items():
         lines.append(f"area_id={area_id or ''}")
         for entity in entities:
             aliases = entity.get("aliases") or []
-            lines.append(
-                f"{entity.get('entity_id', '')},{entity.get('prompt_name', '')},"
-                f"{entity.get('state', '')},{'/'.join(str(alias) for alias in aliases)},"
-                f"{_attributes_json(entity)}"
-            )
+            row: list[Any] = [
+                entity.get("entity_id", ""),
+                entity.get("prompt_name", ""),
+                entity.get("state", ""),
+                "/".join(str(alias) for alias in aliases),
+            ]
+            if include_attributes:
+                row.append(_attributes_json(entity))
+            lines.append(_csv_row(row))
+    return "\n".join(lines) + "\n"
+
+
+def _render_grouped_default_with_attributes(
+    hass: Any, exposed_entities: list[dict[str, Any]]
+) -> str:
+    """Preserve the maintained grouped default while adding one compact column."""
+    return _render_grouped_default(hass, exposed_entities, include_attributes=True)
+
+
+def _render_legacy_default(
+    hass: Any,
+    exposed_entities: list[dict[str, Any]],
+    *,
+    include_attributes: bool,
+) -> str:
+    """Render the stored legacy default with structurally safe CSV rows."""
+    header = ["entity_id", "name", "state", "area_id", "aliases"]
+    if include_attributes:
+        header.append("attributes")
+    lines = ["## Available Devices", "```csv", _csv_row(header)]
+    for entity in exposed_entities:
+        entity_id = str(entity.get("entity_id", ""))
+        aliases = entity.get("aliases") or []
+        row: list[Any] = [
+            entity_id,
+            entity.get("name", ""),
+            entity.get("state", ""),
+            resolve_area_id(hass, entity_id),
+            "/".join(str(item) for item in aliases),
+        ]
+        if include_attributes:
+            row.append(_attributes_json(entity))
+        lines.append(_csv_row(row))
+    lines.append("```")
     return "\n".join(lines) + "\n"
 
 
@@ -343,21 +406,7 @@ def _render_legacy_default_with_attributes(
     hass: Any, exposed_entities: list[dict[str, Any]]
 ) -> str:
     """Preserve the legacy maintained-template shape when it is stored explicitly."""
-    lines = [
-        "## Available Devices",
-        "```csv",
-        "entity_id,name,state,area_id,aliases,attributes",
-    ]
-    for entity in exposed_entities:
-        entity_id = str(entity.get("entity_id", ""))
-        aliases = entity.get("aliases") or []
-        lines.append(
-            f"{entity_id},{entity.get('name', '')},{entity.get('state', '')},"
-            f"{resolve_area_id(hass, entity_id)},"
-            f"{'/'.join(str(item) for item in aliases)},{_attributes_json(entity)}"
-        )
-    lines.append("```")
-    return "\n".join(lines) + "\n"
+    return _render_legacy_default(hass, exposed_entities, include_attributes=True)
 
 
 def _has_selected_values(exposed_entities: list[dict[str, Any]]) -> bool:
@@ -399,9 +448,11 @@ def install_exposed_attribute_runtime() -> None:
 
     @wraps(original_default_renderer)
     def default_renderer(hass: Any, exposed_entities: list[dict[str, Any]]) -> str:
-        if _has_selected_values(exposed_entities):
-            return _render_grouped_default_with_attributes(hass, exposed_entities)
-        return original_default_renderer(hass, exposed_entities)
+        return _render_grouped_default(
+            hass,
+            exposed_entities,
+            include_attributes=_has_selected_values(exposed_entities),
+        )
 
     @wraps(original_template_renderer)
     def template_renderer(
@@ -413,10 +464,12 @@ def install_exposed_attribute_runtime() -> None:
         user_input: Any,
         skills: list[Any],
     ) -> str:
-        if raw == DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE and _has_selected_values(
-            exposed_entities
-        ):
-            return _render_legacy_default_with_attributes(hass, exposed_entities)
+        if raw == DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE:
+            return _render_legacy_default(
+                hass,
+                exposed_entities,
+                include_attributes=_has_selected_values(exposed_entities),
+            )
         return original_template_renderer(
             hass,
             raw,
