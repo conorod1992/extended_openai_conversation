@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -22,6 +24,10 @@ from .ha_permissions import set_active_ha_context
 LEGACY_ANONYMOUS_SCOPE_ID = "__anonymous__"
 SHARED_HOUSEHOLD_SCOPE_ID = "shared:household"
 UNRETAINED_SCOPE_ID = "unretained"
+
+_ACTIVE_VOICE_IDENTITY_USERS: ContextVar[frozenset[str] | None] = ContextVar(
+    "extended_openai_active_voice_identity_users", default=None
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -43,6 +49,24 @@ class ResolvedDataScope:
     def as_dict(self) -> dict[str, str | None]:
         """Return a JSON-safe representation."""
         return asdict(self)
+
+
+@contextmanager
+def bind_active_voice_identity_users(user_ids: frozenset[str]) -> Iterator[None]:
+    """Bind the HA users validated for configured Voice Identity this request."""
+    token = _ACTIVE_VOICE_IDENTITY_USERS.set(user_ids)
+    try:
+        yield
+    finally:
+        _ACTIVE_VOICE_IDENTITY_USERS.reset(token)
+
+
+def _configured_voice_user_available(user_id: str) -> bool:
+    """Return whether runtime validation permits a configured personal scope."""
+    active_users = _ACTIVE_VOICE_IDENTITY_USERS.get()
+    # Pure policy callers do not have Home Assistant's auth manager available.
+    # Production conversation requests bind a concrete set before resolving.
+    return active_users is None or user_id in active_users
 
 
 def _context_user_id(context: Any) -> str | None:
@@ -128,16 +152,17 @@ def resolve_data_scope(context: Any, options: Mapping[str, Any]) -> ResolvedData
                 return shared_scope(source="device_mapping", device_id=device_id)
             if mapped not in {"unretained", UNRETAINED_SCOPE_ID}:
                 mapped_user = mapped.removeprefix("user:")
-                return user_scope(
-                    mapped_user, source="device_mapping", device_id=device_id
-                )
+                if mapped_user and _configured_voice_user_available(mapped_user):
+                    return user_scope(
+                        mapped_user, source="device_mapping", device_id=device_id
+                    )
         policy = str(
             options.get(CONF_VOICE_UNMAPPED_POLICY, DEFAULT_VOICE_UNMAPPED_POLICY)
         )
 
     if policy == VOICE_POLICY_DEFAULT_USER:
         owner = options.get(CONF_VOICE_DEFAULT_USER_ID)
-        if isinstance(owner, str) and owner:
+        if isinstance(owner, str) and owner and _configured_voice_user_available(owner):
             return user_scope(owner, source="agent_default_user", device_id=device_id)
     if policy == VOICE_POLICY_SHARED:
         return shared_scope(source="shared_voice_policy", device_id=device_id)
