@@ -51,7 +51,7 @@ jobs:
           pip install -r requirements_test.txt
           pip install homeassistant
 
-      - name: Install integration-level requirements
+      - name: Install integration dependency requirements
         run: |
           python - <<'PY'
           import json
@@ -62,24 +62,38 @@ jobs:
           import homeassistant
 
           components = Path(next(iter(homeassistant.__path__))) / "components"
-          requirements = set()
-
-          # Home Assistant wheels intentionally do not install every integration's
-          # optional requirements. Install the same relevant dependency families as
-          # the main CI job, plus media dependencies used by AI Task setup.
-          for domain in ("conversation", "rest", "scrape", "camera", "stream"):
-              manifest_path = components / domain / "manifest.json"
-              if manifest_path.exists():
-                  manifest = json.loads(manifest_path.read_text())
-                  requirements.update(manifest.get("requirements", []))
-
           custom_manifest = json.loads(
               Path(
                   "custom_components/extended_openai_conversation_responses/manifest.json"
               ).read_text()
           )
-          requirements.update(custom_manifest.get("requirements", []))
 
+          requirements = set(custom_manifest.get("requirements", []))
+          pending = list(custom_manifest.get("dependencies", []))
+          visited = set()
+
+          # The Home Assistant wheel intentionally does not install every built-in
+          # integration's optional Python requirements. Walk the real dependency
+          # graph declared by the custom integration so the acceptance environment
+          # contains exactly the packages Home Assistant may need while setting those
+          # dependencies up (for example haffmpeg and hass_frontend).
+          while pending:
+              domain = pending.pop()
+              if domain in visited:
+                  continue
+              visited.add(domain)
+
+              manifest_path = components / domain / "manifest.json"
+              if not manifest_path.exists():
+                  raise RuntimeError(
+                      f"Home Assistant dependency manifest not found: {domain}"
+                  )
+
+              manifest = json.loads(manifest_path.read_text())
+              requirements.update(manifest.get("requirements", []))
+              pending.extend(manifest.get("dependencies", []))
+
+          print("Resolved HA dependency integrations:", ", ".join(sorted(visited)))
           if requirements:
               subprocess.check_call(
                   [sys.executable, "-m", "pip", "install", *sorted(requirements)]
@@ -99,6 +113,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
+          set -o pipefail
           pytest tests_real_ha/ \
             -v \
             --asyncio-mode=auto \
