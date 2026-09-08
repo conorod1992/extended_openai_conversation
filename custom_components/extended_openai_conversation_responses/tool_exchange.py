@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
@@ -226,8 +226,11 @@ async def _execute_bound(
 ) -> conversation.ToolResultContent:
     """Execute one prepared call with strict runtime-failure semantics bound."""
     with bind_tool_recovery_state(recovery_state):
-        return await entity._execute_function_tool(
-            function_tool, tool_input, llm_context, exposed_entities
+        return cast(
+            conversation.ToolResultContent,
+            await entity._execute_function_tool(
+                function_tool, tool_input, llm_context, exposed_entities
+            ),
         )
 
 
@@ -298,24 +301,24 @@ async def _async_execute_with_recovery(
         prepared: list[tuple[dict[str, Any], llm.ToolInput]] = []
         recovery_results: dict[str, conversation.ToolResultContent] = {}
         for function_tool, tool_input in parallel_batch:
-            outcome = await _async_validate_recoverable_call(
+            validation_outcome = await _async_validate_recoverable_call(
                 entity, function_tool, tool_input, recovery_state
             )
-            if isinstance(outcome, CorrectableToolFailure):
+            if isinstance(validation_outcome, CorrectableToolFailure):
                 if not recovery_state.consume():
                     append_unresolved_tool_results(
                         chat_log,
                         entity.entity_id,
                         pending_tool_calls,
                         failed_call_id=tool_input.id,
-                        error=outcome.original,
+                        error=validation_outcome.original,
                     )
-                    raise outcome.original
+                    raise validation_outcome.original
                 recovery_results[tool_input.id] = recovery_tool_result(
-                    entity.entity_id, tool_input, outcome
+                    entity.entity_id, tool_input, validation_outcome
                 )
             else:
-                prepared.append((function_tool, outcome))
+                prepared.append((function_tool, validation_outcome))
 
         execution_outcomes: dict[
             str, conversation.ToolResultContent | BaseException
@@ -342,8 +345,10 @@ async def _async_execute_with_recovery(
                 )
                 raise
             execution_outcomes = {
-                tool_input.id: outcome
-                for (_, tool_input), outcome in zip(prepared, outcomes, strict=True)
+                tool_input.id: execution_outcome
+                for (_, tool_input), execution_outcome in zip(
+                    prepared, outcomes, strict=True
+                )
             }
 
         first_error: BaseException | None = None
@@ -352,19 +357,19 @@ async def _async_execute_with_recovery(
             if recovery_result is not None:
                 chat_log.async_add_assistant_content_without_tools(recovery_result)
                 continue
-            outcome = execution_outcomes.get(tool_input.id)
-            if isinstance(outcome, BaseException):
+            execution_outcome = execution_outcomes.get(tool_input.id)
+            if isinstance(execution_outcome, BaseException):
                 append_unresolved_tool_results(
                     chat_log,
                     entity.entity_id,
                     [tool_input],
                     failed_call_id=tool_input.id,
-                    error=outcome,
+                    error=execution_outcome,
                 )
                 if first_error is None:
-                    first_error = outcome
-            elif outcome is not None:
-                chat_log.async_add_assistant_content_without_tools(outcome)
+                    first_error = execution_outcome
+            elif execution_outcome is not None:
+                chat_log.async_add_assistant_content_without_tools(execution_outcome)
         if first_error is not None:
             raise first_error
         return
