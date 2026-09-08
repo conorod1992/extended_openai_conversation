@@ -69,14 +69,18 @@ jobs:
           )
 
           requirements = set(custom_manifest.get("requirements", []))
-          pending = list(custom_manifest.get("dependencies", []))
+          pending = [
+              *custom_manifest.get("dependencies", []),
+              *custom_manifest.get("after_dependencies", []),
+          ]
           visited = set()
 
           # The Home Assistant wheel intentionally does not install every built-in
-          # integration's optional Python requirements. Walk the real dependency
-          # graph declared by the custom integration so the acceptance environment
-          # contains exactly the packages Home Assistant may need while setting those
-          # dependencies up (for example haffmpeg and hass_frontend).
+          # integration's optional Python requirements. Walk both hard dependencies
+          # and after-dependencies recursively: after-dependencies can still be
+          # imported at runtime (AI Task imports Camera, for example), so their Python
+          # requirements must exist even though HA does not force those integrations
+          # to be set up.
           while pending:
               domain = pending.pop()
               if domain in visited:
@@ -92,6 +96,7 @@ jobs:
               manifest = json.loads(manifest_path.read_text())
               requirements.update(manifest.get("requirements", []))
               pending.extend(manifest.get("dependencies", []))
+              pending.extend(manifest.get("after_dependencies", []))
 
           print("Resolved HA dependency integrations:", ", ".join(sorted(visited)))
           if requirements:
