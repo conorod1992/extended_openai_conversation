@@ -10,6 +10,8 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
+from .exceptions import FunctionValidationInfrastructureError
+
 _JSON_TYPES = {"array", "boolean", "integer", "null", "number", "object", "string"}
 _OBJECT_KEYWORDS = {
     "properties",
@@ -283,6 +285,8 @@ async def async_validate_function_arguments(
     hass: HomeAssistant,
     spec: Mapping[str, Any],
     arguments: Mapping[str, Any],
+    *,
+    distinguish_infrastructure: bool = False,
 ) -> dict[str, Any]:
     """Validate Function Tool arguments with bounded configurable regex matching."""
     schema = spec.get("parameters", {})
@@ -306,9 +310,14 @@ async def async_validate_function_arguments(
 
     from .regex_execution import async_search_configured_patterns
 
-    matches = await async_search_configured_patterns(
-        hass, [(pattern, value, flags) for _, pattern, value, flags in checks]
-    )
+    try:
+        matches = await async_search_configured_patterns(
+            hass, [(pattern, value, flags) for _, pattern, value, flags in checks]
+        )
+    except HomeAssistantError as err:
+        if not distinguish_infrastructure:
+            raise
+        raise FunctionValidationInfrastructureError(str(err)) from err
     for (name, _pattern, _value, _flags), matches_pattern in zip(
         checks, matches, strict=True
     ):

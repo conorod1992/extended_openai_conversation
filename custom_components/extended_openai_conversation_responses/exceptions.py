@@ -104,6 +104,10 @@ class ParseArgumentsFailed(HomeAssistantError):
         return "The provider returned malformed or unparseable tool-call arguments."
 
 
+class FunctionValidationInfrastructureError(HomeAssistantError):
+    """When local Function Tool validation cannot complete safely."""
+
+
 class TokenLengthExceededError(HomeAssistantError):
     """When openai return 'length' as 'finish_reason'."""
 
