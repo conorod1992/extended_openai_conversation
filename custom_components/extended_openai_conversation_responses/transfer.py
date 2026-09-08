@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 import json
@@ -10,7 +10,6 @@ from pathlib import Path
 import re
 from typing import Any
 
-from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -83,6 +82,7 @@ SECTION_LABELS = {
 
 _ABSENT = object()
 _DROP = object()
+_GENERIC_REDACTED_PLACEHOLDER = "[redacted]"
 
 
 @dataclass(slots=True)
@@ -246,18 +246,37 @@ async def async_collect_transfer_snapshot(
     return document
 
 
+def _is_redacted_placeholder(value: Any) -> bool:
+    """Return whether a value is one of our explicit redaction placeholders."""
+    return value in {REDACTED_SECRET_SENTINEL, _GENERIC_REDACTED_PLACEHOLDER}
+
+
+def _normalize_redaction_placeholders(value: Any) -> Any:
+    """Use one explicit placeholder in newly created transfer documents."""
+    if value == _GENERIC_REDACTED_PLACEHOLDER:
+        return REDACTED_SECRET_SENTINEL
+    if isinstance(value, list):
+        return [_normalize_redaction_placeholders(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _normalize_redaction_placeholders(item)
+            for key, item in value.items()
+        }
+    return value
+
+
 def redact_transfer_document(document: dict[str, Any]) -> dict[str, Any]:
     """Redact secret-bearing setup sections without altering private state content."""
     result = deepcopy(document)
     sections = result.get("sections")
     if isinstance(sections, dict):
         if SECTION_CONFIGURATION in sections:
-            sections[SECTION_CONFIGURATION] = redact_secrets(
-                sections[SECTION_CONFIGURATION]
+            sections[SECTION_CONFIGURATION] = _normalize_redaction_placeholders(
+                redact_secrets(sections[SECTION_CONFIGURATION])
             )
         if SECTION_REQUEST_RULES in sections:
-            sections[SECTION_REQUEST_RULES] = redact_secrets(
-                sections[SECTION_REQUEST_RULES]
+            sections[SECTION_REQUEST_RULES] = _normalize_redaction_placeholders(
+                redact_secrets(sections[SECTION_REQUEST_RULES])
             )
     return result
 
@@ -304,7 +323,7 @@ def _secret_path(path: tuple[Any, ...]) -> str:
 
 
 def _collect_secret_paths(value: Any, path: tuple[Any, ...] = ()) -> list[str]:
-    if value == REDACTED_SECRET_SENTINEL:
+    if _is_redacted_placeholder(value):
         return [_secret_path(path)]
     if isinstance(value, list):
         result: list[str] = []
@@ -338,7 +357,7 @@ def _restore_with_fallback(
     preserved: list[str],
     missing: list[str],
 ) -> Any:
-    if value == REDACTED_SECRET_SENTINEL:
+    if _is_redacted_placeholder(value):
         label = _secret_path(path)
         if fallback is not _ABSENT:
             preserved.append(label)
