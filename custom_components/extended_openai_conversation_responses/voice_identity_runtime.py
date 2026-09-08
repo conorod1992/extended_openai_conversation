@@ -53,15 +53,26 @@ def _prefer_registry_device_source(user_input: Any) -> Iterator[None]:
         user_input.satellite_id = satellite_id
 
 
-def _configured_user_candidates(
-    user_input: Any, options: Mapping[str, Any]
+async def _user_is_active(agent: Any, user_id: str) -> bool:
+    """Return whether one configured HA user still exists and is active."""
+    user = await agent.hass.auth.async_get_user(user_id)
+    return user is not None and user.is_active
+
+
+async def _active_configured_users(
+    agent: Any, user_input: Any
 ) -> frozenset[str]:
-    """Return configured HA user IDs that could own this unidentified request."""
+    """Validate only configured users that can own this request's selected scope."""
+    request_context = getattr(user_input, "context", None)
+    if getattr(request_context, "user_id", None):
+        # Authenticated Home Assistant identity wins before Voice Identity policy.
+        return frozenset()
+
+    options = getattr(agent.subentry, "data", {})
     policy = str(options.get(CONF_VOICE_SCOPE_POLICY, DEFAULT_VOICE_SCOPE_POLICY))
     device_id = getattr(user_input, "satellite_id", None) or getattr(
         user_input, "device_id", None
     )
-    candidates: set[str] = set()
 
     if policy == VOICE_POLICY_DEVICE_MAPPING:
         mappings = options.get(CONF_VOICE_DEVICE_MAPPINGS, {})
@@ -73,32 +84,24 @@ def _configured_user_candidates(
                 return frozenset()
             if mapped not in {"unretained", UNRETAINED_SCOPE_ID}:
                 mapped_user = mapped.removeprefix("user:")
-                if mapped_user:
-                    candidates.add(mapped_user)
+                if mapped_user and await _user_is_active(agent, mapped_user):
+                    return frozenset({mapped_user})
+        # Missing, explicit-unretained, malformed, deleted, or inactive mappings
+        # are all treated exactly like an unmapped source device.
         policy = str(
             options.get(CONF_VOICE_UNMAPPED_POLICY, DEFAULT_VOICE_UNMAPPED_POLICY)
         )
 
     if policy == VOICE_POLICY_DEFAULT_USER:
         default_user = options.get(CONF_VOICE_DEFAULT_USER_ID)
-        if isinstance(default_user, str) and default_user:
-            candidates.add(default_user)
+        if (
+            isinstance(default_user, str)
+            and default_user
+            and await _user_is_active(agent, default_user)
+        ):
+            return frozenset({default_user})
 
-    return frozenset(candidates)
-
-
-async def _active_configured_users(
-    agent: Any, user_input: Any
-) -> frozenset[str]:
-    """Resolve configured candidate IDs against Home Assistant's current users."""
-    options = getattr(agent.subentry, "data", {})
-    candidates = _configured_user_candidates(user_input, options)
-    active: set[str] = set()
-    for user_id in sorted(candidates):
-        user = await agent.hass.auth.async_get_user(user_id)
-        if user is not None and user.is_active:
-            active.add(user_id)
-    return frozenset(active)
+    return frozenset()
 
 
 def install_voice_identity_runtime() -> None:
