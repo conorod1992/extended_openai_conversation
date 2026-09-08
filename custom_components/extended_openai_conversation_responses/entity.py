@@ -278,8 +278,12 @@ def _convert_content_to_param(
                             "name": tool_call.tool_name,
                             "arguments": (
                                 provider_argument_text(tool_call.tool_args)
-                                if isinstance(tool_call.tool_args, MalformedToolArguments)
-                                else json.dumps(tool_call.tool_args, separators=(",", ":"))
+                                if isinstance(
+                                    tool_call.tool_args, MalformedToolArguments
+                                )
+                                else json.dumps(
+                                    tool_call.tool_args, separators=(",", ":")
+                                )
                             ),
                         },
                     }
