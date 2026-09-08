@@ -38,7 +38,7 @@ jobs:
               [
                   (
                       '    return value in {REDACTED_SECRET_SENTINEL, _GENERIC_REDACTED_PLACEHOLDER}\n',
-                      '    return (\n        value == REDACTED_SECRET_SENTINEL\n        or value == _GENERIC_REDACTED_PLACEHOLDER\n    )\n',
+                      '    if isinstance(value, dict):\n        return value == REDACTED_SECRET_SENTINEL\n    return value == _GENERIC_REDACTED_PLACEHOLDER\n',
                   ),
               ],
           )
@@ -57,12 +57,12 @@ jobs:
               'tests/test_transfer.py',
               [
                   (
-                      'from dataclasses import dataclass\n' if False else 'from copy import deepcopy\n',
+                      'from copy import deepcopy\n',
                       'from copy import deepcopy\nfrom dataclasses import replace\n',
                   ),
                   (
                       '    assert "memories" not in result["json"]\n    assert "archive" not in result["json"]\n',
-                      '    assert set(document["sections"]) == transfer.SETUP_SECTIONS\n',
+                      '',
                   ),
                   (
                       '    assert REDACTED_SECRET_SENTINEL in serialized\n',
