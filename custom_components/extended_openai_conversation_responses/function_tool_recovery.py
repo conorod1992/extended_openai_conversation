@@ -110,21 +110,6 @@ def correctable_validation_failure(error: BaseException) -> CorrectableToolFailu
     )
 
 
-def correctable_unavailable_failure(
-    tool_name: str, error: BaseException
-) -> CorrectableToolFailure:
-    """Represent live availability loss proven to occur before dispatch."""
-    return CorrectableToolFailure(
-        code="tool_unavailable",
-        stage="pre_dispatch_resolution",
-        message=(
-            f"Tool `{tool_name}` is no longer available. Choose another available tool "
-            "or continue without it."
-        ),
-        original=error,
-    )
-
-
 def recovery_tool_result(
     agent_id: str,
     tool_input: llm.ToolInput,

@@ -16,7 +16,6 @@ from .function_tool_recovery import (
     CorrectableToolFailure,
     ToolRecoveryState,
     bind_tool_recovery_state,
-    correctable_unavailable_failure,
     correctable_validation_failure,
     recovery_tool_result,
 )
@@ -200,15 +199,12 @@ async def _async_prepare_recoverable_call(
     if malformed is not None:
         return malformed
 
-    try:
-        function_tool = _resolve_current_tool(
-            entity,
-            tool_input,
-            request_tools_by_name,
-            function_tools_factory,
-        )
-    except FunctionNotFound as err:
-        return correctable_unavailable_failure(tool_input.tool_name, err)
+    function_tool = _resolve_current_tool(
+        entity,
+        tool_input,
+        request_tools_by_name,
+        function_tools_factory,
+    )
 
     # HA LLM Tools own their live request schema and permission boundary. Their
     # availability is still resolved above, but never reinterpret the HA schema with
