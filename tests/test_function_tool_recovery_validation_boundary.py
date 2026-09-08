@@ -100,7 +100,7 @@ async def test_regex_validation_infrastructure_failure_is_not_recoverable(
 
     with pytest.raises(
         FunctionValidationInfrastructureError,
-        match="pattern validation could not complete safely",
+        match="regex worker unavailable",
     ):
         await async_execute_tool_exchange(
             entity,
