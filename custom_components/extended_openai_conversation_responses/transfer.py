@@ -240,30 +240,44 @@ async def async_collect_transfer_snapshot(
             dict(subentry.data), agent_config_snapshot(subentry.data)
         )
     if SECTION_REQUEST_RULES in selected:
-        manager = await async_get_request_rules(
+        request_rules_manager = await async_get_request_rules(
             hass, entry.entry_id, subentry.subentry_id
         )
-        payload[SECTION_REQUEST_RULES] = await manager.async_backup_data()
+        payload[SECTION_REQUEST_RULES] = await request_rules_manager.async_backup_data()
     if SECTION_PERSISTENT_MEMORY in selected:
-        manager = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
-        payload[SECTION_PERSISTENT_MEMORY] = await manager.async_backup_data()
-    if SECTION_TEMPORARY_MEMORY in selected:
-        manager = await async_get_temporary_memory(
+        memory_manager = await async_get_memory(
             hass, entry.entry_id, subentry.subentry_id
         )
-        payload[SECTION_TEMPORARY_MEMORY] = await manager.async_backup_data()
+        payload[SECTION_PERSISTENT_MEMORY] = await memory_manager.async_backup_data()
+    if SECTION_TEMPORARY_MEMORY in selected:
+        temporary_memory_manager = await async_get_temporary_memory(
+            hass, entry.entry_id, subentry.subentry_id
+        )
+        payload[
+            SECTION_TEMPORARY_MEMORY
+        ] = await temporary_memory_manager.async_backup_data()
     if SECTION_KNOWLEDGE in selected:
-        manager = await async_get_knowledge(hass, entry.entry_id, subentry.subentry_id)
-        payload[SECTION_KNOWLEDGE] = await manager.async_backup_data()
+        knowledge_manager = await async_get_knowledge(
+            hass, entry.entry_id, subentry.subentry_id
+        )
+        payload[SECTION_KNOWLEDGE] = await knowledge_manager.async_backup_data()
     if SECTION_CONVERSATION_ARCHIVE in selected:
-        manager = await async_get_archive(hass, entry.entry_id, subentry.subentry_id)
-        payload[SECTION_CONVERSATION_ARCHIVE] = await manager.async_backup_data()
+        archive_manager = await async_get_archive(
+            hass, entry.entry_id, subentry.subentry_id
+        )
+        payload[
+            SECTION_CONVERSATION_ARCHIVE
+        ] = await archive_manager.async_backup_data()
     if SECTION_USAGE in selected:
-        manager = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
-        payload[SECTION_USAGE] = await manager.async_backup_data()
+        usage_manager = await async_get_usage(
+            hass, entry.entry_id, subentry.subentry_id
+        )
+        payload[SECTION_USAGE] = await usage_manager.async_backup_data()
     if SECTION_GUEST_MODE in selected:
-        manager = await async_get_guest_mode(hass, entry.entry_id, subentry.subentry_id)
-        payload[SECTION_GUEST_MODE] = await manager.async_backup_data()
+        guest_mode_manager = await async_get_guest_mode(
+            hass, entry.entry_id, subentry.subentry_id
+        )
+        payload[SECTION_GUEST_MODE] = await guest_mode_manager.async_backup_data()
     return document
 
 
@@ -271,7 +285,9 @@ def _is_redacted_placeholder(value: Any) -> bool:
     """Return whether a value is one of our explicit redaction placeholders."""
     if isinstance(value, dict):
         return value == REDACTED_SECRET_SENTINEL
-    return value == _GENERIC_REDACTED_PLACEHOLDER
+    if isinstance(value, str):
+        return value == _GENERIC_REDACTED_PLACEHOLDER
+    return False
 
 
 def _normalize_redaction_placeholders(value: Any) -> Any:
