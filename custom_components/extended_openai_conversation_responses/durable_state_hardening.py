@@ -64,9 +64,7 @@ def _archive_partition_payload(
 def _archive_partitions(turns: dict[str, list[Any]]) -> set[str]:
     """Return only monthly partitions that still contain retained turns."""
     return {
-        turn.timestamp[:7]
-        for session_turns in turns.values()
-        for turn in session_turns
+        turn.timestamp[:7] for session_turns in turns.values() for turn in session_turns
     }
 
 
@@ -113,9 +111,7 @@ async def _async_commit_archive_state(
     partitions = _archive_partitions(turns)
     removed_partitions = set(archive._partitions) - partitions
     pending_names = (
-        set(changed_partitions)
-        | set(archive._pending_partitions)
-        | removed_partitions
+        set(changed_partitions) | set(archive._pending_partitions) | removed_partitions
     )
     pending = {
         partition: _archive_partition_payload(partition, turns)
