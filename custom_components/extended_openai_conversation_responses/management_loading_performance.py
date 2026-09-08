@@ -54,6 +54,7 @@ _EXTRA_FRONTEND_MODULES = (
     "management-route-performance.js",
     "agent-config-loader.js",
     "agent-config-editor-base.js",
+    "ha-llm-tools.js",
     "request-rules-loader.js",
     "request-rules-ui-impl.js",
     "overview-page-impl.js",

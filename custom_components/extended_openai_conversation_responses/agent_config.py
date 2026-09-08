@@ -172,6 +172,7 @@ from .function_tool_policy import (
     RESERVED_FUNCTION_TOOL_NAMES,
 )
 from .functions import FUNCTIONS, get_function
+from .ha_llm_tools import is_ha_tool, reference_key, validate_reference
 from .helpers import get_model_config, get_reasoning_effort_options
 from .local_intents import (
     CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
@@ -425,6 +426,7 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
         raise AgentConfigError(CONF_FUNCTION_TOOLS, "top-level value must be a list")
     result: list[dict[str, Any]] = []
     names: set[str] = set()
+    ha_references: set[str] = set()
     for index, tool in enumerate(value):
         field = f"{CONF_FUNCTION_TOOLS}[{index}]"
         if not isinstance(tool, dict):
@@ -464,6 +466,28 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
         if name in names:
             raise AgentConfigError(f"{field}.spec.name", f"duplicate tool name: {name}")
         names.add(name)
+        if is_ha_tool(tool):
+            if set(tool) - {"spec", "function", "enabled"} or set(spec) != {"name"}:
+                raise AgentConfigError(
+                    field,
+                    "HA tools store only a reference, local name and enabled state",
+                )
+            try:
+                reference = validate_reference(function_config)
+            except ValueError as err:
+                raise AgentConfigError(field, str(err)) from err
+            key = reference_key(reference)
+            if key in ha_references:
+                raise AgentConfigError(field, "HA tool reference already configured")
+            ha_references.add(key)
+            result.append(
+                {
+                    "spec": {"name": name},
+                    "function": reference,
+                    "enabled": tool.get("enabled", True),
+                }
+            )
+            continue
         description = spec.get("description")
         if description is not None and not isinstance(description, str):
             raise AgentConfigError(f"{field}.spec.description", "must be a string")
@@ -518,6 +542,8 @@ def configured_function_tools_from_data(data: Any) -> list[dict[str, Any]]:
     parsed = yaml.safe_load(configured) if configured else DEFAULT_CONF_FUNCTION_TOOLS
     tools = validate_function_tools(parsed)
     for tool in tools:
+        if is_ha_tool(tool):
+            continue
         function_config = tool["function"]
         tool["function"] = get_function(function_config["type"]).validate_schema(
             function_config

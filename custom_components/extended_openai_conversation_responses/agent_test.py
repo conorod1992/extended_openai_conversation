@@ -33,6 +33,7 @@ from .const import (
 )
 from .functions import get_function
 from .guest_mode import get_loaded_guest_mode, resolve_guest_policy
+from .ha_llm_tools import is_ha_tool, validate_reference
 from .helpers import (
     get_api_mode,
     get_exposed_entities,
@@ -107,6 +108,9 @@ def _validate_function_schema(subentry: ConfigSubentry) -> int:
         if not isinstance(tool, dict) or not isinstance(tool.get("function"), dict):
             raise ValueError("Each function tool must contain a function mapping")
         function_config = cast(dict[str, Any], tool["function"])
+        if is_ha_tool(tool):
+            validate_reference(function_config)
+            continue
         get_function(function_config["type"]).validate_schema(function_config)
     return len(tools or [])
 

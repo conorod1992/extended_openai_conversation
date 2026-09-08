@@ -106,6 +106,14 @@ from .guest_mode import (
     guest_policy_editor_snapshot,
     resolve_guest_policy,
 )
+from .ha_llm_tools import (
+    ToolSnapshot,
+    async_discover,
+    is_ha_tool,
+    new_reference_tool,
+    reference_key,
+    validate_reference,
+)
 from .helpers import get_exposed_entities
 from .knowledge import (
     async_get_knowledge,
@@ -197,6 +205,27 @@ async def _async_preview_effective_request(
         hass, entry.entry_id, subentry.subentry_id
     )
     guest_policy = resolve_guest_policy(hass, options, guest_manager, configured_tools)
+    references = [
+        tool["function"]
+        for tool in configured_tools
+        if is_ha_tool(tool) and function_tool_enabled(tool)
+    ]
+    ha_snapshot = ToolSnapshot()
+    if references and not guest_policy.guest_active:
+        from homeassistant.helpers import llm
+
+        ha_snapshot = await async_discover(
+            hass,
+            llm.LLMContext(
+                platform=DOMAIN,
+                context=Context(user_id=user_id),
+                language=hass.config.language,
+                assistant="conversation",
+                device_id=None,
+            ),
+            references,
+        )
+    configured_tools = ha_snapshot.project(configured_tools)
     temporary_memories = []
     notes = [
         "User input and conversation history are excluded.",
@@ -277,7 +306,8 @@ async def _async_preview_effective_request(
             configured_tools = [
                 tool
                 for tool in configured_tools
-                if guest_policy.allows_configured_tool(tool["spec"]["name"])
+                if not is_ha_tool(tool)
+                and guest_policy.allows_configured_tool(tool["spec"]["name"])
                 and (
                     tool["spec"]["name"] not in membership
                     or membership[tool["spec"]["name"]].get("guest_allowed") is True
@@ -348,7 +378,16 @@ async def _async_preview_effective_request(
             )
 
         section_values = (
-            ("system_context", "System / context", preview.text, "text"),
+            (
+                "system_context",
+                "System / context",
+                "\n".join(
+                    part
+                    for part in (preview.text, ha_snapshot.prompt_for(grouped.tools))
+                    if part
+                ),
+                "text",
+            ),
             (
                 "function_tools",
                 "Function tools",
@@ -392,7 +431,10 @@ async def _async_preview_effective_request(
         ]
 
         enabled_tools = [
-            tool for tool in configured_tools if function_tool_enabled(tool)
+            tool
+            for tool in configured_tools
+            if function_tool_enabled(tool)
+            and (not is_ha_tool(tool) or tool.get("ha_available") is True)
         ]
         grouped_payload = canonical_json(
             format_function_tools(grouped.tools, provider.api_mode)
@@ -427,7 +469,11 @@ async def _async_preview_effective_request(
             if not note.startswith("Query-derived persistent memories")
         ]
     return {
-        "prompt": preview.text,
+        "prompt": "\n".join(
+            part
+            for part in (preview.text, ha_snapshot.prompt_for(grouped.tools))
+            if part
+        ),
         "prompt_sections": [
             {
                 "key": section.key,
@@ -833,7 +879,7 @@ async def async_management_command(
                     ),
                 }
                 for tool in configured_tools
-                if function_tool_enabled(tool)
+                if function_tool_enabled(tool) and not is_ha_tool(tool)
             ]
             return snapshot
         if action == "test":
@@ -1197,6 +1243,100 @@ async def async_management_command(
 
     if section == "tools":
         _require_admin(is_admin)
+        if action in {"ha_catalog", "ha_add"}:
+            from homeassistant.helpers import llm
+
+            references = None
+            if action == "ha_add":
+                selected = message.get("tools")
+                if not isinstance(selected, list) or len(selected) > 1000:
+                    raise HomeAssistantError("Select up to 1000 individual HA tools")
+                try:
+                    references = [validate_reference(ref) for ref in selected]
+                except ValueError as err:
+                    raise HomeAssistantError(str(err)) from err
+            ha_catalog_snapshot = await async_discover(
+                hass,
+                llm.LLMContext(
+                    platform=DOMAIN,
+                    context=Context(user_id=user_id),
+                    language=hass.config.language,
+                    assistant="conversation",
+                    device_id=None,
+                ),
+                references,
+            )
+            # Discovery awaits external sources. Re-read canonical state before any
+            # synchronous mutation so concurrent saves cannot be overwritten.
+            latest_entry = hass.config_entries.async_get_entry(entry_id)
+            if latest_entry is None or subentry_id not in latest_entry.subentries:
+                raise HomeAssistantError("Agent no longer exists")
+            entry = latest_entry
+            subentry = entry.subentries[subentry_id]
+            tools = configured_function_tools_from_data(subentry.data)
+            ha_existing = {
+                reference_key(tool["function"]): tool
+                for tool in tools
+                if is_ha_tool(tool)
+            }
+            if action == "ha_catalog":
+                return {
+                    "tools": [
+                        {
+                            "reference": live.reference,
+                            "name": live.tool.name,
+                            "description": live.tool.description or "",
+                            "source": live.source_label,
+                            "already_added": key in ha_existing,
+                        }
+                        for key, live in ha_catalog_snapshot.tools.items()
+                    ],
+                    "saved": {
+                        tool["spec"]["name"]: {
+                            "available": key in ha_catalog_snapshot.tools,
+                            "name": tool["function"]["tool_name"],
+                            "source": ha_catalog_snapshot.tools[key].source_label
+                            if key in ha_catalog_snapshot.tools
+                            else tool["function"]["source_id"],
+                            "description": ha_catalog_snapshot.tools[
+                                key
+                            ].tool.description
+                            or ""
+                            if key in ha_catalog_snapshot.tools
+                            else "Unavailable in this preview context",
+                        }
+                        for key, tool in ha_existing.items()
+                    },
+                    "unavailable_sources": ha_catalog_snapshot.unavailable_sources,
+                }
+            assert references is not None
+            if any(
+                reference_key(ref) not in ha_catalog_snapshot.tools
+                for ref in references
+            ):
+                raise HomeAssistantError(
+                    "A selected HA tool is no longer available; refresh the catalogue"
+                )
+            groups = validate_function_groups(
+                subentry.data.get(CONF_FUNCTION_GROUPS, []), tools
+            )
+            group_id = message.get("group_id")
+            ha_target_group = next(
+                (group for group in groups if group["id"] == group_id), None
+            )
+            if group_id and ha_target_group is None:
+                raise HomeAssistantError("Function Group no longer exists")
+            occupied = {tool["spec"]["name"] for tool in tools}
+            for ref in references:
+                key = reference_key(ref)
+                if key in ha_existing:
+                    continue
+                ha_added_tool = new_reference_tool(ref, occupied)
+                tools.append(ha_added_tool)
+                ha_existing[key] = ha_added_tool
+                if ha_target_group is not None:
+                    ha_target_group["functions"].append(ha_added_tool["spec"]["name"])
+            return _persist_function_configuration(hass, entry, subentry, tools, groups)
         if action == "validate":
             return _validation_result(
                 lambda: validate_function_tools(message.get("tools"))

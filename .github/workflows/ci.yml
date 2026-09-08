@@ -202,6 +202,23 @@ jobs:
         run: |
           pip install --upgrade git+https://github.com/home-assistant/core.git@dev
 
+      - name: Install AI Task media dependencies from the tested HA version
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+          import homeassistant
+
+          components = Path(next(iter(homeassistant.__path__))) / "components"
+          requirements = set()
+          for domain in ("camera", "stream"):
+              manifest = json.loads((components / domain / "manifest.json").read_text())
+              requirements.update(manifest.get("requirements", []))
+          subprocess.check_call([sys.executable, "-m", "pip", "install", *sorted(requirements)])
+          PY
+
       - name: Verify resolved test environment
         run: |
           pip check

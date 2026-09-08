@@ -154,6 +154,8 @@ def function_tool_runtime_available(tool: dict[str, Any]) -> bool:
     """Return whether a configured tool is individually executable."""
     if not function_tool_enabled(tool):
         return False
+    if tool.get("function", {}).get("type") == "ha_llm":
+        return tool.get("ha_available") is True
     function_config = tool.get("function", {})
     if function_config.get("type") == "bash":
         return function_config.get("allow_unsafe_shell") is True

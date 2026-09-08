@@ -17,7 +17,7 @@ from .const import CONF_GUEST_ALLOWED_GROUP_IDS, DOMAIN, SERVICE_CALL_FUNCTION
 from .function_execution import async_validate_function_arguments
 
 _TOOL_MUTATIONS = frozenset(
-    {"save", "set_enabled", "delete", "save_group", "delete_group"}
+    {"save", "set_enabled", "delete", "save_group", "delete_group", "ha_add"}
 )
 _TEMPLATE_MARKERS = ("{{", "{%", "{#")
 _ACTIVE_CONFIG_REVISION: ContextVar[str | None] = ContextVar(

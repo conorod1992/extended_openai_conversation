@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from openai import OpenAIError
 
 from homeassistant.components import ai_task, conversation
+from homeassistant.components.ai_task.const import DEFAULT_SYSTEM_PROMPT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -15,6 +16,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .debug import record_current_provider_failure
 from .entity import ExtendedOpenAIBaseLLMEntity
+from .ha_llm_tools import ToolSnapshot, caller_api_tools, tool_snapshot_scope
 from .provider_errors import log_provider_failure, request_reauthentication
 from .structured_output import parse_ai_task_structured_response
 
@@ -64,17 +66,35 @@ class ExtendedOpenAITaskEntity(
         chat_log: conversation.ChatLog,
     ) -> ai_task.GenDataTaskResult:
         """Handle a generate data task."""
-        # Call _async_handle_chat_log with empty custom_functions and exposed_entities
-        # AI Task operates without functions
+        # Core has already assembled a caller-supplied API with the task context.
+        # Reuse our exchange/budget; never import this agent's custom Functions.
+        snapshot, tools = (
+            caller_api_tools(chat_log.llm_api)
+            if chat_log.llm_api is not None
+            else (ToolSnapshot(), [])
+        )
         try:
-            await self._async_handle_chat_log(
-                chat_log,
-                function_tools=[],
-                exposed_entities=[],
-                llm_context=None,
-                structure_name=task.name,
-                structure=task.structure,
-            )
+            if chat_log.llm_api is not None:
+                caller_instance = chat_log.llm_api
+                # Ask Core to render its normal task baseline without source
+                # prompts. Our per-round exposure now owns those intact fragments.
+                # Retain the caller serializer for structured output conversion.
+                await chat_log.async_provide_llm_data(
+                    llm_context=caller_instance.llm_context,
+                    user_llm_prompt=DEFAULT_SYSTEM_PROMPT,
+                )
+                chat_log.llm_api = caller_instance
+            with tool_snapshot_scope(snapshot):
+                await self._async_handle_chat_log(
+                    chat_log,
+                    function_tools=tools,
+                    exposed_entities=[],
+                    llm_context=chat_log.llm_api.llm_context
+                    if chat_log.llm_api
+                    else None,
+                    structure_name=task.name,
+                    structure=task.structure,
+                )
         except OpenAIError as err:
             request_reauthentication(self.hass, getattr(self, "entry", None), err)
             record_current_provider_failure(err)
