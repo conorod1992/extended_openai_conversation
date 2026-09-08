@@ -305,6 +305,7 @@ def install_context_usage_hardening() -> None:
         chat_log: Any,
         result: Any,
         request_usage: RequestUsage | None = None,
+        recovery_state: Any = None,
     ) -> AsyncIterator[Any]:
         _estimate_current_request(chat_log, request_usage, "chat_completions")
 
@@ -337,7 +338,7 @@ def install_context_usage_hardening() -> None:
                     _restore_local_estimate(request_usage, estimate)
 
         async for item in original_chat_transform(
-            entity, chat_log, normalized_stream(), request_usage
+            entity, chat_log, normalized_stream(), request_usage, recovery_state
         ):
             yield item
 
@@ -346,6 +347,7 @@ def install_context_usage_hardening() -> None:
         chat_log: Any,
         result: Any,
         request_usage: RequestUsage | None = None,
+        recovery_state: Any = None,
     ) -> AsyncIterator[Any]:
         _estimate_current_request(chat_log, request_usage, "responses")
 
@@ -382,7 +384,7 @@ def install_context_usage_hardening() -> None:
                     _restore_local_estimate(request_usage, estimate)
 
         async for item in original_responses_transform(
-            entity, chat_log, normalized_stream(), request_usage
+            entity, chat_log, normalized_stream(), request_usage, recovery_state
         ):
             yield item
 
