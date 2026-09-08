@@ -659,13 +659,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     async_streaming_speech_cleanup(chat_log, options),
                 ):
                     async for content in chat_log.async_add_delta_content_stream(
-                            self.entity_id, transformed_stream
+                        self.entity_id, transformed_stream
+                    ):
+                        if (
+                            isinstance(content, conversation.AssistantContent)
+                            and content.tool_calls
                         ):
-                            if (
-                                isinstance(content, conversation.AssistantContent)
-                                and content.tool_calls
-                            ):
-                                pending_tool_calls.extend(content.tool_calls)
+                            pending_tool_calls.extend(content.tool_calls)
             except BaseException as err:
                 append_unresolved_tool_results(
                     chat_log,
