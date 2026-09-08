@@ -11,7 +11,7 @@ from typing import Any
 from homeassistant.components import conversation
 from homeassistant.helpers import llm
 
-from .exceptions import ParseArgumentsFailed
+from .exceptions import FunctionValidationInfrastructureError, ParseArgumentsFailed
 
 _MAX_RECOVERIES_PER_CONVERSATION = 2
 _MAX_MODEL_ERROR_TEXT = 320
@@ -97,6 +97,8 @@ def provider_argument_text(arguments: Any) -> str:
 
 def correctable_validation_failure(error: BaseException) -> CorrectableToolFailure:
     """Build bounded model feedback from the dedicated pre-dispatch validator."""
+    if isinstance(error, FunctionValidationInfrastructureError):
+        raise error
     detail = " ".join(str(error).split())
     if len(detail) > _MAX_MODEL_ERROR_TEXT:
         detail = f"{detail[: _MAX_MODEL_ERROR_TEXT - 1]}…"

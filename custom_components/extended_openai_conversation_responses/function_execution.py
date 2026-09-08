@@ -10,6 +10,8 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
+from .exceptions import FunctionValidationInfrastructureError
+
 _JSON_TYPES = {"array", "boolean", "integer", "null", "number", "object", "string"}
 _OBJECT_KEYWORDS = {
     "properties",
@@ -306,9 +308,14 @@ async def async_validate_function_arguments(
 
     from .regex_execution import async_search_configured_patterns
 
-    matches = await async_search_configured_patterns(
-        hass, [(pattern, value, flags) for _, pattern, value, flags in checks]
-    )
+    try:
+        matches = await async_search_configured_patterns(
+            hass, [(pattern, value, flags) for _, pattern, value, flags in checks]
+        )
+    except HomeAssistantError as err:
+        raise FunctionValidationInfrastructureError(
+            "Configured Function Tool pattern validation could not complete safely"
+        ) from err
     for (name, _pattern, _value, _flags), matches_pattern in zip(
         checks, matches, strict=True
     ):
