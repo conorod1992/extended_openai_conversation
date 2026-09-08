@@ -73,6 +73,8 @@ from .function_execution import (
 from .function_tool_recovery import (
     MalformedToolArguments,
     ToolRecoveryState,
+    bind_tool_recovery_state,
+    current_tool_recovery_state,
     provider_argument_text,
     strict_execution_failures_enabled,
 )
@@ -637,7 +639,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         ),
                     )
                     transformed_stream = self._transform_responses_stream(
-                        chat_log, responses_stream, request_usage, recovery_state
+                        chat_log, responses_stream, request_usage
                     )
                 else:
                     chat_stream = cast(
@@ -649,18 +651,19 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         ),
                     )
                     transformed_stream = self._transform_chat_stream(
-                        chat_log, chat_stream, request_usage, recovery_state
+                        chat_log, chat_stream, request_usage
                     )
 
-                with async_streaming_speech_cleanup(chat_log, options):
-                    async for content in chat_log.async_add_delta_content_stream(
-                        self.entity_id, transformed_stream
-                    ):
-                        if (
-                            isinstance(content, conversation.AssistantContent)
-                            and content.tool_calls
+                with bind_tool_recovery_state(recovery_state):
+                    with async_streaming_speech_cleanup(chat_log, options):
+                        async for content in chat_log.async_add_delta_content_stream(
+                            self.entity_id, transformed_stream
                         ):
-                            pending_tool_calls.extend(content.tool_calls)
+                            if (
+                                isinstance(content, conversation.AssistantContent)
+                                and content.tool_calls
+                            ):
+                                pending_tool_calls.extend(content.tool_calls)
             except BaseException as err:
                 append_unresolved_tool_results(
                     chat_log,
@@ -1061,12 +1064,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         result: AsyncStream[ChatCompletionChunk],
         request_usage: RequestUsage | None = None,
-        recovery_state: ToolRecoveryState | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
         """Transform OpenAI stream to Home Assistant format."""
         request_usage = request_usage or RequestUsage()
+        recovery_state = current_tool_recovery_state()
         current_tool_calls: dict[int, dict[str, Any]] = {}
         first_chunk = True
         refusal_seen = False
@@ -1199,12 +1202,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         result: AsyncStream[Any],
         request_usage: RequestUsage | None = None,
-        recovery_state: ToolRecoveryState | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
         """Transform a Responses API event stream to Home Assistant format."""
         request_usage = request_usage or RequestUsage()
+        recovery_state = current_tool_recovery_state()
         response_text_lengths: dict[tuple[int | None, int | None], int] = {}
         response_refusal_lengths: dict[tuple[int | None, int | None], int] = {}
         url_citations: dict[tuple[int | None, int | None], list[dict[str, Any]]] = {}

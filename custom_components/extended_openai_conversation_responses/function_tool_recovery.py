@@ -74,7 +74,7 @@ _ACTIVE_RECOVERY_STATE: ContextVar[ToolRecoveryState | None] = ContextVar(
 
 @contextmanager
 def bind_tool_recovery_state(state: ToolRecoveryState | None) -> Iterator[None]:
-    """Bind recovery policy only around one tool execution boundary."""
+    """Bind recovery policy to one request-local async execution context."""
     token = _ACTIVE_RECOVERY_STATE.set(state)
     try:
         yield
@@ -82,9 +82,14 @@ def bind_tool_recovery_state(state: ToolRecoveryState | None) -> Iterator[None]:
         _ACTIVE_RECOVERY_STATE.reset(token)
 
 
+def current_tool_recovery_state() -> ToolRecoveryState | None:
+    """Return the recovery state bound to the current async request context."""
+    return _ACTIVE_RECOVERY_STATE.get()
+
+
 def strict_execution_failures_enabled() -> bool:
     """Return whether arbitrary runtime failures must remain fail-fast."""
-    state = _ACTIVE_RECOVERY_STATE.get()
+    state = current_tool_recovery_state()
     return state is not None and state.enabled
 
 

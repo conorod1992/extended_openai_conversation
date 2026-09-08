@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
@@ -28,12 +29,23 @@ from custom_components.extended_openai_conversation_responses.function_call_budg
 from custom_components.extended_openai_conversation_responses.function_tool_recovery import (
     MalformedToolArguments,
     ToolRecoveryState,
+    bind_tool_recovery_state,
     correctable_validation_failure,
     recovery_tool_result,
 )
 from custom_components.extended_openai_conversation_responses.tool_exchange import (
     async_execute_tool_exchange,
 )
+
+
+def test_stream_transformer_contract_does_not_expose_recovery_state() -> None:
+    """Keep request-local recovery out of the long-standing transformer call API."""
+    assert "recovery_state" not in inspect.signature(
+        ExtendedOpenAIBaseLLMEntity._transform_chat_stream
+    ).parameters
+    assert "recovery_state" not in inspect.signature(
+        ExtendedOpenAIBaseLLMEntity._transform_responses_stream
+    ).parameters
 
 
 class FakeStream:
@@ -587,12 +599,11 @@ async def test_responses_malformed_arguments_are_retained_only_when_enabled(hass
     entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
     state = ToolRecoveryState(enabled=True)
 
-    deltas = [
-        delta
-        async for delta in entity._transform_responses_stream(
-            _chat_log(hass), stream, recovery_state=state
-        )
-    ]
+    with bind_tool_recovery_state(state):
+        deltas = [
+            delta
+            async for delta in entity._transform_responses_stream(_chat_log(hass), stream)
+        ]
     tool_input = next(delta["tool_calls"][0] for delta in deltas if "tool_calls" in delta)
     assert isinstance(tool_input.tool_args, MalformedToolArguments)
     assert state.pop_malformed(tool_input.id) is not None
@@ -603,13 +614,14 @@ async def test_responses_malformed_arguments_are_retained_only_when_enabled(hass
             _response_event("response.output_item.done", item=item),
         ]
     )
-    with pytest.raises(ParseArgumentsFailed):
-        _ = [
-            delta
-            async for delta in entity._transform_responses_stream(
-                _chat_log(hass), disabled_stream, recovery_state=ToolRecoveryState(False)
-            )
-        ]
+    with bind_tool_recovery_state(ToolRecoveryState(False)):
+        with pytest.raises(ParseArgumentsFailed):
+            _ = [
+                delta
+                async for delta in entity._transform_responses_stream(
+                    _chat_log(hass), disabled_stream
+                )
+            ]
 
 
 async def test_chat_completions_malformed_arguments_are_retained_when_enabled(hass) -> None:
@@ -631,12 +643,13 @@ async def test_chat_completions_malformed_arguments_are_retained_when_enabled(ha
     entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
     state = ToolRecoveryState(enabled=True)
 
-    deltas = [
-        item
-        async for item in entity._transform_chat_stream(
-            _chat_log(hass), FakeStream([chunk]), recovery_state=state
-        )
-    ]
+    with bind_tool_recovery_state(state):
+        deltas = [
+            item
+            async for item in entity._transform_chat_stream(
+                _chat_log(hass), FakeStream([chunk])
+            )
+        ]
     tool_input = next(item["tool_calls"][0] for item in deltas if "tool_calls" in item)
     assert isinstance(tool_input.tool_args, MalformedToolArguments)
     assert state.pop_malformed(tool_input.id) is not None
