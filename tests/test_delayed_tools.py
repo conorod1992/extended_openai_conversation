@@ -13,12 +13,19 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 from homeassistant.util import dt as dt_util
 
+from custom_components.extended_openai_conversation_responses.conversation import (
+    ExtendedOpenAIAgentEntity,
+    _ACTIVE_GUEST_POLICY,
+)
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
     DelayedToolCall,
     DelayedToolManager,
     _DELAYED_EXECUTION_MARKER,
     _EXECUTING,
     _delay_as_timedelta,
+)
+from custom_components.extended_openai_conversation_responses.guest_mode import (
+    GuestCapabilityPolicy,
 )
 
 
@@ -138,6 +145,84 @@ async def test_due_call_uses_current_tool_and_current_exposure(hass, monkeypatch
     assert getattr(context, _DELAYED_EXECUTION_MARKER) is True
     assert exposed == [{"entity_id": "light.current"}]
     assert manager._store.async_save.await_count == 2
+
+
+@pytest.mark.parametrize(
+    ("inherited_policy", "live_policy"),
+    [
+        (
+            GuestCapabilityPolicy(
+                True, configured_tool_names=frozenset({"control_light"})
+            ),
+            GuestCapabilityPolicy(True, configured_tool_names=frozenset()),
+        ),
+        (
+            GuestCapabilityPolicy(
+                True, configured_tool_names=frozenset({"control_light"})
+            ),
+            GuestCapabilityPolicy.unrestricted(),
+        ),
+        (
+            None,
+            GuestCapabilityPolicy(True, configured_tool_names=frozenset()),
+        ),
+    ],
+)
+async def test_due_call_uses_live_guest_policy_not_inherited_request_policy(
+    hass,
+    monkeypatch,
+    inherited_policy: GuestCapabilityPolicy | None,
+    live_policy: GuestCapabilityPolicy,
+) -> None:
+    """In-process and recovered delayed calls authorize from the same live policy."""
+    manager = DelayedToolManager(hass)
+    record = _record()
+    manager._records = {record.call_id: record}
+    manager._store = SimpleNamespace(async_save=AsyncMock())
+    hass.config_entries.async_get_entry = MagicMock(
+        return_value=SimpleNamespace(
+            disabled_by=None,
+            subentries={
+                "agent": SimpleNamespace(subentry_type="conversation", data={})
+            },
+        )
+    )
+    hass.auth.async_get_user = AsyncMock(return_value=SimpleNamespace(is_active=True))
+
+    current_tool = {
+        "enabled": True,
+        "spec": {"name": "control_light"},
+        "function": {"type": "native", "name": "execute_service_single"},
+    }
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.delayed_tools.configured_function_tools_from_data",
+        lambda _data: [current_tool],
+    )
+
+    observed: list[GuestCapabilityPolicy] = []
+
+    class GuestAwareAgent:
+        def _resolve_live_guest_policy(self) -> GuestCapabilityPolicy:
+            return live_policy
+
+        def _effective_guest_policy(self) -> GuestCapabilityPolicy:
+            return ExtendedOpenAIAgentEntity._effective_guest_policy(self)  # type: ignore[arg-type]
+
+        async def _execute_function_tool(self, *_args) -> object:
+            observed.append(self._effective_guest_policy())
+            return object()
+
+    agent = GuestAwareAgent()
+    monkeypatch.setattr(manager, "_resolve_agent", lambda *_args: agent)
+
+    token = _ACTIVE_GUEST_POLICY.set(inherited_policy)
+    try:
+        assert await manager._async_execute_due(record.call_id) is False
+        assert _ACTIVE_GUEST_POLICY.get() is inherited_policy
+    finally:
+        _ACTIVE_GUEST_POLICY.reset(token)
+
+    assert observed == [live_policy]
 
 
 async def test_due_call_is_cancelled_when_tool_is_disabled(hass, monkeypatch) -> None:

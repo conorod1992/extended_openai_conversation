@@ -351,6 +351,13 @@ class DelayedToolManager:
                 call_id, f"Function Tool is unavailable: {err}"
             )
 
+        # A waiter armed from an Assist request inherits that request's ContextVars.
+        # Delayed Function Tools deliberately authorize at execution time, so discard
+        # only the pinned request Guest policy before entering the normal tool seam.
+        # The live agent then resolves the Guest policy that exists when the call is
+        # actually due, matching calls recovered after a Home Assistant restart.
+        from .conversation import _ACTIVE_GUEST_POLICY
+
         executing = replace(record, status=_EXECUTING)
         try:
             await self._async_replace_record(executing)
@@ -367,6 +374,7 @@ class DelayedToolManager:
             device_id=record.device_id,
             **{_DELAYED_EXECUTION_MARKER: True},
         )
+        guest_policy_token = _ACTIVE_GUEST_POLICY.set(None)
         try:
             with bind_active_ha_context(execution_context):
                 await agent._execute_function_tool(
@@ -388,6 +396,7 @@ class DelayedToolManager:
         else:
             _LOGGER.info("Executed delayed Function Tool `%s`", record.tool_name)
         finally:
+            _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
             await self._async_finalize(call_id)
         return False
 
