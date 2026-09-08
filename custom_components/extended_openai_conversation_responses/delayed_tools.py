@@ -28,6 +28,7 @@ from .function_execution import (
     async_validate_function_arguments,
     split_legacy_execution_delay,
 )
+from .function_tool_resolution import latest_function_tool_for_execution
 from .functions import get_function
 from .ha_permissions import bind_active_ha_context
 from .helpers import get_exposed_entities
@@ -338,6 +339,13 @@ class DelayedToolManager:
         agent = self._resolve_agent(record.entry_id, record.subentry_id)
         if agent is None:
             return await self._async_retry_agent(record)
+
+        try:
+            current_tool = latest_function_tool_for_execution(agent, current_tool)
+        except HomeAssistantError as err:
+            return not await self._async_discard(
+                call_id, f"Function Tool is unavailable: {err}"
+            )
 
         executing = replace(record, status=_EXECUTING)
         try:
