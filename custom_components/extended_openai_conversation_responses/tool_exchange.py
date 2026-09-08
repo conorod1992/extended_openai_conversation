@@ -208,6 +208,7 @@ async def _async_validate_recoverable_call(
             entity.hass,
             function_tool.get("spec", {}),
             tool_input.tool_args,
+            distinguish_infrastructure=True,
         )
     except HomeAssistantError as err:
         return correctable_validation_failure(err)

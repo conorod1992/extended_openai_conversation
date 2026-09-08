@@ -285,6 +285,8 @@ async def async_validate_function_arguments(
     hass: HomeAssistant,
     spec: Mapping[str, Any],
     arguments: Mapping[str, Any],
+    *,
+    distinguish_infrastructure: bool = False,
 ) -> dict[str, Any]:
     """Validate Function Tool arguments with bounded configurable regex matching."""
     schema = spec.get("parameters", {})
@@ -313,6 +315,8 @@ async def async_validate_function_arguments(
             hass, [(pattern, value, flags) for _, pattern, value, flags in checks]
         )
     except HomeAssistantError as err:
+        if not distinguish_infrastructure:
+            raise
         raise FunctionValidationInfrastructureError(str(err)) from err
     for (name, _pattern, _value, _flags), matches_pattern in zip(
         checks, matches, strict=True
