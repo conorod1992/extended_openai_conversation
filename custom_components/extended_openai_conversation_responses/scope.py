@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from typing import Any
-
-from homeassistant.core import HomeAssistant
 
 from .const import (
     CONF_VOICE_DEFAULT_USER_ID,
@@ -24,6 +24,10 @@ from .ha_permissions import set_active_ha_context
 LEGACY_ANONYMOUS_SCOPE_ID = "__anonymous__"
 SHARED_HOUSEHOLD_SCOPE_ID = "shared:household"
 UNRETAINED_SCOPE_ID = "unretained"
+
+_ACTIVE_VOICE_IDENTITY_USERS: ContextVar[frozenset[str] | None] = ContextVar(
+    "extended_openai_active_voice_identity_users", default=None
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -45,6 +49,24 @@ class ResolvedDataScope:
     def as_dict(self) -> dict[str, str | None]:
         """Return a JSON-safe representation."""
         return asdict(self)
+
+
+@contextmanager
+def bind_active_voice_identity_users(user_ids: frozenset[str]) -> Iterator[None]:
+    """Bind the HA users validated for configured Voice Identity this request."""
+    token = _ACTIVE_VOICE_IDENTITY_USERS.set(user_ids)
+    try:
+        yield
+    finally:
+        _ACTIVE_VOICE_IDENTITY_USERS.reset(token)
+
+
+def _configured_voice_user_available(user_id: str) -> bool:
+    """Return whether runtime validation permits a configured personal scope."""
+    active_users = _ACTIVE_VOICE_IDENTITY_USERS.get()
+    # Pure policy callers do not have Home Assistant's auth manager available.
+    # Production conversation requests bind a concrete set before resolving.
+    return active_users is None or user_id in active_users
 
 
 def _context_user_id(context: Any) -> str | None:
@@ -130,64 +152,25 @@ def resolve_data_scope(context: Any, options: Mapping[str, Any]) -> ResolvedData
                 return shared_scope(source="device_mapping", device_id=device_id)
             if mapped not in {"unretained", UNRETAINED_SCOPE_ID}:
                 mapped_user = mapped.removeprefix("user:")
-                return user_scope(
-                    mapped_user, source="device_mapping", device_id=device_id
-                )
+                if mapped_user and _configured_voice_user_available(mapped_user):
+                    return user_scope(
+                        mapped_user, source="device_mapping", device_id=device_id
+                    )
         policy = str(
             options.get(CONF_VOICE_UNMAPPED_POLICY, DEFAULT_VOICE_UNMAPPED_POLICY)
         )
 
     if policy == VOICE_POLICY_DEFAULT_USER:
         owner = options.get(CONF_VOICE_DEFAULT_USER_ID)
-        if isinstance(owner, str) and owner:
+        if (
+            isinstance(owner, str)
+            and owner
+            and _configured_voice_user_available(owner)
+        ):
             return user_scope(owner, source="agent_default_user", device_id=device_id)
     if policy == VOICE_POLICY_SHARED:
         return shared_scope(source="shared_voice_policy", device_id=device_id)
     return unretained_scope(device_id=device_id)
-
-
-async def _configured_user_is_active(hass: HomeAssistant, user_id: str | None) -> bool:
-    """Return whether a configured Voice Identity user still exists and is active."""
-    if not user_id:
-        return False
-    user = await hass.auth.async_get_user(user_id)
-    return user is not None and user.is_active
-
-
-async def async_resolve_data_scope(
-    hass: HomeAssistant,
-    context: Any,
-    options: Mapping[str, Any],
-) -> ResolvedDataScope:
-    """Resolve a data scope and fail closed for stale configured HA users.
-
-    An authenticated request user is supplied by Home Assistant and remains
-    authoritative. Voice Identity mappings and default-user choices are persisted
-    configuration, so they must still name an active HA user at request time before
-    they may select a personal retained-data scope.
-    """
-    scope = resolve_data_scope(context, options)
-    if scope.scope_type != "user" or scope.source == "authenticated_user":
-        return scope
-    if await _configured_user_is_active(hass, scope.user_id):
-        return scope
-
-    if scope.source != "device_mapping":
-        return unretained_scope(device_id=scope.device_id)
-
-    # A stale per-device identity is equivalent to an unmapped device. Reuse the
-    # existing fallback policy rather than giving the stale owner a personal scope.
-    fallback_options = dict(options)
-    fallback_options[CONF_VOICE_SCOPE_POLICY] = str(
-        options.get(CONF_VOICE_UNMAPPED_POLICY, DEFAULT_VOICE_UNMAPPED_POLICY)
-    )
-    fallback_options[CONF_VOICE_DEVICE_MAPPINGS] = {}
-    fallback = resolve_data_scope(context, fallback_options)
-    if fallback.scope_type != "user":
-        return fallback
-    if await _configured_user_is_active(hass, fallback.user_id):
-        return fallback
-    return unretained_scope(device_id=fallback.device_id)
 
 
 def memory_scope_id(scope: ResolvedDataScope) -> str | None:
