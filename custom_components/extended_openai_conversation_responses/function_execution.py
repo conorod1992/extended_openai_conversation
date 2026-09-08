@@ -313,9 +313,7 @@ async def async_validate_function_arguments(
             hass, [(pattern, value, flags) for _, pattern, value, flags in checks]
         )
     except HomeAssistantError as err:
-        raise FunctionValidationInfrastructureError(
-            "Configured Function Tool pattern validation could not complete safely"
-        ) from err
+        raise FunctionValidationInfrastructureError(str(err)) from err
     for (name, _pattern, _value, _flags), matches_pattern in zip(
         checks, matches, strict=True
     ):
