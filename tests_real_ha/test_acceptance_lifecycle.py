@@ -8,7 +8,7 @@ import pytest
 
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_API_KEY
+from homeassistant.const import CONF_API_KEY, STATE_UNAVAILABLE
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -146,7 +146,9 @@ async def test_real_ha_setup_loads_platforms_agent_and_runtime(hass: HomeAssista
     guest_mode_row = next(
         row for row in rows if row.unique_id == f"{conversation_id}_guest_mode"
     )
-    assert hass.states.get(guest_mode_row.entity_id) is not None
+    guest_mode_state = hass.states.get(guest_mode_row.entity_id)
+    assert guest_mode_state is not None
+    assert guest_mode_state.state != STATE_UNAVAILABLE
 
 
 @pytest.mark.asyncio
@@ -175,7 +177,11 @@ async def test_real_ha_unload_reload_cleans_and_recreates_runtime(
 
     assert entry.state is ConfigEntryState.NOT_LOADED
     assert conversation.async_get_agent(hass, entry.entry_id) is None
-    assert hass.states.get(guest_mode_entity_id) is None
+    unloaded_guest_mode = hass.states.get(guest_mode_entity_id)
+    assert unloaded_guest_mode is not None
+    # Registry-backed entities intentionally remain represented by HA as unavailable
+    # after unload.  This is HA's public lifecycle contract; absence is not required.
+    assert unloaded_guest_mode.state == STATE_UNAVAILABLE
     assert DATA_TEMPLATE_MANAGER not in hass.data.get(DOMAIN, {})
 
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -183,7 +189,9 @@ async def test_real_ha_unload_reload_cleans_and_recreates_runtime(
 
     assert entry.state is ConfigEntryState.LOADED
     assert conversation.async_get_agent(hass, entry.entry_id) is not None
-    assert hass.states.get(guest_mode_entity_id) is not None
+    reloaded_guest_mode = hass.states.get(guest_mode_entity_id)
+    assert reloaded_guest_mode is not None
+    assert reloaded_guest_mode.state != STATE_UNAVAILABLE
     assert hass.data[DOMAIN][DATA_TEMPLATE_MANAGER] is not template_manager_before
     assert {row.entity_id for row in _registry_entries(hass, entry)} == entity_ids_before
 
