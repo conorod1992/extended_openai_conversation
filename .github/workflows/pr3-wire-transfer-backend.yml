@@ -1,0 +1,96 @@
+name: PR3 wire transfer backend
+
+on:
+  push:
+    branches:
+      - feature/unified-export-backup-import-restore
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/unified-export-backup-import-restore
+          fetch-depth: 0
+      - name: Patch backup transfer transport
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('custom_components/extended_openai_conversation_responses/backup_transfer.py')
+          text = path.read_text()
+
+          def replace_once(old, new):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected one match, found {count}: {old[:100]!r}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              'from .const import DOMAIN\n',
+              'from .const import DOMAIN\nfrom . import transfer\n',
+          )
+          replace_once(
+              '''def _redacted_document(snapshot: dict[str, Any]) -> dict[str, Any]:\n    return {\n        **snapshot,\n        "agent": {\n            **snapshot["agent"],\n            "config": backup._safe_configuration(snapshot["agent"]["config"]),\n        },\n        "request_rules": backup._safe_configuration(snapshot["request_rules"]),\n    }\n''',
+              '''def _redacted_document(snapshot: dict[str, Any]) -> dict[str, Any]:\n    if snapshot.get("format") == transfer.TRANSFER_FORMAT:\n        return transfer.redact_transfer_document(snapshot)\n    return {\n        **snapshot,\n        "agent": {\n            **snapshot["agent"],\n            "config": backup._safe_configuration(snapshot["agent"]["config"]),\n        },\n        "request_rules": backup._safe_configuration(snapshot["request_rules"]),\n    }\n''',
+          )
+          replace_once(
+              '''def _safe_export_filename(document: dict[str, Any]) -> str:\n    title = str(document["agent"]["title"])\n    safe_title = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")\n    date = str(document["created_at"])[:10]\n    return f"{safe_title or 'conversation-agent'}-full-backup-{date}.zip"\n''',
+              '''def _safe_export_filename(document: dict[str, Any]) -> str:\n    title = str(document["agent"]["title"])\n    safe_title = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")\n    date = str(document["created_at"])[:10]\n    label = (\n        "custom-backup"\n        if document.get("format") == transfer.TRANSFER_FORMAT\n        else "full-backup"\n    )\n    return f"{safe_title or 'conversation-agent'}-{label}-{date}.zip"\n''',
+          )
+          replace_once(
+              '''def _load_prepared_restore(\n    path: str, kind: str, target_subentry_id: str\n) -> backup.PreparedRestore:\n    document = _load_uploaded_document(path, kind)\n    return backup.inspect_backup(\n        document, target_subentry_id, max_bytes=MAX_BACKUP_UNCOMPRESSED_BYTES\n    )\n''',
+              '''def _load_prepared_restore(\n    path: str, kind: str, target_subentry_id: str\n) -> transfer.PreparedTransfer:\n    document = _load_uploaded_document(path, kind)\n    return transfer.inspect_transfer(document, target_subentry_id)\n''',
+          )
+          replace_once(
+              '''async def _start_export(\n    hass: HomeAssistant, entry: Any, subentry: Any\n) -> dict[str, Any]:\n''',
+              '''async def _start_export(\n    hass: HomeAssistant, entry: Any, subentry: Any, data: dict[str, Any]\n) -> dict[str, Any]:\n''',
+          )
+          replace_once(
+              '''        gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)\n        async with gate.exclusive():\n            snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)\n''',
+              '''        mode = data.get("mode", "full")\n        if mode not in {"full", "custom"}:\n            raise backup.BackupError("Export mode must be full or custom")\n        gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)\n        async with gate.exclusive():\n            snapshot = (\n                await backup.async_collect_backup_snapshot(hass, entry, subentry)\n                if mode == "full"\n                else await transfer.async_collect_transfer_snapshot(\n                    hass,\n                    entry,\n                    subentry,\n                    mode="custom",\n                    sections=data.get("sections"),\n                )\n            )\n''',
+          )
+          replace_once(
+              '''    return {\n        "session_id": session_id,\n        "filename": session.filename,\n        "content_type": "application/zip",\n''',
+              '''    return {\n        "session_id": session_id,\n        "filename": session.filename,\n        "mode": mode,\n        "content_type": "application/zip",\n''',
+          )
+          replace_once(
+              '''        prepared = await hass.async_add_executor_job(\n            _load_prepared_restore, session.path, session.kind, subentry_id\n        )\n    return {\n        "valid": True,\n        "title": prepared.title,\n        "summary": prepared.summary(),\n    }\n''',
+              '''        prepared = await hass.async_add_executor_job(\n            _load_prepared_restore, session.path, session.kind, subentry_id\n        )\n    entry, subentry = _resolve_agent(hass, entry_id, subentry_id)\n    _target, preview = await transfer.async_materialize_restore(\n        hass, entry, subentry, prepared, sections=data.get("sections")\n    )\n    return {\n        **transfer.inspection_for_frontend(prepared),\n        "preview": preview,\n    }\n''',
+          )
+          replace_once(
+              '''        # Resolve the live effective restore callable here. Startup hardening wraps\n        # this with restart recovery and the per-agent maintenance barrier.\n        return await backup.async_restore_backup(hass, entry, subentry, prepared)\n''',
+              '''        # Selective restore is materialized into one complete target snapshot, then\n        # delegated to the existing restart-safe full transaction.\n        return await transfer.async_restore_transfer(\n            hass, entry, subentry, prepared, sections=data.get("sections")\n        )\n''',
+          )
+          replace_once(
+              '''    if action == "export_start":\n        return await _start_export(hass, entry, subentry)\n''',
+              '''    if action == "setup_export":\n        return await transfer.async_create_setup_export(hass, entry, subentry)\n    if action == "export_start":\n        return await _start_export(hass, entry, subentry, data)\n''',
+          )
+          replace_once(
+              '    raise backup.BackupError("Unsupported full backup transfer action")\n',
+              '    raise backup.BackupError("Unsupported export/import transfer action")\n',
+          )
+          replace_once(
+              '    """Transfer a private full backup in bounded authenticated WebSocket frames."""\n',
+              '    """Transfer bounded authenticated export/import files."""\n',
+          )
+
+          path.write_text(text)
+          Path('.github/workflows/pr3-wire-transfer-backend.yml').unlink()
+          PY
+      - name: Commit backend wiring
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Wire unified transfer transport"
+          git push origin HEAD:feature/unified-export-backup-import-restore
