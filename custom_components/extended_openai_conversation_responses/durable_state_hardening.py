@@ -498,15 +498,17 @@ def _install_usage_transactions() -> None:
         today = dt_util.utcnow().date().isoformat()
         if getattr(manager, lifecycle._LAST_USAGE_PRUNE_DATE, None) == today:
             return
-        if lifecycle.time.monotonic() < float(
+
+        attempt_date = getattr(manager, _USAGE_PRUNE_ATTEMPT_DATE, None)
+        same_day_attempt = attempt_date == today
+        if same_day_attempt and lifecycle.time.monotonic() < float(
             getattr(manager, lifecycle._NEXT_USAGE_PRUNE_RETRY, 0.0) or 0.0
         ):
             return
 
-        attempt_date = getattr(manager, _USAGE_PRUNE_ATTEMPT_DATE, None)
         attempts = (
             int(getattr(manager, _USAGE_PRUNE_ATTEMPT_COUNT, 0) or 0)
-            if attempt_date == today
+            if same_day_attempt
             else 0
         )
         if attempts >= _USAGE_PRUNE_MAX_ATTEMPTS_PER_DAY:
