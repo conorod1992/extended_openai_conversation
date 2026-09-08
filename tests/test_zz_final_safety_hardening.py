@@ -24,6 +24,7 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
 )
 from custom_components.extended_openai_conversation_responses.functions import NativeFunction
 from custom_components.extended_openai_conversation_responses.ha_permissions import (
+    bind_active_ha_context,
     get_active_ha_context,
     set_active_ha_context,
 )
@@ -133,8 +134,9 @@ async def test_add_automation_requires_active_admin(hass, tmp_path, monkeypatch)
             [],
         )
 
-    with pytest.raises(HomeAssistantError, match="authenticated"):
-        await function.add_automation(hass, config, arguments, None, [])
+    with bind_active_ha_context(None):
+        with pytest.raises(HomeAssistantError, match="authenticated"):
+            await function.add_automation(hass, config, arguments, None, [])
 
     automation_path = tmp_path / "automations.yaml"
     monkeypatch.setattr(
