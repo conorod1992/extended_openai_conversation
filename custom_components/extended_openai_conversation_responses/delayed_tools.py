@@ -28,7 +28,9 @@ from .function_execution import (
     async_validate_function_arguments,
     split_legacy_execution_delay,
 )
+from .function_tool_resolution import latest_function_tool_for_execution
 from .functions import get_function
+from .ha_permissions import bind_active_ha_context
 from .helpers import get_exposed_entities
 
 _LOGGER = logging.getLogger(__name__)
@@ -342,6 +344,13 @@ class DelayedToolManager:
         if agent is None:
             return await self._async_retry_agent(record)
 
+        try:
+            current_tool = latest_function_tool_for_execution(agent, current_tool)
+        except HomeAssistantError as err:
+            return not await self._async_discard(
+                call_id, f"Function Tool is unavailable: {err}"
+            )
+
         executing = replace(record, status=_EXECUTING)
         try:
             await self._async_replace_record(executing)
@@ -352,23 +361,25 @@ class DelayedToolManager:
             )
             return True
 
+        execution_context = Context(user_id=record.user_id)
         delayed_context = SimpleNamespace(
-            context=Context(user_id=record.user_id),
+            context=execution_context,
             device_id=record.device_id,
             **{_DELAYED_EXECUTION_MARKER: True},
         )
         try:
-            await agent._execute_function_tool(
-                current_tool,
-                llm.ToolInput(
-                    id=record.call_id,
-                    tool_name=record.tool_name,
-                    tool_args=deepcopy(record.arguments),
-                    external=True,
-                ),
-                delayed_context,
-                get_exposed_entities(self.hass),
-            )
+            with bind_active_ha_context(execution_context):
+                await agent._execute_function_tool(
+                    current_tool,
+                    llm.ToolInput(
+                        id=record.call_id,
+                        tool_name=record.tool_name,
+                        tool_args=deepcopy(record.arguments),
+                        external=True,
+                    ),
+                    delayed_context,
+                    get_exposed_entities(self.hass),
+                )
         except Exception:
             _LOGGER.exception(
                 "Delayed Function Tool `%s` failed during execution",

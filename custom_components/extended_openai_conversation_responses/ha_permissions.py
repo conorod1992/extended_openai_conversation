@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
@@ -24,6 +25,16 @@ _SETUP_KEY = f"{DOMAIN}.permission_users_setup"
 def set_active_ha_context(context: Context | None) -> None:
     """Bind the real Home Assistant caller context to the current request task."""
     _ACTIVE_HA_CONTEXT.set(context)
+
+
+@contextmanager
+def bind_active_ha_context(context: Context | None) -> Iterator[None]:
+    """Temporarily bind a Home Assistant caller context and restore the prior one."""
+    token = _ACTIVE_HA_CONTEXT.set(context)
+    try:
+        yield
+    finally:
+        _ACTIVE_HA_CONTEXT.reset(token)
 
 
 def get_active_ha_context() -> Context | None:
