@@ -269,7 +269,9 @@ async def async_collect_transfer_snapshot(
 
 def _is_redacted_placeholder(value: Any) -> bool:
     """Return whether a value is one of our explicit redaction placeholders."""
-    return value in {REDACTED_SECRET_SENTINEL, _GENERIC_REDACTED_PLACEHOLDER}
+    if isinstance(value, dict):
+        return value == REDACTED_SECRET_SENTINEL
+    return value == _GENERIC_REDACTED_PLACEHOLDER
 
 
 def _normalize_redaction_placeholders(value: Any) -> Any:

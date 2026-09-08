@@ -571,8 +571,12 @@ def _require_session_identity(
 
 
 async def _start_export(
-    hass: HomeAssistant, entry: Any, subentry: Any, data: dict[str, Any]
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    data = data or {}
     async with _start_lock(hass):
         await _async_cleanup_expired(hass)
         # Reserve the worst-case archive footprint before doing any expensive work.

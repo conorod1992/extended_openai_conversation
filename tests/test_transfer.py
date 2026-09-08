@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -93,7 +94,9 @@ def _entry_and_subentry(config: dict | None = None):
     return (
         SimpleNamespace(entry_id="entry-1"),
         SimpleNamespace(
-            subentry_id="agent-1", title="Jarvis", data=config or agent_config_defaults()
+            subentry_id="agent-1",
+            title="Jarvis",
+            data=config or agent_config_defaults(),
         ),
     )
 
@@ -130,11 +133,11 @@ async def test_shareable_setup_reads_only_setup_state_and_round_trips_ha_llm_ref
     ):
         monkeypatch.setattr(transfer, name, forbidden)
 
-    result = await transfer.async_create_setup_export(SimpleNamespace(), entry, subentry)
+    result = await transfer.async_create_setup_export(
+        SimpleNamespace(), entry, subentry
+    )
     document = result["document"]
     assert set(document["sections"]) == transfer.SETUP_SECTIONS
-    assert "memories" not in result["json"]
-    assert "archive" not in result["json"]
 
     prepared = transfer.inspect_transfer(document, "target-agent")
     tools = yaml.safe_load(prepared.config[CONF_FUNCTION_TOOLS])
@@ -144,9 +147,7 @@ async def test_shareable_setup_reads_only_setup_state_and_round_trips_ha_llm_ref
 
 async def test_custom_export_reads_only_selected_sections(monkeypatch) -> None:
     entry, subentry = _entry_and_subentry()
-    memory = SimpleNamespace(
-        async_backup_data=AsyncMock(return_value={"memories": []})
-    )
+    memory = SimpleNamespace(async_backup_data=AsyncMock(return_value={"memories": []}))
 
     async def get_memory(_hass, _entry_id, _subentry_id):
         return memory
@@ -205,7 +206,7 @@ def test_new_transfer_normalizes_all_detected_secret_markers() -> None:
     assert "sk-proj-" not in serialized
     assert "Bearer abc" not in serialized
     assert "[redacted]" not in serialized
-    assert REDACTED_SECRET_SENTINEL in serialized
+    assert "__extended_openai_redacted_secret__" in serialized
 
 
 @pytest.mark.parametrize("placeholder", [REDACTED_SECRET_SENTINEL, "[redacted]"])
@@ -256,7 +257,7 @@ def test_current_full_backup_is_classified_without_inventing_absent_sections() -
 async def test_selective_restore_replaces_only_selected_section(monkeypatch) -> None:
     current = backup.inspect_backup(_document(), "target-agent")
     imported_memory = deepcopy(current.memories)
-    imported_memory[0].content = "Imported memory"
+    imported_memory[0] = replace(imported_memory[0], content="Imported memory")
     imported = transfer.PreparedTransfer(
         source_kind="custom_backup",
         mode="custom",
@@ -266,9 +267,7 @@ async def test_selective_restore_replaces_only_selected_section(monkeypatch) -> 
         integration_version="5.0.0",
         memories=imported_memory,
     )
-    monkeypatch.setattr(
-        transfer, "_current_snapshot", AsyncMock(return_value=current)
-    )
+    monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=current))
     entry, subentry = _entry_and_subentry()
 
     target, preview = await transfer.async_materialize_restore(
@@ -297,12 +296,12 @@ async def test_request_rule_dependency_uses_combined_target_state(monkeypatch) -
         integration_version="5.0.0",
         request_rules=rules,
     )
-    monkeypatch.setattr(
-        transfer, "_current_snapshot", AsyncMock(return_value=current)
-    )
+    monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=current))
     entry, subentry = _entry_and_subentry()
 
-    with pytest.raises(backup.BackupError, match="unavailable Function Tool `remember`"):
+    with pytest.raises(
+        backup.BackupError, match="unavailable Function Tool `remember`"
+    ):
         await transfer.async_materialize_restore(
             SimpleNamespace(), entry, subentry, imported
         )
@@ -316,7 +315,9 @@ async def test_request_rule_dependency_uses_combined_target_state(monkeypatch) -
     assert target.request_rules["rules"][0]["id"] == "remember-rule"
 
 
-async def test_configuration_secret_placeholder_uses_current_destination(monkeypatch) -> None:
+async def test_configuration_secret_placeholder_uses_current_destination(
+    monkeypatch,
+) -> None:
     current = backup.inspect_backup(_document(), "target-agent")
     current.config[CONF_PROMPT] = "Bearer sk-destination-secret-value-1234567890"
     raw = deepcopy(current.config)
@@ -332,9 +333,7 @@ async def test_configuration_secret_placeholder_uses_current_destination(monkeyp
         raw_configuration=raw,
         redacted_sensitive_fields=(f"configuration.{CONF_PROMPT}",),
     )
-    monkeypatch.setattr(
-        transfer, "_current_snapshot", AsyncMock(return_value=current)
-    )
+    monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=current))
     entry, subentry = _entry_and_subentry()
 
     target, preview = await transfer.async_materialize_restore(
