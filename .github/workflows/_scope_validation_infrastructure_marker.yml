@@ -1,0 +1,73 @@
+name: Scope validation infrastructure marker
+
+on:
+  push:
+    branches:
+      - feature/correctable-function-tool-recovery
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: feature/correctable-function-tool-recovery
+          fetch-depth: 0
+
+      - name: Scope infrastructure distinction to recovery pre-validation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          execution = Path("custom_components/extended_openai_conversation_responses/function_execution.py")
+          text = execution.read_text()
+          old_sig = '''async def async_validate_function_arguments(\n    hass: HomeAssistant,\n    spec: Mapping[str, Any],\n    arguments: Mapping[str, Any],\n) -> dict[str, Any]:\n'''
+          new_sig = '''async def async_validate_function_arguments(\n    hass: HomeAssistant,\n    spec: Mapping[str, Any],\n    arguments: Mapping[str, Any],\n    *,\n    distinguish_infrastructure: bool = False,\n) -> dict[str, Any]:\n'''
+          if new_sig not in text:
+              if old_sig not in text:
+                  raise SystemExit("validation signature anchor not found")
+              text = text.replace(old_sig, new_sig, 1)
+          old_except = '''    except HomeAssistantError as err:\n        raise FunctionValidationInfrastructureError(str(err)) from err\n'''
+          new_except = '''    except HomeAssistantError as err:\n        if not distinguish_infrastructure:\n            raise\n        raise FunctionValidationInfrastructureError(str(err)) from err\n'''
+          if new_except not in text:
+              if old_except not in text:
+                  raise SystemExit("validation exception anchor not found")
+              text = text.replace(old_except, new_except, 1)
+          execution.write_text(text)
+
+          exchange = Path("custom_components/extended_openai_conversation_responses/tool_exchange.py")
+          text = exchange.read_text()
+          old_call = '''        arguments = await async_validate_function_arguments(\n            entity.hass,\n            function_tool.get("spec", {}),\n            tool_input.tool_args,\n        )\n'''
+          new_call = '''        arguments = await async_validate_function_arguments(\n            entity.hass,\n            function_tool.get("spec", {}),\n            tool_input.tool_args,\n            distinguish_infrastructure=True,\n        )\n'''
+          if new_call not in text:
+              if old_call not in text:
+                  raise SystemExit("tool exchange validation call anchor not found")
+              text = text.replace(old_call, new_call, 1)
+          exchange.write_text(text)
+
+          Path(".github/workflows/_scope_validation_infrastructure_marker.yml").unlink()
+          PY
+
+      - name: Format and validate
+        run: |
+          python -m pip install ruff
+          ruff format \
+            custom_components/extended_openai_conversation_responses/function_execution.py \
+            custom_components/extended_openai_conversation_responses/tool_exchange.py
+          ruff check \
+            custom_components/extended_openai_conversation_responses/function_execution.py \
+            custom_components/extended_openai_conversation_responses/tool_exchange.py
+          git diff --check
+
+      - name: Commit scoped boundary
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Scope regex infrastructure marker to recovery"
+          git push origin HEAD:feature/correctable-function-tool-recovery
