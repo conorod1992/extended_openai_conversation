@@ -1,0 +1,74 @@
+name: PR3 redaction placeholder fix
+
+on:
+  push:
+    branches:
+      - feature/unified-export-backup-import-restore
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/unified-export-backup-import-restore
+          fetch-depth: 0
+      - name: Normalize redaction placeholders
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('custom_components/extended_openai_conversation_responses/transfer.py')
+          text = path.read_text()
+
+          def replace_once(old, new):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected one match, found {count}: {old[:120]!r}')
+              text = text.replace(old, new, 1)
+
+          replace_once('from collections.abc import Iterable, Mapping, Sequence\n', 'from collections.abc import Iterable, Mapping\n')
+          replace_once('from homeassistant.config_entries import ConfigSubentry\n', '')
+          replace_once(
+              '_ABSENT = object()\n_DROP = object()\n',
+              '_ABSENT = object()\n_DROP = object()\n_GENERIC_REDACTED_PLACEHOLDER = "[redacted]"\n',
+          )
+          replace_once(
+              '''def redact_transfer_document(document: dict[str, Any]) -> dict[str, Any]:\n    """Redact secret-bearing setup sections without altering private state content."""\n    result = deepcopy(document)\n''',
+              '''def _is_redacted_placeholder(value: Any) -> bool:\n    """Return whether a value is one of our explicit redaction placeholders."""\n    return value in {REDACTED_SECRET_SENTINEL, _GENERIC_REDACTED_PLACEHOLDER}\n\n\ndef _normalize_redaction_placeholders(value: Any) -> Any:\n    """Use one explicit placeholder in newly created transfer documents."""\n    if value == _GENERIC_REDACTED_PLACEHOLDER:\n        return REDACTED_SECRET_SENTINEL\n    if isinstance(value, list):\n        return [_normalize_redaction_placeholders(item) for item in value]\n    if isinstance(value, dict):\n        return {\n            key: _normalize_redaction_placeholders(item)\n            for key, item in value.items()\n        }\n    return value\n\n\ndef redact_transfer_document(document: dict[str, Any]) -> dict[str, Any]:\n    """Redact secret-bearing setup sections without altering private state content."""\n    result = deepcopy(document)\n''',
+          )
+          replace_once(
+              '''            sections[SECTION_CONFIGURATION] = redact_secrets(\n                sections[SECTION_CONFIGURATION]\n            )\n''',
+              '''            sections[SECTION_CONFIGURATION] = _normalize_redaction_placeholders(\n                redact_secrets(sections[SECTION_CONFIGURATION])\n            )\n''',
+          )
+          replace_once(
+              '''            sections[SECTION_REQUEST_RULES] = redact_secrets(\n                sections[SECTION_REQUEST_RULES]\n            )\n''',
+              '''            sections[SECTION_REQUEST_RULES] = _normalize_redaction_placeholders(\n                redact_secrets(sections[SECTION_REQUEST_RULES])\n            )\n''',
+          )
+          replace_once(
+              '    if value == REDACTED_SECRET_SENTINEL:\n        return [_secret_path(path)]\n',
+              '    if _is_redacted_placeholder(value):\n        return [_secret_path(path)]\n',
+          )
+          replace_once(
+              '    if value == REDACTED_SECRET_SENTINEL:\n        label = _secret_path(path)\n',
+              '    if _is_redacted_placeholder(value):\n        label = _secret_path(path)\n',
+          )
+
+          path.write_text(text)
+          Path('.github/workflows/pr3-redaction-placeholder-fix.yml').unlink()
+          PY
+      - name: Commit placeholder fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Normalize transfer secret placeholders"
+          git push origin HEAD:feature/unified-export-backup-import-restore
