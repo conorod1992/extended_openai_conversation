@@ -102,4 +102,17 @@ jobs:
           pytest tests_real_ha/ \
             -v \
             --asyncio-mode=auto \
-            --timeout=60
+            --timeout=60 \
+            --junitxml=real-ha-junit.xml \
+            2>&1 | tee real-ha-pytest.log
+
+      - name: Upload acceptance diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: real-ha-acceptance-diagnostics
+          path: |
+            real-ha-pytest.log
+            real-ha-junit.xml
+          if-no-files-found: warn
+          retention-days: 7
