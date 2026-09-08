@@ -1,0 +1,59 @@
+name: Tighten recovery boundary
+
+on:
+  push:
+    branches:
+      - feature/correctable-function-tool-recovery
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/correctable-function-tool-recovery
+      - name: Apply fail-closed boundary edits
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one anchor, found {count}")
+              p.write_text(text.replace(old, new))
+
+          base = Path("custom_components/extended_openai_conversation_responses")
+          tool_exchange = base / "tool_exchange.py"
+          replace(
+              tool_exchange,
+              "    correctable_unavailable_failure,\n",
+              "",
+          )
+          replace(
+              tool_exchange,
+              '''    try:\n        function_tool = _resolve_current_tool(\n            entity,\n            tool_input,\n            request_tools_by_name,\n            function_tools_factory,\n        )\n    except FunctionNotFound as err:\n        return correctable_unavailable_failure(tool_input.tool_name, err)\n''',
+              '''    function_tool = _resolve_current_tool(\n        entity,\n        tool_input,\n        request_tools_by_name,\n        function_tools_factory,\n    )\n''',
+          )
+
+          recovery = base / "function_tool_recovery.py"
+          text = recovery.read_text()
+          start = text.index("\ndef correctable_unavailable_failure(")
+          end = text.index("\ndef recovery_tool_result(", start)
+          recovery.write_text(text[:start] + text[end:])
+
+          Path('.github/workflows/_tighten_recovery_boundary.yml').unlink()
+      - name: Commit edits
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Keep availability and security failures fail-fast"
+          git push origin HEAD:feature/correctable-function-tool-recovery
