@@ -133,7 +133,7 @@ async def test_runtime_stale_mapping_follows_unmapped_policy(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
-async def test_runtime_user_validation_excludes_inactive_user() -> None:
+async def test_runtime_user_validation_falls_through_inactive_mapping() -> None:
     options = {
         CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_DEVICE_MAPPING,
         CONF_VOICE_DEVICE_MAPPINGS: {"kitchen": "user:mapped-user"},
@@ -142,17 +142,42 @@ async def test_runtime_user_validation_excludes_inactive_user() -> None:
     }
 
     async def get_user(user_id):
-        return SimpleNamespace(is_active=user_id == "mapped-user")
+        return SimpleNamespace(is_active=user_id == "default-user")
 
+    auth_lookup = AsyncMock(side_effect=get_user)
     agent = SimpleNamespace(
-        hass=SimpleNamespace(
-            auth=SimpleNamespace(async_get_user=AsyncMock(side_effect=get_user))
-        ),
+        hass=SimpleNamespace(auth=SimpleNamespace(async_get_user=auth_lookup)),
         subentry=SimpleNamespace(data=options),
     )
     user_input = SimpleNamespace(device_id="kitchen", satellite_id=None)
 
     active = await voice_identity_runtime._active_configured_users(agent, user_input)
 
-    assert active == frozenset({"mapped-user"})
-    assert agent.hass.auth.async_get_user.await_count == 2
+    assert active == frozenset({"default-user"})
+    assert [call.args[0] for call in auth_lookup.await_args_list] == [
+        "mapped-user",
+        "default-user",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_authenticated_request_skips_configured_user_validation() -> None:
+    options = {
+        CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_DEVICE_MAPPING,
+        CONF_VOICE_DEVICE_MAPPINGS: {"kitchen": "user:deleted-user"},
+    }
+    auth_lookup = AsyncMock()
+    agent = SimpleNamespace(
+        hass=SimpleNamespace(auth=SimpleNamespace(async_get_user=auth_lookup)),
+        subentry=SimpleNamespace(data=options),
+    )
+    user_input = SimpleNamespace(
+        context=SimpleNamespace(user_id="authenticated-user"),
+        device_id="kitchen",
+        satellite_id=None,
+    )
+
+    active = await voice_identity_runtime._active_configured_users(agent, user_input)
+
+    assert active == frozenset()
+    auth_lookup.assert_not_awaited()
