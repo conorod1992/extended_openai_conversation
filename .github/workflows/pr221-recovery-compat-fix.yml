@@ -1,0 +1,133 @@
+name: PR221 recovery compatibility fix
+
+on:
+  push:
+    branches:
+      - feature/correctable-function-tool-recovery
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/correctable-function-tool-recovery
+          fetch-depth: 0
+
+      - name: Apply guarded compatibility patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, found {count}")
+              file.write_text(text.replace(old, new, 1))
+
+          recovery = "custom_components/extended_openai_conversation_responses/function_tool_recovery.py"
+          entity = "custom_components/extended_openai_conversation_responses/entity.py"
+          tests = "tests/test_function_tool_error_recovery.py"
+
+          replace_once(
+              recovery,
+              '''def strict_execution_failures_enabled() -> bool:\n    """Return whether arbitrary runtime failures must remain fail-fast."""\n    state = _ACTIVE_RECOVERY_STATE.get()\n    return state is not None and state.enabled\n''',
+              '''def current_tool_recovery_state() -> ToolRecoveryState | None:\n    """Return the recovery state bound to the current async request context."""\n    return _ACTIVE_RECOVERY_STATE.get()\n\n\ndef strict_execution_failures_enabled() -> bool:\n    """Return whether arbitrary runtime failures must remain fail-fast."""\n    state = current_tool_recovery_state()\n    return state is not None and state.enabled\n''',
+          )
+
+          replace_once(
+              recovery,
+              '''    """Bind recovery policy only around one tool execution boundary."""''',
+              '''    """Bind recovery policy to one request-local async execution context."""''',
+          )
+
+          replace_once(
+              entity,
+              '''from .function_tool_recovery import (\n    MalformedToolArguments,\n    ToolRecoveryState,\n    provider_argument_text,\n    strict_execution_failures_enabled,\n)''',
+              '''from .function_tool_recovery import (\n    MalformedToolArguments,\n    ToolRecoveryState,\n    bind_tool_recovery_state,\n    current_tool_recovery_state,\n    provider_argument_text,\n    strict_execution_failures_enabled,\n)''',
+          )
+
+          replace_once(
+              entity,
+              '''                    transformed_stream = self._transform_responses_stream(\n                        chat_log, responses_stream, request_usage, recovery_state\n                    )''',
+              '''                    transformed_stream = self._transform_responses_stream(\n                        chat_log, responses_stream, request_usage\n                    )''',
+          )
+
+          replace_once(
+              entity,
+              '''                    transformed_stream = self._transform_chat_stream(\n                        chat_log, chat_stream, request_usage, recovery_state\n                    )''',
+              '''                    transformed_stream = self._transform_chat_stream(\n                        chat_log, chat_stream, request_usage\n                    )''',
+          )
+
+          replace_once(
+              entity,
+              '''                with async_streaming_speech_cleanup(chat_log, options):\n                    async for content in chat_log.async_add_delta_content_stream(\n                        self.entity_id, transformed_stream\n                    ):\n                        if (\n                            isinstance(content, conversation.AssistantContent)\n                            and content.tool_calls\n                        ):\n                            pending_tool_calls.extend(content.tool_calls)''',
+              '''                with bind_tool_recovery_state(recovery_state):\n                    with async_streaming_speech_cleanup(chat_log, options):\n                        async for content in chat_log.async_add_delta_content_stream(\n                            self.entity_id, transformed_stream\n                        ):\n                            if (\n                                isinstance(content, conversation.AssistantContent)\n                                and content.tool_calls\n                            ):\n                                pending_tool_calls.extend(content.tool_calls)''',
+          )
+
+          replace_once(
+              entity,
+              '''        request_usage: RequestUsage | None = None,\n        recovery_state: ToolRecoveryState | None = None,\n    ) -> AsyncGenerator[\n        conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict\n    ]:\n        """Transform OpenAI stream to Home Assistant format."""\n        request_usage = request_usage or RequestUsage()\n        current_tool_calls: dict[int, dict[str, Any]] = {}''',
+              '''        request_usage: RequestUsage | None = None,\n    ) -> AsyncGenerator[\n        conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict\n    ]:\n        """Transform OpenAI stream to Home Assistant format."""\n        request_usage = request_usage or RequestUsage()\n        recovery_state = current_tool_recovery_state()\n        current_tool_calls: dict[int, dict[str, Any]] = {}''',
+          )
+
+          replace_once(
+              entity,
+              '''        request_usage: RequestUsage | None = None,\n        recovery_state: ToolRecoveryState | None = None,\n    ) -> AsyncGenerator[\n        conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict\n    ]:\n        """Transform a Responses API event stream to Home Assistant format."""\n        request_usage = request_usage or RequestUsage()\n        response_text_lengths: dict[tuple[int | None, int | None], int] = {}''',
+              '''        request_usage: RequestUsage | None = None,\n    ) -> AsyncGenerator[\n        conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict\n    ]:\n        """Transform a Responses API event stream to Home Assistant format."""\n        request_usage = request_usage or RequestUsage()\n        recovery_state = current_tool_recovery_state()\n        response_text_lengths: dict[tuple[int | None, int | None], int] = {}''',
+          )
+
+          replace_once(
+              tests,
+              '''from __future__ import annotations\n\nfrom collections.abc import AsyncIterator''',
+              '''from __future__ import annotations\n\nimport inspect\nfrom collections.abc import AsyncIterator''',
+          )
+
+          replace_once(
+              tests,
+              '''from custom_components.extended_openai_conversation_responses.function_tool_recovery import (\n    MalformedToolArguments,\n    ToolRecoveryState,\n    correctable_validation_failure,\n    recovery_tool_result,\n)''',
+              '''from custom_components.extended_openai_conversation_responses.function_tool_recovery import (\n    MalformedToolArguments,\n    ToolRecoveryState,\n    bind_tool_recovery_state,\n    correctable_validation_failure,\n    recovery_tool_result,\n)''',
+          )
+
+          replace_once(
+              tests,
+              '''    deltas = [\n        delta\n        async for delta in entity._transform_responses_stream(\n            _chat_log(hass), stream, recovery_state=state\n        )\n    ]''',
+              '''    with bind_tool_recovery_state(state):\n        deltas = [\n            delta\n            async for delta in entity._transform_responses_stream(_chat_log(hass), stream)\n        ]''',
+          )
+
+          replace_once(
+              tests,
+              '''    with pytest.raises(ParseArgumentsFailed):\n        _ = [\n            delta\n            async for delta in entity._transform_responses_stream(\n                _chat_log(hass), disabled_stream, recovery_state=ToolRecoveryState(False)\n            )\n        ]''',
+              '''    with bind_tool_recovery_state(ToolRecoveryState(False)):\n        with pytest.raises(ParseArgumentsFailed):\n            _ = [\n                delta\n                async for delta in entity._transform_responses_stream(\n                    _chat_log(hass), disabled_stream\n                )\n            ]''',
+          )
+
+          replace_once(
+              tests,
+              '''    deltas = [\n        item\n        async for item in entity._transform_chat_stream(\n            _chat_log(hass), FakeStream([chunk]), recovery_state=state\n        )\n    ]''',
+              '''    with bind_tool_recovery_state(state):\n        deltas = [\n            item\n            async for item in entity._transform_chat_stream(\n                _chat_log(hass), FakeStream([chunk])\n            )\n        ]''',
+          )
+
+          marker = '''class FakeStream:\n    """Small async iterator accepted by both provider stream transformers."""\n'''
+          regression = '''def test_stream_transformer_contract_does_not_expose_recovery_state() -> None:\n    """Keep request-local recovery out of the long-standing transformer call API."""\n    assert "recovery_state" not in inspect.signature(\n        ExtendedOpenAIBaseLLMEntity._transform_chat_stream\n    ).parameters\n    assert "recovery_state" not in inspect.signature(\n        ExtendedOpenAIBaseLLMEntity._transform_responses_stream\n    ).parameters\n\n\n'''
+          replace_once(tests, marker, regression + marker)
+
+          workflow = Path(".github/workflows/pr221-recovery-compat-fix.yml")
+          workflow.unlink()
+          PY
+
+      - name: Commit compatibility fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Fix recovery stream compatibility"
+          git push origin HEAD:feature/correctable-function-tool-recovery
