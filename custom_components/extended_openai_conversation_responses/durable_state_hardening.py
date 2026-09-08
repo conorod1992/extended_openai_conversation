@@ -19,6 +19,8 @@ _INSTALLED = False
 _ARCHIVE_RETENTION_INTERVAL = timedelta(days=1)
 _USAGE_PRUNE_TASK = "_extended_openai_usage_prune_task"
 _USAGE_PRUNE_ATTEMPT_DATE = "_extended_openai_usage_prune_attempt_date"
+_USAGE_PRUNE_ATTEMPT_COUNT = "_extended_openai_usage_prune_attempt_count"
+_USAGE_PRUNE_MAX_ATTEMPTS_PER_DAY = 2
 
 
 def _archive_metadata_payload(
@@ -59,6 +61,32 @@ def _archive_partition_payload(
     }
 
 
+def _archive_partitions(turns: dict[str, list[Any]]) -> set[str]:
+    """Return only monthly partitions that still contain retained turns."""
+    return {
+        turn.timestamp[:7] for session_turns in turns.values() for turn in session_turns
+    }
+
+
+async def _async_remove_archive_partition(storage: Any, partition: str) -> None:
+    """Remove one obsolete partition store when the storage boundary supports it."""
+    remover = getattr(storage, "async_remove_partition", None)
+    if callable(remover):
+        await remover(partition)
+        return
+
+    # HomeAssistantArchiveStorage predates an explicit removal method. Keep the
+    # compatibility fallback local to this housekeeping boundary instead of making
+    # Archive callers know about Store internals.
+    store_factory = getattr(storage, "_partition_store", None)
+    if not callable(store_factory):
+        return
+    store = store_factory(partition)
+    remove = getattr(store, "async_remove", None)
+    if callable(remove):
+        await remove()
+
+
 async def _async_commit_archive_state(
     archive: Any,
     *,
@@ -76,7 +104,15 @@ async def _async_commit_archive_state(
     state is published before those writes and deliberately remains at the target if
     a later partition/final-metadata write fails.
     """
-    pending_names = set(changed_partitions) | set(archive._pending_partitions)
+    # Surviving turns are the source of truth for the partition index. Destructive
+    # operations historically passed the previous set here, leaving empty months
+    # permanently referenced after their last session was removed.
+    del partitions
+    partitions = _archive_partitions(turns)
+    removed_partitions = set(archive._partitions) - partitions
+    pending_names = (
+        set(changed_partitions) | set(archive._pending_partitions) | removed_partitions
+    )
     pending = {
         partition: _archive_partition_payload(partition, turns)
         for partition in sorted(pending_names)
@@ -96,6 +132,21 @@ async def _async_commit_archive_state(
 
     for partition, payload in pending.items():
         await archive._storage.async_save_partition(partition, payload)
+
+    # Removed months have already been durably overwritten with an empty payload.
+    # Physically remove their Store files when possible; failure here is only
+    # housekeeping and must not turn a completed privacy/deletion mutation into an
+    # apparent failure. Metadata below remains the authoritative partition index.
+    for partition in sorted(pending_names - partitions):
+        try:
+            await _async_remove_archive_partition(archive._storage, partition)
+        except Exception:
+            _LOGGER.warning(
+                "Unable to remove obsolete conversation archive partition %s",
+                partition,
+                exc_info=True,
+            )
+
     await archive._storage.async_save_metadata(
         _archive_metadata_payload(sessions, active, partitions)
     )
@@ -426,6 +477,7 @@ def _install_usage_transactions() -> None:
                 lifecycle._LAST_USAGE_PRUNE_DATE,
                 dt_util.utcnow().date().isoformat(),
             )
+            setattr(manager, lifecycle._NEXT_USAGE_PRUNE_RETRY, 0.0)
             return result
 
     async def async_clear_details(manager: Any, *, confirm: bool) -> dict[str, int]:
@@ -442,22 +494,42 @@ def _install_usage_transactions() -> None:
             return result
 
     async def async_prune_usage_if_due(manager: Any) -> None:
-        """Run once-daily transactional Usage retention outside the user turn."""
+        """Run transactional Usage retention off-path with one bounded same-day retry."""
         today = dt_util.utcnow().date().isoformat()
-        if (
-            getattr(manager, lifecycle._LAST_USAGE_PRUNE_DATE, None) == today
-            or getattr(manager, _USAGE_PRUNE_ATTEMPT_DATE, None) == today
+        if getattr(manager, lifecycle._LAST_USAGE_PRUNE_DATE, None) == today:
+            return
+
+        attempt_date = getattr(manager, _USAGE_PRUNE_ATTEMPT_DATE, None)
+        same_day_attempt = attempt_date == today
+        if same_day_attempt and lifecycle.time.monotonic() < float(
+            getattr(manager, lifecycle._NEXT_USAGE_PRUNE_RETRY, 0.0) or 0.0
         ):
             return
+
+        attempts = (
+            int(getattr(manager, _USAGE_PRUNE_ATTEMPT_COUNT, 0) or 0)
+            if same_day_attempt
+            else 0
+        )
+        if attempts >= _USAGE_PRUNE_MAX_ATTEMPTS_PER_DAY:
+            return
+
         current = getattr(manager, _USAGE_PRUNE_TASK, None)
         if isinstance(current, asyncio.Task) and not current.done():
             return
+
         setattr(manager, _USAGE_PRUNE_ATTEMPT_DATE, today)
+        setattr(manager, _USAGE_PRUNE_ATTEMPT_COUNT, attempts + 1)
 
         async def run() -> None:
             try:
                 await manager.async_prune_details(save=True)
             except Exception:
+                setattr(
+                    manager,
+                    lifecycle._NEXT_USAGE_PRUNE_RETRY,
+                    lifecycle.time.monotonic() + lifecycle._USAGE_PRUNE_RETRY_SECONDS,
+                )
                 _LOGGER.exception("Background usage retention maintenance failed")
 
         task = asyncio.create_task(
