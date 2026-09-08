@@ -67,6 +67,8 @@ class ToolRecoveryState:
         return self.malformed_calls.pop(call_id, None)
 
 
+# ContextVar keeps recovery state isolated when multiple conversations stream or
+# execute tools concurrently on the same entity instance.
 _ACTIVE_RECOVERY_STATE: ContextVar[ToolRecoveryState | None] = ContextVar(
     "extended_openai_function_tool_recovery", default=None
 )
