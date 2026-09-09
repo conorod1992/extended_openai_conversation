@@ -36,6 +36,7 @@ from .memory import MemoryRecord, PersistentMemory, async_get_memory
 from .request_rules import RequestRules, async_get_request_rules
 from .secret_redaction import (
     REDACTED_SECRET_SENTINEL,
+    is_redacted_secret,
     redact_secrets,
     restore_redacted_secrets,
 )
@@ -95,7 +96,6 @@ SECTION_LABELS = {
 
 _ABSENT = object()
 _DROP = object()
-_GENERIC_REDACTED_PLACEHOLDER = "[redacted]"
 
 
 @dataclass(slots=True)
@@ -283,17 +283,13 @@ async def async_collect_transfer_snapshot(
 
 def _is_redacted_placeholder(value: Any) -> bool:
     """Return whether a value is one of our explicit redaction placeholders."""
-    if isinstance(value, dict):
-        return value == REDACTED_SECRET_SENTINEL
-    if isinstance(value, str):
-        return value == _GENERIC_REDACTED_PLACEHOLDER
-    return False
+    return is_redacted_secret(value)
 
 
 def _normalize_redaction_placeholders(value: Any) -> Any:
     """Use one explicit placeholder in newly created transfer documents."""
-    if value == _GENERIC_REDACTED_PLACEHOLDER:
-        return REDACTED_SECRET_SENTINEL
+    if _is_redacted_placeholder(value):
+        return dict(REDACTED_SECRET_SENTINEL)
     if isinstance(value, list):
         return [_normalize_redaction_placeholders(item) for item in value]
     if isinstance(value, dict):
@@ -376,15 +372,32 @@ def _collect_secret_paths(value: Any, path: tuple[Any, ...] = ()) -> list[str]:
     return []
 
 
+def _list_item_identity(item: Any) -> Any:
+    """Use explicit IDs, or the stable spec name of a Function Tool."""
+    if isinstance(item, Mapping):
+        if "id" in item:
+            return ("id", item["id"])
+        spec = item.get("spec")
+        if isinstance(spec, Mapping) and "name" in spec:
+            return ("spec.name", spec["name"])
+    return None
+
+
 def _fallback_list_item(item: Any, fallback: Any, index: int) -> Any:
     if not isinstance(fallback, list):
         return _ABSENT
-    if isinstance(item, Mapping) and isinstance(item.get("id"), str):
-        item_id = item["id"]
-        for candidate in fallback:
-            if isinstance(candidate, Mapping) and candidate.get("id") == item_id:
-                return candidate
-    return fallback[index] if index < len(fallback) else _ABSENT
+    identity = _list_item_identity(item)
+    if identity is not None:
+        if not isinstance(identity[1], str) or not identity[1]:
+            return _ABSENT
+        matches = [
+            candidate
+            for candidate in fallback
+            if _list_item_identity(candidate) == identity
+        ]
+        return matches[0] if len(matches) == 1 else _ABSENT
+    candidate = fallback[index] if index < len(fallback) else _ABSENT
+    return candidate if _list_item_identity(candidate) is None else _ABSENT
 
 
 def _restore_with_fallback(
@@ -397,7 +410,7 @@ def _restore_with_fallback(
 ) -> Any:
     if _is_redacted_placeholder(value):
         label = _secret_path(path)
-        if fallback is not _ABSENT:
+        if fallback is not _ABSENT and not _collect_secret_paths(fallback):
             preserved.append(label)
             return deepcopy(fallback)
         missing.append(label)
@@ -734,7 +747,7 @@ def _prepared_restore_from_selection(
         title = imported.title
         if imported.raw_configuration is not None:
             raw, kept, absent = _restore_section_secrets(
-                imported.raw_configuration, current.config
+                imported.raw_configuration, agent_config_snapshot(current.config)
             )
             preserved.extend(f"configuration.{path}" for path in kept)
             missing.extend(f"configuration.{path}" for path in absent)
@@ -855,6 +868,10 @@ async def async_materialize_restore(
     target, preserved, missing = _prepared_restore_from_selection(
         current, prepared, selected
     )
+    if missing:
+        raise backup.BackupError(
+            "Cannot safely restore unavailable secrets: " + ", ".join(missing[:50])
+        )
     await _async_validate_request_rule_function_dependencies(
         hass, target.request_rules, target.config
     )
