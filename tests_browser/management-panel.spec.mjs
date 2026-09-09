@@ -56,8 +56,9 @@ test("general configuration survives a fresh panel load and a rejected save can 
   await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
 
   await expect.poll(async () => page.evaluate(() => window.browserHarness.calls.filter(
-    (call) => call.section === "configuration" && call.action === "update",
+    (call) => call.section === "configuration" && call.action === "save",
   ).length)).toBe(1);
+  await expect(panel.getByText("Unable to save configuration: Fixture rejected configuration save once", {exact: true})).toBeVisible();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
   expect(await page.evaluate(() => window.browserHarness.getState().configuration.title)).toBe("Jarvis");
 
@@ -128,14 +129,14 @@ test("direct non-admin URLs cannot load administrator configuration", async ({pa
   await expectHarnessClean(page, pageErrors);
 });
 
-test("keeps the Overview usable when one backend section reports a partial failure", async ({page}) => {
+test("keeps the Overview usable when one backend section rejects", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("overview", "&partial=1"));
 
   const panel = page.locator("extended-openai-management-panel");
-  await expect(panel.getByText("Knowledge could not be loaded. Other overview information is still available.", {exact: true})).toBeVisible();
-  await expect(panel.getByText("1,234 tokens today", {exact: false})).toBeVisible();
-  await expect(panel.getByText("5,678 this month", {exact: false})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Jarvis", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Capabilities", exact: true})).toBeVisible();
+  await expect(panel.getByText("1 functions · 1 groups", {exact: true})).toBeVisible();
 
   const overviewRequests = await page.evaluate(() => window.browserHarness.calls.filter(
     (call) => ["usage", "conversations", "memories", "knowledge"].includes(call.section),
