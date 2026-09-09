@@ -300,25 +300,39 @@ async def _async_execute_with_recovery(
 
         prepared: list[tuple[dict[str, Any], llm.ToolInput]] = []
         recovery_results: dict[str, conversation.ToolResultContent] = {}
-        for function_tool, tool_input in parallel_batch:
-            validation_outcome = await _async_validate_recoverable_call(
-                entity, function_tool, tool_input, recovery_state
-            )
-            if isinstance(validation_outcome, CorrectableToolFailure):
-                if not recovery_state.consume():
-                    append_unresolved_tool_results(
-                        chat_log,
-                        entity.entity_id,
-                        pending_tool_calls,
-                        failed_call_id=tool_input.id,
-                        error=validation_outcome.original,
-                    )
-                    raise validation_outcome.original
-                recovery_results[tool_input.id] = recovery_tool_result(
-                    entity.entity_id, tool_input, validation_outcome
+        validating_call: llm.ToolInput | None = None
+        try:
+            for function_tool, tool_input in parallel_batch:
+                validating_call = tool_input
+                validation_outcome = await _async_validate_recoverable_call(
+                    entity, function_tool, tool_input, recovery_state
                 )
-            else:
-                prepared.append((function_tool, validation_outcome))
+                if isinstance(validation_outcome, CorrectableToolFailure):
+                    if not recovery_state.consume():
+                        append_unresolved_tool_results(
+                            chat_log,
+                            entity.entity_id,
+                            pending_tool_calls,
+                            failed_call_id=tool_input.id,
+                            error=validation_outcome.original,
+                        )
+                        raise validation_outcome.original
+                    recovery_results[tool_input.id] = recovery_tool_result(
+                        entity.entity_id, tool_input, validation_outcome
+                    )
+                else:
+                    prepared.append((function_tool, validation_outcome))
+        except BaseException as err:
+            append_unresolved_tool_results(
+                chat_log,
+                entity.entity_id,
+                pending_tool_calls,
+                failed_call_id=(
+                    validating_call.id if validating_call is not None else None
+                ),
+                error=err,
+            )
+            raise
 
         execution_outcomes: dict[
             str, conversation.ToolResultContent | BaseException

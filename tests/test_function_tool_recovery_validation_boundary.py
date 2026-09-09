@@ -48,22 +48,37 @@ def _tool() -> dict[str, Any]:
     }
 
 
-def _call(mode: str) -> llm.ToolInput:
+def _parallel_tool(name: str) -> dict[str, Any]:
+    tool = _tool()
+    tool["spec"]["name"] = name
+    tool["function"] = {"type": "knowledge", "operation": "search"}
+    return tool
+
+
+def _call(
+    mode: str, *, call_id: str = "call-1", tool_name: str = "set_mode"
+) -> llm.ToolInput:
     return llm.ToolInput(
-        id="call-1",
-        tool_name="set_mode",
+        id=call_id,
+        tool_name=tool_name,
         tool_args={"mode": mode},
         external=True,
     )
 
 
 def _chat_log(hass: Any, call: llm.ToolInput) -> conversation.ChatLog:
+    return _chat_log_for_calls(hass, [call])
+
+
+def _chat_log_for_calls(
+    hass: Any, calls: list[llm.ToolInput]
+) -> conversation.ChatLog:
     chat_log = conversation.ChatLog(hass, "validation-boundary")
     chat_log.content[0] = conversation.SystemContent(content="Be helpful")
     chat_log.async_add_assistant_content_without_tools(
         conversation.AssistantContent(
             agent_id="conversation.validation_boundary",
-            tool_calls=[call],
+            tool_calls=calls,
         )
     )
     return chat_log
@@ -122,6 +137,66 @@ async def test_regex_validation_infrastructure_failure_is_not_recoverable(
     assert len(results) == 1
     assert results[0].tool_result["result"]["status"] == "error"
     assert results[0].tool_result["result"].get("reason") != "correctable_tool_error"
+
+
+@pytest.mark.parametrize("failure_index", [0, 1, 2])
+async def test_parallel_validation_infrastructure_failure_closes_all_calls(
+    hass, monkeypatch, failure_index: int
+) -> None:
+    """A pre-dispatch infrastructure failure closes every retained parallel call."""
+    validation_index = 0
+
+    async def fail_selected(_hass: Any, _checks: Any) -> list[bool]:
+        nonlocal validation_index
+        current = validation_index
+        validation_index += 1
+        if current == failure_index:
+            raise HomeAssistantError(f"regex worker unavailable at {failure_index}")
+        return [True]
+
+    monkeypatch.setattr(
+        regex_execution, "async_search_configured_patterns", fail_selected
+    )
+
+    names = ["first_read", "second_read", "third_read"]
+    tools = [_parallel_tool(name) for name in names]
+    calls = [
+        _call("on", call_id=f"call-{index + 1}", tool_name=name)
+        for index, name in enumerate(names)
+    ]
+    chat_log = _chat_log_for_calls(hass, calls)
+    entity = _entity(hass)
+    state = ToolRecoveryState(enabled=True)
+    budget = FunctionCallBudget(3)
+
+    with pytest.raises(
+        FunctionValidationInfrastructureError,
+        match=f"regex worker unavailable at {failure_index}",
+    ):
+        await async_execute_tool_exchange(
+            entity,
+            chat_log,
+            calls,
+            tools,
+            budget,
+            None,
+            [],
+            recovery_state=state,
+        )
+
+    entity._execute_function_tool.assert_not_awaited()
+    assert state.used == 0
+    assert budget.used == 3
+    results = _results(chat_log)
+    assert [result.tool_call_id for result in results] == [
+        "call-1",
+        "call-2",
+        "call-3",
+    ]
+    assert len({result.tool_call_id for result in results}) == 3
+    assert [result.tool_result["result"]["status"] for result in results] == [
+        "error" if index == failure_index else "skipped" for index in range(3)
+    ]
 
 
 async def test_disabled_validation_preserves_original_infrastructure_error(
