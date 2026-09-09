@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -229,6 +230,9 @@ async def test_real_sdk_partial_stream_without_terminal_event_fails_closed(
             await entity._async_handle_chat_log(chat_log, [_tool()], [])
     finally:
         await client.close()
+        # The stable HA pytest harness fails on an async-generator finalizer that is
+        # already scheduled but has not received its next event-loop turn yet.
+        await asyncio.sleep(0)
 
     entity._execute_function_tool.assert_not_awaited()
     assert len(wire.requests) == 1
