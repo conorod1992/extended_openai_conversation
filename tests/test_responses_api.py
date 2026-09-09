@@ -1457,3 +1457,234 @@ async def test_failed_api_request_is_forwarded_to_usage_statistics(hass) -> None
     entity._usage.async_record_conversation.assert_awaited_once()
     entity._usage.async_record_request.assert_awaited_once()
     assert entity._usage.async_record_request.await_args.kwargs["successful"] is False
+
+
+def _control_stream(api_mode, name, arguments, call_id="control"):
+    """Emit the same tool call using each provider's real stream shape."""
+    if api_mode == API_MODE_RESPONSES:
+        call = _function_call(name, json.dumps(arguments), call_id)
+        return FakeStream(
+            [
+                _event("response.output_item.added", item=call),
+                _event("response.output_item.done", item=call),
+                _completed_event(),
+            ]
+        )
+    from openai.types.chat import ChatCompletionChunk
+
+    return FakeStream(
+        [
+            ChatCompletionChunk.model_validate(
+                {
+                    "id": "chat",
+                    "created": 0,
+                    "model": "test",
+                    "object": "chat.completion.chunk",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "tool_calls",
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": call_id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": name,
+                                            "arguments": json.dumps(arguments),
+                                        },
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                }
+            )
+        ]
+    )
+
+
+def _control_entity(hass, api_mode, streams):
+    create = AsyncMock(side_effect=streams)
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(
+            responses=SimpleNamespace(create=create),
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+        )
+    )
+    entity.subentry = SimpleNamespace(
+        data={CONF_CHAT_MODEL: "gpt-4o-mini", CONF_API_MODE: api_mode}
+    )
+    entity.hass = hass
+    entity.entity_id = "conversation.test"
+    log = conversation.ChatLog(hass, "conversation-id")
+    log.async_add_user_content(conversation.UserContent(content="Help me"))
+    return entity, log, create
+
+
+@pytest.mark.parametrize("decision", [False, True])
+@pytest.mark.parametrize("action_first", [False, True])
+async def test_chat_completions_finalizer_directly_and_after_function(
+    hass, decision, action_first
+):
+    streams = []
+    if action_first:
+        streams.append(
+            _control_stream(API_MODE_CHAT_COMPLETIONS, "turn_on", {}, "action")
+        )
+    streams.append(
+        _control_stream(
+            API_MODE_CHAT_COMPLETIONS,
+            CONTINUE_CONVERSATION_TOOL_NAME,
+            {"response": "Which room?", "continue_conversation": decision},
+        )
+    )
+    entity, log, create = _control_entity(hass, API_MODE_CHAT_COMPLETIONS, streams)
+    entity._execute_function_tool = AsyncMock(
+        return_value=conversation.ToolResultContent(
+            agent_id=entity.entity_id,
+            tool_call_id="action",
+            tool_name="turn_on",
+            tool_result={"result": "done"},
+        )
+    )
+    tools = [
+        {
+            "spec": {
+                "name": "turn_on",
+                "description": "Turn on",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": {"type": "native", "name": "unused"},
+        }
+    ]
+    result = await entity._async_handle_chat_log(
+        log, tools, [], conditional_continue=True
+    )
+    assert result is decision
+    assert log.content[-1].content == "Which room?"
+    assert log.content[-1].tool_calls is None
+    assert create.await_count == (2 if action_first else 1)
+    assert entity._execute_function_tool.await_count == int(action_first)
+    for call in create.await_args_list:
+        assert call.kwargs["tool_choice"] == "required"
+        assert {tool["function"]["name"] for tool in call.kwargs["tools"]} == {
+            "turn_on",
+            CONTINUE_CONVERSATION_TOOL_NAME,
+        }
+    if action_first:
+        assert any(
+            message.get("role") == "tool" and message.get("tool_call_id") == "action"
+            for message in create.await_args_list[1].kwargs["messages"]
+        )
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS])
+@pytest.mark.parametrize(
+    "mode",
+    [
+        DEFAULT_CONTINUE_CONVERSATION,
+        CONTINUE_CONVERSATION_ALWAYS,
+        CONTINUE_CONVERSATION_CONDITIONAL,
+    ],
+)
+async def test_continue_mode_controls_provider_finalizer_injection(
+    hass, monkeypatch, api_mode, mode
+):
+    conditional = mode == CONTINUE_CONVERSATION_CONDITIONAL
+    if conditional:
+        stream = _control_stream(
+            api_mode,
+            CONTINUE_CONVERSATION_TOOL_NAME,
+            {"response": "Done", "continue_conversation": False},
+        )
+    elif api_mode == API_MODE_RESPONSES:
+        stream = FakeStream(
+            [_event("response.output_text.delta", delta="Done"), _completed_event()]
+        )
+    else:
+        from openai.types.chat import ChatCompletionChunk
+
+        stream = FakeStream(
+            [
+                ChatCompletionChunk.model_validate(
+                    {
+                        "id": "chat",
+                        "created": 0,
+                        "model": "test",
+                        "object": "chat.completion.chunk",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": "Done"},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                    }
+                )
+            ]
+        )
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_CONTINUE_CONVERSATION,
+    )
+    from tests.test_conversation_orchestration import _assist_fixture
+
+    entity, invoke, _, _ = _assist_fixture(monkeypatch)
+    entity.hass = hass
+    provider_entity, _, create = _control_entity(hass, api_mode, [stream])
+    entity.entry.runtime_data = provider_entity.entry.runtime_data
+    entity.subentry.data.update(provider_entity.subentry.data)
+    entity.subentry.data[CONF_CONTINUE_CONVERSATION] = mode
+    del entity._async_handle_chat_log
+    # Use HA's stream-capable ChatLog while retaining the normal entry pipeline.
+    from contextlib import nullcontext
+
+    from custom_components.extended_openai_conversation_responses import (
+        conversation as conversation_module,
+    )
+
+    def chat_log(_hass, _session, user_input):
+        log = conversation.ChatLog(hass, "conversation-id")
+        log.async_add_user_content(conversation.UserContent(content=user_input.text))
+        return nullcontext(log)
+
+    monkeypatch.setattr(conversation_module, "async_get_chat_log", chat_log)
+    result = await invoke()
+    assert result.continue_conversation is (mode == CONTINUE_CONVERSATION_ALWAYS)
+    request = create.await_args.kwargs
+    names = {
+        tool["name"] if api_mode == API_MODE_RESPONSES else tool["function"]["name"]
+        for tool in request.get("tools", [])
+    }
+    assert (CONTINUE_CONVERSATION_TOOL_NAME in names) is conditional
+    if conditional:
+        assert request["tool_choice"] == "required"
+    else:
+        assert request.get("tool_choice") != "required"
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS])
+@pytest.mark.parametrize(
+    "arguments",
+    [{"response": "Done"}, {"response": "Done", "continue_conversation": "yes"}],
+)
+async def test_malformed_finalizer_raises_instead_of_enabling_listening(
+    hass, api_mode, arguments
+):
+    from custom_components.extended_openai_conversation_responses.exceptions import (
+        ParseArgumentsFailed,
+    )
+
+    entity, log, create = _control_entity(
+        hass,
+        api_mode,
+        [
+            _control_stream(api_mode, CONTINUE_CONVERSATION_TOOL_NAME, arguments),
+        ],
+    )
+    with pytest.raises(ParseArgumentsFailed):
+        await entity._async_handle_chat_log(log, [], [], conditional_continue=True)
+    assert create.await_count == 1
+    assert log.continue_conversation is False
