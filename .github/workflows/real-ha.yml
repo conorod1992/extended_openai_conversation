@@ -124,6 +124,10 @@ jobs:
             --asyncio-mode=auto \
             --timeout=60 \
             --junitxml=real-ha-junit.xml \
+            --cov=custom_components.extended_openai_conversation_responses.config_flow \
+            --cov-branch \
+            --cov-report=term-missing \
+            --cov-report=xml:real-ha-config-flow-coverage.xml \
             2>&1 | tee real-ha-pytest.log
 
       - name: Upload acceptance diagnostics
@@ -134,5 +138,6 @@ jobs:
           path: |
             real-ha-pytest.log
             real-ha-junit.xml
+            real-ha-config-flow-coverage.xml
           if-no-files-found: warn
           retention-days: 7
