@@ -162,6 +162,10 @@ Regex is an advanced feature. Rules run sequentially on the completed response i
     - `Always`: Explicitly request another utterance after every successful response. Error responses do not continue.
     - `Conditional`: Let the language model decide independently for each final response.
 
+    This setting only controls responses handled by ExtendedOpenAI. Home Assistant sentence triggers and native local handling may intercept a request before ExtendedOpenAI is invoked; their follow-up behavior remains controlled by Home Assistant.
+
+    Always also applies to successful local intents and consumed Request Rules inside ExtendedOpenAI. Failed local handling does not request follow-up listening. These local responses keep listening disabled in HA Default and Conditional modes; Conditional requires an actual model continuation decision.
+
     Conditional mode adds an internal structured finalizer tool to the existing model turn. The tool carries both the complete spoken response and a boolean `continue_conversation` decision. The integration consumes the boolean as control metadata and exposes only the response text to Home Assistant. Normal Home Assistant tools still run first, and no second model request is made solely to classify continuation.
 
     The model is instructed to continue for direct questions, clarification, choices, and intentionally multi-turn interactions. It is instructed to stop after completed commands, final answers, and status reports.

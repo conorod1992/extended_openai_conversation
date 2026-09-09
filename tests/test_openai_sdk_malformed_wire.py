@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import gc
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -69,6 +71,16 @@ def _assert_closed_tool_exchange(
     assert [(item.tool_call_id, item.tool_name) for item in outputs] == [
         (call_id, tool_name)
     ]
+
+
+async def _drain_sdk_asyncgen_finalizers() -> None:
+    """Finish transient async-generator cleanup scheduled by OpenAI's SSE iterator."""
+    gc.collect()
+    # OpenAI 2.45.0 breaks out of a nested async generator on [DONE]. Python
+    # schedules that generator's athrow finalizer on the next loop turn; a second
+    # turn lets the finalizer itself complete before HA checks for lingering tasks.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
 
 
 def _responses_malformed_tool_arguments() -> bytes:
@@ -229,6 +241,7 @@ async def test_real_sdk_partial_stream_without_terminal_event_fails_closed(
             await entity._async_handle_chat_log(chat_log, [_tool()], [])
     finally:
         await client.close()
+        await _drain_sdk_asyncgen_finalizers()
 
     entity._execute_function_tool.assert_not_awaited()
     assert len(wire.requests) == 1

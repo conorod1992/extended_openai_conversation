@@ -640,6 +640,7 @@ class ExtendedOpenAIAgentEntity(
                         user_input,
                         chat_log,
                         f"Sorry, this Request Rule cannot be used: {err}",
+                        successful=False,
                     )
                 metadata = _PROCESS_METADATA.get()
                 if metadata is not None and evaluation is not None:
@@ -894,6 +895,8 @@ class ExtendedOpenAIAgentEntity(
         user_input: ConversationInput,
         chat_log: ChatLog,
         response: str,
+        *,
+        successful: bool,
     ) -> ConversationResult:
         """Return a local rule response without invoking the provider."""
         metadata = _PROCESS_METADATA.get()
@@ -910,7 +913,10 @@ class ExtendedOpenAIAgentEntity(
         return ConversationResult(
             response=intent_response,
             conversation_id=chat_log.conversation_id,
-            continue_conversation=False,
+            continue_conversation=successful
+            and _resolve_continue_conversation(
+                _get_continue_conversation_mode(self.subentry.data), False, None
+            ),
         )
 
     def _local_intent_result(
@@ -937,7 +943,10 @@ class ExtendedOpenAIAgentEntity(
         return ConversationResult(
             response=local_intent.response,
             conversation_id=chat_log.conversation_id,
-            continue_conversation=False,
+            continue_conversation=local_intent.response.error_code is None
+            and _resolve_continue_conversation(
+                _get_continue_conversation_mode(self.subentry.data), False, None
+            ),
         )
 
     def _fire_conversation_finished(
@@ -1014,7 +1023,9 @@ class ExtendedOpenAIAgentEntity(
                 home_assistant_conversation_id=user_input.conversation_id,
                 source_device_id=source_device_id,
             ) as run:
-                result = self._local_rule_result(user_input, chat_log, response)
+                result = self._local_rule_result(
+                    user_input, chat_log, response, successful=successful
+                )
                 if not successful:
                     self._usage.mark_current_run_failed("RequestRuleExecutionFailed")
                 await self._async_archive_turn(
@@ -1025,7 +1036,9 @@ class ExtendedOpenAIAgentEntity(
                     successful=successful,
                 )
         else:
-            result = self._local_rule_result(user_input, chat_log, response)
+            result = self._local_rule_result(
+                user_input, chat_log, response, successful=successful
+            )
             await self._async_archive_turn(
                 archive_session,
                 None,

@@ -126,12 +126,27 @@ def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
     return entity, user_input, chat_log, policy, process
 
 
-async def test_consumed_request_rule_bypasses_local_intent_and_provider(monkeypatch):
+@pytest.mark.parametrize(
+    "mode",
+    [
+        DEFAULT_CONTINUE_CONVERSATION,
+        CONTINUE_CONVERSATION_ALWAYS,
+        CONTINUE_CONVERSATION_CONDITIONAL,
+    ],
+)
+@pytest.mark.parametrize("successful", [False, True])
+@pytest.mark.parametrize("with_usage", [False, True])
+async def test_consumed_request_rule_bypasses_local_intent_and_provider(
+    monkeypatch, mode, successful, with_usage
+):
     entity, _user_input, _chat_log, _policy, process = _pipeline_fixture(
         monkeypatch, text="good night"
     )
+    entity.subentry.data[CONF_CONTINUE_CONVERSATION] = mode
+    if with_usage:
+        entity._usage = _UsageRecorder()
+        entity._usage.mark_current_run_failed = MagicMock()
     entity._request_rules = object()
-    entity.subentry.data[CONF_CONTINUE_CONVERSATION] = CONTINUE_CONVERSATION_ALWAYS
     entity._request_rule_runtime = SimpleNamespace(effective_options=MagicMock())
 
     evaluation = RuleEvaluation(
@@ -143,6 +158,7 @@ async def test_consumed_request_rule_bypasses_local_intent_and_provider(monkeypa
         ),
         consume=True,
         response="Handled locally",
+        successful=successful,
     )
     evaluate_rule = AsyncMock(return_value=evaluation)
     try_local_intent = AsyncMock()
@@ -154,22 +170,37 @@ async def test_consumed_request_rule_bypasses_local_intent_and_provider(monkeypa
     result = await process()
 
     assert result.response.speech["plain"]["speech"] == "Handled locally"
-    assert result.continue_conversation is False
+    assert result.continue_conversation is (
+        successful and mode == CONTINUE_CONVERSATION_ALWAYS
+    )
     evaluate_rule.assert_awaited_once()
     try_local_intent.assert_not_awaited()
     entity._async_handle_message_with_ha_tools.assert_not_awaited()
-    entity._continuity.async_record_success.assert_awaited_once()
+    assert entity._continuity.async_record_success.await_count == int(successful)
     payload = entity.hass.bus.async_fire.call_args.args[1]
     assert payload["status"] == "local"
     assert payload["handled_locally"] is True
 
 
-async def test_local_intent_bypasses_provider_and_records_continuity(monkeypatch):
+@pytest.mark.parametrize(
+    "mode",
+    [
+        DEFAULT_CONTINUE_CONVERSATION,
+        CONTINUE_CONVERSATION_ALWAYS,
+        CONTINUE_CONVERSATION_CONDITIONAL,
+    ],
+)
+@pytest.mark.parametrize("successful", [False, True])
+async def test_local_intent_bypasses_provider_and_records_continuity(
+    monkeypatch, mode, successful
+):
     entity, _user_input, _chat_log, _policy, process = _pipeline_fixture(
         monkeypatch, text="is the kitchen light on"
     )
+    entity.subentry.data[CONF_CONTINUE_CONVERSATION] = mode
     local_response = intent.IntentResponse(language="en")
-    entity.subentry.data[CONF_CONTINUE_CONVERSATION] = CONTINUE_CONVERSATION_ALWAYS
+    if not successful:
+        local_response.async_set_error(intent.IntentResponseErrorCode.UNKNOWN, "Failed")
     local_response.async_set_speech("The kitchen light is on.")
     try_local_intent = AsyncMock(
         return_value=LocalIntentResult(
@@ -184,7 +215,9 @@ async def test_local_intent_bypasses_provider_and_records_continuity(monkeypatch
     result = await process()
 
     assert result.response is local_response
-    assert result.continue_conversation is False
+    assert result.continue_conversation is (
+        successful and mode == CONTINUE_CONVERSATION_ALWAYS
+    )
     try_local_intent.assert_awaited_once()
     assert try_local_intent.call_args.kwargs["guest_active"] is False
     entity._async_handle_message_with_ha_tools.assert_not_awaited()
@@ -286,6 +319,23 @@ async def test_unexpected_failure_restores_request_scoped_context(monkeypatch):
     finally:
         for context_var, token in reversed(tokens):
             context_var.reset(token)
+
+
+async def test_rejected_request_rule_does_not_continue_in_always_mode(monkeypatch):
+    entity, _, _, _, process = _pipeline_fixture(monkeypatch)
+    entity.subentry.data[CONF_CONTINUE_CONVERSATION] = CONTINUE_CONVERSATION_ALWAYS
+    entity._request_rules = object()
+    entity._request_rule_runtime = SimpleNamespace(effective_options=MagicMock())
+    monkeypatch.setattr(
+        conversation_module,
+        "async_evaluate_rule",
+        AsyncMock(side_effect=conversation_module.HomeAssistantError("Rejected")),
+    )
+    result = await process()
+    assert "Rejected" in result.response.speech["plain"]["speech"]
+    assert result.continue_conversation is False
+    entity._async_handle_message_with_ha_tools.assert_not_awaited()
+    entity._continuity.async_record_success.assert_not_awaited()
 
 
 def _assist_fixture(monkeypatch):
