@@ -53,7 +53,7 @@ test("non-admin browser navigation exposes only the permitted Capabilities secti
   await expectHarnessClean(page, pageErrors);
 });
 
-test("keeps the Overview usable when one websocket-backed section fails", async ({page}) => {
+test("keeps the Overview usable when its summary reports a partial backend failure", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto("/tests_browser/fixture.html?route=overview&partial=1");
 
@@ -62,12 +62,10 @@ test("keeps the Overview usable when one websocket-backed section fails", async 
   await expect(panel.getByText("1,234 tokens today", {exact: false})).toBeVisible();
   await expect(panel.getByText("5,678 this month", {exact: false})).toBeVisible();
 
-  const requestedSections = await page.evaluate(() => window.browserHarness.calls
-    .filter((call) => call.section)
-    .map((call) => `${call.section}/${call.action}`));
-  for (const request of ["usage/summary", "conversations/settings", "memories/list", "knowledge/list"]) {
-    expect(requestedSections).toContain(request);
-  }
+  const overviewRequests = await page.evaluate(() => window.browserHarness.calls.filter(
+    (call) => call.section === "overview" && call.action === "summary",
+  ));
+  expect(overviewRequests).toHaveLength(1);
 
   await expectHarnessClean(page, pageErrors);
 });
