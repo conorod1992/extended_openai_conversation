@@ -129,20 +129,19 @@ test("direct non-admin URLs cannot load administrator configuration", async ({pa
   await expectHarnessClean(page, pageErrors);
 });
 
-test("keeps the Overview usable when one backend section rejects", async ({page}) => {
+test("keeps the Overview usable when its summary reports a partial backend failure", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("overview", "&partial=1"));
 
   const panel = page.locator("extended-openai-management-panel");
-  await expect(panel.getByRole("heading", {name: "Jarvis", exact: true})).toBeVisible();
-  await expect(panel.getByRole("heading", {name: "Capabilities", exact: true})).toBeVisible();
-  await expect(panel.getByText("1 functions · 1 groups", {exact: true})).toBeVisible();
+  await expect(panel.getByText("Knowledge could not be loaded. Other overview information is still available.", {exact: true})).toBeVisible();
+  await expect(panel.getByText("1,234 tokens today", {exact: false})).toBeVisible();
+  await expect(panel.getByText("5,678 this month", {exact: false})).toBeVisible();
 
   const overviewRequests = await page.evaluate(() => window.browserHarness.calls.filter(
-    (call) => ["usage", "conversations", "memories", "knowledge"].includes(call.section),
+    (call) => call.section === "overview" && call.action === "summary",
   ));
-  expect(overviewRequests.some((call) => call.section === "usage" && call.action === "summary")).toBe(true);
-  expect(overviewRequests.some((call) => call.section === "knowledge" && call.action === "list")).toBe(true);
+  expect(overviewRequests).toHaveLength(1);
 
   await expectHarnessClean(page, pageErrors);
 });
