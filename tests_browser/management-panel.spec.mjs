@@ -35,6 +35,27 @@ test("renders the shipped Guide and responds to real browser interactions", asyn
   await expectHarnessClean(page, pageErrors);
 });
 
+test("replays hass and route when Home Assistant creates the panel before definition", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await page.goto("/tests_browser/fixture.html?route=guide&predefine=1");
+
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.getByRole("heading", {name: "Guide", exact: true})).toBeVisible();
+  await expect(panel.locator("#agent")).toHaveValue("agent-1");
+
+  const lifecycle = await page.evaluate(() => ({
+    defined: customElements.get("extended-openai-management-panel") != null,
+    ownHass: Object.prototype.hasOwnProperty.call(window.browserHarness.panel, "hass"),
+    ownRoute: Object.prototype.hasOwnProperty.call(window.browserHarness.panel, "route"),
+    agentLoads: window.browserHarness.calls.filter(
+      (call) => call.action === "agents" && !call.section,
+    ).length,
+  }));
+  expect(lifecycle).toEqual({defined: true, ownHass: false, ownRoute: false, agentLoads: 1});
+
+  await expectHarnessClean(page, pageErrors);
+});
+
 test("non-admin browser navigation exposes only the permitted Capabilities section", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto("/tests_browser/fixture.html?route=guide&admin=0");
@@ -49,6 +70,22 @@ test("non-admin browser navigation exposes only the permitted Capabilities secti
   await expect.poll(async () => page.evaluate(() => window.browserHarness.calls.some(
     (call) => call.section === "guest_mode" && call.action === "get",
   ))).toBe(true);
+
+  await expectHarnessClean(page, pageErrors);
+});
+
+test("direct non-admin URLs cannot load administrator configuration", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await page.goto("/tests_browser/fixture.html?route=assistant/basics&admin=0");
+
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.getByText("Administrator permission is required for this section.", {exact: true})).toBeVisible();
+  await expect(panel.locator('.top-nav button[data-page="assistant"]')).toHaveCount(0);
+
+  const configurationRequests = await page.evaluate(() => window.browserHarness.calls.filter(
+    (call) => call.section === "configuration",
+  ));
+  expect(configurationRequests).toEqual([]);
 
   await expectHarnessClean(page, pageErrors);
 });
