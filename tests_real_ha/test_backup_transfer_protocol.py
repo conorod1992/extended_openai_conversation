@@ -277,11 +277,34 @@ async def test_full_backup_round_trip_through_registered_websocket(
 
 
 @pytest.mark.asyncio
-async def test_custom_backup_selection_and_admin_boundary_use_real_ha_websocket(
+async def test_backup_transfer_rejects_non_admin_through_registered_websocket(
     hass: HomeAssistant,
     hass_ws_client: Any,
 ) -> None:
-    """The registered command is admin-only and preserves a custom section contract."""
+    """A normal authenticated user is rejected by HA's real admin boundary."""
+    entry = _entry()
+    await _setup_entry(hass, entry)
+
+    normal_user = MockUser(id="backup-normal", name="Backup Normal User")
+    normal_client = await hass_ws_client(
+        hass, await _user_token(hass, normal_user)
+    )
+    denied = await _transfer_call(
+        normal_client,
+        entry=entry,
+        action="export_start",
+        data={"mode": "custom", "sections": [SECTION_PERSISTENT_MEMORY]},
+    )
+    assert not denied["success"], denied
+    assert denied["error"]["code"] == "unauthorized"
+
+
+@pytest.mark.asyncio
+async def test_custom_backup_selection_round_trip_through_registered_websocket(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+) -> None:
+    """A custom backup restores only selected sections and preserves configuration."""
     entry = _entry()
     await _setup_entry(hass, entry)
     subentry = _conversation_subentry(entry)
@@ -295,19 +318,6 @@ async def test_custom_backup_selection_and_admin_boundary_use_real_ha_websocket(
         "explicit",
     )
     original_id = original["memory"]["memory_id"]
-
-    normal_user = MockUser(id="backup-normal", name="Backup Normal User")
-    normal_client = await hass_ws_client(
-        hass, await _user_token(hass, normal_user)
-    )
-    denied = await _transfer_call(
-        normal_client,
-        entry=entry,
-        action="export_start",
-        data={"mode": "custom", "sections": [SECTION_PERSISTENT_MEMORY]},
-    )
-    assert not denied["success"]
-    assert denied["error"]["code"] == "unauthorized"
 
     admin = MockUser(id="custom-backup-admin", name="Custom Backup Admin", is_owner=True)
     admin_client = await hass_ws_client(hass, await _user_token(hass, admin))
