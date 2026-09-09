@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -28,7 +28,7 @@ STATISTICS_TYPES = [
     "sum",
 ]
 
-_LEGACY_DEFAULT_EXECUTE_SERVICE_PARAMETERS = {
+_LEGACY_DEFAULT_EXECUTE_SERVICE_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "delay": {
@@ -90,7 +90,7 @@ _LEGACY_DEFAULT_EXECUTE_SERVICE_PARAMETERS = {
     },
 }
 
-_LEGACY_PRESET_EXECUTE_SERVICE_PARAMETERS = {
+_LEGACY_PRESET_EXECUTE_SERVICE_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "list": {
@@ -121,7 +121,7 @@ _LEGACY_PRESET_EXECUTE_SERVICE_PARAMETERS = {
     "required": ["list"],
 }
 
-_LEGACY_PRESET_EXECUTE_SERVICE_SINGLE_PARAMETERS = {
+_LEGACY_PRESET_EXECUTE_SERVICE_SINGLE_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "domain": {
@@ -139,7 +139,7 @@ _LEGACY_PRESET_EXECUTE_SERVICE_SINGLE_PARAMETERS = {
     "required": ["domain", "service", "service_data"],
 }
 
-_LEGACY_PRESET_GET_STATISTICS_PARAMETERS = {
+_LEGACY_PRESET_GET_STATISTICS_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "statistic_ids": {
@@ -169,10 +169,13 @@ def _service_data_schema(
     parameters: dict[str, Any], implementation: str
 ) -> dict[str, Any]:
     """Return service_data from one already-recognized historical schema."""
-    properties = parameters["properties"]
+    properties = cast(dict[str, Any], parameters["properties"])
     if implementation == "execute_service_single":
-        return properties["service_data"]
-    return properties["list"]["items"]["properties"]["service_data"]
+        return cast(dict[str, Any], properties["service_data"])
+    list_schema = cast(dict[str, Any], properties["list"])
+    item_schema = cast(dict[str, Any], list_schema["items"])
+    item_properties = cast(dict[str, Any], item_schema["properties"])
+    return cast(dict[str, Any], item_properties["service_data"])
 
 
 def _migrate_service_schema(tool: dict[str, Any], implementation: str) -> bool:
@@ -185,6 +188,7 @@ def _migrate_service_schema(tool: dict[str, Any], implementation: str) -> bool:
         return False
 
     legacy_default = parameters == _LEGACY_DEFAULT_EXECUTE_SERVICE_PARAMETERS
+    historical: tuple[dict[str, Any], ...]
     if implementation == "execute_service":
         historical = (
             _LEGACY_DEFAULT_EXECUTE_SERVICE_PARAMETERS,
@@ -199,7 +203,9 @@ def _migrate_service_schema(tool: dict[str, Any], implementation: str) -> bool:
     service_data["description"] = SERVICE_DATA_DESCRIPTION
     service_data["additionalProperties"] = True
     if implementation == "execute_service":
-        parameters["properties"]["list"]["maxItems"] = MAX_NATIVE_SERVICE_ACTIONS
+        properties = cast(dict[str, Any], parameters["properties"])
+        list_schema = cast(dict[str, Any], properties["list"])
+        list_schema["maxItems"] = MAX_NATIVE_SERVICE_ACTIONS
     if legacy_default:
         parameters["required"] = ["list"]
     spec["strict"] = False
@@ -214,15 +220,17 @@ def _migrate_statistics_schema(tool: dict[str, Any]) -> bool:
     parameters = spec.get("parameters")
     if parameters != _LEGACY_PRESET_GET_STATISTICS_PARAMETERS:
         return False
+    if not isinstance(parameters, dict):
+        return False
 
-    properties = parameters["properties"]
-    properties["period"].update(
+    properties = cast(dict[str, Any], parameters["properties"])
+    cast(dict[str, Any], properties["period"]).update(
         {
             "enum": list(STATISTICS_PERIODS),
             "description": "Aggregation period; defaults to day.",
         }
     )
-    properties["units"].update(
+    cast(dict[str, Any], properties["units"]).update(
         {
             "description": (
                 "Optional unit conversions keyed by Home Assistant unit class, "
@@ -232,7 +240,7 @@ def _migrate_statistics_schema(tool: dict[str, Any]) -> bool:
             "additionalProperties": {"type": "string"},
         }
     )
-    properties["types"].update(
+    cast(dict[str, Any], properties["types"]).update(
         {
             "items": {"type": "string", "enum": list(STATISTICS_TYPES)},
             "description": "Statistic value types to return; defaults to change.",
