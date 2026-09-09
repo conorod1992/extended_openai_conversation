@@ -6,7 +6,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from homeassistant.core import Context, HomeAssistant
+from homeassistant.core import Context, CoreState, HomeAssistant
 
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
     DelayedToolManager,
@@ -34,6 +34,7 @@ async def _setup_without_waiters(
     hass: HomeAssistant, monkeypatch
 ) -> tuple[DelayedToolManager, MagicMock]:
     """Set up a real-store manager while replacing only timer arming."""
+    hass.state = CoreState.running
     manager = DelayedToolManager(hass)
     arm = MagicMock()
     monkeypatch.setattr(manager, "_arm", arm)
