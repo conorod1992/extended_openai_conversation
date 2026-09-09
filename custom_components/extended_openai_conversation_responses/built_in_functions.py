@@ -5,6 +5,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from .resource_limits import MAX_NATIVE_SERVICE_ACTIONS
+
 _SERVICE_DATA_DESCRIPTION = (
     "Any valid Home Assistant service data accepted by the selected service. Include "
     "a target such as entity_id, device_id, area_id, floor_id, or label_id. "
@@ -111,6 +113,7 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
         {
             "list": {
                 "type": "array",
+                "maxItems": MAX_NATIVE_SERVICE_ACTIONS,
                 "items": {
                     "type": "object",
                     "properties": {
