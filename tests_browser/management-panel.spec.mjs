@@ -56,6 +56,35 @@ test("replays hass and route when Home Assistant creates the panel before defini
   await expectHarnessClean(page, pageErrors);
 });
 
+test("loads, edits, and saves administrator configuration through the shipped editor", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await page.goto("/tests_browser/fixture.html?route=assistant/basics");
+
+  const panel = page.locator("extended-openai-management-panel");
+  const title = panel.locator('[data-config="__title"]');
+  await expect(title).toHaveValue("Jarvis");
+  await expect(panel.locator('[data-config="chat_model"]')).toHaveValue("gpt-5-mini");
+
+  await title.fill("Kitchen Jarvis");
+  await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
+  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+
+  await expect.poll(async () => page.evaluate(() => window.browserHarness.calls.filter(
+    (call) => call.section === "configuration" && call.action === "save",
+  ).length)).toBe(1);
+
+  const saveRequest = await page.evaluate(() => window.browserHarness.calls.find(
+    (call) => call.section === "configuration" && call.action === "save",
+  ));
+  expect(saveRequest.title).toBe("Kitchen Jarvis");
+  expect(saveRequest.config.chat_model).toBe("gpt-5-mini");
+  expect(saveRequest.config.max_tokens).toBe(1200);
+  await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
+  await expect(panel.locator("#agent option:checked")).toHaveText("Kitchen Jarvis");
+
+  await expectHarnessClean(page, pageErrors);
+});
+
 test("non-admin browser navigation exposes only the permitted Capabilities section", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto("/tests_browser/fixture.html?route=guide&admin=0");
