@@ -35,7 +35,9 @@ from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
 from .memory import MemoryRecord, PersistentMemory, async_get_memory
 from .request_rules import RequestRules, async_get_request_rules
 from .secret_redaction import (
+    LITERAL_TEXT_KEY,
     REDACTED_SECRET_SENTINEL,
+    is_literal_text,
     is_redacted_secret,
     redact_secrets,
     restore_redacted_secrets,
@@ -288,6 +290,8 @@ def _is_redacted_placeholder(value: Any) -> bool:
 
 def _normalize_redaction_placeholders(value: Any) -> Any:
     """Use one explicit placeholder in newly created transfer documents."""
+    if is_literal_text(value):
+        return deepcopy(value)
     if _is_redacted_placeholder(value):
         return dict(REDACTED_SECRET_SENTINEL)
     if isinstance(value, list):
@@ -357,6 +361,8 @@ def _secret_path(path: tuple[Any, ...]) -> str:
 
 
 def _collect_secret_paths(value: Any, path: tuple[Any, ...] = ()) -> list[str]:
+    if is_literal_text(value):
+        return []
     if _is_redacted_placeholder(value):
         return [_secret_path(path)]
     if isinstance(value, list):
@@ -383,21 +389,56 @@ def _list_item_identity(item: Any) -> Any:
     return None
 
 
-def _fallback_list_item(item: Any, fallback: Any, index: int) -> Any:
-    if not isinstance(fallback, list):
-        return _ABSENT
+def _compatible_secret_context(value: Any, fallback: Any) -> bool:
+    """Require identical visible structure; only secret scalar leaves may differ.
+
+    A marker cannot hide a container (and therefore a destination). Nested lists
+    may reorder only when their items have unique, one-to-one safe matches.
+    """
+    if is_literal_text(value):
+        return bool(value[LITERAL_TEXT_KEY] == fallback)
+    if _is_redacted_placeholder(value):
+        return (
+            fallback is not _ABSENT
+            and not isinstance(fallback, (Mapping, list))
+            and not _is_redacted_placeholder(fallback)
+        )
+    if isinstance(value, dict):
+        return (
+            isinstance(fallback, Mapping)
+            and value.keys() == fallback.keys()
+            and all(
+                _compatible_secret_context(item, fallback[key])
+                for key, item in value.items()
+            )
+        )
+    if isinstance(value, list):
+        if not isinstance(fallback, list) or len(value) != len(fallback):
+            return False
+        matches = [_fallback_list_index(item, fallback) for item in value]
+        return None not in matches and len(set(matches)) == len(matches)
+    return type(value) is type(fallback) and bool(value == fallback)
+
+
+def _fallback_list_index(item: Any, fallback: list[Any]) -> int | None:
+    """Select a unique compatible item, never infer authority from its position."""
     identity = _list_item_identity(item)
-    if identity is not None:
-        if not isinstance(identity[1], str) or not identity[1]:
-            return _ABSENT
-        matches = [
-            candidate
-            for candidate in fallback
-            if _list_item_identity(candidate) == identity
-        ]
-        return matches[0] if len(matches) == 1 else _ABSENT
-    candidate = fallback[index] if index < len(fallback) else _ABSENT
-    return candidate if _list_item_identity(candidate) is None else _ABSENT
+    if identity is not None and (not isinstance(identity[1], str) or not identity[1]):
+        return None
+    candidates = [
+        index
+        for index, candidate in enumerate(fallback)
+        if _list_item_identity(candidate) == identity
+    ]
+    # Duplicate stable identities are invalid even if their public fields differ.
+    if identity is not None and len(candidates) != 1:
+        return None
+    matches = [
+        index
+        for index in candidates
+        if _compatible_secret_context(item, fallback[index])
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _restore_with_fallback(
@@ -408,17 +449,26 @@ def _restore_with_fallback(
     preserved: list[str],
     missing: list[str],
 ) -> Any:
+    if is_literal_text(value):
+        return value[LITERAL_TEXT_KEY]
     if _is_redacted_placeholder(value):
         label = _secret_path(path)
-        if fallback is not _ABSENT and not _collect_secret_paths(fallback):
+        if _compatible_secret_context(value, fallback):
             preserved.append(label)
             return deepcopy(fallback)
         missing.append(label)
         return _DROP
     if isinstance(value, list):
         restored: list[Any] = []
+        local_items = fallback if isinstance(fallback, list) else []
+        matches = [_fallback_list_index(item, local_items) for item in value]
         for index, item in enumerate(value):
-            candidate = _fallback_list_item(item, fallback, index)
+            match = matches[index]
+            candidate = (
+                local_items[match]
+                if match is not None and matches.count(match) == 1
+                else _ABSENT
+            )
             child = _restore_with_fallback(
                 item,
                 candidate,

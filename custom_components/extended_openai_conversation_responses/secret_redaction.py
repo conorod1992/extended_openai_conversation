@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 REDACTED_SECRET_SENTINEL = {"__extended_openai_redacted_secret__": True}
+LITERAL_TEXT_KEY = "__extended_openai_literal_text__"
 
 _SECRET_KEY_PARTS = frozenset(
     {"password", "passwd", "secret", "token", "authorization"}
@@ -39,6 +40,15 @@ def is_redacted_secret(value: Any) -> bool:
     )
 
 
+def is_literal_text(value: Any) -> bool:
+    """Recognize escaped user text, distinct from legacy redaction markers."""
+    return (
+        isinstance(value, dict)
+        and set(value) == {LITERAL_TEXT_KEY}
+        and isinstance(value[LITERAL_TEXT_KEY], str)
+    )
+
+
 def _is_function_tool_schema_root(path: tuple[Any, ...]) -> bool:
     """Return whether *path* is a configured Function Tool JSON Schema root."""
     return (
@@ -52,8 +62,10 @@ def _is_function_tool_schema_root(path: tuple[Any, ...]) -> bool:
 
 def _redact_secrets(value: Any, *, schema: bool, path: tuple[Any, ...]) -> Any:
     """Recursively redact secrets while tracking structural schema context."""
-    if is_redacted_secret(value):
+    if value == REDACTED_SECRET_SENTINEL:
         return _sentinel()
+    if is_literal_text(value):
+        value = value[LITERAL_TEXT_KEY]
     if isinstance(value, list):
         return [
             _redact_secrets(item, schema=schema, path=(*path, index))
@@ -62,7 +74,10 @@ def _redact_secrets(value: Any, *, schema: bool, path: tuple[Any, ...]) -> Any:
     if isinstance(value, str):
         # The entire leaf must be recoverable. Substring replacement loses the
         # credential while leaving a seemingly usable, permanently corrupt value.
-        return _sentinel() if _LIKELY_SECRET.search(value) else value
+        if _LIKELY_SECRET.search(value):
+            return _sentinel()
+        # New exports must distinguish literal prose from ambiguous old markers.
+        return {LITERAL_TEXT_KEY: value} if "[redacted]" in value else value
     if not isinstance(value, dict):
         return value
     result: dict[Any, Any] = {}
@@ -87,6 +102,8 @@ def redact_secrets(value: Any, *, schema: bool = False) -> Any:
 
 def _restore_redacted_secrets(value: Any) -> Any:
     """Remove unresolved markers, including strings from older backups."""
+    if is_literal_text(value):
+        return value[LITERAL_TEXT_KEY]
     if is_redacted_secret(value):
         return _DROP
     if isinstance(value, list):
