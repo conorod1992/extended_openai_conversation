@@ -8,6 +8,8 @@ from typing import Any
 
 import yaml
 
+from .resource_limits import MAX_NATIVE_SERVICE_ACTIONS
+
 SERVICE_DATA_DESCRIPTION = (
     "Any valid Home Assistant service data accepted by the selected service. Include "
     "a target such as entity_id, device_id, area_id, floor_id, or label_id. "
@@ -196,6 +198,8 @@ def _migrate_service_schema(tool: dict[str, Any], implementation: str) -> bool:
     service_data = _service_data_schema(parameters, implementation)
     service_data["description"] = SERVICE_DATA_DESCRIPTION
     service_data["additionalProperties"] = True
+    if implementation == "execute_service":
+        parameters["properties"]["list"]["maxItems"] = MAX_NATIVE_SERVICE_ACTIONS
     if legacy_default:
         parameters["required"] = ["list"]
     spec["strict"] = False
