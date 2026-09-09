@@ -2,11 +2,6 @@ name: Targeted mutation testing
 
 on:
   workflow_dispatch:
-  # Temporary bootstrap trigger for PR #248. Remove after the calibrated campaign;
-  # the committed workflow is intended to remain manual-only.
-  pull_request:
-    branches:
-      - develop
 
 permissions:
   contents: read

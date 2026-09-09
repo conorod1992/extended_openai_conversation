@@ -271,6 +271,16 @@ def test_configured_resolution_uses_live_entry_and_allows_enabled_group() -> Non
     entry_lookup.assert_called_once_with("entry-1")
 
 
+def test_missing_resolver_fails_closed_with_requested_name() -> None:
+    """A missing configured-tool resolver yields the public not-found contract."""
+    agent = SimpleNamespace()
+
+    with pytest.raises(FunctionNotFound) as caught:
+        configured_function_tool_for_execution(agent, "notify")
+
+    assert caught.value.function == "notify"
+
+
 def test_missing_current_tool_preserves_requested_name() -> None:
     """A live deletion reports the Function Tool name that disappeared."""
     agent, _entry_lookup, _resolver = _resolution_agent([])
