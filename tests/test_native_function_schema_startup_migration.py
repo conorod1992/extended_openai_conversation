@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import yaml
 
@@ -83,12 +83,15 @@ async def test_startup_persists_schema_without_touching_group_or_metadata(hass) 
     entry.disabled_by = None
     entry.version = CONFIG_ENTRY_VERSION
     entry.subentries = {"agent": subentry}
-    hass.config_entries.async_entries.return_value = [entry]
 
-    await async_migrate_integration(hass)
+    with (
+        patch.object(hass.config_entries, "async_entries", return_value=[entry]),
+        patch.object(hass.config_entries, "async_update_subentry") as update_subentry,
+    ):
+        await async_migrate_integration(hass)
 
-    hass.config_entries.async_update_subentry.assert_called_once()
-    call = hass.config_entries.async_update_subentry.call_args
+    update_subentry.assert_called_once()
+    call = update_subentry.call_args
     assert call.args[:2] == (entry, subentry)
     saved = call.kwargs["data"]
     migrated_tool = yaml.safe_load(saved[CONF_FUNCTION_TOOLS])[0]
