@@ -34,6 +34,7 @@ from .const import (
     CONF_EXPOSED_ENTITIES_ENABLED,
     CONF_EXPOSED_ENTITIES_TEMPLATE,
     CONF_FUNCTION_GROUPS,
+    CONF_FUNCTION_TOOLS,
     CONF_GUEST_CONTROLLABLE_AREAS,
     CONF_GUEST_CONTROLLABLE_DOMAINS,
     CONF_GUEST_CONTROLLABLE_ENTITIES,
@@ -104,6 +105,10 @@ from .management_permissions import install_management_permissions
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
 from .model_search_hardening import install_model_search_hardening
+from .native_function_schema_migration import (
+    install_current_default_native_function_schemas,
+    migrate_legacy_stock_native_function_tools_yaml,
+)
 from .openai_compat import apply_openai_compatibility
 from .performance import PerformanceOpenAIClientProxy, install_performance_optimizations
 from .persistence_hardening import install_persistence_transactions
@@ -118,6 +123,11 @@ from .template import async_setup_templates, async_unload_templates
 from .voice_identity_runtime import install_voice_identity_runtime
 
 _LOGGER = logging.getLogger(__name__)
+
+# agent_config has already been loaded by the management/exposed-attribute modules.
+# Refresh its authoritative default snapshot once so newly-created agents are seeded
+# with the same current native schemas that the UI and provider will see.
+install_current_default_native_function_schemas()
 
 
 def _register_split_frontend_modules() -> None:
@@ -259,13 +269,37 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
+def _migrate_saved_native_function_schemas(data: dict) -> bool:
+    """Persist exact-stock native schema upgrades in one agent data mapping."""
+    migrated_yaml, changed = migrate_legacy_stock_native_function_tools_yaml(
+        data.get(CONF_FUNCTION_TOOLS)
+    )
+    if changed:
+        data[CONF_FUNCTION_TOOLS] = migrated_yaml
+    return changed
+
+
 async def async_migrate_integration(hass: HomeAssistant) -> None:
-    """Migrate integration entry structure."""
+    """Migrate integration entry structure and exact historical stock tool schemas."""
 
     entries = sorted(
         hass.config_entries.async_entries(DOMAIN),
         key=lambda e: e.disabled_by is not None,
     )
+
+    # Schema migration is intentionally independent of config-entry version. It is
+    # idempotent and exact-match only, so current entries created by an older release
+    # can be corrected without inventing another provider-only representation.
+    for entry in entries:
+        if entry.version < CONFIG_ENTRY_VERSION:
+            continue
+        for subentry in entry.subentries.values():
+            if subentry.subentry_type != "conversation":
+                continue
+            data = dict(subentry.data)
+            if _migrate_saved_native_function_schemas(data):
+                hass.config_entries.async_update_subentry(entry, subentry, data=data)
+
     if not any(entry.version < CONFIG_ENTRY_VERSION for entry in entries):
         return
 
@@ -306,6 +340,7 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
             if subentry.subentry_type != "conversation":
                 continue
             data = dict(subentry.data)
+            _migrate_saved_native_function_schemas(data)
             mode = get_memory_mode(data)
             data[CONF_MEMORY_MODE] = mode
             data[CONF_MEMORY_ENABLED] = mode != MEMORY_MODE_OFF
