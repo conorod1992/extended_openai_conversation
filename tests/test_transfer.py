@@ -13,9 +13,11 @@ import yaml
 from custom_components.extended_openai_conversation_responses import backup, transfer
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
+    agent_config_snapshot,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     AGENT_CONFIG_EXPORT_VERSION,
+    CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_PROMPT,
     DOMAIN,
@@ -262,8 +264,14 @@ def test_current_full_backup_is_classified_without_inventing_absent_sections() -
     assert transfer.SECTION_PERSISTENT_MEMORY in prepared.available_sections
 
 
-async def test_selective_restore_replaces_only_selected_section(monkeypatch) -> None:
+@pytest.mark.parametrize("snapshot_config", [False, True])
+async def test_selective_restore_replaces_only_selected_section(
+    monkeypatch, snapshot_config
+) -> None:
     current = backup.inspect_backup(_document(), "target-agent")
+    expected_config = deepcopy(current.config)
+    if snapshot_config:
+        current = replace(current, config=agent_config_snapshot(current.config))
     imported_memory = deepcopy(current.memories)
     imported_memory[0] = replace(imported_memory[0], content="Imported memory")
     imported = transfer.PreparedTransfer(
@@ -287,7 +295,8 @@ async def test_selective_restore_replaces_only_selected_section(monkeypatch) -> 
     )
     assert target.memories[0].content == "Imported memory"
     assert target.title == current.title
-    assert target.config == current.config
+    assert target.config == expected_config
+    assert isinstance(target.config[CONF_FUNCTION_TOOLS], str)
     assert target.knowledge == current.knowledge
     assert preview["selected_sections"] == [transfer.SECTION_PERSISTENT_MEMORY]
 
@@ -317,6 +326,7 @@ async def test_request_rule_dependency_uses_combined_target_state(
     current.config[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         [_remember_tool()], sort_keys=False
     )
+    current.config[CONF_FUNCTION_GROUPS] = []
     target, _preview = await transfer.async_materialize_restore(
         hass, entry, subentry, imported
     )
@@ -353,6 +363,7 @@ async def test_request_rule_dependency_validates_nested_static_arguments(
     current.config[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         [_remember_tool()], sort_keys=False
     )
+    current.config[CONF_FUNCTION_GROUPS] = []
     rules = RequestRules.validate_backup_data(
         _rules_backup([_function_rule(arguments={"fact": 42}, nested=True)])
     )

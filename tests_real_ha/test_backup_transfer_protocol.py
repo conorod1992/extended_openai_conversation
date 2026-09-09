@@ -13,10 +13,14 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import CLIENT_ID, MockConfigEntry, MockUser
 
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    agent_config_snapshot,
+)
 from custom_components.extended_openai_conversation_responses.backup_transfer import (
     WS_BACKUP_TRANSFER,
 )
 from custom_components.extended_openai_conversation_responses.const import (
+    CONF_FUNCTION_TOOLS,
     CONF_MEMORY_MODE,
     CONF_SKIP_AUTHENTICATION,
     CONFIG_ENTRY_VERSION,
@@ -108,7 +112,7 @@ async def _download_archive(
     started = await _transfer_call(
         client, entry=entry, action="export_start", data=start_data
     )
-    assert started["success"]
+    assert started["success"], started
     metadata = started["result"]
     session_id = metadata["session_id"]
 
@@ -121,7 +125,7 @@ async def _download_archive(
                 action="export_chunk",
                 data={"session_id": session_id, "index": index},
             )
-            assert response["success"]
+            assert response["success"], response
             result = response["result"]
             decoded = base64.b64decode(result["data"], validate=True)
             assert len(decoded) == result["bytes"]
@@ -135,7 +139,7 @@ async def _download_archive(
             action="export_cancel",
             data={"session_id": session_id},
         )
-        assert cancelled["success"]
+        assert cancelled["success"], cancelled
         assert cancelled["result"] == {"cancelled": True}
 
     archive = b"".join(chunks)
@@ -158,7 +162,7 @@ async def _upload_archive(
         action="import_start",
         data={"filename": filename, "size": len(archive)},
     )
-    assert started["success"]
+    assert started["success"], started
     result = started["result"]
     session_id = result["session_id"]
     chunk_size = result["chunk_size"]
@@ -175,7 +179,7 @@ async def _upload_archive(
                 "data": base64.b64encode(chunk).decode("ascii"),
             },
         )
-        assert response["success"]
+        assert response["success"], response
         uploaded = response["result"]
         assert uploaded["received"] == min(offset + chunk_size, len(archive))
         assert uploaded["next_index"] == index + 1
@@ -235,7 +239,7 @@ async def test_full_backup_round_trip_through_registered_websocket(
         action="import_inspect",
         data={"session_id": import_session},
     )
-    assert inspected["success"]
+    assert inspected["success"], inspected
     inspection = inspected["result"]
     assert inspection["valid"] is True
     assert inspection["source_kind"] == "full_backup"
@@ -249,7 +253,7 @@ async def test_full_backup_round_trip_through_registered_websocket(
         action="import_restore",
         data={"session_id": import_session},
     )
-    assert restored["success"]
+    assert restored["success"], restored
     assert restored["result"]["status"] == "restored"
     assert SECTION_PERSISTENT_MEMORY in restored["result"]["transfer"][
         "selected_sections"
@@ -282,6 +286,7 @@ async def test_custom_backup_selection_and_admin_boundary_use_real_ha_websocket(
     await _setup_entry(hass, entry)
     subentry = _conversation_subentry(entry)
     memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
+    original_config = agent_config_snapshot(subentry.data)
     owner = "custom-backup-owner"
     original = await memory.async_add(
         owner,
@@ -335,7 +340,7 @@ async def test_custom_backup_selection_and_admin_boundary_use_real_ha_websocket(
             action="import_inspect",
             data={"session_id": import_session},
         )
-        assert inspected["success"]
+        assert inspected["success"], inspected
         inspection = inspected["result"]
         assert inspection["source_kind"] == "custom_backup"
         assert inspection["available_sections"] == [SECTION_PERSISTENT_MEMORY]
@@ -350,7 +355,7 @@ async def test_custom_backup_selection_and_admin_boundary_use_real_ha_websocket(
             action="import_restore",
             data={"session_id": import_session},
         )
-        assert restored["success"]
+        assert restored["success"], restored
         assert restored["result"]["transfer"]["selected_sections"] == [
             SECTION_PERSISTENT_MEMORY
         ]
@@ -363,9 +368,12 @@ async def test_custom_backup_selection_and_admin_boundary_use_real_ha_websocket(
                 action="import_cancel",
                 data={"session_id": import_session},
             )
-            assert cancelled["success"]
+            assert cancelled["success"], cancelled
 
     memories = await memory.async_list(owner)
     assert [(item.memory_id, item.content) for item in memories] == [
         (original_id, "Custom backup acceptance marker.")
     ]
+
+    assert isinstance(subentry.data[CONF_FUNCTION_TOOLS], str)
+    assert agent_config_snapshot(subentry.data) == original_config

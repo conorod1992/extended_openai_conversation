@@ -808,6 +808,13 @@ def _prepared_restore_from_selection(
             config = deepcopy(imported.config)
         else:
             raise backup.BackupError("Transferred configuration is unavailable")
+    else:
+        # Durable snapshots contain frontend-shaped, parsed Function Tools.
+        # Retained configuration must use the same persisted YAML representation
+        # as imported configuration before dependency validation and restore.
+        config = preserve_legacy_guest_policy(
+            current.config, normalize_agent_config(current.config)
+        )
 
     rules = current.request_rules
     if SECTION_REQUEST_RULES in selected:
