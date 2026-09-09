@@ -5,12 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-
-from homeassistant.components import conversation
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_API_KEY, STATE_UNAVAILABLE
-from homeassistant.core import Context, HomeAssistant
-from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -29,6 +23,11 @@ from custom_components.extended_openai_conversation_responses.local_intents impo
 from custom_components.extended_openai_conversation_responses.template import (
     DATA_TEMPLATE_MANAGER,
 )
+from homeassistant.components import conversation
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import CONF_API_KEY, STATE_UNAVAILABLE
+from homeassistant.core import Context, HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
 
 def _subentry(
@@ -50,9 +49,10 @@ def _make_entry(
     *,
     include_ai_task: bool = True,
     local_intents: bool = False,
+    conversation_options: dict | None = None,
 ) -> MockConfigEntry:
     """Create a current-version entry that cannot make an authentication request."""
-    conversation_data = {}
+    conversation_data = dict(conversation_options or {})
     if local_intents:
         conversation_data[CONF_LOCAL_INTENTS_ENABLED] = True
 
@@ -104,7 +104,9 @@ def _conversation_subentry(entry: MockConfigEntry):
 
 
 @pytest.mark.asyncio
-async def test_real_ha_setup_loads_platforms_agent_and_runtime(hass: HomeAssistant) -> None:
+async def test_real_ha_setup_loads_platforms_agent_and_runtime(
+    hass: HomeAssistant,
+) -> None:
     """Set up the assembled integration through HA, not direct platform calls."""
     entry = _make_entry()
     await _setup_entry(hass, entry)
@@ -193,7 +195,9 @@ async def test_real_ha_unload_reload_cleans_and_recreates_runtime(
     assert reloaded_guest_mode is not None
     assert reloaded_guest_mode.state != STATE_UNAVAILABLE
     assert hass.data[DOMAIN][DATA_TEMPLATE_MANAGER] is not template_manager_before
-    assert {row.entity_id for row in _registry_entries(hass, entry)} == entity_ids_before
+    assert {
+        row.entity_id for row in _registry_entries(hass, entry)
+    } == entity_ids_before
 
 
 @pytest.mark.asyncio
@@ -293,3 +297,71 @@ async def test_real_ha_public_conversation_api_can_complete_locally(
     response = result.response.as_dict()
     assert response["speech"]["plain"]["speech"]
     assert result.conversation_id is not None
+
+
+@pytest.mark.asyncio
+async def test_real_ha_separate_calls_resume_history_and_preserve_continue_signal(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two public Assist calls share device history and return the listening flag."""
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_CONTINUE_CONVERSATION,
+        CONF_CONVERSATION_CONTINUITY,
+        CONTINUE_CONVERSATION_ALWAYS,
+        CONVERSATION_CONTINUITY_DEVICE,
+    )
+
+    entry = _make_entry(
+        include_ai_task=False,
+        conversation_options={
+            CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_DEVICE,
+            CONF_CONTINUE_CONVERSATION: CONTINUE_CONVERSATION_ALWAYS,
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert isinstance(agent, ExtendedOpenAIAgentEntity)
+    seen = []
+
+    async def model(log, **kwargs):
+        seen.append([item.content for item in log.content])
+        log.async_add_assistant_content_without_tools(
+            conversation.AssistantContent(
+                agent_id=agent.entity_id, content="The mug is blue."
+            )
+        )
+        return None
+
+    monkeypatch.setattr(agent, "_async_handle_chat_log", model)
+    first = await conversation.async_converse(
+        hass=hass,
+        text="Remember my blue mug",
+        conversation_id=None,
+        context=Context(),
+        language="en",
+        agent_id=entry.entry_id,
+        device_id="kitchen",
+    )
+    second = await conversation.async_converse(
+        hass=hass,
+        text="What colour is it?",
+        conversation_id=None,
+        context=Context(),
+        language="en",
+        agent_id=entry.entry_id,
+        device_id="kitchen",
+    )
+    assert first.conversation_id == second.conversation_id
+    assert "Remember my blue mug" in seen[0]
+    assert seen[1][-3:] == [
+        "Remember my blue mug",
+        "The mug is blue.",
+        "What colour is it?",
+    ]
+    for result in (first, second):
+        assert result.continue_conversation is True
+        assert result.as_dict()["continue_conversation"] is True
+        assert (
+            result.response.as_dict()["speech"]["plain"]["speech"] == "The mug is blue."
+        )
