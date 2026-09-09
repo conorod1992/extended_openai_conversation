@@ -11,7 +11,10 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 
 from custom_components.extended_openai_conversation_responses import (
     conversation_archive as archive_module,
@@ -207,6 +210,12 @@ async def test_real_ha_unload_reload_rehydrates_durable_agent_state(
         assistant_text="They are in the blue drawer.",
         successful=True,
     )
+
+    # Routine usage writes are intentionally coalesced for five seconds. Cross
+    # that durability boundary deterministically before discarding the manager;
+    # otherwise this would model abrupt memory loss, not a persistence round trip.
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=6))
+    await hass.async_block_till_done()
 
     before = {
         "memory": await first._memory.async_backup_data(),
