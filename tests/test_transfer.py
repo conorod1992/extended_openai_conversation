@@ -45,7 +45,21 @@ def _rules_backup(rules: list[dict] | None = None) -> dict:
     }
 
 
-def _function_rule(function_name: str = "remember") -> dict:
+def _function_rule(
+    function_name: str = "remember",
+    *,
+    arguments: dict | None = None,
+    nested: bool = False,
+) -> dict:
+    function_action = {
+        "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+        "data": {
+            "function": function_name,
+            "arguments": (
+                arguments if arguments is not None else {"fact": "hello"}
+            ),
+        },
+    }
     raw = {
         "id": "remember-rule",
         "name": "Remember this",
@@ -54,15 +68,9 @@ def _function_rule(function_name: str = "remember") -> dict:
         "match_type": "equals",
         "action_type": "local_action",
         "action": {
-            "actions": [
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {
-                        "function": function_name,
-                        "arguments": {"fact": "hello"},
-                    },
-                }
-            ],
+            "actions": (
+                [{"parallel": [function_action]}] if nested else [function_action]
+            ),
             "success_response": "Done",
             "failure_response": "Failed safely",
         },
@@ -284,7 +292,9 @@ async def test_selective_restore_replaces_only_selected_section(monkeypatch) -> 
     assert preview["selected_sections"] == [transfer.SECTION_PERSISTENT_MEMORY]
 
 
-async def test_request_rule_dependency_uses_combined_target_state(monkeypatch) -> None:
+async def test_request_rule_dependency_uses_combined_target_state(
+    hass, monkeypatch
+) -> None:
     current = backup.inspect_backup(_document(), "target-agent")
     rules = RequestRules.validate_backup_data(_rules_backup([_function_rule()]))
     imported = transfer.PreparedTransfer(
@@ -300,18 +310,99 @@ async def test_request_rule_dependency_uses_combined_target_state(monkeypatch) -
     entry, subentry = _entry_and_subentry()
 
     with pytest.raises(
-        backup.BackupError, match="unavailable Function Tool `remember`"
+        backup.BackupError, match="unavailable or disabled: remember"
     ):
-        await transfer.async_materialize_restore(
-            SimpleNamespace(), entry, subentry, imported
-        )
+        await transfer.async_materialize_restore(hass, entry, subentry, imported)
 
     current.config[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         [_remember_tool()], sort_keys=False
     )
     target, _preview = await transfer.async_materialize_restore(
-        SimpleNamespace(), entry, subentry, imported
+        hass, entry, subentry, imported
     )
+    assert target.request_rules["rules"][0]["id"] == "remember-rule"
+
+
+async def test_request_rule_dependency_checks_nested_actions(hass, monkeypatch) -> None:
+    current = backup.inspect_backup(_document(), "target-agent")
+    rules = RequestRules.validate_backup_data(
+        _rules_backup([_function_rule(nested=True)])
+    )
+    imported = transfer.PreparedTransfer(
+        source_kind="custom_backup",
+        mode="custom",
+        title="Nested rules",
+        available_sections=frozenset({transfer.SECTION_REQUEST_RULES}),
+        created_at="2026-09-08T20:00:00+00:00",
+        integration_version="5.0.0",
+        request_rules=rules,
+    )
+    monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=current))
+    entry, subentry = _entry_and_subentry()
+
+    with pytest.raises(
+        backup.BackupError, match="unavailable or disabled: remember"
+    ):
+        await transfer.async_materialize_restore(hass, entry, subentry, imported)
+
+
+async def test_request_rule_dependency_validates_nested_static_arguments(
+    hass, monkeypatch
+) -> None:
+    current = backup.inspect_backup(_document(), "target-agent")
+    current.config[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+        [_remember_tool()], sort_keys=False
+    )
+    rules = RequestRules.validate_backup_data(
+        _rules_backup([_function_rule(arguments={"fact": 42}, nested=True)])
+    )
+    imported = transfer.PreparedTransfer(
+        source_kind="custom_backup",
+        mode="custom",
+        title="Nested rules",
+        available_sections=frozenset({transfer.SECTION_REQUEST_RULES}),
+        created_at="2026-09-08T20:00:00+00:00",
+        integration_version="5.0.0",
+        request_rules=rules,
+    )
+    monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=current))
+    entry, subentry = _entry_and_subentry()
+
+    with pytest.raises(backup.BackupError, match="Function input `fact` must be string"):
+        await transfer.async_materialize_restore(hass, entry, subentry, imported)
+
+
+async def test_request_rule_dependency_accepts_tool_imported_with_rule(
+    hass, monkeypatch
+) -> None:
+    current = backup.inspect_backup(_document(), "target-agent")
+    imported_config = deepcopy(current.config)
+    imported_config[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+        [_remember_tool()], sort_keys=False
+    )
+    rules = RequestRules.validate_backup_data(
+        _rules_backup([_function_rule(nested=True)])
+    )
+    imported = transfer.PreparedTransfer(
+        source_kind="custom_backup",
+        mode="custom",
+        title="Imported setup",
+        available_sections=frozenset(
+            {transfer.SECTION_CONFIGURATION, transfer.SECTION_REQUEST_RULES}
+        ),
+        created_at="2026-09-08T20:00:00+00:00",
+        integration_version="5.0.0",
+        config=imported_config,
+        request_rules=rules,
+    )
+    monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=current))
+    entry, subentry = _entry_and_subentry()
+
+    target, _preview = await transfer.async_materialize_restore(
+        hass, entry, subentry, imported
+    )
+
+    assert yaml.safe_load(target.config[CONF_FUNCTION_TOOLS])[0]["spec"]["name"] == "remember"
     assert target.request_rules["rules"][0]["id"] == "remember-rule"
 
 
