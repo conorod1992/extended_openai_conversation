@@ -27,6 +27,7 @@
       const requestedRoute = params.get("route") || "guide";
       const isAdmin = params.get("admin") !== "0";
       const partialOverview = params.get("partial") === "1";
+      const predefinePanel = params.get("predefine") === "1";
 
       history.replaceState({}, "", `/extended-openai/${requestedRoute}`);
 
@@ -125,10 +126,22 @@
         window.browserHarness.rejections.push(String(event.reason));
       });
 
+      let panel = null;
+      if (predefinePanel) {
+        // Reproduce Home Assistant creating its custom-panel element and assigning
+        // properties before the integration module has finished defining the tag.
+        panel = document.createElement("extended-openai-management-panel");
+        panel.hass = hass;
+        panel.route = {path: window.location.pathname};
+        document.body.append(panel);
+      }
+
       await import("/custom_components/extended_openai_conversation_responses/frontend/management-panel.js");
-      const panel = document.createElement("extended-openai-management-panel");
-      document.body.append(panel);
-      panel.hass = hass;
+      if (!panel) {
+        panel = document.createElement("extended-openai-management-panel");
+        document.body.append(panel);
+        panel.hass = hass;
+      }
       window.browserHarness.panel = panel;
     </script>
   </body>
