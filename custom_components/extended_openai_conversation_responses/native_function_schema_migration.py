@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from types import MappingProxyType
 from typing import Any
 
 import yaml
@@ -181,6 +182,7 @@ def _migrate_service_schema(tool: dict[str, Any], implementation: str) -> bool:
     if not isinstance(parameters, dict):
         return False
 
+    legacy_default = parameters == _LEGACY_DEFAULT_EXECUTE_SERVICE_PARAMETERS
     if implementation == "execute_service":
         historical = (
             _LEGACY_DEFAULT_EXECUTE_SERVICE_PARAMETERS,
@@ -194,6 +196,8 @@ def _migrate_service_schema(tool: dict[str, Any], implementation: str) -> bool:
     service_data = _service_data_schema(parameters, implementation)
     service_data["description"] = SERVICE_DATA_DESCRIPTION
     service_data["additionalProperties"] = True
+    if legacy_default:
+        parameters["required"] = ["list"]
     spec["strict"] = False
     return True
 
@@ -242,8 +246,8 @@ def migrate_legacy_stock_native_function_tools(
     Tool identity and presentation metadata are deliberately outside the fingerprint:
     spec.name, spec.description, enabled, guest_allowed, and Function Group membership
     may have been customized without changing the stock executable schema. They are
-    therefore preserved byte-for-value in the parsed structure. Any schema change,
-    including a strict setting or a changed parameter constraint, prevents migration.
+    therefore preserved value-for-value. Any schema change, including a strict setting
+    or a changed parameter constraint, prevents migration.
     """
     migrated = deepcopy(tools)
     changed = False
@@ -275,7 +279,30 @@ def migrate_legacy_stock_native_function_tools_yaml(value: Any) -> tuple[Any, bo
     migrated, changed = migrate_legacy_stock_native_function_tools(parsed)
     if not changed:
         return value, False
-    return (
-        yaml.safe_dump(migrated, sort_keys=False, allow_unicode=True),
-        True,
+    return yaml.safe_dump(migrated, sort_keys=False, allow_unicode=True), True
+
+
+def install_current_default_native_function_schemas() -> None:
+    """Normalize in-memory defaults before new agents snapshot their configuration.
+
+    The legacy constant remains the migration fingerprint in source, while every
+    runtime consumer sees the current persisted schema. Existing saved agents are
+    handled separately by the startup migration below; this function only prevents a
+    newly-created agent from being seeded with a historical schema.
+    """
+    from . import agent_config, const
+
+    migrated, changed = migrate_legacy_stock_native_function_tools(
+        const.DEFAULT_CONF_FUNCTION_TOOLS
     )
+    if not changed:
+        return
+
+    # Preserve the shared list identity imported by agent_config while replacing its
+    # contents, then refresh the already-built authoritative default snapshot.
+    const.DEFAULT_CONF_FUNCTION_TOOLS[:] = migrated
+    defaults = dict(agent_config.AGENT_CONFIG_DEFAULTS)
+    defaults[const.CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+        migrated, sort_keys=False, allow_unicode=True
+    )
+    agent_config.AGENT_CONFIG_DEFAULTS = MappingProxyType(defaults)
