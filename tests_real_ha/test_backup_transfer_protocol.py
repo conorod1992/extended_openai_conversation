@@ -193,7 +193,7 @@ async def test_full_backup_round_trip_through_registered_websocket(
     entry = _entry()
     await _setup_entry(hass, entry)
     subentry = _conversation_subentry(entry)
-    admin = MockUser(id="backup-admin", name="Backup Admin", is_admin=True)
+    admin = MockUser(id="backup-admin", name="Backup Admin", is_owner=True)
     admin_client = await hass_ws_client(hass, await _user_token(hass, admin))
 
     memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
@@ -304,7 +304,7 @@ async def test_custom_backup_selection_and_admin_boundary_use_real_ha_websocket(
     assert not denied["success"]
     assert denied["error"]["code"] == "unauthorized"
 
-    admin = MockUser(id="custom-backup-admin", name="Custom Backup Admin", is_admin=True)
+    admin = MockUser(id="custom-backup-admin", name="Custom Backup Admin", is_owner=True)
     admin_client = await hass_ws_client(hass, await _user_token(hass, admin))
     archive, metadata = await _download_archive(
         admin_client,
