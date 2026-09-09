@@ -2,7 +2,7 @@ name: Targeted mutation testing
 
 on:
   workflow_dispatch:
-  # Temporary bootstrap trigger for PR #248. Remove after the initial campaign;
+  # Temporary bootstrap trigger for PR #248. Remove after the calibrated campaign;
   # the committed workflow is intended to remain manual-only.
   pull_request:
     branches:
@@ -71,7 +71,8 @@ jobs:
             tests/test_function_tool_recovery_security.py \
             tests/test_function_tool_recovery_validation_boundary.py \
             tests/test_parallel_tool_execution.py \
-            tests/test_deterministic_concurrency_cancellation.py
+            tests/test_deterministic_concurrency_cancellation.py \
+            tests/test_targeted_mutation_contracts.py
 
       - name: Run targeted mutation campaign
         run: |

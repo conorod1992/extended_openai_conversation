@@ -64,6 +64,7 @@ pytest_add_cli_args_test_selection = [
     "tests/test_function_tool_recovery_validation_boundary.py",
     "tests/test_parallel_tool_execution.py",
     "tests/test_deterministic_concurrency_cancellation.py",
+    "tests/test_targeted_mutation_contracts.py",
 ]
 
 [tool.mypy]
