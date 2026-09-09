@@ -6,6 +6,8 @@ on:
       - "frontend/**"
       - "custom_components/extended_openai_conversation_responses/frontend/**"
       - "tests/*.test.mjs"
+      - "tests_browser/**"
+      - "playwright.config.mjs"
       - ".github/workflows/frontend.yml"
   push:
     branches:
@@ -14,6 +16,8 @@ on:
       - "frontend/**"
       - "custom_components/extended_openai_conversation_responses/frontend/**"
       - "tests/*.test.mjs"
+      - "tests_browser/**"
+      - "playwright.config.mjs"
       - ".github/workflows/frontend.yml"
 
 concurrency:
@@ -57,3 +61,36 @@ jobs:
       - name: Build frontend bundle
         working-directory: frontend
         run: npm run build
+
+  browser-smoke:
+    name: Browser smoke (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Install Playwright test runner
+        run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run shipped frontend browser smoke tests
+        run: npx playwright test --config=playwright.config.mjs
+
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frontend-browser-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 7
