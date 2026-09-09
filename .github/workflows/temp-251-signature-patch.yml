@@ -22,30 +22,16 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-
           path = Path("custom_components/extended_openai_conversation_responses/conversation.py")
           text = path.read_text(encoding="utf-8")
-          old = """    def _local_rule_result(
-        self,
-        user_input: ConversationInput,
-        chat_log: ChatLog,
-        response: str,
-        *,
-        successful: bool = True,
-    ) -> ConversationResult:
-"""
-          new = """    def _local_rule_result(
-        self,
-        user_input: ConversationInput,
-        chat_log: ChatLog,
-        response: str,
-        *,
-        successful: bool,
-    ) -> ConversationResult:
-"""
-          if text.count(old) != 1:
-              raise SystemExit(f"Expected exactly one _local_rule_result signature, found {text.count(old)}")
-          path.write_text(text.replace(old, new), encoding="utf-8")
+          start = text.index("    def _local_rule_result(")
+          end = text.index("    def _local_intent_result(", start)
+          block = text[start:end]
+          old = "        successful: bool = True,"
+          if block.count(old) != 1:
+              raise SystemExit(f"Expected exactly one local-rule success default, found {block.count(old)}")
+          block = block.replace(old, "        successful: bool,")
+          path.write_text(text[:start] + block + text[end:], encoding="utf-8")
           PY
 
       - name: Remove temporary workflow and commit
