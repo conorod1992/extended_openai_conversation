@@ -60,7 +60,7 @@ def _install_request_context_binding() -> None:
             return await current(entity, user_input)
 
     process_with_ha_context._extended_openai_ha_context = True  # type: ignore[attr-defined]
-    ExtendedOpenAIAgentEntity._async_process = process_with_ha_context  # type: ignore[method-assign]
+    ExtendedOpenAIAgentEntity._async_process = process_with_ha_context  # type: ignore[assignment]
 
 
 async def async_setup_ha_permissions(hass: HomeAssistant) -> None:
