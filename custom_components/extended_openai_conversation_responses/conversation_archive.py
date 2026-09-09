@@ -157,6 +157,8 @@ class ConversationArchive:
             if self._initialized:
                 return
             data = await self._storage.async_load_metadata() or {}
+            if not isinstance(data, dict):
+                data = {}
             pending = data.get("pending_partitions")
             if pending is not None:
                 # Metadata is the transaction marker. Complete any interrupted
@@ -177,22 +179,31 @@ class ConversationArchive:
                     if key != "pending_partitions"
                 }
                 await self._storage.async_save_metadata(data)
-            for raw in data.get("sessions", []):
+            sessions = data.get("sessions")
+            for raw in sessions if isinstance(sessions, list) else []:
                 try:
                     session = ArchiveSession(**raw)
                 except TypeError, ValueError:
                     _LOGGER.warning("Ignoring malformed conversation archive session")
                     continue
                 self._sessions[session.session_id] = session
+            active = data.get("active")
             self._active = {
                 str(key): str(value)
-                for key, value in data.get("active", {}).items()
-                if value in self._sessions
+                for key, value in (active if isinstance(active, dict) else {}).items()
+                if isinstance(value, str) and value in self._sessions
             }
-            self._partitions = {str(value) for value in data.get("partitions", [])}
+            partitions = data.get("partitions")
+            self._partitions = {
+                value
+                for value in (partitions if isinstance(partitions, list) else [])
+                if isinstance(value, str)
+                and re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", value)
+            }
             for partition in sorted(self._partitions):
                 payload = await self._storage.async_load_partition(partition) or {}
-                for raw in payload.get("turns", []):
+                turns = payload.get("turns") if isinstance(payload, dict) else None
+                for raw in turns if isinstance(turns, list) else []:
                     try:
                         turn = ArchiveTurn(**raw)
                     except TypeError, ValueError:
