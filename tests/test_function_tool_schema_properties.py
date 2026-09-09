@@ -114,9 +114,7 @@ def test_nested_schema_coerces_valid_values_without_mutating_input(
 
 
 @st.composite
-def _missing_required_case(
-    draw: st.DrawFn,
-) -> tuple[dict[str, Any], dict[str, Any], str]:
+def _missing_required_case(draw):
     field_count = draw(st.integers(min_value=1, max_value=5))
     missing_index = draw(st.integers(min_value=0, max_value=field_count - 1))
     fields = [f"required_{index}" for index in range(field_count)]
@@ -152,7 +150,7 @@ def test_generated_required_fields_fail_when_exactly_one_is_missing(
 
 
 @st.composite
-def _union_case(draw: st.DrawFn) -> tuple[str, int | bool, type[int] | type[bool]]:
+def _union_case(draw):
     if draw(st.booleans()):
         value = draw(st.integers(min_value=-1000, max_value=1000))
         return str(value), value, int
@@ -267,7 +265,7 @@ def test_additional_properties_preserve_reject_or_validate_by_declared_policy(
 
 
 @st.composite
-def _bounded_integer_case(draw: st.DrawFn) -> tuple[int, int, int]:
+def _bounded_integer_case(draw):
     lower = draw(st.integers(min_value=-100, max_value=100))
     width = draw(st.integers(min_value=1, max_value=20))
     upper = lower + width
