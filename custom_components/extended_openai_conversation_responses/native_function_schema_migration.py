@@ -277,7 +277,9 @@ def migrate_legacy_stock_native_function_tools_yaml(value: Any) -> tuple[Any, bo
         parsed = yaml.safe_load(value)
     except yaml.YAMLError:
         return value, False
-    if not isinstance(parsed, list) or not all(isinstance(tool, dict) for tool in parsed):
+    if not isinstance(parsed, list) or not all(
+        isinstance(tool, dict) for tool in parsed
+    ):
         return value, False
 
     migrated, changed = migrate_legacy_stock_native_function_tools(parsed)
