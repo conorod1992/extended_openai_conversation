@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -9,15 +10,18 @@ import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import CLIENT_ID, MockConfigEntry, MockUser
 
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_ENABLED,
     CONF_MEMORY_MODE,
     CONF_SKIP_AUTHENTICATION,
+    CONF_TEMPORARY_MEMORY,
     CONFIG_ENTRY_VERSION,
     DOMAIN,
     MEMORY_MODE_MANUAL,
+    TEMPORARY_MEMORY_BALANCED,
 )
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     async_get_archive,
@@ -27,10 +31,13 @@ from custom_components.extended_openai_conversation_responses.management_ui impo
 )
 from custom_components.extended_openai_conversation_responses.memory import async_get_memory
 from custom_components.extended_openai_conversation_responses.scope import user_scope
+from custom_components.extended_openai_conversation_responses.temporary_memory import (
+    async_get_temporary_memory,
+)
 
 
 def _entry() -> MockConfigEntry:
-    """Build one local-only entry with personal memory and archive enabled."""
+    """Build one local-only entry with personal retained data enabled."""
     return MockConfigEntry(
         domain=DOMAIN,
         title="User Ownership Acceptance",
@@ -44,6 +51,7 @@ def _entry() -> MockConfigEntry:
                 "data": {
                     CONF_MEMORY_MODE: MEMORY_MODE_MANUAL,
                     CONF_ARCHIVE_ENABLED: True,
+                    CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_BALANCED,
                 },
                 "subentry_type": "conversation",
                 "title": "User Ownership Conversation",
@@ -113,6 +121,28 @@ async def _seed_personal_data(
     return memory_id, session.session_id
 
 
+async def _seed_temporary_memory(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    *,
+    user: MockUser,
+    content: str,
+) -> str:
+    """Seed one active Temporary Memory record owned by a user."""
+    subentry = _conversation_subentry(entry)
+    temporary = await async_get_temporary_memory(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    created = await temporary.async_add(
+        f"conversation:{user.id}",
+        content,
+        (dt_util.utcnow() + timedelta(hours=1)).isoformat(),
+        "general",
+        owner_scope_id=f"user:{user.id}",
+    )
+    return created["memory"]["memory_id"]
+
+
 async def _management_call(
     client: Any,
     *,
@@ -141,7 +171,7 @@ async def test_management_websocket_lists_only_the_authenticated_users_personal_
     hass: HomeAssistant,
     hass_ws_client: Any,
 ) -> None:
-    """Normal users must see only their own personal memories and conversations."""
+    """Normal users must see only their own personal retained data."""
     entry = _entry()
     await _setup_entry(hass, entry)
     alice, alice_token = await _normal_user_token(hass, "privacy-alice", "Alice")
@@ -160,6 +190,18 @@ async def test_management_websocket_lists_only_the_authenticated_users_personal_
         user=bob,
         memory_text="Bob keeps the spare key in the green drawer.",
         conversation_text="Bob private conversation marker.",
+    )
+    alice_temporary_id = await _seed_temporary_memory(
+        hass,
+        entry,
+        user=alice,
+        content="Alice temporary marker.",
+    )
+    bob_temporary_id = await _seed_temporary_memory(
+        hass,
+        entry,
+        user=bob,
+        content="Bob temporary marker.",
     )
 
     alice_client = await hass_ws_client(hass, alice_token)
@@ -181,6 +223,23 @@ async def test_management_websocket_lists_only_the_authenticated_users_personal_
     ]
     assert alice_memories["result"]["scope_id"] == f"user:{alice.id}"
     assert bob_memories["result"]["scope_id"] == f"user:{bob.id}"
+
+    alice_temporary = await _management_call(
+        alice_client, entry=entry, section="memories", action="temporary_list"
+    )
+    bob_temporary = await _management_call(
+        bob_client, entry=entry, section="memories", action="temporary_list"
+    )
+    assert alice_temporary["success"]
+    assert bob_temporary["success"]
+    assert [
+        item["memory_id"] for item in alice_temporary["result"]["memories"]
+    ] == [alice_temporary_id]
+    assert [item["memory_id"] for item in bob_temporary["result"]["memories"]] == [
+        bob_temporary_id
+    ]
+    assert alice_temporary["result"]["scope_id"] == f"user:{alice.id}"
+    assert bob_temporary["result"]["scope_id"] == f"user:{bob.id}"
 
     alice_conversations = await _management_call(
         alice_client, entry=entry, section="conversations", action="list"
@@ -215,6 +274,12 @@ async def test_management_websocket_rejects_explicit_cross_user_scope(
         memory_text="Bob private memory.",
         conversation_text="Bob private conversation.",
     )
+    await _seed_temporary_memory(
+        hass,
+        entry,
+        user=bob,
+        content="Bob private temporary memory.",
+    )
     alice_client = await hass_ws_client(hass, alice_token)
 
     for section in ("memories", "conversations"):
@@ -229,6 +294,17 @@ async def test_management_websocket_rejects_explicit_cross_user_scope(
         assert response["error"]["code"] == "invalid_request"
         assert "not available to the current user" in response["error"]["message"]
 
+    temporary_response = await _management_call(
+        alice_client,
+        entry=entry,
+        section="memories",
+        action="temporary_list",
+        scope_id=f"user:{bob.id}",
+    )
+    assert not temporary_response["success"]
+    assert temporary_response["error"]["code"] == "invalid_request"
+    assert "not available to the current user" in temporary_response["error"]["message"]
+
     scopes = await _management_call(
         alice_client, entry=entry, section="scopes", action="catalog"
     )
@@ -239,7 +315,7 @@ async def test_management_websocket_rejects_explicit_cross_user_scope(
 
 
 @pytest.mark.asyncio
-async def test_known_cross_user_record_ids_cannot_be_read_or_deleted(
+async def test_known_cross_user_record_ids_cannot_be_read_or_modified(
     hass: HomeAssistant,
     hass_ws_client: Any,
 ) -> None:
@@ -255,6 +331,12 @@ async def test_known_cross_user_record_ids_cannot_be_read_or_deleted(
         memory_text="Bob IDOR memory marker.",
         conversation_text="Bob IDOR conversation marker.",
     )
+    bob_temporary_id = await _seed_temporary_memory(
+        hass,
+        entry,
+        user=bob,
+        content="Bob IDOR temporary marker.",
+    )
     alice_client = await hass_ws_client(hass, alice_token)
     bob_client = await hass_ws_client(hass, bob_token)
 
@@ -267,6 +349,27 @@ async def test_known_cross_user_record_ids_cannot_be_read_or_deleted(
     )
     assert memory_delete["success"]
     assert memory_delete["result"] == {"deleted": 0}
+
+    temporary_update = await _management_call(
+        alice_client,
+        entry=entry,
+        section="memories",
+        action="temporary_update",
+        memory_id=bob_temporary_id,
+        content="Alice changed Bob's temporary memory.",
+    )
+    assert not temporary_update["success"]
+    assert temporary_update["error"]["code"] == "invalid_request"
+
+    temporary_delete = await _management_call(
+        alice_client,
+        entry=entry,
+        section="memories",
+        action="temporary_delete",
+        memory_id=bob_temporary_id,
+    )
+    assert temporary_delete["success"]
+    assert temporary_delete["result"] == {"deleted": 0}
 
     conversation_get = await _management_call(
         alice_client,
@@ -295,6 +398,17 @@ async def test_known_cross_user_record_ids_cannot_be_read_or_deleted(
     assert [item["memory_id"] for item in bob_memories["result"]["memories"]] == [
         bob_memory_id
     ]
+
+    bob_temporary = await _management_call(
+        bob_client, entry=entry, section="memories", action="temporary_list"
+    )
+    assert bob_temporary["success"]
+    assert [item["memory_id"] for item in bob_temporary["result"]["memories"]] == [
+        bob_temporary_id
+    ]
+    assert bob_temporary["result"]["memories"][0]["content"] == (
+        "Bob IDOR temporary marker."
+    )
 
     bob_conversation = await _management_call(
         bob_client,
