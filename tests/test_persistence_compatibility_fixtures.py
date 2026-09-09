@@ -163,10 +163,12 @@ async def test_temporary_memory_pre_owner_fixture_preserves_legacy_ownership() -
     assert alice[0].owner_scope_id == "user:alice"
     assert await memory.async_list("user:alice", owner_scope_id="user:bob") == []
 
-    shared = await memory.async_list("shared:household")
+    shared = await memory.async_list(
+        "shared:household", owner_scope_id="shared:household"
+    )
     assert [record.memory_id for record in shared] == ["temp-shared"]
-    assert shared[0].owner_scope_id is None
-    # An unresolved legacy shared record cannot become a personal record.
+    assert shared[0].owner_scope_id == "shared:household"
+    # A migrated shared record cannot be claimed by a personal owner.
     for owner in ("user:alice", "user:bob"):
         assert await memory.async_list("shared:household", owner_scope_id=owner) == []
 
