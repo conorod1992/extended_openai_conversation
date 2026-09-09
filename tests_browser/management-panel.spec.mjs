@@ -103,6 +103,23 @@ test("non-admin browser navigation exposes only the permitted Capabilities secti
   await expectHarnessClean(page, pageErrors);
 });
 
+test("mobile layout exposes working responsive navigation", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await page.setViewportSize({width: 390, height: 844});
+  await page.goto("/tests_browser/fixture.html?route=guide");
+
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.getByRole("heading", {name: "Guide", exact: true})).toBeVisible();
+  await expect(panel.locator(".top-nav")).toBeHidden();
+  await expect(panel.locator("#top-section-mobile")).toBeVisible();
+
+  await panel.locator("#top-section-mobile").selectOption("capabilities");
+  await expect(page).toHaveURL(/\/extended-openai\/capabilities\/home-assistant$/);
+  await expect(panel.getByRole("heading", {name: "Home Assistant access", exact: true})).toBeVisible();
+
+  await expectHarnessClean(page, pageErrors);
+});
+
 test("direct non-admin URLs cannot load administrator configuration", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto("/tests_browser/fixture.html?route=assistant/basics&admin=0");
