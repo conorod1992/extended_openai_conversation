@@ -3,328 +3,306 @@ title: "Native Functions"
 description: "Built-in functions provided by Extended OpenAI Conversation (Responses)"
 ---
 
-Native functions are built-in capabilities provided directly by the Extended OpenAI Conversation (Responses) component. These functions are implemented in Python and offer core functionality. In the Tools page, choose **Add Function Tool**, then use **Insert Built-in Function** to place a complete editable preset into the normal YAML editor.
+Native functions are capabilities implemented directly by Extended OpenAI Conversation. In the Tools page, choose **Add Function Tool**, then **Insert Built-in Function** to insert an editable preset into the YAML editor.
 
 ## Available Native Functions
 
 ### execute_service
 
-Call any Home Assistant service with specified parameters.
+Call one or more Home Assistant services on Assist-exposed targets.
 
-<ParamField path="domain" type="string" required>
-  The domain of the service (e.g., `light`, `switch`, `climate`)
+The native runtime accepts normal Home Assistant service-specific data, not only target fields. For example, `light.turn_on` can receive `brightness_pct`, `color_name`, `color_temp_kelvin`, `rgb_color`, `transition`, and other fields supported by that Home Assistant service.
+
+<ParamField path="list" type="array" required>
+  One or more service calls. Each item contains `domain`, `service`, and `service_data`.
 </ParamField>
 
-<ParamField path="service" type="string" required>
-  The service to call (e.g., `turn_on`, `turn_off`, `set_temperature`)
+<ParamField path="list[].domain" type="string" required>
+  Home Assistant service domain, for example `light`, `switch`, `climate`, or `media_player`.
 </ParamField>
 
-<ParamField path="service_data" type="object" required>
-  Service data object with the following properties:
-  - `entity_id` (string): Target entity ID
-  - `device_id` (string): Target device ID (optional)
-  - `area_id` (string): Target area ID (optional)
+<ParamField path="list[].service" type="string" required>
+  Service name, for example `turn_on`, `turn_off`, or `set_temperature`.
 </ParamField>
+
+<ParamField path="list[].service_data" type="object" required>
+  Any valid data accepted by the selected Home Assistant service. Include at least one exposed target using `entity_id`, `device_id`, `area_id`, `floor_id`, or `label_id`. Service-specific fields are allowed alongside the target.
+</ParamField>
+
+<Info>
+The built-in service-call presets intentionally use `strict: false` because `service_data` is an open Home Assistant mapping whose valid keys depend on the selected service. Target exposure and Home Assistant permission checks are still enforced by the backend.
+</Info>
 
 <Accordion title="Example Configuration">
-  Control Home Assistant devices and services:
 
-  ```yaml
-  - spec:
-      name: execute_services
-      description: Use this function to execute service of devices in Home Assistant.
-      parameters:
-        type: object
-        properties:
-          list:
-            type: array
-            items:
-              type: object
-              properties:
-                domain:
-                  type: string
-                  description: The domain of the service
-                service:
-                  type: string
-                  description: The service to be called
-                service_data:
-                  type: object
-                  description: The service data object to indicate what to control.
-                  properties:
-                    entity_id:
-                      type: string
-                      description: The entity_id retrieved from available devices. It must start with domain, followed by dot character.
-                  required:
-                  - entity_id
-              required:
+```yaml
+- spec:
+    name: execute_service
+    description: Execute one or more Home Assistant services on exposed targets.
+    strict: false
+    parameters:
+      type: object
+      properties:
+        list:
+          type: array
+          items:
+            type: object
+            properties:
+              domain:
+                type: string
+              service:
+                type: string
+              service_data:
+                type: object
+                description: >-
+                  Any valid Home Assistant service data. Include an exposed target;
+                  service-specific fields such as brightness_pct or color_temp_kelvin
+                  are also allowed.
+                additionalProperties: true
+            required:
               - domain
               - service
               - service_data
-    function:
-      type: native
-      name: execute_service
-  ```
+      required:
+        - list
+  function:
+    type: native
+    name: execute_service
+```
+
+For example, the model may call `light.turn_on` with:
+
+```yaml
+service_data:
+  entity_id:
+    - light.study
+  color_temp_kelvin: 2700
+  brightness_pct: 60
+```
+
 </Accordion>
+
+### execute_service_single
+
+Call exactly one Home Assistant service. It has the same open `service_data` contract and the same exposure/permission enforcement as `execute_service`, but `domain`, `service`, and `service_data` are top-level arguments rather than entries in a `list`.
+
+<ParamField path="domain" type="string" required>
+  Home Assistant service domain.
+</ParamField>
+
+<ParamField path="service" type="string" required>
+  Home Assistant service name.
+</ParamField>
+
+<ParamField path="service_data" type="object" required>
+  Any valid data accepted by the selected service, including an exposed target and service-specific fields.
+</ParamField>
+
+### send_broadcast
+
+Send a spoken Broadcast announcement to an announcement-capable Assist Satellite. Busy satellites are queued rather than interrupted.
+
+<ParamField path="message" type="string" required>
+  Exact message to announce.
+</ParamField>
+
+<ParamField path="destination" type="string">
+  Natural Home Assistant area, device, floor, label, or Assist Satellite name. Required unless `whole_home` is `true`.
+</ParamField>
+
+<ParamField path="whole_home" type="boolean">
+  Send to every announcement-capable Assist Satellite except the originating satellite. When false or omitted, `destination` is required.
+</ParamField>
 
 ### add_automation
 
-Create Home Assistant automations dynamically through conversation.
+Create a Home Assistant automation from a complete YAML configuration.
 
 <Warning>
-Before using this function, set up notifications for the `automation_registered_via_extended_openai_conversation_responses` event. Automations can be created even if the conversation fails to get a response.
+Before using this function, set up notifications for the `automation_registered_via_extended_openai_conversation_responses` event. Automations can be created even if the conversation later fails to produce a response.
 </Warning>
 
 <ParamField path="automation_config" type="string" required>
-  Automation configuration in valid YAML format. Newline characters should be `\n`.
+  One complete Home Assistant automation in valid YAML. The integration validates it before writing and reloads automations after the atomic update.
 </ParamField>
 
-<Accordion title="Setup Recommendations">
-  1. **Create a separate assistant** for automation creation to avoid accidental automation registration
-  2. **Set up event notifications** to monitor created automations
-  3. **Review automations** before enabling them in production
-
-  <Columns cols={2}>
-    <div>
-      **Create Separate Assistant**
-      <Frame>
-        <img width="830" alt="Create Assistant" src="https://github.com/jekalmin/extended_openai_conversation/assets/2917984/b7030a46-9a4e-4ea8-a4ed-03d2eb3af0a9" />
-      </Frame>
-    </div>
-    <div>
-      **Notify on Created**
-      <Frame>
-        <img width="1116" alt="Notification Setup" src="https://github.com/jekalmin/extended_openai_conversation/assets/2917984/7afa3709-1c1d-41d0-8847-70f2102d824f" />
-      </Frame>
-    </div>
-  </Columns>
-</Accordion>
-
 <Accordion title="Example Configuration">
-  **English Configuration:**
 
-  ```yaml
-  - spec:
-      name: add_automation
-      description: Use this function to add an automation in Home Assistant.
-      parameters:
-        type: object
-        properties:
-          automation_config:
-            type: string
-            description: A configuration for automation in a valid yaml format. Next line character should be \n. Use devices from the list.
-        required:
+```yaml
+- spec:
+    name: add_automation
+    description: Create a Home Assistant automation from a complete YAML configuration.
+    parameters:
+      type: object
+      properties:
+        automation_config:
+          type: string
+          description: A complete Home Assistant automation in valid YAML.
+      required:
         - automation_config
-    function:
-      type: native
-      name: add_automation
-  ```
+  function:
+    type: native
+    name: add_automation
+```
 
-  **Korean Configuration:**
-
-  For Korean language, use `\\n` instead of `\n` for newline characters:
-
-  ```yaml
-  - spec:
-      name: add_automation
-      description: Use this function to add an automation in Home Assistant.
-      parameters:
-        type: object
-        properties:
-          automation_config:
-            type: string
-            description: A configuration for automation in a valid yaml format. Next line character should be \\n, not \n. Use devices from the list.
-        required:
-        - automation_config
-    function:
-      type: native
-      name: add_automation
-  ```
-
-  <Frame>
-    <img width="300" alt="Automation Example" src="https://github.com/jekalmin/extended_openai_conversation/assets/2917984/55f5fe7e-b1fd-43c9-bce6-ac92e203598f" />
-  </Frame>
 </Accordion>
 
 ### get_history
 
-Retrieve historical state data for specified entities.
+Retrieve historical state data for Assist-exposed Home Assistant entities.
 
 <ParamField path="entity_ids" type="array" required>
-  List of entity IDs to retrieve history for
+  Entity IDs to retrieve history for.
 </ParamField>
 
 <ParamField path="start_time" type="string">
-  Start of the history period in `%Y-%m-%dT%H:%M:%S%z` format. Defaults to 1 day before the request time.
+  ISO 8601 start time. Defaults to one day before the request time.
 </ParamField>
 
 <ParamField path="end_time" type="string">
-  End of the history period in `%Y-%m-%dT%H:%M:%S%z` format. Defaults to current time.
+  ISO 8601 end time. Defaults to one day after the resolved `start_time`.
 </ParamField>
 
-<ParamField path="minimal_response" type="boolean">
-  Only return `last_changed` and `state` for non-first/last states. Default: `true`
-</ParamField>
-
-<ParamField path="no_attributes" type="boolean">
-  Skip returning attributes from the database. Default: `true`
+<ParamField path="include_start_time_state" type="boolean">
+  Include the state immediately before the requested start time. Default: `true`.
 </ParamField>
 
 <ParamField path="significant_changes_only" type="boolean">
-  Only return significant state changes. Default: `true`
+  Return only significant state changes. Default: `true`.
 </ParamField>
 
-<Accordion title="Example Configuration">
-  Retrieve historical state data for entities. For advanced formatting with templates, see the [composite function example](/functions/composite#example-get-history-with-formatting).
+<ParamField path="minimal_response" type="boolean">
+  Use Home Assistant's minimal history representation. Default: `true`.
+</ParamField>
 
-  ```yaml
-  - spec:
-      name: get_history
-      description: Retrieve historical data of specified entities.
-      parameters:
-        type: object
-        properties:
-          entity_ids:
-            type: array
-            items:
-              type: string
-              description: The entity id to filter.
-          start_time:
-            type: string
-            description: Start of the history period in "%Y-%m-%dT%H:%M:%S%z".
-          end_time:
-            type: string
-            description: End of the history period in "%Y-%m-%dT%H:%M:%S%z".
-          minimal_response:
-            type: boolean
-            description: Only return last_changed and state for non-first/last states.
-          no_attributes:
-            type: boolean
-            description: Skip returning attributes from the database.
-          significant_changes_only:
-            type: boolean
-            description: Only return significant state changes.
-        required:
-        - entity_ids
-    function:
-      type: native
-      name: get_history
-  ```
-
-  <Frame>
-    <img width="300" alt="History Example" src="https://github.com/jekalmin/extended_openai_conversation/assets/2917984/32217f3d-10fc-4001-9028-717b1683573b" />
-  </Frame>
-</Accordion>
+<ParamField path="no_attributes" type="boolean">
+  Omit state attributes. Default: `true`.
+</ParamField>
 
 ### get_energy
 
-Retrieve energy configuration and preferences from Home Assistant's energy management system.
+Retrieve Home Assistant Energy dashboard configuration and preferences.
 
 <Info>
-This function returns the energy dashboard configuration including solar, grid, battery, and gas sources. No parameters required.
+This function has no model arguments. If the Energy configuration references Home Assistant entities that are not exposed to Assist, the native runtime refuses to disclose the configuration.
 </Info>
-
-<Accordion title="Example Configuration">
-  Retrieve energy management configuration:
-
-  ```yaml
-  - spec:
-      name: get_energy
-      description: Retrieve energy management configuration and preferences.
-      parameters:
-        type: object
-        properties: {}
-    function:
-      type: native
-      name: get_energy
-  ```
-</Accordion>
 
 ### get_statistics
 
-Retrieve statistical data for specified entities over a time period.
+Retrieve Home Assistant long-term statistics for a time period.
 
-<ParamField path="statistic_ids" type="array">
-  List of statistic IDs to retrieve data for
+<ParamField path="statistic_ids" type="array" required>
+  One or more statistic IDs. Entity-backed IDs must be exposed to Assist; valid external integration statistic IDs are also supported. Maximum: 100.
 </ParamField>
 
 <ParamField path="start_time" type="string" required>
-  Start of the statistics period in `%Y-%m-%dT%H:%M:%S%z` format
+  ISO 8601 start time.
 </ParamField>
 
 <ParamField path="end_time" type="string" required>
-  End of the statistics period in `%Y-%m-%dT%H:%M:%S%z` format
+  ISO 8601 end time.
 </ParamField>
 
 <ParamField path="period" type="string">
-  Aggregation period. Options: `5minute`, `hour`, `day`, `month`. Default: `day`
+  Aggregation period: `5minute`, `hour`, `day`, `week`, `month`, or `year`. Default: `day`.
 </ParamField>
 
 <ParamField path="units" type="object">
-  Unit conversion configuration (optional)
+  Optional unit conversions keyed by Home Assistant unit class, for example `power`, `energy`, or `temperature`, with Home Assistant unit strings as values.
 </ParamField>
 
 <ParamField path="types" type="array">
-  Types of statistics to return. Default: `["change"]`
+  Values to return. Supported values are `change`, `last_reset`, `max`, `mean`, `min`, `state`, and `sum`. Default: `["change"]`.
 </ParamField>
 
-<Accordion title="Example Configuration">
-  Retrieve statistical data for energy consumption or other long-term statistics:
+<Info>
+The statistics preset uses `strict: false` because `units` is an open mapping keyed by Home Assistant unit class. The preset still constrains `period` and each `types` item to values supported by Home Assistant's recorder API.
+</Info>
 
-  ```yaml
-  - spec:
-      name: get_statistics
-      description: Retrieve statistical data for specified entities over a time period.
-      parameters:
-        type: object
-        properties:
-          statistic_ids:
-            type: array
-            items:
-              type: string
-              description: The statistic id to retrieve data for.
-          start_time:
+<Accordion title="Example Configuration">
+
+```yaml
+- spec:
+    name: get_statistics
+    description: Retrieve Home Assistant long-term statistics for a time period.
+    strict: false
+    parameters:
+      type: object
+      properties:
+        statistic_ids:
+          type: array
+          items:
             type: string
-            description: Start of the statistics period in "%Y-%m-%dT%H:%M:%S%z".
-          end_time:
+          minItems: 1
+          maxItems: 100
+        start_time:
+          type: string
+        end_time:
+          type: string
+        period:
+          type: string
+          enum:
+            - 5minute
+            - hour
+            - day
+            - week
+            - month
+            - year
+        units:
+          type: object
+          additionalProperties:
             type: string
-            description: End of the statistics period in "%Y-%m-%dT%H:%M:%S%z".
-          period:
+        types:
+          type: array
+          items:
             type: string
-            description: Aggregation period (5minute, hour, day, month).
-          types:
-            type: array
-            items:
-              type: string
-            description: Types of statistics to return.
-        required:
+            enum:
+              - change
+              - last_reset
+              - max
+              - mean
+              - min
+              - state
+              - sum
+      required:
+        - statistic_ids
         - start_time
         - end_time
-    function:
-      type: native
-      name: get_statistics
-  ```
+  function:
+    type: native
+    name: get_statistics
+```
+
 </Accordion>
+
+### get_user_from_user_id
+
+Return the current Home Assistant user's display name from the conversation context.
+
+<Info>
+This function takes no model arguments. Despite the historical function name, the model does not supply a user ID; the native runtime uses the authenticated Home Assistant conversation context.
+</Info>
 
 ## Use Cases
 
 <CardGroup cols={2}>
   <Card title="Control Devices" icon="toggle-on">
-    Use `execute_service` to control lights, switches, and other devices
+    Use `execute_service` or `execute_service_single` for Home Assistant service calls
+  </Card>
+  <Card title="Broadcast" icon="bullhorn">
+    Use `send_broadcast` for queued Assist Satellite announcements
   </Card>
   <Card title="Create Automations" icon="robot">
-    Use `add_automation` to create automations through conversation
+    Use `add_automation` to create validated Home Assistant automations
   </Card>
   <Card title="Analyze History" icon="clock-rotate-left">
-    Use `get_history` to analyze entity state changes over time
+    Use `get_history` to inspect exposed entity state changes
   </Card>
   <Card title="Energy Monitoring" icon="bolt">
-    Use `get_energy` to retrieve energy dashboard configuration
+    Use `get_energy` to retrieve Energy dashboard configuration
   </Card>
   <Card title="Statistical Analysis" icon="chart-line">
-    Use `get_statistics` for long-term statistical data and trends
-  </Card>
-  <Card title="Monitor Events" icon="bell">
-    Combine functions to create monitoring and notification workflows
+    Use `get_statistics` for long-term statistics and trends
   </Card>
 </CardGroup>
 
