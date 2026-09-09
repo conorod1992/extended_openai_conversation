@@ -52,7 +52,7 @@ async def test_pending_call_and_retry_state_survive_real_store_restart(
         {"delay": {"hours": 1}, "entity_id": "light.kitchen"},
         _context(),
     )
-    assert first_arm.call_args_list == [((record.call_id,),)]
+    first_arm.assert_called_once_with(record.call_id)
 
     assert await first._async_retry_agent(record) is True
     retried = first._records[record.call_id]
