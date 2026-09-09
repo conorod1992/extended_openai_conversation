@@ -25,10 +25,26 @@ jobs:
 
           path = Path("custom_components/extended_openai_conversation_responses/conversation.py")
           text = path.read_text(encoding="utf-8")
-          old = "        successful: bool = True,\n    ) -> ConversationResult:"
-          new = "        successful: bool,\n    ) -> ConversationResult:"
+          old = """    def _local_rule_result(
+        self,
+        user_input: ConversationInput,
+        chat_log: ChatLog,
+        response: str,
+        *,
+        successful: bool = True,
+    ) -> ConversationResult:
+"""
+          new = """    def _local_rule_result(
+        self,
+        user_input: ConversationInput,
+        chat_log: ChatLog,
+        response: str,
+        *,
+        successful: bool,
+    ) -> ConversationResult:
+"""
           if text.count(old) != 1:
-              raise SystemExit(f"Expected exactly one local-rule signature, found {text.count(old)}")
+              raise SystemExit(f"Expected exactly one _local_rule_result signature, found {text.count(old)}")
           path.write_text(text.replace(old, new), encoding="utf-8")
           PY
 
