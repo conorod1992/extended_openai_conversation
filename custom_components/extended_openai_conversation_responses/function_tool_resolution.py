@@ -20,6 +20,7 @@ _INTEGRATION_TOOL_TYPES = frozenset(
         "temporary_memory",
         "knowledge",
         "archive",
+        "conversation_lifecycle",
         "function_group_loader",
     }
 )

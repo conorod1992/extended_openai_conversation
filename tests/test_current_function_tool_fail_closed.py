@@ -11,6 +11,9 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 from custom_components.extended_openai_conversation_responses.exceptions import (
     FunctionNotFound,
 )
+from custom_components.extended_openai_conversation_responses.function_tool_resolution import (
+    latest_function_tool_for_execution,
+)
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
 )
@@ -43,6 +46,23 @@ def _agent(current_tools: list[dict], *, groups: list[dict] | None = None):
         return_value=GuestCapabilityPolicy.unrestricted()
     )
     return agent
+
+
+def test_integration_lifecycle_tool_keeps_request_round_definition() -> None:
+    agent = _agent([])
+    lifecycle_tool = {
+        "spec": {
+            "name": "start_fresh_conversation",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {
+            "type": "conversation_lifecycle",
+            "operation": "start_fresh",
+        },
+    }
+
+    assert latest_function_tool_for_execution(agent, lifecycle_tool) is lifecycle_tool
+    agent._configured_function_tools_from_data.assert_not_called()
 
 
 async def test_deleted_tool_fails_closed_before_execution() -> None:
