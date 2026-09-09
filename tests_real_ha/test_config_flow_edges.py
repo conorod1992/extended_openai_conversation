@@ -136,24 +136,27 @@ async def test_reauth_unexpected_validation_error_can_retry_in_same_flow(
     entry.add_to_hass(hass)
     validate = AsyncMock(side_effect=[RuntimeError("validation exploded"), None])
 
-    with patch(f"{CONFIG_FLOW_MODULE}.validate_input", validate):
-        result = await entry.start_reauth_flow(hass)
-        flow_id = result["flow_id"]
-        result = await hass.config_entries.flow.async_configure(
-            flow_id, {CONF_API_KEY: "replacement"}
-        )
-        assert result["type"] is FlowResultType.FORM
-        assert result["errors"] == {"base": "unknown"}
-        assert entry.data[CONF_API_KEY] == "sk-config-flow-edge-test"
+    try:
+        with patch(f"{CONFIG_FLOW_MODULE}.validate_input", validate):
+            result = await entry.start_reauth_flow(hass)
+            flow_id = result["flow_id"]
+            result = await hass.config_entries.flow.async_configure(
+                flow_id, {CONF_API_KEY: "replacement"}
+            )
+            assert result["type"] is FlowResultType.FORM
+            assert result["errors"] == {"base": "unknown"}
+            assert entry.data[CONF_API_KEY] == "sk-config-flow-edge-test"
 
-        result = await hass.config_entries.flow.async_configure(
-            flow_id, {CONF_API_KEY: "replacement"}
-        )
+            result = await hass.config_entries.flow.async_configure(
+                flow_id, {CONF_API_KEY: "replacement"}
+            )
 
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reauth_successful"
-    assert entry.data[CONF_API_KEY] == "replacement"
-    assert validate.await_count == 2
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "reauth_successful"
+        assert entry.data[CONF_API_KEY] == "replacement"
+        assert validate.await_count == 2
+    finally:
+        await _unload_entry(hass, entry)
 
 
 @pytest.mark.asyncio
