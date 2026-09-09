@@ -135,7 +135,9 @@ async def test_public_conversation_keeps_concurrent_user_permissions_isolated(
             active.user_id if active is not None else None,
             {item["entity_id"] for item in agent._get_exposed_entities()},
         )
-        return agent._local_rule_result(user_input, chat_log, "done")
+        return agent._local_rule_result(
+            user_input, chat_log, "done", successful=True
+        )
 
     _install_local_provider_seam(monkeypatch, agent, local_seam)
 
@@ -198,7 +200,9 @@ async def test_public_conversation_enforces_control_permission_and_context(
             outcomes[user_id] = str(err)
         else:
             outcomes[user_id] = "allowed"
-        return agent._local_rule_result(user_input, chat_log, "done")
+        return agent._local_rule_result(
+            user_input, chat_log, "done", successful=True
+        )
 
     _install_local_provider_seam(monkeypatch, agent, local_seam)
 
@@ -246,7 +250,9 @@ async def test_public_conversation_missing_and_inactive_users_fail_closed(
         observed[user_input.context.user_id] = [
             item["entity_id"] for item in agent._get_exposed_entities()
         ]
-        return agent._local_rule_result(user_input, chat_log, "done")
+        return agent._local_rule_result(
+            user_input, chat_log, "done", successful=True
+        )
 
     _install_local_provider_seam(monkeypatch, agent, local_seam)
 
