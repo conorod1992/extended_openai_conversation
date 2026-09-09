@@ -2,13 +2,23 @@ import assert from "node:assert/strict";
 
 import {knowledgeAvailabilityMarkup} from "../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js";
 import {
+  diagnosticResultMarkup,
+  diagnosticStatusMeta,
   featureStatusMarkup,
   overviewAgentFeatureProjection,
 } from "../custom_components/extended_openai_conversation_responses/frontend/management-feature-status.js";
 
+const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+})[character]);
+
 const panel = {
   _data: {is_admin: true},
-  _e: (value) => String(value),
+  _e: escape,
 };
 
 const markup = featureStatusMarkup(panel, "Persistent memory", {
@@ -56,3 +66,26 @@ assert.equal(projected.memory_mode, "Automatic · Knowledge Available");
 
 const original = {memory_mode: "manual"};
 assert.equal(overviewAgentFeatureProjection(original), original);
+
+assert.deepEqual(diagnosticStatusMeta("Passed"), {label: "Passed", icon: "✓", className: "passed"});
+assert.deepEqual(diagnosticStatusMeta("Warning"), {label: "Warning", icon: "!", className: "warning"});
+assert.deepEqual(diagnosticStatusMeta("Failed"), {label: "Failed", icon: "×", className: "failed"});
+
+const diagnostics = diagnosticResultMarkup(panel, {
+  status: "Warning",
+  authentication_rejected: false,
+  checks: [
+    {name: "Authentication", status: "Passed", message: "API client is available"},
+    {name: "Exposed entities", status: "Warning", message: "0"},
+    {name: "Configuration", status: "Failed", message: "Unsafe <script>alert('x')</script>"},
+  ],
+});
+assert.match(diagnostics, /diagnostic-summary warning/);
+assert.match(diagnostics, /Authentication/);
+assert.match(diagnostics, /API client is available/);
+assert.match(diagnostics, /diagnostic-check warning/);
+assert.match(diagnostics, /diagnostic-check failed/);
+assert.match(diagnostics, /Show raw diagnostic data/);
+assert.match(diagnostics, /&lt;script&gt;/);
+assert.doesNotMatch(diagnostics, /<script>/);
+assert.match(diagnostics, /authentication_rejected/);
