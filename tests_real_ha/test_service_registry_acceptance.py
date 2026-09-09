@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from probatio.error import MultipleInvalid
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
@@ -172,11 +173,11 @@ async def test_memory_service_schema_and_manager_failures_surface_through_regist
     user.add_to_hass(hass)
     base = {"config_entry": entry.entry_id, "agent_id": subentry.subentry_id}
 
-    with pytest.raises(HomeAssistantError):
+    with pytest.raises(MultipleInvalid):
         await _response_service_call(
             hass,
             SERVICE_MEMORY_LIST,
-            {**base, "limit": 0},
+            {**base, "limit": 101},
             user_id=user.id,
         )
 
@@ -231,6 +232,8 @@ async def test_change_config_service_enforces_admin_and_updates_entry(
     )
     assert entry.data[CONF_ORGANIZATION] == "acceptance-org"
     provider_validation.assert_awaited_once()
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
 
 
 @pytest.mark.asyncio
@@ -423,7 +426,7 @@ async def test_query_image_service_rejects_malformed_images_before_provider_call
     entry = _entry()
     await _setup_entry(hass, entry)
 
-    with pytest.raises(HomeAssistantError):
+    with pytest.raises(MultipleInvalid):
         await _response_service_call(
             hass,
             SERVICE_QUERY_IMAGE,
