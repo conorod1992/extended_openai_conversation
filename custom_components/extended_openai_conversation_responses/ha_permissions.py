@@ -11,6 +11,7 @@ from typing import Any
 from homeassistant.auth import EVENT_USER_ADDED, EVENT_USER_REMOVED, EVENT_USER_UPDATED
 from homeassistant.auth.permissions import filter_entity_ids_by_permission
 from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
+from homeassistant.components.conversation import ConversationInput, ConversationResult
 from homeassistant.core import Context, Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 
@@ -52,8 +53,10 @@ def _install_request_context_binding() -> None:
         return
 
     @wraps(current)
-    async def process_with_ha_context(entity: Any, user_input: Any) -> Any:
-        with bind_active_ha_context(getattr(user_input, "context", None)):
+    async def process_with_ha_context(
+        entity: ExtendedOpenAIAgentEntity, user_input: ConversationInput
+    ) -> ConversationResult:
+        with bind_active_ha_context(user_input.context):
             return await current(entity, user_input)
 
     process_with_ha_context._extended_openai_ha_context = True  # type: ignore[attr-defined]
