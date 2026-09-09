@@ -193,7 +193,8 @@ async def test_failed_local_rule_is_archived_and_recorded_as_failed() -> None:
             self._continuity = Continuity()
             self.archived: list[bool] = []
 
-        def _local_rule_result(self, *_args: Any) -> str:
+        def _local_rule_result(self, *_args: Any, successful: bool) -> str:
+            assert successful is False
             return "result"
 
         async def _async_archive_turn(self, *_args: Any, successful: bool) -> None:

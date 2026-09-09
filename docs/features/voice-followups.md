@@ -4,6 +4,10 @@ Voice follow-ups control whether a compatible Home Assistant voice client listen
 
 This is configured through **Continue conversation** on the conversation agent.
 
+This setting only controls responses handled by ExtendedOpenAI. Home Assistant sentence triggers and native local handling may intercept a request before ExtendedOpenAI is invoked; their follow-up behavior remains controlled by Home Assistant.
+
+Always also applies to successful local intents and consumed Request Rules inside ExtendedOpenAI. Failed local handling does not request follow-up listening. These local responses keep listening disabled in HA Default and Conditional modes; Conditional requires an actual model continuation decision.
+
 ## Modes
 
 ### HA Default
