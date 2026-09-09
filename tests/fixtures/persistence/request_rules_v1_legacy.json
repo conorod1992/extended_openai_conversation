@@ -1,0 +1,32 @@
+{
+  "defaults": {
+    "word_forms": true,
+    "wording_alternatives": true,
+    "fuzzy": false,
+    "fuzzy_threshold": 90
+  },
+  "rules": [
+    {
+      "id": "legacy-routing-rule",
+      "name": "Think carefully",
+      "enabled": true,
+      "phrases": ["think carefully"],
+      "match_type": "equals",
+      "action_type": "model_routing",
+      "action": {
+        "model": "gpt-5",
+        "reasoning_effort": "high",
+        "scope": "request",
+        "reset": false
+      },
+      "matching_behavior": "defaults",
+      "matching": {
+        "word_forms": true,
+        "wording_alternatives": true,
+        "fuzzy": false,
+        "fuzzy_threshold": 90
+      },
+      "order": 0
+    }
+  ]
+}

@@ -393,7 +393,8 @@ def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
         scope_id = values.get("scope_id")
         values["owner_scope_id"] = (
             scope_id
-            if isinstance(scope_id, str) and scope_id.startswith("user:")
+            if isinstance(scope_id, str)
+            and (scope_id.startswith("user:") or scope_id.startswith("shared:"))
             else None
         )
     return TemporaryMemoryRecord(**values)

@@ -1,0 +1,24 @@
+{
+  "records": [
+    {
+      "memory_id": "temp-user",
+      "scope_id": "user:alice",
+      "content": "Alice is temporarily using the kitchen.",
+      "category": "context",
+      "source": "automatic",
+      "expires_at": "2099-01-01T00:00:00+00:00",
+      "created_at": "2026-01-01T00:00:00+00:00",
+      "updated_at": "2026-01-01T00:00:00+00:00"
+    },
+    {
+      "memory_id": "temp-shared",
+      "scope_id": "shared:household",
+      "content": "A shared temporary household fact.",
+      "category": "context",
+      "source": "automatic",
+      "expires_at": "2099-01-01T00:00:00+00:00",
+      "created_at": "2026-01-01T00:00:00+00:00",
+      "updated_at": "2026-01-01T00:00:00+00:00"
+    }
+  ]
+}

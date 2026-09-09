@@ -1,0 +1,61 @@
+{
+  "legacy_totals": {
+    "conversation_count": 3,
+    "api_request_count": 4,
+    "successful_request_count": 3,
+    "failed_request_count": 1,
+    "input_tokens": 100,
+    "output_tokens": 50,
+    "total_tokens": 150,
+    "cached_input_tokens": 10,
+    "reasoning_tokens": 5,
+    "details": {"input_audio_tokens": 2}
+  },
+  "daily": {
+    "totals": {
+      "conversation_count": 4,
+      "api_request_count": "corrupt",
+      "successful_request_count": 2,
+      "failed_request_count": 1,
+      "input_tokens": 120,
+      "output_tokens": 60,
+      "total_tokens": 180,
+      "cached_input_tokens": false,
+      "reasoning_tokens": 6,
+      "details": {
+        "input_audio_tokens": 3,
+        "bad": "not-an-integer",
+        "zero": 0
+      }
+    },
+    "days": ["corrupt-container"]
+  },
+  "details": {
+    "requests": [
+      {
+        "request_id": "request-good",
+        "run_id": "run-good",
+        "timestamp": "2026-09-01T10:00:00+00:00",
+        "agent_subentry_id": "agent-1",
+        "provider": "openai",
+        "model": "gpt-test",
+        "api_mode": "responses",
+        "successful": true,
+        "duration_ms": 10
+      },
+      {"request_id": "broken"}
+    ],
+    "runs": [
+      {
+        "run_id": "run-good",
+        "started_at": "2026-09-01T10:00:00+00:00",
+        "completed_at": "2026-09-01T10:00:01+00:00",
+        "duration_ms": 1000,
+        "agent_subentry_id": "agent-1",
+        "home_assistant_conversation_id": "conversation-1",
+        "source_device_id": "satellite-1"
+      },
+      {"run_id": "broken"}
+    ]
+  }
+}

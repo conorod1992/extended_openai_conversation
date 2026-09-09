@@ -1,0 +1,23 @@
+{
+  "sources": [
+    {
+      "source_id": "source-good",
+      "title": "Heating reference",
+      "description": "A valid source surrounded by damaged records.",
+      "content": "Celsius is the configured temperature unit.",
+      "created_at": "2026-01-01T00:00:00+00:00",
+      "updated_at": "2026-01-01T00:00:00+00:00",
+      "enabled": true
+    },
+    {"source_id": "broken"},
+    {
+      "source_id": "source-good",
+      "title": "Duplicate",
+      "description": "Must not replace the first source.",
+      "content": "duplicate",
+      "created_at": "2026-01-02T00:00:00+00:00",
+      "updated_at": "2026-01-02T00:00:00+00:00",
+      "enabled": true
+    }
+  ]
+}

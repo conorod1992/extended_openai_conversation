@@ -1,0 +1,12 @@
+{
+  "sources": [
+    {
+      "source_id": "legacy-source",
+      "title": "Heating reference",
+      "description": "Legacy source before the enabled flag existed.",
+      "content": "The heating reference uses Celsius.",
+      "created_at": "2025-01-01T00:00:00+00:00",
+      "updated_at": "2025-01-01T00:00:00+00:00"
+    }
+  ]
+}
