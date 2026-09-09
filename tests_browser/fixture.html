@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Extended OpenAI browser fixture</title>
+    <style>
+      :root {
+        --primary-text-color: #111;
+        --secondary-text-color: #555;
+        --primary-background-color: #fff;
+        --secondary-background-color: #f5f5f5;
+        --card-background-color: #fff;
+        --divider-color: #ddd;
+        --primary-color: #03a9f4;
+        --text-primary-color: #fff;
+        --success-color: #0f9d58;
+        --warning-color: #b26a00;
+        --error-color: #db4437;
+      }
+      body { margin: 0; font-family: system-ui, sans-serif; }
+    </style>
+  </head>
+  <body>
+    <script type="module">
+      const params = new URLSearchParams(window.location.search);
+      const requestedRoute = params.get("route") || "guide";
+      const isAdmin = params.get("admin") !== "0";
+      const partialOverview = params.get("partial") === "1";
+
+      history.replaceState({}, "", `/extended-openai/${requestedRoute}`);
+
+      const managementType = "extended_openai_conversation_responses/management";
+      const broadcastType = "extended_openai_conversation_responses/broadcast";
+      const calls = [];
+      const agent = {
+        entry_id: "entry-1",
+        subentry_id: "agent-1",
+        title: "Jarvis",
+        provider: "OpenAI",
+        model: "gpt-5-mini",
+        function_count: 3,
+        function_group_count: 1,
+        memory_mode: "Manual",
+        memory_count: 4,
+        knowledge_source_count: 2,
+        archive_enabled: true,
+        guest_mode: {
+          state: "inactive",
+          has_home_assistant_exclusions: true,
+        },
+      };
+      const scopes = [
+        {
+          scope_id: "user:test-user",
+          scope_type: "user",
+          display_name: "Test User",
+          is_current_user: true,
+          memory_count: 4,
+          conversation_count: 2,
+        },
+      ];
+
+      const hass = {
+        config: {time_zone: "Europe/Dublin"},
+        callWS: async (message) => {
+          calls.push(structuredClone(message));
+
+          if (message.type === managementType && message.action === "agents" && !message.section) {
+            return {is_admin: isAdmin, agents: [agent], scopes};
+          }
+          if (message.type === broadcastType && message.action === "snapshot") {
+            return {
+              enabled: false,
+              can_manage: isAdmin,
+              catalog: {satellites: [], areas: []},
+              history: [],
+            };
+          }
+          if (message.type !== managementType) return {};
+
+          const key = `${message.section || ""}/${message.action || ""}`;
+          if (partialOverview && key === "knowledge/list") {
+            throw new Error("Knowledge fixture unavailable");
+          }
+
+          const responses = {
+            "usage/summary": {
+              today: {total_tokens: 1234},
+              month: {total_tokens: 5678},
+              lifetime: {total_tokens: 9999},
+            },
+            "conversations/settings": {
+              archive_enabled: true,
+              archive_retention_days: 30,
+            },
+            "memories/list": {memories: []},
+            "knowledge/list": {sources: []},
+            "scopes/catalog": {scopes},
+            "guest_mode/get": {
+              config: {},
+              state: "inactive",
+              legacy_policy: false,
+            },
+            "configuration/get": {
+              title: "Jarvis",
+              config: {},
+              options: {},
+              model_capabilities: {},
+            },
+          };
+          return responses[key] ?? {};
+        },
+      };
+
+      window.browserHarness = {calls, hass};
+      window.addEventListener("error", (event) => {
+        window.browserHarness.windowErrors ||= [];
+        window.browserHarness.windowErrors.push(String(event.error || event.message));
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        window.browserHarness.rejections ||= [];
+        window.browserHarness.rejections.push(String(event.reason));
+      });
+
+      await import("/custom_components/extended_openai_conversation_responses/frontend/management-panel.js");
+      const panel = document.createElement("extended-openai-management-panel");
+      document.body.append(panel);
+      panel.hass = hass;
+      window.browserHarness.panel = panel;
+    </script>
+  </body>
+</html>
