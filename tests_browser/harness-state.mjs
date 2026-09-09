@@ -73,6 +73,13 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
 
   async function call(message) {
     const key = `${message.section || ""}/${message.action || ""}`;
+    if (key === "overview/summary") {
+      return {
+        usage: {today: {total_tokens: 1234}, month: {total_tokens: 5678}, lifetime: {total_tokens: 9999}},
+        conversations: {archive_enabled: true, archive_retention_days: 30},
+        load_errors: partialOverview ? [{key: "knowledge", label: "Knowledge", message: "Knowledge fixture unavailable"}] : [],
+      };
+    }
     if (key === "usage/summary") return {today: {total_tokens: 1234}, month: {total_tokens: 5678}, lifetime: {total_tokens: 9999}};
     if (key === "conversations/settings") return {archive_enabled: true, archive_retention_days: 30, archive_model_search_enabled: false};
     if (key === "knowledge/list") { if (partialOverview) throw new Error("Knowledge fixture unavailable"); return {sources: []}; }
@@ -86,7 +93,7 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
       if (failConfigurationOnce && !state.failedConfigurationOnce) { state.failedConfigurationOnce = true; save(); throw new Error("Fixture rejected configuration save once"); }
       state.configuration = {...state.configuration, title: message.title, revision: state.configuration.revision + 1, config: clone(message.config)};
       state.agent.title = message.title; state.agent.model = message.config.chat_model; counts(); save();
-      return clone(state.configuration);
+      return {valid: true, errors: {}, ...clone(state.configuration), agent: clone(state.agent)};
     }
 
     if (key === "memories/list") return {memories: clone(state.memories.filter((m) => !message.scope_id || m.scope_id === message.scope_id)), total: state.memories.length};
