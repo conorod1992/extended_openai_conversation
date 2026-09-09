@@ -28,6 +28,9 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemory,
 )
+from custom_components.extended_openai_conversation_responses.temporary_memory_performance import (
+    install_temporary_memory_read_fast_path,
+)
 from custom_components.extended_openai_conversation_responses.usage import UsageManager
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "persistence"
@@ -152,6 +155,7 @@ async def test_knowledge_mixed_corruption_preserves_unique_valid_source() -> Non
 
 async def test_temporary_memory_pre_owner_fixture_preserves_legacy_ownership() -> None:
     """Pre-owner records receive only the safe owner implied by their old scope."""
+    install_temporary_memory_read_fast_path()
     memory = TemporaryMemory(
         FixtureStorage(_fixture("temporary_memory_pre_owner.json"))
     )
@@ -168,9 +172,11 @@ async def test_temporary_memory_pre_owner_fixture_preserves_legacy_ownership() -
     )
     assert [record.memory_id for record in shared] == ["temp-shared"]
     assert shared[0].owner_scope_id == "shared:household"
-    # A migrated shared record cannot be claimed by a personal owner.
-    for owner in ("user:alice", "user:bob"):
-        assert await memory.async_list("shared:household", owner_scope_id=owner) == []
+    # Runtime reads follow the resolved owner across conversation scopes. Alice
+    # retains her own record, but neither personal owner can claim temp-shared.
+    for owner, expected in (("user:alice", ["temp-user"]), ("user:bob", [])):
+        records = await memory.async_list("shared:household", owner_scope_id=owner)
+        assert [record.memory_id for record in records] == expected
 
 
 async def test_request_rules_v1_fixture_migrates_and_normalizes_once() -> None:

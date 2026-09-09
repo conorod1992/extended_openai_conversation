@@ -137,7 +137,7 @@ def _totals_from_storage(stored: dict[str, Any] | None) -> UsageTotals:
     if not isinstance(values_source, dict):
         return UsageTotals()
     allowed = {item.name for item in fields(UsageTotals)}
-    values = {
+    values: dict[str, Any] = {
         key: _integer(values_source[key])
         for key in allowed - {"details"}
         if key in values_source
