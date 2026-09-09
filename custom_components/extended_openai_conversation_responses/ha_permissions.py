@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from functools import wraps
 from typing import Any
 
 from homeassistant.auth import EVENT_USER_ADDED, EVENT_USER_REMOVED, EVENT_USER_UPDATED
@@ -42,8 +43,31 @@ def get_active_ha_context() -> Context | None:
     return _ACTIVE_HA_CONTEXT.get()
 
 
+def _install_request_context_binding() -> None:
+    """Bind every effective conversation request to its originating HA Context."""
+    from .conversation import ExtendedOpenAIAgentEntity
+
+    current = ExtendedOpenAIAgentEntity._async_process
+    if getattr(current, "_extended_openai_ha_context", False):
+        return
+
+    @wraps(current)
+    async def process_with_ha_context(entity: Any, user_input: Any) -> Any:
+        with bind_active_ha_context(getattr(user_input, "context", None)):
+            return await current(entity, user_input)
+
+    process_with_ha_context._extended_openai_ha_context = True  # type: ignore[attr-defined]
+    ExtendedOpenAIAgentEntity._async_process = process_with_ha_context  # type: ignore[method-assign]
+
+
 async def async_setup_ha_permissions(hass: HomeAssistant) -> None:
     """Cache user objects needed by the synchronous prompt exposure path."""
+    # This setup runs after the integration's other runtime installers. Wrap the
+    # final effective request entry point so every nested helper sees the same real
+    # Home Assistant caller identity, while ContextVar isolation keeps concurrent
+    # requests independent.
+    _install_request_context_binding()
+
     cache: dict[str, Any] = hass.data.setdefault(_USER_CACHE_KEY, {})
     users = await hass.auth.async_get_users()
     cache.clear()
