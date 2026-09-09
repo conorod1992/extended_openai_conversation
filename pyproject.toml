@@ -44,16 +44,19 @@ force-sort-within-sections = true
 combine-as-imports = true
 split-on-trailing-comma = false
 
-[tool.ruff.lint.flake8-import-conventions.extend-aliases]
-voluptuous = "vol"
-"homeassistant.helpers.config_validation" = "cv"
-"homeassistant.helpers.device_registry" = "dr"
-"homeassistant.helpers.entity_registry" = "er"
-"homeassistant.util.dt" = "dt_util"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.mutmut]
+source_paths = ["custom_components/extended_openai_conversation_responses/"]
+only_mutate = [
+    "custom_components/extended_openai_conversation_responses/function_call_budget.py",
+    "custom_components/extended_openai_conversation_responses/function_tool_resolution.py",
+    "custom_components/extended_openai_conversation_responses/function_tool_recovery.py",
+    "custom_components/extended_openai_conversation_responses/parallel_tool_execution.py",
+]
+pytest_add_cli_args_test_selection = ["tests/"]
 
 [tool.mypy]
 python_version = "3.14"
