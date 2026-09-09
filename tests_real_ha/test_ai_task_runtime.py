@@ -17,7 +17,7 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er, llm
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUser
 
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
@@ -326,7 +326,9 @@ async def test_caller_llm_tool_executes_with_the_original_home_assistant_context
     tool = ContextProbeTool()
     caller_api = CallerAPI(hass=hass, id="runtime-probe", name="Runtime Probe")
     caller_api.tools = [tool]
-    context = Context(user_id="ai-task-runtime-user")
+    user = MockUser(id="ai-task-runtime-user", name="AI Task Runtime User")
+    user.add_to_hass(hass)
+    context = Context(user_id=user.id)
 
     result = await ai_task.async_generate_data(
         hass,
@@ -344,7 +346,7 @@ async def test_caller_llm_tool_executes_with_the_original_home_assistant_context
     assert tool_input.tool_name == "context_probe"
     assert tool_input.tool_args == {"value": "from-model"}
     assert llm_context.context is context
-    assert llm_context.context.user_id == "ai-task-runtime-user"
+    assert llm_context.context.user_id == user.id
     second_messages = _flatten_text(client.completions.calls[1]["messages"])
     assert "from-model" in second_messages
 
