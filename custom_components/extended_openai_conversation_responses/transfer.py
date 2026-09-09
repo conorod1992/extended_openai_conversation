@@ -18,18 +18,18 @@ from . import backup
 from .agent_config import (
     agent_config_snapshot,
     configured_function_tools_from_data,
-    function_tool_enabled,
     normalize_agent_config,
     preserve_legacy_guest_policy,
     validate_agent_title,
 )
-from .const import AGENT_CONFIG_EXPORT_VERSION, DOMAIN, SERVICE_CALL_FUNCTION
+from .const import AGENT_CONFIG_EXPORT_VERSION
 from .conversation_archive import (
     ArchiveSession,
     ArchiveTurn,
     ConversationArchive,
     async_get_archive,
 )
+from .function_dependency_integrity import async_validate_request_rule_functions
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
 from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
 from .memory import MemoryRecord, PersistentMemory, async_get_memory
@@ -700,53 +700,23 @@ def inspect_transfer(value: Any, target_agent_id: str) -> PreparedTransfer:
     )
 
 
-def _request_rule_function_dependencies(
-    request_rules: Mapping[str, Any], config: Mapping[str, Any]
+async def _async_validate_request_rule_function_dependencies(
+    hass: HomeAssistant,
+    request_rules: Mapping[str, Any],
+    config: Mapping[str, Any],
 ) -> None:
-    """Reject a combined target whose Request Rules reference unavailable Functions."""
+    """Apply canonical Request Rule Function validation to one combined target."""
     tools = configured_function_tools_from_data(config)
-    enabled = {
-        tool["spec"]["name"]: tool for tool in tools if function_tool_enabled(tool)
-    }
-    service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
     for rule in request_rules.get("rules", []):
         if not isinstance(rule, Mapping):
             continue
-        for action in rule.get("action", {}).get("actions", []):
-            if not isinstance(action, Mapping):
-                continue
-            if action.get("action", action.get("service")) != service_action:
-                continue
-            data = action.get("data")
-            if not isinstance(data, Mapping) or not isinstance(
-                data.get("function"), str
-            ):
-                raise backup.BackupError(
-                    f"Request Rule `{rule.get('name', rule.get('id', 'unnamed'))}` has an invalid Function Tool action"
-                )
-            name = data["function"]
-            tool = enabled.get(name)
-            if tool is None:
-                raise backup.BackupError(
-                    f"Request Rule `{rule.get('name', rule.get('id', 'unnamed'))}` references unavailable Function Tool `{name}`"
-                )
-            arguments = data.get("arguments", {})
-            if not isinstance(arguments, Mapping):
-                raise backup.BackupError(
-                    f"Request Rule Function Tool `{name}` arguments must be an object"
-                )
-            parameters = tool.get("spec", {}).get("parameters", {})
-            required = (
-                parameters.get("required", [])
-                if isinstance(parameters, Mapping)
-                else []
-            )
-            missing = set(required) - set(arguments)
-            if missing:
-                raise backup.BackupError(
-                    f"Request Rule Function Tool `{name}` needs input: "
-                    + ", ".join(sorted(missing))
-                )
+        try:
+            await async_validate_request_rule_functions(hass, rule, tools)
+        except (HomeAssistantError, ValueError) as err:
+            label = rule.get("name", rule.get("id", "unnamed"))
+            raise backup.BackupError(
+                f"Request Rule `{label}` has an invalid Function Tool action: {err}"
+            ) from err
 
 
 def _prepared_restore_from_selection(
@@ -850,7 +820,6 @@ def _prepared_restore_from_selection(
         created_at=imported.created_at or current.created_at,
         integration_version=imported.integration_version or current.integration_version,
     )
-    _request_rule_function_dependencies(target.request_rules, target.config)
     return target, tuple(preserved), tuple(missing)
 
 
@@ -885,6 +854,9 @@ async def async_materialize_restore(
     current = await _current_snapshot(hass, entry, subentry)
     target, preserved, missing = _prepared_restore_from_selection(
         current, prepared, selected
+    )
+    await _async_validate_request_rule_function_dependencies(
+        hass, target.request_rules, target.config
     )
     preview = prepared.summary()
     preview.update(
