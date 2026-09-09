@@ -72,8 +72,8 @@ async def test_native_service_batch_limit_rejects_before_execution(
     hass.services.async_call.assert_not_called()
 
 
-def test_provider_schema_adds_native_batch_limit_without_mutating_saved_tool() -> None:
-    """Legacy saved tools learn the runtime cap only in the provider-facing copy."""
+def test_provider_schema_does_not_invent_native_batch_limit() -> None:
+    """Provider preparation must leave an authored native schema unchanged."""
     tool = {
         "spec": {
             "name": "execute_service",
@@ -97,10 +97,7 @@ def test_provider_schema_adds_native_batch_limit_without_mutating_saved_tool() -
 
     assert tool == original
     assert "maxItems" not in tool["spec"]["parameters"]["properties"]["list"]
-    assert (
-        prepared["spec"]["parameters"]["properties"]["list"]["maxItems"]
-        == MAX_NATIVE_SERVICE_ACTIONS
-    )
+    assert prepared["spec"] == original["spec"]
 
 
 def test_provider_schema_preserves_stricter_native_batch_limit() -> None:

@@ -5,6 +5,26 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from .resource_limits import MAX_NATIVE_SERVICE_ACTIONS
+
+_SERVICE_DATA_DESCRIPTION = (
+    "Any valid Home Assistant service data accepted by the selected service. Include "
+    "a target such as entity_id, device_id, area_id, floor_id, or label_id. "
+    "Service-specific fields are also allowed, for example brightness_pct, "
+    "color_name, color_temp_kelvin, rgb_color, temperature, hvac_mode, transition, "
+    "effect, or volume_level."
+)
+_STATISTICS_PERIODS = ["5minute", "hour", "day", "week", "month", "year"]
+_STATISTICS_TYPES = [
+    "change",
+    "last_reset",
+    "max",
+    "mean",
+    "min",
+    "state",
+    "sum",
+]
+
 
 def _preset(
     label: str,
@@ -12,6 +32,8 @@ def _preset(
     description: str,
     properties: dict[str, Any] | None = None,
     required: list[str] | None = None,
+    *,
+    strict: bool | None = None,
 ) -> dict[str, Any]:
     parameters: dict[str, Any] = {
         "type": "object",
@@ -19,15 +41,18 @@ def _preset(
     }
     if required:
         parameters["required"] = required
+    spec: dict[str, Any] = {
+        "name": implementation,
+        "description": description,
+        "parameters": parameters,
+    }
+    if strict is not None:
+        spec["strict"] = strict
     return {
         "label": label,
         "implementation": implementation,
         "tool": {
-            "spec": {
-                "name": implementation,
-                "description": description,
-                "parameters": parameters,
-            },
+            "spec": spec,
             "function": {"type": "native", "name": implementation},
         },
     }
@@ -49,7 +74,12 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
     _preset(
         "Send broadcast",
         "send_broadcast",
-        "Send a spoken Broadcast announcement to an Assist Satellite destination or the whole home. Use a natural Home Assistant area, device, floor, label, or satellite name as destination. Busy satellites are queued rather than interrupted.",
+        (
+            "Send a spoken Broadcast announcement to an Assist Satellite destination "
+            "or the whole home. Use a natural Home Assistant area, device, floor, "
+            "label, or satellite name as destination. Busy satellites are queued "
+            "rather than interrupted."
+        ),
         {
             "message": {
                 "type": "string",
@@ -57,11 +87,17 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
             },
             "destination": {
                 "type": "string",
-                "description": "Target area, device, floor, label, or Assist Satellite name. Omit only when whole_home is true.",
+                "description": (
+                    "Target area, device, floor, label, or Assist Satellite name. "
+                    "Omit only when whole_home is true."
+                ),
             },
             "whole_home": {
                 "type": "boolean",
-                "description": "Send to every announcement-capable Assist Satellite except the originating satellite.",
+                "description": (
+                    "Send to every announcement-capable Assist Satellite except the "
+                    "originating satellite."
+                ),
             },
         },
         ["message"],
@@ -69,10 +105,15 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
     _preset(
         "Execute services",
         "execute_service",
-        "Execute one or more Home Assistant services on exposed entities, devices, or areas.",
+        (
+            "Execute one or more Home Assistant services on exposed targets. Supply "
+            "service-specific fields inside service_data when the requested action "
+            "needs them."
+        ),
         {
             "list": {
                 "type": "array",
+                "maxItems": MAX_NATIVE_SERVICE_ACTIONS,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -86,7 +127,8 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
                         },
                         "service_data": {
                             "type": "object",
-                            "description": "Service data, including an entity_id, device_id, or area_id target.",
+                            "description": _SERVICE_DATA_DESCRIPTION,
+                            "additionalProperties": True,
                         },
                     },
                     "required": ["domain", "service", "service_data"],
@@ -94,11 +136,16 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
             }
         },
         ["list"],
+        strict=False,
     ),
     _preset(
         "Execute one service",
         "execute_service_single",
-        "Execute one Home Assistant service on an exposed entity, device, or area.",
+        (
+            "Execute one Home Assistant service on an exposed target. Supply "
+            "service-specific fields inside service_data when the requested action "
+            "needs them."
+        ),
         {
             "domain": {
                 "type": "string",
@@ -107,10 +154,12 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
             "service": {"type": "string", "description": "The service name to call."},
             "service_data": {
                 "type": "object",
-                "description": "Service data, including an entity_id, device_id, or area_id target.",
+                "description": _SERVICE_DATA_DESCRIPTION,
+                "additionalProperties": True,
             },
         },
         ["domain", "service", "service_data"],
+        strict=False,
     ),
     _preset(
         "Get entity history",
@@ -128,7 +177,9 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
             },
             "end_time": {
                 "type": "string",
-                "description": "Optional ISO 8601 end time.",
+                "description": (
+                    "Optional ISO 8601 end time; defaults to one day after start_time."
+                ),
             },
             "include_start_time_state": {"type": "boolean"},
             "significant_changes_only": {"type": "boolean"},
@@ -152,18 +203,35 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
                 "items": {"type": "string"},
                 "minItems": 1,
                 "maxItems": 100,
-                "description": "Statistic IDs to retrieve. Entity-backed IDs must be exposed to Assist; external integration statistics are also supported.",
+                "description": (
+                    "Statistic IDs to retrieve. Entity-backed IDs must be exposed to "
+                    "Assist; external integration statistics are also supported."
+                ),
             },
             "start_time": {"type": "string", "description": "ISO 8601 start time."},
             "end_time": {"type": "string", "description": "ISO 8601 end time."},
             "period": {
                 "type": "string",
-                "enum": ["5minute", "hour", "day", "month"],
+                "enum": _STATISTICS_PERIODS,
+                "description": "Aggregation period; defaults to day.",
             },
-            "units": {"type": "object"},
-            "types": {"type": "array", "items": {"type": "string"}},
+            "units": {
+                "type": "object",
+                "description": (
+                    "Optional unit conversions keyed by Home Assistant unit class, "
+                    "for example power, energy, or temperature. Values are Home "
+                    "Assistant unit strings."
+                ),
+                "additionalProperties": {"type": "string"},
+            },
+            "types": {
+                "type": "array",
+                "items": {"type": "string", "enum": _STATISTICS_TYPES},
+                "description": "Statistic value types to return; defaults to change.",
+            },
         },
         ["statistic_ids", "start_time", "end_time"],
+        strict=False,
     ),
     _preset(
         "Get current user",
