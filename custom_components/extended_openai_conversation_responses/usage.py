@@ -130,18 +130,22 @@ def _value(source: Any, key: str) -> Any:
 
 
 def _totals_from_storage(stored: dict[str, Any] | None) -> UsageTotals:
-    """Load compatible persisted totals without silently accepting corruption."""
-    if not stored:
+    """Salvage compatible persisted totals, neutralizing malformed counters."""
+    if not isinstance(stored, dict):
         return UsageTotals()
     values_source = stored.get("totals", stored)
     if not isinstance(values_source, dict):
-        raise ValueError("usage totals storage is invalid")
+        return UsageTotals()
     allowed = {item.name for item in fields(UsageTotals)}
-    values = {key: values_source[key] for key in allowed if key in values_source}
-    if isinstance(values.get("details"), dict):
+    values = {
+        key: _integer(values_source[key])
+        for key in allowed - {"details"}
+        if key in values_source
+    }
+    if isinstance(values_source.get("details"), dict):
         values["details"] = {
             str(key): _integer(value)
-            for key, value in values["details"].items()
+            for key, value in values_source["details"].items()
             if _integer(value)
         }
     return UsageTotals(**values)
@@ -234,16 +238,17 @@ class UsageManager:
             if self._daily_storage is not None:
                 daily_data = await self._daily_storage.async_load() or {}
                 if not isinstance(daily_data, dict):
-                    raise ValueError("daily usage storage is invalid")
+                    daily_data = {}
 
             if "totals" in daily_data:
                 staged_totals = _totals_from_storage({"totals": daily_data["totals"]})
             else:
                 staged_totals = _totals_from_storage(await self._storage.async_load())
 
+            days = daily_data.get("days")
             staged_daily = {
                 str(key): deepcopy(value)
-                for key, value in daily_data.get("days", {}).items()
+                for key, value in (days if isinstance(days, dict) else {}).items()
                 if isinstance(value, dict)
             }
             staged_requests: list[UsageRequest] = []
@@ -251,13 +256,15 @@ class UsageManager:
             if self._detail_storage is not None:
                 detail_data = await self._detail_storage.async_load() or {}
                 if not isinstance(detail_data, dict):
-                    raise ValueError("usage detail storage is invalid")
-                for raw in detail_data.get("requests", []):
+                    detail_data = {}
+                requests = detail_data.get("requests")
+                for raw in requests if isinstance(requests, list) else []:
                     try:
                         staged_requests.append(UsageRequest(**raw))
                     except TypeError, ValueError:
                         continue
-                for raw in detail_data.get("runs", []):
+                runs = detail_data.get("runs")
+                for raw in runs if isinstance(runs, list) else []:
                     try:
                         staged_runs.append(UsageRun(**raw))
                     except TypeError, ValueError:

@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
 )
@@ -20,8 +22,8 @@ from custom_components.extended_openai_conversation_responses.memory import (
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
     DEFAULT_WORDING_GROUPS,
-    RequestRuleStore,
     RequestRules,
+    RequestRuleStore,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemory,
@@ -88,7 +90,7 @@ async def test_memory_v0_fixture_migrates_with_v2_defaults() -> None:
     assert records[0].subject is None
     assert records[0].key is None
     assert records[0].valid_from is None
-    assert records[0].last_confirmed_at is None
+    assert records[0].last_confirmed_at == "2025-01-02T03:04:05+00:00"
 
 
 async def test_memory_mixed_corruption_self_heals_without_losing_good_record() -> None:
@@ -164,6 +166,9 @@ async def test_temporary_memory_pre_owner_fixture_preserves_legacy_ownership() -
     shared = await memory.async_list("shared:household")
     assert [record.memory_id for record in shared] == ["temp-shared"]
     assert shared[0].owner_scope_id is None
+    # An unresolved legacy shared record cannot become a personal record.
+    for owner in ("user:alice", "user:bob"):
+        assert await memory.async_list("shared:household", owner_scope_id=owner) == []
 
 
 async def test_request_rules_v1_fixture_migrates_and_normalizes_once() -> None:
@@ -251,3 +256,48 @@ async def test_usage_corruption_salvages_valid_totals_and_detail_records() -> No
     assert manager.daily == {}
     assert [request.request_id for request in manager.requests] == ["request-good"]
     assert [run.run_id for run in manager.runs] == ["run-good"]
+
+
+@pytest.mark.parametrize("malformed", [None, 7, "broken", ["broken"]])
+async def test_archive_container_shapes_are_isolated(malformed: Any) -> None:
+    fixture = _fixture("archive_mixed_corrupt.json")
+    fixture["metadata"]["active"] = {"bad": []}
+    fixture["partitions"]["2026-09"] = {"turns": malformed}
+    archive = ConversationArchive(ArchiveFixtureStorage(fixture), "agent-1")
+    await archive.async_initialize()
+    assert archive.stats()["session_count"] == 1
+    assert archive.stats()["turn_count"] == 0
+
+    fixture["metadata"] = malformed
+    empty = ConversationArchive(ArchiveFixtureStorage(fixture), "agent-1")
+    await empty.async_initialize()
+    assert empty.stats()["session_count"] == 0
+
+
+@pytest.mark.parametrize("malformed", [None, 7, "broken", ["broken"]])
+async def test_usage_container_shapes_preserve_independent_stores(malformed: Any) -> None:
+    fixture = _fixture("usage_compatibility_cases.json")
+    manager = UsageManager(
+        FixtureStorage(fixture["legacy_totals"]),
+        FixtureStorage(malformed),
+        FixtureStorage(malformed),
+    )
+    await manager.async_initialize()
+    assert manager.totals.total_tokens == 150
+    assert manager.daily == {}
+    assert manager.requests == []
+    assert manager.runs == []
+
+    fixture["daily"]["totals"]["details"] = malformed
+    fixture["details"]["requests"] = malformed
+    second = UsageManager(
+        FixtureStorage(malformed),
+        FixtureStorage(fixture["daily"]),
+        FixtureStorage(fixture["details"]),
+        run_retention_days=10_000,
+    )
+    await second.async_initialize()
+    assert second.totals.total_tokens == 180
+    assert second.totals.details == {}
+    assert second.requests == []
+    assert [run.run_id for run in second.runs] == ["run-good"]
