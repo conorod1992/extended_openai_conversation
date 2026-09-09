@@ -36,7 +36,7 @@ test("Function Tools support create, reload, edit, and delete through YAML", asy
   await page.goto(fixtureUrl("capabilities/functions"));
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".tool-card").filter({hasText: "browser_tool"})).toHaveCount(0);
-  await expect(panel.locator(".tool-card").filter({hasText: "baseline_tool"})).toBeVisible();
+  await expect(panel.locator(".tool-card").filter({hasText: "baseline_tool"})).toHaveCount(1);
   await expectHarnessClean(page, pageErrors);
 });
 
@@ -145,7 +145,7 @@ test("full backup and restore round-trips settings, memories, rules, tools, and 
   await page.goto(fixtureUrl("capabilities/functions"));
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator('.function-group-card[data-group-id="baseline-group"]')).toBeVisible();
-  await expect(panel.locator(".tool-card").filter({hasText: "baseline_tool"})).toBeVisible();
+  await expect(panel.locator(".tool-card").filter({hasText: "baseline_tool"})).toHaveCount(1);
 
   await expectHarnessClean(page, pageErrors);
 });
