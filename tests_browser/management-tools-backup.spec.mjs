@@ -45,6 +45,7 @@ test("Function Groups persist membership across create, reload, edit, and delete
   await page.goto(fixtureUrl("capabilities/functions"));
 
   let panel = page.locator("extended-openai-management-panel");
+  await expect(panel.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
   await panel.locator("#add-group").click();
   await expect(panel.locator("#group-dialog")).toHaveJSProperty("open", true);
   await panel.locator("#group-name").fill("Browser group");
@@ -87,9 +88,10 @@ test("full backup and restore round-trips settings, memories, rules, tools, and 
   await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
 
   let panel = page.locator("extended-openai-management-panel");
-  await expect(panel.locator("#create-backup")).toBeVisible();
+  await expect(panel.locator("#create-backup-transfer")).toBeVisible();
+  await panel.locator("#transfer-export-mode").selectOption("full");
   const downloadPromise = page.waitForEvent("download");
-  await panel.locator("#create-backup").click();
+  await panel.locator("#create-backup-transfer").click();
   const download = await downloadPromise;
   const backupPath = await download.path();
   expect(backupPath).toBeTruthy();
@@ -123,10 +125,12 @@ test("full backup and restore round-trips settings, memories, rules, tools, and 
 
   await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
   panel = page.locator("extended-openai-management-panel");
-  await panel.locator("#backup-file").setInputFiles(backupPath);
+  await panel.locator("#backup-file-transfer").setInputFiles(backupPath);
   await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
   await expect(panel.locator("#restore-backup-name")).toHaveText("Jarvis");
-  await panel.locator("#restore-apply").click();
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
+  await panel.locator("#restore-transfer-apply").click();
+  await acceptConfirmation(panel);
   await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", false);
 
   await page.goto(fixtureUrl("assistant/basics"));
