@@ -56,7 +56,15 @@ only_mutate = [
     "custom_components/extended_openai_conversation_responses/function_tool_recovery.py",
     "custom_components/extended_openai_conversation_responses/parallel_tool_execution.py",
 ]
-pytest_add_cli_args_test_selection = ["tests/"]
+pytest_add_cli_args_test_selection = [
+    "tests/test_native_function_execution_budget.py",
+    "tests/test_current_function_tool_fail_closed.py",
+    "tests/test_function_tool_error_recovery.py",
+    "tests/test_function_tool_recovery_security.py",
+    "tests/test_function_tool_recovery_validation_boundary.py",
+    "tests/test_parallel_tool_execution.py",
+    "tests/test_deterministic_concurrency_cancellation.py",
+]
 
 [tool.mypy]
 python_version = "3.14"
