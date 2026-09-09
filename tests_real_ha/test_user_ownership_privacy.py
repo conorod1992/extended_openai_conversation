@@ -9,7 +9,7 @@ import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUser
+from pytest_homeassistant_custom_component.common import CLIENT_ID, MockConfigEntry, MockUser
 
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_ENABLED,
@@ -75,7 +75,7 @@ async def _normal_user_token(
     """Create one non-admin HA user and a real access token for WebSocket auth."""
     user = MockUser(id=user_id, name=name)
     user.add_to_hass(hass)
-    refresh_token = await hass.auth.async_create_refresh_token(user)
+    refresh_token = await hass.auth.async_create_refresh_token(user, CLIENT_ID)
     return user, hass.auth.async_create_access_token(refresh_token)
 
 
