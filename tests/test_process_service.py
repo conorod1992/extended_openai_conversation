@@ -247,7 +247,7 @@ async def test_finished_event_distinguishes_provider_success_and_local_rule():
         content=[conversation.UserContent(content="local")],
         conversation_id="conversation",
     )
-    entity._local_rule_result(user_input, local_log, "done")
+    entity._local_rule_result(user_input, local_log, "done", successful=True)
     payload = entity.hass.bus.async_fire.call_args.args[1]
     assert payload["status"] == "local"
     assert payload["handled_locally"] is True
