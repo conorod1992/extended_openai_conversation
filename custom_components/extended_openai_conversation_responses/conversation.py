@@ -896,7 +896,7 @@ class ExtendedOpenAIAgentEntity(
         chat_log: ChatLog,
         response: str,
         *,
-        successful: bool = True,
+        successful: bool,
     ) -> ConversationResult:
         """Return a local rule response without invoking the provider."""
         metadata = _PROCESS_METADATA.get()
