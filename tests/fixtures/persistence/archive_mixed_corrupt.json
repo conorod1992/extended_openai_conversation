@@ -1,0 +1,39 @@
+{
+  "metadata": {
+    "sessions": [
+      {
+        "session_id": "session-good",
+        "home_assistant_conversation_id": "conversation-1",
+        "agent_subentry_id": "agent-1",
+        "scope_id": "user:alice",
+        "scope_type": "user",
+        "scope_source": "authenticated_user",
+        "source_device_id": null,
+        "started_at": "2026-09-01T10:00:00+00:00",
+        "last_message_at": "2026-09-01T10:01:00+00:00",
+        "title": "Greeting",
+        "turn_count": 1,
+        "retention_state": "retained"
+      },
+      "broken-session"
+    ],
+    "active": ["corrupt-container"],
+    "partitions": ["2026-09", "not-a-month", 7]
+  },
+  "partitions": {
+    "2026-09": {
+      "turns": [
+        {
+          "turn_id": "turn-good",
+          "session_id": "session-good",
+          "run_id": "run-1",
+          "timestamp": "2026-09-01T10:01:00+00:00",
+          "user_text": "Hello",
+          "assistant_text": "Hi",
+          "successful": true
+        },
+        "broken-turn"
+      ]
+    }
+  }
+}
