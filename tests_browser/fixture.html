@@ -80,22 +80,24 @@
           if (message.type !== managementType) return {};
 
           const key = `${message.section || ""}/${message.action || ""}`;
-          if (partialOverview && key === "knowledge/list") {
-            throw new Error("Knowledge fixture unavailable");
+          if (key === "overview/summary") {
+            return {
+              usage: {
+                today: {total_tokens: 1234},
+                month: {total_tokens: 5678},
+                lifetime: {total_tokens: 9999},
+              },
+              conversations: {
+                archive_enabled: true,
+                archive_retention_days: 30,
+              },
+              load_errors: partialOverview
+                ? [{key: "knowledge", label: "Knowledge", message: "Knowledge fixture unavailable"}]
+                : [],
+            };
           }
 
           const responses = {
-            "usage/summary": {
-              today: {total_tokens: 1234},
-              month: {total_tokens: 5678},
-              lifetime: {total_tokens: 9999},
-            },
-            "conversations/settings": {
-              archive_enabled: true,
-              archive_retention_days: 30,
-            },
-            "memories/list": {memories: []},
-            "knowledge/list": {sources: []},
             "scopes/catalog": {scopes},
             "guest_mode/get": {
               config: {},
