@@ -24,6 +24,7 @@ export function renderHAToolCard(panel, tool, index) {
 }
 
 export function bindHALlmTools(panel, synchronize) {
+  if (!panel?._draft) return;
   const root = panel.shadowRoot;
   const agentId = panel._agentId;
   const load = async () => {
