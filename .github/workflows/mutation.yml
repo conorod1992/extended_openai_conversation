@@ -78,6 +78,12 @@ jobs:
           rm -rf mutants
           mutmut run
 
-      - name: Show mutation results
+      - name: Show mutation results and surviving diffs
         if: always()
-        run: mutmut results
+        run: |
+          mutmut results | tee /tmp/mutmut-results.txt
+          sed -n 's/^[[:space:]]*\([^:]*\): survived$/\1/p' /tmp/mutmut-results.txt | while IFS= read -r mutant; do
+            echo "::group::$mutant"
+            mutmut show "$mutant"
+            echo "::endgroup::"
+          done
