@@ -8,13 +8,10 @@ import pytest
 
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_API_KEY
+from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_FINAL_WRITE
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import (
-    MockConfigEntry,
-    async_fire_time_changed,
-)
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.extended_openai_conversation_responses import (
     conversation_archive as archive_module,
@@ -211,10 +208,11 @@ async def test_real_ha_unload_reload_rehydrates_durable_agent_state(
         successful=True,
     )
 
-    # Routine usage writes are intentionally coalesced for five seconds. Cross
-    # that durability boundary deterministically before discarding the manager;
-    # otherwise this would model abrupt memory loss, not a persistence round trip.
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=6))
+    # Usage snapshots are intentionally coalesced, but Home Assistant Store
+    # registers a final-write listener so pending state is committed during a
+    # graceful shutdown. Exercise that real restart durability boundary before
+    # discarding process-local manager objects.
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_FINAL_WRITE)
     await hass.async_block_till_done()
 
     before = {
