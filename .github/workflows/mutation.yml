@@ -13,6 +13,7 @@ on:
           - guest-security
           - ha-permissions
           - request-rules
+          - function-groups
       target:
         description: Optional Mutmut target override
         required: false
