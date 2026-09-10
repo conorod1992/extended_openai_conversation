@@ -181,12 +181,12 @@ jobs:
               mutmut run
               ;;
             guest-security)
-              mutmut run "*guest_mode.resolve_guest_policy*"
+              mutmut run "*guest_mode.x_resolve_guest_policy__mutmut_*"
               ;;
             ha-permissions)
               status=0
-              mutmut run "*ha_permissions.filter_entities_for_active_user*" || status=$?
-              mutmut run "*ha_permissions.async_require_control_permission*" || status=$?
+              mutmut run "*ha_permissions.x_filter_entities_for_active_user__mutmut_*" || status=$?
+              mutmut run "*ha_permissions.x_async_require_control_permission__mutmut_*" || status=$?
               exit "$status"
               ;;
           esac
