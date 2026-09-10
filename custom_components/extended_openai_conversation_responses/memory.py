@@ -159,6 +159,17 @@ class EmbeddingCacheEntry:
     vector: list[float]
 
 
+@dataclass(slots=True)
+class _MemoryMutationSnapshot:
+    """Last successfully committed live state for durable-write rollback."""
+
+    memories: dict[str, MemoryRecord]
+    token_index: dict[tuple[str, str], set[str]]
+    key_index: dict[tuple[str, str], str]
+    embedding_cache: dict[str, EmbeddingCacheEntry]
+    embedding_cache_dirty: bool
+
+
 class MemoryStorage(Protocol):
     """Persistence boundary for a future alternative memory backend."""
 
@@ -283,6 +294,7 @@ class PersistentMemory:
         self._embedding_maintenance_requested = False
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._committed_state: _MemoryMutationSnapshot | None = None
 
     async def async_initialize(self) -> None:
         """Load, validate, and self-heal memory data once."""
@@ -341,6 +353,7 @@ class PersistentMemory:
                     }
                 )
             await self._async_load_embedding_cache_locked()
+            self._committed_state = self._snapshot_mutation_state()
             self._initialized = True
 
     def set_embedding_provider(
@@ -1039,6 +1052,41 @@ class PersistentMemory:
             self._invalidate_cached_embedding(current.memory_id)
         return updated
 
+    def _snapshot_mutation_state(self) -> _MemoryMutationSnapshot:
+        """Capture live structures so a rejected durable write can be rolled back."""
+        return _MemoryMutationSnapshot(
+            memories=dict(self._memories),
+            token_index={key: set(ids) for key, ids in self._token_index.items()},
+            key_index=dict(self._key_index),
+            embedding_cache={
+                memory_id: EmbeddingCacheEntry(
+                    model=entry.model,
+                    fingerprint=entry.fingerprint,
+                    vector=list(entry.vector),
+                )
+                for memory_id, entry in self._embedding_cache.items()
+            },
+            embedding_cache_dirty=self._embedding_cache_dirty,
+        )
+
+    def _restore_mutation_state(self, snapshot: _MemoryMutationSnapshot) -> None:
+        """Restore the last successfully committed live structures."""
+        self._memories = dict(snapshot.memories)
+        self._token_index = defaultdict(
+            set,
+            {key: set(ids) for key, ids in snapshot.token_index.items()},
+        )
+        self._key_index = dict(snapshot.key_index)
+        self._embedding_cache = {
+            memory_id: EmbeddingCacheEntry(
+                model=entry.model,
+                fingerprint=entry.fingerprint,
+                vector=list(entry.vector),
+            )
+            for memory_id, entry in snapshot.embedding_cache.items()
+        }
+        self._embedding_cache_dirty = snapshot.embedding_cache_dirty
+
     async def _async_refresh_missing_embeddings(self, scope_ids: Sequence[str]) -> bool:
         provider = self._embedding_provider
         if provider is None:
@@ -1088,16 +1136,23 @@ class PersistentMemory:
         return True
 
     async def _async_save_locked(self) -> None:
-        await self._storage.async_save(
-            {
-                "memories": [
-                    _record_as_storage_dict(memory)
-                    for memory in self._memories.values()
-                ]
-            }
-        )
+        previous = self._committed_state
+        try:
+            await self._storage.async_save(
+                {
+                    "memories": [
+                        _record_as_storage_dict(memory)
+                        for memory in self._memories.values()
+                    ]
+                }
+            )
+        except Exception:
+            if previous is not None:
+                self._restore_mutation_state(previous)
+            raise
         if self._embedding_cache_dirty:
             await self._async_save_embedding_cache_locked()
+        self._committed_state = self._snapshot_mutation_state()
 
     def _cached_embedding(self, memory: MemoryRecord) -> list[float] | None:
         entry = self._embedding_cache.get(memory.memory_id)
@@ -1147,6 +1202,8 @@ class PersistentMemory:
             return True
         if self._embedding_cache_storage is None:
             self._embedding_cache_dirty = False
+            if self._initialized:
+                self._committed_state = self._snapshot_mutation_state()
             return True
         try:
             await self._embedding_cache_storage.async_save(
@@ -1159,6 +1216,8 @@ class PersistentMemory:
                 }
             )
             self._embedding_cache_dirty = False
+            if self._initialized:
+                self._committed_state = self._snapshot_mutation_state()
             return True
         except Exception:
             _LOGGER.warning(

@@ -188,14 +188,18 @@ async def get_authenticated_client(
             azure_endpoint=base_url,
             api_version=api_version,
             organization=organization,
-            http_client=get_async_client(hass),
+            # OpenAI 3.10 types its new httpx2 client only; HA's legacy HTTPX
+            # client remains supported by the SDK at runtime, as in HA core.
+            http_client=cast(Any, get_async_client(hass)),
         )
     else:
         client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
             organization=organization,
-            http_client=get_async_client(hass),
+            # OpenAI 3.10 types its new httpx2 client only; HA's legacy HTTPX
+            # client remains supported by the SDK at runtime, as in HA core.
+            http_client=cast(Any, get_async_client(hass)),
         )
 
     if skip_authentication:
