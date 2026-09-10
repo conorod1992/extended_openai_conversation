@@ -17,7 +17,12 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN
+from .const import (
+    CONF_CHAT_MODEL,
+    CONF_REASONING_EFFORT,
+    DEFAULT_CHAT_MODEL,
+    DOMAIN,
+)
 from .model_catalog import (
     BUNDLED_CATALOG,
     MAX_CATALOG_BYTES,
@@ -30,6 +35,7 @@ from .model_catalog import (
     validate_catalog,
     validate_catalog_transition,
 )
+from .request_rules import SLOT_REFERENCE, async_get_request_rules
 
 CATALOG_URL = (
     "https://raw.githubusercontent.com/conorod1992/extended_openai_conversation/"
@@ -168,17 +174,6 @@ class ModelCatalogManager:
         if self.catalog is None:
             return False
 
-        # Local imports avoid a module cycle: Request Rules consume model metadata.
-        from .const import (  # noqa: PLC0415
-            CONF_CHAT_MODEL,
-            CONF_REASONING_EFFORT,
-            DEFAULT_CHAT_MODEL,
-        )
-        from .request_rules import (  # noqa: PLC0415
-            SLOT_REFERENCE,
-            async_get_request_rules,
-        )
-
         bundled_efforts = set(catalog_reasoning_efforts(None))
         for entry in self.hass.config_entries.async_entries(DOMAIN):
             for subentry in entry.subentries.values():
@@ -189,11 +184,15 @@ class ModelCatalogManager:
                     subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
                 )
                 configured_effort = subentry.data.get(CONF_REASONING_EFFORT)
-                if isinstance(configured_effort, str) and configured_effort:
-                    if configured_effort not in catalog_model_metadata(
-                        None, configured_model
-                    )["reasoning_efforts"]:
-                        return True
+                if (
+                    isinstance(configured_effort, str)
+                    and configured_effort
+                    and configured_effort
+                    not in catalog_model_metadata(None, configured_model)[
+                        "reasoning_efforts"
+                    ]
+                ):
+                    return True
 
                 rules = await async_get_request_rules(
                     self.hass, entry.entry_id, subentry.subentry_id
