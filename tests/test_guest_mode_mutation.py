@@ -1,8 +1,14 @@
 """Focused mutation contracts for Guest Mode capability policy decisions."""
 
 from types import SimpleNamespace
+from typing import NoReturn
 
 from custom_components.extended_openai_conversation_responses import guest_mode
+
+
+def _unexpected_resolver(*_args: object, **_kwargs: object) -> NoReturn:
+    """Fail when a Guest policy branch that should be unreachable is selected."""
+    raise AssertionError("unexpected Guest policy resolver")
 
 
 def test_unrestricted_policy_allows_entities_and_configured_tools() -> None:
@@ -60,16 +66,8 @@ def test_configured_tool_policy_uses_exact_membership() -> None:
 
 def test_resolve_guest_policy_is_unrestricted_without_loaded_manager(monkeypatch) -> None:
     """No loaded Guest Mode manager means the normal unrestricted policy."""
-    monkeypatch.setattr(
-        guest_mode,
-        "_resolve_exclusion_policy",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected v2 resolver")),
-    )
-    monkeypatch.setattr(
-        guest_mode,
-        "_resolve_legacy_policy",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected legacy resolver")),
-    )
+    monkeypatch.setattr(guest_mode, "_resolve_exclusion_policy", _unexpected_resolver)
+    monkeypatch.setattr(guest_mode, "_resolve_legacy_policy", _unexpected_resolver)
 
     policy = guest_mode.resolve_guest_policy(SimpleNamespace(), {}, None)
 
@@ -79,16 +77,8 @@ def test_resolve_guest_policy_is_unrestricted_without_loaded_manager(monkeypatch
 def test_resolve_guest_policy_is_unrestricted_when_manager_inactive(monkeypatch) -> None:
     """An inactive Guest Mode manager must not apply guest restrictions."""
     manager = SimpleNamespace(is_active=lambda: False)
-    monkeypatch.setattr(
-        guest_mode,
-        "_resolve_exclusion_policy",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected v2 resolver")),
-    )
-    monkeypatch.setattr(
-        guest_mode,
-        "_resolve_legacy_policy",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected legacy resolver")),
-    )
+    monkeypatch.setattr(guest_mode, "_resolve_exclusion_policy", _unexpected_resolver)
+    monkeypatch.setattr(guest_mode, "_resolve_legacy_policy", _unexpected_resolver)
 
     policy = guest_mode.resolve_guest_policy(SimpleNamespace(), {}, manager)
 
@@ -106,11 +96,7 @@ def test_resolve_guest_policy_routes_current_policy_to_exclusion_resolver(monkey
         return expected
 
     monkeypatch.setattr(guest_mode, "_resolve_exclusion_policy", _resolve)
-    monkeypatch.setattr(
-        guest_mode,
-        "_resolve_legacy_policy",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected legacy resolver")),
-    )
+    monkeypatch.setattr(guest_mode, "_resolve_legacy_policy", _unexpected_resolver)
     hass = SimpleNamespace()
     options = {guest_mode.CONF_GUEST_POLICY_VERSION: guest_mode.GUEST_POLICY_VERSION}
     configured_tools = ({"spec": {"name": "weather_lookup"}},)
@@ -132,11 +118,7 @@ def test_resolve_guest_policy_routes_legacy_policy_to_legacy_resolver(monkeypatc
         return expected
 
     monkeypatch.setattr(guest_mode, "_resolve_legacy_policy", _resolve)
-    monkeypatch.setattr(
-        guest_mode,
-        "_resolve_exclusion_policy",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected v2 resolver")),
-    )
+    monkeypatch.setattr(guest_mode, "_resolve_exclusion_policy", _unexpected_resolver)
     hass = SimpleNamespace()
     options: dict[str, object] = {}
     configured_tools = ({"spec": {"name": "weather_lookup"}},)
