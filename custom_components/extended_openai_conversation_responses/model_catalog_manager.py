@@ -17,12 +17,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
-from .const import (
-    CONF_CHAT_MODEL,
-    CONF_REASONING_EFFORT,
-    DEFAULT_CHAT_MODEL,
-    DOMAIN,
-)
+from .const import CONF_CHAT_MODEL, CONF_REASONING_EFFORT, DEFAULT_CHAT_MODEL, DOMAIN
 from .model_catalog import (
     BUNDLED_CATALOG,
     MAX_CATALOG_BYTES,
@@ -184,13 +179,13 @@ class ModelCatalogManager:
                     subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
                 )
                 configured_effort = subentry.data.get(CONF_REASONING_EFFORT)
+                bundled_config_efforts = catalog_model_metadata(
+                    None, configured_model
+                )["reasoning_efforts"]
                 if (
                     isinstance(configured_effort, str)
                     and configured_effort
-                    and configured_effort
-                    not in catalog_model_metadata(None, configured_model)[
-                        "reasoning_efforts"
-                    ]
+                    and configured_effort not in bundled_config_efforts
                 ):
                     return True
 
