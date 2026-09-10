@@ -138,6 +138,8 @@ Only the first category requires a new test. Do not refactor production behaviou
 
 ## Request Rules campaign review (2026-09-10)
 
+The runs below record the initial review before rebasing onto PR #256. The current four-campaign runner configures only the selected campaign; the PR records validation runs on the rebased head. `tests/test_mutation_campaign_runner.py` checks isolation for all four campaigns, restoration after failure (including Windows line endings), selector/override validation and incomplete-result rejection.
+
 The [first run](https://github.com/conorod1992/extended_openai_conversation/actions/runs/34426831096) killed 211 of 274 mutants, with 63 survivors. Reviewing every surviving diff led to 12 additional cases and stronger existing assertions for effective settings, custom wording groups, fuzzy candidate fall-through/position/ties, returned match metadata, sparse saved order, inactive-pattern fall-through, and sentence variants. These assert observable matching behaviour rather than cache internals or mocked scores.
 
 The [second run](https://github.com/conorod1992/extended_openai_conversation/actions/runs/34427259763), on code commit `ea32639`, passed the 74-test campaign baseline and executed all 274 selected mutants: **242 killed, 32 survived**, with no timeouts, errors, or unchecked selected mutants. Every remaining survivor was inspected with `mutmut show`:

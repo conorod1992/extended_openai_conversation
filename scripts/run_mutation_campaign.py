@@ -37,7 +37,7 @@ def configured_campaign(path, config):
         + "\n\n"
     )
     updated, count = re.subn(
-        r"(?ms)^\[tool\.mutmut\]\n.*?(?=^\[|\Z)", lambda _: section, text
+        r"(?ms)^\[tool\.mutmut\]\r?\n.*?(?=^\[|\Z)", lambda _: section, text
     )
     if count != 1:
         raise ValueError("Expected exactly one [tool.mutmut] section")
