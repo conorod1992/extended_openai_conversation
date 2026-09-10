@@ -135,3 +135,21 @@ Do not treat mutation score as a merge target. Review surviving mutants individu
 4. a mutation-tool artefact.
 
 Only the first category requires a new test. Do not refactor production behaviour merely to make a mutation disappear, and keep any exclusions narrow and justified.
+
+## Request Rules campaign review (2026-09-10)
+
+The [first run](https://github.com/conorod1992/extended_openai_conversation/actions/runs/34426831096) killed 211 of 274 mutants, with 63 survivors. Reviewing every surviving diff led to 12 additional cases and stronger existing assertions for effective settings, custom wording groups, fuzzy candidate fall-through/position/ties, returned match metadata, sparse saved order, inactive-pattern fall-through, and sentence variants. These assert observable matching behaviour rather than cache internals or mocked scores.
+
+The [second run](https://github.com/conorod1992/extended_openai_conversation/actions/runs/34427259763), on code commit `ea32639`, passed the 74-test campaign baseline and executed all 274 selected mutants: **242 killed, 32 survived**, with no timeouts, errors, or unchecked selected mutants. Every remaining survivor was inspected with `mutmut show`:
+
+| Function / mutant suffix numbers | Classification and reason to leave them |
+| --- | --- |
+| `match`: 54, 85; `_sort_and_compile`: 46, 59 | Equivalent: changing the first argument to `typing.cast` has no runtime effect. |
+| `match`: 5, 30; `_sort_and_compile`: 23, 66, 67, 89, 90 | Outside scope: aggregate sentence work budgets and compiled-state activation limits. These are meaningful resource-safety behaviours, not equivalent mutants; this matching/precedence campaign does not certify them. Existing bounds tests remain ordinary regression coverage. |
+| `_sort_and_compile`: 9, 10, 14, 16, 17, 18, 19 | Outside scope: persistence dirty flags and canonical index bookkeeping. Relative winner order remains intact for the tested valid configurations; exact saved indices/save counts are not assertions of this campaign. These are not claimed globally equivalent. |
+| `_sort_and_compile`: 52, 53 | Outside scope: rechecking mismatched capture names in malformed stored sentence variants. Public creation validates variant capture names separately; storage repair validation is not targeted. |
+| `_sort_and_compile`: 54, 55, 56, 68, 69, 70, 71, 72, 76, 77, 81, 82 | Incidental/outside scope: diagnostic payloads and logging. Rule selection does not promise exact diagnostic content; management diagnostics are not certified here. |
+
+Suffix numbers refer to `__mutmut_N` in the pinned version and source, not permanent exclusions. No pragmas suppress these mutants. All 23 `_deterministic_match` mutants were killed. A future change should re-review survivors rather than treating this list as an allowlist.
+
+Local Windows validation also passed all 213 Request Rules tests and the original 85-test Function Tool baseline, using Python 3.14, HA 2026.8.0b3, and pytest-asyncio with the Linux-only HA pytest plugin disabled. Ruff lint/format and whitespace checks passed. A broader local run before the final 12 cases had 1,687 passed, 2 skipped and 16 unrelated failures: 15 reproduced on unchanged `develop`; an existing file-edit concurrency test failed in the working checkout but passed in the comparison checkout. Those failures were not fixed or hidden by this campaign. HACS validation passed; a normal GitHub `ci` matrix run was not reported for this draft PR. These limits should not be represented as a fully green integration suite.
