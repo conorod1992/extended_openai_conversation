@@ -85,6 +85,15 @@ selectors = [
     "custom_components.extended_openai_conversation_responses.request_rules.x__deterministic_match__mutmut_*",
 ]
 
+[tool.mutation-campaigns.function-groups]
+only_mutate = ["custom_components/extended_openai_conversation_responses/function_groups.py"]
+pytest_add_cli_args_test_selection = ["tests/test_function_groups_mutation.py"]
+selectors = [
+    "custom_components.extended_openai_conversation_responses.function_groups.x__available_group_sets__mutmut_*",
+    "custom_components.extended_openai_conversation_responses.function_groups.x_assemble_function_tools__mutmut_*",
+    "custom_components.extended_openai_conversation_responses.function_groups.x_load_function_groups__mutmut_*",
+]
+
 [tool.mutation-campaigns.guest-security]
 only_mutate = ["custom_components/extended_openai_conversation_responses/guest_mode.py"]
 pytest_add_cli_args_test_selection = ["tests/test_guest_mode_mutation.py"]
