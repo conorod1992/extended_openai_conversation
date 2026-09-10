@@ -138,7 +138,7 @@ async def test_no_eligible_rule_returns_no_match(rules):
 @pytest.mark.parametrize(
     "setting,phrase,text",
     [
-        ("word_forms", "lights", "light"),
+        ("word_forms", "light", "lights"),
         ("wording_alternatives", "turn on tv", "switch on television"),
     ],
 )
@@ -163,11 +163,15 @@ async def test_sentence_match_can_have_no_captures_or_return_captured_values():
     )
     literal = rules.match("good night")
     assert literal is not None and literal.slots == {}
+    assert literal.phrase == "good night"
+    assert literal.score == 100
     captured = rules.match("remember buy oat milk")
     assert captured is not None
     assert captured.rule["id"] == "capture"
     assert captured.slots == {"fact": "buy oat milk"}
     assert captured.fuzzy is False
+    assert captured.phrase == "remember {fact}"
+    assert captured.score == 100
     assert rules.match("recall buy oat milk") is None
 
 
@@ -189,6 +193,7 @@ async def test_strict_broad_match_beats_fuzzy_equals():
     assert match is not None
     assert match.rule["id"] == "strict"
     assert match.fuzzy is False
+    assert match.score == 100
 
 
 @pytest.mark.parametrize("threshold,expected", [(79, True), (80, True), (81, False)])
@@ -202,6 +207,94 @@ async def test_fuzzy_threshold_is_inclusive(threshold, expected):
     assert (match is not None) is expected
     if expected:
         assert match.fuzzy is True
+        assert match.phrase == "light"
+        assert threshold <= match.score <= 100
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_inherited_settings_ignore_saved_custom_values(enabled):
+    inherited = rule("inherited", "light", matching={"word_forms": not enabled})
+    inherited["matching_behavior"] = "defaults"
+    rules = await manager(inherited, defaults={"word_forms": enabled})
+    assert (rules.match("lights") is not None) is enabled
+
+
+async def test_custom_wording_groups_apply_to_phrases_and_requests():
+    rules = await manager(rule("command", "activate kitchen"))
+    await rules.async_set_wording_groups(
+        [{"canonical": "activate", "alternatives": ["power up"]}]
+    )
+    assert rules.match("power up kitchen").rule["id"] == "command"
+    await rules.async_update("command", rule("command", "power up kitchen"))
+    assert rules.match("activate kitchen").rule["id"] == "command"
+
+
+@pytest.mark.parametrize("earlier_type", ["equals", "sentence_pattern"])
+async def test_fuzzy_fallback_skips_ineligible_earlier_candidates(earlier_type):
+    rules = await manager(
+        rule("strict-only", "good night", earlier_type),
+        rule(
+            "fuzzy", "light", order=1, matching={"fuzzy": True, "fuzzy_threshold": 70}
+        ),
+    )
+    assert rules.match("liagt").rule["id"] == "fuzzy"
+
+
+@pytest.mark.parametrize(
+    "match_type,text",
+    [
+        ("equals", "please liagt"),
+        ("starts_with", "please liagt"),
+        ("ends_with", "liagt please"),
+    ],
+)
+async def test_fuzzy_modes_do_not_match_the_wrong_position(match_type, text):
+    rules = await manager(
+        rule(
+            "fuzzy",
+            "light",
+            match_type,
+            matching={"fuzzy": True, "fuzzy_threshold": 70},
+        )
+    )
+    assert rules.match(text) is None
+
+
+async def test_equal_fuzzy_phrase_variants_keep_the_first_variant():
+    rules = await manager(
+        rule(
+            "fuzzy", ["light", "liant"], matching={"fuzzy": True, "fuzzy_threshold": 70}
+        )
+    )
+    match = rules.match("liagt")
+    assert match is not None
+    assert match.phrase == "light"
+
+
+async def test_sparse_saved_order_preserves_the_winner():
+    rules = await manager(
+        rule("later", "hello", order=20), rule("first", "hello", order=10)
+    )
+    assert rules.match("hello").rule["id"] == "first"
+
+
+async def test_inactive_legacy_pattern_does_not_hide_later_valid_rule():
+    rules = await manager(
+        rule("legacy", "(on; downstairs)", "sentence_pattern"),
+        rule("valid", "hello", order=1),
+    )
+    assert rules.match("hello").rule["id"] == "valid"
+    assert rules.match("on downstairs") is None
+
+
+async def test_sentence_variants_can_match_a_later_phrase_with_the_same_slots():
+    rules = await manager(
+        rule("capture", ["remember {fact}", "save {fact}"], "sentence_pattern")
+    )
+    match = rules.match("save buy oat milk")
+    assert match is not None
+    assert match.phrase == "save {fact}"
+    assert match.slots == {"fact": "buy oat milk"}
 
 
 async def test_fuzzy_is_opt_in():
