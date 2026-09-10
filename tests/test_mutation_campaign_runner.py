@@ -31,6 +31,7 @@ PROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
         ("guest-security", {"guest_mode"}, 1),
         ("ha-permissions", {"ha_permissions"}, 1),
         ("request-rules", {"request_rules"}, 1),
+        ("function-groups", {"function_groups"}, 1),
     ],
 )
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
