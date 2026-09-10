@@ -43,21 +43,19 @@ async def _memory(
     return memory
 
 
-def _manager_state(memory: PersistentMemory) -> dict[str, Any]:
-    """Capture every live structure a durable mutation can currently change."""
+def _durable_manager_state(memory: PersistentMemory) -> dict[str, Any]:
+    """Capture facts and indexes that must match the durable Memory store."""
     return {
         "memories": dict(memory._memories),
         "token_index": {
             key: frozenset(value) for key, value in memory._token_index.items()
         },
         "key_index": dict(memory._key_index),
-        "embedding_cache": deepcopy(memory._embedding_cache),
-        "embedding_cache_dirty": memory._embedding_cache_dirty,
     }
 
 
 async def _warm_embedding_cache(memory: PersistentMemory) -> None:
-    """Ensure rollback assertions also cover regenerable cache invalidation."""
+    """Warm the regenerable cache so failed mutations exercise invalidation safely."""
 
     async def embeddings(inputs: list[str]) -> list[list[float]]:
         return [[1.0, 0.0] for _ in inputs]
@@ -79,7 +77,7 @@ async def _warm_embedding_cache(memory: PersistentMemory) -> None:
     ],
 )
 async def test_durable_save_failure_rolls_back_live_manager(operation: str) -> None:
-    """A failed durable write must not leave a newer in-process memory view."""
+    """A failed durable write must not leave a newer in-process Memory view."""
     storage = FailableStorage()
     memory = await _memory(storage)
     created = await memory.async_add(
@@ -93,7 +91,7 @@ async def test_durable_save_failure_rolls_back_live_manager(operation: str) -> N
     memory_id = created["memory"]["memory_id"]
     await _warm_embedding_cache(memory)
 
-    before_live = _manager_state(memory)
+    before_live = _durable_manager_state(memory)
     before_disk = deepcopy(storage.data)
     replacement = [
         MemoryRecord(
@@ -136,10 +134,21 @@ async def test_durable_save_failure_rolls_back_live_manager(operation: str) -> N
         else:
             await memory.async_replace_backup(replacement)
 
-    assert _manager_state(memory) == before_live
+    assert _durable_manager_state(memory) == before_live
     assert storage.data == before_disk
     records = await memory.async_search("alice", "Oscar Cavachon breed")
     assert [record.memory_id for record in records] == [memory_id]
+
+    # Embeddings are a separate regenerable cache, not part of the durable Memory
+    # transaction. A failed mutation may conservatively invalidate them; prove that
+    # doing so cannot strand the restored fact or leave a stale vector in use.
+    assert await memory.async_prepare_hybrid(["alice"], "Oscar breed") == [1.0, 0.0]
+    assert [record.memory_id for record in await memory.async_search(
+        "alice",
+        "Oscar breed",
+        query_embedding=[1.0, 0.0],
+        hybrid=True,
+    )] == [memory_id]
 
 
 async def test_concurrent_keyed_upserts_serialize_to_one_canonical_record() -> None:
