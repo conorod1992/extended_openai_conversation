@@ -2,17 +2,32 @@ name: Targeted mutation testing
 
 on:
   workflow_dispatch:
+    inputs:
+      campaign:
+        description: Mutation campaign
+        required: true
+        default: function-tools
+        type: choice
+        options:
+          - function-tools
+          - guest-security
+          - ha-permissions
+      target:
+        description: Optional Mutmut target override
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: mutation-${{ github.ref }}
+  group: mutation-${{ github.ref }}-${{ inputs.campaign }}
   cancel-in-progress: true
 
 jobs:
   mutation:
-    name: Critical Function Tool mutation campaign
+    name: Mutation campaign (${{ inputs.campaign }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -57,22 +72,124 @@ jobs:
           PY
           pip install "mutmut==3.7.0"
 
-      - name: Run unmutated target baseline
+      - name: Configure mutation campaign
+        env:
+          CAMPAIGN: ${{ inputs.campaign }}
         run: |
-          pytest -q \
-            tests/test_native_function_execution_budget.py \
-            tests/test_current_function_tool_fail_closed.py \
-            tests/test_function_tool_error_recovery.py \
-            tests/test_function_tool_recovery_security.py \
-            tests/test_function_tool_recovery_validation_boundary.py \
-            tests/test_parallel_tool_execution.py \
-            tests/test_deterministic_concurrency_cancellation.py \
-            tests/test_targeted_mutation_contracts.py
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          campaign = os.environ["CAMPAIGN"]
+          campaigns = {
+              "function-tools": {
+                  "only_mutate": [
+                      "custom_components/extended_openai_conversation_responses/function_call_budget.py",
+                      "custom_components/extended_openai_conversation_responses/function_tool_resolution.py",
+                      "custom_components/extended_openai_conversation_responses/function_tool_recovery.py",
+                      "custom_components/extended_openai_conversation_responses/parallel_tool_execution.py",
+                  ],
+                  "tests": [
+                      "tests/test_native_function_execution_budget.py",
+                      "tests/test_current_function_tool_fail_closed.py",
+                      "tests/test_function_tool_error_recovery.py",
+                      "tests/test_function_tool_recovery_security.py",
+                      "tests/test_function_tool_recovery_validation_boundary.py",
+                      "tests/test_parallel_tool_execution.py",
+                      "tests/test_deterministic_concurrency_cancellation.py",
+                      "tests/test_targeted_mutation_contracts.py",
+                  ],
+              },
+              "guest-security": {
+                  "only_mutate": [
+                      "custom_components/extended_openai_conversation_responses/guest_mode.py",
+                  ],
+                  "tests": ["tests/test_guest_mode_mutation.py"],
+              },
+              "ha-permissions": {
+                  "only_mutate": [
+                      "custom_components/extended_openai_conversation_responses/ha_permissions.py",
+                  ],
+                  "tests": ["tests/test_ha_permissions_mutation.py"],
+              },
+          }
+          config = campaigns[campaign]
+
+          path = Path("pyproject.toml")
+          text = path.read_text()
+          start = text.index("[tool.mutmut]")
+          next_section = text.find("\n[", start + len("[tool.mutmut]"))
+          end = len(text) if next_section == -1 else next_section + 1
+
+          def toml_list(name: str, values: list[str]) -> str:
+              lines = [f"{name} = ["]
+              lines.extend(f'    "{value}",' for value in values)
+              lines.append("]")
+              return "\n".join(lines)
+
+          section = "\n".join(
+              [
+                  "[tool.mutmut]",
+                  'source_paths = ["custom_components/extended_openai_conversation_responses/"]',
+                  toml_list("only_mutate", config["only_mutate"]),
+                  toml_list("pytest_add_cli_args_test_selection", config["tests"]),
+                  "",
+              ]
+          )
+          path.write_text(text[:start] + section + text[end:])
+          PY
+
+      - name: Run unmutated campaign baseline
+        env:
+          CAMPAIGN: ${{ inputs.campaign }}
+        shell: bash
+        run: |
+          case "$CAMPAIGN" in
+            function-tools)
+              pytest -q \
+                tests/test_native_function_execution_budget.py \
+                tests/test_current_function_tool_fail_closed.py \
+                tests/test_function_tool_error_recovery.py \
+                tests/test_function_tool_recovery_security.py \
+                tests/test_function_tool_recovery_validation_boundary.py \
+                tests/test_parallel_tool_execution.py \
+                tests/test_deterministic_concurrency_cancellation.py \
+                tests/test_targeted_mutation_contracts.py
+              ;;
+            guest-security)
+              pytest -q tests/test_guest_mode_mutation.py
+              ;;
+            ha-permissions)
+              pytest -q tests/test_ha_permissions_mutation.py
+              ;;
+          esac
 
       - name: Run targeted mutation campaign
+        env:
+          CAMPAIGN: ${{ inputs.campaign }}
+          TARGET: ${{ inputs.target }}
+        shell: bash
         run: |
           rm -rf mutants
-          mutmut run
+          if [[ -n "$TARGET" ]]; then
+            mutmut run "$TARGET"
+            exit
+          fi
+
+          case "$CAMPAIGN" in
+            function-tools)
+              mutmut run
+              ;;
+            guest-security)
+              mutmut run "custom_components.extended_openai_conversation_responses.guest_mode.GuestCapabilityPolicy*"
+              ;;
+            ha-permissions)
+              status=0
+              mutmut run "custom_components.extended_openai_conversation_responses.ha_permissions.filter_entities_for_active_user*" || status=$?
+              mutmut run "custom_components.extended_openai_conversation_responses.ha_permissions.async_require_control_permission*" || status=$?
+              exit "$status"
+              ;;
+          esac
 
       - name: Show mutation results and surviving diffs
         if: always()
