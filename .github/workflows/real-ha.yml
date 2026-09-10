@@ -7,6 +7,7 @@ on:
       - develop
   schedule:
     - cron: "30 0 * * *"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -32,9 +33,16 @@ jobs:
           echo "Home Assistant Python version: $PYTHON_VERSION"
 
   acceptance:
-    name: Genuine Home Assistant lifecycle
+    name: Genuine Home Assistant lifecycle (${{ matrix.home-assistant }})
     runs-on: ubuntu-latest
     needs: prepare
+    continue-on-error: ${{ matrix.home-assistant == 'upcoming' && github.event_name == 'pull_request' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        home-assistant:
+          - stable
+          - upcoming
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -45,11 +53,23 @@ jobs:
           python-version: ${{ needs.prepare.outputs.python-version }}
           allow-prereleases: true
 
-      - name: Install Home Assistant stable test harness
+      - name: Install stable Home Assistant test harness
+        if: matrix.home-assistant == 'stable'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements_test.txt
           pip install homeassistant
+
+      - name: Install upcoming Home Assistant test harness
+        if: matrix.home-assistant == 'upcoming'
+        run: |
+          python -m pip install --upgrade pip
+          # Install the normal test harness first so pytest-homeassistant-custom-component
+          # and its helper dependencies are present, then deliberately replace the
+          # stable HA package it pins with current Home Assistant Core dev.
+          pip install -r requirements_test.txt
+          pip install --upgrade --force-reinstall \
+            "git+https://github.com/${{ env.HA_CORE_REPO }}.git@${{ env.HA_CORE_BRANCH }}"
 
       - name: Install integration dependency requirements
         run: |
@@ -75,12 +95,10 @@ jobs:
           ]
           visited = set()
 
-          # The Home Assistant wheel intentionally does not install every built-in
-          # integration's optional Python requirements. Walk both hard dependencies
-          # and after-dependencies recursively: after-dependencies can still be
-          # imported at runtime (AI Task imports Camera, for example), so their Python
-          # requirements must exist even though HA does not force those integrations
-          # to be set up.
+          # The Home Assistant wheel/source install intentionally does not install
+          # every built-in integration's optional Python requirements. Walk both
+          # hard dependencies and after-dependencies recursively: after-dependencies
+          # can still be imported at runtime (AI Task imports Camera, for example).
           while pending:
               domain = pending.pop()
               if domain in visited:
@@ -105,9 +123,22 @@ jobs:
               )
           PY
 
-      - name: Verify resolved test environment
+      - name: Verify resolved stable test environment
+        if: matrix.home-assistant == 'stable'
         run: |
           pip check
+          python - <<'PY'
+          from importlib.metadata import version
+          print("homeassistant=" + version("homeassistant"))
+          print("pytest-homeassistant-custom-component=" + version("pytest-homeassistant-custom-component"))
+          PY
+
+      - name: Verify resolved upcoming test environment
+        if: matrix.home-assistant == 'upcoming'
+        run: |
+          # pytest-homeassistant-custom-component pins a released HA build, so pip
+          # check is expected to report that one deliberate mismatch after replacing
+          # HA with Core dev. Verify the versions we are actually about to exercise.
           python - <<'PY'
           from importlib.metadata import version
           print("homeassistant=" + version("homeassistant"))
@@ -134,7 +165,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: real-ha-acceptance-diagnostics
+          name: real-ha-acceptance-diagnostics-${{ matrix.home-assistant }}
           path: |
             real-ha-pytest.log
             real-ha-junit.xml
