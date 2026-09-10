@@ -21,7 +21,7 @@ It runs the existing focused Function Tool mutation-contract test set.
 
 This campaign mutates only the small `GuestCapabilityPolicy` decision surface in `guest_mode.py` and runs `tests/test_guest_mode_mutation.py`.
 
-The intent is to verify clear capability-policy contracts such as custom-profile opt-in and the separation between entity, configured-tool, and external-tool capability flags. It deliberately does not mutate the wider Guest Mode implementation.
+The intent is to verify clear resolved capability-policy contracts: unrestricted versus explicit entity/tool sets, independent read/control entity boundaries, exact configured-tool membership, and fail-closed empty capability sets. It deliberately does not mutate the wider Guest Mode implementation.
 
 ### `ha-permissions`
 
