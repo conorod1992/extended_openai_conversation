@@ -84,29 +84,47 @@ def test_loading_on_demand_group_exposes_its_members_and_removes_empty_loader() 
     ]
 
 
-def test_disabled_group_is_hidden_not_loadable_and_clears_stale_loaded_state() -> None:
+def test_loading_same_group_again_reports_already_loaded_without_changing_state() -> None:
     tool = _tool("remind")
+    groups = [_group("reminders", ["remind"])]
+    session = FunctionGroupRuntime().begin("conversation:one", 30)
+
+    assert load_function_groups(session, ["reminders"], groups, [tool])["loaded"] == [
+        "reminders"
+    ]
+    result = load_function_groups(session, ["reminders"], groups, [tool])
+
+    assert result["status"] == "success"
+    assert result["loaded"] == []
+    assert result["already_loaded"] == ["reminders"]
+    assert result["loadable_groups"] == []
+    assert session.loaded_group_ids == {"reminders"}
+
+
+def test_disabled_group_is_hidden_without_suppressing_later_available_tools() -> None:
+    disabled = _tool("remind")
+    general = _tool("general")
     group = _group("reminders", ["remind"], enabled=False)
     loaded = {"reminders"}
 
-    assembly = assemble_function_tools([tool], [group], loaded)
+    assembly = assemble_function_tools([disabled, general], [group], loaded)
 
-    assert assembly.tools == []
+    assert _names(assembly) == ["general"]
     assert loaded == set()
     result = load_function_groups(
         FunctionGroupRuntime().begin("conversation:one", 30),
         ["reminders"],
         [group],
-        [tool],
+        [disabled, general],
     )
     assert result["status"] == "error"
     assert result["loaded"] == []
 
 
-def test_individually_unavailable_member_is_omitted_without_hiding_viable_group() -> None:
-    available = _tool("create_reminder")
+def test_individually_unavailable_member_does_not_suppress_later_available_member() -> None:
     unavailable = _tool("delete_reminder", enabled=False)
-    tools = [available, unavailable]
+    available = _tool("create_reminder")
+    tools = [unavailable, available]
     groups = [_group("reminders", ["create_reminder", "delete_reminder"])]
     session = FunctionGroupRuntime().begin("conversation:one", 30)
 
@@ -196,6 +214,30 @@ def test_function_tool_support_disables_grouped_and_ungrouped_configured_tools()
     assert session.loaded_group_ids == set()
 
 
+def test_load_without_configured_tool_snapshot_uses_group_members_as_reachable() -> None:
+    groups = [_group("reminders", ["remind"])]
+    session = FunctionGroupRuntime().begin("conversation:one", 30)
+
+    result = load_function_groups(session, ["reminders"], groups)
+
+    assert result["status"] == "success"
+    assert result["loaded"] == ["reminders"]
+    assert session.loaded_group_ids == {"reminders"}
+
+
+def test_load_without_configured_tool_snapshot_still_respects_function_tool_support() -> None:
+    groups = [_group("reminders", ["remind"])]
+    session = FunctionGroupRuntime().begin("conversation:one", 30)
+
+    result = load_function_groups(
+        session, ["reminders"], groups, function_tools_supported=False
+    )
+
+    assert result["status"] == "error"
+    assert result["loaded"] == []
+    assert session.loaded_group_ids == set()
+
+
 def test_runtime_predicate_exposes_only_available_members_and_keeps_group_loadable() -> None:
     tools = [_tool("allowed"), _tool("blocked")]
     groups = [_group("mixed", ["allowed", "blocked"])]
@@ -217,6 +259,24 @@ def test_runtime_predicate_exposes_only_available_members_and_keeps_group_loadab
     assert _names(after) == ["allowed"]
 
 
+def test_runtime_predicate_can_make_entire_group_unloadable() -> None:
+    tool = _tool("blocked")
+    groups = [_group("blocked_group", ["blocked"])]
+    session = FunctionGroupRuntime().begin("conversation:one", 30)
+
+    result = load_function_groups(
+        session,
+        ["blocked_group"],
+        groups,
+        [tool],
+        tool_available=lambda _tool: False,
+    )
+
+    assert result["status"] == "error"
+    assert result["loaded"] == []
+    assert session.loaded_group_ids == set()
+
+
 @pytest.mark.parametrize(
     "requested",
     [None, "reminders", [], [1], ["reminders", 1]],
@@ -228,6 +288,8 @@ def test_malformed_load_requests_fail_without_changing_loaded_state(requested) -
     result = load_function_groups(session, requested, groups, [_tool("remind")])
 
     assert result["status"] == "error"
+    assert "error" in result
+    assert result["loadable_groups"] == ["reminders"]
     assert session.loaded_group_ids == set()
 
 
@@ -235,9 +297,10 @@ def test_mixed_valid_and_unknown_load_request_is_partial_and_loads_only_valid_gr
     session = FunctionGroupRuntime().begin("conversation:one", 30)
     groups = [
         _group("reminders", ["remind"]),
+        _group("notes", ["note"]),
         _group("calendar", ["calendar"], "always"),
     ]
-    tools = [_tool("remind"), _tool("calendar")]
+    tools = [_tool("remind"), _tool("note"), _tool("calendar")]
 
     result = load_function_groups(
         session, ["reminders", "calendar", "missing"], groups, tools
@@ -245,6 +308,8 @@ def test_mixed_valid_and_unknown_load_request_is_partial_and_loads_only_valid_gr
 
     assert result["status"] == "partial"
     assert result["loaded"] == ["reminders"]
+    assert result["already_loaded"] == []
     assert result["already_available"] == ["calendar"]
     assert result["unknown"] == ["missing"]
+    assert result["loadable_groups"] == ["notes"]
     assert session.loaded_group_ids == {"reminders"}
