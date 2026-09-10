@@ -204,3 +204,28 @@ async def test_match_preview_requires_admin_and_text() -> None:
                 "text": "hello",
             },
         )
+
+
+
+def test_preview_uses_explicit_routing_flow_not_match_type() -> None:
+    match = RuleMatch(
+        rule={
+            "id": "standalone-broad-rule",
+            "name": "Standalone broad rule",
+            "match_type": "starts_with",
+            "action_type": "model_routing",
+            "action": {
+                "reset": False,
+                "model": "gpt-5",
+                "reasoning_effort": "high",
+                "scope": "conversation",
+                "continue_to_ai": False,
+            },
+        },
+        phrase="think carefully",
+        fuzzy=False,
+        score=100.0,
+    )
+    result = request_rule_match_preview(match)["would_do"]
+    assert result["consumed"] is True
+    assert result["provider_input"] == "none"
