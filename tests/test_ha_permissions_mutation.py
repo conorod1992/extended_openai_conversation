@@ -11,12 +11,17 @@ from custom_components.extended_openai_conversation_responses import ha_permissi
 class _Permissions:
     """Minimal permission object for direct entity CONTROL checks."""
 
-    def __init__(self, controllable: set[str]) -> None:
+    def __init__(self, controllable: set[str], *, access_all: bool = False) -> None:
         self._controllable = controllable
+        self._access_all = access_all
 
     def check_entity(self, entity_id: str, policy: str) -> bool:
         assert policy == ha_permissions.POLICY_CONTROL
         return entity_id in self._controllable
+
+    def access_all_entities(self, policy: str) -> bool:
+        assert policy == ha_permissions.POLICY_CONTROL
+        return self._access_all
 
 
 class _Auth:
@@ -88,6 +93,18 @@ def test_entity_filter_fails_closed_for_unavailable_authenticated_user(cached_us
     assert result == []
 
 
+def test_entity_filter_fails_closed_before_permission_cache_is_initialized() -> None:
+    """An authenticated request sees nothing if the permission cache is unavailable."""
+    context = SimpleNamespace(user_id="user-1")
+    entities = [{"entity_id": "light.kitchen"}]
+    hass = SimpleNamespace(data={})
+
+    with ha_permissions.bind_active_ha_context(context):
+        result = ha_permissions.filter_entities_for_active_user(hass, entities)
+
+    assert result == []
+
+
 @pytest.mark.asyncio
 async def test_direct_control_permission_allows_permitted_entities() -> None:
     """The simple resolved-target route accepts entities with HA CONTROL permission."""
@@ -123,5 +140,80 @@ async def test_direct_control_permission_rejects_any_denied_entity() -> None:
         await ha_permissions.async_require_control_permission(
             hass,
             ["light.allowed", "light.denied"],
+            context=context,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user", [None, SimpleNamespace(is_active=False)])
+async def test_direct_control_permission_rejects_unavailable_or_inactive_user(user) -> None:
+    """An authenticated direct-control request fails closed without an active HA user."""
+    context = SimpleNamespace(user_id="user-1")
+    users = {} if user is None else {"user-1": user}
+    hass = SimpleNamespace(auth=_Auth(users))
+
+    with pytest.raises(HomeAssistantError):
+        await ha_permissions.async_require_control_permission(
+            hass,
+            ["light.kitchen"],
+            context=context,
+        )
+
+
+@pytest.mark.asyncio
+async def test_empty_direct_target_is_allowed_for_admin_user() -> None:
+    """Admins may authorize a direct action whose entity target cannot be resolved."""
+    context = SimpleNamespace(user_id="user-1")
+    user = SimpleNamespace(
+        is_active=True,
+        is_admin=True,
+        permissions=_Permissions(set(), access_all=False),
+    )
+    hass = SimpleNamespace(auth=_Auth({"user-1": user}))
+
+    result = await ha_permissions.async_require_control_permission(
+        hass,
+        [],
+        context=context,
+    )
+
+    assert result is context
+
+
+@pytest.mark.asyncio
+async def test_empty_direct_target_is_allowed_with_global_control_permission() -> None:
+    """A non-admin with global CONTROL permission may authorize an unresolved target."""
+    context = SimpleNamespace(user_id="user-1")
+    user = SimpleNamespace(
+        is_active=True,
+        is_admin=False,
+        permissions=_Permissions(set(), access_all=True),
+    )
+    hass = SimpleNamespace(auth=_Auth({"user-1": user}))
+
+    result = await ha_permissions.async_require_control_permission(
+        hass,
+        [],
+        context=context,
+    )
+
+    assert result is context
+
+
+@pytest.mark.asyncio
+async def test_empty_direct_target_is_rejected_without_global_control_permission() -> None:
+    """A normal user cannot authorize a direct action with no resolvable entity target."""
+    context = SimpleNamespace(user_id="user-1")
+    user = SimpleNamespace(
+        is_active=True,
+        is_admin=False,
+        permissions=_Permissions(set(), access_all=False),
+    )
+    hass = SimpleNamespace(auth=_Auth({"user-1": user}))
+
+    with pytest.raises(HomeAssistantError):
+        await ha_permissions.async_require_control_permission(
+            hass,
+            [],
             context=context,
         )
