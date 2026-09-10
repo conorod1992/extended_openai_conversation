@@ -237,3 +237,7 @@ AI Task agents use a smaller configuration surface focused on:
 Conversation-specific features such as voice follow-ups, Web Search, memory, the Knowledge Library, skills, and custom Functions are not shown there.
 
 See [AI Task](features/ai-task.md).
+
+## Refreshing model data
+
+Model capability metadata can be refreshed independently of the integration. Use **Update model data** or **Use bundled model data** under Model parameters. See [Model data catalogue](features/model-data.md) for the automatic update cadence, fallback, and storage details.

@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from functools import lru_cache, wraps
 import hashlib
 import math
-import re
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -41,13 +40,13 @@ from .memory import (
     _record_token_list as _memory_record_token_list,
     _tokens as _memory_tokens,
 )
+from .model_catalog import model_metadata
 from .prompt import EffectivePrompt
 
 _TEMPLATE_MARKERS = ("{{", "{%", "{#")
 _TEMPLATE_CACHE_LIMIT = 64
 _MEMORY_LEXICAL_CACHE_LIMIT = 20_000
 _EXPLICIT_CACHE_MIN_CHARACTERS = 4096
-_GPT_56_OR_LATER = re.compile(r"^gpt-5\.(\d+)(?:[-.]|$)", re.IGNORECASE)
 
 _TEMPLATE_CACHE: dict[tuple[int, str], template.Template] = {}
 _INSTALLED = False
@@ -307,8 +306,7 @@ def prompt_cache_context(
 def _supports_explicit_cache(model: Any) -> bool:
     if not isinstance(model, str):
         return False
-    match = _GPT_56_OR_LATER.match(model)
-    return bool(match and int(match.group(1)) >= 6)
+    return bool(model_metadata(model)["explicit_prompt_cache"])
 
 
 def optimize_responses_kwargs(
