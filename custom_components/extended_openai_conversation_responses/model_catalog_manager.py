@@ -26,6 +26,7 @@ from .model_catalog import (
     model_metadata,
     parse_catalog,
     validate_catalog,
+    validate_catalog_transition,
 )
 
 CATALOG_URL = (
@@ -76,6 +77,11 @@ class ModelCatalogManager:
                     < BUNDLED_CATALOG["catalog_version"]
                 ):
                     candidate, etag = None, None
+                elif candidate is not None:
+                    # Stored overrides must retain every reasoning choice accepted by
+                    # the bundled release, otherwise durable agent/rule data could
+                    # become invalid immediately after Home Assistant restarts.
+                    validate_catalog_transition(None, candidate)
                 self.catalog, self.etag, self.last_checked = candidate, etag, checked
         except Exception:
             self.last_error = (
@@ -139,6 +145,7 @@ class ModelCatalogManager:
                     self.catalog or BUNDLED_CATALOG
                 ):
                     raise ValueError("Changed catalogue must increment catalog_version")
+                validate_catalog_transition(self.catalog, candidate)
                 await self._save(candidate, etag, now)
                 activate_catalog(candidate)
                 self.catalog, self.etag, self.last_error = candidate, etag, None
