@@ -336,13 +336,6 @@ fixed conversation-start bundle; call memory_search when a later topic needs oth
   delete them. Confirm before broad deletion.
 """
 
-MODEL_TOKEN_PARAMETER_SUPPORT = (
-    {
-        "pattern": r"(^|-)(gpt-4o|gpt-5|gpt-6-astra|o1|o3|o4)",
-        "token_param": "max_completion_tokens",
-    },
-)
-DEFAULT_TOKEN_PARAM = "max_tokens"
 CONF_MAX_TOKENS = "max_tokens"
 DEFAULT_MAX_TOKENS = 500
 CONF_TOP_P = "top_p"
@@ -529,35 +522,6 @@ CONF_PAYLOAD_TEMPLATE = "payload_template"
 # Advanced Options
 CONF_ADVANCED_OPTIONS = "advanced_options"
 DEFAULT_ADVANCED_OPTIONS = False
-
-# Model-specific parameter configurations
-# Default configuration for standard models (gpt-4, gpt-4o, etc.)
-DEFAULT_MODEL_CONFIG = {
-    "supports_top_p": True,
-    "supports_temperature": True,
-    "supports_max_tokens": True,
-    "supports_max_completion_tokens": False,
-    "supports_reasoning_effort": False,
-    "supports_service_tier": False,
-}
-
-# Pattern-based model configurations
-# Each entry: {"pattern": regex_string, "config": config_dict}
-# Patterns are matched in order; first match wins
-MODEL_CONFIG_PATTERNS = [
-    # Reasoning models with the current shared request-parameter profile.
-    {
-        "pattern": r"^(?:o[1-4]|gpt-5|gpt-6-astra(?:[-.]|$))",
-        "config": {
-            "supports_top_p": False,
-            "supports_temperature": False,
-            "supports_max_tokens": False,
-            "supports_max_completion_tokens": True,
-            "supports_reasoning_effort": True,
-            "supports_service_tier": True,
-        },
-    },
-]
 
 # AI Task default options (simpler than conversation - no prompt, just model/token settings)
 DEFAULT_AI_TASK_OPTIONS = {

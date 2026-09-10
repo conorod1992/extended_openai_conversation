@@ -38,7 +38,7 @@ const elements = {
 };
 const root = {querySelector:(selector) => elements[selector] || null};
 
-syncRequestRuleRoutingControls(root);
+syncRequestRuleRoutingControls(root, ["low", "medium", "high", "xhigh", "max"]);
 assert.equal(scope.value, "conversation");
 assert.equal(scope.disabled, true);
 assert.equal(scope.querySelector('option[value="request"]').disabled, true);
@@ -50,20 +50,20 @@ assert.equal(reasoning.querySelector('option[value="max"]').disabled, false);
 
 matchType.value = "starts_with";
 scope.value = "request";
-syncRequestRuleRoutingControls(root);
+syncRequestRuleRoutingControls(root, ["low", "medium", "high", "xhigh", "max"]);
 assert.equal(scope.disabled, false);
 assert.equal(scope.querySelector('option[value="request"]').disabled, false);
 assert.match(help.textContent, /original request to the AI unchanged/i);
 
 model.value = "gpt-5.6";
 reasoning.value = "max";
-syncRequestRuleRoutingControls(root);
+syncRequestRuleRoutingControls(root, ["low", "medium", "high"]);
 assert.equal(reasoning.querySelector('option[value="xhigh"]').disabled, true);
 assert.equal(reasoning.querySelector('option[value="max"]').disabled, true);
 assert.equal(reasoning.value, "");
 
 model.value = "";
-syncRequestRuleRoutingControls(root);
+syncRequestRuleRoutingControls(root, ["low", "medium", "high", "xhigh", "max"]);
 assert.equal(reasoning.querySelector('option[value="max"]').disabled, false);
 
 const dialog = requestRulesDialog({});

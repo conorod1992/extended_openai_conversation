@@ -21,17 +21,13 @@ from .const import (
     API_MODE_RESPONSES,
     DEFAULT_API_PROVIDER,
     DEFAULT_CONF_BASE_URL,
-    DEFAULT_MODEL_CONFIG,
-    DEFAULT_TOKEN_PARAM,
-    MODEL_CONFIG_PATTERNS,
-    MODEL_TOKEN_PARAMETER_SUPPORT,
-    REASONING_EFFORT_OPTIONS,
 )
 from .entity_context_cache import (
     get_entity_prompt_metadata,
     normalize_entity_aliases as normalize_entity_aliases,
 )
 from .ha_permissions import filter_entities_for_active_user
+from .model_catalog import model_metadata
 from .provider_errors import provider_transport_error
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,40 +47,21 @@ def get_api_mode(configured_mode: str, model: str) -> str:
     if configured_mode != API_MODE_AUTO:
         return configured_mode
 
-    if re.match(r"^gpt-6-astra(?:[-.]|$)", model, re.IGNORECASE):
-        return API_MODE_RESPONSES
-
-    match = re.match(r"^gpt-5\.(\d+)(?:[-.]|$)", model, re.IGNORECASE)
-    if match and int(match.group(1)) >= 6:
-        return API_MODE_RESPONSES
-
-    return API_MODE_CHAT_COMPLETIONS
+    return (
+        API_MODE_CHAT_COMPLETIONS
+        if model_metadata(model)["chat_reasoning_tools"]
+        else API_MODE_RESPONSES
+    )
 
 
 def get_model_config(model: str) -> dict[str, bool]:
-    """Get model-specific parameter configuration."""
-    # Check patterns in order; first match wins
-    for entry in MODEL_CONFIG_PATTERNS:
-        pattern = str(entry["pattern"])
-        entry_config = entry["config"]
-        if re.match(pattern, model, re.IGNORECASE):
-            # Type assertion since we know the structure from MODEL_CONFIG_PATTERNS
-            return (
-                dict(entry_config)
-                if isinstance(entry_config, dict)
-                else DEFAULT_MODEL_CONFIG
-            )
-
-    # Default configuration for standard models (gpt-4, gpt-4o, etc.)
-    return DEFAULT_MODEL_CONFIG
+    """Get model-specific parameter configuration from the active catalogue."""
+    return dict(model_metadata(model)["parameters"])
 
 
 def get_reasoning_effort_options(model: str) -> list[str]:
-    """Return only reasoning-effort values supported by the selected model."""
-    options = list(REASONING_EFFORT_OPTIONS)
-    if re.match(r"^gpt-6-astra(?:[-.]|$)", model, re.IGNORECASE):
-        options.extend(("xhigh", "max"))
-    return options
+    """Return reasoning choices from the same metadata used by configuration."""
+    return list(model_metadata(model)["reasoning_efforts"])
 
 
 def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:
@@ -127,11 +104,11 @@ def supports_openai_hosted_tools(
 
 def get_token_param_for_model(model: str) -> str:
     """Return the token parameter name for a model."""
-    model_lower = model.lower()
-    for entry in MODEL_TOKEN_PARAMETER_SUPPORT:
-        if re.search(entry["pattern"], model_lower):
-            return entry["token_param"]
-    return DEFAULT_TOKEN_PARAM
+    return (
+        "max_completion_tokens"
+        if model_metadata(model)["completion_token_limit"]
+        else "max_tokens"
+    )
 
 
 def convert_to_template(

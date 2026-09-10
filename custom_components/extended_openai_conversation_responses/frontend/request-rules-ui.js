@@ -1,3 +1,4 @@
+import {lookupModelData} from "./model-catalog.js";
 import {bindRequestRuleMatchTester, formatRequestRuleMatchResult, transformRequestRulesMatchTester} from "./request-rules-match-test-ui.js";
 
 const {ensureRequestRulesModule, getRequestRulesModule} = await import("./request-rules-loader.js");
@@ -59,24 +60,23 @@ function addRequestRuleManagementClarity(panel, html) {
   return transformed;
 }
 
-function ensureReasoningOptions(root) {
+function ensureReasoningOptions(root, efforts) {
   const select = root?.querySelector("#rule-reasoning");
   if (!select) return;
-  for (const [value, label] of [["xhigh", "Extra high"], ["max", "Max"]]) {
+  for (const value of efforts) {
     if (select.querySelector(`option[value="${value}"]`)) continue;
     const option = select.ownerDocument.createElement("option");
     option.value = value;
-    option.textContent = label;
+    option.textContent = value.charAt(0).toUpperCase() + value.slice(1);
     select.append(option);
   }
 }
 
-export function syncRequestRuleRoutingControls(root) {
+export function syncRequestRuleRoutingControls(root, efforts = null) {
   if (!root) return;
   const actionType = root.querySelector("#rule-action-type");
   const matchType = root.querySelector("#rule-match");
   const scope = root.querySelector("#rule-scope");
-  const model = root.querySelector("#rule-model");
   const reasoning = root.querySelector("#rule-reasoning");
   const help = root.querySelector("#rule-routing-scope-help");
   if (!actionType || !matchType || !scope) return;
@@ -88,17 +88,12 @@ export function syncRequestRuleRoutingControls(root) {
   if (consumed) scope.value = "conversation";
   scope.disabled = consumed;
 
-  ensureReasoningOptions(root);
-  if (reasoning) {
-    const explicitModel = String(model?.value || "").trim();
-    const astra = /^gpt-6-astra(?:[-.]|$)/i.test(explicitModel);
-    for (const value of ["xhigh", "max"]) {
-      const option = reasoning.querySelector(`option[value="${value}"]`);
-      if (option) option.disabled = Boolean(explicitModel) && !astra;
+  if (reasoning && efforts) {
+    ensureReasoningOptions(root, efforts);
+    for (const option of reasoning.options) {
+      option.disabled = Boolean(option.value) && !efforts.includes(option.value);
     }
-    if (Boolean(explicitModel) && !astra && ["xhigh", "max"].includes(reasoning.value)) {
-      reasoning.value = "";
-    }
+    if (reasoning.value && !efforts.includes(reasoning.value)) reasoning.value = "";
   }
 
   if (help) {
@@ -139,12 +134,23 @@ export function bindRequestRules(panel) {
       await module.recoverRequestRuleMutation(panel, err, "Unable to move Request Rule");
     }
   }));
+  let revision = 0;
+  const refreshRouting = async () => {
+    syncRequestRuleRoutingControls(root);
+    if (!root?.querySelector("#rule-model")) return;
+    const current = ++revision;
+    try {
+      const data = await lookupModelData(panel, root.querySelector("#rule-model")?.value.trim() || "");
+      if (current === revision) syncRequestRuleRoutingControls(root, data.reasoning_effort_options);
+    } catch (err) { panel._toast(`Unable to load model choices: ${err.message || String(err)}`, true); }
+  };
+  root?.querySelectorAll(".rule-edit,#rule-add,#rule-empty-add").forEach((button) => button.addEventListener("click", refreshRouting));
   for (const selector of ["#rule-action-type", "#rule-match", "#rule-scope", "#rule-model", "#rule-reset"]) {
     const element = root?.querySelector(selector);
     if (!element) continue;
-    element.addEventListener(selector === "#rule-model" ? "input" : "change", () => syncRequestRuleRoutingControls(root));
+    element.addEventListener(selector === "#rule-model" ? "input" : "change", refreshRouting);
   }
-  syncRequestRuleRoutingControls(root);
+  void refreshRouting();
   bindRequestRuleMatchTester(panel);
   return result;
 }

@@ -38,6 +38,7 @@ from .guest_mode import (
     guest_arguments_allowed_runtime,
 )
 from .helpers import get_model_config, get_reasoning_effort_options
+from .model_catalog import all_reasoning_efforts
 from .request_rule_patterns import (
     MAX_AGENT_PATTERN_STATES,
     CompiledSentencePattern,
@@ -1102,7 +1103,7 @@ def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
                 raise ValueError(
                     f"reasoning effort {effort} is not supported by model {model}"
                 )
-        elif effort not in get_reasoning_effort_options("gpt-6-astra"):
+        elif effort not in all_reasoning_efforts():
             # The effective model may come from the configured/conversation route.
             # Accept every currently supported value here; runtime validates it
             # against that effective model before publishing any route change.

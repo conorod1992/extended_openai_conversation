@@ -28,17 +28,6 @@ function applyModelAwareReasoningOptions(panel) {
   };
 }
 
-function normalizeReasoningBeforeModelValidation(panel) {
-  const root = panel?.shadowRoot;
-  const model = root?.querySelector('[data-config="chat_model"]');
-  if (!model) return;
-  model.addEventListener("change", () => {
-    if (/^gpt-6-astra(?:[-.]|$)/i.test(model.value || "")) return;
-    const reasoning = root.querySelector('[data-config="reasoning_effort"]');
-    if (reasoning && ["xhigh", "max"].includes(reasoning.value)) reasoning.value = "high";
-  }, {capture: true});
-}
-
 function simplifyConfigurationMarkupLegacy(panel, html) {
   const config = panel._draft || panel._result?.config || {};
   const localEnabled = Boolean(config.local_intents_enabled);
@@ -173,7 +162,6 @@ export function renderConfiguration(panel) {
 export function bindConfiguration(panel) {
   const module = getAgentConfigModule();
   if (!module) return queueRender(panel);
-  normalizeReasoningBeforeModelValidation(panel);
   const result = module.bindConfiguration(panel);
   bindBackupTransfer(panel, backupSummaryLines);
   bindExposedAttributeSettings(panel);

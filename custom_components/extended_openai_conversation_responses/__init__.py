@@ -104,6 +104,7 @@ from .management_loading_performance import install_management_loading_optimizat
 from .management_permissions import install_management_permissions
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
+from .model_catalog_manager import async_setup_model_catalog
 from .model_search_hardening import install_model_search_hardening
 from .native_function_schema_migration import (
     install_current_default_native_function_schemas,
@@ -134,6 +135,7 @@ def _register_split_frontend_modules() -> None:
     """Add implementation modules used by the management frontend wrappers."""
     extras = (
         "agent-config-editor-base.js",
+        "model-catalog.js",
         "ha-llm-tools.js",
         "agent-config-loader.js",
         "exposed-attributes-ui.js",
@@ -168,6 +170,7 @@ type ExtendedOpenAIConfigEntry = ConfigEntry[AsyncClient]
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Extended OpenAI Conversation (Responses)."""
+    await async_setup_model_catalog(hass)
     apply_openai_compatibility()
     install_persistence_transactions()
     install_restore_recovery()
