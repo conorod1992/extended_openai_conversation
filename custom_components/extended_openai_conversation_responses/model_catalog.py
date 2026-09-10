@@ -173,16 +173,40 @@ def _transition_probe_models(catalog: dict[str, Any]) -> set[str]:
     return probes
 
 
+def catalog_model_metadata(
+    catalog: dict[str, Any] | None, model: str
+) -> dict[str, Any]:
+    """Resolve metadata against bundled data or one validated downloaded overlay."""
+    effective = _effective_catalog(
+        validate_catalog(catalog) if catalog is not None else None
+    )
+    return _model_metadata_from(effective, model)
+
+
+def catalog_reasoning_efforts(catalog: dict[str, Any] | None) -> list[str]:
+    """Return every reasoning choice exposed by one effective catalogue."""
+    effective = _effective_catalog(
+        validate_catalog(catalog) if catalog is not None else None
+    )
+    return list(
+        dict.fromkeys(
+            effort
+            for item in [effective["defaults"], *effective["models"]]
+            for effort in item["reasoning_efforts"]
+        )
+    )
+
+
 def validate_catalog_transition(
     current: dict[str, Any] | None, candidate: dict[str, Any]
 ) -> None:
     """Prevent hot metadata updates from invalidating already persisted choices.
 
     Agent configuration and Request Rules store reasoning-effort values that are
-    validated against the active catalogue. A hot update may add choices, but
-    removing one could make existing durable state invalid on its next reload.
-    Such narrowing therefore requires an integration release with an explicit
-    migration rather than a data-only catalogue update.
+    validated against the active catalogue. A hot update may add choices or add
+    reasoning support, but removing a choice or reasoning capability could make
+    existing durable state invalid on its next reload. Such narrowing therefore
+    requires an integration release with an explicit migration.
     """
     current_effective = _effective_catalog(
         validate_catalog(current) if current is not None else None
@@ -192,14 +216,22 @@ def validate_catalog_transition(
         candidate_effective
     )
     for model in probes:
-        before = set(_model_metadata_from(current_effective, model)["reasoning_efforts"])
-        after = set(
-            _model_metadata_from(candidate_effective, model)["reasoning_efforts"]
-        )
+        before_metadata = _model_metadata_from(current_effective, model)
+        after_metadata = _model_metadata_from(candidate_effective, model)
+        before = set(before_metadata["reasoning_efforts"])
+        after = set(after_metadata["reasoning_efforts"])
         if not before.issubset(after):
             raise ValueError(
                 "Catalogue update cannot remove reasoning effort choices without "
                 "an integration migration"
+            )
+        if (
+            before_metadata["parameters"]["supports_reasoning_effort"]
+            and not after_metadata["parameters"]["supports_reasoning_effort"]
+        ):
+            raise ValueError(
+                "Catalogue update cannot remove reasoning support without an "
+                "integration migration"
             )
 
 
