@@ -4,7 +4,7 @@ This repository uses Mutmut for deliberately small, manual mutation-testing camp
 
 ## Campaigns
 
-The manual workflow provides four selectable campaigns:
+The manual workflow provides five selectable campaigns:
 
 ### `function-tools`
 
@@ -52,7 +52,19 @@ The `request-rules` campaign selects exactly these functions in `custom_componen
 
 The compilation helper also contains storage diagnostics and pattern activation bounds. Those branches are not the objective of this campaign. Do not assert exact diagnostics, persistence bookkeeping, cache layout, or compiled-state counts just to kill their mutants. The sentence grammar engine, fuzzy similarity algorithm, normalization implementation, async scheduling, routing overrides, actions, providers, Function Tools, Guest Mode, permissions and UI are deliberately not Request Rules mutation targets. Calling some of them during test setup does not expand that claim.
 
-Mutation testing complements normal unit/property tests and real-Home-Assistant acceptance tests; it is not a replacement for either. No production behaviour is changed for this campaign.
+### `function-groups`
+
+This campaign mutates three deterministic Function Groups boundaries in `custom_components/extended_openai_conversation_responses/function_groups.py` and runs `tests/test_function_groups_mutation.py`:
+
+- `_available_group_sets()` — which configured groups are actually viable under current Function Tool/runtime availability;
+- `assemble_function_tools()` — which ungrouped, always-available, loaded on-demand and loader schemas are exposed; and
+- `load_function_groups()` — which requested groups may change the per-session loaded set and how valid/unknown/already-available requests are classified.
+
+The focused tests cover ungrouped and always-available tools, on-demand withholding/loading, disabled groups, unavailable individual members, stale loaded-state cleanup when a group loses all available members, group-loader and Function Tool capability switches, runtime availability predicates, malformed load requests, mixed valid/unknown requests, already-loaded/idempotent requests, multiple-group requests, and the case where an unavailable configured tool appears before later viable tools.
+
+This campaign deliberately does **not** certify management CRUD, provider/tool execution, expiry timing, exact diagnostic/count metadata, exact error-message wording, malformed stored-group repair semantics, or broader Function Tool/security behaviour. Those areas require their own explicit contracts rather than assertions added solely to kill mutants.
+
+Mutation testing complements normal unit/property tests and real-Home-Assistant acceptance tests; it is not a replacement for either. No production behaviour is changed by these campaigns.
 
 ## Scope principles
 
@@ -60,7 +72,7 @@ Mutation testing here is selective rather than repository-wide. A campaign shoul
 
 Mutation testing complements the normal unit/property tests and real-Home-Assistant acceptance tests; it is not a replacement for either. The real-HA suite should continue to validate runtime integration separately rather than being used as the mutation runner.
 
-Function Groups are not part of these campaigns yet. They can be added later if stable, high-value policy decisions are identified that benefit from mutation testing.
+Additional campaigns should only be added when another small, stable decision boundary has a clear behavioural contract worth protecting.
 
 ## Run locally
 
@@ -80,13 +92,14 @@ mutmut run
 mutmut results
 ```
 
-All four campaigns use the same runner locally and in Actions:
+All five campaigns use the same runner locally and in Actions:
 
 ```bash
 python scripts/run_mutation_campaign.py request-rules
 python scripts/run_mutation_campaign.py guest-security
 python scripts/run_mutation_campaign.py ha-permissions
 python scripts/run_mutation_campaign.py function-tools
+python scripts/run_mutation_campaign.py function-groups
 ```
 
 Run from the repository root. The runner temporarily replaces only `[tool.mutmut]` with the selected campaign's source module(s) and focused tests, then restores the original file even on failure. It clears generated `mutants/` state before each mutation run so switching campaigns cannot reuse stale results. The checked-in default remains the Function Tool configuration; there is no union of campaign modules or tests.
@@ -96,7 +109,7 @@ Use `--baseline-only` for pytest without mutation, or `--target 'MUTMUT_GLOB_OR_
 On Windows without WSL, use the existing manual Actions workflow for actual Mutmut execution:
 
 ```bash
-gh workflow run mutation.yml --ref YOUR_BRANCH -f campaign=request-rules
+gh workflow run mutation.yml --ref YOUR_BRANCH -f campaign=function-groups
 ```
 
 The Request Rules selectors use verified generated `xǁRequestRulesǁmethod__mutmut_*` names; Python qualified method names do not select those mutants.
@@ -115,6 +128,7 @@ Run it from **Actions → Targeted mutation testing → Run workflow**, then cho
 - `guest-security`
 - `ha-permissions`
 - `request-rules`
+- `function-groups`
 
 Concurrency is grouped by branch/ref and campaign, so different campaigns can run independently.
 
@@ -142,7 +156,7 @@ Only the first category requires a new test. Do not refactor production behaviou
 
 ## Request Rules campaign review (2026-09-10)
 
-The runs below record the initial review before rebasing onto PR #256. The current four-campaign runner configures only the selected campaign; the PR records validation runs on the rebased head. `tests/test_mutation_campaign_runner.py` checks isolation for all four campaigns, restoration after failure (including Windows line endings), selector/override validation and incomplete-result rejection.
+The runs below record the initial review before rebasing onto PR #256. The current multi-campaign runner configures only the selected campaign; the PR records validation runs on the rebased head. `tests/test_mutation_campaign_runner.py` checks campaign isolation, restoration after failure (including Windows line endings), selector/override validation and incomplete-result rejection.
 
 The [first run](https://github.com/conorod1992/extended_openai_conversation/actions/runs/34426831096) killed 211 of 274 mutants, with 63 survivors. Reviewing every surviving diff led to 12 additional cases and stronger existing assertions for effective settings, custom wording groups, fuzzy candidate fall-through/position/ties, returned match metadata, sparse saved order, inactive-pattern fall-through, and sentence variants. These assert observable matching behaviour rather than cache internals or mocked scores.
 
@@ -159,3 +173,18 @@ The [second run](https://github.com/conorod1992/extended_openai_conversation/act
 Suffix numbers refer to `__mutmut_N` in the pinned version and source, not permanent exclusions. No pragmas suppress these mutants. All 23 `_deterministic_match` mutants were killed. A future change should re-review survivors rather than treating this list as an allowlist.
 
 Local Windows validation also passed all 213 Request Rules tests and the original 85-test Function Tool baseline, using Python 3.14, HA 2026.8.0b3, and pytest-asyncio with the Linux-only HA pytest plugin disabled. Ruff lint/format and whitespace checks passed. A broader local run before the final 12 cases had 1,687 passed, 2 skipped and 16 unrelated failures: 15 reproduced on unchanged `develop`; an existing file-edit concurrency test failed in the working checkout but passed in the comparison checkout. Those failures were not fixed or hidden by this campaign. These were pre-rebase local results only. On final head `24c92a4`, normal GitHub CI subsequently passed lint/type checks and **1,756 tests on both HA stable and HA dev**, while **Real HA Acceptance passed all 55 tests**; HACS and version metadata also passed. The final-head validation is therefore green while the historical local Windows limitations above remain documented for context.
+
+## Function Groups campaign review (2026-09-10)
+
+The initial focused run exposed meaningful gaps in otherwise-valid Function Groups tests, particularly around unavailable configured members not suppressing later viable tools and around idempotent/already-available load behaviour. Reliable behavioural cases were added for those contracts rather than asserting implementation details.
+
+The [strengthened run](https://github.com/conorod1992/extended_openai_conversation/actions/runs/34465849452), on code/test commit `f2d902e`, passed the **18-test** focused baseline and executed all **202** selected mutants: **187 killed, 15 survived**, with no timeout, error, suspicious or unchecked selected mutants. Every survivor was inspected:
+
+| Function / mutant suffix numbers | Classification and reason to leave them |
+| --- | --- |
+| `_available_group_sets`: 11, 13 | Outside scope: differences in the fallback used when an internal group mapping omits its expected `functions` key. This campaign does not define malformed stored-group repair semantics. |
+| `assemble_function_tools`: 53, 59, 60, 66, 68, 69, 70, 71, 72 | Incidental/outside scope: assembly diagnostics and count/character metadata. Tool visibility and loader behaviour are unchanged; exact diagnostic metadata is not a contract of this campaign. |
+| `load_function_groups`: 27, 28, 29 | Incidental: exact validation error wording/capitalisation. The error result and no-state-change behaviour are asserted without freezing prose. |
+| `load_function_groups`: 49 | Outside scope: the precise `time.monotonic()` activity timestamp update. Runtime expiry/timing is deliberately excluded from this campaign. |
+
+Suffix numbers refer to `__mutmut_N` for Mutmut 3.7.0 and the reviewed source revision, not permanent exclusions. No pragmas suppress these mutants. Future source changes should re-run and re-review survivors rather than treating this table as an allowlist.
