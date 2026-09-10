@@ -1137,3 +1137,100 @@ async def test_management_api_permissions_crud_and_delete_confirmation(
     )
     assert deleted["deleted"] is True
     assert isinstance(deleted["revision"], str)
+
+
+
+@pytest.mark.parametrize(
+    ("match_type", "expected"),
+    [
+        ("equals", False),
+        ("sentence_pattern", False),
+        ("starts_with", True),
+        ("ends_with", True),
+        ("contains", True),
+    ],
+)
+def test_legacy_routing_flow_is_normalized_once(match_type, expected) -> None:
+    rule = routing_rule(
+        scope="conversation" if match_type in {"equals", "sentence_pattern"} else "request",
+        match_type=match_type,
+    )
+    validated = validate_rule(rule)
+    assert validated["action"]["continue_to_ai"] is expected
+
+
+def test_explicit_continue_to_ai_allows_equals_request_scope() -> None:
+    rule = routing_rule(scope="request", match_type="equals")
+    rule["action"]["continue_to_ai"] = True
+    validated = validate_rule(rule)
+    assert validated["action"]["scope"] == "request"
+    assert validated["action"]["continue_to_ai"] is True
+
+
+def test_explicit_continue_to_ai_survives_backup_normalization() -> None:
+    rule = routing_rule(scope="request", match_type="equals")
+    rule["action"]["continue_to_ai"] = True
+    prepared = RequestRules.validate_backup_data(
+        {"defaults": dict(DEFAULT_MATCHING), "rules": [rule]}
+    )
+    restored = prepared["rules"][0]
+    assert restored["action"]["scope"] == "request"
+    assert restored["action"]["continue_to_ai"] is True
+
+
+async def test_explicit_continue_to_ai_decouples_equals_from_consumption() -> None:
+    rule = routing_rule(scope="request", match_type="equals")
+    rule["action"]["continue_to_ai"] = True
+    result = await async_evaluate_rule(
+        SimpleNamespace(),
+        await manager(rule),
+        RequestRuleRuntime(),
+        "think carefully",
+        "session",
+    )
+    assert result is not None and result.consume is False
+    assert result.response is None
+    assert result.request_override == {
+        CONF_CHAT_MODEL: "gpt-5",
+        CONF_REASONING_EFFORT: "high",
+    }
+
+
+async def test_explicit_standalone_routing_decouples_contains_from_consumption() -> None:
+    rule = routing_rule(scope="conversation", match_type="contains")
+    rule["action"]["continue_to_ai"] = False
+    runtime = RequestRuleRuntime()
+    result = await async_evaluate_rule(
+        SimpleNamespace(),
+        await manager(rule),
+        runtime,
+        "please think carefully about this",
+        "session",
+    )
+    assert result is not None and result.consume is True
+    assert result.response == "Updated"
+    assert result.request_override is None
+    assert runtime.get("session") == {
+        CONF_CHAT_MODEL: "gpt-5",
+        CONF_REASONING_EFFORT: "high",
+    }
+
+
+def test_explicit_standalone_request_scope_is_rejected() -> None:
+    rule = routing_rule(scope="request", match_type="contains")
+    rule["action"]["continue_to_ai"] = False
+    with pytest.raises(ValueError, match="Continue to AI"):
+        validate_rule(rule)
+
+
+def test_continue_to_ai_requires_boolean() -> None:
+    rule = routing_rule(scope="request", match_type="starts_with")
+    rule["action"]["continue_to_ai"] = "yes"
+    with pytest.raises(ValueError, match="continue_to_ai must be true or false"):
+        validate_rule(rule)
+
+
+async def test_storage_v4_migration_is_additive() -> None:
+    store = object.__new__(RequestRuleStore)
+    old = {"defaults": dict(DEFAULT_MATCHING), "rules": [local_rule()]}
+    assert await store._async_migrate_func(4, 0, old) == old

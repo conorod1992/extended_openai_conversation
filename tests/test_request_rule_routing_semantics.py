@@ -66,7 +66,7 @@ def _rule(
     }
 
 
-def test_complete_routing_commands_reject_request_scope_even_for_reset() -> None:
+def test_standalone_routing_rejects_request_scope_even_for_reset() -> None:
     for match_type in ("equals", "sentence_pattern"):
         for reset in (False, True):
             rule = _rule(
@@ -78,10 +78,11 @@ def test_complete_routing_commands_reject_request_scope_even_for_reset() -> None
                     "reasoning_effort": None,
                     "scope": "request",
                     "reset": reset,
+                    "continue_to_ai": False,
                     "success_response": "Updated",
                 },
             )
-            with pytest.raises(ValueError, match="consumed locally"):
+            with pytest.raises(ValueError, match="Continue to AI"):
                 validate_rule(rule)
 
 
@@ -147,6 +148,7 @@ async def test_broad_request_reset_evaluation_keeps_saved_override() -> None:
             "reasoning_effort": None,
             "scope": "request",
             "reset": True,
+            "continue_to_ai": True,
             "success_response": "Using defaults",
         },
     )
@@ -211,6 +213,7 @@ async def test_captured_reasoning_uses_effective_routed_model_before_publish() -
             "reasoning_effort": "{effort}",
             "scope": "conversation",
             "reset": False,
+            "continue_to_ai": False,
             "success_response": "Updated",
         },
     )
@@ -260,6 +263,7 @@ async def test_changing_model_revalidates_existing_conversation_reasoning() -> N
             "reasoning_effort": None,
             "scope": "conversation",
             "reset": False,
+            "continue_to_ai": False,
             "success_response": "Updated",
         },
     )

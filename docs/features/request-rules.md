@@ -32,7 +32,12 @@ If any action fails, the remaining actions do not run and the configured failure
 
 ## AI routing
 
-An **AI routing** rule can override the model, reasoning effort, or both. The exact effect of its scope depends on whether the matched phrase is itself a complete command or is only selecting a route for a broader request.
+An **AI routing** rule can override the model, reasoning effort, or both. Matching and request flow are separate choices: **Equals**, **Starts with**, **Ends with**, **Contains**, and **ExtendedOpenAI sentence pattern** decide only whether a rule matches.
+
+Use **Continue to AI** to choose what happens after a routing rule matches:
+
+- **On** applies the routing settings and sends the original request to the AI provider unchanged. **This request only** applies the selected model/reasoning only to that provider call; **Rest of this conversation** applies it to that call and later requests in the same conversation.
+- **Off** treats the phrase as a standalone routing command. ExtendedOpenAI acknowledges it locally and does not send that command to the provider. Because there is no provider request to modify, standalone commands use **Rest of this conversation** scope.
 
 Routing precedence for a provider request is:
 
@@ -40,14 +45,9 @@ Routing precedence for a provider request is:
 
 Conversation overrides use the current conversation/continuity identity and expire with it. They do not change the saved agent configuration.
 
-**Equals** and **ExtendedOpenAI sentence pattern** routing rules are complete routing commands. ExtendedOpenAI acknowledges these locally and does **not** send the routing command itself to the AI provider. Because there is no provider request for that command to modify, these rules must use **Rest of this conversation** scope. This applies to both model changes and resets.
+A reset follows the same explicit flow choice. With **Continue to AI** on and **This request only**, the configured agent defaults apply to that one provider call while any saved conversation override remains in place for the next normal request. A **Rest of this conversation** reset clears the saved conversation override.
 
-**Starts with**, **Ends with**, and **Contains** routing rules are different: they select a route while the original request continues to the provider unchanged. These broader rules can use either scope:
-
-- **This request only** applies the selected model/reasoning only to that provider call.
-- **Rest of this conversation** applies it to that provider call and later requests in the same conversation.
-
-A reset follows the same distinction. A broad **This request only** reset uses the configured agent defaults for that one provider call but deliberately leaves any saved conversation override in place, so the next normal request returns to the conversation route. A **Rest of this conversation** reset clears the saved conversation override.
+Existing routing rules created before this option was added retain their previous behaviour when first loaded: Equals and Sentence pattern rules remain standalone, while Starts with, Ends with, and Contains rules continue to the provider. Once normalized, that choice is stored explicitly and no longer changes when the match type changes.
 
 Reasoning effort is validated against the model that will actually receive it, including a model supplied by another active conversation override. Model-specific values are supported where the model allows them; for example, GPT-6 Astra routing can use `xhigh` and `max` in addition to the normal reasoning levels.
 
@@ -65,7 +65,7 @@ Strict matching always wins over fuzzy matching. More specific strict types win 
 
 ### ExtendedOpenAI sentence patterns
 
-Choose **ExtendedOpenAI sentence pattern** when parts of a command can vary. This is a small syntax owned by ExtendedOpenAI; it is not a promise of compatibility with Home Assistant/Hassil grammar. Patterns are parsed and compiled when rules are loaded or saved, then matched by a bounded finite-state matcher.
+Choose **ExtendedOpenAI sentence pattern** when parts of a command can vary. The editor provides **Optional**, **Choice**, **Variable**, and **Number range** insertion helpers; they build the same raw syntax shown below, which remains fully editable. This is a small syntax owned by ExtendedOpenAI; it is not a promise of compatibility with Home Assistant/Hassil grammar. Patterns are parsed and compiled when rules are loaded or saved, then matched by a bounded finite-state matcher.
 
 Sentence patterns are case-insensitive but otherwise use their own exact grammar path. Fuzzy matching, wording alternatives, and word-form normalization do not apply.
 

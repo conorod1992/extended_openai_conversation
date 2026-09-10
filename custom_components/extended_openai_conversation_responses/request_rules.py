@@ -54,7 +54,7 @@ from .request_rule_patterns import (
 
 _LOGGER = logging.getLogger(__name__)
 
-STORAGE_VERSION = 4
+STORAGE_VERSION = 5
 STORAGE_KEY_PREFIX = "extended_openai_conversation_responses.request_rules"
 MAX_RULES = 500
 MAX_PHRASES = 25
@@ -170,7 +170,7 @@ class RequestRuleStore(Store[dict[str, Any]]):
                 **old_data,
                 "wording_groups": _copy_wording_groups(DEFAULT_WORDING_GROUPS),
             }
-        if old_major_version in {2, 3}:
+        if old_major_version in {2, 3, 4}:
             return old_data
         raise NotImplementedError
 
@@ -184,7 +184,11 @@ def _normalize_legacy_consumed_request_scope(value: Any) -> tuple[Any, bool]:
     if value.get("match_type", "equals") not in {"equals", "sentence_pattern"}:
         return value, False
     action = value.get("action")
-    if not isinstance(action, Mapping) or action.get("scope", "request") != "request":
+    if (
+        not isinstance(action, Mapping)
+        or "continue_to_ai" in action
+        or action.get("scope", "request") != "request"
+    ):
         return value, False
     normalized = deepcopy(dict(value))
     normalized["action"] = {**dict(action), "scope": "conversation"}
@@ -595,8 +599,6 @@ class RequestRules:
                 )
             return normalized_candidates[key]
 
-        # Published phrases are already sorted by the original deterministic
-        # ranking. Once one succeeds, no unvisited phrase can change the winner.
         for rule, settings, compiled in snapshot.deterministic:
             if compiled.sentence_pattern is not None:
                 if sentence_text is None:
@@ -611,8 +613,6 @@ class RequestRules:
             ):
                 return RuleMatch(rule, compiled.original, False, 100.0)
 
-        # Fuzzy ties historically use rule order, then phrase order, rather than
-        # phrase length. Restore that order after the deterministic pass.
         fuzzy: list[tuple[tuple[float, int, int], RuleMatch]] = []
         for rule, settings, compiled in snapshot.phrases:
             if compiled.sentence_pattern is not None or not settings["fuzzy"]:
@@ -948,6 +948,18 @@ def validate_rule(
     if action_type not in ACTION_TYPES:
         raise ValueError("unsupported action type")
     raw_action = value.get("action", {})
+    if (
+        action_type == "model_routing"
+        and isinstance(raw_action, Mapping)
+        and "continue_to_ai" not in raw_action
+    ):
+        # Preserve historical routing behaviour once for legacy rules. New and
+        # edited rules store this choice explicitly, so matching no longer decides
+        # whether the provider is called.
+        raw_action = {
+            **raw_action,
+            "continue_to_ai": match_type not in {"equals", "sentence_pattern"},
+        }
     action = _validate_action(action_type, raw_action)
     referenced_slots = _referenced_slots(action) | _legacy_action_slots(raw_action)
     unknown_slots = referenced_slots - set(slot_names)
@@ -955,12 +967,12 @@ def validate_rule(
         raise ValueError("unknown captured value: " + ", ".join(sorted(unknown_slots)))
     if (
         action_type == "model_routing"
-        and match_type in {"equals", "sentence_pattern"}
+        and not action["continue_to_ai"]
         and action["scope"] == "request"
     ):
         raise ValueError(
-            "Equals and Sentence pattern AI routing commands are consumed locally; "
-            "use the rest of the conversation scope"
+            "Request-only routing requires Continue to AI; enable it or use "
+            "the rest of the conversation scope"
         )
     behavior = value.get("matching_behavior", "defaults")
     if behavior not in {"defaults", "custom"}:
@@ -1069,13 +1081,23 @@ def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
             ),
             "canonical_signature": canonical_action_signature(actions),
         }
-    allowed = {"model", "reasoning_effort", "scope", "reset", "success_response"}
+    allowed = {
+        "model",
+        "reasoning_effort",
+        "scope",
+        "reset",
+        "success_response",
+        "continue_to_ai",
+    }
     unknown = set(value) - allowed
     if unknown:
         raise ValueError("unknown model routing fields: " + ", ".join(sorted(unknown)))
     reset = value.get("reset", False)
     if not isinstance(reset, bool):
         raise ValueError("reset must be true or false")
+    continue_to_ai = value.get("continue_to_ai", True)
+    if not isinstance(continue_to_ai, bool):
+        raise ValueError("continue_to_ai must be true or false")
     scope = value.get("scope", "request")
     if scope not in ROUTING_SCOPES:
         raise ValueError("unsupported routing scope")
@@ -1113,6 +1135,7 @@ def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
         "reasoning_effort": effort or None,
         "scope": scope,
         "reset": reset,
+        "continue_to_ai": continue_to_ai,
         "success_response": _clean(
             value.get(
                 "success_response",
@@ -1465,7 +1488,6 @@ def _guest_script_allowed(
             ):
                 return False
         elif any(key in item for key in ("device_id", "event", "event_type")):
-            # Device and event actions do not provide an entity-scoped boundary.
             return False
     return True
 
@@ -1584,7 +1606,7 @@ async def async_evaluate_rule(
             request_override = {_REQUEST_RESET_SENTINEL: "1"}
         return RuleEvaluation(
             match,
-            rule["match_type"] in {"equals", "sentence_pattern"},
+            not action["continue_to_ai"],
             resolve_slot_values(action["success_response"], match.slots),
             request_override,
         )
@@ -1634,7 +1656,7 @@ async def async_evaluate_rule(
         request_override = None
     else:
         request_override = override
-    consume = rule["match_type"] in {"equals", "sentence_pattern"}
+    consume = not action["continue_to_ai"]
     return RuleEvaluation(
         match,
         consume,

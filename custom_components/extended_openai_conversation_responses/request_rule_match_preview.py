@@ -25,10 +25,14 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
 
     rule = match.rule
     action = rule["action"]
-    consumed = rule["action_type"] == "local_action" or rule["match_type"] in {
-        "equals",
-        "sentence_pattern",
-    }
+    if rule["action_type"] == "local_action":
+        consumed = True
+    else:
+        continue_to_ai = action.get("continue_to_ai")
+        if not isinstance(continue_to_ai, bool):
+            # Direct preview callers may provide an unnormalized legacy rule.
+            continue_to_ai = rule["match_type"] not in {"equals", "sentence_pattern"}
+        consumed = not continue_to_ai
     if rule["action_type"] == "local_action":
         would_do: dict[str, Any] = {
             "type": "local_action",
