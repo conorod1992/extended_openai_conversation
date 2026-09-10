@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sys
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -39,6 +40,23 @@ async def test_packaged_release_is_discovered_and_imported_by_home_assistant(
     destination = config_dir / "custom_components" / DOMAIN
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source, destination)
+
+    # This test must prove that the clean installed copy is sufficient by itself.
+    # Remove the checkout root from import resolution and evict any module that might
+    # already have been imported while pytest collected the rest of the repository.
+    repo_root = Path(__file__).parent.parent.resolve()
+    sys.path[:] = [
+        entry
+        for entry in sys.path
+        if not entry or Path(entry).resolve() != repo_root
+    ]
+    sys.path.insert(0, str(config_dir))
+    for name in list(sys.modules):
+        if name == f"custom_components.{DOMAIN}" or name.startswith(
+            f"custom_components.{DOMAIN}."
+        ):
+            del sys.modules[name]
+    importlib.invalidate_caches()
 
     integration = await async_get_integration(hass, DOMAIN)
     component = integration.get_component()
