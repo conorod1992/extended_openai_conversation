@@ -8,10 +8,16 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.extended_openai_conversation_responses import (
     model_catalog as data,
     model_catalog_manager as runtime,
+)
+from custom_components.extended_openai_conversation_responses.const import (
+    CONF_CHAT_MODEL,
+    CONF_REASONING_EFFORT,
+    DOMAIN,
 )
 
 
@@ -71,6 +77,16 @@ def test_hot_transition_cannot_remove_previously_valid_reasoning_choice() -> Non
 
     with pytest.raises(ValueError, match="cannot remove reasoning effort choices"):
         data.validate_catalog_transition(current, candidate)
+
+
+def test_hot_transition_cannot_remove_reasoning_capability() -> None:
+    candidate = deepcopy(data.BUNDLED_CATALOG)
+    candidate["catalog_version"] += 1
+    model = next(item for item in candidate["models"] if item["id"] == "gpt-5.6")
+    model["parameters"]["supports_reasoning_effort"] = False
+
+    with pytest.raises(ValueError, match="cannot remove reasoning support"):
+        data.validate_catalog_transition(None, candidate)
 
 
 def test_new_exact_model_cannot_narrow_its_previous_fallback_choices() -> None:
@@ -133,3 +149,42 @@ async def test_restart_rejects_stored_override_that_narrows_bundled_choices(hass
         "medium",
         "high",
     ]
+
+
+async def test_reset_is_blocked_when_saved_agent_uses_download_only_choice(hass) -> None:
+    current = _expanded_candidate()
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={},
+        subentries_data=[
+            {
+                "data": {
+                    CONF_CHAT_MODEL: "gpt-5.6",
+                    CONF_REASONING_EFFORT: "xhigh",
+                },
+                "subentry_type": "conversation",
+                "title": "Downloaded reasoning choice",
+                "unique_id": None,
+            }
+        ],
+    )
+    entry.add_to_hass(hass)
+
+    manager = runtime.ModelCatalogManager(hass)
+    manager.store = MemoryStore()
+    manager.catalog = current
+    manager.etag = '"v2"'
+    manager.store.saved = {
+        "catalog": current,
+        "etag": manager.etag,
+        "last_checked": 0,
+    }
+    data.activate_catalog(current)
+
+    result = await manager.async_reset()
+
+    assert result["source"] == "downloaded"
+    assert "saved configuration" in result["last_error"]
+    assert manager.catalog == current
+    assert manager.store.saved["catalog"] == current
+    assert data.model_metadata("gpt-5.6")["reasoning_efforts"][-1] == "xhigh"
