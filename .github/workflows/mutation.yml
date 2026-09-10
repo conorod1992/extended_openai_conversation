@@ -181,12 +181,15 @@ jobs:
               mutmut run
               ;;
             guest-security)
-              mutmut run "custom_components.extended_openai_conversation_responses.guest_mode.GuestCapabilityPolicy*"
+              status=0
+              mutmut run "*guest_mode.GuestCapabilityPolicy.unrestricted*" || status=$?
+              mutmut run "*guest_mode.GuestCapabilityPolicy.allows_*" || status=$?
+              exit "$status"
               ;;
             ha-permissions)
               status=0
-              mutmut run "custom_components.extended_openai_conversation_responses.ha_permissions.filter_entities_for_active_user*" || status=$?
-              mutmut run "custom_components.extended_openai_conversation_responses.ha_permissions.async_require_control_permission*" || status=$?
+              mutmut run "*ha_permissions.filter_entities_for_active_user*" || status=$?
+              mutmut run "*ha_permissions.async_require_control_permission*" || status=$?
               exit "$status"
               ;;
           esac
