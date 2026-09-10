@@ -280,7 +280,9 @@ async def test_on_demand_group_loads_in_tool_loop_and_is_conversation_scoped(
     results = [item for item in sent[1]["messages"] if item["role"] == "tool"]
     assert len(results) == 1
     assert results[0]["tool_call_id"] == "load-bedtime"
-    assert json.loads(results[0]["content"])["loaded"] == ["bedtime"]
+    loader_result = json.loads(json.loads(results[0]["content"])["result"])
+    assert loader_result["status"] == "success"
+    assert loader_result["loaded"] == ["bedtime"]
 
     second = await _say(hass, agent, "Check again", first.conversation_id)
     assert second.conversation_id == first.conversation_id
