@@ -73,6 +73,11 @@ def test_override_reports_only_selected_mutants_and_accepts_reviewable_survivors
         "module.x_other__mutmut_1: not checked",
         ["module.x_target__mutmut_*"],
     )
+    assert results == {
+        "module.x_target__mutmut_1": "killed",
+        "module.x_target__mutmut_2": "survived",
+    }
+    require_complete(results)
 
 
 def test_function_tool_default_accepts_generated_modules_without_decorated_budget():
@@ -89,11 +94,6 @@ def test_function_tool_default_accepts_generated_modules_without_decorated_budge
         )
     )
     assert len(selected_results(output, selectors)) == 3
-    assert results == {
-        "module.x_target__mutmut_1": "killed",
-        "module.x_target__mutmut_2": "survived",
-    }
-    require_complete(results)
 
 
 @pytest.mark.parametrize(
