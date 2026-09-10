@@ -67,6 +67,37 @@ pytest_add_cli_args_test_selection = [
     "tests/test_targeted_mutation_contracts.py",
 ]
 
+# Campaigns inherit source_paths from the Function Tool default above.
+[tool.mutation-campaigns.function-tools]
+selectors = [
+    "custom_components.extended_openai_conversation_responses.function_call_budget.*",
+    "custom_components.extended_openai_conversation_responses.function_tool_resolution.*",
+    "custom_components.extended_openai_conversation_responses.function_tool_recovery.*",
+    "custom_components.extended_openai_conversation_responses.parallel_tool_execution.*",
+]
+
+[tool.mutation-campaigns.request-rules]
+only_mutate = ["custom_components/extended_openai_conversation_responses/request_rules.py"]
+pytest_add_cli_args_test_selection = ["tests/test_request_rule_matching_contracts.py"]
+selectors = [
+    "custom_components.extended_openai_conversation_responses.request_rules.xǁRequestRulesǁmatch__mutmut_*",
+    "custom_components.extended_openai_conversation_responses.request_rules.xǁRequestRulesǁ_sort_and_compile__mutmut_*",
+    "custom_components.extended_openai_conversation_responses.request_rules.x__deterministic_match__mutmut_*",
+]
+
+[tool.mutation-campaigns.guest-security]
+only_mutate = ["custom_components/extended_openai_conversation_responses/guest_mode.py"]
+pytest_add_cli_args_test_selection = ["tests/test_guest_mode_mutation.py"]
+selectors = ["*guest_mode.x_resolve_guest_policy__mutmut_*"]
+
+[tool.mutation-campaigns.ha-permissions]
+only_mutate = ["custom_components/extended_openai_conversation_responses/ha_permissions.py"]
+pytest_add_cli_args_test_selection = ["tests/test_ha_permissions_mutation.py"]
+selectors = [
+    "*ha_permissions.x_filter_entities_for_active_user__mutmut_*",
+    "*ha_permissions.x_async_require_control_permission__mutmut_*",
+]
+
 [tool.mypy]
 python_version = "3.14"
 ignore_missing_imports = true

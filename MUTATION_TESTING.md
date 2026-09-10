@@ -4,7 +4,7 @@ This repository uses Mutmut for deliberately small, manual mutation-testing camp
 
 ## Campaigns
 
-The manual workflow provides three selectable campaigns:
+The manual workflow provides four selectable campaigns:
 
 ### `function-tools`
 
@@ -36,13 +36,27 @@ The current mutation targets are deliberately limited to:
 
 This is intentionally **not** a claim that every advanced Function Tool, HA LLM Tool, custom function, indirect target-resolution path, or other execution mechanism is universally constrained by these two routes. Those paths need their own explicit security contracts before mutation tests should make stronger assertions about them.
 
+### `request-rules`
+
+The `request-rules` campaign selects exactly these functions in `custom_components/extended_openai_conversation_responses/request_rules.py`:
+
+- `RequestRules.match`: strict selection, sentence results, and fuzzy fallback/threshold/ranking;
+- `RequestRules._sort_and_compile`: enabled-rule participation, effective matching settings, and strict ranking;
+- `_deterministic_match`: whole-phrase boundaries for equals, starts-with, ends-with, and contains.
+
+`tests/test_request_rule_matching_contracts.py` uses the public manager methods with an in-memory store. It exercises real validation, compilation and matching. Strict precedence is match type (equals, sentence pattern, starts-with, ends-with, contains), then longer phrase, then rule order. This is not first-in-list matching. Fuzzy candidates are considered only after strict matching fails, with inclusive thresholds and score/type/order precedence. Tests also cover disabled and absent rules, nonmatching candidates, phrase variants, inherited/custom normalization settings, and sentence captures without tolerant text transformations.
+
+The compilation helper also contains storage diagnostics and pattern activation bounds. Those branches are not the objective of this campaign. Do not assert exact diagnostics, persistence bookkeeping, cache layout, or compiled-state counts just to kill their mutants. The sentence grammar engine, fuzzy similarity algorithm, normalization implementation, async scheduling, routing overrides, actions, providers, Function Tools, Guest Mode, permissions and UI are deliberately not Request Rules mutation targets. Calling some of them during test setup does not expand that claim.
+
+Mutation testing complements normal unit/property tests and real-Home-Assistant acceptance tests; it is not a replacement for either. No production behaviour is changed for this campaign.
+
 ## Scope principles
 
 Mutation testing here is selective rather than repository-wide. A campaign should target a small decision boundary only when its expected behaviour is clear enough to support reliable assertions.
 
 Mutation testing complements the normal unit/property tests and real-Home-Assistant acceptance tests; it is not a replacement for either. The real-HA suite should continue to validate runtime integration separately rather than being used as the mutation runner.
 
-Function Groups and Request Rules are not part of these campaigns yet. They can be added later if stable, high-value policy decisions are identified that benefit from mutation testing.
+Function Groups are not part of these campaigns yet. They can be added later if stable, high-value policy decisions are identified that benefit from mutation testing.
 
 ## Run locally
 
@@ -62,7 +76,26 @@ mutmut run
 mutmut results
 ```
 
-For the Guest Mode and HA permission campaigns, the GitHub Actions workflow temporarily selects the relevant source file and focused test file before invoking Mutmut. This keeps a normal local `mutmut run` backward-compatible with the existing Function Tool campaign.
+All four campaigns use the same runner locally and in Actions:
+
+```bash
+python scripts/run_mutation_campaign.py request-rules
+python scripts/run_mutation_campaign.py guest-security
+python scripts/run_mutation_campaign.py ha-permissions
+python scripts/run_mutation_campaign.py function-tools
+```
+
+Run from the repository root. The runner temporarily replaces only `[tool.mutmut]` with the selected campaign's source module(s) and focused tests, then restores the original file even on failure. It clears generated `mutants/` state before each mutation run so switching campaigns cannot reuse stale results. The checked-in default remains the Function Tool configuration; there is no union of campaign modules or tests.
+
+Use `--baseline-only` for pytest without mutation, or `--target 'MUTMUT_GLOB_OR_NAME'` to override default selectors within the selected module scope. Targets are passed as one literal CLI argument without shell expansion. Mutmut 3.7.0 selectors are checked against actual generated results. The runner prints selected counts and every survivor diff, rejects selectors that match nothing and incomplete results, and does not impose a mutation-score gate. Unselected `not checked` entries are not campaign survivors.
+
+On Windows without WSL, use the existing manual Actions workflow for actual Mutmut execution:
+
+```bash
+gh workflow run mutation.yml --ref YOUR_BRANCH -f campaign=request-rules
+```
+
+The Request Rules selectors use verified generated `xǁRequestRulesǁmethod__mutmut_*` names; Python qualified method names do not select those mutants.
 
 The workflow also accepts an optional Mutmut target override for narrower investigation within the selected campaign.
 
@@ -77,6 +110,9 @@ Run it from **Actions → Targeted mutation testing → Run workflow**, then cho
 - `function-tools`
 - `guest-security`
 - `ha-permissions`
+- `request-rules`
+
+Concurrency is grouped by branch/ref and campaign, so different campaigns can run independently.
 
 The workflow:
 
