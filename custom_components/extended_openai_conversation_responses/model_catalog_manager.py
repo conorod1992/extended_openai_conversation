@@ -179,9 +179,9 @@ class ModelCatalogManager:
                     subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
                 )
                 configured_effort = subentry.data.get(CONF_REASONING_EFFORT)
-                bundled_config_efforts = catalog_model_metadata(
-                    None, configured_model
-                )["reasoning_efforts"]
+                bundled_config_efforts = catalog_model_metadata(None, configured_model)[
+                    "reasoning_efforts"
+                ]
                 if (
                     isinstance(configured_effort, str)
                     and configured_effort
