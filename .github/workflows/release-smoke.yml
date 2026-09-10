@@ -1,0 +1,103 @@
+name: Release Artifact Smoke
+
+on:
+  pull_request:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packaged-install:
+    name: Clean packaged-install smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+
+      - name: Install stable Home Assistant test harness
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_test.txt
+          pip install homeassistant
+
+      - name: Install integration dependency requirements
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          import homeassistant
+
+          components = Path(next(iter(homeassistant.__path__))) / "components"
+          custom_manifest = json.loads(
+              Path(
+                  "custom_components/extended_openai_conversation_responses/manifest.json"
+              ).read_text()
+          )
+
+          requirements = set(custom_manifest.get("requirements", []))
+          pending = [
+              *custom_manifest.get("dependencies", []),
+              *custom_manifest.get("after_dependencies", []),
+          ]
+          visited = set()
+
+          while pending:
+              domain = pending.pop()
+              if domain in visited:
+                  continue
+              visited.add(domain)
+
+              manifest_path = components / domain / "manifest.json"
+              if not manifest_path.exists():
+                  raise RuntimeError(
+                      f"Home Assistant dependency manifest not found: {domain}"
+                  )
+
+              manifest = json.loads(manifest_path.read_text())
+              requirements.update(manifest.get("requirements", []))
+              pending.extend(manifest.get("dependencies", []))
+              pending.extend(manifest.get("after_dependencies", []))
+
+          if requirements:
+              subprocess.check_call(
+                  [sys.executable, "-m", "pip", "install", *sorted(requirements)]
+              )
+          PY
+
+      - name: Build tracked release payload
+        id: payload
+        run: |
+          PAYLOAD_ROOT="${RUNNER_TEMP}/release-payload"
+          rm -rf "$PAYLOAD_ROOT"
+          mkdir -p "$PAYLOAD_ROOT"
+          while IFS= read -r -d '' file; do
+            mkdir -p "$PAYLOAD_ROOT/$(dirname "$file")"
+            cp "$file" "$PAYLOAD_ROOT/$file"
+          done < <(git ls-files -z custom_components/extended_openai_conversation_responses)
+
+          VERSION="$(python scripts/set_release_version.py --check)"
+          echo "root=$PAYLOAD_ROOT" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Run clean packaged-install smoke
+        env:
+          RELEASE_COMPONENT_DIR: ${{ steps.payload.outputs.root }}/custom_components/extended_openai_conversation_responses
+          RELEASE_EXPECTED_VERSION: ${{ steps.payload.outputs.version }}
+        run: |
+          pytest tests_real_ha/test_packaged_release.py \
+            -v \
+            --asyncio-mode=auto \
+            --timeout=60
