@@ -118,17 +118,98 @@ BUNDLED_CATALOG = parse_catalog(Path(__file__).with_suffix(".json").read_bytes()
 _active = BUNDLED_CATALOG
 
 
+def _effective_catalog(catalog: dict[str, Any] | None) -> dict[str, Any]:
+    """Overlay a validated remote subset onto the bundled model records."""
+    if catalog is None:
+        return BUNDLED_CATALOG
+    models = {item["id"]: item for item in BUNDLED_CATALOG["models"]}
+    models.update({item["id"]: item for item in catalog["models"]})
+    return {**catalog, "models": list(models.values())}
+
+
+def _model_metadata_from(catalog: dict[str, Any], model: str) -> dict[str, Any]:
+    """Resolve model metadata from one complete effective catalogue."""
+    name = model.lower()
+    models = {item["id"]: item for item in catalog["models"]}
+    if name in models:
+        return deepcopy(models[name])
+    # Only dated snapshots inherit an alias wholesale; arbitrary suffixes retain
+    # the legacy compatibility rules below (including their token-limit quirks).
+    for alias in sorted(models, key=len, reverse=True):
+        if models[alias]["kind"] == "alias" and re.fullmatch(
+            re.escape(alias) + r"-\d{4}-\d{2}-\d{2}", name
+        ):
+            return deepcopy(models[alias])
+    result: dict[str, Any] = deepcopy(catalog["defaults"])
+    family = re.match(r"^(o[1-4]|gpt-5|gpt-6-astra(?:[-.]|$))", name)
+    if family:
+        key = "gpt-6-astra" if name.startswith("gpt-6-astra") else family[1]
+        source = models.get(key, catalog["defaults"])
+        result["parameters"] = deepcopy(source["parameters"])
+        result["reasoning_efforts"] = list(source["reasoning_efforts"])
+    token_family = re.search(r"(^|-)(gpt-4o|gpt-5|gpt-6-astra|o1|o3|o4)", name)
+    if token_family:
+        result["completion_token_limit"] = models[token_family[2]][
+            "completion_token_limit"
+        ]
+    if re.match(r"^gpt-6-astra(?:[-.]|$)", name):
+        result["chat_reasoning_tools"] = models["gpt-6-astra"]["chat_reasoning_tools"]
+    minor = re.match(r"^gpt-5\.(\d+)(?:[-.]|$)", name)
+    if minor and int(minor[1]) >= 6:
+        for key in ("chat_reasoning_tools", "explicit_prompt_cache"):
+            result[key] = models["gpt-5.6"][key]
+    return result
+
+
+def _transition_probe_models(catalog: dict[str, Any]) -> set[str]:
+    """Cover exact IDs, dated alias inheritance, and unknown-model fallback."""
+    probes = {item["id"] for item in catalog["models"]}
+    probes.update(
+        f"{item['id']}-2000-01-01"
+        for item in catalog["models"]
+        if item["kind"] == "alias"
+    )
+    probes.add("catalog-unknown-model")
+    return probes
+
+
+def validate_catalog_transition(
+    current: dict[str, Any] | None, candidate: dict[str, Any]
+) -> None:
+    """Prevent hot metadata updates from invalidating already persisted choices.
+
+    Agent configuration and Request Rules store reasoning-effort values that are
+    validated against the active catalogue. A hot update may add choices, but
+    removing one could make existing durable state invalid on its next reload.
+    Such narrowing therefore requires an integration release with an explicit
+    migration rather than a data-only catalogue update.
+    """
+    current_effective = _effective_catalog(
+        validate_catalog(current) if current is not None else None
+    )
+    candidate_effective = _effective_catalog(validate_catalog(candidate))
+    probes = _transition_probe_models(current_effective) | _transition_probe_models(
+        candidate_effective
+    )
+    for model in probes:
+        before = set(_model_metadata_from(current_effective, model)["reasoning_efforts"])
+        after = set(
+            _model_metadata_from(candidate_effective, model)["reasoning_efforts"]
+        )
+        if not before.issubset(after):
+            raise ValueError(
+                "Catalogue update cannot remove reasoning effort choices without "
+                "an integration migration"
+            )
+
+
 def activate_catalog(catalog: dict[str, Any] | None) -> None:
     """Publish a complete, validated snapshot in a single assignment."""
     global _active
     if catalog is None:
         _active = BUNDLED_CATALOG
         return
-    candidate = validate_catalog(catalog)
-    # Remote catalogues may describe a subset; omitted models retain bundled data.
-    models = {item["id"]: item for item in BUNDLED_CATALOG["models"]}
-    models.update({item["id"]: item for item in candidate["models"]})
-    _active = {**candidate, "models": list(models.values())}
+    _active = _effective_catalog(validate_catalog(catalog))
 
 
 def all_reasoning_efforts() -> list[str]:
@@ -148,33 +229,4 @@ def model_metadata(model: str) -> dict[str, Any]:
     Matching is deliberately code, never a regex/expression supplied by a server.
     Preserve the old broad family handling for unknown and compatible-provider IDs.
     """
-    name = model.lower()
-    models = {item["id"]: item for item in _active["models"]}
-    if name in models:
-        return deepcopy(models[name])
-    # Only dated snapshots inherit an alias wholesale; arbitrary suffixes retain
-    # the legacy compatibility rules below (including their token-limit quirks).
-    for alias in sorted(models, key=len, reverse=True):
-        if models[alias]["kind"] == "alias" and re.fullmatch(
-            re.escape(alias) + r"-\d{4}-\d{2}-\d{2}", name
-        ):
-            return deepcopy(models[alias])
-    result: dict[str, Any] = deepcopy(_active["defaults"])
-    family = re.match(r"^(o[1-4]|gpt-5|gpt-6-astra(?:[-.]|$))", name)
-    if family:
-        key = "gpt-6-astra" if name.startswith("gpt-6-astra") else family[1]
-        source = models.get(key, _active["defaults"])
-        result["parameters"] = deepcopy(source["parameters"])
-        result["reasoning_efforts"] = list(source["reasoning_efforts"])
-    token_family = re.search(r"(^|-)(gpt-4o|gpt-5|gpt-6-astra|o1|o3|o4)", name)
-    if token_family:
-        result["completion_token_limit"] = models[token_family[2]][
-            "completion_token_limit"
-        ]
-    if re.match(r"^gpt-6-astra(?:[-.]|$)", name):
-        result["chat_reasoning_tools"] = models["gpt-6-astra"]["chat_reasoning_tools"]
-    minor = re.match(r"^gpt-5\.(\d+)(?:[-.]|$)", name)
-    if minor and int(minor[1]) >= 6:
-        for key in ("chat_reasoning_tools", "explicit_prompt_cache"):
-            result[key] = models["gpt-5.6"][key]
-    return result
+    return _model_metadata_from(_active, model)
