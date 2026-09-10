@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.extended_openai_conversation_responses import (
     model_catalog as data,
@@ -153,22 +152,19 @@ async def test_restart_rejects_stored_override_that_narrows_bundled_choices(hass
 
 async def test_reset_is_blocked_when_saved_agent_uses_download_only_choice(hass) -> None:
     current = _expanded_candidate()
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={},
-        subentries_data=[
-            {
-                "data": {
-                    CONF_CHAT_MODEL: "gpt-5.6",
-                    CONF_REASONING_EFFORT: "xhigh",
-                },
-                "subentry_type": "conversation",
-                "title": "Downloaded reasoning choice",
-                "unique_id": None,
-            }
-        ],
+    subentry = SimpleNamespace(
+        data={
+            CONF_CHAT_MODEL: "gpt-5.6",
+            CONF_REASONING_EFFORT: "xhigh",
+        },
+        subentry_id="conversation-subentry",
+        subentry_type="conversation",
     )
-    entry.add_to_hass(hass)
+    entry = SimpleNamespace(
+        entry_id="catalog-entry",
+        subentries={subentry.subentry_id: subentry},
+    )
+    hass.config_entries.async_entries.return_value = [entry]
 
     manager = runtime.ModelCatalogManager(hass)
     manager.store = MemoryStore()
@@ -183,6 +179,7 @@ async def test_reset_is_blocked_when_saved_agent_uses_download_only_choice(hass)
 
     result = await manager.async_reset()
 
+    hass.config_entries.async_entries.assert_called_once_with(DOMAIN)
     assert result["source"] == "downloaded"
     assert "saved configuration" in result["last_error"]
     assert manager.catalog == current
