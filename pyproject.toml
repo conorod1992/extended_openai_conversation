@@ -72,6 +72,9 @@ pytest_add_cli_args_test_selection = [
 # Preserve the original unfiltered run within the four-module allowlist.
 # Mutmut 3.7.0 produces no mutants for the decorated FunctionCallBudget class.
 selectors = ["*"]
+# Cancellation mutants can deadlock an existing test. Let pytest fail that test
+# before Mutmut's worker deadline, without accepting incomplete worker results.
+pytest_add_cli_args = ["--timeout=10"]
 
 [tool.mutation-campaigns.request-rules]
 only_mutate = ["custom_components/extended_openai_conversation_responses/request_rules.py"]

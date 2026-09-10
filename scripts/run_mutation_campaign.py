@@ -90,6 +90,7 @@ def main():
                 "-m",
                 "pytest",
                 "-q",
+                *selected_config.get("pytest_add_cli_args", []),
                 *selected_config["pytest_add_cli_args_test_selection"],
             ],
             check=True,

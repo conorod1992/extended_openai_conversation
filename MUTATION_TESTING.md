@@ -19,6 +19,8 @@ It runs the existing focused Function Tool mutation-contract test set.
 
 The runner keeps the original unfiltered selection within this four-module allowlist. Mutmut 3.7.0 generates no mutants for the decorated `FunctionCallBudget` class, so the runner checks that the campaign generates mutants rather than incorrectly requiring mutants from every configured file. This does not claim mutation coverage of that decorated class.
 
+This campaign applies a 10-second pytest timeout per test. Reversing the unfinished-task cancellation check creates a real deadlock in an existing cancellation test; the test timeout reports it as a failure before Mutmut's worker deadline. The runner still rejects incomplete worker results and no Function Tool behavioural tests are changed.
+
 ### `guest-security`
 
 This campaign runs `tests/test_guest_mode_mutation.py` and mutates the small module-level `resolve_guest_policy()` routing boundary in `guest_mode.py`.
