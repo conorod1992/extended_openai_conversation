@@ -254,7 +254,15 @@ async def test_request_rule_edit_reorder_delete_survive_real_reload(
         rule_id=second["rule"]["id"],
         direction="up",
     )
-    replacement = deepcopy(first["rule"])
+    current = await _management_call(
+        client, entry=entry, section="request_rules", action="list"
+    )
+    post_move_first = next(
+        rule for rule in current["rules"] if rule["id"] == first["rule"]["id"]
+    )
+    assert post_move_first["order"] == 1
+    replacement = deepcopy(post_move_first)
+    replacement.pop("sensitive_matching_warning", None)
     replacement["name"] = "First rule edited"
     replacement["action"]["success_response"] = "Edited success"
     await _management_call(
