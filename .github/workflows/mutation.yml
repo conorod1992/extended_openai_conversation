@@ -181,10 +181,7 @@ jobs:
               mutmut run
               ;;
             guest-security)
-              status=0
-              mutmut run "*guest_mode.GuestCapabilityPolicy.unrestricted*" || status=$?
-              mutmut run "*guest_mode.GuestCapabilityPolicy.allows_*" || status=$?
-              exit "$status"
+              mutmut run "*guest_mode.resolve_guest_policy*"
               ;;
             ha-permissions)
               status=0
