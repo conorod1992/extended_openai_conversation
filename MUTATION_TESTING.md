@@ -19,9 +19,11 @@ It runs the existing focused Function Tool mutation-contract test set.
 
 ### `guest-security`
 
-This campaign mutates only the small `GuestCapabilityPolicy` decision surface in `guest_mode.py` and runs `tests/test_guest_mode_mutation.py`.
+This campaign runs `tests/test_guest_mode_mutation.py` and mutates the small module-level `resolve_guest_policy()` routing boundary in `guest_mode.py`.
 
-The intent is to verify clear resolved capability-policy contracts: unrestricted versus explicit entity/tool sets, independent read/control entity boundaries, exact configured-tool membership, and fail-closed empty capability sets. It deliberately does not mutate the wider Guest Mode implementation.
+The focused tests also assert the resolved `GuestCapabilityPolicy` membership behaviour directly: unrestricted versus explicit entity/tool sets, independent read/control entity boundaries, exact configured-tool membership, and fail-closed empty capability sets. Those dataclass methods remain valuable normal regression tests, but Mutmut 3.7.0 does not reliably mutate methods on decorated classes such as `@dataclass`, so the mutation target is deliberately the supported module-level policy resolver rather than pretending those methods are being mutated.
+
+`resolve_guest_policy()` is the security-relevant decision point that determines whether Guest Mode is inactive, uses the current exclusion-policy resolver, or falls back to the legacy resolver. The wider Guest Mode implementation remains outside this targeted campaign.
 
 ### `ha-permissions`
 
