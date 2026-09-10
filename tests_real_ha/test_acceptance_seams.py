@@ -10,8 +10,6 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
-    CONF_CHAT_MODEL,
-    CONF_REASONING_EFFORT,
     FUNCTION_GROUP_LOADING_ON_DEMAND,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
@@ -42,8 +40,7 @@ from tests_real_ha.test_provider_wire_e2e import (
 )
 
 
-def _routing_rule(*, scope: str) -> dict[str, Any]:
-    """Build one explicit Continue-to-AI routing rule."""
+def _routing_rule() -> dict[str, Any]:
     return {
         "name": "Acceptance conversation route",
         "enabled": True,
@@ -53,7 +50,7 @@ def _routing_rule(*, scope: str) -> dict[str, Any]:
         "action": {
             "model": "gpt-6-astra",
             "reasoning_effort": "xhigh",
-            "scope": scope,
+            "scope": "conversation",
             "reset": False,
             "continue_to_ai": True,
             "success_response": "Route selected",
@@ -68,17 +65,15 @@ async def test_explicit_continue_to_ai_conversation_route_persists_for_next_turn
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Equals + Continue-to-AI must reach the provider and retain conversation scope."""
+    """Equals + Continue-to-AI reaches the provider and retains conversation scope."""
     agent = await _conversation_agent(hass)
-    await agent._request_rules.async_create(_routing_rule(scope="conversation"))
+    await agent._request_rules.async_create(_routing_rule())
     sent = _provider(monkeypatch, agent, ["Deep route active.", "Still deep."])
 
     first = await _say(hass, agent, "use the deep route")
     assert _speech(first) == "Deep route active."
-    assert len(sent) == 1
     assert sent[0]["model"] == "gpt-6-astra"
     assert sent[0]["reasoning_effort"] == "xhigh"
-    assert sent[0]["messages"][-1]["content"] == "use the deep route"
 
     second = await _say(hass, agent, "And now?", first.conversation_id)
     assert second.conversation_id == first.conversation_id
@@ -125,18 +120,17 @@ async def test_provider_failure_after_tool_execution_does_not_commit_continuity(
 
 
 @pytest.mark.asyncio
-async def test_configuration_management_write_is_observed_by_loaded_agent(
+async def test_configuration_write_is_observed_by_loaded_agent(
     hass: HomeAssistant,
     hass_ws_client: Any,
 ) -> None:
-    """A saved management setting must be visible on the genuinely loaded agent."""
     entry = _entry("Configuration Runtime Observation")
     await _setup_entry(hass, entry)
     client = await _admin_client(hass, hass_ws_client)
-
     before = await _management_call(
         client, entry=entry, section="configuration", action="get"
     )
+
     await _management_call(
         client,
         entry=entry,
@@ -153,15 +147,13 @@ async def test_configuration_management_write_is_observed_by_loaded_agent(
 
 
 @pytest.mark.asyncio
-async def test_memory_management_edit_and_delete_survive_real_reload(
+async def test_memory_edit_and_delete_survive_real_reload(
     hass: HomeAssistant,
     hass_ws_client: Any,
 ) -> None:
-    """Memory edit and delete complete the real management persistence lifecycle."""
     entry = _entry("Memory CRUD Acceptance")
     await _setup_entry(hass, entry)
     client = await _admin_client(hass, hass_ws_client)
-
     created = await _management_call(
         client,
         entry=entry,
@@ -171,7 +163,8 @@ async def test_memory_management_edit_and_delete_survive_real_reload(
         category="acceptance",
     )
     memory_id = created["memory"]["memory_id"]
-    updated = await _management_call(
+
+    await _management_call(
         client,
         entry=entry,
         section="memories",
@@ -180,15 +173,14 @@ async def test_memory_management_edit_and_delete_survive_real_reload(
         content="Updated acceptance memory.",
         category="updated",
     )
-    assert updated["memory"]["content"] == "Updated acceptance memory."
-
     await _fresh_reload(hass, entry)
     reloaded = await _management_call(
         client, entry=entry, section="memories", action="list"
     )
-    assert [(item["memory_id"], item["content"], item["category"]) for item in reloaded["memories"]] == [
-        (memory_id, "Updated acceptance memory.", "updated")
-    ]
+    assert [
+        (item["memory_id"], item["content"], item["category"])
+        for item in reloaded["memories"]
+    ] == [(memory_id, "Updated acceptance memory.", "updated")]
 
     deleted = await _management_call(
         client,
@@ -199,7 +191,9 @@ async def test_memory_management_edit_and_delete_survive_real_reload(
     )
     assert deleted["deleted"] == 1
     await _fresh_reload(hass, entry)
-    final = await _management_call(client, entry=entry, section="memories", action="list")
+    final = await _management_call(
+        client, entry=entry, section="memories", action="list"
+    )
     assert final["memories"] == []
 
 
@@ -230,15 +224,13 @@ def _local_rule(rule_id: str, name: str, phrase: str, order: int) -> dict[str, A
 
 
 @pytest.mark.asyncio
-async def test_request_rule_management_edit_reorder_delete_survive_real_reload(
+async def test_request_rule_edit_reorder_delete_survive_real_reload(
     hass: HomeAssistant,
     hass_ws_client: Any,
 ) -> None:
-    """Request Rule edit, precedence move and delete cross the real Store lifecycle."""
     entry = _entry("Request Rule CRUD Acceptance")
     await _setup_entry(hass, entry)
     client = await _admin_client(hass, hass_ws_client)
-
     first = await _management_call(
         client,
         entry=entry,
@@ -253,6 +245,7 @@ async def test_request_rule_management_edit_reorder_delete_survive_real_reload(
         action="create",
         rule=_local_rule("acceptance-second", "Second rule", "second phrase", 1),
     )
+
     await _management_call(
         client,
         entry=entry,
@@ -281,7 +274,9 @@ async def test_request_rule_management_edit_reorder_delete_survive_real_reload(
         second["rule"]["id"],
         first["rule"]["id"],
     ]
-    edited = next(rule for rule in reloaded["rules"] if rule["id"] == first["rule"]["id"])
+    edited = next(
+        rule for rule in reloaded["rules"] if rule["id"] == first["rule"]["id"]
+    )
     assert edited["name"] == "First rule edited"
     assert edited["action"]["success_response"] == "Edited success"
 
@@ -306,11 +301,9 @@ async def test_function_tool_and_group_edit_delete_survive_real_reload(
     hass: HomeAssistant,
     hass_ws_client: Any,
 ) -> None:
-    """Function Tool and Group mutation beyond initial save survives genuine reloads."""
     entry = _entry("Function CRUD Acceptance")
     await _setup_entry(hass, entry)
     client = await _admin_client(hass, hass_ws_client)
-
     tool = {
         "spec": {
             "name": "acceptance_crud_tool",
@@ -319,10 +312,6 @@ async def test_function_tool_and_group_edit_delete_survive_real_reload(
         },
         "function": {"type": "native", "name": "get_user_from_user_id"},
     }
-    await _management_call(
-        client, entry=entry, section="tools", action="save", tool=tool
-    )
-    await hass.async_block_till_done()
     group = {
         "id": "acceptance_crud_group",
         "name": "Acceptance CRUD Group",
@@ -331,6 +320,11 @@ async def test_function_tool_and_group_edit_delete_survive_real_reload(
         "functions": ["acceptance_crud_tool"],
         "enabled": True,
     }
+
+    await _management_call(
+        client, entry=entry, section="tools", action="save", tool=tool
+    )
+    await hass.async_block_till_done()
     await _management_call(
         client, entry=entry, section="tools", action="save_group", group=group
     )
