@@ -23,6 +23,8 @@ from .model_catalog import (
     MAX_CATALOG_BYTES,
     activate_catalog,
     all_reasoning_efforts,
+    catalog_model_metadata,
+    catalog_reasoning_efforts,
     model_metadata,
     parse_catalog,
     validate_catalog,
@@ -78,9 +80,9 @@ class ModelCatalogManager:
                 ):
                     candidate, etag = None, None
                 elif candidate is not None:
-                    # Stored overrides must retain every reasoning choice accepted by
-                    # the bundled release, otherwise durable agent/rule data could
-                    # become invalid immediately after Home Assistant restarts.
+                    # Stored overrides must retain every reasoning choice/capability
+                    # accepted by the bundled release, otherwise durable agent/rule
+                    # data could become invalid immediately after HA restarts.
                     validate_catalog_transition(None, candidate)
                 self.catalog, self.etag, self.last_checked = candidate, etag, checked
         except Exception:
@@ -161,10 +163,80 @@ class ModelCatalogManager:
                     _LOGGER.warning("Unable to persist model catalogue check time")
             return self.status()
 
+    async def _bundled_reset_would_invalidate_saved_reasoning(self) -> bool:
+        """Check durable agent/rule choices before narrowing back to bundled data."""
+        if self.catalog is None:
+            return False
+
+        # Local imports avoid a module cycle: Request Rules consume model metadata.
+        from .const import (  # noqa: PLC0415
+            CONF_CHAT_MODEL,
+            CONF_REASONING_EFFORT,
+            DEFAULT_CHAT_MODEL,
+        )
+        from .request_rules import (  # noqa: PLC0415
+            SLOT_REFERENCE,
+            async_get_request_rules,
+        )
+
+        bundled_efforts = set(catalog_reasoning_efforts(None))
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            for subentry in entry.subentries.values():
+                if subentry.subentry_type != "conversation":
+                    continue
+
+                configured_model = str(
+                    subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+                )
+                configured_effort = subentry.data.get(CONF_REASONING_EFFORT)
+                if isinstance(configured_effort, str) and configured_effort:
+                    if configured_effort not in catalog_model_metadata(
+                        None, configured_model
+                    )["reasoning_efforts"]:
+                        return True
+
+                rules = await async_get_request_rules(
+                    self.hass, entry.entry_id, subentry.subentry_id
+                )
+                for rule in rules.snapshot()["rules"]:
+                    if rule.get("action_type") != "model_routing":
+                        continue
+                    action = rule.get("action", {})
+                    if action.get("reset"):
+                        continue
+                    effort = action.get("reasoning_effort")
+                    if (
+                        not isinstance(effort, str)
+                        or not effort
+                        or SLOT_REFERENCE.search(effort)
+                    ):
+                        continue
+                    model = action.get("model")
+                    if (
+                        isinstance(model, str)
+                        and model
+                        and not SLOT_REFERENCE.search(model)
+                    ):
+                        metadata = catalog_model_metadata(None, model)
+                        if (
+                            not metadata["parameters"]["supports_reasoning_effort"]
+                            or effort not in metadata["reasoning_efforts"]
+                        ):
+                            return True
+                    elif effort not in bundled_efforts:
+                        return True
+        return False
+
     async def async_reset(self) -> dict[str, Any]:
-        """Return to bundled data; the next automatic update is due after one day."""
+        """Return to bundled data without invalidating currently durable choices."""
         async with self._lock:
             now = time.time()
+            if await self._bundled_reset_would_invalidate_saved_reasoning():
+                self.last_error = (
+                    "Model data reset was blocked because saved configuration or "
+                    "Request Rules use reasoning choices unavailable in bundled data."
+                )
+                return self.status()
             try:
                 await self._save(None, None, now)
             except Exception:
