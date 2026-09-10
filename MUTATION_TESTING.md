@@ -17,6 +17,8 @@ The existing default campaign. It mutates critical Function Tool execution logic
 
 It runs the existing focused Function Tool mutation-contract test set.
 
+The runner keeps the original unfiltered selection within this four-module allowlist. Mutmut 3.7.0 generates no mutants for the decorated `FunctionCallBudget` class, so the runner checks that the campaign generates mutants rather than incorrectly requiring mutants from every configured file. This does not claim mutation coverage of that decorated class.
+
 ### `guest-security`
 
 This campaign runs `tests/test_guest_mode_mutation.py` and mutates the small module-level `resolve_guest_policy()` routing boundary in `guest_mode.py`.

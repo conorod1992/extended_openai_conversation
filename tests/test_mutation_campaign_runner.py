@@ -73,6 +73,22 @@ def test_override_reports_only_selected_mutants_and_accepts_reviewable_survivors
         "module.x_other__mutmut_1: not checked",
         ["module.x_target__mutmut_*"],
     )
+
+
+def test_function_tool_default_accepts_generated_modules_without_decorated_budget():
+    config = tomllib.loads(PROJECT.read_text(encoding="utf-8"))["tool"]
+    selectors = config["mutation-campaigns"]["function-tools"]["selectors"]
+    # Mutmut 3.7.0 skips the decorated budget class; all generated mutants in
+    # the module allowlist must still run, as with the original unfiltered CLI.
+    output = "\n".join(
+        f"custom_components.extended_openai_conversation_responses.{module}.x_example__mutmut_1: killed"
+        for module in (
+            "function_tool_resolution",
+            "function_tool_recovery",
+            "parallel_tool_execution",
+        )
+    )
+    assert len(selected_results(output, selectors)) == 3
     assert results == {
         "module.x_target__mutmut_1": "killed",
         "module.x_target__mutmut_2": "survived",

@@ -69,12 +69,9 @@ pytest_add_cli_args_test_selection = [
 
 # Campaigns inherit source_paths from the Function Tool default above.
 [tool.mutation-campaigns.function-tools]
-selectors = [
-    "custom_components.extended_openai_conversation_responses.function_call_budget.*",
-    "custom_components.extended_openai_conversation_responses.function_tool_resolution.*",
-    "custom_components.extended_openai_conversation_responses.function_tool_recovery.*",
-    "custom_components.extended_openai_conversation_responses.parallel_tool_execution.*",
-]
+# Preserve the original unfiltered run within the four-module allowlist.
+# Mutmut 3.7.0 produces no mutants for the decorated FunctionCallBudget class.
+selectors = ["*"]
 
 [tool.mutation-campaigns.request-rules]
 only_mutate = ["custom_components/extended_openai_conversation_responses/request_rules.py"]
