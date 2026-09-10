@@ -166,9 +166,9 @@ async def test_consumed_rule_commits_local_exchange_and_continues_to_provider(
         ("assistant", "The bedroom is ready for sleep."),
     ]
 
-    second = await _say(
-        hass, agent, "What did you just do?", first.conversation_id, device_id="bedroom"
-    )
+    # A separate Assist invocation supplies only the device identity; continuity
+    # must resolve the previous session without the caller returning its ID.
+    second = await _say(hass, agent, "What did you just do?", device_id="bedroom")
     assert second.conversation_id == first.conversation_id
     assert _speech(second) == "Sleep well."
     assert len(sent) == 1
