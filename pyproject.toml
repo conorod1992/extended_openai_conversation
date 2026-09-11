@@ -48,6 +48,10 @@ split-on-trailing-comma = false
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
+[tool.coverage.report]
+# Regression floor: intentionally ~1.5 percentage points below the 77.56% stable-CI baseline.
+fail_under = 76
+
 [tool.mutmut]
 source_paths = ["custom_components/extended_openai_conversation_responses/"]
 only_mutate = [
