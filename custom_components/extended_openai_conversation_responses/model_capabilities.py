@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from .const import API_MODE_AUTO, API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES
 from .model_catalog import model_metadata
@@ -63,14 +63,16 @@ def validate_api_path(model: str, api: str, tools_required: bool = False) -> str
     return api
 
 
-def select_api_path(model: str, configured_api: str, tools_required: bool = False) -> str:
+def select_api_path(
+    model: str, configured_api: str, tools_required: bool = False
+) -> str:
     """Resolve Auto from catalogue data, then validate the selected path."""
     capabilities = get_model_capabilities(model)
     if configured_api != API_MODE_AUTO:
         return validate_api_path(model, configured_api, tools_required)
 
     if tools_required:
-        preferred = capabilities["function_calling"]["preferred_api"]
+        preferred = cast(str, capabilities["function_calling"]["preferred_api"])
         if capabilities["api"].get(preferred) and capabilities["function_calling"].get(
             preferred
         ):
@@ -82,7 +84,7 @@ def select_api_path(model: str, configured_api: str, tools_required: bool = Fals
             f"{model} has no supported API path for function/tool calling."
         )
 
-    preferred = capabilities["recommended_profile"]["api"]
+    preferred = cast(str, capabilities["recommended_profile"]["api"])
     if capabilities["api"].get(preferred):
         return preferred
     for api in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS):
@@ -94,7 +96,7 @@ def select_api_path(model: str, configured_api: str, tools_required: bool = Fals
 def recommended_reasoning_effort(model: str) -> str | None:
     """Return the HA/application default, separately from the provider default."""
     capabilities = get_model_capabilities(model)
-    return capabilities["recommended_profile"]["reasoning_effort"]
+    return cast(str | None, capabilities["recommended_profile"]["reasoning_effort"])
 
 
 def normalize_output_token_limit(
@@ -116,7 +118,7 @@ def normalize_output_token_limit(
         raise ModelCapabilityError(
             f"Output token limit {value} exceeds {model}'s maximum of {ceiling}."
         )
-    field = capabilities["output_tokens"][api]
+    field = cast(str, capabilities["output_tokens"][api])
     if field == "max_tokens":
         raise ModelCapabilityError("Legacy max_tokens must never be emitted.")
     return field, value
