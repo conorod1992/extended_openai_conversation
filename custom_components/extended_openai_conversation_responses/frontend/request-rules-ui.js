@@ -144,8 +144,7 @@ export function bindRequestRules(panel) {
     const current = ++revision;
     const editingRule = (panel._result?.rules || []).find((item) => item.id === panel._editingRuleId);
     const selectedEffort = editingRule?.action?.reasoning_effort || root.querySelector("#rule-reasoning")?.value || "";
-    const configuredModel = panel._configData?.config?.chat_model || panel._result?.configured_model || "";
-    const model = modelInput.value.trim() || configuredModel;
+    const model = modelInput.value.trim();
     try {
       const data = await lookupModelData(panel, model);
       if (current === revision) syncRequestRuleRoutingControls(root, data.reasoning_effort_options, selectedEffort);
