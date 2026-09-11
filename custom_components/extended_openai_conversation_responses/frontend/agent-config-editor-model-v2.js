@@ -15,7 +15,15 @@ function currentConfig(panel) {
 }
 
 function toolsRequired(config = {}) {
-  return (config.functions || []).some((tool) => tool?.enabled !== false);
+  if (Array.isArray(config.functions) && config.functions.length) return true;
+  if (Array.isArray(config.function_groups) && config.function_groups.length) return true;
+  return [
+    "memory_enabled",
+    "knowledge_enabled",
+    "archive_enabled",
+    "guest_mode_enabled",
+    "web_search",
+  ].some((key) => Boolean(config[key]));
 }
 
 function currentCatalogData(panel, model) {
