@@ -35,7 +35,7 @@ async def test_admin_update_reload_and_reset_using_registered_command(
     value["catalog_version"] += 1
     next(item for item in value["models"] if item["id"] == "gpt-5.6")["reasoning"][
         "efforts"
-    ].append("xhigh")
+    ].append("minimal")
 
     async def chunks(_size):
         yield json.dumps(value).encode()
@@ -63,13 +63,13 @@ async def test_admin_update_reload_and_reset_using_registered_command(
     updated = await command(admin, "update")
     assert updated["success"] is True
     assert updated["result"]["source"] == "downloaded"
-    assert updated["result"]["reasoning_effort_options"][-1] == "xhigh"
-    assert get_reasoning_effort_options("gpt-5.6")[-1] == "xhigh"
+    assert updated["result"]["reasoning_effort_options"][-1] == "minimal"
+    assert get_reasoning_effort_options("gpt-5.6")[-1] == "minimal"
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert (await command(admin, "lookup"))["result"]["reasoning_effort_options"][
         -1
-    ] == "xhigh"
+    ] == "minimal"
     # A fresh manager reads the real HA Store, rather than an in-memory test store.
     restarted = runtime.ModelCatalogManager(hass)
     await restarted.async_load()
@@ -80,7 +80,14 @@ async def test_admin_update_reload_and_reset_using_registered_command(
     reset = await command(admin, "reset")
     assert reset["success"] is True
     assert reset["result"]["source"] == "bundled"
-    assert reset["result"]["reasoning_effort_options"] == ["low", "medium", "high"]
+    assert reset["result"]["reasoning_effort_options"] == [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
     restarted = runtime.ModelCatalogManager(hass)
     await restarted.async_load()
     assert restarted.catalog is None
