@@ -37,6 +37,9 @@ from tests_real_ha.test_management_backend_acceptance import (
 )
 
 
+ADMIN_SCOPE_ID = f"user:{ADMIN_ID}"
+
+
 def _session(
     subentry_id: str,
     session_id: str,
@@ -48,7 +51,7 @@ def _session(
         session_id=session_id,
         home_assistant_conversation_id=f"ha-{session_id}",
         agent_subentry_id=subentry_id,
-        scope_id=ADMIN_ID,
+        scope_id=ADMIN_SCOPE_ID,
         scope_type="user",
         scope_source="user",
         source_device_id=None,
