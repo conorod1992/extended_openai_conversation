@@ -233,7 +233,9 @@ async def test_chat_memory_crosses_provider_tool_and_durable_retrieval_boundarie
     # Pinpoint the temporary-memory seam without bypassing production retrieval.
     # The snapshot proves the fixture is visible under the intended scope while
     # leaving the deliberately expired record in place for the real request to prune.
-    seeded_active = await agent._temporary_memory.async_active_snapshot(_TEMP_SCOPE)
+    seeded_active = await agent._temporary_memory.async_active_snapshot(
+        _TEMP_SCOPE, owner_scope_id=_TEMP_SCOPE
+    )
     assert [item.content for item in seeded_active] == [
         "Temporary owned marker is active-saffron."
     ]
