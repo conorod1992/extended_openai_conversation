@@ -20,6 +20,7 @@ from tests_real_ha.test_knowledge_provider_wire_e2e import (
     _chat_sse_tool_call,
     _chat_tool_result,
     _say,
+    _tool_names,
 )
 from tests_real_ha.test_management_backend_acceptance import (
     _admin_client,
@@ -32,9 +33,8 @@ _OLD_MARKER = "atlas-copper"
 _NEW_MARKER = "atlas-indigo"
 _CREATE_CALL = "call-knowledge-live-create"
 _UPDATE_CALL = "call-knowledge-live-update"
-_DISABLE_CALL = "call-knowledge-live-disable"
 _REENABLE_CALL = "call-knowledge-live-reenable"
-_DELETE_CALL = "call-knowledge-live-delete"
+_KNOWLEDGE_TOOLS = {"knowledge_search", "knowledge_list", "knowledge_get"}
 
 
 def _search_results(wire: Any, call_id: str) -> list[dict[str, Any]]:
@@ -49,6 +49,13 @@ def _search_results(wire: Any, call_id: str) -> list[dict[str, Any]]:
             return result["results"]
     raise AssertionError(
         f"Provider request containing Knowledge tool result {call_id!r} was not captured"
+    )
+
+
+def _assert_knowledge_tools_absent(body: dict[str, Any]) -> None:
+    """Assert an unavailable Knowledge Library is not exposed to the provider."""
+    assert _KNOWLEDGE_TOOLS.isdisjoint(
+        _tool_names(body, API_MODE_CHAT_COMPLETIONS)
     )
 
 
@@ -90,11 +97,6 @@ async def test_management_mutations_update_loaded_agent_knowledge_immediately(
                 {"query": _QUERY, "limit": 5},
             ),
             _chat_sse_text("The updated Knowledge source is available."),
-            _chat_sse_tool_call(
-                _DISABLE_CALL,
-                "knowledge_search",
-                {"query": _QUERY, "limit": 5},
-            ),
             _chat_sse_text("The disabled Knowledge source is unavailable."),
             _chat_sse_tool_call(
                 _REENABLE_CALL,
@@ -102,11 +104,6 @@ async def test_management_mutations_update_loaded_agent_knowledge_immediately(
                 {"query": _QUERY, "limit": 5},
             ),
             _chat_sse_text("The re-enabled Knowledge source is available."),
-            _chat_sse_tool_call(
-                _DELETE_CALL,
-                "knowledge_search",
-                {"query": _QUERY, "limit": 5},
-            ),
             _chat_sse_text("The deleted Knowledge source is unavailable."),
         ],
     )
@@ -156,8 +153,10 @@ async def test_management_mutations_update_loaded_agent_knowledge_immediately(
     )
     assert disabled["source"]["enabled"] is False
 
+    disabled_request_index = len(wire.requests)
     await _say(hass, agent, "Search for the lifecycle reference marker.")
-    assert _search_results(wire, _DISABLE_CALL) == []
+    assert len(wire.requests) == disabled_request_index + 1
+    _assert_knowledge_tools_absent(wire.requests[disabled_request_index]["body"])
 
     listed = await _management_call(
         client, entry=entry, section="knowledge", action="list"
@@ -192,8 +191,10 @@ async def test_management_mutations_update_loaded_agent_knowledge_immediately(
     )
     assert deleted["deleted"] == 1
 
+    deleted_request_index = len(wire.requests)
     await _say(hass, agent, "Search once more for the lifecycle reference marker.")
-    assert _search_results(wire, _DELETE_CALL) == []
+    assert len(wire.requests) == deleted_request_index + 1
+    _assert_knowledge_tools_absent(wire.requests[deleted_request_index]["body"])
 
     after_delete = await _management_call(
         client, entry=entry, section="knowledge", action="list"
