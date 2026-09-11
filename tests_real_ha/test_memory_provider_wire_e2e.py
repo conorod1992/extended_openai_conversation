@@ -48,8 +48,8 @@ _TOOL_CALL_ID = "call-memory-provider-wire"
 _NEW_MEMORY = "The user's project codename is lattice-quartz."
 
 
-def _chat_sse_memory_add() -> bytes:
-    """Return one real Chat Completions function-call stream for memory_add."""
+def _chat_sse_memory_upsert() -> bytes:
+    """Return one real Chat Completions function-call stream for memory_upsert."""
     chunk = {
         "id": "chatcmpl-memory-provider-wire-1",
         "object": "chat.completion.chunk",
@@ -66,7 +66,7 @@ def _chat_sse_memory_add() -> bytes:
                             "id": _TOOL_CALL_ID,
                             "type": "function",
                             "function": {
-                                "name": "memory_add",
+                                "name": "memory_upsert",
                                 "arguments": json.dumps(
                                     {
                                         "content": _NEW_MEMORY,
@@ -256,7 +256,7 @@ async def test_chat_memory_crosses_provider_tool_and_durable_retrieval_boundarie
     wire = _install_wire(
         monkeypatch,
         agent,
-        [_chat_sse_memory_add(), _chat_sse_text("I remembered the project codename.")],
+        [_chat_sse_memory_upsert(), _chat_sse_text("I remembered the project codename.")],
     )
     result = await _say(
         hass,
@@ -279,7 +279,7 @@ async def test_chat_memory_crosses_provider_tool_and_durable_retrieval_boundarie
     assert "expired-crimson" not in first_request
     assert "foreign-violet" not in first_request
     assert any(
-        tool["function"]["name"] == "memory_add"
+        tool["function"]["name"] == "memory_upsert"
         for tool in wire.requests[0]["body"]["tools"]
     )
 
