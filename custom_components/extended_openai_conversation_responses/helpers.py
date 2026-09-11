@@ -15,10 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.template import Template
 
-from .const import (
-    DEFAULT_API_PROVIDER,
-    DEFAULT_CONF_BASE_URL,
-)
+from .const import DEFAULT_API_PROVIDER, DEFAULT_CONF_BASE_URL
 from .entity_context_cache import (
     get_entity_prompt_metadata,
     normalize_entity_aliases as normalize_entity_aliases,
