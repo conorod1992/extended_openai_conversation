@@ -27,7 +27,7 @@ select = [
     "W",      # pycodestyle warnings
     "F",      # Pyflakes
     "I",      # isort
-    "UP",     # pyupgrade
+    "UP",    # pyupgrade
     "RUF",    # Ruff-specific rules
     "B",      # flake8-bugbear
     "SIM",    # flake8-simplify
@@ -47,6 +47,9 @@ split-on-trailing-comma = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.coverage.report]
+fail_under = 80
 
 [tool.mutmut]
 source_paths = ["custom_components/extended_openai_conversation_responses/"]
