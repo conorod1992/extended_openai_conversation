@@ -16,7 +16,7 @@ function makeSelect(value, optionValues = []) {
       const match = selector.match(/^option\[value="(.*)"\]$/);
       return match ? this.options.find((option) => option.value === match[1]) || null : null;
     },
-    append(option) { this.options.push(option); },
+    replaceChildren(...nextOptions) { this.options = nextOptions; },
   };
 }
 
@@ -58,8 +58,8 @@ assert.match(help.textContent, /original request to the AI unchanged/i);
 model.value = "gpt-5.6";
 reasoning.value = "max";
 syncRequestRuleRoutingControls(root, ["low", "medium", "high"]);
-assert.equal(reasoning.querySelector('option[value="xhigh"]').disabled, true);
-assert.equal(reasoning.querySelector('option[value="max"]').disabled, true);
+assert.equal(reasoning.querySelector('option[value="xhigh"]'), null);
+assert.equal(reasoning.querySelector('option[value="max"]'), null);
 assert.equal(reasoning.value, "");
 
 model.value = "";

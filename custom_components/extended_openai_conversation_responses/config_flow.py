@@ -67,7 +67,6 @@ from .const import (
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_MAX_TOKENS,
     DEFAULT_NAME,
-    DEFAULT_REASONING_EFFORT,
     DEFAULT_SERVICE_TIER,
     DEFAULT_SHORTEN_TOOL_CALL_ID,
     DEFAULT_SKIP_AUTHENTICATION,
@@ -77,10 +76,11 @@ from .const import (
     DOMAIN,
     SERVICE_TIER_OPTIONS,
 )
-from .helpers import (
-    get_authenticated_client,
-    get_model_config,
-    get_reasoning_effort_options,
+from .helpers import get_authenticated_client
+from .model_capabilities import (
+    get_model_capabilities,
+    parameter_is_allowed,
+    recommended_reasoning_effort,
 )
 from .provider_errors import classify_config_provider_error, log_provider_failure
 from .skills import SkillManager
@@ -536,10 +536,26 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
     async def async_step_advanced(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
-        """Handle advanced options step."""
+        """Handle advanced model options from exact catalogue capabilities."""
+        chat_model = str(
+            (self._temp_data or {}).get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+        )
+        metadata = get_model_capabilities(chat_model)
+        recommended_effort = recommended_reasoning_effort(chat_model)
+
         if user_input is not None:
-            # Merge advanced options with temp data
             final_data = {**(self._temp_data or {}), **user_input}
+            configured_effort = final_data.get(CONF_REASONING_EFFORT)
+            effective_effort = (
+                str(configured_effort)
+                if configured_effort is not None
+                else recommended_effort
+            )
+            for parameter in (CONF_TEMPERATURE, CONF_TOP_P):
+                if parameter in final_data and not parameter_is_allowed(
+                    chat_model, parameter, effective_effort
+                ):
+                    final_data.pop(parameter, None)
 
             if self._is_new:
                 title = final_data.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
@@ -554,14 +570,10 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 data=final_data,
             )
 
-        # Build schema for advanced options based on selected model
-        chat_model = (self._temp_data or {}).get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
-        model_config = get_model_config(chat_model)
-
         schema: dict[Any, Any] = {}
+        reasoning = metadata["reasoning"]
 
-        # Add top_p if supported
-        if model_config["supports_top_p"]:
+        if parameter_is_allowed(chat_model, CONF_TOP_P, recommended_effort):
             schema[
                 vol.Optional(
                     CONF_TOP_P,
@@ -569,8 +581,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 )
             ] = NumberSelector(NumberSelectorConfig(min=0, max=1, step=0.05))
 
-        # Add temperature if supported
-        if model_config["supports_temperature"]:
+        if parameter_is_allowed(chat_model, CONF_TEMPERATURE, recommended_effort):
             schema[
                 vol.Optional(
                     CONF_TEMPERATURE,
@@ -578,25 +589,24 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 )
             ] = NumberSelector(NumberSelectorConfig(min=0, max=2, step=0.05))
 
-        # Add reasoning_effort if supported (o1, o3, o4, gpt-5, gpt-6 models)
-        if model_config.get("supports_reasoning_effort"):
+        if reasoning["supported"]:
+            default_effort = recommended_effort or reasoning["efforts"][0]
             schema[
                 vol.Optional(
                     CONF_REASONING_EFFORT,
-                    default=DEFAULT_REASONING_EFFORT,
+                    default=default_effort,
                 )
             ] = SelectSelector(
                 SelectSelectorConfig(
                     options=[
                         SelectOptionDict(value=opt, label=opt.capitalize())
-                        for opt in get_reasoning_effort_options(str(chat_model))
+                        for opt in reasoning["efforts"]
                     ],
                     mode=SelectSelectorMode.DROPDOWN,
                 )
             )
 
-        # Add service_tier if supported (o3, o4, gpt-5 models)
-        if model_config.get("supports_service_tier"):
+        if metadata["service_tier"]:
             schema[
                 vol.Optional(
                     CONF_SERVICE_TIER,
@@ -612,7 +622,6 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 )
             )
 
-        # Add shorten_tool_call_id option (for Mistral AI compatibility)
         schema[
             vol.Optional(
                 CONF_SHORTEN_TOOL_CALL_ID,

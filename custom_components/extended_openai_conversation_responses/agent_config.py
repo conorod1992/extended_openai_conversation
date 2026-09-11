@@ -816,9 +816,23 @@ def normalize_agent_config(
         raise AgentConfigError(
             "config", "unknown fields: " + ", ".join(sorted(unknown))
         )
+    reasoning_effort_explicit = CONF_REASONING_EFFORT in data
     result = agent_config_defaults() if apply_defaults else {}
     result.update(deepcopy(data))
     _coerce_legacy_numbers(result)
+
+    selected_model = str(result.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+    reasoning_options = get_reasoning_effort_options(selected_model)
+    if not reasoning_effort_explicit:
+        recommended_effort = (
+            get_model_config(selected_model)
+            .get("recommended_profile", {})
+            .get("reasoning_effort")
+        )
+        if recommended_effort is None:
+            result.pop(CONF_REASONING_EFFORT, None)
+        else:
+            result[CONF_REASONING_EFFORT] = recommended_effort
 
     _require_type(
         result,
@@ -904,9 +918,7 @@ def normalize_agent_config(
         CONF_CONTEXT_TRUNCATE_STRATEGY: [
             item["key"] for item in CONTEXT_TRUNCATE_STRATEGIES
         ],
-        CONF_REASONING_EFFORT: get_reasoning_effort_options(
-            str(result.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
-        ),
+        CONF_REASONING_EFFORT: reasoning_options,
         CONF_SERVICE_TIER: SERVICE_TIER_OPTIONS,
         CONF_GUEST_KNOWLEDGE_POLICY: GUEST_ACCESS_POLICIES,
         CONF_GUEST_FUNCTION_POLICY: GUEST_ACCESS_POLICIES,

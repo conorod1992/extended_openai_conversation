@@ -45,7 +45,7 @@ def _expanded_candidate() -> dict:
     candidate = deepcopy(data.BUNDLED_CATALOG)
     candidate["catalog_version"] += 1
     model = next(item for item in candidate["models"] if item["id"] == "gpt-5.6")
-    model["reasoning_efforts"].append("xhigh")
+    model["reasoning"]["efforts"].append("minimal")
     return candidate
 
 
@@ -72,7 +72,7 @@ def test_hot_transition_cannot_remove_previously_valid_reasoning_choice() -> Non
     candidate = deepcopy(current)
     candidate["catalog_version"] += 1
     model = next(item for item in candidate["models"] if item["id"] == "gpt-5.6")
-    model["reasoning_efforts"].remove("xhigh")
+    model["reasoning"]["efforts"].remove("minimal")
 
     with pytest.raises(ValueError, match="cannot remove reasoning effort choices"):
         data.validate_catalog_transition(current, candidate)
@@ -82,25 +82,27 @@ def test_hot_transition_cannot_remove_reasoning_capability() -> None:
     candidate = deepcopy(data.BUNDLED_CATALOG)
     candidate["catalog_version"] += 1
     model = next(item for item in candidate["models"] if item["id"] == "gpt-5.6")
-    model["parameters"]["supports_reasoning_effort"] = False
-
-    with pytest.raises(ValueError, match="cannot remove reasoning support"):
-        data.validate_catalog_transition(None, candidate)
-
-
-def test_new_exact_model_cannot_narrow_its_previous_fallback_choices() -> None:
-    candidate = deepcopy(data.BUNDLED_CATALOG)
-    candidate["catalog_version"] += 1
-    model = deepcopy(next(item for item in candidate["models"] if item["id"] == "gpt-4"))
-    model.update(
-        id="private-model",
-        display_name="private-model",
-        reasoning_efforts=["low"],
-    )
-    candidate["models"].append(model)
+    model["reasoning"]["supported"] = False
+    model["reasoning"]["efforts"] = []
+    model["reasoning"]["openai_default"] = None
+    model["recommended_profile"]["reasoning_effort"] = None
 
     with pytest.raises(ValueError, match="cannot remove reasoning effort choices"):
         data.validate_catalog_transition(None, candidate)
+
+
+def test_new_exact_model_does_not_inherit_unknown_model_capabilities() -> None:
+    """An unknown ID has no permissive family fallback to preserve in v2."""
+    assert data.model_metadata("private-model")["status"] == "unknown"
+    assert data.model_metadata("private-model")["reasoning"]["efforts"] == []
+
+    candidate = deepcopy(data.BUNDLED_CATALOG)
+    candidate["catalog_version"] += 1
+    model = deepcopy(next(item for item in candidate["models"] if item["id"] == "gpt-4.1"))
+    model.update(id="private-model", display_name="private-model")
+    candidate["models"].append(model)
+
+    data.validate_catalog_transition(None, candidate)
 
 
 async def test_manager_rejects_narrowing_and_keeps_last_good_catalog(
@@ -115,21 +117,21 @@ async def test_manager_rejects_narrowing_and_keeps_last_good_catalog(
     candidate = deepcopy(current)
     candidate["catalog_version"] += 1
     model = next(item for item in candidate["models"] if item["id"] == "gpt-5.6")
-    model["reasoning_efforts"].remove("xhigh")
+    model["reasoning"]["efforts"].remove("minimal")
     _transport(monkeypatch, json.dumps(candidate).encode(), etag='"v3"')
 
     result = await manager.async_update(force=True)
     assert result["last_error"]
     assert manager.catalog == current
     assert manager.store.saved["catalog"] == current
-    assert data.model_metadata("gpt-5.6")["reasoning_efforts"][-1] == "xhigh"
+    assert data.model_metadata("gpt-5.6")["reasoning"]["efforts"][-1] == "minimal"
 
 
 async def test_restart_rejects_stored_override_that_narrows_bundled_choices(hass) -> None:
     candidate = deepcopy(data.BUNDLED_CATALOG)
     candidate["catalog_version"] += 1
     model = next(item for item in candidate["models"] if item["id"] == "gpt-5.6")
-    model["reasoning_efforts"] = ["low"]
+    model["reasoning"]["efforts"] = ["low"]
 
     manager = runtime.ModelCatalogManager(hass)
     manager.store = MemoryStore()
@@ -143,10 +145,13 @@ async def test_restart_rejects_stored_override_that_narrows_bundled_choices(hass
     assert manager.catalog is None
     assert manager.status()["source"] == "bundled"
     assert manager.status()["last_error"]
-    assert data.model_metadata("gpt-5.6")["reasoning_efforts"] == [
+    assert data.model_metadata("gpt-5.6")["reasoning"]["efforts"] == [
+        "none",
         "low",
         "medium",
         "high",
+        "xhigh",
+        "max",
     ]
 
 
@@ -155,7 +160,7 @@ async def test_reset_is_blocked_when_saved_agent_uses_download_only_choice(hass)
     subentry = SimpleNamespace(
         data={
             CONF_CHAT_MODEL: "gpt-5.6",
-            CONF_REASONING_EFFORT: "xhigh",
+            CONF_REASONING_EFFORT: "minimal",
         },
         subentry_id="conversation-subentry",
         subentry_type="conversation",
@@ -184,4 +189,4 @@ async def test_reset_is_blocked_when_saved_agent_uses_download_only_choice(hass)
     assert "saved configuration" in result["last_error"]
     assert manager.catalog == current
     assert manager.store.saved["catalog"] == current
-    assert data.model_metadata("gpt-5.6")["reasoning_efforts"][-1] == "xhigh"
+    assert data.model_metadata("gpt-5.6")["reasoning"]["efforts"][-1] == "minimal"

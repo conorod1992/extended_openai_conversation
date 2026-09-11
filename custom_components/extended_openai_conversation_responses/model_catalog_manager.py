@@ -25,11 +25,13 @@ from .model_catalog import (
     activate_catalog,
     all_reasoning_efforts,
     catalog_model_metadata,
+    catalog_picker_models,
     catalog_reasoning_efforts,
+    compatibility_capabilities,
     model_metadata,
     parse_catalog,
-    validate_catalog,
     validate_catalog_transition,
+    validate_or_migrate_catalog,
 )
 from .request_rules import SLOT_REFERENCE, async_get_request_rules
 
@@ -60,13 +62,14 @@ class ModelCatalogManager:
         self._lock = asyncio.Lock()
 
     async def async_load(self) -> None:
-        """Bad persisted data must not prevent HA from starting."""
+        """Load/migrate stored data without making startup depend on the network."""
         try:
             saved = await self.store.async_load()
+            migrated = False
             if saved:
                 candidate = saved.get("catalog")
                 if candidate is not None:
-                    candidate = validate_catalog(candidate)
+                    candidate, migrated = validate_or_migrate_catalog(candidate)
                 checked = saved.get("last_checked", 0)
                 etag = saved.get("etag")
                 if type(checked) not in (float, int) or not 0 <= checked <= time.time():
@@ -78,7 +81,6 @@ class ModelCatalogManager:
                     or "\r" in etag
                 ):
                     raise ValueError("Invalid catalogue ETag")
-                # An integration upgrade must not resurrect older downloaded data.
                 if (
                     candidate is not None
                     and candidate["catalog_version"]
@@ -86,11 +88,17 @@ class ModelCatalogManager:
                 ):
                     candidate, etag = None, None
                 elif candidate is not None:
-                    # Stored overrides must retain every reasoning choice/capability
-                    # accepted by the bundled release, otherwise durable agent/rule
-                    # data could become invalid immediately after HA restarts.
                     validate_catalog_transition(None, candidate)
                 self.catalog, self.etag, self.last_checked = candidate, etag, checked
+                if migrated:
+                    _LOGGER.debug(
+                        "Migrated stored model capability catalogue v1 to schema v2; "
+                        "v2 bundled model data is authoritative"
+                    )
+                    try:
+                        await self._save(candidate, etag, checked)
+                    except Exception:
+                        _LOGGER.warning("Unable to persist migrated model catalogue v2")
         except Exception:
             self.last_error = (
                 "Stored model data could not be loaded; using bundled data."
@@ -102,7 +110,7 @@ class ModelCatalogManager:
         return {
             "source": "downloaded" if self.catalog is not None else "bundled",
             "catalog_version": (self.catalog or BUNDLED_CATALOG)["catalog_version"],
-            "schema_version": 1,
+            "schema_version": 2,
             "last_checked": self.last_checked,
             "last_error": self.last_error,
         }
@@ -118,21 +126,16 @@ class ModelCatalogManager:
         """Retain current data while remembering when the failed check occurred."""
         self.last_error = "Model data update failed; the current catalogue was kept."
         if transient:
-            # Background refreshes are best-effort. Ordinary loss of internet access,
-            # rate limiting, or GitHub/server outages must not pollute HA warnings.
             _LOGGER.debug(self.last_error)
         else:
-            # Invalid remote data or a local persistence problem is actionable and can
-            # indicate a broken published catalogue, so retain warning visibility.
             _LOGGER.warning(self.last_error)
-        # Persist attempt time as well, avoiding retry storms across restarts.
         try:
             await self._save(self.catalog, self.etag, checked)
         except Exception:
             _LOGGER.warning("Unable to persist model catalogue check time")
 
     async def async_update(self, *, force: bool = False) -> dict[str, Any]:
-        """Fetch only trusted data; HTTP/parsing/storage failures preserve current data."""
+        """Fetch only trusted v2 data; failures preserve the current catalogue."""
         async with self._lock:
             now = time.time()
             if not force and now - self.last_checked < UPDATE_INTERVAL:
@@ -185,7 +188,7 @@ class ModelCatalogManager:
             return self.status()
 
     async def _bundled_reset_would_invalidate_saved_reasoning(self) -> bool:
-        """Check durable agent/rule choices before narrowing back to bundled data."""
+        """Check durable agent/rule choices before narrowing to bundled data."""
         if self.catalog is None:
             return False
 
@@ -199,13 +202,15 @@ class ModelCatalogManager:
                     subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
                 )
                 configured_effort = subentry.data.get(CONF_REASONING_EFFORT)
-                bundled_config_efforts = catalog_model_metadata(None, configured_model)[
-                    "reasoning_efforts"
-                ]
+                metadata = catalog_model_metadata(None, configured_model)
+                bundled_config_efforts = metadata["reasoning"]["efforts"]
                 if (
                     isinstance(configured_effort, str)
                     and configured_effort
-                    and configured_effort not in bundled_config_efforts
+                    and (
+                        not metadata["reasoning"]["supported"]
+                        or configured_effort not in bundled_config_efforts
+                    )
                 ):
                     return True
 
@@ -233,8 +238,8 @@ class ModelCatalogManager:
                     ):
                         metadata = catalog_model_metadata(None, model)
                         if (
-                            not metadata["parameters"]["supports_reasoning_effort"]
-                            or effort not in metadata["reasoning_efforts"]
+                            not metadata["reasoning"]["supported"]
+                            or effort not in metadata["reasoning"]["efforts"]
                         ):
                             return True
                     elif effort not in bundled_efforts:
@@ -242,7 +247,7 @@ class ModelCatalogManager:
         return False
 
     async def async_reset(self) -> dict[str, Any]:
-        """Return to bundled data without invalidating currently durable choices."""
+        """Return to bundled data without invalidating durable choices."""
         async with self._lock:
             now = time.time()
             if await self._bundled_reset_would_invalidate_saved_reasoning():
@@ -280,7 +285,7 @@ class ModelCatalogManager:
 async def websocket_catalog(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
 ) -> None:
-    """The management UI reads the same Python lookup used by requests and rules."""
+    """Expose the same v2 capability data used by request validation."""
     manager: ModelCatalogManager = hass.data[DATA_MANAGER]
     if msg["action"] == "update":
         status = await manager.async_update(force=True)
@@ -291,16 +296,17 @@ async def websocket_catalog(
             return
     elif msg["action"] == "reset":
         await manager.async_reset()
+
     metadata = model_metadata(msg["model"])
+    capabilities = compatibility_capabilities(msg["model"])
     connection.send_result(
         msg["id"],
         {
             **manager.status(),
-            "model_capabilities": {
-                **metadata["parameters"],
-                "reasoning_effort_options": metadata["reasoning_efforts"],
-            },
-            "reasoning_effort_options": metadata["reasoning_efforts"]
+            "model_capabilities": capabilities,
+            "model_metadata": metadata,
+            "catalog_models": catalog_picker_models(manager.catalog, msg["model"]),
+            "reasoning_effort_options": metadata["reasoning"]["efforts"]
             if msg["model"]
             else all_reasoning_efforts(),
         },
@@ -319,7 +325,6 @@ async def async_setup_model_catalog(hass: HomeAssistant) -> None:
     async def check(_now: Any) -> None:
         await manager.async_update()
 
-    # No startup network dependency. First check within an hour, then at most daily.
     cancel = async_track_time_interval(hass, check, timedelta(hours=1))
 
     @callback

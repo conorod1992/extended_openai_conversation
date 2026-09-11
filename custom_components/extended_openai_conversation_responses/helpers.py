@@ -15,19 +15,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.template import Template
 
-from .const import (
-    API_MODE_AUTO,
-    API_MODE_CHAT_COMPLETIONS,
-    API_MODE_RESPONSES,
-    DEFAULT_API_PROVIDER,
-    DEFAULT_CONF_BASE_URL,
-)
+from .const import DEFAULT_API_PROVIDER, DEFAULT_CONF_BASE_URL
 from .entity_context_cache import (
     get_entity_prompt_metadata,
     normalize_entity_aliases as normalize_entity_aliases,
 )
 from .ha_permissions import filter_entities_for_active_user
-from .model_catalog import model_metadata
+from .model_capabilities import select_api_path
+from .model_catalog import compatibility_capabilities, model_metadata
 from .provider_errors import provider_transport_error
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,39 +31,28 @@ _LOGGER = logging.getLogger(__name__)
 AZURE_DOMAIN_PATTERN = r"\.(openai\.azure\.com|azure-api\.net|services\.ai\.azure\.com)"
 
 
-def get_api_mode(configured_mode: str, model: str) -> str:
-    """Resolve the configured API mode for a model.
+def get_api_mode(configured_mode: str, model: str, tools_required: bool = False) -> str:
+    """Resolve/validate API mode from authoritative model capability data."""
+    return select_api_path(model, configured_mode, tools_required)
 
-    Auto deliberately has a conservative boundary so existing models and
-    OpenAI-compatible providers keep using Chat Completions. GPT-5.6 and later
-    GPT-5 minor versions, plus GPT-6 Astra, use Responses where reasoning and
-    function tools can be used together.
+
+def get_model_config(model: str) -> dict[str, Any]:
+    """Return legacy-compatible booleans derived from v2 capability data.
+
+    `supports_max_tokens` is deliberately always false. Older call sites that still
+    branch on this helper therefore normalize onto max_completion_tokens instead of
+    ever emitting the deprecated max_tokens field.
     """
-    if configured_mode != API_MODE_AUTO:
-        return configured_mode
-
-    return (
-        API_MODE_CHAT_COMPLETIONS
-        if model_metadata(model)["chat_reasoning_tools"]
-        else API_MODE_RESPONSES
-    )
-
-
-def get_model_config(model: str) -> dict[str, bool]:
-    """Get model-specific parameter configuration from the active catalogue."""
-    return dict(model_metadata(model)["parameters"])
+    return compatibility_capabilities(model)
 
 
 def get_reasoning_effort_options(model: str) -> list[str]:
-    """Return reasoning choices from the same metadata used by configuration."""
-    return list(model_metadata(model)["reasoning_efforts"])
+    """Return the exact model-specific reasoning enum from the active catalogue."""
+    return list(model_metadata(model)["reasoning"]["efforts"])
 
 
 def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:
     """Get Assist-exposed entities the authenticated caller may read."""
-    # Exposure, state values/names and caller permissions deliberately stay live.
-    # Only registry-derived aliases/area metadata are cached behind registry-event
-    # invalidation in entity_context_cache.
     states = [
         state
         for state in hass.states.async_all()
@@ -103,12 +87,13 @@ def supports_openai_hosted_tools(
 
 
 def get_token_param_for_model(model: str) -> str:
-    """Return the token parameter name for a model."""
-    return (
-        "max_completion_tokens"
-        if model_metadata(model)["completion_token_limit"]
-        else "max_tokens"
-    )
+    """Return the modern Chat Completions output-token field.
+
+    This compatibility helper intentionally never returns deprecated `max_tokens`.
+    Responses requests use max_output_tokens through the request builder instead.
+    """
+    del model
+    return "max_completion_tokens"
 
 
 def convert_to_template(
@@ -165,8 +150,6 @@ async def get_authenticated_client(
             azure_endpoint=base_url,
             api_version=api_version,
             organization=organization,
-            # OpenAI 3.10 types its new httpx2 client only; HA's legacy HTTPX
-            # client remains supported by the SDK at runtime, as in HA core.
             http_client=cast(Any, get_async_client(hass)),
         )
     else:
@@ -174,8 +157,6 @@ async def get_authenticated_client(
             api_key=api_key,
             base_url=base_url,
             organization=organization,
-            # OpenAI 3.10 types its new httpx2 client only; HA's legacy HTTPX
-            # client remains supported by the SDK at runtime, as in HA core.
             http_client=cast(Any, get_async_client(hass)),
         )
 

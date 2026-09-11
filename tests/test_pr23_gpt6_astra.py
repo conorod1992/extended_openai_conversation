@@ -33,17 +33,31 @@ MODEL = "gpt-6-astra"
 
 
 def test_gpt6_astra_uses_reasoning_model_parameter_profile() -> None:
-    """Astra should omit sampling controls and use completion-token semantics."""
+    """Astra should expose its exact v2 reasoning, sampling, and API capabilities."""
     config = get_model_config(MODEL)
 
-    assert config == {
-        "supports_top_p": False,
-        "supports_temperature": False,
-        "supports_max_tokens": False,
-        "supports_max_completion_tokens": True,
-        "supports_reasoning_effort": True,
-        "supports_service_tier": True,
+    assert config["reasoning"] == {
+        "supported": True,
+        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "openai_default": None,
     }
+    assert config["temperature"]["support"] == "never"
+    assert config["top_p"]["support"] == "never"
+    assert config["api"] == {
+        "responses": True,
+        "chat_completions": True,
+        "completions_legacy": False,
+    }
+    assert config["function_calling"] == {
+        "responses": True,
+        "chat_completions": False,
+        "preferred_api": "responses",
+    }
+    assert config["limits"] == {
+        "context_tokens": 1_050_000,
+        "max_output_tokens": 128_000,
+    }
+    assert config["recommended_profile"]["reasoning_effort"] == "low"
     assert get_token_param_for_model(MODEL) == "max_completion_tokens"
 
 

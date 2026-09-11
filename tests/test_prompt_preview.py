@@ -380,7 +380,7 @@ async def test_effective_request_preview_uses_first_request_tool_assembly(
         {
             CONF_PROMPT: "BASE",
             CONF_API_MODE: "responses",
-            CONF_CHAT_MODEL: "gpt-5.6-mini",
+            CONF_CHAT_MODEL: "gpt-5.6-luna",
             CONF_WEB_SEARCH: True,
             CONF_ARCHIVE_ENABLED: False,
             CONF_CURRENT_DATETIME_ENABLED: False,
