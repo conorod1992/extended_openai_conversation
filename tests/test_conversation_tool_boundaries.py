@@ -146,7 +146,10 @@ async def test_temporary_memory_dispatcher_uses_request_scope_for_all_mutations(
         async_update=AsyncMock(return_value=record),
         async_delete=AsyncMock(return_value=1),
     )
-    token = conversation._ACTIVE_TEMPORARY_SCOPE.set("conversation:test")
+    scope_token = conversation._ACTIVE_SCOPE.set(
+        user_scope("user-1", source="test")
+    )
+    temporary_token = conversation._ACTIVE_TEMPORARY_SCOPE.set("conversation:test")
     try:
         created = await entity._async_execute_temporary_memory_tool(
             "add",
@@ -169,7 +172,8 @@ async def test_temporary_memory_dispatcher_uses_request_scope_for_all_mutations(
             "delete", {"memory_ids": ["temporary-1"]}
         )
     finally:
-        conversation._ACTIVE_TEMPORARY_SCOPE.reset(token)
+        conversation._ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
+        conversation._ACTIVE_SCOPE.reset(scope_token)
 
     entity._temporary_memory.async_add.assert_awaited_once_with(
         "conversation:test",
@@ -300,6 +304,9 @@ async def test_conversation_tool_dispatchers_reject_malformed_control_arguments(
             "search", {"query": "dog", "limit": True}, _llm_context()
         )
 
+    temporary_scope_token = conversation._ACTIVE_SCOPE.set(
+        user_scope("user-1", source="test")
+    )
     temporary_token = conversation._ACTIVE_TEMPORARY_SCOPE.set("conversation:test")
     try:
         with pytest.raises(ValueError, match="memory_ids must be a list of strings"):
@@ -308,6 +315,7 @@ async def test_conversation_tool_dispatchers_reject_malformed_control_arguments(
             )
     finally:
         conversation._ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
+        conversation._ACTIVE_SCOPE.reset(temporary_scope_token)
 
     scope_token = conversation._ACTIVE_SCOPE.set(user_scope("alice", source="test"))
     archive_token = conversation._ACTIVE_ARCHIVE.set(("session-key", "session-1"))
