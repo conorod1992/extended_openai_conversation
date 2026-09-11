@@ -125,6 +125,8 @@ from .voice_identity_runtime import install_voice_identity_runtime
 
 _LOGGER = logging.getLogger(__name__)
 
+_REQUEST_RULE_RUNTIMES = "extended_openai_conversation_responses.request_rule_runtimes"
+
 # agent_config has already been loaded by the management/exposed-attribute modules.
 # Refresh its authoritative default snapshot once so newly-created agents are seeded
 # with the same current native schemas that the UI and provider will see.
@@ -259,10 +261,16 @@ async def async_setup_entry(
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload OpenAI."""
+    """Unload OpenAI and discard transient per-conversation routing state."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unloaded:
         return False
+    hass_data = getattr(hass, "data", None)
+    subentries = getattr(entry, "subentries", None)
+    if isinstance(hass_data, dict) and subentries is not None:
+        runtimes = hass_data.get(_REQUEST_RULE_RUNTIMES, {})
+        for subentry in subentries.values():
+            runtimes.pop((entry.entry_id, subentry.subentry_id), None)
     await async_unload_templates(hass, entry.entry_id)
     return True
 
