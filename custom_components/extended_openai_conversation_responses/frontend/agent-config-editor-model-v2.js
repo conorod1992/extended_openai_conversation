@@ -155,6 +155,19 @@ async function ensureCatalogData(panel) {
   }
 }
 
+function applyModelDefaults(panel, model, data) {
+  if (!panel._draft) panel._draft = {...(panel._result?.config || {})};
+  panel._draft.chat_model = model;
+  const reasoning = data?.model_metadata?.reasoning || {};
+  const efforts = Array.isArray(reasoning.efforts) ? reasoning.efforts : [];
+  if (!reasoning.supported || !efforts.length) {
+    delete panel._draft.reasoning_effort;
+    return;
+  }
+  const recommended = data?.model_metadata?.recommended_profile?.reasoning_effort;
+  panel._draft.reasoning_effort = efforts.includes(recommended) ? recommended : efforts[0];
+}
+
 export function renderConfiguration(panel) {
   return decorateConfiguration(panel, base.renderConfiguration(panel));
 }
@@ -162,7 +175,26 @@ export function renderConfiguration(panel) {
 export function bindConfiguration(panel) {
   const result = base.bindConfiguration(panel);
   void ensureCatalogData(panel);
-  const reasoning = panel?.shadowRoot?.querySelector('[data-config="reasoning_effort"]');
+  const root = panel?.shadowRoot;
+  const modelInput = root?.querySelector('[data-config="chat_model"]');
+  modelInput?.addEventListener("change", async (event) => {
+    event.stopImmediatePropagation();
+    try {
+      const model = modelInput.value;
+      const data = await lookupModelData(panel, model);
+      if (modelInput.value !== model) return;
+      applyModelDefaults(panel, model, data);
+      const validation = await panel._call("configuration", "validate", {config: panel._draft});
+      if (!validation.valid) return;
+      panel._result.model_capabilities = validation.model_capabilities;
+      panel._setConfigDirty?.(true);
+      panel._configRestoreFocus = '[data-config="chat_model"]';
+      panel._render();
+    } catch (err) {
+      panel._toast?.(`Unable to inspect model options: ${err.message || String(err)}`, true);
+    }
+  }, true);
+  const reasoning = root?.querySelector('[data-config="reasoning_effort"]');
   reasoning?.addEventListener("change", () => {
     if (!panel._draft) panel._draft = {...(panel._result?.config || {})};
     panel._draft.reasoning_effort = reasoning.value;
