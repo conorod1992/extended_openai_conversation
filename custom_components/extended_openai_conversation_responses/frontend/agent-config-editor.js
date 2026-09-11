@@ -12,7 +12,7 @@ const BACKUP_CREDENTIAL_NOTICE = `<p class="privacy-warning credential-redaction
 
 export function reasoningEffortOptionsForResult(result = {}) {
   const values = result?.model_capabilities?.reasoning_effort_options;
-  const supported = Array.isArray(values) && values.length ? values : ["low", "medium", "high"];
+  const supported = Array.isArray(values) ? values : [];
   return supported.map((value) => ({value, label: String(value).charAt(0).toUpperCase() + String(value).slice(1)}));
 }
 
