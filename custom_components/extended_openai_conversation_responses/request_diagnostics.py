@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from copy import deepcopy
 import time
 from typing import Any, cast
@@ -108,15 +109,13 @@ def install_payload_latency_diagnostics() -> None:
             return original_exposed(agent, *args, **kwargs)
         started = time.monotonic()
         result = original_exposed(agent, *args, **kwargs)
-        try:
+        with suppress(Exception):
             _record_preparation(
                 trace,
                 "exposed_entity_context",
                 int((time.monotonic() - started) * 1000),
                 count=len(result) if isinstance(result, list) else None,
             )
-        except Exception:
-            pass
         return result
 
     def tools_with_timing(agent: Any, *args: Any, **kwargs: Any) -> Any:
