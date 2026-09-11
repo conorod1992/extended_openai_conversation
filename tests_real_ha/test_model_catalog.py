@@ -33,8 +33,8 @@ async def test_admin_update_reload_and_reset_using_registered_command(
     )
     value = deepcopy(BUNDLED_CATALOG)
     value["catalog_version"] += 1
-    next(item for item in value["models"] if item["id"] == "gpt-5.6")[
-        "reasoning_efforts"
+    next(item for item in value["models"] if item["id"] == "gpt-5.6")["reasoning"][
+        "efforts"
     ].append("xhigh")
 
     async def chunks(_size):
