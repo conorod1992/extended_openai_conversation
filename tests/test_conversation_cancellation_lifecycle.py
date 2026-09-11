@@ -8,7 +8,9 @@ from typing import Any
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import conversation as conversation_module
+from custom_components.extended_openai_conversation_responses import (
+    conversation as conversation_module,
+)
 
 
 class _BlockingResolveContinuity:
