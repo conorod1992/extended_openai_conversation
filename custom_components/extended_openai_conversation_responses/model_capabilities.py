@@ -90,9 +90,9 @@ def select_api_path(
     if capabilities["status"] == "unknown":
         preferred = API_MODE_RESPONSES
     else:
-        preferred = cast(
-            str | None, capabilities.get("auto_api")
-        ) or API_MODE_CHAT_COMPLETIONS
+        preferred = (
+            cast(str | None, capabilities.get("auto_api")) or API_MODE_CHAT_COMPLETIONS
+        )
     if capabilities["api"].get(preferred):
         return preferred
     for api in (API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES):
