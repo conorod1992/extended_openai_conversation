@@ -824,9 +824,11 @@ def normalize_agent_config(
     selected_model = str(result.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
     reasoning_options = get_reasoning_effort_options(selected_model)
     if not reasoning_effort_explicit:
-        recommended_effort = get_model_config(selected_model).get(
-            "recommended_profile", {}
-        ).get("reasoning_effort")
+        recommended_effort = (
+            get_model_config(selected_model)
+            .get("recommended_profile", {})
+            .get("reasoning_effort")
+        )
         if recommended_effort is None:
             result.pop(CONF_REASONING_EFFORT, None)
         else:
