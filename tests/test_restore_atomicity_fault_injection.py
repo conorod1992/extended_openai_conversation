@@ -124,6 +124,10 @@ async def test_restore_failure_at_each_manager_boundary_rolls_back_and_retry_suc
     monkeypatch.setattr(
         backup, "_snapshot_for_restore", AsyncMock(return_value=rollback)
     )
+    # Validation is covered independently. Return this exact prepared target here so
+    # identity matching can distinguish target writes from rollback writes even when
+    # individual category payloads are value-equal.
+    monkeypatch.setattr(backup, "inspect_backup", lambda *_args, **_kwargs: target)
     monkeypatch.setattr(
         restore_recovery, "_async_persist_config_entries", persist_config
     )
