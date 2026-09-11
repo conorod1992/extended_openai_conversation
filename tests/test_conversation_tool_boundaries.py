@@ -10,7 +10,11 @@ import pytest
 from custom_components.extended_openai_conversation_responses import conversation
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+    CONF_MEMORY_MODE,
     CONF_SHARED_ARCHIVE_ENABLED,
+    CONF_TEMPORARY_MEMORY,
+    MEMORY_MODE_MANUAL,
+    TEMPORARY_MEMORY_BALANCED,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
@@ -25,7 +29,12 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
 def _agent(options: dict | None = None) -> ExtendedOpenAIAgentEntity:
     """Build the narrow entity surface needed by the tool dispatchers."""
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
-    entity.subentry = SimpleNamespace(data=options or {})
+    retained_data_options = {
+        CONF_MEMORY_MODE: MEMORY_MODE_MANUAL,
+        CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_BALANCED,
+    }
+    retained_data_options.update(options or {})
+    entity.subentry = SimpleNamespace(data=retained_data_options)
     entity._effective_guest_policy = lambda: SimpleNamespace(
         guest_active=False,
         shared_memory_read=True,
