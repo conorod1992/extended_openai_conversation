@@ -223,7 +223,10 @@ def test_deprecated_picker_and_stable_alias_status_are_exact():
     assert "o2" not in normal_ids
     assert "o4" not in normal_ids
     assert "gpt-5.3" not in normal_ids
-    existing = {item["id"]: item for item in model_catalog.catalog_picker_models("gpt-4-turbo")}
+    existing = {
+        item["id"]: item
+        for item in model_catalog.catalog_picker_models(selected_model="gpt-4-turbo")
+    }
     assert existing["gpt-4-turbo"]["status"] == "deprecated"
     assert model_catalog.model_metadata("gpt-5.6")["status"] == "current"
 
