@@ -112,7 +112,7 @@ def test_picker_hides_deprecated_unless_already_selected():
     assert all(item["status"] == "current" for item in normal)
     assert "gpt-4-turbo" not in {item["id"] for item in normal}
 
-    existing = data.catalog_picker_models("gpt-4-turbo")
+    existing = data.catalog_picker_models(selected_model="gpt-4-turbo")
     deprecated = next(item for item in existing if item["id"] == "gpt-4-turbo")
     assert deprecated["status"] == "deprecated"
 
