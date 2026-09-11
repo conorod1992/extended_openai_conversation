@@ -10,6 +10,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_CHAT_MODEL,
+    CONF_EXPOSED_ENTITIES_ENABLED,
 )
 from custom_components.extended_openai_conversation_responses.exposed_attributes import (
     CONF_EXPOSED_ENTITY_ATTRIBUTES,
@@ -63,6 +64,7 @@ async def _agent(hass: HomeAssistant, api_mode: str, registry_entry_id: str):
         conversation_options={
             CONF_API_MODE: api_mode,
             CONF_CHAT_MODEL: "gpt-5.6",
+            CONF_EXPOSED_ENTITIES_ENABLED: True,
             CONF_EXPOSED_ENTITY_ATTRIBUTES: {
                 f"registry:{registry_entry_id}": [_ATTRIBUTE]
             },
