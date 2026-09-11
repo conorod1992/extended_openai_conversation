@@ -6,7 +6,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, cast
 
 MAX_CATALOG_BYTES = 256 * 1024
 _ID = re.compile(r"[a-z0-9][a-z0-9._:-]{0,127}\Z")
@@ -83,9 +83,15 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
     )
     functions = value["function_calling"]
     _keys(functions, {"responses", "chat_completions", "preferred_api"})
-    if type(functions["responses"]) is not bool or type(functions["chat_completions"]) is not bool:
+    if (
+        type(functions["responses"]) is not bool
+        or type(functions["chat_completions"]) is not bool
+    ):
         raise ValueError("Function-calling values must be boolean")
-    if functions["preferred_api"] not in _APIS or not value["api"][functions["preferred_api"]]:
+    if (
+        functions["preferred_api"] not in _APIS
+        or not value["api"][functions["preferred_api"]]
+    ):
         raise ValueError("Invalid preferred function-calling API")
 
     reasoning = value["reasoning"]
@@ -100,7 +106,10 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
         or reasoning["supported"] != bool(efforts)
     ):
         raise ValueError("Invalid reasoning efforts")
-    if reasoning["openai_default"] is not None and reasoning["openai_default"] not in efforts:
+    if (
+        reasoning["openai_default"] is not None
+        and reasoning["openai_default"] not in efforts
+    ):
         raise ValueError("Invalid OpenAI reasoning default")
 
     _validate_sampling(value["temperature"], efforts, "temperature")
@@ -126,15 +135,23 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
     _keys(profile, {"api", "reasoning_effort", "temperature", "top_p"})
     if profile["api"] not in _APIS or not value["api"][profile["api"]]:
         raise ValueError("Invalid recommended API")
-    if profile["reasoning_effort"] is not None and profile["reasoning_effort"] not in efforts:
+    if (
+        profile["reasoning_effort"] is not None
+        and profile["reasoning_effort"] not in efforts
+    ):
         raise ValueError("Invalid recommended reasoning effort")
     if profile["temperature"] != "omit" or profile["top_p"] != "omit":
         raise ValueError("Recommended sampling profile must omit temperature/top_p")
-    if type(value["service_tier"]) is not bool or type(value["explicit_prompt_cache"]) is not bool:
+    if (
+        type(value["service_tier"]) is not bool
+        or type(value["explicit_prompt_cache"]) is not bool
+    ):
         raise ValueError("Compatibility feature flags must be boolean")
 
     alias_of = value.get("alias_of")
-    if alias_of is not None and (not isinstance(alias_of, str) or not _ID.fullmatch(alias_of)):
+    if alias_of is not None and (
+        not isinstance(alias_of, str) or not _ID.fullmatch(alias_of)
+    ):
         raise ValueError("Invalid alias target")
     note = value.get("lifecycle_note")
     if note is not None and (not isinstance(note, str) or len(note) > 512):
@@ -144,7 +161,10 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
 def validate_catalog(value: Any) -> dict[str, Any]:
     """Validate one strict model-capability catalogue v2 document."""
     _keys(value, {"schema_version", "catalog_version", "defaults", "models"})
-    if value.get("schema_version") != 2 or type(value.get("catalog_version")) is not int:
+    if (
+        value.get("schema_version") != 2
+        or type(value.get("catalog_version")) is not int
+    ):
         raise ValueError("Unsupported model catalogue schema")
     if value["catalog_version"] < 2:
         raise ValueError("catalog_version must be at least 2")
@@ -159,10 +179,17 @@ def validate_catalog(value: Any) -> dict[str, Any]:
     for model in models:
         _keys(model, _MODEL_WRAPPER_KEYS | _METADATA_REQUIRED, _METADATA_OPTIONAL)
         model_id = model["id"]
-        if not isinstance(model_id, str) or not _ID.fullmatch(model_id) or model_id in ids:
+        if (
+            not isinstance(model_id, str)
+            or not _ID.fullmatch(model_id)
+            or model_id in ids
+        ):
             raise ValueError("Invalid or duplicate model ID")
         ids.add(model_id)
-        if not isinstance(model["display_name"], str) or not 1 <= len(model["display_name"]) <= 128:
+        if (
+            not isinstance(model["display_name"], str)
+            or not 1 <= len(model["display_name"]) <= 128
+        ):
             raise ValueError("Invalid display name")
         if model["kind"] not in {"alias", "snapshot"}:
             raise ValueError("Invalid model kind")
@@ -223,19 +250,25 @@ def _model_metadata_from(catalog: dict[str, Any], model: str) -> dict[str, Any]:
     model_id = str(model or "").lower()
     for item in catalog["models"]:
         if item["id"] == model_id:
-            return deepcopy(item)
+            return cast(dict[str, Any], deepcopy(item))
     result = deepcopy(catalog["defaults"])
     result.update({"id": model_id, "display_name": model_id, "kind": "custom"})
     return result
 
 
-def catalog_model_metadata(catalog: dict[str, Any] | None, model: str) -> dict[str, Any]:
+def catalog_model_metadata(
+    catalog: dict[str, Any] | None, model: str
+) -> dict[str, Any]:
     return _model_metadata_from(_effective_catalog(catalog), model)
 
 
 def catalog_reasoning_efforts(catalog: dict[str, Any] | None) -> list[str]:
     effective = _effective_catalog(catalog)
-    return list(dict.fromkeys(e for item in effective["models"] for e in item["reasoning"]["efforts"]))
+    return list(
+        dict.fromkeys(
+            e for item in effective["models"] for e in item["reasoning"]["efforts"]
+        )
+    )
 
 
 def catalog_picker_models(
@@ -278,11 +311,15 @@ def _sampling_rank(capability: dict[str, Any]) -> tuple[int, frozenset[str]]:
     return 0, frozenset()
 
 
-def validate_catalog_transition(current: dict[str, Any] | None, candidate: dict[str, Any]) -> None:
+def validate_catalog_transition(
+    current: dict[str, Any] | None, candidate: dict[str, Any]
+) -> None:
     """Prevent downloaded metadata from silently narrowing durable capabilities."""
     before = _effective_catalog(current)
     after = _effective_catalog(validate_catalog(candidate))
-    ids = {item["id"] for item in before["models"]} | {item["id"] for item in after["models"]}
+    ids = {item["id"] for item in before["models"]} | {
+        item["id"] for item in after["models"]
+    }
     for model_id in ids:
         old = _model_metadata_from(before, model_id)
         new = _model_metadata_from(after, model_id)
@@ -292,9 +329,13 @@ def validate_catalog_transition(current: dict[str, Any] | None, candidate: dict[
             if old["api"][api] and not new["api"][api]:
                 raise ValueError("Catalogue update cannot remove an API path")
             if old["function_calling"][api] and not new["function_calling"][api]:
-                raise ValueError("Catalogue update cannot remove function-calling support")
+                raise ValueError(
+                    "Catalogue update cannot remove function-calling support"
+                )
         if old["limits"]["max_output_tokens"] > new["limits"]["max_output_tokens"]:
-            raise ValueError("Catalogue update cannot lower max output without migration")
+            raise ValueError(
+                "Catalogue update cannot lower max output without migration"
+            )
         for name in ("temperature", "top_p"):
             old_rank, old_allowed = _sampling_rank(old[name])
             new_rank, new_allowed = _sampling_rank(new[name])
@@ -302,7 +343,9 @@ def validate_catalog_transition(current: dict[str, Any] | None, candidate: dict[
                 old[name]["support"] == new[name]["support"] == "conditional"
                 and not old_allowed.issubset(new_allowed)
             ):
-                raise ValueError(f"Catalogue update cannot narrow {name} without migration")
+                raise ValueError(
+                    f"Catalogue update cannot narrow {name} without migration"
+                )
 
 
 def activate_catalog(catalog: dict[str, Any] | None) -> None:
@@ -311,7 +354,11 @@ def activate_catalog(catalog: dict[str, Any] | None) -> None:
 
 
 def all_reasoning_efforts() -> list[str]:
-    return list(dict.fromkeys(e for item in _active["models"] for e in item["reasoning"]["efforts"]))
+    return list(
+        dict.fromkeys(
+            e for item in _active["models"] for e in item["reasoning"]["efforts"]
+        )
+    )
 
 
 def model_metadata(model: str) -> dict[str, Any]:
@@ -319,13 +366,16 @@ def model_metadata(model: str) -> dict[str, Any]:
     return _model_metadata_from(_active, model)
 
 
-def compatibility_capabilities(model: str, *, effort: str | None = None) -> dict[str, Any]:
+def compatibility_capabilities(
+    model: str, *, effort: str | None = None
+) -> dict[str, Any]:
     """Expose legacy booleans derived from v2 without making them authoritative."""
     del effort
     metadata = model_metadata(model)
     return {
         "supports_top_p": metadata["top_p"]["support"] in {"always", "conditional"},
-        "supports_temperature": metadata["temperature"]["support"] in {"always", "conditional"},
+        "supports_temperature": metadata["temperature"]["support"]
+        in {"always", "conditional"},
         "supports_max_tokens": False,
         "supports_max_completion_tokens": True,
         "supports_reasoning_effort": metadata["reasoning"]["supported"],
