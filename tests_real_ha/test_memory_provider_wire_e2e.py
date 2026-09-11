@@ -183,8 +183,6 @@ async def _seed_temporary_memories(agent: Any) -> None:
         "acceptance",
         owner_scope_id=_FOREIGN_TEMP_SCOPE,
     )
-    owned = await temporary.async_list_all(owner_scope_id=_TEMP_SCOPE)
-    foreign = await temporary.async_list_all(owner_scope_id=_FOREIGN_TEMP_SCOPE)
     expired = TemporaryMemoryRecord(
         memory_id="expired-memory-provider-wire",
         scope_id=_TEMP_SCOPE,
@@ -196,9 +194,10 @@ async def _seed_temporary_memories(agent: Any) -> None:
         updated_at=(now - timedelta(hours=1)).isoformat(),
         owner_scope_id=_TEMP_SCOPE,
     )
-    # Backup replacement is a production persistence path. It lets this acceptance
-    # fixture represent a record that expired while HA was not processing requests.
-    await temporary.async_replace_backup([*owned, *foreign, expired])
+    # Normal production writes reject a past expiry. Seed only that impossible state
+    # directly so the request still exercises production prune/filter/inject behavior.
+    async with temporary._lock:
+        temporary._records[expired.memory_id] = expired
 
 
 async def _fresh_agent_from_durable_memory(hass: HomeAssistant, entry: Any) -> Any:
