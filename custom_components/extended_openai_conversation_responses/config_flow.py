@@ -462,26 +462,19 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Manage the options."""
-        # Abort if entry is not loaded
         if self._get_entry().state != ConfigEntryState.LOADED:
             return self.async_abort(reason="entry_not_loaded")
 
         if user_input is not None:
-            # Check if advanced options is enabled
             if user_input.get(CONF_ADVANCED_OPTIONS, False):
-                # Store data and move to advanced step
                 self._temp_data = user_input
                 return await self.async_step_advanced()
 
-            # No advanced options, save directly
             if self._is_new:
                 title = user_input.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
                 if CONF_NAME in user_input:
                     del user_input[CONF_NAME]
-                return self.async_create_entry(
-                    title=title,
-                    data=user_input,
-                )
+                return self.async_create_entry(title=title, data=user_input)
             return self.async_update_and_abort(
                 self._get_entry(),
                 self._get_reconfigure_subentry(),
@@ -489,20 +482,12 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             )
 
         schema: dict = {}
-
         if self._is_new:
             schema[vol.Optional(CONF_NAME, default=DEFAULT_AI_TASK_NAME)] = str
-
         schema.update(
             {
-                vol.Optional(
-                    CONF_CHAT_MODEL,
-                    default=DEFAULT_CHAT_MODEL,
-                ): str,
-                vol.Optional(
-                    CONF_API_MODE,
-                    default=DEFAULT_API_MODE,
-                ): SelectSelector(
+                vol.Optional(CONF_CHAT_MODEL, default=DEFAULT_CHAT_MODEL): str,
+                vol.Optional(CONF_API_MODE, default=DEFAULT_API_MODE): SelectSelector(
                     SelectSelectorConfig(
                         options=[
                             SelectOptionDict(value=mode["key"], label=mode["label"])
@@ -511,21 +496,13 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                vol.Optional(CONF_MAX_TOKENS, default=DEFAULT_MAX_TOKENS): int,
+                vol.Optional(CONF_WEB_SEARCH, default=DEFAULT_WEB_SEARCH): BooleanSelector(),
                 vol.Optional(
-                    CONF_MAX_TOKENS,
-                    default=DEFAULT_MAX_TOKENS,
-                ): int,
-                vol.Optional(
-                    CONF_WEB_SEARCH,
-                    default=DEFAULT_WEB_SEARCH,
-                ): BooleanSelector(),
-                vol.Optional(
-                    CONF_ADVANCED_OPTIONS,
-                    default=DEFAULT_ADVANCED_OPTIONS,
+                    CONF_ADVANCED_OPTIONS, default=DEFAULT_ADVANCED_OPTIONS
                 ): BooleanSelector(),
             }
         )
-
         return self.async_show_form(
             step_id="init",
             data_schema=self.add_suggested_values_to_schema(
@@ -542,6 +519,17 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         )
         metadata = get_model_capabilities(chat_model)
         recommended_effort = recommended_reasoning_effort(chat_model)
+        reasoning = metadata["reasoning"]
+        stored_effort = (
+            self.options.get(CONF_REASONING_EFFORT)
+            if str(self.options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)) == chat_model
+            else None
+        )
+        display_effort = (
+            str(stored_effort)
+            if stored_effort is not None and str(stored_effort) in reasoning["efforts"]
+            else recommended_effort
+        )
 
         if user_input is not None:
             final_data = {**(self._temp_data or {}), **user_input}
@@ -560,10 +548,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             if self._is_new:
                 title = final_data.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
                 final_data.pop(CONF_NAME, None)
-                return self.async_create_entry(
-                    title=title,
-                    data=final_data,
-                )
+                return self.async_create_entry(title=title, data=final_data)
             return self.async_update_and_abort(
                 self._get_entry(),
                 self._get_reconfigure_subentry(),
@@ -571,31 +556,20 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             )
 
         schema: dict[Any, Any] = {}
-        reasoning = metadata["reasoning"]
-
-        if parameter_is_allowed(chat_model, CONF_TOP_P, recommended_effort):
+        if parameter_is_allowed(chat_model, CONF_TOP_P, display_effort):
             schema[
-                vol.Optional(
-                    CONF_TOP_P,
-                    default=DEFAULT_TOP_P,
-                )
+                vol.Optional(CONF_TOP_P, default=DEFAULT_TOP_P)
             ] = NumberSelector(NumberSelectorConfig(min=0, max=1, step=0.05))
 
-        if parameter_is_allowed(chat_model, CONF_TEMPERATURE, recommended_effort):
+        if parameter_is_allowed(chat_model, CONF_TEMPERATURE, display_effort):
             schema[
-                vol.Optional(
-                    CONF_TEMPERATURE,
-                    default=DEFAULT_TEMPERATURE,
-                )
+                vol.Optional(CONF_TEMPERATURE, default=DEFAULT_TEMPERATURE)
             ] = NumberSelector(NumberSelectorConfig(min=0, max=2, step=0.05))
 
         if reasoning["supported"]:
-            default_effort = recommended_effort or reasoning["efforts"][0]
+            default_effort = display_effort or reasoning["efforts"][0]
             schema[
-                vol.Optional(
-                    CONF_REASONING_EFFORT,
-                    default=default_effort,
-                )
+                vol.Optional(CONF_REASONING_EFFORT, default=default_effort)
             ] = SelectSelector(
                 SelectSelectorConfig(
                     options=[
@@ -608,10 +582,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
 
         if metadata["service_tier"]:
             schema[
-                vol.Optional(
-                    CONF_SERVICE_TIER,
-                    default=DEFAULT_SERVICE_TIER,
-                )
+                vol.Optional(CONF_SERVICE_TIER, default=DEFAULT_SERVICE_TIER)
             ] = SelectSelector(
                 SelectSelectorConfig(
                     options=[
