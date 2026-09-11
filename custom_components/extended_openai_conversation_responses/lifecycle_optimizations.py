@@ -293,7 +293,12 @@ def _install_archive_fast_path() -> None:
 
 def _install_memory_prefetch() -> None:
     """Overlap independent persistent- and temporary-memory retrieval."""
+    from . import conversation as conversation_module
     from .conversation import ExtendedOpenAIAgentEntity
+    from .temporary_memory_ownership import (
+        _ACTIVE_OWNER_SCOPE_ID,
+        _owner_from_resolved_scope,
+    )
 
     agent_type: Any = ExtendedOpenAIAgentEntity
     original_retrieve_memories = agent_type._async_retrieve_memories
@@ -303,7 +308,18 @@ def _install_memory_prefetch() -> None:
         existing = _TEMPORARY_MEMORY_PREFETCH.get()
         task = existing
         if task is None and getattr(agent, "_temporary_memory", None) is not None:
-            task = asyncio.create_task(original_retrieve_temporary(agent))
+            # create_task copies the current Context. Bind the resolved retained owner
+            # before spawning the prefetch so an ownership wrapper installed after
+            # this optimization cannot be bypassed by the captured retrieval callable.
+            owner = _owner_from_resolved_scope(conversation_module._ACTIVE_SCOPE.get())
+            owner_token = (
+                _ACTIVE_OWNER_SCOPE_ID.set(owner) if owner is not None else None
+            )
+            try:
+                task = asyncio.create_task(original_retrieve_temporary(agent))
+            finally:
+                if owner_token is not None:
+                    _ACTIVE_OWNER_SCOPE_ID.reset(owner_token)
             _TEMPORARY_MEMORY_PREFETCH.set(task)
         try:
             return await original_retrieve_memories(agent, *args, **kwargs)
