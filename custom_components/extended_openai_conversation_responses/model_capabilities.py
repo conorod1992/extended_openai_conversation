@@ -12,6 +12,20 @@ class ModelCapabilityError(ValueError):
     """A configuration is incompatible with the selected model capabilities."""
 
 
+# Preserve the established Auto-routing boundary without reviving family-name
+# heuristics. These exact catalogue IDs historically default to Responses; unknown
+# future/custom IDs remain conservative and also use Responses.
+_AUTO_RESPONSES_MODELS = frozenset(
+    {
+        "gpt-6-astra",
+        "gpt-5.6",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    }
+)
+
+
 def get_model_capabilities(model_id: str) -> dict[str, Any]:
     """Return authoritative v2 capability data for one exact model ID."""
     return model_metadata(model_id)
@@ -66,14 +80,7 @@ def validate_api_path(model: str, api: str, tools_required: bool = False) -> str
 def select_api_path(
     model: str, configured_api: str, tools_required: bool = False
 ) -> str:
-    """Resolve Auto from catalogue data, then validate the selected path.
-
-    The recommended profile is guidance for new configuration, not a command to
-    rewrite the established Auto runtime behaviour. Without tools, keep Chat
-    Completions for models that can also use tools there; otherwise prefer
-    Responses when it preserves the model's full function-calling capability.
-    When tools are required, use the catalogue's preferred function-calling path.
-    """
+    """Resolve Auto from exact model metadata and the compatibility boundary."""
     capabilities = get_model_capabilities(model)
     if configured_api != API_MODE_AUTO:
         return validate_api_path(model, configured_api, tools_required)
@@ -91,15 +98,15 @@ def select_api_path(
             f"{model} has no supported API path for function/tool calling."
         )
 
+    model_id = str(model or "").lower()
     if (
-        capabilities["api"][API_MODE_CHAT_COMPLETIONS]
-        and capabilities["function_calling"][API_MODE_CHAT_COMPLETIONS]
-    ):
-        return API_MODE_CHAT_COMPLETIONS
-    if capabilities["api"][API_MODE_RESPONSES]:
+        model_id in _AUTO_RESPONSES_MODELS or capabilities["status"] == "unknown"
+    ) and capabilities["api"][API_MODE_RESPONSES]:
         return API_MODE_RESPONSES
     if capabilities["api"][API_MODE_CHAT_COMPLETIONS]:
         return API_MODE_CHAT_COMPLETIONS
+    if capabilities["api"][API_MODE_RESPONSES]:
+        return API_MODE_RESPONSES
     raise ModelCapabilityError(f"{model} has no supported conversational API path.")
 
 
