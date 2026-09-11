@@ -45,7 +45,7 @@ assert.doesNotMatch(debug, /^import "\.\/debug-panel\.js"/m);
 assert.match(agentEditor, /import "\.\/management-bootstrap\.js"/);
 assert.doesNotMatch(agentEditor, /from "\.\/agent-config-editor-base\.js"/);
 assert.doesNotMatch(agentEditor, /export \* from "\.\/agent-config-editor-base\.js"/);
-assert.match(agentLoader, /import\("\.\/agent-config-editor-base\.js"\)/);
+assert.match(agentLoader, /import\("\.\/agent-config-editor-model-v2\.js"\)/);
 assert.doesNotMatch(requestRules, /from "\.\/request-rules-ui-impl\.js"/);
 assert.match(requestRulesLoader, /import\("\.\/request-rules-ui-impl\.js"\)/);
 assert.match(bootstrap, /await import\("\.\/management-rendering-performance\.js"\)/);
