@@ -178,7 +178,7 @@ class ModelCatalogManager:
                 await self._save(candidate, etag, now)
                 activate_catalog(candidate)
                 self.catalog, self.etag, self.last_error = candidate, etag, None
-            except (ClientError, TimeoutError, _TransientCatalogUpdateError):
+            except ClientError, TimeoutError, _TransientCatalogUpdateError:
                 await self._record_failed_update(now, transient=True)
             except Exception:
                 await self._record_failed_update(now, transient=False)
