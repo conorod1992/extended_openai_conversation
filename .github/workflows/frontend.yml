@@ -5,9 +5,16 @@ on:
     paths:
       - "frontend/**"
       - "custom_components/extended_openai_conversation_responses/frontend/**"
+      - "custom_components/extended_openai_conversation_responses/management_ui.py"
+      - "custom_components/extended_openai_conversation_responses/agent_config.py"
+      - "custom_components/extended_openai_conversation_responses/memory.py"
+      - "custom_components/extended_openai_conversation_responses/request_rules.py"
       - "tests/*.test.mjs"
       - "tests_browser/**"
+      - "tests_real_ha/test_browser_backend_acceptance.py"
+      - "tests_real_ha/test_management_backend_acceptance.py"
       - "playwright.config.mjs"
+      - "requirements_test.txt"
       - ".github/workflows/frontend.yml"
   push:
     branches:
@@ -15,9 +22,16 @@ on:
     paths:
       - "frontend/**"
       - "custom_components/extended_openai_conversation_responses/frontend/**"
+      - "custom_components/extended_openai_conversation_responses/management_ui.py"
+      - "custom_components/extended_openai_conversation_responses/agent_config.py"
+      - "custom_components/extended_openai_conversation_responses/memory.py"
+      - "custom_components/extended_openai_conversation_responses/request_rules.py"
       - "tests/*.test.mjs"
       - "tests_browser/**"
+      - "tests_real_ha/test_browser_backend_acceptance.py"
+      - "tests_real_ha/test_management_backend_acceptance.py"
       - "playwright.config.mjs"
+      - "requirements_test.txt"
       - ".github/workflows/frontend.yml"
 
 concurrency:
@@ -89,6 +103,98 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: frontend-browser-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 7
+
+  browser-real-ha:
+    name: Browser to genuine HA backend (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+
+      - name: Install Home Assistant test harness
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_test.txt
+          pip install homeassistant
+
+      - name: Install integration dependency requirements
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          import homeassistant
+
+          components = Path(next(iter(homeassistant.__path__))) / "components"
+          custom_manifest = json.loads(
+              Path(
+                  "custom_components/extended_openai_conversation_responses/manifest.json"
+              ).read_text()
+          )
+          requirements = set(custom_manifest.get("requirements", []))
+          pending = [
+              *custom_manifest.get("dependencies", []),
+              *custom_manifest.get("after_dependencies", []),
+          ]
+          visited = set()
+          while pending:
+              domain = pending.pop()
+              if domain in visited:
+                  continue
+              visited.add(domain)
+              manifest_path = components / domain / "manifest.json"
+              if not manifest_path.exists():
+                  raise RuntimeError(
+                      f"Home Assistant dependency manifest not found: {domain}"
+                  )
+              manifest = json.loads(manifest_path.read_text())
+              requirements.update(manifest.get("requirements", []))
+              pending.extend(manifest.get("dependencies", []))
+              pending.extend(manifest.get("after_dependencies", []))
+          if requirements:
+              subprocess.check_call(
+                  [sys.executable, "-m", "pip", "install", *sorted(requirements)]
+              )
+          PY
+
+      - name: Install Playwright test runner
+        run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser against genuine HA management backend
+        env:
+          RUN_REAL_HA_BROWSER: "1"
+        run: |
+          pytest tests_real_ha/test_browser_backend_acceptance.py \
+            -v \
+            --asyncio-mode=auto \
+            --timeout=180
+
+      - name: Upload genuine HA browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frontend-real-ha-browser-diagnostics
           path: |
             playwright-report/
             test-results/
