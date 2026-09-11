@@ -22,7 +22,6 @@ from custom_components.extended_openai_conversation_responses.management_ui impo
     WS_COMMAND,
 )
 from custom_components.extended_openai_conversation_responses.usage import (
-    UsageRequest,
     UsageRun,
     UsageTotals,
     _empty_day,
@@ -192,10 +191,10 @@ async def test_history_command_pagination_has_no_overlap_or_gap(
         [
             _session(
                 subentry.subentry_id,
-                session_id,
-                f"2026-09-{day:02d}T12:00:00+00:00",
+                f"s{index}",
+                f"2026-09-{index + 6:02d}T12:00:00+00:00",
             )
-            for session_id, day in zip(["s1", "s2", "s3", "s4", "s5"], range(7, 12))
+            for index in range(1, 6)
         ],
     )
     client = await _admin_client(hass, hass_ws_client)
@@ -247,7 +246,12 @@ async def test_history_search_date_range_is_inclusive_at_both_bounds(
     await _setup_entry(hass, entry)
     subentry = _conversation_subentry(entry)
     sessions = [
-        _session(subentry.subentry_id, "range", "2026-09-11T20:00:00+00:00", turn_count=3)
+        _session(
+            subentry.subentry_id,
+            "range",
+            "2026-09-11T20:00:00+00:00",
+            turn_count=3,
+        )
     ]
     turns = [
         ArchiveTurn(
