@@ -8,6 +8,7 @@ import logging
 import time
 from typing import Any
 
+from aiohttp import ClientError
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
@@ -40,6 +41,10 @@ UPDATE_INTERVAL = 24 * 60 * 60
 DATA_MANAGER = f"{DOMAIN}.model_catalog"
 WS_CATALOG = f"{DOMAIN}/model_catalog"
 _LOGGER = logging.getLogger(__name__)
+
+
+class _TransientCatalogUpdateError(Exception):
+    """Remote catalogue refresh failed for an ordinary transient reason."""
 
 
 class ModelCatalogManager:
@@ -109,6 +114,23 @@ class ModelCatalogManager:
             {"catalog": catalog, "etag": etag, "last_checked": checked}
         )
 
+    async def _record_failed_update(self, checked: float, *, transient: bool) -> None:
+        """Retain current data while remembering when the failed check occurred."""
+        self.last_error = "Model data update failed; the current catalogue was kept."
+        if transient:
+            # Background refreshes are best-effort. Ordinary loss of internet access,
+            # rate limiting, or GitHub/server outages must not pollute HA warnings.
+            _LOGGER.debug(self.last_error)
+        else:
+            # Invalid remote data or a local persistence problem is actionable and can
+            # indicate a broken published catalogue, so retain warning visibility.
+            _LOGGER.warning(self.last_error)
+        # Persist attempt time as well, avoiding retry storms across restarts.
+        try:
+            await self._save(self.catalog, self.etag, checked)
+        except Exception:
+            _LOGGER.warning("Unable to persist model catalogue check time")
+
     async def async_update(self, *, force: bool = False) -> dict[str, Any]:
         """Fetch only trusted data; HTTP/parsing/storage failures preserve current data."""
         async with self._lock:
@@ -130,6 +152,10 @@ class ModelCatalogManager:
                             await self._save(self.catalog, self.etag, now)
                             self.last_error = None
                             return self.status()
+                        if response.status == 429 or response.status >= 500:
+                            raise _TransientCatalogUpdateError(
+                                "Catalogue service temporarily unavailable"
+                            )
                         if response.status != 200:
                             raise ValueError("Catalogue HTTP update failed")
                         raw = bytearray()
@@ -152,16 +178,10 @@ class ModelCatalogManager:
                 await self._save(candidate, etag, now)
                 activate_catalog(candidate)
                 self.catalog, self.etag, self.last_error = candidate, etag, None
+            except (ClientError, TimeoutError, _TransientCatalogUpdateError):
+                await self._record_failed_update(now, transient=True)
             except Exception:
-                self.last_error = (
-                    "Model data update failed; the current catalogue was kept."
-                )
-                _LOGGER.warning(self.last_error)
-                # Persist attempt time as well, avoiding retry storms across restarts.
-                try:
-                    await self._save(self.catalog, self.etag, now)
-                except Exception:
-                    _LOGGER.warning("Unable to persist model catalogue check time")
+                await self._record_failed_update(now, transient=False)
             return self.status()
 
     async def _bundled_reset_would_invalidate_saved_reasoning(self) -> bool:
@@ -263,7 +283,12 @@ async def websocket_catalog(
     """The management UI reads the same Python lookup used by requests and rules."""
     manager: ModelCatalogManager = hass.data[DATA_MANAGER]
     if msg["action"] == "update":
-        await manager.async_update(force=True)
+        status = await manager.async_update(force=True)
+        if status["last_error"]:
+            connection.send_error(
+                msg["id"], "model_catalog_update_failed", status["last_error"]
+            )
+            return
     elif msg["action"] == "reset":
         await manager.async_reset()
     metadata = model_metadata(msg["model"])
