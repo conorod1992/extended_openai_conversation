@@ -47,7 +47,9 @@ def _chat_sse_tool_call(call_id: str, name: str, arguments: dict[str, Any]) -> b
                             "type": "function",
                             "function": {
                                 "name": name,
-                                "arguments": json.dumps(arguments, separators=(",", ":")),
+                                "arguments": json.dumps(
+                                    arguments, separators=(",", ":")
+                                ),
                             },
                         }
                     ],
@@ -197,6 +199,21 @@ def _responses_tool_result(body: dict[str, Any], call_id: str) -> dict[str, Any]
     return json.loads(outer["result"])
 
 
+def _chat_tool_arguments(
+    body: dict[str, Any], call_id: str, name: str
+) -> dict[str, Any]:
+    """Return the arguments of one exact assistant tool call from serialized history."""
+    call = next(
+        call
+        for item in body["messages"]
+        if item.get("role") == "assistant"
+        for call in item.get("tool_calls", [])
+        if call.get("id") == call_id
+        and call.get("function", {}).get("name") == name
+    )
+    return json.loads(call["function"]["arguments"])
+
+
 async def test_chat_knowledge_search_get_and_answer_cross_real_provider_wire(
     hass: HomeAssistant, monkeypatch: Any
 ) -> None:
@@ -252,14 +269,11 @@ async def test_chat_knowledge_search_get_and_answer_cross_real_provider_wire(
     assert _RELEVANT_MARKER in get_result["content"]
     assert _IRRELEVANT_MARKER not in json.dumps(get_result, ensure_ascii=False)
 
-    # Prove the exact source ID returned by search is the one the provider used for get.
-    second_tool_call = next(
-        item
-        for item in wire.requests[2]["body"]["messages"]
-        if item.get("role") == "assistant" and item.get("tool_calls")
-    )["tool_calls"][-1]
-    assert second_tool_call["function"]["name"] == "knowledge_get"
-    assert json.loads(second_tool_call["function"]["arguments"])["source_id"] == relevant.source_id
+    # Search returns the ID that the provider then sends back through knowledge_get.
+    get_arguments = _chat_tool_arguments(
+        wire.requests[2]["body"], _GET_CALL_ID, "knowledge_get"
+    )
+    assert get_arguments["source_id"] == search_result["results"][0]["source_id"]
 
 
 async def test_responses_knowledge_search_executes_through_real_sdk_wire(
