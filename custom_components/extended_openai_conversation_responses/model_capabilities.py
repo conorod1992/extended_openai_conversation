@@ -66,7 +66,14 @@ def validate_api_path(model: str, api: str, tools_required: bool = False) -> str
 def select_api_path(
     model: str, configured_api: str, tools_required: bool = False
 ) -> str:
-    """Resolve Auto from catalogue data, then validate the selected path."""
+    """Resolve Auto from catalogue data, then validate the selected path.
+
+    The recommended profile is guidance for new configuration, not a command to
+    rewrite the established Auto runtime behaviour. Without tools, prefer Chat
+    Completions when the exact model supports it. When tools are required, use
+    the catalogue's preferred function-calling path so models such as Astra are
+    automatically routed to Responses.
+    """
     capabilities = get_model_capabilities(model)
     if configured_api != API_MODE_AUTO:
         return validate_api_path(model, configured_api, tools_required)
@@ -84,10 +91,7 @@ def select_api_path(
             f"{model} has no supported API path for function/tool calling."
         )
 
-    preferred = cast(str, capabilities["recommended_profile"]["api"])
-    if capabilities["api"].get(preferred):
-        return preferred
-    for api in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS):
+    for api in (API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES):
         if capabilities["api"][api]:
             return api
     raise ModelCapabilityError(f"{model} has no supported conversational API path.")
