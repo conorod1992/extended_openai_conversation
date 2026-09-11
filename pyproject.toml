@@ -49,8 +49,10 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 
 [tool.coverage.report]
-# Regression floor: intentionally ~1.5 percentage points below the 77.56% stable-CI baseline.
-fail_under = 76
+# Regression guardrail: the last measured stable-CI baseline was 78.32%.
+# Keep a small 0.32 percentage-point allowance for benign measurement drift while
+# failing meaningful coverage regressions. Raise this floor as coverage improves.
+fail_under = 78
 
 [tool.mutmut]
 source_paths = ["custom_components/extended_openai_conversation_responses/"]
