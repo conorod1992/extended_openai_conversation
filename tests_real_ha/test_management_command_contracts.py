@@ -235,14 +235,14 @@ async def test_settings_update_returns_snapshot_and_mutates_canonical_subentry(
         subentry_id=subentry.subentry_id,
         section="settings",
         action="update",
-        settings={CONF_ARCHIVE_RETENTION_DAYS: 23},
+        settings={CONF_ARCHIVE_RETENTION_DAYS: 90},
     )
 
     assert response["success"] is True
-    assert response["result"]["settings"][CONF_ARCHIVE_RETENTION_DAYS] == 23
+    assert response["result"]["settings"][CONF_ARCHIVE_RETENTION_DAYS] == 90
     current = hass.config_entries.async_get_entry(entry.entry_id)
     assert current is not None
-    assert current.subentries[subentry.subentry_id].data[CONF_ARCHIVE_RETENTION_DAYS] == 23
+    assert current.subentries[subentry.subentry_id].data[CONF_ARCHIVE_RETENTION_DAYS] == 90
 
 
 @pytest.mark.asyncio
