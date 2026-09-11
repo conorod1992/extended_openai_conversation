@@ -232,7 +232,11 @@ def build_provider_request_snapshot(
 ) -> ProviderRequestSnapshot:
     """Build validated/normalized settings used by the live OpenAI request."""
     model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
-    needs_tools = _configured_tools_required(options) if tools_required is None else tools_required
+    needs_tools = (
+        _configured_tools_required(options)
+        if tools_required is None
+        else tools_required
+    )
     configured_api = str(options.get(CONF_API_MODE, DEFAULT_API_MODE))
     try:
         api_mode = select_api_path(model, configured_api, needs_tools)
@@ -244,7 +248,10 @@ def build_provider_request_snapshot(
         if normalized_limit is not None:
             field, value = normalized_limit
             api_kwargs[field] = value
-            if CONF_MAX_TOKENS in options and model not in _LEGACY_TOKEN_MIGRATION_LOGGED:
+            if (
+                CONF_MAX_TOKENS in options
+                and model not in _LEGACY_TOKEN_MIGRATION_LOGGED
+            ):
                 _LOGGER.debug(
                     "Normalizing persisted max_tokens for %s to API-specific %s; "
                     "deprecated max_tokens will not be sent",
