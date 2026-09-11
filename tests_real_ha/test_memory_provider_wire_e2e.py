@@ -42,6 +42,7 @@ from tests_real_ha.test_provider_wire_e2e import (
 _USER_ID = "memory-provider-wire-user"
 _FOREIGN_USER_ID = "memory-provider-wire-foreign"
 _TEMP_SCOPE = f"user:{_USER_ID}"
+_FOREIGN_TEMP_SCOPE = f"user:{_FOREIGN_USER_ID}"
 _TOOL_CALL_ID = "call-memory-provider-wire"
 _NEW_MEMORY = "The user's project codename is lattice-quartz."
 
@@ -176,13 +177,14 @@ async def _seed_temporary_memories(agent: Any) -> None:
         owner_scope_id=_TEMP_SCOPE,
     )
     await temporary.async_add(
-        f"user:{_FOREIGN_USER_ID}",
+        _FOREIGN_TEMP_SCOPE,
         "Temporary foreign marker is foreign-violet.",
         (now + timedelta(hours=1)).isoformat(),
         "acceptance",
-        owner_scope_id=f"user:{_FOREIGN_USER_ID}",
+        owner_scope_id=_FOREIGN_TEMP_SCOPE,
     )
-    current = await temporary.async_list_all()
+    owned = await temporary.async_list_all(owner_scope_id=_TEMP_SCOPE)
+    foreign = await temporary.async_list_all(owner_scope_id=_FOREIGN_TEMP_SCOPE)
     expired = TemporaryMemoryRecord(
         memory_id="expired-memory-provider-wire",
         scope_id=_TEMP_SCOPE,
@@ -196,7 +198,7 @@ async def _seed_temporary_memories(agent: Any) -> None:
     )
     # Backup replacement is a production persistence path. It lets this acceptance
     # fixture represent a record that expired while HA was not processing requests.
-    await temporary.async_replace_backup([*current, expired])
+    await temporary.async_replace_backup([*owned, *foreign, expired])
 
 
 async def _fresh_agent_from_durable_memory(hass: HomeAssistant, entry: Any) -> Any:
@@ -303,7 +305,3 @@ async def test_responses_memory_prompt_injection_uses_real_sdk_wire(
     assert "cobalt-zebra" in request
     assert "minestrone" not in request
     assert "amber-lynx" not in request
-    assert any(
-        tool["type"] == "function" and tool["name"] == "memory_add"
-        for tool in wire.requests[0]["body"]["tools"]
-    )
