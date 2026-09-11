@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import json
+import logging
 from typing import Any
 
 from homeassistant.exceptions import HomeAssistantError
@@ -18,8 +19,12 @@ from .const import (
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
     CONF_BASE_URL,
     CONF_CHAT_MODEL,
+    CONF_FUNCTION_GROUPS,
+    CONF_FUNCTION_TOOLS,
     CONF_GUEST_MODE_ENABLED,
+    CONF_KNOWLEDGE_ENABLED,
     CONF_MAX_TOKENS,
+    CONF_MEMORY_ENABLED,
     CONF_REASONING_EFFORT,
     CONF_SERVICE_TIER,
     CONF_TEMPERATURE,
@@ -41,11 +46,24 @@ from .const import (
 from .conversation_archive import archive_tools
 from .conversation_lifecycle import conversation_lifecycle_active
 from .guest_mode import GuestCapabilityPolicy, guest_mode_restrict_tool
-from .helpers import get_api_mode, get_model_config, supports_openai_hosted_tools
+from .helpers import supports_openai_hosted_tools
 from .knowledge import KNOWLEDGE_TOOL_NAMES, knowledge_tools
 from .memory import MEMORY_TOOL_NAMES, memory_tools
+from .model_capabilities import (
+    ModelCapabilityError,
+    get_model_capabilities,
+    normalize_output_token_limit,
+    parameter_is_allowed,
+    recommended_reasoning_effort,
+    sampling_value_is_configured,
+    select_api_path,
+    validate_reasoning_effort,
+)
 from .model_payload import prepare_model_function_tools
 from .temporary_memory import TEMPORARY_MEMORY_TOOL_NAMES, temporary_memory_tools
+
+_LOGGER = logging.getLogger(__name__)
+_LEGACY_TOKEN_MIGRATION_LOGGED: set[str] = set()
 
 CONTINUE_CONVERSATION_TOOL_NAME = "set_continue_conversation"
 CONTINUE_CONVERSATION_TOOL = {
@@ -157,39 +175,126 @@ def build_web_search_tool(
     }
 
 
-def build_provider_request_snapshot(
-    options: Mapping[str, Any], entry_data: Mapping[str, Any]
-) -> ProviderRequestSnapshot:
-    """Build the non-secret first-request settings used by live execution."""
-    model = options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
-    api_mode = get_api_mode(options.get(CONF_API_MODE, DEFAULT_API_MODE), model)
-    model_config = get_model_config(model)
-    api_kwargs: dict[str, Any] = {"model": model, "stream": True}
-    max_tokens = options.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
-    if api_mode == API_MODE_RESPONSES:
-        api_kwargs["max_output_tokens"] = max_tokens
-        api_kwargs["store"] = False
-    else:
-        api_kwargs["stream_options"] = {"include_usage": True}
-        if model_config["supports_max_completion_tokens"]:
-            api_kwargs["max_completion_tokens"] = max_tokens
-        elif model_config["supports_max_tokens"]:
-            api_kwargs["max_tokens"] = max_tokens
-    if model_config["supports_top_p"]:
-        api_kwargs["top_p"] = options.get(CONF_TOP_P, DEFAULT_TOP_P)
-    if model_config["supports_temperature"]:
-        api_kwargs["temperature"] = options.get(CONF_TEMPERATURE, DEFAULT_TEMPERATURE)
-    if model_config.get("supports_reasoning_effort"):
-        effort = options.get(CONF_REASONING_EFFORT, DEFAULT_REASONING_EFFORT)
-        if api_mode == API_MODE_RESPONSES:
-            api_kwargs["reasoning"] = {"effort": effort}
-            api_kwargs["include"] = ["reasoning.encrypted_content"]
-        else:
-            api_kwargs["reasoning_effort"] = effort
-    if model_config.get("supports_service_tier"):
-        api_kwargs["service_tier"] = options.get(
-            CONF_SERVICE_TIER, DEFAULT_SERVICE_TIER
+def _configured_tools_required(options: Mapping[str, Any]) -> bool:
+    """Conservatively identify requests that can expose integration/provider tools."""
+    configured = options.get(CONF_FUNCTION_TOOLS)
+    if isinstance(configured, str):
+        if configured.strip() not in {"", "[]", "null", "~"}:
+            return True
+    elif configured:
+        return True
+    if options.get(CONF_FUNCTION_GROUPS):
+        return True
+    return any(
+        bool(options.get(key))
+        for key in (
+            CONF_MEMORY_ENABLED,
+            CONF_KNOWLEDGE_ENABLED,
+            CONF_ARCHIVE_ENABLED,
+            CONF_GUEST_MODE_ENABLED,
+            CONF_WEB_SEARCH,
         )
+    )
+
+
+def _sampling_value(
+    options: Mapping[str, Any],
+    model: str,
+    parameter: str,
+    effort: str | None,
+) -> Any | None:
+    """Return a valid explicitly configured sampling value, else omit it."""
+    if parameter == CONF_TEMPERATURE:
+        legacy_default = DEFAULT_TEMPERATURE
+    else:
+        legacy_default = DEFAULT_TOP_P
+    value = options.get(parameter, legacy_default)
+    if not sampling_value_is_configured(parameter, value, legacy_default):
+        return None
+    if parameter_is_allowed(model, parameter, effort):
+        return value
+    _LOGGER.debug(
+        "Omitting stale %s=%r for model %s at reasoning_effort=%r because the "
+        "active capability catalogue marks it invalid or undocumented",
+        parameter,
+        value,
+        model,
+        effort,
+    )
+    return None
+
+
+def build_provider_request_snapshot(
+    options: Mapping[str, Any],
+    entry_data: Mapping[str, Any],
+    *,
+    tools_required: bool | None = None,
+) -> ProviderRequestSnapshot:
+    """Build validated/normalized settings used by the live OpenAI request."""
+    model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+    needs_tools = _configured_tools_required(options) if tools_required is None else tools_required
+    configured_api = str(options.get(CONF_API_MODE, DEFAULT_API_MODE))
+    try:
+        api_mode = select_api_path(model, configured_api, needs_tools)
+        capabilities = get_model_capabilities(model)
+        api_kwargs: dict[str, Any] = {"model": model, "stream": True}
+
+        max_tokens = options.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
+        normalized_limit = normalize_output_token_limit(model, api_mode, max_tokens)
+        if normalized_limit is not None:
+            field, value = normalized_limit
+            api_kwargs[field] = value
+            if CONF_MAX_TOKENS in options and model not in _LEGACY_TOKEN_MIGRATION_LOGGED:
+                _LOGGER.debug(
+                    "Normalizing persisted max_tokens for %s to API-specific %s; "
+                    "deprecated max_tokens will not be sent",
+                    model,
+                    field,
+                )
+                _LEGACY_TOKEN_MIGRATION_LOGGED.add(model)
+
+        if api_mode == API_MODE_RESPONSES:
+            api_kwargs["store"] = False
+        else:
+            api_kwargs["stream_options"] = {"include_usage": True}
+
+        effort: str | None = None
+        if capabilities["reasoning"]["supported"]:
+            raw_effort = options.get(CONF_REASONING_EFFORT)
+            if raw_effort is None:
+                raw_effort = recommended_reasoning_effort(model)
+            effort = validate_reasoning_effort(
+                model, str(raw_effort) if raw_effort is not None else None
+            )
+            if effort is not None:
+                if api_mode == API_MODE_RESPONSES:
+                    api_kwargs["reasoning"] = {"effort": effort}
+                    api_kwargs["include"] = ["reasoning.encrypted_content"]
+                else:
+                    api_kwargs["reasoning_effort"] = effort
+        else:
+            stale_effort = options.get(CONF_REASONING_EFFORT)
+            if stale_effort not in {None, DEFAULT_REASONING_EFFORT}:
+                _LOGGER.debug(
+                    "Ignoring stale reasoning_effort=%r for non-reasoning model %s",
+                    stale_effort,
+                    model,
+                )
+
+        temperature = _sampling_value(options, model, CONF_TEMPERATURE, effort)
+        if temperature is not None:
+            api_kwargs[CONF_TEMPERATURE] = temperature
+        top_p = _sampling_value(options, model, CONF_TOP_P, effort)
+        if top_p is not None:
+            api_kwargs[CONF_TOP_P] = top_p
+
+        if capabilities.get("service_tier"):
+            api_kwargs["service_tier"] = options.get(
+                CONF_SERVICE_TIER, DEFAULT_SERVICE_TIER
+            )
+    except ModelCapabilityError as err:
+        raise HomeAssistantError(str(err)) from err
+
     provider_tool = build_web_search_tool(options, api_mode, entry_data)
     return ProviderRequestSnapshot(
         api_mode,
