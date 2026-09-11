@@ -24,7 +24,11 @@ export function bindModelDataControls(panel, onUpdated = () => {}) {
         onUpdated(status.textContent);
       }
     } catch (err) {
-      status.textContent = `Unable to update model data: ${err.message || String(err)}`;
+      if (button.dataset.modelData === "update") {
+        status.textContent = "Unable to update model data. The existing model data is still in use. Check Home Assistant's internet connection and try again.";
+      } else {
+        status.textContent = `Unable to use bundled model data: ${err.message || String(err)}`;
+      }
     } finally {
       buttons.forEach((item) => { item.disabled = false; });
     }
