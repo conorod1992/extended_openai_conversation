@@ -13,6 +13,7 @@ from homeassistant.core import HomeAssistant
 
 from .agent_config import configured_function_tools_from_data, validate_function_groups
 from .const import (
+    API_MODE_AUTO,
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -37,7 +38,6 @@ from .ha_llm_tools import is_ha_tool, validate_reference
 from .helpers import (
     get_api_mode,
     get_exposed_entities,
-    get_model_config,
     supports_openai_hosted_tools,
 )
 from .memory import async_get_memory, memory_enabled
@@ -131,10 +131,16 @@ async def async_test_agent(
 
     model = subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
     configured_mode = subentry.data.get(CONF_API_MODE, DEFAULT_API_MODE)
-    api_mode = get_api_mode(configured_mode, model)
-    if api_mode not in {API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES}:
-        checks.append(_check("API mode", "Failed", f"Unsupported mode: {api_mode}"))
+    if configured_mode not in {
+        API_MODE_AUTO,
+        API_MODE_CHAT_COMPLETIONS,
+        API_MODE_RESPONSES,
+    }:
+        checks.append(
+            _check("API mode", "Failed", f"Unsupported mode: {configured_mode}")
+        )
         return AgentTestResult(_overall(checks), checks)
+    api_mode = get_api_mode(configured_mode, model)
     checks.append(_check("API mode", "Passed", api_mode.replace("_", " ").title()))
 
     try:
@@ -301,7 +307,6 @@ async def async_test_agent(
             )
             ensure_successful_responses_result(response)
         else:
-            model_config = get_model_config(model)
             kwargs: dict[str, Any] = {
                 "model": model,
                 "messages": [{"role": "user", "content": "Reply OK."}],
@@ -317,11 +322,8 @@ async def async_test_agent(
                     }
                 ],
                 "tool_choice": "none",
+                "max_completion_tokens": 16,
             }
-            if model_config["supports_max_completion_tokens"]:
-                kwargs["max_completion_tokens"] = 16
-            else:
-                kwargs["max_tokens"] = 16
             response = await client.chat.completions.create(**kwargs)
     except OpenAIError as err:
         is_authentication_failure = (
