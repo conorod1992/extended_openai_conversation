@@ -82,9 +82,7 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
         "API capability",
     )
     auto_api = value.get("auto_api")
-    if auto_api is not None and (
-        auto_api not in _APIS or not value["api"][auto_api]
-    ):
+    if auto_api is not None and (auto_api not in _APIS or not value["api"][auto_api]):
         raise ValueError("Invalid Auto API preference")
 
     functions = value["function_calling"]
