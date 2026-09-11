@@ -185,20 +185,34 @@ def test_astra_reasoning_values_are_model_specific() -> None:
             )
         )["action"]["reasoning_effort"] == effort
 
-        with pytest.raises(ValueError, match="not supported by model"):
-            validate_rule(
-                _rule(
-                    f"bad-{effort}",
-                    effort,
-                    action={
-                        "model": "gpt-5.6",
-                        "reasoning_effort": effort,
-                        "scope": "conversation",
-                        "reset": False,
-                        "success_response": "Updated",
-                    },
-                )
+    assert validate_rule(
+        _rule(
+            "gpt-5.6-none",
+            "none",
+            action={
+                "model": "gpt-5.6",
+                "reasoning_effort": "none",
+                "scope": "conversation",
+                "reset": False,
+                "success_response": "Updated",
+            },
+        )
+    )["action"]["reasoning_effort"] == "none"
+
+    with pytest.raises(ValueError, match="not supported by model"):
+        validate_rule(
+            _rule(
+                "astra-none",
+                "none",
+                action={
+                    "model": "gpt-6-astra",
+                    "reasoning_effort": "none",
+                    "scope": "conversation",
+                    "reset": False,
+                    "success_response": "Updated",
+                },
             )
+        )
 
 
 async def test_captured_reasoning_uses_effective_routed_model_before_publish() -> None:
@@ -239,12 +253,12 @@ async def test_captured_reasoning_uses_effective_routed_model_before_publish() -
 
     runtime.set("other", {CONF_CHAT_MODEL: "gpt-6-astra"})
     bad = RuleMatch(
-        rule, "route {model} {effort}", False, 100.0, {"model": "gpt-5.6", "effort": "max"}
+        rule, "route {model} {effort}", False, 100.0, {"model": "gpt-5.1", "effort": "max"}
     )
     before = runtime.get("other")
-    with pytest.raises(HomeAssistantError, match="not supported by model gpt-5.6"):
+    with pytest.raises(HomeAssistantError, match="not supported by model gpt-5.1"):
         await async_evaluate_rule(
-            SimpleNamespace(), Rules(bad), runtime, "route gpt-5.6 max", "other", "gpt-5.6"
+            SimpleNamespace(), Rules(bad), runtime, "route gpt-5.1 max", "other", "gpt-5.6"
         )
     assert runtime.get("other") == before
 
@@ -259,7 +273,7 @@ async def test_changing_model_revalidates_existing_conversation_reasoning() -> N
         "model-only",
         "use older model",
         action={
-            "model": "gpt-5.6",
+            "model": "gpt-5.1",
             "reasoning_effort": None,
             "scope": "conversation",
             "reset": False,
@@ -273,7 +287,7 @@ async def test_changing_model_revalidates_existing_conversation_reasoning() -> N
             return RuleMatch(rule, "use older model", False, 100.0)
 
     before = runtime.get("session")
-    with pytest.raises(HomeAssistantError, match="not supported by model gpt-5.6"):
+    with pytest.raises(HomeAssistantError, match="not supported by model gpt-5.1"):
         await async_evaluate_rule(
             SimpleNamespace(), Rules(), runtime, "use older model", "session", "gpt-5.6"
         )
