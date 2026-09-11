@@ -87,7 +87,7 @@ def test_hot_transition_cannot_remove_reasoning_capability() -> None:
     model["reasoning"]["openai_default"] = None
     model["recommended_profile"]["reasoning_effort"] = None
 
-    with pytest.raises(ValueError, match="cannot remove reasoning support"):
+    with pytest.raises(ValueError, match="cannot remove reasoning effort choices"):
         data.validate_catalog_transition(None, candidate)
 
 
