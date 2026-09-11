@@ -185,7 +185,7 @@ async def test_non_admin_settings_update_is_denied_without_mutation(
 
     assert response["success"] is False
     assert response["error"]["code"] == "invalid_request"
-    assert response["error"]["message"] == "Administrator access required"
+    assert response["error"]["message"] == "Administrator permission is required"
     current = hass.config_entries.async_get_entry(entry.entry_id)
     assert current is not None
     assert dict(current.subentries[subentry.subentry_id].data) == before
