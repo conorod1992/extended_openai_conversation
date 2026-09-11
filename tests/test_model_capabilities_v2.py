@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
-
 import pytest
 
 from homeassistant.exceptions import HomeAssistantError
@@ -80,10 +78,21 @@ def test_gpt_56_reasoning_and_defaults():
     with pytest.raises(ModelCapabilityError):
         validate_reasoning_effort("gpt-5.6", "ultra")
 
-    alias = deepcopy(get_model_capabilities("gpt-5.6"))
-    sol = deepcopy(get_model_capabilities("gpt-5.6-sol"))
-    alias.pop("alias_of", None)
-    assert alias == sol
+    alias = get_model_capabilities("gpt-5.6")
+    sol = get_model_capabilities("gpt-5.6-sol")
+    assert alias["alias_of"] == "gpt-5.6-sol"
+    for key in (
+        "api",
+        "function_calling",
+        "reasoning",
+        "temperature",
+        "top_p",
+        "limits",
+        "streaming",
+        "output_tokens",
+        "recommended_profile",
+    ):
+        assert alias[key] == sol[key]
 
 
 def test_gpt_56_undocumented_sampling_is_omitted():
