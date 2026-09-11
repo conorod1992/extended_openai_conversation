@@ -216,6 +216,25 @@ DEFAULT_CONF_FUNCTION_TOOLS_STR = yaml.dump(
 DEFAULT_OPTIONS = types.MappingProxyType(agent_config_defaults())
 
 
+def _ai_task_display_reasoning_effort(
+    chat_model: str,
+    options: dict[str, Any],
+    *,
+    reconfigure: bool,
+) -> str | None:
+    """Return the reasoning effort that should drive the AI Task advanced form."""
+    recommended = recommended_reasoning_effort(chat_model)
+    if not reconfigure:
+        return recommended
+    if str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)) != chat_model:
+        return recommended
+    saved = options.get(CONF_REASONING_EFFORT)
+    efforts = get_model_capabilities(chat_model)["reasoning"]["efforts"]
+    if saved is not None and str(saved) in efforts:
+        return str(saved)
+    return recommended
+
+
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
     """Validate the user input allows us to connect.
 
@@ -542,6 +561,11 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         )
         metadata = get_model_capabilities(chat_model)
         recommended_effort = recommended_reasoning_effort(chat_model)
+        display_effort = _ai_task_display_reasoning_effort(
+            chat_model,
+            self.options,
+            reconfigure=not self._is_new,
+        )
 
         if user_input is not None:
             final_data = {**(self._temp_data or {}), **user_input}
@@ -573,7 +597,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         schema: dict[Any, Any] = {}
         reasoning = metadata["reasoning"]
 
-        if parameter_is_allowed(chat_model, CONF_TOP_P, recommended_effort):
+        if parameter_is_allowed(chat_model, CONF_TOP_P, display_effort):
             schema[
                 vol.Optional(
                     CONF_TOP_P,
@@ -581,7 +605,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 )
             ] = NumberSelector(NumberSelectorConfig(min=0, max=1, step=0.05))
 
-        if parameter_is_allowed(chat_model, CONF_TEMPERATURE, recommended_effort):
+        if parameter_is_allowed(chat_model, CONF_TEMPERATURE, display_effort):
             schema[
                 vol.Optional(
                     CONF_TEMPERATURE,
@@ -590,7 +614,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             ] = NumberSelector(NumberSelectorConfig(min=0, max=2, step=0.05))
 
         if reasoning["supported"]:
-            default_effort = recommended_effort or reasoning["efforts"][0]
+            default_effort = display_effort or reasoning["efforts"][0]
             schema[
                 vol.Optional(
                     CONF_REASONING_EFFORT,
