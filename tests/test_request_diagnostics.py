@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from datetime import UTC, datetime
 from enum import Enum
-import json
 
 import pytest
 
@@ -230,7 +230,7 @@ def test_trace_as_dict_handles_non_json_native_values() -> None:
     result = trace.as_dict()
 
     assert result["memory"]["when"] == value.isoformat()
-    assert isinstance(result["memory"]["marker"], str)
+    assert isinstance(result["memory"]["marker"], dict)
     json.dumps(result)
 
 
