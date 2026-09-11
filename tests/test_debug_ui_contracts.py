@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from inspect import unwrap
 from types import SimpleNamespace
 
 import pytest
@@ -67,12 +68,18 @@ def _message(action: str, **extra):
     }
 
 
+async def _call_websocket(hass, connection, message) -> None:
+    """Invoke the coroutine beneath Home Assistant's async_response scheduler."""
+    handler = unwrap(websocket_request_debug)
+    await handler(hass, connection, message)
+
+
 @pytest.mark.asyncio
 async def test_debug_websocket_requires_admin() -> None:
     hass = _hass()
     connection = _Connection(is_admin=False)
 
-    await websocket_request_debug(hass, connection, _message("status"))
+    await _call_websocket(hass, connection, _message("status"))
 
     assert connection.results == []
     assert connection.errors == [(1, "unauthorized", "Administrator required")]
@@ -87,7 +94,7 @@ async def test_debug_websocket_agents_status_configure_runs_get_and_clear() -> N
     agents_message = _message("agents")
     agents_message.pop("entry_id")
     agents_message.pop("subentry_id")
-    await websocket_request_debug(hass, connection, agents_message)
+    await _call_websocket(hass, connection, agents_message)
     assert connection.results[-1][1] == {
         "agents": [
             {
@@ -98,11 +105,11 @@ async def test_debug_websocket_agents_status_configure_runs_get_and_clear() -> N
         ]
     }
 
-    await websocket_request_debug(hass, connection, _message("status"))
+    await _call_websocket(hass, connection, _message("status"))
     assert connection.results[-1][1]["enabled"] is False
     assert connection.results[-1][1]["volatile"] is True
 
-    await websocket_request_debug(
+    await _call_websocket(
         hass,
         connection,
         _message("configure", enabled=True, limit=5),
@@ -119,12 +126,12 @@ async def test_debug_websocket_agents_status_configure_runs_get_and_clear() -> N
     )
     manager.finish(trace, successful=True, result={"response": "done"})
 
-    await websocket_request_debug(hass, connection, _message("runs"))
+    await _call_websocket(hass, connection, _message("runs"))
     runs = connection.results[-1][1]
     assert runs["count"] == 1
     assert runs["runs"][0]["debug_id"] == trace.debug_id
 
-    await websocket_request_debug(
+    await _call_websocket(
         hass,
         connection,
         _message("get", debug_id=trace.debug_id),
@@ -133,7 +140,7 @@ async def test_debug_websocket_agents_status_configure_runs_get_and_clear() -> N
     assert result["trace"]["debug_id"] == trace.debug_id
     assert result["trace"]["result"] == {"response": "done"}
 
-    await websocket_request_debug(
+    await _call_websocket(
         hass,
         connection,
         _message("clear", confirm=True),
@@ -149,7 +156,7 @@ async def test_debug_websocket_get_missing_run_is_invalid_request() -> None:
     hass = _hass()
     connection = _Connection()
 
-    await websocket_request_debug(
+    await _call_websocket(
         hass,
         connection,
         _message("get", debug_id="missing"),
@@ -164,7 +171,7 @@ async def test_debug_websocket_clear_requires_explicit_confirmation() -> None:
     hass = _hass()
     connection = _Connection()
 
-    await websocket_request_debug(hass, connection, _message("clear"))
+    await _call_websocket(hass, connection, _message("clear"))
 
     assert connection.results == []
     assert connection.errors == [
@@ -177,7 +184,7 @@ async def test_debug_websocket_rejects_invalid_target_and_unknown_action() -> No
     hass = _hass()
     connection = _Connection()
 
-    await websocket_request_debug(
+    await _call_websocket(
         hass,
         connection,
         {**_message("status"), "subentry_id": "missing"},
@@ -188,7 +195,7 @@ async def test_debug_websocket_rejects_invalid_target_and_unknown_action() -> No
         "Conversation agent not found",
     )
 
-    await websocket_request_debug(hass, connection, _message("unknown"))
+    await _call_websocket(hass, connection, _message("unknown"))
     assert connection.errors[-1] == (
         1,
         "invalid_request",
