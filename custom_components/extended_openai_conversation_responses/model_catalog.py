@@ -30,7 +30,7 @@ _METADATA_REQUIRED = {
     "explicit_prompt_cache",
 }
 _MODEL_WRAPPER_KEYS = {"id", "display_name", "kind"}
-_METADATA_OPTIONAL = {"alias_of", "lifecycle_note"}
+_METADATA_OPTIONAL = {"alias_of", "lifecycle_note", "auto_api"}
 
 
 def _keys(value: Any, required: set[str], optional: set[str] | None = None) -> None:
@@ -81,6 +81,12 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
         {"responses", "chat_completions", "completions_legacy"},
         "API capability",
     )
+    auto_api = value.get("auto_api")
+    if auto_api is not None and (
+        auto_api not in _APIS or not value["api"][auto_api]
+    ):
+        raise ValueError("Invalid Auto API preference")
+
     functions = value["function_calling"]
     _keys(functions, {"responses", "chat_completions", "preferred_api"})
     if (
@@ -382,6 +388,7 @@ def compatibility_capabilities(
         "supports_service_tier": metadata["service_tier"],
         "reasoning_effort_options": list(metadata["reasoning"]["efforts"]),
         "api": deepcopy(metadata["api"]),
+        "auto_api": metadata.get("auto_api"),
         "function_calling": deepcopy(metadata["function_calling"]),
         "reasoning": deepcopy(metadata["reasoning"]),
         "temperature": deepcopy(metadata["temperature"]),
