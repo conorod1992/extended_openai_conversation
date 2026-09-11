@@ -74,6 +74,15 @@ function decorateModelPicker(root, panel, config, data) {
   }
 }
 
+function decorateOutputLimit(root, metadata) {
+  const setting = root.querySelector('[data-field="max_tokens"]');
+  const input = setting?.querySelector('[data-config="max_tokens"]');
+  const ceiling = Number(metadata?.limits?.max_output_tokens);
+  if (!setting || !input || !Number.isInteger(ceiling) || ceiling <= 0) return;
+  input.max = String(ceiling);
+  addStatus(setting, `Selected model maximum output: ${ceiling.toLocaleString()} tokens.`);
+}
+
 function decorateReasoning(root, config, metadata) {
   const reasoning = metadata?.reasoning || {};
   const setting = root.querySelector('[data-field="reasoning_effort"]');
@@ -144,6 +153,7 @@ function decorateConfiguration(panel, html) {
   template.innerHTML = html;
   const root = template.content;
   decorateModelPicker(root, panel, config, data);
+  decorateOutputLimit(root, metadata);
   decorateReasoning(root, config, metadata);
   decorateSampling(root, config, metadata);
   decorateApiSelector(root, config, metadata);
