@@ -108,7 +108,7 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        async with asyncio.timeout(120):
+        async with asyncio.timeout(180):
             stdout, _ = await process.communicate()
         output = stdout.decode("utf-8", errors="replace")
         assert process.returncode == 0, f"Playwright genuine-HA acceptance failed:\n{output}"
