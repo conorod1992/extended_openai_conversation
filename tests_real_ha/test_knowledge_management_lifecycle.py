@@ -37,10 +37,19 @@ _REENABLE_CALL = "call-knowledge-live-reenable"
 _DELETE_CALL = "call-knowledge-live-delete"
 
 
-def _search_results(wire: Any, request_index: int, call_id: str) -> list[dict[str, Any]]:
-    """Decode Knowledge search results replayed into one provider request."""
-    result = _chat_tool_result(wire.requests[request_index]["body"], call_id)
-    return result["results"]
+def _search_results(wire: Any, call_id: str) -> list[dict[str, Any]]:
+    """Decode one Knowledge search result by exact provider tool-call identity."""
+    for request in wire.requests:
+        body = request["body"]
+        if any(
+            item.get("role") == "tool" and item.get("tool_call_id") == call_id
+            for item in body.get("messages", [])
+        ):
+            result = _chat_tool_result(body, call_id)
+            return result["results"]
+    raise AssertionError(
+        f"Provider request containing Knowledge tool result {call_id!r} was not captured"
+    )
 
 
 @pytest.mark.asyncio
@@ -115,7 +124,7 @@ async def test_management_mutations_update_loaded_agent_knowledge_immediately(
     source_id = created["source"]["source_id"]
 
     await _say(hass, agent, "Find the lifecycle reference marker.")
-    created_results = _search_results(wire, 1, _CREATE_CALL)
+    created_results = _search_results(wire, _CREATE_CALL)
     assert len(created_results) == 1
     assert created_results[0]["source_id"] == source_id
     assert _OLD_MARKER in created_results[0]["excerpt"]
@@ -131,7 +140,7 @@ async def test_management_mutations_update_loaded_agent_knowledge_immediately(
     assert updated["source"]["source_id"] == source_id
 
     await _say(hass, agent, "Find the lifecycle reference marker again.")
-    updated_results = _search_results(wire, 3, _UPDATE_CALL)
+    updated_results = _search_results(wire, _UPDATE_CALL)
     assert len(updated_results) == 1
     assert updated_results[0]["source_id"] == source_id
     assert _NEW_MARKER in updated_results[0]["excerpt"]
@@ -148,7 +157,7 @@ async def test_management_mutations_update_loaded_agent_knowledge_immediately(
     assert disabled["source"]["enabled"] is False
 
     await _say(hass, agent, "Search for the lifecycle reference marker.")
-    assert _search_results(wire, 5, _DISABLE_CALL) == []
+    assert _search_results(wire, _DISABLE_CALL) == []
 
     listed = await _management_call(
         client, entry=entry, section="knowledge", action="list"
@@ -167,7 +176,7 @@ async def test_management_mutations_update_loaded_agent_knowledge_immediately(
     assert reenabled["source"]["enabled"] is True
 
     await _say(hass, agent, "Search after re-enabling the lifecycle reference marker.")
-    reenabled_results = _search_results(wire, 7, _REENABLE_CALL)
+    reenabled_results = _search_results(wire, _REENABLE_CALL)
     assert len(reenabled_results) == 1
     assert reenabled_results[0]["source_id"] == source_id
     assert _NEW_MARKER in reenabled_results[0]["excerpt"]
@@ -184,7 +193,7 @@ async def test_management_mutations_update_loaded_agent_knowledge_immediately(
     assert deleted["deleted"] == 1
 
     await _say(hass, agent, "Search once more for the lifecycle reference marker.")
-    assert _search_results(wire, 9, _DELETE_CALL) == []
+    assert _search_results(wire, _DELETE_CALL) == []
 
     after_delete = await _management_call(
         client, entry=entry, section="knowledge", action="list"
