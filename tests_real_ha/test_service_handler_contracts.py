@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import MockUser
 
@@ -133,9 +133,7 @@ async def test_call_function_service_uses_default_arguments_and_unwraps_tool_res
     """Call Function must preserve schema defaults and the public result envelope."""
     entry = _entry()
     await _setup_entry(hass, entry)
-    call_active = AsyncMock(
-        return_value=SimpleNamespace(tool_result={"answer": 42})
-    )
+    call_active = AsyncMock(return_value=SimpleNamespace(tool_result={"answer": 42}))
     monkeypatch.setattr(services, "async_call_active_function", call_active)
 
     response = await _response_service_call(
@@ -161,7 +159,9 @@ async def test_query_image_service_success_uses_loaded_runtime_client(
         id="response-1",
         status="completed",
         error=None,
-        model_dump=MagicMock(return_value={"id": "response-1", "output_text": "A dog"}),
+        model_dump=MagicMock(
+            return_value={"id": "response-1", "output_text": "A dog"}
+        ),
     )
     create = AsyncMock(return_value=provider_response)
     client = SimpleNamespace(responses=SimpleNamespace(create=create))
@@ -269,7 +269,9 @@ async def test_download_skill_service_success_publishes_staged_skill(
     assert response["skill_name"] == "demo"
     assert response["source_ref"] == "v-test"
     assert response["downloaded_files"] == ["skills/demo/SKILL.md"]
-    assert response["target_directory"] == str((tmp_path / "skills" / "demo").resolve())
+    assert response["target_directory"] == str(
+        (tmp_path / "skills" / "demo").resolve()
+    )
     manager.async_publish_staged_skill.assert_awaited_once()
     published_name, staging_dir = manager.async_publish_staged_skill.await_args.args
     assert published_name == "demo"
@@ -280,10 +282,30 @@ async def test_download_skill_service_success_publishes_staged_skill(
 @pytest.mark.parametrize(
     ("service_name", "helper_name", "field", "enabled"),
     [
-        (services.SERVICE_ENABLE_FUNCTION_TOOLS, "async_set_function_tools_enabled", "functions", True),
-        (services.SERVICE_DISABLE_FUNCTION_TOOLS, "async_set_function_tools_enabled", "functions", False),
-        (services.SERVICE_ENABLE_FUNCTION_GROUPS, "async_set_function_groups_enabled", "function_groups", True),
-        (services.SERVICE_DISABLE_FUNCTION_GROUPS, "async_set_function_groups_enabled", "function_groups", False),
+        (
+            services.SERVICE_ENABLE_FUNCTION_TOOLS,
+            "async_set_function_tools_enabled",
+            "functions",
+            True,
+        ),
+        (
+            services.SERVICE_DISABLE_FUNCTION_TOOLS,
+            "async_set_function_tools_enabled",
+            "functions",
+            False,
+        ),
+        (
+            services.SERVICE_ENABLE_FUNCTION_GROUPS,
+            "async_set_function_groups_enabled",
+            "function_groups",
+            True,
+        ),
+        (
+            services.SERVICE_DISABLE_FUNCTION_GROUPS,
+            "async_set_function_groups_enabled",
+            "function_groups",
+            False,
+        ),
     ],
 )
 async def test_function_state_services_dispatch_exact_requested_state(
@@ -311,9 +333,7 @@ async def test_function_state_services_dispatch_exact_requested_state(
             field: ["first", "second"],
         },
         blocking=True,
-        context=services.Context(user_id=hass_admin_user.id)
-        if hasattr(services, "Context")
-        else None,
+        context=Context(user_id=hass_admin_user.id),
     )
 
     helper.assert_awaited_once_with(
@@ -344,9 +364,7 @@ async def test_function_state_service_unknown_target_does_not_mutate(
                 "functions": ["anything"],
             },
             blocking=True,
-            context=services.Context(user_id=hass_admin_user.id)
-            if hasattr(services, "Context")
-            else None,
+            context=Context(user_id=hass_admin_user.id),
         )
 
 
