@@ -8,6 +8,7 @@ from typing import Any
 
 from custom_components.extended_openai_conversation_responses import (
     continuity as continuity_module,
+    conversation as conversation_module,
     memory as memory_module,
 )
 from custom_components.extended_openai_conversation_responses.const import (
@@ -229,6 +230,27 @@ async def test_chat_memory_crosses_provider_tool_and_durable_retrieval_boundarie
     await _seed_memories(agent)
     await _seed_temporary_memories(agent)
 
+    # Pinpoint the temporary-memory seam without bypassing production retrieval.
+    # The snapshot proves the fixture is visible under the intended scope while
+    # leaving the deliberately expired record in place for the real request to prune.
+    seeded_active = await agent._temporary_memory.async_active_snapshot(_TEMP_SCOPE)
+    assert [item.content for item in seeded_active] == [
+        "Temporary owned marker is active-saffron."
+    ]
+    runtime_scopes: list[str | None] = []
+    retrieved_temporary: list[list[str]] = []
+    original_retrieve_temporary = agent._async_retrieve_temporary_memories
+
+    async def _capture_temporary_retrieval() -> list[TemporaryMemoryRecord]:
+        runtime_scopes.append(conversation_module._ACTIVE_TEMPORARY_SCOPE.get())
+        records = await original_retrieve_temporary()
+        retrieved_temporary.append([item.content for item in records])
+        return records
+
+    monkeypatch.setattr(
+        agent, "_async_retrieve_temporary_memories", _capture_temporary_retrieval
+    )
+
     wire = _install_wire(
         monkeypatch,
         agent,
@@ -240,6 +262,8 @@ async def test_chat_memory_crosses_provider_tool_and_durable_retrieval_boundarie
         "What is my calibration token? Remember that my project codename is lattice-quartz.",
     )
 
+    assert runtime_scopes == [_TEMP_SCOPE]
+    assert retrieved_temporary == [["Temporary owned marker is active-saffron."]]
     assert _speech(result) == "I remembered the project codename."
     assert [request["path"] for request in wire.requests] == [
         "/v1/chat/completions",
