@@ -251,7 +251,7 @@ def _model_metadata_from(catalog: dict[str, Any], model: str) -> dict[str, Any]:
     for item in catalog["models"]:
         if item["id"] == model_id:
             return cast(dict[str, Any], deepcopy(item))
-    result = deepcopy(catalog["defaults"])
+    result = cast(dict[str, Any], deepcopy(catalog["defaults"]))
     result.update({"id": model_id, "display_name": model_id, "kind": "custom"})
     return result
 
