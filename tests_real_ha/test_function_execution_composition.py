@@ -134,10 +134,17 @@ async def test_on_demand_custom_tool_load_execute_and_result_cross_real_wire(
 
     # The second SDK request is possible only after the production loader executes;
     # require its real result rather than merely checking the changed schema list.
-    second_text = _serialized(second)
-    assert "call-load-composition" in second_text
-    assert _GROUP_ID in second_text
-    assert '"status":"success"' in second_text.replace(" ", "")
+    loader_message = next(
+        item
+        for item in second["messages"]
+        if item.get("role") == "tool"
+        and item.get("tool_call_id") == "call-load-composition"
+    )
+    loader_envelope = json.loads(loader_message["content"])
+    loader_result = json.loads(loader_envelope["result"])
+    assert loader_result["status"] == "success"
+    assert loader_result["loaded"] == [_GROUP_ID]
+    assert loader_result["unknown"] == []
 
     # The third request must contain the result produced by the configured template
     # implementation, proving resolution -> execution -> provider serialization.
