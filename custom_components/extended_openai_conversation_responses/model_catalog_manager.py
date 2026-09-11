@@ -83,7 +83,8 @@ class ModelCatalogManager:
                     raise ValueError("Invalid catalogue ETag")
                 if (
                     candidate is not None
-                    and candidate["catalog_version"] < BUNDLED_CATALOG["catalog_version"]
+                    and candidate["catalog_version"]
+                    < BUNDLED_CATALOG["catalog_version"]
                 ):
                     candidate, etag = None, None
                 elif candidate is not None:
