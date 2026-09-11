@@ -33,6 +33,7 @@ _NEW_MARKER = "atlas-indigo"
 _CREATE_CALL = "call-knowledge-live-create"
 _UPDATE_CALL = "call-knowledge-live-update"
 _DISABLE_CALL = "call-knowledge-live-disable"
+_REENABLE_CALL = "call-knowledge-live-reenable"
 _DELETE_CALL = "call-knowledge-live-delete"
 
 
@@ -86,6 +87,12 @@ async def test_management_mutations_update_loaded_agent_knowledge_immediately(
                 {"query": _QUERY, "limit": 5},
             ),
             _chat_sse_text("The disabled Knowledge source is unavailable."),
+            _chat_sse_tool_call(
+                _REENABLE_CALL,
+                "knowledge_search",
+                {"query": _QUERY, "limit": 5},
+            ),
+            _chat_sse_text("The re-enabled Knowledge source is available."),
             _chat_sse_tool_call(
                 _DELETE_CALL,
                 "knowledge_search",
@@ -149,6 +156,23 @@ async def test_management_mutations_update_loaded_agent_knowledge_immediately(
     stored = next(source for source in listed["sources"] if source["source_id"] == source_id)
     assert stored["enabled"] is False
 
+    reenabled = await _management_call(
+        client,
+        entry=entry,
+        section="knowledge",
+        action="update",
+        source_id=source_id,
+        enabled=True,
+    )
+    assert reenabled["source"]["enabled"] is True
+
+    await _say(hass, agent, "Search after re-enabling the lifecycle reference marker.")
+    reenabled_results = _search_results(wire, 7, _REENABLE_CALL)
+    assert len(reenabled_results) == 1
+    assert reenabled_results[0]["source_id"] == source_id
+    assert _NEW_MARKER in reenabled_results[0]["excerpt"]
+    assert _OLD_MARKER not in reenabled_results[0]["excerpt"]
+
     deleted = await _management_call(
         client,
         entry=entry,
@@ -160,7 +184,7 @@ async def test_management_mutations_update_loaded_agent_knowledge_immediately(
     assert deleted["deleted"] == 1
 
     await _say(hass, agent, "Search once more for the lifecycle reference marker.")
-    assert _search_results(wire, 7, _DELETE_CALL) == []
+    assert _search_results(wire, 9, _DELETE_CALL) == []
 
     after_delete = await _management_call(
         client, entry=entry, section="knowledge", action="list"
