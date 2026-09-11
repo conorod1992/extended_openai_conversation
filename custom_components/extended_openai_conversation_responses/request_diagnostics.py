@@ -207,8 +207,8 @@ def install_payload_latency_diagnostics() -> None:
             )
             is_model = api_surface in _MODEL_API_SURFACES
             request.metrics["model_request"] = is_model
-            request.metrics["explicit_prompt_cache"]["request_cache_key_present"] = bool(
-                safe_kwargs.get("prompt_cache_key")
+            request.metrics["explicit_prompt_cache"]["request_cache_key_present"] = (
+                bool(safe_kwargs.get("prompt_cache_key"))
             )
             previous = next(
                 (
@@ -289,7 +289,8 @@ def install_payload_latency_diagnostics() -> None:
                 "embedding_request_count": sum(
                     1
                     for item in data.get("provider_requests", [])
-                    if isinstance(item, dict) and item.get("api_surface") == "embeddings"
+                    if isinstance(item, dict)
+                    and item.get("api_surface") == "embeddings"
                 ),
                 "preparation": deepcopy(preparation),
                 "function_tool_calls": deepcopy(tool_calls),
