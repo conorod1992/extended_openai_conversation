@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from unittest.mock import AsyncMock
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+import yaml
 
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    configured_function_tools_from_data,
+)
 from custom_components.extended_openai_conversation_responses.const import (
+    CONF_FUNCTION_TOOLS,
     CONF_SKIP_AUTHENTICATION,
     CONFIG_ENTRY_VERSION,
     DEFAULT_AI_TASK_OPTIONS,
@@ -19,6 +25,9 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 )
 from custom_components.extended_openai_conversation_responses.local_intents import (
     CONF_LOCAL_INTENTS_ENABLED,
+)
+from custom_components.extended_openai_conversation_responses.resource_limits import (
+    MAX_NATIVE_SERVICE_ACTIONS,
 )
 from custom_components.extended_openai_conversation_responses.template import (
     DATA_TEMPLATE_MANAGER,
@@ -101,6 +110,79 @@ def _conversation_subentry(entry: MockConfigEntry):
         for subentry in entry.subentries.values()
         if subentry.subentry_type == "conversation"
     )
+
+
+def _legacy_execute_service_tool() -> dict:
+    """Return one persisted historical stock execute_service Function Tool."""
+    return {
+        "spec": {
+            "name": "legacy_service_action",
+            "description": "My customised legacy HA service tool",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "delay": {
+                        "type": "object",
+                        "description": "Time to wait before execution",
+                        "properties": {
+                            "hours": {"type": "integer", "minimum": 0},
+                            "minutes": {"type": "integer", "minimum": 0},
+                            "seconds": {"type": "integer", "minimum": 0},
+                        },
+                    },
+                    "list": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "domain": {
+                                    "type": "string",
+                                    "description": "The domain of the service.",
+                                },
+                                "service": {
+                                    "type": "string",
+                                    "description": "The service to be called",
+                                },
+                                "service_data": {
+                                    "type": "object",
+                                    "description": (
+                                        "The service data object to indicate what to control."
+                                    ),
+                                    "properties": {
+                                        "entity_id": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "string",
+                                                "description": (
+                                                    "The entity_id retrieved from available "
+                                                    "devices. It must start with domain, "
+                                                    "followed by dot character."
+                                                ),
+                                            },
+                                        },
+                                        "area_id": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "string",
+                                                "description": (
+                                                    "The id retrieved from areas. You can "
+                                                    "specify only area_id without entity_id "
+                                                    "to act on all entities in that area"
+                                                ),
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                            "required": ["domain", "service", "service_data"],
+                        },
+                    },
+                },
+            },
+        },
+        "function": {"type": "native", "name": "execute_service"},
+        "enabled": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -263,6 +345,83 @@ async def test_real_ha_legacy_entry_migrates_before_platform_setup(
     assert {"conversation", "ai_task", "sensor"}.issubset(
         {row.domain for row in _registry_entries(hass, entry)}
     )
+
+
+@pytest.mark.asyncio
+async def test_real_ha_stale_native_tool_schema_migrates_and_survives_reload(
+    hass: HomeAssistant,
+) -> None:
+    """Recover a recognized stale native Function Tool through HA startup."""
+    legacy_tool = _legacy_execute_service_tool()
+    original_tool = deepcopy(legacy_tool)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Stale Native Tool Acceptance",
+        data={
+            CONF_API_KEY: "sk-acceptance-test",
+            CONF_SKIP_AUTHENTICATION: True,
+        },
+        version=CONFIG_ENTRY_VERSION,
+        subentries_data=[
+            _subentry(
+                "conversation",
+                "Stale Native Tool Conversation",
+                {
+                    CONF_FUNCTION_TOOLS: yaml.safe_dump(
+                        [legacy_tool], sort_keys=False, allow_unicode=True
+                    )
+                },
+            )
+        ],
+    )
+
+    await _setup_entry(hass, entry)
+
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert isinstance(agent, ExtendedOpenAIAgentEntity)
+
+    conversation_subentry = _conversation_subentry(entry)
+    migrated_yaml = conversation_subentry.data[CONF_FUNCTION_TOOLS]
+    migrated_tools = yaml.safe_load(migrated_yaml)
+    assert isinstance(migrated_tools, list)
+    assert len(migrated_tools) == 1
+    migrated = migrated_tools[0]
+
+    assert migrated["spec"]["name"] == original_tool["spec"]["name"]
+    assert migrated["spec"]["description"] == original_tool["spec"]["description"]
+    assert migrated["enabled"] == original_tool["enabled"]
+    assert migrated["function"] == original_tool["function"]
+
+    parameters = migrated["spec"]["parameters"]
+    assert migrated["spec"]["strict"] is False
+    assert parameters["required"] == ["list"]
+    list_schema = parameters["properties"]["list"]
+    assert list_schema["maxItems"] == MAX_NATIVE_SERVICE_ACTIONS
+    service_data = list_schema["items"]["properties"]["service_data"]
+    assert service_data["additionalProperties"] is True
+    for concept in ("device_id", "floor_id", "label_id", "brightness_pct"):
+        assert concept in service_data["description"]
+
+    configured_tools = configured_function_tools_from_data(agent.subentry.data)
+    configured_tool = next(
+        tool for tool in configured_tools if tool["spec"]["name"] == "legacy_service_action"
+    )
+    assert configured_tool["spec"]["strict"] is False
+    assert configured_tool["spec"]["parameters"] == parameters
+    assert configured_tool["function"]["name"] == "execute_service"
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    after_first_setup = _conversation_subentry(entry).data[CONF_FUNCTION_TOOLS]
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    reloaded_agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert isinstance(reloaded_agent, ExtendedOpenAIAgentEntity)
+    after_second_setup = _conversation_subentry(entry).data[CONF_FUNCTION_TOOLS]
+    assert after_second_setup == after_first_setup
 
 
 @pytest.mark.asyncio
