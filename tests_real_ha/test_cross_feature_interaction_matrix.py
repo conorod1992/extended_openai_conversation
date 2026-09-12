@@ -6,6 +6,8 @@ from datetime import timedelta
 import json
 from typing import Any
 
+import voluptuous as vol
+
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_API_MODE,
     CONF_CHAT_MODEL,
@@ -21,7 +23,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.helpers import llm
+from homeassistant.helpers import config_validation as cv, llm
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockUser
 
@@ -129,7 +131,7 @@ async def test_temporary_memory_is_hidden_during_guest_mode_and_restored_afterwa
     assert "temporary_memory_add" not in _tool_names(guest_sent[0])
 
     still_owned = await temporary.async_active(_OWNER_SCOPE, owner_scope_id=_OWNER_SCOPE)
-    assert [item.memory_id for item in still_owned] == [record.memory_id]
+    assert [item.memory_id for item in still_owned] == [record["memory"]["memory_id"]]
 
     await agent._guest_mode.async_disable_trusted()
     restored_sent = _provider(monkeypatch, agent, ["Your launch code is available again."])
@@ -149,6 +151,14 @@ async def test_request_scoped_model_route_survives_ha_owned_tool_loop_without_le
     monkeypatch: Any,
 ) -> None:
     """A request route must stay active across an HA tool loop, then reset."""
+    # Keep this synthetic HA-owned tool representative of real Home Assistant
+    # tools in the Chat Completions path: HA tools use HA validators/selectors,
+    # not bare Python ``str`` validators.
+    monkeypatch.setattr(
+        _MutableEchoTool,
+        "parameters",
+        vol.Schema({vol.Required("value"): cv.string}),
+    )
     tool = _MutableEchoTool()
     api = _MutableAPI(hass, tool)
     llm.async_register_api(hass, api)
@@ -195,7 +205,7 @@ async def test_request_scoped_model_route_survives_ha_owned_tool_loop_without_le
                 "type": "function",
                 "function": {
                     "name": _HA_ALIAS,
-                    "arguments": json.dumps({"value": "ha", "repeat": 2}),
+                    "arguments": json.dumps({"value": "ha"}),
                 },
             },
             "Routed tool complete.",
@@ -210,8 +220,8 @@ async def test_request_scoped_model_route_survives_ha_owned_tool_loop_without_le
     assert [request["reasoning_effort"] for request in sent] == ["xhigh", "xhigh"]
     assert _HA_ALIAS in _tool_names(sent[0])
     assert len(tool.calls) == 1
-    assert tool.calls[0][0].tool_args == {"value": "ha", "repeat": 2}
-    assert "haha" in json.dumps(sent[1], sort_keys=True)
+    assert tool.calls[0][0].tool_args == {"value": "ha"}
+    assert '"echo": "ha"' in json.dumps(sent[1], sort_keys=True)
 
     normal = await _say(hass, agent, "Use the normal route now", routed.conversation_id)
     assert _speech(normal) == "Back on the default route."
