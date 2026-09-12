@@ -554,6 +554,12 @@ async def test_conversation_persistence_failure_does_not_replay_provider_or_tool
         archive=archive,
         archive_session=archive_session,
     )
+    # This test targets the archive persistence write itself. Keep guest-policy
+    # resolution out of that fault-injection boundary so a policy change cannot
+    # silently turn the persistence failure case into a no-op archive path.
+    entity._effective_guest_policy = MagicMock(
+        return_value=GuestCapabilityPolicy.unrestricted()
+    )
 
     async def execute(_function_tool, tool_input, _llm_context, _entities):
         return _result(entity, tool_input, "done")
