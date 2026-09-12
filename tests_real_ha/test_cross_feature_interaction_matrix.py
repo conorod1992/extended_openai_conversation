@@ -64,7 +64,11 @@ async def _say(
 
 def _system_prompt(request: dict[str, Any]) -> str:
     """Return the serialized Chat Completions system prompt."""
-    return str(next(item for item in request["messages"] if item["role"] == "system")["content"])
+    return str(
+        next(item for item in request["messages"] if item["role"] == "system")[
+            "content"
+        ]
+    )
 
 
 def _tool_names(request: dict[str, Any]) -> set[str]:
@@ -118,7 +122,9 @@ async def test_temporary_memory_is_hidden_during_guest_mode_and_restored_afterwa
     assert _TEMPORARY_FACT in _system_prompt(owner_sent[0])
 
     await agent._guest_mode.async_update_trusted(indefinite=True)
-    guest_sent = _provider(monkeypatch, agent, ["That private context is unavailable in Guest Mode."])
+    guest_sent = _provider(
+        monkeypatch, agent, ["That private context is unavailable in Guest Mode."]
+    )
     guest = await _say(
         hass,
         agent,
@@ -130,19 +136,29 @@ async def test_temporary_memory_is_hidden_during_guest_mode_and_restored_afterwa
     assert _TEMPORARY_FACT not in _system_prompt(guest_sent[0])
     assert "temporary_memory_add" not in _tool_names(guest_sent[0])
 
-    still_owned = await temporary.async_active(_OWNER_SCOPE, owner_scope_id=_OWNER_SCOPE)
-    assert [item.memory_id for item in still_owned] == [record["memory"]["memory_id"]]
+    still_owned = await temporary.async_active(
+        _OWNER_SCOPE, owner_scope_id=_OWNER_SCOPE
+    )
+    assert [item.memory_id for item in still_owned] == [
+        record["memory"]["memory_id"]
+    ]
 
     await agent._guest_mode.async_disable_trusted()
-    restored_sent = _provider(monkeypatch, agent, ["Your launch code is available again."])
+    # This interaction test is about the privacy boundary, not owner-continuity
+    # resumption. Start one fresh owner claim so restoration proves the retained
+    # record itself becomes usable again after Guest Mode ends.
+    assert await agent._continuity.async_end(_OWNER_SCOPE)
+    restored_sent = _provider(
+        monkeypatch, agent, ["Your launch code is available again."]
+    )
     restored = await _say(
         hass,
         agent,
         "Can you use my temporary launch code again?",
-        owner.conversation_id,
         user_id=_OWNER_ID,
     )
     assert _speech(restored) == "Your launch code is available again."
+    assert restored.conversation_id != owner.conversation_id
     assert _TEMPORARY_FACT in _system_prompt(restored_sent[0])
 
 
@@ -184,7 +200,7 @@ async def test_request_scoped_model_route_survives_ha_owned_tool_loop_without_le
         _rule(
             "model_routing",
             {
-                "model": "gpt-6-astra",
+                "model": "gpt-5.5",
                 "reasoning_effort": "xhigh",
                 "scope": "request",
                 "reset": False,
@@ -216,7 +232,7 @@ async def test_request_scoped_model_route_survives_ha_owned_tool_loop_without_le
     routed = await _say(hass, agent, "route and echo this through Home Assistant")
     assert _speech(routed) == "Routed tool complete."
     assert len(sent) == 2
-    assert [request["model"] for request in sent] == ["gpt-6-astra", "gpt-6-astra"]
+    assert [request["model"] for request in sent] == ["gpt-5.5", "gpt-5.5"]
     assert [request["reasoning_effort"] for request in sent] == ["xhigh", "xhigh"]
     assert _HA_ALIAS in _tool_names(sent[0])
     assert len(tool.calls) == 1
@@ -324,7 +340,8 @@ async def test_persisted_request_rule_and_function_group_reconstruct_after_reloa
     loader = next(
         item
         for item in sent[1]["messages"]
-        if item.get("role") == "tool" and item.get("tool_call_id") == "call-load-reload-group"
+        if item.get("role") == "tool"
+        and item.get("tool_call_id") == "call-load-reload-group"
     )
     result = json.loads(json.loads(loader["content"])["result"])
     assert result["status"] == "success"
