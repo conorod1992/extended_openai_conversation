@@ -6,7 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import conversation as conv
+from custom_components.extended_openai_conversation_responses import (
+    conversation as conv,
+)
+from custom_components.extended_openai_conversation_responses.scope import user_scope
 
 
 def _agent(*, data=None):
@@ -153,30 +156,38 @@ def test_conversation_lifecycle_schedules_fresh_context_without_active_sessions(
 
 async def test_temporary_memory_tool_requires_permission_store_and_scope(monkeypatch) -> None:
     agent = _agent(data={conv.CONF_TEMPORARY_MEMORY: "balanced"})
+    scope_token = conv._ACTIVE_SCOPE.set(user_scope("user-1", source="test"))
+    temporary_scope_token = conv._ACTIVE_TEMPORARY_SCOPE.set("conversation:test")
 
-    monkeypatch.setattr(
-        conv.ExtendedOpenAIAgentEntity,
-        "_effective_guest_policy",
-        lambda self: _policy(temporary_memory=False),
-    )
-    with pytest.raises(RuntimeError, match=conv.GUEST_MODE_UNAVAILABLE):
-        await agent._async_execute_temporary_memory_tool("add", {})
-
-    monkeypatch.setattr(
-        conv.ExtendedOpenAIAgentEntity,
-        "_effective_guest_policy",
-        lambda self: _policy(temporary_memory=True),
-    )
-    with pytest.raises(RuntimeError, match="temporary memory is unavailable"):
-        await agent._async_execute_temporary_memory_tool("add", {})
-
-    agent._temporary_memory = SimpleNamespace()
-    token = conv._ACTIVE_TEMPORARY_SCOPE.set(None)
     try:
-        with pytest.raises(RuntimeError, match="unavailable for this request"):
+        monkeypatch.setattr(
+            conv.ExtendedOpenAIAgentEntity,
+            "_effective_guest_policy",
+            lambda self: _policy(temporary_memory=False),
+        )
+        with pytest.raises(RuntimeError, match=conv.GUEST_MODE_UNAVAILABLE):
             await agent._async_execute_temporary_memory_tool("add", {})
+
+        monkeypatch.setattr(
+            conv.ExtendedOpenAIAgentEntity,
+            "_effective_guest_policy",
+            lambda self: _policy(temporary_memory=True),
+        )
+        with pytest.raises(RuntimeError, match="temporary memory is unavailable"):
+            await agent._async_execute_temporary_memory_tool("add", {})
+
+        agent._temporary_memory = SimpleNamespace()
+        missing_scope_token = conv._ACTIVE_TEMPORARY_SCOPE.set(None)
+        try:
+            with pytest.raises(
+                RuntimeError, match="temporary memory is unavailable for this"
+            ):
+                await agent._async_execute_temporary_memory_tool("add", {})
+        finally:
+            conv._ACTIVE_TEMPORARY_SCOPE.reset(missing_scope_token)
     finally:
-        conv._ACTIVE_TEMPORARY_SCOPE.reset(token)
+        conv._ACTIVE_TEMPORARY_SCOPE.reset(temporary_scope_token)
+        conv._ACTIVE_SCOPE.reset(scope_token)
 
 
 class _TemporaryMemory:
@@ -201,7 +212,8 @@ async def test_temporary_memory_tool_validates_and_executes_add_delete(monkeypat
         "_effective_guest_policy",
         lambda self: _policy(temporary_memory=True),
     )
-    token = conv._ACTIVE_TEMPORARY_SCOPE.set("scope-1")
+    scope_token = conv._ACTIVE_SCOPE.set(user_scope("user-1", source="test"))
+    temporary_scope_token = conv._ACTIVE_TEMPORARY_SCOPE.set("scope-1")
     try:
         with pytest.raises(ValueError, match="content, expires_at, and category"):
             await agent._async_execute_temporary_memory_tool(
@@ -229,7 +241,8 @@ async def test_temporary_memory_tool_validates_and_executes_add_delete(monkeypat
         with pytest.raises(ValueError, match="unknown temporary-memory operation"):
             await agent._async_execute_temporary_memory_tool("unknown", {})
     finally:
-        conv._ACTIVE_TEMPORARY_SCOPE.reset(token)
+        conv._ACTIVE_TEMPORARY_SCOPE.reset(temporary_scope_token)
+        conv._ACTIVE_SCOPE.reset(scope_token)
 
 
 async def test_archive_tool_requires_store_and_active_session() -> None:
