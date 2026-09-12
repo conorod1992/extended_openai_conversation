@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pytest
 import voluptuous as vol
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -476,11 +475,11 @@ async def test_ha_owned_tool_runtime_failure_skips_later_call_and_next_turn_reco
     hass.states.async_remove(entity_b)
     await hass.async_block_till_done()
 
-    with pytest.raises(
-        HomeAssistantError,
-        match=r"sensor\.composition_stale_b.*unavailable",
-    ):
-        await _say(hass, agent, "Run the ordered Home Assistant entity actions")
+    failure = await _say(hass, agent, "Run the ordered Home Assistant entity actions")
+    assert failure.response.error_code is not None
+    failure_speech = _speech(failure)
+    assert entity_b in failure_speech
+    assert "unavailable" in failure_speech
 
     assert tool.attempts == [entity_a, entity_b]
     assert tool.calls == [entity_a]
