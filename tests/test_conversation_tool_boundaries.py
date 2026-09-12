@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -24,6 +25,7 @@ from custom_components.extended_openai_conversation_responses.scope import user_
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemoryRecord,
 )
+from homeassistant.helpers import llm
 
 
 def _agent(options: dict | None = None) -> ExtendedOpenAIAgentEntity:
@@ -331,3 +333,145 @@ async def test_conversation_tool_dispatchers_reject_malformed_control_arguments(
     entity._memory.async_list.assert_not_awaited()
     entity._temporary_memory.async_delete.assert_not_awaited()
     entity._archive.async_delete_date_range.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("function_type", "dispatcher", "expected_args"),
+    [
+        ("guest_mode", "_async_execute_guest_mode_tool", ({"value": 1},)),
+        ("archive", "_async_execute_archive_tool", ("operation", {"value": 1})),
+        (
+            "knowledge",
+            "_async_execute_knowledge_tool",
+            ("operation", {"value": 1}),
+        ),
+        (
+            "temporary_memory",
+            "_async_execute_temporary_memory_tool",
+            ("operation", {"value": 1}),
+        ),
+    ],
+)
+async def test_integration_tool_boundary_routes_and_serializes_results(
+    function_type, dispatcher, expected_args
+) -> None:
+    """Integration-owned tools return one provider-compatible result shape."""
+    entity = _agent()
+    entity._attr_entity_id = "conversation.test"
+    handler = AsyncMock(return_value={"status": "ok", "type": function_type})
+    setattr(entity, dispatcher, handler)
+    tool_input = llm.ToolInput(
+        id="call-1",
+        tool_name=f"{function_type}_operation",
+        tool_args={"value": 1},
+        external=True,
+    )
+    function_tool = {
+        "function": {"type": function_type, "operation": "operation"}
+    }
+
+    result = await entity._execute_function_tool(
+        function_tool, tool_input, _llm_context(), []
+    )
+
+    handler.assert_awaited_once_with(*expected_args)
+    assert result.tool_call_id == "call-1"
+    assert result.tool_name == f"{function_type}_operation"
+    assert json.loads(result.tool_result["result"]) == {
+        "status": "ok",
+        "type": function_type,
+    }
+
+
+@pytest.mark.parametrize(
+    ("function_type", "error", "expected"),
+    [
+        (
+            "memory",
+            RuntimeError("persistent memory is unavailable"),
+            {"status": "error", "error": "persistent memory is unavailable"},
+        ),
+        (
+            "temporary_memory",
+            OSError("store offline"),
+            {
+                "status": "unavailable",
+                "error": "Memory is temporarily unavailable",
+            },
+        ),
+        (
+            "knowledge",
+            OSError("index offline"),
+            {
+                "status": "unavailable",
+                "error": "Knowledge Library is temporarily unavailable",
+            },
+        ),
+    ],
+)
+async def test_integration_tool_boundary_normalizes_expected_and_store_failures(
+    function_type, error, expected
+) -> None:
+    """Tool failures remain structured without exposing backend exception details."""
+    entity = _agent()
+    entity._attr_entity_id = "conversation.test"
+    dispatcher = {
+        "memory": "_async_execute_memory_tool",
+        "temporary_memory": "_async_execute_temporary_memory_tool",
+        "knowledge": "_async_execute_knowledge_tool",
+    }[function_type]
+    setattr(entity, dispatcher, AsyncMock(side_effect=error))
+    tool_input = llm.ToolInput(
+        id="call-1",
+        tool_name=f"{function_type}_operation",
+        tool_args={},
+        external=True,
+    )
+
+    result = await entity._execute_function_tool(
+        {"function": {"type": function_type, "operation": "operation"}},
+        tool_input,
+        _llm_context(),
+        [],
+    )
+
+    assert json.loads(result.tool_result["result"]) == expected
+
+
+async def test_conversation_lifecycle_tool_captures_active_session_ids() -> None:
+    """A start-fresh tool result schedules cleanup for the exact active sessions."""
+    entity = _agent()
+    entity._attr_entity_id = "conversation.test"
+    lifecycle_token = conversation.begin_conversation_lifecycle()
+    group_token = conversation._ACTIVE_FUNCTION_GROUP_SESSION.set(
+        SimpleNamespace(session_key="state-session")
+    )
+    memory_token = conversation._ACTIVE_MEMORY_SESSION.set(("memory-session", 15))
+    tool_input = llm.ToolInput(
+        id="call-1",
+        tool_name="start_fresh_conversation",
+        tool_args={},
+        external=True,
+    )
+    try:
+        result = await entity._execute_function_tool(
+            {
+                "function": {
+                    "type": "conversation_lifecycle",
+                    "operation": "start_fresh",
+                }
+            },
+            tool_input,
+            _llm_context(),
+            [],
+        )
+        reset = conversation.requested_conversation_reset()
+    finally:
+        conversation._ACTIVE_MEMORY_SESSION.reset(memory_token)
+        conversation._ACTIVE_FUNCTION_GROUP_SESSION.reset(group_token)
+        conversation.end_conversation_lifecycle(lifecycle_token)
+
+    assert json.loads(result.tool_result["result"])["status"] == "scheduled"
+    assert reset is not None
+    assert reset.state_session_id == "state-session"
+    assert reset.memory_session_id == "memory-session"
