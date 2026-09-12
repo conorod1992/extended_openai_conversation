@@ -156,7 +156,7 @@ async def test_malformed_stored_record_does_not_poison_siblings_or_future_writes
     assert {
         result.source_id for result in await library.async_search("masonry drill")
     } == {"valid-c"}
-    assert await library.async_search("never enter the index") == []
+    assert await library.async_search("corrupt source") == []
     assert [record.getMessage() for record in caplog.records].count(warning) == 1
 
     assert storage.data == original_payload
@@ -175,7 +175,7 @@ async def test_malformed_stored_record_does_not_poison_siblings_or_future_writes
     reloaded_ids = {item["source_id"] for item in await reloaded.async_list()}
     assert reloaded_ids == {"valid-a", "valid-c", created.source_id}
     assert {
-        result.source_id for result in await reloaded.async_search("tea towels")
+        result.source_id for result in await reloaded.async_search("drawer beside oven")
     } == {"valid-a"}
     assert {
         result.source_id for result in await reloaded.async_search("spare towels airing")
