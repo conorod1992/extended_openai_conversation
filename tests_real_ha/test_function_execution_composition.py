@@ -430,6 +430,23 @@ async def test_ha_owned_tool_runtime_failure_skips_later_call_and_next_turn_reco
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
 
+    captured_results: list[conversation.ToolResultContent] = []
+    original_add = conversation.ChatLog.async_add_assistant_content_without_tools
+
+    def capture_tool_results(
+        chat_log: conversation.ChatLog,
+        content: conversation.Content,
+    ) -> None:
+        if isinstance(content, conversation.ToolResultContent):
+            captured_results.append(content)
+        original_add(chat_log, content)
+
+    monkeypatch.setattr(
+        conversation.ChatLog,
+        "async_add_assistant_content_without_tools",
+        capture_tool_results,
+    )
+
     failing_wire = _install_wire(
         monkeypatch,
         agent,
@@ -471,6 +488,31 @@ async def test_ha_owned_tool_runtime_failure_skips_later_call_and_next_turn_reco
     assert hass.states.get(entity_b) is None
     assert hass.states.get(entity_c) is not None
     assert [request["path"] for request in failing_wire.requests] == ["/v1/responses"]
+
+    failed_batch_ids = {
+        "call-ha-valid-a",
+        "call-ha-stale-b",
+        "call-ha-valid-c",
+    }
+    failed_batch_results = {
+        result.tool_call_id: result
+        for result in captured_results
+        if result.tool_call_id in failed_batch_ids
+    }
+    assert set(failed_batch_results) == failed_batch_ids
+    success_a = failed_batch_results["call-ha-valid-a"].tool_result
+    assert entity_a in _serialized(success_a)
+    assert "ready" in _serialized(success_a)
+
+    error_b = failed_batch_results["call-ha-stale-b"].tool_result["result"]
+    assert error_b["status"] == "error"
+    assert "HomeAssistantError" in error_b["error"]
+    assert entity_b in error_b["error"]
+    assert "unavailable" in error_b["error"]
+
+    skipped_c = failed_batch_results["call-ha-valid-c"].tool_result["result"]
+    assert skipped_c["status"] == "skipped"
+    assert "failed" in skipped_c["error"].lower()
 
     recovery_wire = _install_wire(
         monkeypatch,
