@@ -9,7 +9,6 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
-    CONF_API_KEY,
     CONF_API_MODE,
     CONF_API_PROVIDER,
     CONF_BASE_URL,
@@ -36,6 +35,7 @@ from custom_components.extended_openai_conversation_responses.services import (
     to_image_param,
 )
 from custom_components.extended_openai_conversation_responses.skills import SkillManager
+from homeassistant.const import CONF_API_KEY
 from homeassistant.exceptions import HomeAssistantError
 
 
