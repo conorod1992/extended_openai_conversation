@@ -109,6 +109,80 @@ async def test_malformed_stored_records_are_ignored() -> None:
     assert [item["source_id"] for item in await library.async_list()] == ["valid"]
 
 
+async def test_malformed_stored_record_does_not_poison_siblings_or_future_writes(
+    caplog,
+) -> None:
+    valid_a = {
+        "source_id": "valid-a",
+        "title": "Kitchen storage",
+        "description": "Where kitchen items are stored",
+        "content": "Tea towels are in the drawer beside the oven.",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+        "enabled": True,
+    }
+    corrupt_b = {
+        "source_id": "corrupt-b",
+        "title": "Corrupt source",
+        "description": "This record must not load",
+        "content": "This content must never enter the index.",
+        "created_at": "2026-01-02T00:00:00+00:00",
+        "updated_at": "2026-01-02T00:00:00+00:00",
+        "enabled": "true",
+    }
+    valid_c = {
+        "source_id": "valid-c",
+        "title": "Garage storage",
+        "description": "Where workshop equipment is stored",
+        "content": "The masonry drill is on the upper garage shelf.",
+        "created_at": "2026-01-03T00:00:00+00:00",
+        "updated_at": "2026-01-03T00:00:00+00:00",
+        "enabled": True,
+    }
+    original_payload = {"sources": [valid_a, corrupt_b, valid_c]}
+    storage = FakeStorage(original_payload)
+    logger_name = "custom_components.extended_openai_conversation_responses.knowledge"
+    warning = "Ignoring malformed Knowledge Library record"
+    caplog.set_level("WARNING", logger=logger_name)
+
+    library = await _library(storage)
+
+    loaded_ids = {item["source_id"] for item in await library.async_list()}
+    assert loaded_ids == {"valid-a", "valid-c"}
+    assert "corrupt-b" not in loaded_ids
+    assert {result.source_id for result in await library.async_search("tea towels")} == {
+        "valid-a"
+    }
+    assert {
+        result.source_id for result in await library.async_search("masonry drill")
+    } == {"valid-c"}
+    assert await library.async_search("corrupt source") == []
+    assert [record.getMessage() for record in caplog.records].count(warning) == 1
+
+    assert storage.data == original_payload
+
+    created = await library.async_create(
+        "Bathroom storage",
+        "Bathroom supplies",
+        "Spare towels are in the airing cupboard.",
+    )
+    saved_ids = {item["source_id"] for item in storage.data["sources"]}
+    assert saved_ids == {"valid-a", "valid-c", created.source_id}
+    assert "corrupt-b" not in saved_ids
+
+    caplog.clear()
+    reloaded = await _library(storage)
+    reloaded_ids = {item["source_id"] for item in await reloaded.async_list()}
+    assert reloaded_ids == {"valid-a", "valid-c", created.source_id}
+    assert {
+        result.source_id for result in await reloaded.async_search("drawer beside oven")
+    } == {"valid-a"}
+    assert {
+        result.source_id for result in await reloaded.async_search("airing cupboard")
+    } == {created.source_id}
+    assert warning not in [record.getMessage() for record in caplog.records]
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
