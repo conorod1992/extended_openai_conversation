@@ -11,6 +11,7 @@ from homeassistant.helpers import llm
 
 from custom_components.extended_openai_conversation_responses.parallel_tool_execution import (
     async_execute_parallel_safe_batch,
+    async_execute_parallel_safe_batch_outcomes,
     is_parallel_safe_integration_tool,
     resolve_parallel_safe_batch,
 )
@@ -160,3 +161,78 @@ async def test_parallel_batch_preserves_first_failure_order() -> None:
         await async_execute_parallel_safe_batch(calls, execute)
 
     assert set(started) == {"1", "2"}
+
+
+@pytest.mark.asyncio
+async def test_parallel_outcomes_preserve_call_association_when_completion_is_inverted() -> None:
+    """Provider-order outcomes retain the identity of independently completed calls."""
+    calls = [
+        (_tool("first", "knowledge", operation="search"), _call("first", "1")),
+        (_tool("second", "knowledge", operation="list"), _call("second", "2")),
+    ]
+    second_completed = asyncio.Event()
+    invocation_counts = {"1": 0, "2": 0}
+
+    async def execute(function_tool: dict, tool_input: llm.ToolInput):
+        invocation_counts[tool_input.id] += 1
+        if tool_input.id == "1":
+            await asyncio.wait_for(second_completed.wait(), timeout=1)
+        result = conversation.ToolResultContent(
+            agent_id="test",
+            tool_call_id=tool_input.id,
+            tool_name=tool_input.tool_name,
+            tool_result={"result": tool_input.id},
+        )
+        if tool_input.id == "2":
+            second_completed.set()
+        return result
+
+    outcomes = await async_execute_parallel_safe_batch_outcomes(calls, execute)
+
+    assert all(isinstance(outcome, conversation.ToolResultContent) for outcome in outcomes)
+    results = [
+        outcome
+        for outcome in outcomes
+        if isinstance(outcome, conversation.ToolResultContent)
+    ]
+    assert [(result.tool_call_id, result.tool_name) for result in results] == [
+        ("1", "first"),
+        ("2", "second"),
+    ]
+    assert invocation_counts == {"1": 1, "2": 1}
+
+
+@pytest.mark.asyncio
+async def test_parallel_outcomes_retain_successful_sibling_after_ordinary_failure() -> None:
+    """One ordinary tool failure does not erase or re-execute a successful sibling."""
+    calls = [
+        (_tool("first", "knowledge", operation="search"), _call("first", "1")),
+        (_tool("second", "knowledge", operation="list"), _call("second", "2")),
+    ]
+    second_completed = asyncio.Event()
+    invocation_counts = {"1": 0, "2": 0}
+
+    async def execute(function_tool: dict, tool_input: llm.ToolInput):
+        invocation_counts[tool_input.id] += 1
+        if tool_input.id == "1":
+            await asyncio.wait_for(second_completed.wait(), timeout=1)
+            raise RuntimeError("first failed")
+        result = conversation.ToolResultContent(
+            agent_id="test",
+            tool_call_id=tool_input.id,
+            tool_name=tool_input.tool_name,
+            tool_result={"result": tool_input.id},
+        )
+        second_completed.set()
+        return result
+
+    outcomes = await async_execute_parallel_safe_batch_outcomes(calls, execute)
+
+    assert len(outcomes) == 2
+    assert isinstance(outcomes[0], RuntimeError)
+    assert str(outcomes[0]) == "first failed"
+    assert isinstance(outcomes[1], conversation.ToolResultContent)
+    assert outcomes[1].tool_call_id == "2"
+    assert outcomes[1].tool_name == "second"
+    assert outcomes[1].tool_result == {"result": "2"}
+    assert invocation_counts == {"1": 1, "2": 1}
