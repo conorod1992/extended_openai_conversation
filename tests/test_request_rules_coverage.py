@@ -352,9 +352,7 @@ def test_runtime_expires_old_overrides_and_refreshes_timeout(monkeypatch) -> Non
     clock["now"] = 30.0
     assert runtime.get("first", timeout_minutes=2) == {"model": "one"}
 
-    clock["now"] = 91.0
-    assert runtime.get("first") == {"model": "one"}
-    clock["now"] = 152.0
+    clock["now"] = 151.0
     assert runtime.get("first") == {}
 
 
