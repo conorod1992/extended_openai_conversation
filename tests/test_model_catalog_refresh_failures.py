@@ -11,6 +11,7 @@ from aiohttp import ClientError
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    model_catalog as data,
     model_catalog_manager as runtime,
 )
 from custom_components.extended_openai_conversation_responses.const import (
@@ -37,6 +38,12 @@ class MemoryStore:
         self.saved = deepcopy(value)
 
 
+@pytest.fixture(autouse=True)
+def isolated_catalog(monkeypatch):
+    """Keep publication state local to each lifecycle test."""
+    monkeypatch.setattr(data, "_active", data.BUNDLED_CATALOG)
+
+
 @pytest.fixture
 def manager(hass):
     result = runtime.ModelCatalogManager(hass)
@@ -45,11 +52,12 @@ def manager(hass):
 
 
 def candidate():
-    """Return a valid downloaded catalogue that extends bundled reasoning."""
-    value = deepcopy(runtime.BUNDLED_CATALOG)
+    """Return a valid downloaded catalogue that extends bundled capabilities."""
+    value = deepcopy(data.BUNDLED_CATALOG)
     value["catalog_version"] += 1
     model = next(item for item in value["models"] if item["id"] == "gpt-5.6")
-    model["reasoning_efforts"] = ["low", "medium", "high", "xhigh"]
+    model["reasoning_efforts"] = ["low", "medium", "high", "xhigh", "max"]
+    model["parameters"]["supports_temperature"] = True
     return value
 
 
@@ -76,13 +84,13 @@ def transport(monkeypatch, raw=b"", *, status=200, error=None, etag='"v2"'):
 
 async def set_saved_conversation(monkeypatch, manager, *, model="gpt-5.6", effort=None):
     """Expose one persisted conversation subentry through HA's config-entry shape."""
-    data = {CONF_CHAT_MODEL: model}
+    subentry_data = {CONF_CHAT_MODEL: model}
     if effort is not None:
-        data[CONF_REASONING_EFFORT] = effort
+        subentry_data[CONF_REASONING_EFFORT] = effort
     subentry = SimpleNamespace(
         subentry_type="conversation",
         subentry_id="conversation-1",
-        data=data,
+        data=subentry_data,
     )
     entry = SimpleNamespace(entry_id="entry-1", subentries={"conversation-1": subentry})
     monkeypatch.setattr(manager.hass.config_entries, "async_entries", lambda _domain: [entry])
@@ -147,7 +155,7 @@ async def test_permanent_http_failure_retains_warning_visibility(
     [
         ("gpt-5.6", None, False),
         ("gpt-5.6", "high", False),
-        ("gpt-5.6", "xhigh", True),
+        ("gpt-5.6", "max", True),
         ("gpt-5.6", 42, False),
         ("private-model", "xhigh", True),
     ],
@@ -163,9 +171,7 @@ async def test_bundled_reset_safeguard_checks_saved_conversation_reasoning(
     manager, monkeypatch, model, effort, expected
 ):
     manager.catalog = candidate()
-    await set_saved_conversation(
-        monkeypatch, manager, model=model, effort=effort
-    )
+    await set_saved_conversation(monkeypatch, manager, model=model, effort=effort)
 
     assert await manager._bundled_reset_would_invalidate_saved_reasoning() is expected
 
@@ -180,7 +186,7 @@ async def test_public_reset_blocks_download_only_saved_reasoning(manager, monkey
         "last_checked": manager.last_checked,
     }
     runtime.activate_catalog(downloaded)
-    await set_saved_conversation(monkeypatch, manager, effort="xhigh")
+    await set_saved_conversation(monkeypatch, manager, effort="max")
 
     result = await manager.async_reset()
 
@@ -189,6 +195,7 @@ async def test_public_reset_blocks_download_only_saved_reasoning(manager, monkey
     assert manager.catalog == downloaded
     assert manager.etag == '"v2"'
     assert manager.store.saved["catalog"] == downloaded
+    assert runtime.model_metadata("gpt-5.6")["reasoning_efforts"][-1] == "max"
 
 
 async def test_reset_persistence_failure_keeps_published_catalog_and_can_retry(
@@ -213,7 +220,7 @@ async def test_reset_persistence_failure_keeps_published_catalog_and_can_retry(
     assert manager.catalog == downloaded
     assert manager.etag == '"v2"'
     assert manager.store.saved["catalog"] == downloaded
-    assert runtime.model_metadata("gpt-5.6")["reasoning_efforts"][-1] == "xhigh"
+    assert runtime.model_metadata("gpt-5.6")["reasoning_efforts"][-1] == "max"
 
     manager.store.fail = False
     succeeded = await manager.async_reset()
