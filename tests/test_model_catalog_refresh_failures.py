@@ -1,9 +1,9 @@
 """Failure and lifecycle contracts for remote model catalogue management."""
 
 import asyncio
+from copy import deepcopy
 import json
 import logging
-from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -52,12 +52,11 @@ def manager(hass):
 
 
 def candidate():
-    """Return a valid downloaded catalogue that extends bundled capabilities."""
+    """Return a valid downloaded catalogue with a download-only effort."""
     value = deepcopy(data.BUNDLED_CATALOG)
     value["catalog_version"] += 1
     model = next(item for item in value["models"] if item["id"] == "gpt-5.6")
-    model["reasoning_efforts"] = ["low", "medium", "high", "xhigh", "max"]
-    model["parameters"]["supports_temperature"] = True
+    model["reasoning"]["efforts"].append("minimal")
     return value
 
 
@@ -93,7 +92,9 @@ async def set_saved_conversation(monkeypatch, manager, *, model="gpt-5.6", effor
         data=subentry_data,
     )
     entry = SimpleNamespace(entry_id="entry-1", subentries={"conversation-1": subentry})
-    monkeypatch.setattr(manager.hass.config_entries, "async_entries", lambda _domain: [entry])
+    monkeypatch.setattr(
+        manager.hass.config_entries, "async_entries", lambda _domain: [entry]
+    )
 
     async def no_rules(_hass, _entry_id, _subentry_id):
         return SimpleNamespace(snapshot=lambda: {"rules": []})
@@ -155,7 +156,7 @@ async def test_permanent_http_failure_retains_warning_visibility(
     [
         ("gpt-5.6", None, False),
         ("gpt-5.6", "high", False),
-        ("gpt-5.6", "max", True),
+        ("gpt-5.6", "minimal", True),
         ("gpt-5.6", 42, False),
         ("private-model", "xhigh", True),
     ],
@@ -186,7 +187,7 @@ async def test_public_reset_blocks_download_only_saved_reasoning(manager, monkey
         "last_checked": manager.last_checked,
     }
     runtime.activate_catalog(downloaded)
-    await set_saved_conversation(monkeypatch, manager, effort="max")
+    await set_saved_conversation(monkeypatch, manager, effort="minimal")
 
     result = await manager.async_reset()
 
@@ -195,7 +196,7 @@ async def test_public_reset_blocks_download_only_saved_reasoning(manager, monkey
     assert manager.catalog == downloaded
     assert manager.etag == '"v2"'
     assert manager.store.saved["catalog"] == downloaded
-    assert runtime.model_metadata("gpt-5.6")["reasoning_efforts"][-1] == "max"
+    assert runtime.model_metadata("gpt-5.6")["reasoning"]["efforts"][-1] == "minimal"
 
 
 async def test_reset_persistence_failure_keeps_published_catalog_and_can_retry(
@@ -210,7 +211,9 @@ async def test_reset_persistence_failure_keeps_published_catalog_and_can_retry(
         "last_checked": manager.last_checked,
     }
     runtime.activate_catalog(downloaded)
-    monkeypatch.setattr(manager.hass.config_entries, "async_entries", lambda _domain: [])
+    monkeypatch.setattr(
+        manager.hass.config_entries, "async_entries", lambda _domain: []
+    )
     manager.store.fail = True
 
     failed = await manager.async_reset()
@@ -220,7 +223,7 @@ async def test_reset_persistence_failure_keeps_published_catalog_and_can_retry(
     assert manager.catalog == downloaded
     assert manager.etag == '"v2"'
     assert manager.store.saved["catalog"] == downloaded
-    assert runtime.model_metadata("gpt-5.6")["reasoning_efforts"][-1] == "max"
+    assert runtime.model_metadata("gpt-5.6")["reasoning"]["efforts"][-1] == "minimal"
 
     manager.store.fail = False
     succeeded = await manager.async_reset()
@@ -230,10 +233,13 @@ async def test_reset_persistence_failure_keeps_published_catalog_and_can_retry(
     assert manager.catalog is None
     assert manager.etag is None
     assert manager.store.saved["catalog"] is None
-    assert runtime.model_metadata("gpt-5.6")["reasoning_efforts"] == [
+    assert runtime.model_metadata("gpt-5.6")["reasoning"]["efforts"] == [
+        "none",
         "low",
         "medium",
         "high",
+        "xhigh",
+        "max",
     ]
 
 
