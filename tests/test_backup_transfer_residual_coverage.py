@@ -584,7 +584,7 @@ async def test_command_cancel_enforces_owner_before_deleting(hass, tmp_path, mon
     assert session.session_id in backup_transfer._exports(hass)
 
 
-async def test_websocket_translates_expected_error_and_returns_success(monkeypatch):
+async def test_websocket_translates_expected_error_and_returns_success(hass, monkeypatch):
     connection = SimpleNamespace(
         user=SimpleNamespace(is_admin=True),
         send_error=MagicMock(),
@@ -601,7 +601,7 @@ async def test_websocket_translates_expected_error_and_returns_success(monkeypat
         "async_backup_transfer_command",
         AsyncMock(side_effect=backup.BackupError("bad request")),
     )
-    await backup_transfer.websocket_backup_transfer(object(), connection, message)
+    await backup_transfer.websocket_backup_transfer(hass, connection, message)
     connection.send_error.assert_called_once_with(7, "invalid_request", "bad request")
     connection.send_result.assert_not_called()
 
@@ -611,7 +611,7 @@ async def test_websocket_translates_expected_error_and_returns_success(monkeypat
         "async_backup_transfer_command",
         AsyncMock(return_value={"ok": True}),
     )
-    await backup_transfer.websocket_backup_transfer(object(), connection, message)
+    await backup_transfer.websocket_backup_transfer(hass, connection, message)
     connection.send_result.assert_called_once_with(7, {"ok": True})
     connection.send_error.assert_not_called()
 
