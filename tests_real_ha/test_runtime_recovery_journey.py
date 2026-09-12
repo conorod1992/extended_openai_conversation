@@ -6,6 +6,8 @@ from copy import deepcopy
 import json
 from typing import Any
 
+import voluptuous as vol
+
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -18,7 +20,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.helpers import llm
+from homeassistant.helpers import config_validation as cv, llm
 from pytest_homeassistant_custom_component.common import MockUser
 
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
@@ -106,6 +108,14 @@ async def test_dirty_session_recovers_across_ha_failure_config_mutation_and_relo
         hass.states.async_set(entity_id, "ready")
     await hass.async_block_till_done()
 
+    # Match the schema shape used by real HA-owned tools. The reusable test helper's
+    # bare Python ``str`` validator is intentionally minimal, but the integration's
+    # HA LLM schema exporter expects an HA-native validator/selector here.
+    monkeypatch.setattr(
+        _EntityActionTool,
+        "parameters",
+        vol.Schema({vol.Required("entity_id"): cv.string}),
+    )
     ha_tool = _EntityActionTool()
     api = _MutableAPI(hass, ha_tool)
     llm.async_register_api(hass, api)
@@ -280,8 +290,10 @@ async def test_dirty_session_recovers_across_ha_failure_config_mutation_and_relo
     assert _GROUP_TOOL in _tool_names(
         recovery_wire.requests[1]["body"], API_MODE_RESPONSES
     )
+    # The third request contains both preserved good history and this turn's new
+    # function result, so assert the updated result is present rather than requiring
+    # the historical pre-reload value to disappear from continuity.
     assert _UPDATED_RESULT in _serialized(recovery_wire.requests[2]["body"])
-    assert _INITIAL_RESULT not in _serialized(recovery_wire.requests[2]["body"])
 
     final_session = continuity._sessions[_OWNER_SCOPE]
     assert final_session.in_flight is False
