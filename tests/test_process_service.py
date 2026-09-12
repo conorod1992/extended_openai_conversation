@@ -126,6 +126,178 @@ async def test_process_action_reports_missing_agent(monkeypatch):
         await handler(call)
 
 
+@pytest.mark.parametrize(
+    ("agents", "message"),
+    [
+        ([], "No Extended OpenAI conversation agent is available"),
+        ([FakeAgent(), FakeAgent()], "Choose a conversation agent"),
+    ],
+)
+async def test_process_action_requires_unambiguous_default_agent(
+    monkeypatch, agents, message
+):
+    hass = MagicMock()
+    hass.config.language = "en"
+    hass.services.async_register = MagicMock()
+    registry_entries = {
+        f"agent-{index}": SimpleNamespace(
+            platform=DOMAIN,
+            domain="conversation",
+            entity_id=f"conversation.agent_{index}",
+        )
+        for index, _agent in enumerate(agents)
+    }
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.services.er.async_get",
+        lambda _hass: SimpleNamespace(entities=registry_entries),
+    )
+    agents_by_id = {
+        entry.entity_id: agent
+        for entry, agent in zip(registry_entries.values(), agents, strict=True)
+    }
+    monkeypatch.setattr(
+        conversation,
+        "async_get_agent",
+        lambda _hass, entity_id: agents_by_id.get(entity_id),
+    )
+    handler = await _handler(hass)
+    call = ServiceCall(
+        hass,
+        DOMAIN,
+        "process",
+        {"text": "hello"},
+        return_response=True,
+        context=Context(),
+    )
+
+    with pytest.raises(HomeAssistantError, match=message):
+        await handler(call)
+
+
+async def test_process_action_uses_single_default_agent_and_returns_rule_metadata(
+    monkeypatch,
+):
+    hass = MagicMock()
+    hass.config.language = "fr"
+    hass.services.async_register = MagicMock()
+    agent = FakeAgent()
+
+    async def process_direct(user_input):
+        agent.inputs.append(user_input)
+        response = intent.IntentResponse(language=user_input.language)
+        response.async_set_speech("Rule handled")
+        return (
+            conversation.ConversationResult(
+                response=response, conversation_id="generated-id"
+            ),
+            {
+                "handled_locally": True,
+                "matched_rule": "goodnight",
+                "captured_values": {"room": "kitchen"},
+            },
+        )
+
+    agent.async_process_direct = process_direct
+    registry_entry = SimpleNamespace(
+        platform=DOMAIN,
+        domain="conversation",
+        entity_id=agent.entity_id,
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.services.er.async_get",
+        lambda _hass: SimpleNamespace(entities={"agent": registry_entry}),
+    )
+    monkeypatch.setattr(
+        conversation,
+        "async_get_agent",
+        lambda _hass, entity_id: agent if entity_id == agent.entity_id else None,
+    )
+    handler = await _handler(hass)
+
+    result = await handler(
+        ServiceCall(
+            hass,
+            DOMAIN,
+            "process",
+            {"text": "bonne nuit"},
+            return_response=True,
+            context=Context(),
+        )
+    )
+
+    assert result == {
+        "response": "Rule handled",
+        "conversation_id": "generated-id",
+        "handled_locally": True,
+        "matched_rule": "goodnight",
+        "captured_values": {"room": "kitchen"},
+    }
+    assert agent.inputs[0].language == "fr"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [RuntimeError("provider exploded"), HomeAssistantError("already translated")],
+)
+async def test_process_action_translates_only_unexpected_agent_errors(
+    monkeypatch, error
+):
+    hass = MagicMock()
+    hass.config.language = "en"
+    hass.services.async_register = MagicMock()
+    agent = FakeAgent()
+    agent.async_process_direct = AsyncMock(side_effect=error)
+    monkeypatch.setattr(conversation, "async_get_agent", lambda _hass, _id: agent)
+    handler = await _handler(hass)
+    call = ServiceCall(
+        hass,
+        DOMAIN,
+        "process",
+        {"text": "hello", "agent_id": agent.entity_id},
+        return_response=True,
+        context=Context(),
+    )
+
+    if isinstance(error, HomeAssistantError):
+        with pytest.raises(HomeAssistantError, match="already translated") as raised:
+            await handler(call)
+        assert raised.value is error
+    else:
+        with pytest.raises(HomeAssistantError, match=r"could not process.*exploded"):
+            await handler(call)
+
+
+@pytest.mark.parametrize("speech", ["plain text", {"plain": "plain text"}])
+async def test_process_action_handles_nonstandard_speech_payload(monkeypatch, speech):
+    hass = MagicMock()
+    hass.config.language = "en"
+    hass.services.async_register = MagicMock()
+    agent = FakeAgent()
+    agent.async_process_direct = AsyncMock(
+        return_value=(
+            SimpleNamespace(
+                response=SimpleNamespace(speech=speech), conversation_id="id"
+            ),
+            {},
+        )
+    )
+    monkeypatch.setattr(conversation, "async_get_agent", lambda _hass, _id: agent)
+    handler = await _handler(hass)
+
+    result = await handler(
+        ServiceCall(
+            hass,
+            DOMAIN,
+            "process",
+            {"text": "hello", "agent_id": agent.entity_id},
+            return_response=True,
+            context=Context(),
+        )
+    )
+
+    assert result["response"] == ""
+
+
 async def test_direct_and_normal_entry_points_share_the_same_core_pipeline():
     entity = object.__new__(ExtendedOpenAIAgentEntity)
     expected = object()
