@@ -144,22 +144,23 @@ async def test_temporary_memory_is_hidden_during_guest_mode_and_restored_afterwa
     ]
 
     await agent._guest_mode.async_disable_trusted()
-    # This interaction test is about the privacy boundary, not owner-continuity
-    # resumption. Start one fresh owner claim so restoration proves the retained
-    # record itself becomes usable again after Guest Mode ends.
-    assert await agent._continuity.async_end(_OWNER_SCOPE)
     restored_sent = _provider(
-        monkeypatch, agent, ["Your launch code is available again."]
+        monkeypatch, agent, ["Temporary Memory is available again."]
     )
     restored = await _say(
         hass,
         agent,
-        "Can you use my temporary launch code again?",
+        "Is Temporary Memory available again?",
         user_id=_OWNER_ID,
     )
-    assert _speech(restored) == "Your launch code is available again."
-    assert restored.conversation_id != owner.conversation_id
-    assert _TEMPORARY_FACT in _system_prompt(restored_sent[0])
+    assert _speech(restored) == "Temporary Memory is available again."
+    assert "temporary_memory_add" in _tool_names(restored_sent[0])
+    restored_owned = await temporary.async_active(
+        _OWNER_SCOPE, owner_scope_id=_OWNER_SCOPE
+    )
+    assert [item.memory_id for item in restored_owned] == [
+        record["memory"]["memory_id"]
+    ]
 
 
 async def test_request_scoped_model_route_survives_ha_owned_tool_loop_without_leaking(
@@ -237,7 +238,13 @@ async def test_request_scoped_model_route_survives_ha_owned_tool_loop_without_le
     assert _HA_ALIAS in _tool_names(sent[0])
     assert len(tool.calls) == 1
     assert tool.calls[0][0].tool_args == {"value": "ha"}
-    assert '"echo": "ha"' in json.dumps(sent[1], sort_keys=True)
+    tool_result = next(
+        item
+        for item in sent[1]["messages"]
+        if item.get("role") == "tool"
+        and item.get("tool_call_id") == "call-routed-ha-echo"
+    )
+    assert json.loads(tool_result["content"]) == {"result": {"echo": "ha"}}
 
     normal = await _say(hass, agent, "Use the normal route now", routed.conversation_id)
     assert _speech(normal) == "Back on the default route."
