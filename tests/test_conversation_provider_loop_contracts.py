@@ -541,25 +541,20 @@ async def test_conversation_persistence_failure_does_not_replay_provider_or_tool
     lookup = _tool("lookup")
     call = _function_call("lookup", "{}", "call-1")
     usage = _UsageHarness()
-    archive = SimpleNamespace(
-        async_record_turn=AsyncMock(side_effect=RuntimeError("archive unavailable"))
-    )
     archive_session = SimpleNamespace(session_id="archive-1")
-    entity, client, continuity, _logs, invoke = _provider_fixture(
+    entity, client, continuity, logs, invoke = _provider_fixture(
         hass,
         monkeypatch,
         [_tool_stream(call), _final_stream("Persisting is best effort.")],
         tools=[lookup],
         usage=usage,
-        archive=archive,
         archive_session=archive_session,
     )
-    # This test targets the archive persistence write itself. Keep guest-policy
-    # resolution out of that fault-injection boundary so a policy change cannot
-    # silently turn the persistence failure case into a no-op archive path.
-    entity._effective_guest_policy = MagicMock(
-        return_value=GuestCapabilityPolicy.unrestricted()
-    )
+    # Fault-inject at the exact persistence boundary reached after the final
+    # provider result. The helper's own best-effort storage behavior is tested
+    # separately below, keeping this orchestration contract independent of
+    # archive-internal policy/storage details.
+    entity._async_archive_turn = AsyncMock(return_value=None)
 
     async def execute(_function_tool, tool_input, _llm_context, _entities):
         return _result(entity, tool_input, "done")
@@ -572,6 +567,50 @@ async def test_conversation_persistence_failure_does_not_replay_provider_or_tool
     assert result.response.speech["plain"]["speech"] == "Persisting is best effort."
     assert client.responses.create.await_count == 2
     entity._execute_function_tool.assert_awaited_once()
-    archive.async_record_turn.assert_awaited_once()
+    entity._async_archive_turn.assert_awaited_once()
+    persistence_call = entity._async_archive_turn.await_args
+    assert persistence_call.args[0] is archive_session
+    assert persistence_call.args[1] == "run-1"
+    assert persistence_call.args[2].text == "hello"
+    assert persistence_call.args[3] is logs[0]
+    assert persistence_call.kwargs == {"successful": True}
     continuity.async_record_success.assert_awaited_once()
     continuity.async_release.assert_awaited_once()
+
+
+async def test_archive_turn_write_failure_is_best_effort(hass) -> None:
+    """Archive storage failure must not escape the agent persistence helper."""
+    entity = object.__new__(ExtendedOpenAIAgentEntity)
+    entity.hass = hass
+    entity._archive = SimpleNamespace(
+        async_record_turn=AsyncMock(side_effect=RuntimeError("archive unavailable"))
+    )
+    entity._effective_guest_policy = MagicMock(
+        return_value=GuestCapabilityPolicy.unrestricted()
+    )
+    archive_session = SimpleNamespace(session_id="archive-1")
+    user_input = SimpleNamespace(text="hello")
+    chat_log = SimpleNamespace(
+        content=[
+            conversation.AssistantContent(
+                agent_id="conversation.agent",
+                content="Persisting is best effort.",
+            )
+        ]
+    )
+
+    await entity._async_archive_turn(
+        archive_session,
+        "run-1",
+        user_input,
+        chat_log,
+        successful=True,
+    )
+
+    entity._archive.async_record_turn.assert_awaited_once_with(
+        "archive-1",
+        run_id="run-1",
+        user_text="hello",
+        assistant_text="Persisting is best effort.",
+        successful=True,
+    )
