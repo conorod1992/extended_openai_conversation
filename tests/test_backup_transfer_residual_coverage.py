@@ -585,7 +585,11 @@ async def test_command_cancel_enforces_owner_before_deleting(hass, tmp_path, mon
 
 
 async def test_websocket_translates_expected_error_and_returns_success(monkeypatch):
-    connection = SimpleNamespace(send_error=MagicMock(), send_result=MagicMock())
+    connection = SimpleNamespace(
+        user=SimpleNamespace(is_admin=True),
+        send_error=MagicMock(),
+        send_result=MagicMock(),
+    )
     message = {
         "id": 7,
         "entry_id": "entry-1",
