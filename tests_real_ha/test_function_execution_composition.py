@@ -477,7 +477,7 @@ async def test_ha_owned_tool_runtime_failure_skips_later_call_and_next_turn_reco
 
     failure = await _say(hass, agent, "Run the ordered Home Assistant entity actions")
     assert failure.response.error_code is not None
-    failure_speech = _speech(failure)
+    failure_speech = failure.response.as_dict()["speech"]["plain"]["speech"]
     assert entity_b in failure_speech
     assert "unavailable" in failure_speech
 
