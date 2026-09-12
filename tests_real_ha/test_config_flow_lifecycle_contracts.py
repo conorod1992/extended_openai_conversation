@@ -25,7 +25,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONFIG_ENTRY_VERSION,
     DEFAULT_AI_TASK_OPTIONS,
     DEFAULT_API_PROVIDER,
-    DEFAULT_CONVERSATION_NAME,
     DOMAIN,
 )
 
@@ -210,7 +209,7 @@ async def test_reauth_validation_failure_is_fully_atomic(
 async def test_user_flow_output_is_consumed_by_runtime_setup(
     hass: HomeAssistant,
 ) -> None:
-    """Runtime authentication consumes the exact provider values emitted by the flow."""
+    """Automatic setup consumes the exact provider values emitted by the user flow."""
     submitted = {
         CONF_NAME: "Runtime Contract",
         CONF_API_KEY: "sk-runtime-contract",
@@ -221,27 +220,18 @@ async def test_user_flow_output_is_consumed_by_runtime_setup(
         CONF_API_PROVIDER: "openai",
     }
 
-    with patch(
-        f"{CONFIG_FLOW_MODULE}.get_authenticated_client", new_callable=AsyncMock
-    ):
-        result = await _start_user_flow(hass)
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], dict(submitted)
-        )
-
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    entry = result["result"]
-    assert dict(entry.data) == submitted
-
     runtime_client = object()
-    authenticate = AsyncMock(return_value=runtime_client)
+    validate_authenticate = AsyncMock(return_value=object())
+    runtime_authenticate = AsyncMock(return_value=runtime_client)
     forward = AsyncMock(return_value=None)
     setup_templates = AsyncMock(return_value=None)
     unload_platforms = AsyncMock(return_value=True)
     unload_templates = AsyncMock(return_value=None)
 
+    result = await _start_user_flow(hass)
     with (
-        patch(f"{INTEGRATION_MODULE}.get_authenticated_client", authenticate),
+        patch(f"{CONFIG_FLOW_MODULE}.get_authenticated_client", validate_authenticate),
+        patch(f"{INTEGRATION_MODULE}.get_authenticated_client", runtime_authenticate),
         patch(f"{INTEGRATION_MODULE}.DebugOpenAIClientProxy", side_effect=lambda value: value),
         patch(
             f"{INTEGRATION_MODULE}.PerformanceOpenAIClientProxy",
@@ -252,11 +242,18 @@ async def test_user_flow_output_is_consumed_by_runtime_setup(
         patch.object(hass.config_entries, "async_unload_platforms", unload_platforms),
         patch(f"{INTEGRATION_MODULE}.async_unload_templates", unload_templates),
     ):
-        assert await hass.config_entries.async_setup(entry.entry_id)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], dict(submitted)
+        )
         await hass.async_block_till_done()
+
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        entry = result["result"]
+        assert dict(entry.data) == submitted
         assert entry.state is ConfigEntryState.LOADED
 
-        authenticate.assert_awaited_once_with(
+        validate_authenticate.assert_awaited_once()
+        runtime_authenticate.assert_awaited_once_with(
             hass=hass,
             api_key=submitted[CONF_API_KEY],
             base_url=submitted[CONF_BASE_URL],
