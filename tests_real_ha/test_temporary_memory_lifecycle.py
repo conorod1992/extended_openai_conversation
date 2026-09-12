@@ -214,7 +214,7 @@ async def test_temporary_memory_created_by_model_is_owned_injected_pruned_and_re
     expired_wire = _install_wire(
         monkeypatch,
         agent,
-        [_chat_sse_text("That temporary note has expired." )],
+        [_chat_sse_text("That temporary note has expired.")],
     )
     expired_turn = await _say(
         hass,
