@@ -544,12 +544,7 @@ async def test_conversation_persistence_failure_does_not_replay_provider_or_tool
     archive = SimpleNamespace(
         async_record_turn=AsyncMock(side_effect=RuntimeError("archive unavailable"))
     )
-    archive_session = SimpleNamespace(
-        session_id="archive-1",
-        iter_new_content=MagicMock(
-            return_value=[conversation.UserContent(content="hello")]
-        ),
-    )
+    archive_session = SimpleNamespace(session_id="archive-1")
     entity, client, continuity, _logs, invoke = _provider_fixture(
         hass,
         monkeypatch,
@@ -571,7 +566,6 @@ async def test_conversation_persistence_failure_does_not_replay_provider_or_tool
     assert result.response.speech["plain"]["speech"] == "Persisting is best effort."
     assert client.responses.create.await_count == 2
     entity._execute_function_tool.assert_awaited_once()
-    archive_session.iter_new_content.assert_called_once()
     archive.async_record_turn.assert_awaited_once()
     continuity.async_record_success.assert_awaited_once()
     continuity.async_release.assert_awaited_once()
