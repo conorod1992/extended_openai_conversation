@@ -54,13 +54,14 @@ from homeassistant.util import dt as dt_util
 class _UsageRecorder:
     """Minimal deterministic usage context for orchestration assertions."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, successful: bool = True) -> None:
         self.calls: list[dict[str, object]] = []
+        self.successful = successful
 
     @asynccontextmanager
     async def async_run(self, **kwargs):
         self.calls.append(dict(kwargs))
-        yield SimpleNamespace(run_id="run-1", successful=True)
+        yield SimpleNamespace(run_id="run-1", successful=self.successful)
 
 
 def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
@@ -227,9 +228,12 @@ async def test_local_intent_bypasses_provider_and_records_continuity(
     assert payload["handled_locally"] is True
 
 
-async def test_provider_success_records_usage_archive_and_continuity(monkeypatch):
+@pytest.mark.parametrize("successful", [False, True])
+async def test_provider_result_records_usage_archive_and_successful_continuity(
+    monkeypatch, successful
+):
     entity, user_input, chat_log, policy, process = _pipeline_fixture(monkeypatch)
-    usage = _UsageRecorder()
+    usage = _UsageRecorder(successful=successful)
     archive = SimpleNamespace(async_record_turn=AsyncMock())
     archive_session = SimpleNamespace(session_id="archive-1")
     entity._usage = usage
@@ -275,13 +279,16 @@ async def test_provider_success_records_usage_archive_and_continuity(monkeypatch
         run_id="run-1",
         user_text=user_input.text,
         assistant_text="Provider response",
-        successful=True,
+        successful=successful,
     )
-    entity._continuity.async_record_success.assert_awaited_once_with(
-        "device:kitchen",
-        "claim-token",
-        chat_log.content,
-    )
+    if successful:
+        entity._continuity.async_record_success.assert_awaited_once_with(
+            "device:kitchen",
+            "claim-token",
+            chat_log.content,
+        )
+    else:
+        entity._continuity.async_record_success.assert_not_awaited()
 
 
 async def test_unexpected_failure_restores_request_scoped_context(monkeypatch):
@@ -386,7 +393,14 @@ def _assist_fixture(monkeypatch):
 
     entity._async_handle_chat_log = AsyncMock(side_effect=model)
 
-    async def invoke(text="hello", *, device="kitchen", satellite=None, incoming=None):
+    async def invoke(
+        text="hello",
+        *,
+        device="kitchen",
+        satellite=None,
+        incoming=None,
+        direct=False,
+    ):
         request = SimpleNamespace(
             text=text,
             language="en",
@@ -398,6 +412,8 @@ def _assist_fixture(monkeypatch):
         request.as_llm_context = lambda _domain: SimpleNamespace(
             context=request.context
         )
+        if direct:
+            return await entity.async_process_direct(request)
         return await entity._async_process(request)
 
     return entity, invoke, logs, seen
@@ -536,3 +552,105 @@ async def test_assist_malformed_control_output_returns_error_without_listening(
     assert logs[0].continue_conversation is True
     assert result.response.error_code is intent.IntentResponseErrorCode.UNKNOWN
     assert result.continue_conversation is False
+
+
+async def test_direct_assist_returns_consumed_rule_metadata(monkeypatch):
+    """Direct callers receive the routing decision alongside the local response."""
+    entity, invoke, _, _ = _assist_fixture(monkeypatch)
+    entity._request_rules = object()
+    entity._request_rule_runtime = SimpleNamespace(
+        effective_options=MagicMock(return_value={})
+    )
+    evaluation = RuleEvaluation(
+        match=RuleMatch(
+            {"id": "scene", "name": "Set scene"},
+            "set evening scene",
+            False,
+            100.0,
+            slots={"scene": "evening"},
+        ),
+        consume=True,
+        response="Evening scene set",
+        successful=True,
+    )
+    monkeypatch.setattr(
+        conversation_module,
+        "async_evaluate_rule",
+        AsyncMock(return_value=evaluation),
+    )
+
+    result, metadata = await invoke("set evening scene", direct=True)
+
+    assert result.response.speech["plain"]["speech"] == "Evening scene set"
+    assert metadata == {
+        "handled_locally": True,
+        "matched_rule": {"id": "scene", "name": "Set scene"},
+        "captured_values": {"scene": "evening"},
+    }
+
+
+async def test_direct_assist_returns_local_intent_metadata(monkeypatch):
+    """Direct local-intent responses identify the Home Assistant intent used."""
+    _entity, invoke, _, _ = _assist_fixture(monkeypatch)
+    local_response = intent.IntentResponse(language="en")
+    local_response.async_set_speech("The kitchen light is on.")
+    monkeypatch.setattr(
+        conversation_module,
+        "async_try_handle_local_intent",
+        AsyncMock(
+            return_value=LocalIntentResult(
+                response=local_response,
+                intent_name="HassGetState",
+            )
+        ),
+    )
+
+    result, metadata = await invoke("is the kitchen light on", direct=True)
+
+    assert result.response is local_response
+    assert metadata == {
+        "handled_locally": True,
+        "matched_intent": "HassGetState",
+    }
+
+
+async def test_fresh_conversation_request_resets_owned_state_after_response(
+    monkeypatch,
+):
+    """A model-requested reset is finalized after the current response completes."""
+    entity, _, chat_log, _, process = _pipeline_fixture(monkeypatch)
+    monkeypatch.setattr(
+        conversation_module,
+        "async_try_handle_local_intent",
+        AsyncMock(return_value=None),
+    )
+    reset_context = AsyncMock()
+    monkeypatch.setattr(
+        conversation_module, "async_reset_conversation_context", reset_context
+    )
+
+    async def schedule_reset(*_args):
+        conversation_module.request_fresh_conversation(
+            "state-session", "memory-session"
+        )
+        chat_log.content.append(
+            conversation.AssistantContent(
+                agent_id=entity.entity_id,
+                content="I will start fresh next time.",
+            )
+        )
+        return object()
+
+    entity._async_handle_message_with_ha_tools = AsyncMock(side_effect=schedule_reset)
+
+    await process()
+
+    reset_context.assert_awaited_once_with(
+        entity.hass,
+        entity._continuity,
+        "entry",
+        "agent",
+        continuity_key="device:kitchen",
+        state_session_id="state-session",
+        memory_session_id="memory-session",
+    )

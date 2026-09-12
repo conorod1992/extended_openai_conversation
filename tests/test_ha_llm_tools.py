@@ -4,7 +4,7 @@ import asyncio
 from copy import deepcopy
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import voluptuous as vol
@@ -373,6 +373,43 @@ async def test_guest_denies_external_even_if_policy_allows_name(hass):
     )
     assert result.tool_result
     assert not current_snapshot().tools
+
+
+async def test_conversation_discovers_configured_ha_tools_for_the_request(hass):
+    """The conversation boundary resolves saved HA references in caller context."""
+    api = register(hass, TestAPI(hass))
+    preview = await async_discover(hass, context())
+    saved = new_reference_tool(next(iter(preview.tools.values())).reference, set())
+    entity = object.__new__(ExtendedOpenAIAgentEntity)
+    entity.hass = hass
+    entity.subentry = SimpleNamespace(data={})
+    entity._configured_function_tools_from_data = MagicMock(return_value=[saved])
+    entity._effective_guest_policy = MagicMock(
+        return_value=SimpleNamespace(guest_active=False)
+    )
+    expected = object()
+    observed_names: list[str] = []
+
+    async def handle_message(*_args):
+        observed_names.extend(
+            tool.tool.name for tool in current_snapshot().tools.values()
+        )
+        return expected
+
+    entity._async_handle_message = AsyncMock(side_effect=handle_message)
+    user_input = SimpleNamespace(as_llm_context=lambda _domain: context())
+    chat_log = object()
+
+    result = await entity._async_handle_message_with_ha_tools(
+        user_input, chat_log, {"model": "test"}
+    )
+
+    assert result is expected
+    assert observed_names == ["echo"]
+    assert len(api.contexts) == 2
+    entity._async_handle_message.assert_awaited_once_with(
+        user_input, chat_log, {"model": "test"}
+    )
 
 
 async def test_source_schema_validates_before_side_effect(hass):
