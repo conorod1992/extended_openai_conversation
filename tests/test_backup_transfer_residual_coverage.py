@@ -601,7 +601,8 @@ async def test_websocket_translates_expected_error_and_returns_success(hass, mon
         "async_backup_transfer_command",
         AsyncMock(side_effect=backup.BackupError("bad request")),
     )
-    await backup_transfer.websocket_backup_transfer(hass, connection, message)
+    backup_transfer.websocket_backup_transfer(hass, connection, message)
+    await hass.async_block_till_done()
     connection.send_error.assert_called_once_with(7, "invalid_request", "bad request")
     connection.send_result.assert_not_called()
 
@@ -611,7 +612,8 @@ async def test_websocket_translates_expected_error_and_returns_success(hass, mon
         "async_backup_transfer_command",
         AsyncMock(return_value={"ok": True}),
     )
-    await backup_transfer.websocket_backup_transfer(hass, connection, message)
+    backup_transfer.websocket_backup_transfer(hass, connection, message)
+    await hass.async_block_till_done()
     connection.send_result.assert_called_once_with(7, {"ok": True})
     connection.send_error.assert_not_called()
 
