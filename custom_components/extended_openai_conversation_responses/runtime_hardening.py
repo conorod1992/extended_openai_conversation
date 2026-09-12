@@ -203,7 +203,7 @@ def _install_guest_mode_hardening() -> None:
                             manager.hass, candidate.active_until, "active_until"
                         )
                     schedule = candidate
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     _LOGGER.warning(
                         "Ignoring malformed Guest Mode state", exc_info=True
                     )
