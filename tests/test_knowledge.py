@@ -178,7 +178,7 @@ async def test_malformed_stored_record_does_not_poison_siblings_or_future_writes
         result.source_id for result in await reloaded.async_search("drawer beside oven")
     } == {"valid-a"}
     assert {
-        result.source_id for result in await reloaded.async_search("spare towels airing")
+        result.source_id for result in await reloaded.async_search("airing cupboard")
     } == {created.source_id}
     assert warning not in [record.getMessage() for record in caplog.records]
 
