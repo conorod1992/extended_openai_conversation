@@ -236,3 +236,38 @@ async def test_parallel_outcomes_retain_successful_sibling_after_ordinary_failur
     assert outcomes[1].tool_name == "second"
     assert outcomes[1].tool_result == {"result": "2"}
     assert invocation_counts == {"1": 1, "2": 1}
+
+
+@pytest.mark.asyncio
+async def test_parallel_outcomes_cancel_and_collect_children_on_request_cancellation() -> None:
+    """Cancelling the enclosing request also cancels and collects every child task."""
+    calls = [
+        (_tool("first", "knowledge", operation="search"), _call("first", "1")),
+        (_tool("second", "knowledge", operation="list"), _call("second", "2")),
+    ]
+    both_started = asyncio.Event()
+    never_complete = asyncio.Event()
+    started: set[str] = set()
+    cancelled: set[str] = set()
+
+    async def execute(function_tool: dict, tool_input: llm.ToolInput):
+        started.add(tool_input.id)
+        if len(started) == 2:
+            both_started.set()
+        try:
+            await never_complete.wait()
+        except asyncio.CancelledError:
+            cancelled.add(tool_input.id)
+            raise
+
+    batch_task = asyncio.create_task(
+        async_execute_parallel_safe_batch_outcomes(calls, execute)
+    )
+    await asyncio.wait_for(both_started.wait(), timeout=1)
+
+    batch_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await batch_task
+
+    assert started == {"1", "2"}
+    assert cancelled == {"1", "2"}
