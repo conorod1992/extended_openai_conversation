@@ -6,12 +6,12 @@ test("Usage renders aggregate detail and navigates into retention settings", asy
   await page.goto(fixtureUrl("usage-maintenance/usage"));
 
   const panel = page.locator("extended-openai-management-panel");
-  await expect(panel.getByRole("heading", {name: "Tokens by day", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Input footprint", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Usage period", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Tokens by recorded day", exact: true})).toBeVisible();
   await expect(panel.getByRole("heading", {name: "Recent runs", exact: true})).toBeVisible();
-  await expect(panel.getByText("1,234", {exact: true})).toBeVisible();
-  await expect(panel.getByText("5,678", {exact: true})).toBeVisible();
   await expect(panel.getByText("9,999", {exact: true})).toBeVisible();
-  await expect(panel.getByText("No completed runs yet.", {exact: true})).toBeVisible();
+  await expect(panel.getByText("No retained recent runs.", {exact: true})).toBeVisible();
 
   const usageCalls = await page.evaluate(() => window.browserHarness.calls.filter(
     (call) => call.section === "usage",
@@ -44,14 +44,14 @@ test("Knowledge Library opens a real editor and protects an unsaved draft", asyn
   await panel.locator("#knowledge-content").fill("The browser fixture has a deliberately unsaved source.");
   await expect(panel.locator("#knowledge-counter")).toContainText("characters");
 
-  await dialog.locator(".close-editor").click();
+  await dialog.getByRole("button", {name: "Cancel", exact: true}).click();
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
   await expect(panel.locator("#confirm-title")).toHaveText("Discard unsaved changes?");
   await panel.locator("#confirm-cancel").click();
   await expect(dialog).toHaveJSProperty("open", true);
   await expect(panel.locator("#knowledge-title")).toHaveValue("Browser knowledge draft");
 
-  await dialog.locator(".close-editor").click();
+  await dialog.getByRole("button", {name: "Cancel", exact: true}).click();
   await acceptConfirmation(panel);
   await expect(dialog).toHaveJSProperty("open", false);
 
