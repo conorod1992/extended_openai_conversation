@@ -43,10 +43,17 @@ assert.equal(calls.at(-1).model, "another-model");
 assert.equal(calls.at(-1).action, "lookup");
 
 // Future model choices supplied by Python must work without another JS release.
-const select = {value:"minimal", options:[{value:""},{value:"high"}], ownerDocument:{createElement:() => ({})}, append(option) {this.options.push(option);}, querySelector(selector) { return this.options.find((item) => selector === `option[value="${item.value}"]`); }};
-const scope = {value:"request", querySelector:() => ({})};
+const select = {
+  value:"minimal",
+  options:[{value:""},{value:"high"}],
+  ownerDocument:{createElement:() => ({value:"",disabled:false,textContent:""})},
+  replaceChildren(...options) { this.options = options; },
+  querySelector(selector) { return this.options.find((item) => selector === `option[value="${item.value}"]`) || null; },
+};
+const scopeOption = {value:"request",disabled:false};
+const scope = {value:"request", disabled:false, querySelector:() => scopeOption};
 const root = {querySelector:(selector) => ({"#rule-action-type":{value:"model_routing"},"#rule-match":{value:"contains"},"#rule-scope":scope,"#rule-reasoning":select})[selector]};
 syncRequestRuleRoutingControls(root, ["minimal"]);
 assert.equal(select.value, "minimal");
-assert.equal(select.options.find((item) => item.value === "minimal").disabled, false);
-assert.equal(select.options.find((item) => item.value === "high").disabled, true);
+assert.deepEqual(select.options.map((item) => item.value), ["", "minimal"]);
+assert.equal(select.querySelector('option[value="high"]'), null);

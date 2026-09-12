@@ -60,19 +60,24 @@ function addRequestRuleManagementClarity(panel, html) {
   return transformed;
 }
 
-function ensureReasoningOptions(root, efforts) {
+function setReasoningOptions(root, efforts, selected = "") {
   const select = root?.querySelector("#rule-reasoning");
   if (!select) return;
-  for (const value of efforts) {
-    if (select.querySelector(`option[value="${value}"]`)) continue;
+  const values = Array.isArray(efforts) ? efforts : [];
+  const keepCurrent = select.ownerDocument.createElement("option");
+  keepCurrent.value = "";
+  keepCurrent.textContent = "Keep current";
+  const options = [keepCurrent, ...values.map((value) => {
     const option = select.ownerDocument.createElement("option");
     option.value = value;
     option.textContent = value.charAt(0).toUpperCase() + value.slice(1);
-    select.append(option);
-  }
+    return option;
+  })];
+  select.replaceChildren(...options);
+  select.value = selected && values.includes(selected) ? selected : "";
 }
 
-export function syncRequestRuleRoutingControls(root, efforts = null) {
+export function syncRequestRuleRoutingControls(root, efforts = null, selectedEffort = null) {
   if (!root) return;
   const actionType = root.querySelector("#rule-action-type");
   const matchType = root.querySelector("#rule-match");
@@ -89,11 +94,8 @@ export function syncRequestRuleRoutingControls(root, efforts = null) {
   scope.disabled = consumed;
 
   if (reasoning && efforts) {
-    ensureReasoningOptions(root, efforts);
-    for (const option of reasoning.options) {
-      option.disabled = Boolean(option.value) && !efforts.includes(option.value);
-    }
-    if (reasoning.value && !efforts.includes(reasoning.value)) reasoning.value = "";
+    const desired = selectedEffort ?? reasoning.value;
+    setReasoningOptions(root, efforts, desired);
   }
 
   if (help) {
@@ -137,11 +139,15 @@ export function bindRequestRules(panel) {
   let revision = 0;
   const refreshRouting = async () => {
     syncRequestRuleRoutingControls(root);
-    if (!root?.querySelector("#rule-model")) return;
+    const modelInput = root?.querySelector("#rule-model");
+    if (!modelInput) return;
     const current = ++revision;
+    const editingRule = (panel._result?.rules || []).find((item) => item.id === panel._editingRuleId);
+    const selectedEffort = editingRule?.action?.reasoning_effort || root.querySelector("#rule-reasoning")?.value || "";
+    const model = modelInput.value.trim();
     try {
-      const data = await lookupModelData(panel, root.querySelector("#rule-model")?.value.trim() || "");
-      if (current === revision) syncRequestRuleRoutingControls(root, data.reasoning_effort_options);
+      const data = await lookupModelData(panel, model);
+      if (current === revision) syncRequestRuleRoutingControls(root, data.reasoning_effort_options, selectedEffort);
     } catch (err) { panel._toast(`Unable to load model choices: ${err.message || String(err)}`, true); }
   };
   root?.querySelectorAll(".rule-edit,#rule-add,#rule-empty-add").forEach((button) => button.addEventListener("click", refreshRouting));

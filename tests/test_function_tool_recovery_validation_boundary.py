@@ -219,6 +219,25 @@ async def test_disabled_validation_preserves_original_infrastructure_error(
     assert type(caught.value) is HomeAssistantError
 
 
+async def test_non_mapping_arguments_fail_before_regex_worker(hass, monkeypatch) -> None:
+    """Invalid top-level argument shape is rejected before regex infrastructure runs."""
+    regex_worker = AsyncMock(side_effect=AssertionError("regex worker must not run"))
+    monkeypatch.setattr(
+        regex_execution,
+        "async_search_configured_patterns",
+        regex_worker,
+    )
+
+    with pytest.raises(HomeAssistantError, match="Function input must be an object"):
+        await async_validate_function_arguments(
+            hass,
+            _tool()["spec"],
+            ["on"],  # type: ignore[arg-type]
+        )
+
+    regex_worker.assert_not_awaited()
+
+
 async def test_regex_argument_mismatch_remains_correctable(hass, monkeypatch) -> None:
     """A completed validation that rejects model input still returns correction feedback."""
 

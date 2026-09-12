@@ -19,19 +19,27 @@ on:
         required: false
         default: ""
         type: string
+  schedule:
+    # Keep mutation testing off the PR critical path while exercising the
+    # established high-value campaigns once a week from the default branch.
+    - cron: "23 4 * * 0"
 
 permissions:
   contents: read
 
 concurrency:
-  group: mutation-${{ github.ref }}-${{ inputs.campaign }}
+  group: mutation-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.campaign || 'scheduled' }}
   cancel-in-progress: true
 
 jobs:
   mutation:
-    name: Mutation campaign (${{ inputs.campaign }})
+    name: Mutation campaign (${{ matrix.campaign }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        campaign: ${{ fromJSON(github.event_name == 'schedule' && '["function-tools","guest-security","request-rules","function-groups"]' || format('["{0}"]', inputs.campaign)) }}
 
     steps:
       - name: Checkout repository
@@ -76,6 +84,18 @@ jobs:
 
       - name: Run baseline and targeted mutation campaign
         env:
-          CAMPAIGN: ${{ inputs.campaign }}
-          TARGET: ${{ inputs.target }}
-        run: python scripts/run_mutation_campaign.py "$CAMPAIGN" --target "$TARGET"
+          CAMPAIGN: ${{ matrix.campaign }}
+          TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || '' }}
+        run: |
+          set -o pipefail
+          python scripts/run_mutation_campaign.py "$CAMPAIGN" --target "$TARGET" \
+            2>&1 | tee "mutation-${CAMPAIGN}.log"
+
+      - name: Upload mutation diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mutation-${{ matrix.campaign }}-diagnostics
+          path: mutation-${{ matrix.campaign }}.log
+          if-no-files-found: warn
+          retention-days: 14
