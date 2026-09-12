@@ -30,6 +30,9 @@ async def test_real_ha_voice_broadcast_waits_for_idle_target_and_skips_origin(
 ) -> None:
     """A local voice broadcast must queue while busy, then announce only to peers."""
     monkeypatch.setattr(intercom, "IDLE_STABILITY_SECONDS", 0)
+    # This journey validates delivery, not TTL expiry. Avoid leaving the production
+    # 120-second expiry callback behind for the Real-HA lingering-timer assertion.
+    monkeypatch.setattr(intercom, "async_call_later", lambda *_args, **_kwargs: None)
 
     entry = _make_entry()
     await _setup_entry(hass, entry)
@@ -100,7 +103,7 @@ async def test_real_ha_voice_broadcast_waits_for_idle_target_and_skips_origin(
     assert announce_calls == [
         {
             "message": "dinner is ready",
-            "entity_id": ["assist_satellite.hall"],
+            "entity_id": "assist_satellite.hall",
         }
     ]
     delivered = manager.history()[0]
