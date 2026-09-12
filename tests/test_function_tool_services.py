@@ -201,3 +201,24 @@ async def test_call_function_action_uses_request_scoped_bridge(
     )
     assert result == {"result": {"ok": True}}
     execute.assert_awaited_once_with("remember", {"fact": "Tuesday"})
+
+
+async def test_call_function_action_unwraps_structured_tool_result(
+    hass, monkeypatch
+) -> None:
+    execute = AsyncMock(return_value=SimpleNamespace(tool_result={"value": 42}))
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.services.async_call_active_function",
+        execute,
+    )
+    await async_setup_services(hass, {})
+    handler = next(
+        call.args[2]
+        for call in hass.services.async_register.call_args_list
+        if call.args[:2] == (DOMAIN, SERVICE_CALL_FUNCTION)
+    )
+
+    assert await handler(SimpleNamespace(data={"function": "calculate"})) == {
+        "result": {"value": 42}
+    }
+    execute.assert_awaited_once_with("calculate", {})
