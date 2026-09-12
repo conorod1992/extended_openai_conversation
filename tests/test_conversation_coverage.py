@@ -80,11 +80,14 @@ def test_guest_argument_filter_requires_every_explicit_entity_to_be_allowed() ->
     )
 
 
-def test_guest_argument_filter_fails_closed_for_non_string_entity_selector() -> None:
-    policy = _policy()
+def test_guest_argument_filter_checks_list_entity_selectors() -> None:
+    policy = _policy(read=lambda entity_id: entity_id != "sensor.private")
 
-    assert not conv.ExtendedOpenAIAgentEntity._guest_arguments_allowed(
+    assert conv.ExtendedOpenAIAgentEntity._guest_arguments_allowed(
         {"entity_id": ["sensor.one"]}, policy, control=False
+    )
+    assert not conv.ExtendedOpenAIAgentEntity._guest_arguments_allowed(
+        {"entity_id": ["sensor.one", "sensor.private"]}, policy, control=False
     )
 
 
@@ -149,7 +152,7 @@ def test_conversation_lifecycle_schedules_fresh_context_without_active_sessions(
 
 
 async def test_temporary_memory_tool_requires_permission_store_and_scope(monkeypatch) -> None:
-    agent = _agent()
+    agent = _agent(data={conv.CONF_TEMPORARY_MEMORY: "balanced"})
 
     monkeypatch.setattr(
         conv.ExtendedOpenAIAgentEntity,
@@ -190,7 +193,7 @@ class _TemporaryMemory:
 
 
 async def test_temporary_memory_tool_validates_and_executes_add_delete(monkeypatch) -> None:
-    agent = _agent()
+    agent = _agent(data={conv.CONF_TEMPORARY_MEMORY: "balanced"})
     store = _TemporaryMemory()
     agent._temporary_memory = store
     monkeypatch.setattr(
@@ -230,7 +233,7 @@ async def test_temporary_memory_tool_validates_and_executes_add_delete(monkeypat
 
 
 async def test_archive_tool_requires_store_and_active_session() -> None:
-    agent = _agent()
+    agent = _agent(data={conv.CONF_ARCHIVE_ENABLED: True})
 
     with pytest.raises(RuntimeError, match="conversation archive is unavailable"):
         await agent._async_execute_archive_tool("search", {})
@@ -259,7 +262,7 @@ class _Archive:
 
 
 async def test_archive_delete_operations_validate_inputs_and_preserve_scope() -> None:
-    agent = _agent()
+    agent = _agent(data={conv.CONF_ARCHIVE_ENABLED: True})
     archive = _Archive()
     agent._archive = archive
     scope = SimpleNamespace(scope_id="scope-1")
