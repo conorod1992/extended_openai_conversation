@@ -446,6 +446,7 @@ async def test_ha_owned_tool_runtime_failure_skips_later_call_and_next_turn_reco
         capture_tool_results,
     )
 
+    failure_text = f"Entity {entity_b} is unavailable."
     failing_wire = _install_wire(
         monkeypatch,
         agent,
@@ -468,7 +469,8 @@ async def test_ha_owned_tool_runtime_failure_skips_later_call_and_next_turn_reco
                         {"entity_id": entity_c},
                     ),
                 ]
-            )
+            ),
+            _responses_sse_text(failure_text),
         ],
     )
 
@@ -476,17 +478,23 @@ async def test_ha_owned_tool_runtime_failure_skips_later_call_and_next_turn_reco
     await hass.async_block_till_done()
 
     failure = await _say(hass, agent, "Run the ordered Home Assistant entity actions")
-    assert failure.response.error_code is not None
-    failure_speech = failure.response.as_dict()["speech"]["plain"]["speech"]
-    assert entity_b in failure_speech
-    assert "unavailable" in failure_speech
+    assert _speech(failure) == failure_text
 
     assert tool.attempts == [entity_a, entity_b]
     assert tool.calls == [entity_a]
     assert hass.states.get(entity_a) is not None
     assert hass.states.get(entity_b) is None
     assert hass.states.get(entity_c) is not None
-    assert [request["path"] for request in failing_wire.requests] == ["/v1/responses"]
+    assert [request["path"] for request in failing_wire.requests] == [
+        "/v1/responses",
+        "/v1/responses",
+    ]
+    failed_followup = _serialized(failing_wire.requests[1]["body"])
+    assert "call-ha-valid-a" in failed_followup
+    assert "call-ha-stale-b" in failed_followup
+    assert "call-ha-valid-c" in failed_followup
+    assert entity_a in failed_followup
+    assert entity_b in failed_followup
 
     failed_batch_ids = {
         "call-ha-valid-a",
