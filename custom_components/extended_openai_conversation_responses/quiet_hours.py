@@ -10,13 +10,22 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
-from .quiet_hours_runtime import *  # noqa: F403
 from .quiet_hours_runtime import (
-    _VOLUME_TOLERANCE,
+    DEFAULT_END,
+    DEFAULT_MAX_VOLUME,
+    DEFAULT_START,
+    DEFAULT_WAKE_SOUND,
+    QuietHoursConfig,
     QuietHoursManager as _RuntimeQuietHoursManager,
     QuietPeriod,
+    SatelliteCapabilities,
+    SatelliteOverride,
+    _VOLUME_TOLERANCE,
+    _config_from_data,
     _current_switch,
     _current_volume,
+    discover_satellite_capabilities,
+    quiet_period_for,
 )
 
 _RUNTIME_KEY = "quiet_hours_manager"
@@ -51,8 +60,12 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             suggested_object_id="extended_openai_quiet_hours",
             original_name="Quiet Hours",
         )
-        self._registered_state_entity_id = entry.entity_id
-        return entry.entity_id
+        entity_id = getattr(entry, "entity_id", None)
+        if not isinstance(entity_id, str):
+            self._registered_state_entity_id = _STATE_FALLBACK_ENTITY_ID
+            return self._registered_state_entity_id
+        self._registered_state_entity_id = entity_id
+        return entity_id
 
     def _publish_state(self, period: QuietPeriod | None) -> None:
         self.hass.states.async_set(
@@ -226,3 +239,22 @@ async def async_get_quiet_hours(hass: HomeAssistant) -> QuietHoursManager:
     await manager.async_setup()
     _register_quiet_hours_actions(hass)
     return manager
+
+
+__all__ = [
+    "DEFAULT_END",
+    "DEFAULT_MAX_VOLUME",
+    "DEFAULT_START",
+    "DEFAULT_WAKE_SOUND",
+    "QuietHoursConfig",
+    "QuietHoursManager",
+    "QuietPeriod",
+    "SatelliteCapabilities",
+    "SatelliteOverride",
+    "SERVICE_DISABLE_QUIET_HOURS",
+    "SERVICE_ENABLE_QUIET_HOURS",
+    "_config_from_data",
+    "async_get_quiet_hours",
+    "discover_satellite_capabilities",
+    "quiet_period_for",
+]
