@@ -14,10 +14,11 @@ from custom_components import extended_openai_conversation_responses as integrat
 async def test_unload_removes_request_rule_runtime_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    preserved = object()
     runtimes = {
         ("entry-1", "conversation-1"): object(),
         ("entry-1", "conversation-2"): object(),
-        ("other-entry", "conversation-1"): object(),
+        ("other-entry", "conversation-1"): preserved,
     }
     unloaded_templates: list[str] = []
 
@@ -42,7 +43,7 @@ async def test_unload_removes_request_rule_runtime_state(
     )
 
     assert await integration.async_unload_entry(hass, entry) is True
-    assert runtimes == {("other-entry", "conversation-1"): pytest.approx(runtimes[("other-entry", "conversation-1")])}
+    assert runtimes == {("other-entry", "conversation-1"): preserved}
     assert unloaded_templates == ["entry-1"]
 
 
