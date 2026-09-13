@@ -148,6 +148,44 @@ class _FakeConnection:
         self.closed = True
 
 
+class _NoColumnsConnection:
+    def __init__(self) -> None:
+        self.progress_handler: Any = None
+        self.closed = False
+
+    def setlimit(self, *_args: Any) -> None:
+        return None
+
+    def execute(self, query: str) -> Any:
+        if query == "PRAGMA query_only = ON":
+            return None
+        return SimpleNamespace(description=None)
+
+    def set_authorizer(self, _authorizer: Any) -> None:
+        return None
+
+    def set_progress_handler(self, handler: Any, _steps: int) -> None:
+        self.progress_handler = handler
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_execute_query_rejects_statement_without_columns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = _NoColumnsConnection()
+    monkeypatch.setattr(sqlite_module.sqlite3, "connect", lambda *_a, **_k: conn)
+
+    with pytest.raises(HomeAssistantError, match="did not return any columns"):
+        sqlite_module._execute_sqlite_query(
+            "file:test.sqlite?mode=ro", "SELECT 1", False, 1
+        )
+
+    assert conn.closed is True
+    assert conn.progress_handler is None
+
+
 def test_execute_query_translates_sqlite_too_big(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -173,6 +211,24 @@ def test_execute_query_reraises_unrelated_data_error(
         sqlite_module._execute_sqlite_query(
             "file:test.sqlite?mode=ro", "SELECT 1", False, 1
         )
+
+
+def test_execute_query_reraises_non_timeout_operational_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = _FakeConnection(
+        sqlite3.OperationalError("database unavailable"), invoke_progress=True
+    )
+    monkeypatch.setattr(sqlite_module.sqlite3, "connect", lambda *_a, **_k: conn)
+    monkeypatch.setattr(sqlite_module.time, "monotonic", lambda: 10.0)
+
+    with pytest.raises(sqlite3.OperationalError, match="database unavailable"):
+        sqlite_module._execute_sqlite_query(
+            "file:test.sqlite?mode=ro", "SELECT 1", False, 1, timeout_seconds=5
+        )
+
+    assert conn.closed is True
+    assert conn.progress_handler is None
 
 
 def test_execute_query_translates_deadline_expiry(
