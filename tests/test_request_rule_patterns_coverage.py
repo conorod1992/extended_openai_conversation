@@ -34,7 +34,7 @@ def test_pattern_length_limit_is_enforced() -> None:
 @pytest.mark.parametrize(
     ("source", "message"),
     [
-        (r"say \", "ends with an escape"),
+        ("say \\", "ends with an escape"),
         ("say [hello", "missing closing"),
         ("say (hello|)", "cannot be empty"),
         ("say ]", "unexpected"),
@@ -44,7 +44,7 @@ def test_pattern_length_limit_is_enforced() -> None:
         ("say {item} and {item}", "used more than once"),
         ("say {item=}", "needs a constraint"),
         ("say {item=10..1}", "minimum greater"),
-        (r"say {item=a\}", "ends with an escape"),
+        ("say {item=a\\}", "ends with an escape"),
         ("say {item=a||b}", "empty choice"),
     ],
 )
@@ -74,7 +74,7 @@ def test_constrained_choice_limits_are_enforced() -> None:
         patterns.compile_sentence_pattern(f"set {{value={too_long}|ok}}")
 
 
-def test_single_branch_groups_and_empty_literals_compile_normally() -> None:
+def test_single_branch_groups_compile_normally() -> None:
     grouped = patterns.compile_sentence_pattern("say (hello)")
     assert grouped.match("say hello") is not None
     optional = patterns.compile_sentence_pattern("say [please] hello")
@@ -92,12 +92,13 @@ def test_required_fragment_fast_rejection_and_numeric_nonmatch() -> None:
     assert numeric.match("set -9") is None
 
 
-def test_display_helpers_cover_empty_and_terminal_spans() -> None:
+def test_display_helpers_cover_empty_expansion_and_terminal_spans() -> None:
     empty = patterns.prepare_match_text("")
     assert patterns._display_span(empty, 0, 0) == (0, 0)
 
     prepared = patterns.prepare_match_text("straße")
-    # Case-folding expands ß, so the interior offset is not a display boundary.
+    # ß expands to ss; the offset between those folded characters is not a
+    # display boundary.
     assert patterns._display_boundary(prepared, 5) is False
     assert patterns._display_boundary(prepared, 0) is True
     assert patterns._display_boundary(prepared, len(prepared.folded)) is True
@@ -120,12 +121,15 @@ def test_compiler_defensive_guards_reject_invalid_internal_shapes() -> None:
         compiler._compile_capture(patterns._Capture("value", "bogus"))
 
 
-def _compiled_with_states(*states: patterns._State) -> patterns.CompiledSentencePattern:
+def _compiled_with_states(
+    *states: patterns._State,
+    capture_names: tuple[str, ...] = (),
+) -> patterns.CompiledSentencePattern:
     return patterns.CompiledSentencePattern(
         source="synthetic",
         states=states,
         start_state=0,
-        capture_names=(),
+        capture_names=capture_names,
         required_fragments=(),
     )
 
@@ -139,18 +143,16 @@ def test_matcher_defensive_guards_reject_invalid_compiled_states() -> None:
     with pytest.raises(patterns.SentenceMatchLimitError, match="unknown compiled state"):
         unknown.match("")
 
-    bad_capture = patterns.CompiledSentencePattern(
-        source="synthetic",
-        states=(patterns._State("capture_end", out=1, name="value"), patterns._State("match")),
-        start_state=0,
+    bad_capture = _compiled_with_states(
+        patterns._State("capture_end", out=1, name="value"),
+        patterns._State("match"),
         capture_names=("value",),
-        required_fragments=(),
     )
     with pytest.raises(patterns.SentenceMatchLimitError, match="invalid compiled capture state"):
         bad_capture.match("x")
 
 
-def test_split_with_only_one_branch_and_space_boundaries_are_safe() -> None:
+def test_split_with_only_preferred_branch_and_space_boundaries_are_safe() -> None:
     synthetic = _compiled_with_states(
         patterns._State("split", out1=1),
         patterns._State("space", out=2),
