@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
@@ -124,7 +124,10 @@ async def test_skill_first_load_failure_does_not_clear_newer_singleton(
         manager_type._instance = replacement
         raise OSError("load failed")
 
-    hass = SimpleNamespace(data={}, async_add_executor_job=AsyncMock(side_effect=fail_after_replacement))
+    hass = SimpleNamespace(
+        data={},
+        async_add_executor_job=AsyncMock(side_effect=fail_after_replacement),
+    )
     monkeypatch.setattr(skills, "SkillManager", manager_type)
     monkeypatch.setattr(skills, "SkillMdParser", _Parser)
 
