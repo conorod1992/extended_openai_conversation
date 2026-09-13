@@ -420,7 +420,7 @@ guest_mode_disable:
             domain: conversation
 enable_quiet_hours:
   name: Enable Quiet Hours schedule
-  description: Enable the configured global Quiet Hours daily schedule. If the current time is inside the schedule, the policy is applied immediately.
+  description: Turn on the saved Quiet Hours schedule. If Quiet Hours is due now, it starts immediately.
 disable_quiet_hours:
   name: Disable Quiet Hours schedule
-  description: Disable the global Quiet Hours schedule and immediately restore any controls that are still owned by Quiet Hours.
+  description: Turn off the saved Quiet Hours schedule. Speaker and wake-word settings changed by Quiet Hours are restored when they have not been changed since.
