@@ -471,6 +471,7 @@ async def test_real_sdk_failure_after_tool_keeps_one_closed_exchange_without_ret
             await entity._async_handle_chat_log(chat_log, [_tool()], [])
     finally:
         await client.close()
+        await _drain_sdk_asyncgen_finalizers()
 
     assert executed == [call_id]
     assert len(wire.requests) == 2
