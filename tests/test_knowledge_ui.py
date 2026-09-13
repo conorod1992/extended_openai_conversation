@@ -61,18 +61,8 @@ def test_entry_and_agent_rejects_wrong_entry_or_subentry() -> None:
         knowledge_ui._entry_and_agent(hass, "entry-1", "agent-1")
 
 
-def test_agents_lists_only_conversation_subentries_and_feature_state() -> None:
-    conversation = _subentry("conversation", knowledge_enabled=False)
-    other = _subentry("other", subentry_type="something_else")
-    entry = _entry(subentry=conversation)
-    entry.subentries[other.subentry_id] = other
-    hass = _hass(entry)
-
-    result = pytest.run(async_fn=knowledge_ui.async_manage_knowledge_command) if False else None
-
-
 @pytest.mark.asyncio
-async def test_agents_lists_only_conversation_subentries_and_feature_state_async() -> None:
+async def test_agents_lists_only_conversation_subentries_and_feature_state() -> None:
     conversation = _subentry("conversation", knowledge_enabled=False)
     other = _subentry("other", subentry_type="something_else")
     entry = _entry(subentry=conversation)
@@ -233,7 +223,11 @@ async def test_websocket_reports_errors_and_results(monkeypatch) -> None:
 
     connection.send_error.reset_mock()
     connection.send_result.reset_mock()
-    knowledge_ui.async_manage_knowledge_command = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(
+        knowledge_ui,
+        "async_manage_knowledge_command",
+        AsyncMock(return_value={"ok": True}),
+    )
     await knowledge_ui.websocket_manage_knowledge(
         _hass(), connection, {"id": 8, "action": "agents", "type": knowledge_ui.WS_COMMAND}
     )
