@@ -153,6 +153,9 @@ def test_extract_usage_salvages_object_and_model_dump_details() -> None:
             self.extra = 2
 
     class DumpDetails:
+        def __init__(self):
+            self.reasoning_tokens = 3
+
         def model_dump(self, *, exclude_none):
             assert exclude_none is True
             return {"reasoning_tokens": 3, "accepted_prediction_tokens": 2, "zero": 0}
