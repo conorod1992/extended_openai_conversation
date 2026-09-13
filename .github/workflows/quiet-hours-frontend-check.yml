@@ -1,0 +1,19 @@
+name: Quiet Hours frontend check
+
+on:
+  push:
+    branches:
+      - feature/quiet-hours-v2
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Frontend syntax and behaviour
+        run: |
+          node --check custom_components/extended_openai_conversation_responses/frontend/quiet-hours-ui.js
+          node --test tests/quiet-hours.test.mjs
