@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -95,12 +96,19 @@ async def test_auth_change_fails_closed_then_refreshes_user(hass, monkeypatch):
     get_user = AsyncMock(return_value=refreshed)
     monkeypatch.setattr(hass.auth, "async_get_user", get_user)
     listeners: dict[str, object] = {}
+    tasks: list[asyncio.Task[None]] = []
 
     def listen(event_type, callback):
         listeners[event_type] = callback
         return Mock()
 
+    def create_task(coro, _name):
+        task = asyncio.create_task(coro)
+        tasks.append(task)
+        return task
+
     monkeypatch.setattr(hass.bus, "async_listen", listen)
+    monkeypatch.setattr(hass, "async_create_task", create_task)
     hass.data.pop(ha_permissions._USER_CACHE_KEY, None)
     hass.data.pop(ha_permissions._SETUP_KEY, None)
     await ha_permissions.async_setup_ha_permissions(hass)
@@ -108,8 +116,9 @@ async def test_auth_change_fails_closed_then_refreshes_user(hass, monkeypatch):
     callback = listeners[EVENT_USER_UPDATED]
     callback(Event(EVENT_USER_UPDATED, {"user_id": "user-1"}))
     assert "user-1" not in hass.data[ha_permissions._USER_CACHE_KEY]
+    assert len(tasks) == 1
 
-    await hass.async_block_till_done()
+    await tasks[0]
 
     get_user.assert_awaited_once_with("user-1")
     assert hass.data[ha_permissions._USER_CACHE_KEY]["user-1"] is refreshed
@@ -126,12 +135,14 @@ async def test_auth_change_ignores_invalid_id_and_removal_does_not_refresh(
     get_user = AsyncMock()
     monkeypatch.setattr(hass.auth, "async_get_user", get_user)
     listeners: dict[str, object] = {}
+    create_task = Mock()
 
     def listen(event_type, callback):
         listeners[event_type] = callback
         return Mock()
 
     monkeypatch.setattr(hass.bus, "async_listen", listen)
+    monkeypatch.setattr(hass, "async_create_task", create_task)
     hass.data.pop(ha_permissions._USER_CACHE_KEY, None)
     hass.data.pop(ha_permissions._SETUP_KEY, None)
     await ha_permissions.async_setup_ha_permissions(hass)
@@ -143,9 +154,9 @@ async def test_auth_change_ignores_invalid_id_and_removal_does_not_refresh(
 
     removed = listeners[EVENT_USER_REMOVED]
     removed(Event(EVENT_USER_REMOVED, {"user_id": "user-1"}))
-    await hass.async_block_till_done()
 
     assert "user-1" not in hass.data[ha_permissions._USER_CACHE_KEY]
+    create_task.assert_not_called()
     get_user.assert_not_awaited()
 
 
@@ -157,12 +168,19 @@ async def test_auth_refresh_does_not_cache_missing_user(hass, monkeypatch):
     monkeypatch.setattr(hass.auth, "async_get_users", AsyncMock(return_value=[user]))
     monkeypatch.setattr(hass.auth, "async_get_user", AsyncMock(return_value=None))
     listeners: dict[str, object] = {}
+    tasks: list[asyncio.Task[None]] = []
 
     def listen(event_type, callback):
         listeners[event_type] = callback
         return Mock()
 
+    def create_task(coro, _name):
+        task = asyncio.create_task(coro)
+        tasks.append(task)
+        return task
+
     monkeypatch.setattr(hass.bus, "async_listen", listen)
+    monkeypatch.setattr(hass, "async_create_task", create_task)
     hass.data.pop(ha_permissions._USER_CACHE_KEY, None)
     hass.data.pop(ha_permissions._SETUP_KEY, None)
     await ha_permissions.async_setup_ha_permissions(hass)
@@ -170,6 +188,7 @@ async def test_auth_refresh_does_not_cache_missing_user(hass, monkeypatch):
     listeners[EVENT_USER_UPDATED](
         Event(EVENT_USER_UPDATED, {"user_id": "user-1"})
     )
-    await hass.async_block_till_done()
+    assert len(tasks) == 1
+    await tasks[0]
 
     assert "user-1" not in hass.data[ha_permissions._USER_CACHE_KEY]
