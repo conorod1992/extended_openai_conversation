@@ -55,7 +55,7 @@ function volumeStatus(panel, satellite) {
   if (!entityId) return {label: "No speaker found", ready: false};
   const state = panel._hass?.states?.[entityId];
   const volume = state?.attributes?.volume_level;
-  if (!state || typeof volume !== "number" || !Number.isFinite(volume)) {
+  if (!state || state.state === "unavailable" || state.state === "unknown" || typeof volume !== "number" || !Number.isFinite(volume)) {
     return {label: "Speaker unavailable", ready: false};
   }
   return {label: "Speaker ready", ready: true};
