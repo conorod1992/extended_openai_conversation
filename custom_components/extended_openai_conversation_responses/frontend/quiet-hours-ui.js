@@ -38,7 +38,12 @@ function entityOptions(panel, domain, selected = "") {
   const entries = Object.keys(panel._hass?.states || {})
     .filter((entityId) => entityId.startsWith(`${domain}.`))
     .sort((a, b) => entityLabel(panel._hass, a).localeCompare(entityLabel(panel._hass, b)));
-  return entries.map((entityId) => `<option value="${panel._e(entityId)}" ${entityId === selected ? "selected" : ""}>${panel._e(entityLabel(panel._hass, entityId))} · ${panel._e(entityId)}</option>`).join("");
+  if (selected && !entries.includes(selected)) entries.unshift(selected);
+  return entries.map((entityId) => {
+    const missing = !panel._hass?.states?.[entityId];
+    const label = missing ? `Unavailable · ${entityId}` : `${entityLabel(panel._hass, entityId)} · ${entityId}`;
+    return `<option value="${panel._e(entityId)}" ${entityId === selected ? "selected" : ""}>${panel._e(label)}</option>`;
+  }).join("");
 }
 
 function manualOverride(config, satelliteId) {
@@ -57,8 +62,8 @@ function satelliteCard(panel, satellite, config) {
       <span class="${satellite.media_player_entity_id ? "availability-badge" : "disabled-badge"}">${satellite.media_player_entity_id ? "Volume ready" : "No volume found"}</span>
     </div>
     <div class="qh-grid">
-      <label><span>Volume entity</span><select class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="media_player_entity_id"><option value="">Auto${autoMedia ? ` · ${panel._e(autoMedia)}` : ""}</option>${entityOptions(panel, "media_player", media)}</select><small>${satellite.media_player_source === "manual" ? "Manual override" : autoMedia ? `Auto-discovered on the same device: ${panel._e(autoMedia)}` : "No same-device volume control was discovered. Choose one manually if this satellite has an output entity elsewhere."}</small></label>
-      <label><span>Wake sound switch</span><select class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="wake_sound_entity_id"><option value="">Auto${autoWake ? ` · ${panel._e(autoWake)}` : ""}</option>${entityOptions(panel, "switch", wake)}</select><small>${satellite.wake_sound_source === "manual" ? "Manual override" : autoWake ? `Auto-discovered on the same device: ${panel._e(autoWake)}` : "No Wake sound switch was discovered. This is expected on many non-Voice-PE satellites."}</small></label>
+      <label><span>Volume entity</span><select class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="media_player_entity_id"><option value="">Automatic${autoMedia ? ` · ${panel._e(autoMedia)}` : ""}</option>${entityOptions(panel, "media_player", media)}</select><small>${satellite.media_player_source === "manual" ? "Manual override" : autoMedia ? `Automatically discovered on the same device: ${panel._e(autoMedia)}` : "No same-device volume control was discovered. Choose one manually if this satellite has an output entity elsewhere."}</small></label>
+      <label><span>Wake sound switch</span><select class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="wake_sound_entity_id"><option value="">Automatic${autoWake ? ` · ${panel._e(autoWake)}` : ""}</option>${entityOptions(panel, "switch", wake)}</select><small>${satellite.wake_sound_source === "manual" ? "Manual override" : autoWake ? `Automatically discovered on the same device: ${panel._e(autoWake)}` : "No Wake sound switch was discovered. This is normal for many non-Voice-PE satellites."}</small></label>
     </div>
   </article>`;
 }
@@ -68,19 +73,21 @@ export function renderQuietHours(panel) {
   const config = panel._quietHoursDraft || result.config || {};
   const satellites = result.satellites || [];
   const maxPercent = Math.round(Number(config.max_volume ?? 0.2) * 100);
-  return `<section class="page-intro"><h1>Quiet Hours</h1><p>Apply a simple night-time policy to Assist satellites. Extended OpenAI handles only the common volume and wake-sound controls; use the Quiet Hours entity in normal Home Assistant automations for LEDs or other device-specific behaviour.</p></section>
+  const statusTitle = result.active ? "Quiet Hours active now" : config.enabled ? "Outside Quiet Hours" : "Quiet Hours schedule disabled";
+  const statusDetail = config.enabled ? `${panel._e(config.start || "22:00")}–${panel._e(config.end || "07:00")} every day` : "Enable the schedule below when you are ready to use it.";
+  return `<section class="page-intro"><h1>Quiet Hours</h1><p>Keep Assist satellites less intrusive on a daily schedule. Extended OpenAI handles only the common volume and wake-sound controls; use the Quiet Hours entity in normal Home Assistant automations for LEDs or other device-specific behaviour.</p></section>
     <section class="content-card">
-      <div class="qh-status"><div><strong>${result.active ? "Quiet Hours active" : "Quiet Hours inactive"}</strong><small>${config.enabled ? `${panel._e(config.start || "22:00")}–${panel._e(config.end || "07:00")}` : "Schedule disabled"}</small></div><span class="${result.active ? "availability-badge" : "disabled-badge"}">${result.active ? "On" : "Off"}</span></div>
-      <div class="config-toggle setting"><span class="setting-copy"><span class="setting-label-row"><label for="qh-enabled"><strong>Enable Quiet Hours</strong></label></span><small>Apply the policy every day between the configured start and end times.</small></span><label class="switch-control" for="qh-enabled"><input id="qh-enabled" type="checkbox" role="switch" ${config.enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>
+      <div class="qh-status"><div><strong>${statusTitle}</strong><small>${statusDetail}</small></div><span class="${result.active ? "availability-badge" : "disabled-badge"}">${result.active ? "Active" : "Inactive"}</span></div>
+      <div class="config-toggle setting"><span class="setting-copy"><span class="setting-label-row"><label for="qh-enabled"><strong>Enable daily schedule</strong></label></span><small>When enabled, the policy applies automatically between the configured start and end times. Enabling it during that period takes effect immediately.</small></span><label class="switch-control" for="qh-enabled"><input id="qh-enabled" type="checkbox" role="switch" ${config.enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>
       <div class="qh-grid qh-policy">
         <label><span>Start</span><input id="qh-start" type="time" value="${panel._e(config.start || "22:00")}"></label>
         <label><span>End</span><input id="qh-end" type="time" value="${panel._e(config.end || "07:00")}"></label>
-        <label><span>Maximum satellite volume</span><div class="qh-volume"><input id="qh-volume" type="range" min="0" max="100" step="1" value="${maxPercent}"><output id="qh-volume-value">${maxPercent}%</output></div><small>Acts as a ceiling: a satellite already quieter than this is never made louder.</small></label>
+        <label><span>Maximum satellite volume</span><div class="qh-volume"><input id="qh-volume" type="range" min="0" max="100" step="1" value="${maxPercent}"><output id="qh-volume-value">${maxPercent}%</output></div><small>This is a ceiling, not a target: a satellite already quieter than this is never made louder.</small></label>
         <label><span>Wake sound during Quiet Hours</span><select id="qh-wake"><option value="off" ${config.wake_sound === "off" ? "selected" : ""}>Off</option><option value="on" ${config.wake_sound === "on" ? "selected" : ""}>On</option><option value="unchanged" ${config.wake_sound === "unchanged" ? "selected" : ""}>Don't change</option></select><small>Applied only where a compatible Wake sound switch is discovered or manually selected.</small></label>
       </div>
-      <div class="qh-entity-note"><strong>Automation state</strong><code>${panel._e(result.state_entity_id || "binary_sensor.extended_openai_quiet_hours")}</code><small>This read-only entity is on for the scheduled period, even when every satellite is already below the volume ceiling. Use it to trigger your own LED or other satellite-specific automations.</small></div>
+      <div class="qh-entity-note"><strong>Home Assistant automation state</strong><code>${panel._e(result.state_entity_id || "binary_sensor.extended_openai_quiet_hours")}</code><small>This read-only entity is on throughout the scheduled period, even when no satellite needs changing. Use it for LEDs or other device-specific automations. The schedule can also be enabled or disabled with the Extended OpenAI actions <code>enable_quiet_hours</code> and <code>disable_quiet_hours</code>.</small></div>
     </section>
-    <section class="content-card"><div class="section-heading"><div><h2>Assist satellites</h2><p>Controls on the same Home Assistant device are discovered automatically. Manual choices below override discovery for that satellite only.</p></div></div>${satellites.length ? `<div class="qh-satellites">${satellites.map((satellite) => satelliteCard(panel, satellite, config)).join("")}</div>` : `<p class="empty">No Assist satellite entities were found.</p>`}</section>
+    <section class="content-card"><div class="section-heading"><div><h2>Assist satellites</h2><p>Controls on the same Home Assistant device are discovered automatically. Manual choices below override discovery for that satellite only.</p></div></div>${satellites.length ? `<div class="qh-satellites">${satellites.map((satellite) => satelliteCard(panel, satellite, config)).join("")}</div>` : `<p class="empty">No Assist satellite entities were found. Quiet Hours will keep checking as satellites become available.</p>`}</section>
     <div class="config-actions"><button id="qh-save" type="button" class="primary">Save Quiet Hours</button><button id="qh-reset" type="button">Reset unsaved changes</button></div>`;
 }
 
