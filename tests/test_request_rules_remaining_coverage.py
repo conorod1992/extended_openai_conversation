@@ -128,7 +128,7 @@ def test_guest_configured_function_preflight_rejects_missing_or_disallowed_tool(
     hass = SimpleNamespace()
     policy = GuestCapabilityPolicy(
         guest_active=True,
-        allowed_configured_tools=frozenset({"safe_tool"}),
+        configured_tool_names=frozenset({"safe_tool"}),
     )
     service = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
 
