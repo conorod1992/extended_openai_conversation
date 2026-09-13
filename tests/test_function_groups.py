@@ -26,7 +26,10 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 from custom_components.extended_openai_conversation_responses.function_groups import (
     FunctionGroupRuntime,
     assemble_function_tools,
+    function_tool_runtime_scope,
+    get_function_group_runtime,
     load_function_groups,
+    remove_function_group_runtime,
     reset_function_group_runtime,
 )
 from custom_components.extended_openai_conversation_responses.function_tool_resolution import (
@@ -181,13 +184,13 @@ def test_empty_enabled_on_demand_group_is_omitted_then_reappears() -> None:
 
     tool["enabled"] = True
     enabled = assemble_function_tools([tool], groups, session.loaded_group_ids)
-    assert [item["spec"]["name"] for item in enabled.tools] == [
-        "load_function_groups"
-    ]
+    assert [item["spec"]["name"] for item in enabled.tools] == ["load_function_groups"]
     assert enabled.available_on_demand_groups == 1
 
 
-def test_loaded_group_state_is_discarded_when_its_last_member_becomes_unavailable() -> None:
+def test_loaded_group_state_is_discarded_when_its_last_member_becomes_unavailable() -> (
+    None
+):
     tool = _tool("remind")
     groups = [_group("reminders", ["remind"])]
     session = FunctionGroupRuntime().begin("conversation:one", 30)
@@ -199,9 +202,7 @@ def test_loaded_group_state_is_discarded_when_its_last_member_becomes_unavailabl
     assert session.loaded_group_ids == set()
 
     tool["enabled"] = True
-    available_again = assemble_function_tools(
-        [tool], groups, session.loaded_group_ids
-    )
+    available_again = assemble_function_tools([tool], groups, session.loaded_group_ids)
     assert [item["spec"]["name"] for item in available_again.tools] == [
         "load_function_groups"
     ]
@@ -300,9 +301,7 @@ def test_disabled_group_is_rejected_when_execution_resolves_latest_state() -> No
     stale_tool = _tool("sensitive")
     current_tool = _tool("sensitive")
     latest_data = {
-        "function_groups": [
-            _group("protected", ["sensitive"], "always", enabled=False)
-        ]
+        "function_groups": [_group("protected", ["sensitive"], "always", enabled=False)]
     }
     persisted_subentry = SimpleNamespace(data=latest_data)
     agent = SimpleNamespace(
@@ -409,6 +408,37 @@ def test_agent_reload_and_multiple_agents_isolate_runtime(hass) -> None:
     reloaded = reset_function_group_runtime(hass, "entry", "agent-one")
     assert reloaded is not first
     assert reloaded.begin("conversation:same", 30).loaded_group_ids == set()
+
+
+def test_agent_unload_removes_only_its_function_group_runtime(hass) -> None:
+    first = reset_function_group_runtime(hass, "entry", "agent-one")
+    second = reset_function_group_runtime(hass, "entry", "agent-two")
+
+    remove_function_group_runtime(hass, "entry", "agent-one")
+
+    assert get_function_group_runtime(hass, "entry", "agent-one") is None
+    assert get_function_group_runtime(hass, "entry", "agent-two") is second
+    assert first is not second
+
+
+def test_request_and_caller_tool_predicates_are_both_enforced() -> None:
+    tools = [
+        _tool("available"),
+        _tool("blocked_by_caller"),
+        _tool("blocked_by_request"),
+    ]
+
+    with function_tool_runtime_scope(
+        tool_available=lambda tool: tool["spec"]["name"] != "blocked_by_request"
+    ):
+        assembly = assemble_function_tools(
+            tools,
+            [],
+            set(),
+            tool_available=lambda tool: tool["spec"]["name"] != "blocked_by_caller",
+        )
+
+    assert [tool["spec"]["name"] for tool in assembly.tools] == ["available"]
 
 
 async def test_version_six_migration_adds_empty_groups_without_rewriting_tools(
