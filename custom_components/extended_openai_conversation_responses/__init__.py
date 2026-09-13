@@ -114,6 +114,7 @@ from .openai_compat import apply_openai_compatibility
 from .performance import PerformanceOpenAIClientProxy, install_performance_optimizations
 from .persistence_hardening import install_persistence_transactions
 from .provider_credentials import setup_provider_credentials_websocket
+from .quiet_hours import async_get_quiet_hours
 from .regex_execution import install_configurable_regex_isolation
 from .request_rule_match_preview import install_request_rule_match_preview
 from .restore_recovery import async_recover_pending_restores, install_restore_recovery
@@ -141,6 +142,7 @@ def _register_split_frontend_modules() -> None:
         "model-catalog.js",
         "ha-llm-tools.js",
         "agent-config-loader.js",
+        "quiet-hours-ui.js",
         "exposed-attributes-ui.js",
         "backup-transfer-ui.js",
         "guide-page-base.js",
@@ -174,6 +176,7 @@ type ExtendedOpenAIConfigEntry = ConfigEntry[AsyncClient]
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Extended OpenAI Conversation (Responses)."""
     await async_setup_model_catalog(hass)
+    await async_get_quiet_hours(hass)
     apply_openai_compatibility()
     install_persistence_transactions()
     install_restore_recovery()

@@ -418,3 +418,9 @@ guest_mode_disable:
           filter:
             integration: extended_openai_conversation_responses
             domain: conversation
+enable_quiet_hours:
+  name: Enable Quiet Hours schedule
+  description: Turn on the saved Quiet Hours schedule. If Quiet Hours is due now, it starts immediately.
+disable_quiet_hours:
+  name: Disable Quiet Hours schedule
+  description: Turn off the saved Quiet Hours schedule. Speaker and wake-word settings changed by Quiet Hours are restored when they have not been changed since.
