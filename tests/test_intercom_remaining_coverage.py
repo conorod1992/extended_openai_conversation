@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import deque
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -334,7 +334,7 @@ def test_catalog_handles_registryless_satellites_and_filters_related_metadata(
     monkeypatch.setattr(intercom.fr, "async_get", lambda _hass: floors)
     monkeypatch.setattr(intercom.lr, "async_get", lambda _hass: labels)
 
-    result = manager = IntercomManager(hass).catalog()
+    result = IntercomManager(hass).catalog()
 
     assert [item["id"] for item in result["satellites"]] == [
         kitchen_entity,
