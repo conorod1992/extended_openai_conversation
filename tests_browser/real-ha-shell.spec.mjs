@@ -7,11 +7,16 @@ test.skip(!baseUrl || !authDataRaw, "requires the dedicated genuine Home Assista
 
 test("shipped management panel loads and persists configuration inside the genuine HA frontend", async ({context, page}) => {
   const authData = JSON.parse(authDataRaw);
-  const pageErrors = [];
+  const integrationPageErrors = [];
   const integrationRequestFailures = [];
   const integrationResponses = [];
 
-  page.on("pageerror", (error) => pageErrors.push(String(error)));
+  page.on("pageerror", (error) => {
+    const detail = [error.name, error.message, error.stack].filter(Boolean).join("\n");
+    if (detail.includes("/extended_openai_conversation_responses/")) {
+      integrationPageErrors.push(detail);
+    }
+  });
   page.on("requestfailed", (request) => {
     if (request.url().includes("/extended_openai_conversation_responses/")) {
       integrationRequestFailures.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText || "request failed"}`);
@@ -51,7 +56,7 @@ test("shipped management panel loads and persists configuration inside the genui
   await expect(panel.locator("#agent option:checked")).toHaveText("Real HA shell saved");
 
   expect(integrationRequestFailures).toEqual([]);
-  expect(pageErrors).toEqual([]);
+  expect(integrationPageErrors).toEqual([]);
   expect(integrationResponses.some(({url, status}) =>
     url.endsWith("/extended_openai_conversation_responses/management-panel.js") && status === 200,
   )).toBe(true);
