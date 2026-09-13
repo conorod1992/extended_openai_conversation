@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 import json
 from types import SimpleNamespace
@@ -288,6 +289,12 @@ def _client(wire: _Wire) -> AsyncOpenAI:
     )
 
 
+async def _close_client(client: AsyncOpenAI) -> None:
+    """Close the SDK client and let scheduled stream finalizers finish."""
+    await client.close()
+    await asyncio.sleep(0)
+
+
 def _entity(hass: Any, client: AsyncOpenAI, api_mode: str) -> Any:
     entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
     entity.entry = SimpleNamespace(runtime_data=client, data={})
@@ -365,7 +372,7 @@ async def test_responses_real_sdk_serializes_and_parses_tool_round_trip(hass) ->
     try:
         await entity._async_handle_chat_log(chat_log, [_tool()], [])
     finally:
-        await client.close()
+        await _close_client(client)
 
     assert executed == [
         ("call_response_1", "get_state", {"entity_id": "light.kitchen"})
@@ -434,7 +441,7 @@ async def test_chat_completions_real_sdk_serializes_and_parses_tool_round_trip(
     try:
         await entity._async_handle_chat_log(chat_log, [_tool()], [])
     finally:
-        await client.close()
+        await _close_client(client)
 
     assert executed == [("call_chat_1", "get_state", {"entity_id": "light.kitchen"})]
     assert len(wire.requests) == 2
@@ -501,7 +508,7 @@ async def test_real_sdk_maps_raw_http_429_without_network_or_retry(hass) -> None
         with pytest.raises(RateLimitError, match="wire rate limit") as err:
             await entity._async_handle_chat_log(chat_log, [], [])
     finally:
-        await client.close()
+        await _close_client(client)
 
     assert err.value.status_code == 429
     assert len(wire.requests) == 1
