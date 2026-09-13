@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .quiet_hours_runtime import (
@@ -24,7 +26,9 @@ from .quiet_hours_runtime import (
     _config_from_data,
     _current_switch,
     _current_volume,
-    discover_satellite_capabilities,
+    _override_map,
+    _pick_media_player,
+    _pick_wake_sound,
     quiet_period_for,
 )
 
@@ -33,6 +37,88 @@ _STATE_UNIQUE_ID = "quiet_hours"
 _STATE_FALLBACK_ENTITY_ID = "binary_sensor.extended_openai_quiet_hours"
 SERVICE_ENABLE_QUIET_HOURS = "enable_quiet_hours"
 SERVICE_DISABLE_QUIET_HOURS = "disable_quiet_hours"
+
+
+def discover_satellite_capabilities(
+    hass: HomeAssistant, config: QuietHoursConfig
+) -> list[SatelliteCapabilities]:
+    """Resolve controls for live Assist satellites without registry internals.
+
+    Entity-registry container details and some convenience helpers have changed
+    across Home Assistant releases.  The state machine already tells us which
+    entities are live, so correlate those states to registry entries one-by-one
+    through the stable ``async_get(entity_id)`` API and then match by device id.
+    """
+    registry = er.async_get(hass)
+    overrides = _override_map(config)
+    states = list(hass.states.async_all())
+    satellites = sorted(
+        (state for state in states if state.entity_id.startswith("assist_satellite.")),
+        key=lambda item: item.entity_id,
+    )
+
+    control_entries = []
+    for state in states:
+        if not state.entity_id.startswith(("media_player.", "switch.")):
+            continue
+        entry = registry.async_get(state.entity_id)
+        if entry is not None and entry.disabled_by is None:
+            control_entries.append(entry)
+
+    result: list[SatelliteCapabilities] = []
+    for state in satellites:
+        satellite = registry.async_get(state.entity_id)
+        if satellite is not None and satellite.disabled_by is not None:
+            continue
+        device_id = satellite.device_id if satellite is not None else None
+        same_device = (
+            [entry for entry in control_entries if entry.device_id == device_id]
+            if device_id is not None
+            else []
+        )
+        override = overrides.get(state.entity_id)
+        auto_media = _pick_media_player(hass, same_device)
+        auto_wake = _pick_wake_sound(same_device)
+        media = (
+            override.media_player_entity_id
+            if override and override.media_player_entity_id
+            else auto_media
+        )
+        wake = (
+            override.wake_sound_entity_id
+            if override and override.wake_sound_entity_id
+            else auto_wake
+        )
+        name = (
+            state.attributes.get("friendly_name")
+            or (satellite.name if satellite is not None else None)
+            or (satellite.original_name if satellite is not None else None)
+            or state.entity_id
+        )
+        result.append(
+            SatelliteCapabilities(
+                satellite_entity_id=state.entity_id,
+                name=str(name),
+                device_id=device_id,
+                media_player_entity_id=media,
+                wake_sound_entity_id=wake,
+                media_player_source=(
+                    "manual"
+                    if override and override.media_player_entity_id
+                    else "auto"
+                    if auto_media
+                    else None
+                ),
+                wake_sound_source=(
+                    "manual"
+                    if override and override.wake_sound_entity_id
+                    else "auto"
+                    if auto_wake
+                    else None
+                ),
+            )
+        )
+    return result
 
 
 class QuietHoursManager(_RuntimeQuietHoursManager):
@@ -48,9 +134,6 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         registry = er.async_get(self.hass)
         create = getattr(registry, "async_get_or_create", None)
         if not callable(create):
-            # Home Assistant's real entity registry always exposes this method.
-            # Retaining a deterministic fallback keeps reduced test/runtime stubs
-            # usable without weakening normal registry-backed identity.
             self._registered_state_entity_id = _STATE_FALLBACK_ENTITY_ID
             return self._registered_state_entity_id
         entry = create(
@@ -84,6 +167,12 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             },
         )
 
+    def discovery_snapshot(self) -> list[dict[str, Any]]:
+        return [
+            item.as_dict()
+            for item in discover_satellite_capabilities(self.hass, self._config)
+        ]
+
     def snapshot(self) -> dict[str, Any]:
         result = super().snapshot()
         result["state_entity_id"] = self._state_entity_id()
@@ -96,6 +185,58 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         config = self.config.as_dict()
         config["enabled"] = enabled
         return await self.async_update_config(config)
+
+    async def async_reconcile(self, *, now: datetime | None = None) -> None:
+        """Reconcile the scheduled policy using cross-version-safe discovery."""
+        now = now or dt_util.now()
+        async with self._lock:
+            if not self._initialized:
+                return
+            period = (
+                quiet_period_for(now, self._config.start, self._config.end)
+                if self._config.enabled
+                else None
+            )
+            self._publish_state(period)
+            if period is None:
+                await self._async_restore_locked()
+                return
+
+            period_id = period.start.isoformat()
+            if (
+                self._active is not None
+                and self._active.get("period_started_at") != period_id
+            ):
+                await self._async_restore_locked()
+
+            if self._active is None:
+                self._active = {
+                    "period_started_at": period_id,
+                    "period_ends_at": period.end.isoformat(),
+                    "applied_at": now.isoformat(),
+                    "controls": {},
+                    "observed_controls": [],
+                }
+                await self._async_save_locked()
+
+            controls = self._active.setdefault("controls", {})
+            for capability in discover_satellite_capabilities(self.hass, self._config):
+                if capability.media_player_entity_id:
+                    await self._async_apply_volume_locked(
+                        capability.satellite_entity_id,
+                        capability.media_player_entity_id,
+                        controls,
+                    )
+                if (
+                    capability.wake_sound_entity_id
+                    and self._config.wake_sound != "unchanged"
+                ):
+                    await self._async_apply_switch_locked(
+                        capability.satellite_entity_id,
+                        capability.wake_sound_entity_id,
+                        self._config.wake_sound == "on",
+                        controls,
+                    )
 
     async def _async_apply_volume_locked(
         self,
@@ -112,9 +253,6 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         if original is None:
             return
 
-        # A successfully readable control is evaluated only once per Quiet Hours
-        # occurrence. This lets periodic discovery find newly available satellites
-        # without later mistaking a user's manual change for a new policy target.
         observed.append(entity_id)
         await self._async_save_locked()
         if original <= self._config.max_volume + _VOLUME_TOLERANCE:
@@ -177,8 +315,6 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             value.get("observed_controls") if isinstance(value, Mapping) else None
         )
         observed = {item for item in raw_observed or [] if isinstance(item, str)}
-        # Older stored active state did not record no-op evaluations. Owned controls
-        # are necessarily already evaluated, so include them during migration.
         observed.update(normalized.get("controls", {}))
         normalized["observed_controls"] = sorted(observed)
         return normalized
