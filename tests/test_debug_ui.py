@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+from inspect import unwrap
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses import debug_ui
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
+from homeassistant.exceptions import HomeAssistantError
 
 
 class _Connection:
@@ -46,6 +46,12 @@ class _Manager:
     def clear(self) -> int:
         self.clear_calls += 1
         return 3
+
+
+async def _call_websocket(hass: Any, connection: Any, msg: dict[str, Any]) -> None:
+    """Invoke the coroutine beneath Home Assistant's async_response scheduler."""
+    handler = unwrap(debug_ui.websocket_request_debug)
+    await handler(hass, connection, msg)
 
 
 def _subentry(
@@ -146,7 +152,7 @@ def test_manager_validates_entry_and_conversation_subentry(
 async def test_websocket_rejects_non_admin_before_accessing_debug_state() -> None:
     connection = _Connection(is_admin=False)
 
-    await debug_ui.websocket_request_debug(
+    await _call_websocket(
         cast(Any, SimpleNamespace()),
         cast(Any, connection),
         {"id": 1, "action": "status"},
@@ -167,7 +173,7 @@ async def test_websocket_agents_does_not_require_agent_selection(
         lambda hass: [{"entry_id": "entry", "subentry_id": "agent", "title": "Agent"}],
     )
 
-    await debug_ui.websocket_request_debug(
+    await _call_websocket(
         cast(Any, SimpleNamespace()),
         cast(Any, connection),
         {"id": 2, "action": "agents"},
@@ -200,14 +206,14 @@ async def test_websocket_status_configure_runs_and_clear(
     hass = cast(Any, SimpleNamespace())
 
     connection = _Connection()
-    await debug_ui.websocket_request_debug(
+    await _call_websocket(
         hass,
         cast(Any, connection),
         {"id": 3, "action": "status"},
     )
     assert connection.results[-1] == (3, {"enabled": False, "limit": 10})
 
-    await debug_ui.websocket_request_debug(
+    await _call_websocket(
         hass,
         cast(Any, connection),
         {"id": 4, "action": "configure", "enabled": True, "limit": 25},
@@ -215,7 +221,7 @@ async def test_websocket_status_configure_runs_and_clear(
     assert manager.configure_calls == [(True, 25)]
     assert connection.results[-1] == (4, {"enabled": True, "limit": 25})
 
-    await debug_ui.websocket_request_debug(
+    await _call_websocket(
         hass,
         cast(Any, connection),
         {"id": 5, "action": "runs"},
@@ -225,7 +231,7 @@ async def test_websocket_status_configure_runs_and_clear(
         {"runs": [{"debug_id": "run-1"}], "enabled": True, "limit": 25},
     )
 
-    await debug_ui.websocket_request_debug(
+    await _call_websocket(
         hass,
         cast(Any, connection),
         {"id": 6, "action": "clear", "confirm": True},
@@ -262,7 +268,7 @@ async def test_websocket_get_bounds_provider_page_and_reports_missing_trace(
     hass = cast(Any, SimpleNamespace())
     connection = _Connection()
 
-    await debug_ui.websocket_request_debug(
+    await _call_websocket(
         hass,
         cast(Any, connection),
         {
@@ -283,7 +289,7 @@ async def test_websocket_get_bounds_provider_page_and_reports_missing_trace(
         {"trace": {"debug_id": "run-1", "provider_requests": []}},
     )
 
-    await debug_ui.websocket_request_debug(
+    await _call_websocket(
         hass,
         cast(Any, connection),
         {"id": 8, "action": "get", "debug_id": "missing", "provider_limit": 0},
@@ -312,7 +318,7 @@ async def test_websocket_translates_request_errors(
     monkeypatch.setattr(debug_ui, "_manager", lambda hass, current: _Manager())
     connection = _Connection()
 
-    await debug_ui.websocket_request_debug(
+    await _call_websocket(
         cast(Any, SimpleNamespace()), cast(Any, connection), msg
     )
 
@@ -330,7 +336,7 @@ async def test_websocket_translates_runtime_and_value_errors(
         raise RuntimeError("manager unavailable")
 
     monkeypatch.setattr(debug_ui, "_manager", fail_manager)
-    await debug_ui.websocket_request_debug(
+    await _call_websocket(
         cast(Any, SimpleNamespace()),
         cast(Any, connection),
         {"id": 12, "action": "status"},
@@ -339,7 +345,7 @@ async def test_websocket_translates_runtime_and_value_errors(
 
     manager = _Manager()
     monkeypatch.setattr(debug_ui, "_manager", lambda hass, msg: manager)
-    await debug_ui.websocket_request_debug(
+    await _call_websocket(
         cast(Any, SimpleNamespace()),
         cast(Any, connection),
         {
