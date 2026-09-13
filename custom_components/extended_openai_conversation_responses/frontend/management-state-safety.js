@@ -275,7 +275,13 @@ function bindStateSafety(panel) {
   const syncGuestAfterEvent = () => queueMicrotask(() => syncGuestDirty(panel));
   const syncConfigAfterControlEvent = (event) => {
     const key = configKeyForControl(event.target);
-    if (key) applyTargetedConfigDirty(panel, [key], event.target);
+    if (!key) return;
+    const control = event.target;
+    // Field-specific editor handlers may still be copying the control value into
+    // the shared draft during this event. Compare against the persisted baseline
+    // only after those handlers have completed, then let clarity project the
+    // authoritative changed-key set onto navigation destinations.
+    queueMicrotask(() => applyTargetedConfigDirty(panel, [key], control));
   };
   root.addEventListener("input", syncGuestAfterEvent);
   root.addEventListener("input", syncConfigAfterControlEvent);
