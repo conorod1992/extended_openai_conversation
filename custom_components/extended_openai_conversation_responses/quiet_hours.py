@@ -11,6 +11,7 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
 from .quiet_hours_runtime import (
+    _VOLUME_TOLERANCE,
     DEFAULT_END,
     DEFAULT_MAX_VOLUME,
     DEFAULT_START,
@@ -20,7 +21,6 @@ from .quiet_hours_runtime import (
     QuietPeriod,
     SatelliteCapabilities,
     SatelliteOverride,
-    _VOLUME_TOLERANCE,
     _config_from_data,
     _current_switch,
     _current_volume,
@@ -246,13 +246,13 @@ __all__ = [
     "DEFAULT_MAX_VOLUME",
     "DEFAULT_START",
     "DEFAULT_WAKE_SOUND",
+    "SERVICE_DISABLE_QUIET_HOURS",
+    "SERVICE_ENABLE_QUIET_HOURS",
     "QuietHoursConfig",
     "QuietHoursManager",
     "QuietPeriod",
     "SatelliteCapabilities",
     "SatelliteOverride",
-    "SERVICE_DISABLE_QUIET_HOURS",
-    "SERVICE_ENABLE_QUIET_HOURS",
     "_config_from_data",
     "async_get_quiet_hours",
     "discover_satellite_capabilities",
