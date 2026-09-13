@@ -110,6 +110,8 @@ async def test_prune_due_immediate_save_fallback_clears_pending_state(
         _lock=asyncio.Lock(),
         _detail_storage=object(),
         _async_save_details=_save_details,
+        requests=[],
+        runs=[],
     )
     setattr(manager, lifecycle._USAGE_PRUNE_SAVE_PENDING, True)
     monkeypatch.setattr(
@@ -141,6 +143,8 @@ async def test_prune_due_failure_preserves_pending_save_and_sets_retry(
         _lock=asyncio.Lock(),
         _detail_storage=object(),
         _async_save_details=_save_details,
+        requests=[],
+        runs=[],
     )
     monkeypatch.setattr(
         lifecycle,
