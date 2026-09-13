@@ -94,8 +94,8 @@ def test_jsonable_bounds_and_redacts_arbitrary_sdk_values(monkeypatch) -> None:
     assert serialized["when"].startswith("2026-01-02")
     assert serialized["data"]["authorization"] == "<redacted credential>"
     assert serialized["model"]["api_key"] == "<redacted credential>"
-    assert serialized["as_dict"] == {"value": "as-dict"}
-    assert serialized["to_dict"] == {"value": "to-dict"}
+    assert serialized["as_dict"]["value"].startswith("as-d\n<truncated 3")
+    assert serialized["to_dict"]["value"].startswith("to-d\n<truncated 3")
     assert serialized["vars"] == {"value": "vars"}
     assert sorted(serialized["items"][1]) == [2, 3]
 
