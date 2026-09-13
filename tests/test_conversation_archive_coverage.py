@@ -549,7 +549,7 @@ async def test_async_get_archive_reuses_one_manager_per_agent(monkeypatch) -> No
     ]
 
 
-def test_home_assistant_storage_delegates_to_private_atomic_stores(monkeypatch) -> None:
+async def test_home_assistant_storage_delegates_to_private_atomic_stores(monkeypatch) -> None:
     created = []
 
     class FakeStore:
