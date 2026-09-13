@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -34,7 +34,44 @@ def _config(**overrides):
     return _config_from_data(value)
 
 
+def _install_state_machine(hass) -> dict[str, SimpleNamespace]:
+    """Give the lightweight repository hass fixture a stateful state machine."""
+    states = hass.data.setdefault("_quiet_hours_test_states", {})
+
+    def async_set(entity_id: str, state: str, attributes=None) -> None:
+        states[entity_id] = SimpleNamespace(
+            entity_id=entity_id,
+            state=state,
+            attributes=dict(attributes or {}),
+        )
+
+    def async_all(domain=None):
+        values = list(states.values())
+        if domain is None:
+            return values
+        if isinstance(domain, str):
+            domains = {domain}
+        else:
+            domains = set(domain)
+        return [
+            state
+            for state in values
+            if state.entity_id.partition(".")[0] in domains
+        ]
+
+    def async_remove(entity_id: str) -> bool:
+        return states.pop(entity_id, None) is not None
+
+    hass.states.get.side_effect = states.get
+    hass.states.async_set.side_effect = async_set
+    hass.states.async_all.side_effect = async_all
+    hass.states.async_remove.side_effect = async_remove
+    hass.states.__getitem__.side_effect = states.__getitem__
+    return states
+
+
 def _manager(hass) -> QuietHoursManager:
+    _install_state_machine(hass)
     manager = QuietHoursManager(hass)
     manager._store = SimpleNamespace(async_save=AsyncMock(), async_load=AsyncMock())
     manager._initialized = True
@@ -73,16 +110,10 @@ def _install_registry(monkeypatch, *rooms: str) -> None:
         )
     registry = SimpleNamespace(async_get=entries.get)
     monkeypatch.setattr(quiet_hours_runtime.er, "async_get", lambda _hass: registry)
-    monkeypatch.setattr(
-        quiet_hours_runtime.er,
-        "async_entries_for_device",
-        lambda _registry, device_id: [
-            entry for entry in entries.values() if entry.device_id == device_id
-        ],
-    )
 
 
 def _seed_room(hass, room: str, *, volume: float = 0.55, wake: str = "on") -> None:
+    _install_state_machine(hass)
     hass.states.async_set(
         f"assist_satellite.{room}", "idle", {"friendly_name": f"{room.title()} Voice"}
     )
@@ -94,28 +125,24 @@ async def _install_services(hass):
     volume_calls: list[tuple[str, float]] = []
     switch_calls: list[tuple[str, bool]] = []
 
-    async def volume_set(call) -> None:
-        entity_id = call.data["entity_id"]
-        volume = float(call.data["volume_level"])
-        volume_calls.append((entity_id, volume))
-        current = hass.states.get(entity_id)
-        attrs = dict(current.attributes) if current else {}
-        attrs["volume_level"] = volume
-        hass.states.async_set(entity_id, current.state if current else "idle", attrs)
+    async def async_call(domain, service, data, *, blocking=False) -> None:
+        entity_id = data["entity_id"]
+        if domain == "media_player" and service == "volume_set":
+            volume = float(data["volume_level"])
+            volume_calls.append((entity_id, volume))
+            current = hass.states.get(entity_id)
+            attrs = dict(current.attributes) if current else {}
+            attrs["volume_level"] = volume
+            hass.states.async_set(entity_id, current.state if current else "idle", attrs)
+            return
+        if domain == "switch" and service in {"turn_on", "turn_off"}:
+            enabled = service == "turn_on"
+            switch_calls.append((entity_id, enabled))
+            hass.states.async_set(entity_id, "on" if enabled else "off")
+            return
+        raise AssertionError(f"Unexpected service call: {domain}.{service}")
 
-    async def turn_on(call) -> None:
-        entity_id = call.data["entity_id"]
-        switch_calls.append((entity_id, True))
-        hass.states.async_set(entity_id, "on")
-
-    async def turn_off(call) -> None:
-        entity_id = call.data["entity_id"]
-        switch_calls.append((entity_id, False))
-        hass.states.async_set(entity_id, "off")
-
-    hass.services.async_register("media_player", "volume_set", volume_set)
-    hass.services.async_register("switch", "turn_on", turn_on)
-    hass.services.async_register("switch", "turn_off", turn_off)
+    hass.services.async_call = AsyncMock(side_effect=async_call)
     return volume_calls, switch_calls
 
 
@@ -340,6 +367,25 @@ async def test_enable_disable_actions_are_global_and_idempotently_registered(
     manager.async_set_enabled = AsyncMock()
     hass.data.setdefault(DOMAIN, {})["quiet_hours_manager"] = manager
 
+    registered = {}
+    hass.services.has_service.side_effect = lambda domain, service: (
+        domain,
+        service,
+    ) in registered
+    hass.services.async_register.side_effect = (
+        lambda domain, service, handler: registered.__setitem__(
+            (domain, service), handler
+        )
+    )
+
+    async def async_call(domain, service, data, *, blocking=False):
+        handler = registered[(domain, service)]
+        await handler(
+            SimpleNamespace(data=data, context=SimpleNamespace(user_id=None))
+        )
+
+    hass.services.async_call = AsyncMock(side_effect=async_call)
+
     _register_quiet_hours_actions(hass)
     _register_quiet_hours_actions(hass)
 
@@ -360,7 +406,7 @@ async def test_enable_disable_actions_are_global_and_idempotently_registered(
 @pytest.mark.asyncio
 async def test_shutdown_unsubscribes_and_removes_state(hass) -> None:
     manager = _manager(hass)
-    unsub = AsyncMock()
+    unsub = MagicMock()
     manager._unsubscribers = [unsub]
     hass.states.async_set("binary_sensor.extended_openai_quiet_hours", "off")
 
