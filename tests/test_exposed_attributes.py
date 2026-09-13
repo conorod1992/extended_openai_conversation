@@ -162,18 +162,18 @@ def test_exposed_attribute_catalog_keeps_stale_saved_selection(
     ]
     assert result["saved_unexposed"] == [
         {
-            "reference": "registry:missing",
-            "entity_id": None,
-            "name": "Unavailable entity",
-            "selected_attributes": ["state_class"],
-            "registry_entry_exists": False,
-        },
-        {
             "reference": "registry:two",
             "entity_id": "sensor.old",
             "name": "sensor.old",
             "selected_attributes": ["unit_of_measurement"],
             "registry_entry_exists": True,
+        },
+        {
+            "reference": "registry:missing",
+            "entity_id": None,
+            "name": "Unavailable entity",
+            "selected_attributes": ["state_class"],
+            "registry_entry_exists": False,
         },
     ]
 
