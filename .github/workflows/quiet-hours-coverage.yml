@@ -32,5 +32,7 @@ jobs:
           --cov=custom_components.extended_openai_conversation_responses.quiet_hours_runtime
           --cov-branch
           --cov-report=term-missing
-      - name: Frontend syntax
-        run: node --check custom_components/extended_openai_conversation_responses/frontend/quiet-hours-ui.js
+      - name: Frontend tests
+        run: |
+          node --check custom_components/extended_openai_conversation_responses/frontend/quiet-hours-ui.js
+          node --test tests/test_quiet_hours_frontend.mjs
