@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from inspect import unwrap
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -10,6 +12,9 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     conversation as conversation_module,
+)
+from custom_components.extended_openai_conversation_responses import (
+    lifecycle_optimizations as lifecycle,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -54,9 +59,19 @@ def _agent(*, data: dict | None = None) -> SimpleNamespace:
     )
 
 
+async def _retrieve_temporary_direct(agent: SimpleNamespace):
+    """Exercise the conversation retrieval path without suite-installed wrappers."""
+    token = lifecycle._TEMPORARY_MEMORY_PREFETCH.set(None)
+    try:
+        return await unwrap(Agent._async_retrieve_temporary_memories)(agent)
+    finally:
+        lifecycle._TEMPORARY_MEMORY_PREFETCH.reset(token)
+
+
 @pytest.mark.asyncio
 async def test_startup_resolves_an_absolute_skills_directory(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     entry = SimpleNamespace(entry_id="entry")
     subentry = SimpleNamespace(
@@ -72,8 +87,9 @@ async def test_startup_resolves_an_absolute_skills_directory(
         conversation_module.ConversationEntity, "async_added_to_hass", AsyncMock()
     )
     monkeypatch.setattr(conversation_module.conversation, "async_set_agent", Mock())
+    absolute_dir = tmp_path / "absolute-agent-data"
     monkeypatch.setattr(
-        conversation_module, "DEFAULT_WORKING_DIRECTORY", "C:/absolute-agent-data"
+        conversation_module, "DEFAULT_WORKING_DIRECTORY", str(absolute_dir)
     )
     get_skills = AsyncMock(return_value=object())
     monkeypatch.setattr(
@@ -111,7 +127,7 @@ async def test_startup_resolves_an_absolute_skills_directory(
     await entity.async_added_to_hass()
 
     get_skills.assert_awaited_once_with(
-        entity.hass, user_skills_dir="C:\\absolute-agent-data\\skills"
+        entity.hass, user_skills_dir=str(absolute_dir / "skills")
     )
 
 
@@ -140,17 +156,17 @@ async def test_retrieval_short_circuits_and_isolates_temporary_store_failures() 
     agent._effective_guest_policy = lambda: GuestCapabilityPolicy(
         True, temporary_memory=False
     )
-    assert await Agent._async_retrieve_temporary_memories(agent) == []
+    assert await _retrieve_temporary_direct(agent) == []
 
     agent._effective_guest_policy = GuestCapabilityPolicy.unrestricted
-    assert await Agent._async_retrieve_temporary_memories(agent) == []
+    assert await _retrieve_temporary_direct(agent) == []
 
     agent._temporary_memory = SimpleNamespace(
         async_active=AsyncMock(side_effect=RuntimeError("offline"))
     )
     token = conversation_module._ACTIVE_TEMPORARY_SCOPE.set("request:one")
     try:
-        assert await Agent._async_retrieve_temporary_memories(agent) == []
+        assert await _retrieve_temporary_direct(agent) == []
     finally:
         conversation_module._ACTIVE_TEMPORARY_SCOPE.reset(token)
 
@@ -182,7 +198,7 @@ async def test_embedding_and_temporary_retrieval_success_paths() -> None:
     )
     token = conversation_module._ACTIVE_TEMPORARY_SCOPE.set("request:one")
     try:
-        assert await Agent._async_retrieve_temporary_memories(agent) is records
+        assert await _retrieve_temporary_direct(agent) is records
     finally:
         conversation_module._ACTIVE_TEMPORARY_SCOPE.reset(token)
 
@@ -601,12 +617,13 @@ def test_memory_scope_resolution_covers_guest_shared_and_unretained_paths() -> N
 async def test_temporary_and_archive_argument_validation() -> None:
     agent = _agent(data={CONF_ARCHIVE_MODEL_SEARCH_ENABLED: False})
     agent._temporary_memory = SimpleNamespace()
+    execute_temporary = unwrap(Agent._async_execute_temporary_memory_tool)
     with pytest.raises(RuntimeError, match="unavailable for this request"):
-        await Agent._async_execute_temporary_memory_tool(agent, "update", {})
+        await execute_temporary(agent, "update", {})
     token = conversation_module._ACTIVE_TEMPORARY_SCOPE.set("request:one")
     try:
         with pytest.raises(ValueError, match="memory_id is required"):
-            await Agent._async_execute_temporary_memory_tool(agent, "update", {})
+            await execute_temporary(agent, "update", {})
     finally:
         conversation_module._ACTIVE_TEMPORARY_SCOPE.reset(token)
 
