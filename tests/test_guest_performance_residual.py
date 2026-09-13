@@ -1,4 +1,4 @@
-"""Focused residual coverage for the guest request-policy fast path."""
+"""Focused residual coverage for the guest-policy fast path."""
 
 from __future__ import annotations
 
@@ -8,122 +8,121 @@ from typing import Any
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    conversation,
+    feature_status,
     guest_performance,
-    request as request_module,
-)
-from custom_components.extended_openai_conversation_responses.request import (
-    ExtendedOpenAIAgentEntity,
+    management_loading_performance,
+    request_static_cache,
 )
 
 
-def _install_with_controlled_originals(
+def _install_with_controlled_original(
     monkeypatch: pytest.MonkeyPatch,
-) -> tuple[list[Any], list[Any]]:
-    effective_calls: list[Any] = []
-    resolve_calls: list[Any] = []
+) -> list[Any]:
+    calls: list[Any] = []
 
-    def original_effective(entity: Any) -> str:
-        effective_calls.append(entity)
+    def original_effective_guest_policy(entity: Any) -> str:
+        calls.append(entity)
         return "effective-original"
 
-    def original_resolve(entity: Any) -> str:
-        resolve_calls.append(entity)
-        return "resolve-original"
-
     monkeypatch.setattr(
-        ExtendedOpenAIAgentEntity,
-        "_effective_request_policy",
-        original_effective,
+        conversation.ExtendedOpenAIAgentEntity,
+        "_effective_guest_policy",
+        original_effective_guest_policy,
     )
-    monkeypatch.setattr(request_module, "_resolve_request_policy", original_resolve)
+    monkeypatch.setattr(guest_performance, "_INSTALLED", False)
+    monkeypatch.setattr(request_static_cache, "install_request_static_caching", lambda: None)
     monkeypatch.setattr(
-        ExtendedOpenAIAgentEntity,
-        guest_performance._PATCHED,
-        False,
-        raising=False,
+        management_loading_performance,
+        "install_management_loading_optimizations",
+        lambda: None,
+    )
+    monkeypatch.setattr(feature_status, "install_management_feature_status", lambda: None)
+
+    guest_performance.install_guest_policy_fast_path()
+    assert guest_performance._INSTALLED is True
+    return calls
+
+
+def test_can_reuse_request_policy_requires_unrestricted_inactive_guest_mode() -> None:
+    inactive_policy = SimpleNamespace(guest_active=False)
+    active_policy = SimpleNamespace(guest_active=True)
+    inactive_guest_mode = SimpleNamespace(is_active=lambda: False)
+    active_guest_mode = SimpleNamespace(is_active=lambda: True)
+
+    assert guest_performance.can_reuse_request_policy(inactive_policy, None) is True
+    assert (
+        guest_performance.can_reuse_request_policy(
+            inactive_policy, inactive_guest_mode
+        )
+        is True
+    )
+    assert guest_performance.can_reuse_request_policy(None, inactive_guest_mode) is False
+    assert (
+        guest_performance.can_reuse_request_policy(active_policy, inactive_guest_mode)
+        is False
+    )
+    assert (
+        guest_performance.can_reuse_request_policy(inactive_policy, active_guest_mode)
+        is False
     )
 
-    assert guest_performance.install_guest_policy_fast_path() is True
-    return effective_calls, resolve_calls
 
-
-def test_eligible_non_owner_guest_reuses_stable_owner_policy(
+def test_installed_fast_path_reuses_active_request_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    effective_calls, resolve_calls = _install_with_controlled_originals(monkeypatch)
-    owner_policy = object()
-    entity = SimpleNamespace(
-        _request_policy=owner_policy,
-        _compatibility_restricted_features=None,
-    )
-    monkeypatch.setattr(
-        guest_performance,
-        "current_request_context",
-        lambda: SimpleNamespace(is_guest=True, is_entry_owner=False),
-    )
+    calls = _install_with_controlled_original(monkeypatch)
+    request_policy = SimpleNamespace(guest_active=False)
+    entity = SimpleNamespace(_guest_mode=SimpleNamespace(is_active=lambda: False))
+    token = conversation._ACTIVE_GUEST_POLICY.set(request_policy)
+    try:
+        assert (
+            conversation.ExtendedOpenAIAgentEntity._effective_guest_policy(entity)
+            is request_policy
+        )
+    finally:
+        conversation._ACTIVE_GUEST_POLICY.reset(token)
 
-    assert ExtendedOpenAIAgentEntity._effective_request_policy(entity) is owner_policy
-    assert request_module._resolve_request_policy(entity) is owner_policy
-    assert effective_calls == []
-    assert resolve_calls == []
+    assert calls == []
 
 
-def test_compatibility_restrictions_disable_guest_fast_path(
+def test_installed_fast_path_delegates_when_guest_mode_is_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    effective_calls, resolve_calls = _install_with_controlled_originals(monkeypatch)
-    entity = SimpleNamespace(
-        _request_policy=object(),
-        _compatibility_restricted_features={"reasoning"},
-    )
-    monkeypatch.setattr(
-        guest_performance,
-        "current_request_context",
-        lambda: SimpleNamespace(is_guest=True, is_entry_owner=False),
-    )
+    calls = _install_with_controlled_original(monkeypatch)
+    request_policy = SimpleNamespace(guest_active=False)
+    entity = SimpleNamespace(_guest_mode=SimpleNamespace(is_active=lambda: True))
+    token = conversation._ACTIVE_GUEST_POLICY.set(request_policy)
+    try:
+        assert (
+            conversation.ExtendedOpenAIAgentEntity._effective_guest_policy(entity)
+            == "effective-original"
+        )
+    finally:
+        conversation._ACTIVE_GUEST_POLICY.reset(token)
 
-    assert ExtendedOpenAIAgentEntity._effective_request_policy(entity) == "effective-original"
-    assert request_module._resolve_request_policy(entity) == "resolve-original"
-    assert effective_calls == [entity]
-    assert resolve_calls == [entity]
+    assert calls == [entity]
 
 
-@pytest.mark.parametrize(
-    "context",
-    [
-        None,
-        SimpleNamespace(is_guest=False, is_entry_owner=False),
-        SimpleNamespace(is_guest=True, is_entry_owner=True),
-    ],
-)
-def test_ineligible_contexts_delegate_to_original_policy_resolution(
+def test_installed_fast_path_delegates_without_request_policy(
     monkeypatch: pytest.MonkeyPatch,
-    context: Any,
 ) -> None:
-    effective_calls, resolve_calls = _install_with_controlled_originals(monkeypatch)
-    entity = SimpleNamespace(
-        _request_policy=object(),
-        _compatibility_restricted_features=None,
-    )
-    monkeypatch.setattr(
-        guest_performance,
-        "current_request_context",
-        lambda: context,
-    )
+    calls = _install_with_controlled_original(monkeypatch)
+    entity = SimpleNamespace(_guest_mode=None)
 
-    assert ExtendedOpenAIAgentEntity._effective_request_policy(entity) == "effective-original"
-    assert request_module._resolve_request_policy(entity) == "resolve-original"
-    assert effective_calls == [entity]
-    assert resolve_calls == [entity]
+    assert (
+        conversation.ExtendedOpenAIAgentEntity._effective_guest_policy(entity)
+        == "effective-original"
+    )
+    assert calls == [entity]
 
 
 def test_install_guest_policy_fast_path_is_idempotent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_with_controlled_originals(monkeypatch)
-    effective_wrapper = ExtendedOpenAIAgentEntity._effective_request_policy
-    resolve_wrapper = request_module._resolve_request_policy
+    _install_with_controlled_original(monkeypatch)
+    wrapper = conversation.ExtendedOpenAIAgentEntity._effective_guest_policy
 
-    assert guest_performance.install_guest_policy_fast_path() is False
-    assert ExtendedOpenAIAgentEntity._effective_request_policy is effective_wrapper
-    assert request_module._resolve_request_policy is resolve_wrapper
+    guest_performance.install_guest_policy_fast_path()
+
+    assert conversation.ExtendedOpenAIAgentEntity._effective_guest_policy is wrapper
