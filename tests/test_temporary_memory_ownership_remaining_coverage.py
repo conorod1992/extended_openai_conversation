@@ -131,29 +131,28 @@ async def test_manager_contract_enforces_owner_and_owned_helpers(
 
     ownership._install_manager_contract()
 
-    fake_manager = SimpleNamespace(
-        _records={
-            "alice": _record("alice", owner="user:alice"),
-            "shared": _record("shared", owner=SHARED_HOUSEHOLD_SCOPE_ID),
-            "expired": _record(
-                "expired", owner="user:alice", expires_delta=timedelta(hours=-1)
-            ),
-            "invalid": _record("invalid", owner="device:kitchen"),
-            "bad_expiry": TemporaryMemoryRecord(
-                memory_id="bad_expiry",
-                scope_id="conversation:test",
-                content="bad",
-                category="general",
-                source="automatic",
-                expires_at="not-a-date",
-                created_at=datetime.now(UTC).isoformat(),
-                updated_at=datetime.now(UTC).isoformat(),
-                owner_scope_id="user:alice",
-            ),
-        },
-        invalid_owners_pruned=2,
-        overflow_pruned=3,
-    )
+    fake_manager = object.__new__(TemporaryMemory)
+    fake_manager._records = {
+        "alice": _record("alice", owner="user:alice"),
+        "shared": _record("shared", owner=SHARED_HOUSEHOLD_SCOPE_ID),
+        "expired": _record(
+            "expired", owner="user:alice", expires_delta=timedelta(hours=-1)
+        ),
+        "invalid": _record("invalid", owner="device:kitchen"),
+        "bad_expiry": TemporaryMemoryRecord(
+            memory_id="bad_expiry",
+            scope_id="conversation:test",
+            content="bad",
+            category="general",
+            source="automatic",
+            expires_at="not-a-date",
+            created_at=datetime.now(UTC).isoformat(),
+            updated_at=datetime.now(UTC).isoformat(),
+            owner_scope_id="user:alice",
+        ),
+    }
+    fake_manager.invalid_owners_pruned = 2
+    fake_manager.overflow_pruned = 3
 
     assert await TemporaryMemory.async_active_snapshot(fake_manager, "scope") == []
 
