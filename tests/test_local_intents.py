@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -501,11 +502,16 @@ def test_conversation_entity_resolution_selects_exact_agent(
 def test_get_assist_pipelines_returns_snapshot_list(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from homeassistant.components import assist_pipeline
-
     pipeline = SimpleNamespace(id="one")
+    fake_assist_pipeline = SimpleNamespace(
+        async_get_pipelines=lambda _hass: (item for item in [pipeline])
+    )
+    components = sys.modules["homeassistant.components"]
+    monkeypatch.setitem(
+        sys.modules, "homeassistant.components.assist_pipeline", fake_assist_pipeline
+    )
     monkeypatch.setattr(
-        assist_pipeline, "async_get_pipelines", lambda _hass: (item for item in [pipeline])
+        components, "assist_pipeline", fake_assist_pipeline, raising=False
     )
 
     assert local_intents._get_assist_pipelines(hass) == [pipeline]
