@@ -11,7 +11,9 @@ from openai import OpenAIError
 from homeassistant.components import ai_task, conversation
 from homeassistant.exceptions import HomeAssistantError
 
-from custom_components.extended_openai_conversation_responses import ai_task as ai_task_platform
+from custom_components.extended_openai_conversation_responses import (
+    ai_task as ai_task_platform,
+)
 
 
 def _subentry(
@@ -170,7 +172,7 @@ async def test_generate_provider_error_records_failure_and_reauthentication(
     hass: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     entity = _entity()
-    entity.hass = hass
+    entity._hass = hass
     error = OpenAIError("provider failed")
     calls: list[tuple[str, object]] = []
 
