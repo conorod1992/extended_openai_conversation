@@ -12,8 +12,6 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     conversation as conversation_module,
-)
-from custom_components.extended_openai_conversation_responses import (
     lifecycle_optimizations as lifecycle,
 )
 from custom_components.extended_openai_conversation_responses.const import (
@@ -61,11 +59,15 @@ def _agent(*, data: dict | None = None) -> SimpleNamespace:
 
 async def _retrieve_temporary_direct(agent: SimpleNamespace):
     """Exercise the conversation retrieval path without suite-installed wrappers."""
-    token = lifecycle._TEMPORARY_MEMORY_PREFETCH.set(None)
+    prefetch_token = lifecycle._TEMPORARY_MEMORY_PREFETCH.set(None)
+    scope_token = conversation_module._ACTIVE_SCOPE.set(
+        user_scope("test", source="coverage")
+    )
     try:
         return await unwrap(Agent._async_retrieve_temporary_memories)(agent)
     finally:
-        lifecycle._TEMPORARY_MEMORY_PREFETCH.reset(token)
+        conversation_module._ACTIVE_SCOPE.reset(scope_token)
+        lifecycle._TEMPORARY_MEMORY_PREFETCH.reset(prefetch_token)
 
 
 @pytest.mark.asyncio
@@ -628,19 +630,20 @@ async def test_temporary_and_archive_argument_validation() -> None:
         conversation_module._ACTIVE_TEMPORARY_SCOPE.reset(token)
 
     agent._archive = SimpleNamespace()
+    execute_archive = unwrap(Agent._async_execute_archive_tool)
     scope_token = conversation_module._ACTIVE_SCOPE.set(
         user_scope("one", source="test")
     )
     archive_token = conversation_module._ACTIVE_ARCHIVE.set(("key", "session"))
     try:
         with pytest.raises(RuntimeError, match="model archive search is disabled"):
-            await Agent._async_execute_archive_tool(agent, "search", {"query": "hello"})
+            await execute_archive(agent, "search", {"query": "hello"})
 
         agent.subentry.data[CONF_ARCHIVE_MODEL_SEARCH_ENABLED] = True
         with pytest.raises(ValueError, match="query is required"):
-            await Agent._async_execute_archive_tool(agent, "search", {})
+            await execute_archive(agent, "search", {})
         with pytest.raises(ValueError, match="session_id is required"):
-            await Agent._async_execute_archive_tool(agent, "get", {})
+            await execute_archive(agent, "get", {})
     finally:
         conversation_module._ACTIVE_ARCHIVE.reset(archive_token)
         conversation_module._ACTIVE_SCOPE.reset(scope_token)
