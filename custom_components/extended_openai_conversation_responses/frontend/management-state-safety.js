@@ -275,13 +275,7 @@ function bindStateSafety(panel) {
   const syncGuestAfterEvent = () => queueMicrotask(() => syncGuestDirty(panel));
   const syncConfigAfterControlEvent = (event) => {
     const key = configKeyForControl(event.target);
-    if (!key) return;
-    const control = event.target;
-    // Field-specific editor handlers may still be copying the control value into
-    // the shared draft during this event. Compare against the persisted baseline
-    // only after those handlers have completed, then let clarity project the
-    // authoritative changed-key set onto navigation destinations.
-    queueMicrotask(() => applyTargetedConfigDirty(panel, [key], control));
+    if (key) applyTargetedConfigDirty(panel, [key], event.target);
   };
   root.addEventListener("input", syncGuestAfterEvent);
   root.addEventListener("input", syncConfigAfterControlEvent);
@@ -387,17 +381,15 @@ export function installManagementStateSafety(registry = globalThis.customElement
         this._eocDirtyConfigKeys = new Set();
         return originalSetConfigDirty.call(this, false);
       }
-      if (!configBaselineReady(this)) return originalSetConfigDirty.call(this, true);
-      // Callers set the shared draft before raising the dirty signal. Reconcile
-      // from that authoritative draft synchronously so navigation projection in
-      // the same input event cannot observe an incomplete incremental key set.
-      const wasDirty = Boolean(this._configDirty);
-      const changed = rebuildConfigDirtyKeys(this);
-      const dirty = changed.size > 0;
-      const result = originalSetConfigDirty.call(this, dirty);
-      if (wasDirty && !dirty) {
+      const result = originalSetConfigDirty.call(this, true);
+      if (this._eocDirtyConfigKeys instanceof Set) {
         queueMicrotask(() => {
-          if (!this._configDirty) this._render?.();
+          if (!(this._eocDirtyConfigKeys instanceof Set) || this._eocDirtyConfigKeys.size) return;
+          const changed = rebuildConfigDirtyKeys(this);
+          const dirty = changed.size > 0;
+          const wasDirty = Boolean(this._configDirty);
+          originalSetConfigDirty.call(this, dirty);
+          if (wasDirty && !dirty) this._render?.();
         });
       }
       return result;
