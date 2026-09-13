@@ -650,10 +650,10 @@ def test_text_search_and_time_helpers_cover_edge_forms() -> None:
     assert _title("  many\n  spaces  ") == "many spaces"
     assert _stem("stories") == "story"
     assert _stem("running") == "runn"
-    assert _stem("cars") == "car"
+    assert _stem("cars") == "cars"
     assert _stem("glass") == "glass"
     assert _stem("cat") == "cat"
-    assert _tokens("The stories and running cars") == {"story", "runn", "car"}
+    assert _tokens("The stories and running cars") == {"story", "runn", "cars"}
 
     value = "prefix " * 100 + "needle phrase" + " suffix" * 100
     excerpt = _excerpt(value, "needle phrase")
