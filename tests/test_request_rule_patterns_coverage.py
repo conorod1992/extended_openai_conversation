@@ -44,7 +44,7 @@ def test_pattern_length_limit_is_enforced() -> None:
         ("say {item} and {item}", "used more than once"),
         ("say {item=}", "needs a constraint"),
         ("say {item=10..1}", "minimum greater"),
-        ("say {item=a\\}", "ends with an escape"),
+        ("say {item=a\\}", "missing closing"),
         ("say {item=a||b}", "empty choice"),
     ],
 )
