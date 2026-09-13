@@ -113,6 +113,8 @@ async def test_prune_due_immediate_save_fallback_clears_pending_state(
         requests=[],
         runs=[],
     )
+    setattr(manager, lifecycle._LAST_USAGE_PRUNE_DATE, None)
+    setattr(manager, lifecycle._NEXT_USAGE_PRUNE_RETRY, 0.0)
     setattr(manager, lifecycle._USAGE_PRUNE_SAVE_PENDING, True)
     monkeypatch.setattr(
         lifecycle,
@@ -146,6 +148,8 @@ async def test_prune_due_failure_preserves_pending_save_and_sets_retry(
         requests=[],
         runs=[],
     )
+    setattr(manager, lifecycle._LAST_USAGE_PRUNE_DATE, None)
+    setattr(manager, lifecycle._NEXT_USAGE_PRUNE_RETRY, 0.0)
     monkeypatch.setattr(
         lifecycle,
         "_prune_usage_locked",
