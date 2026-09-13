@@ -9,8 +9,10 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
 from .quiet_hours_runtime import *  # noqa: F403
-from .quiet_hours_runtime import QuietHoursManager as _RuntimeQuietHoursManager
-from .quiet_hours_runtime import QuietPeriod
+from .quiet_hours_runtime import (
+    QuietHoursManager as _RuntimeQuietHoursManager,
+    QuietPeriod,
+)
 
 _RUNTIME_KEY = "quiet_hours_manager"
 _STATE_UNIQUE_ID = "quiet_hours"
