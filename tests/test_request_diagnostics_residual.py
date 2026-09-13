@@ -57,11 +57,11 @@ def restore_wrappers():
 def test_debug_trace_helper_tracks_current_context() -> None:
     assert request_diagnostics._debug_trace() is None
     trace = _trace()
-    token = debug._CURRENT_DEBUG_TRACE.set(trace)
+    token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     try:
         assert request_diagnostics._debug_trace() is trace
     finally:
-        debug._CURRENT_DEBUG_TRACE.reset(token)
+        debug._ACTIVE_DEBUG_TRACE.reset(token)
 
 
 def test_render_metric_failure_is_transparent(monkeypatch) -> None:
@@ -76,11 +76,11 @@ def test_render_metric_failure_is_transparent(monkeypatch) -> None:
         Mock(side_effect=RuntimeError("diagnostics failed")),
     )
     trace = _trace()
-    token = debug._CURRENT_DEBUG_TRACE.set(trace)
+    token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     try:
         result = conversation_module.render_effective_prompt("input")
     finally:
-        debug._CURRENT_DEBUG_TRACE.reset(token)
+        debug._ACTIVE_DEBUG_TRACE.reset(token)
 
     assert result is rendered
     assert request_diagnostics._INTERNAL_PROMPT_METRICS not in trace.memory
@@ -102,11 +102,11 @@ def test_tool_assembly_records_function_group_stats(monkeypatch) -> None:
         subentry=SimpleNamespace(subentry_id="agent-1"),
     )
     trace = _trace()
-    token = debug._CURRENT_DEBUG_TRACE.set(trace)
+    token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     try:
         result = agent_type._get_function_tools(agent)
     finally:
-        debug._CURRENT_DEBUG_TRACE.reset(token)
+        debug._ACTIVE_DEBUG_TRACE.reset(token)
 
     assert result == [{"spec": {"name": "demo"}}]
     preparation = trace.memory[request_diagnostics._INTERNAL_PREPARATION]
@@ -146,7 +146,7 @@ async def test_execute_diagnostic_failure_never_masks_tool_result(monkeypatch) -
     )
 
     trace = _trace()
-    token = debug._CURRENT_DEBUG_TRACE.set(trace)
+    token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     try:
         result = await agent_type._execute_function_tool(
             SimpleNamespace(),
@@ -156,7 +156,7 @@ async def test_execute_diagnostic_failure_never_masks_tool_result(monkeypatch) -
             {},
         )
     finally:
-        debug._CURRENT_DEBUG_TRACE.reset(token)
+        debug._ACTIVE_DEBUG_TRACE.reset(token)
 
     assert result is expected
     assert request_diagnostics._INTERNAL_TOOL_CALLS not in trace.memory
