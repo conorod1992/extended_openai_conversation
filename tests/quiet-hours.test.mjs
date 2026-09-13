@@ -27,7 +27,7 @@ const baseConfig = {
   overrides: {},
 };
 
-test("renders schedule semantics and automation hooks clearly", () => {
+test("renders schedule semantics and automation hooks in plain language", () => {
   const html = renderQuietHours(panel({
     active: false,
     config: baseConfig,
@@ -37,14 +37,34 @@ test("renders schedule semantics and automation hooks clearly", () => {
 
   assert.match(html, /Outside Quiet Hours/);
   assert.match(html, /Enable daily schedule/);
-  assert.match(html, /ceiling, not a target/);
+  assert.match(html, /only turns louder satellites down/);
+  assert.match(html, /never turns a quieter satellite up/);
+  assert.match(html, /other audio from that speaker may also be quieter/);
+  assert.match(html, /chime played when a satellite hears its wake word/);
   assert.match(html, /binary_sensor\.extended_openai_quiet_hours/);
   assert.match(html, /enable_quiet_hours/);
   assert.match(html, /disable_quiet_hours/);
-  assert.match(html, /keep checking as satellites become available/);
+  assert.match(html, /keep checking and will pick them up/);
 });
 
-test("distinguishes active and disabled schedules", () => {
+test("status describes saved state rather than unsaved draft changes", () => {
+  const unsavedDisable = renderQuietHours(panel(
+    {active: true, config: baseConfig, satellites: []},
+    {...baseConfig, enabled: false, start: "23:00"},
+  ));
+  assert.match(unsavedDisable, /Quiet Hours active now/);
+  assert.match(unsavedDisable, /22:00–07:00 every day/);
+
+  const savedDisabled = {...baseConfig, enabled: false};
+  const unsavedEnable = renderQuietHours(panel(
+    {active: false, config: savedDisabled, satellites: []},
+    {...baseConfig, enabled: true},
+  ));
+  assert.match(unsavedEnable, /Quiet Hours schedule disabled/);
+  assert.match(unsavedEnable, /saved schedule is currently turned off/);
+});
+
+test("distinguishes active and disabled saved schedules", () => {
   const active = renderQuietHours(panel({
     active: true,
     config: baseConfig,
@@ -61,7 +81,7 @@ test("distinguishes active and disabled schedules", () => {
   assert.match(disabled, /Quiet Hours schedule disabled/);
 });
 
-test("keeps an unavailable manual override visible instead of silently showing automatic", () => {
+test("keeps an unavailable manual override visible and marks it unavailable", () => {
   const config = {
     ...baseConfig,
     overrides: {
@@ -84,6 +104,32 @@ test("keeps an unavailable manual override visible instead of silently showing a
   }));
 
   assert.match(html, /Unavailable · media_player\.missing/);
-  assert.match(html, /Manual override/);
-  assert.match(html, /normal for many non-Voice-PE satellites/);
+  assert.match(html, /Speaker unavailable/);
+  assert.doesNotMatch(html, /Speaker ready/);
+  assert.match(html, /Manually selected for this satellite/);
+  assert.match(html, /normal for many satellites/);
+});
+
+test("marks a mapped speaker ready only when a numeric volume is available", () => {
+  const satellite = {
+    satellite_entity_id: "assist_satellite.bedroom",
+    name: "Bedroom Voice",
+    media_player_entity_id: "media_player.bedroom",
+    media_player_source: "auto",
+    wake_sound_entity_id: null,
+    wake_sound_source: null,
+  };
+  const ready = renderQuietHours(panel(
+    {active: false, config: baseConfig, satellites: [satellite]},
+    null,
+    {"media_player.bedroom": {state: "idle", attributes: {volume_level: 0.4}}},
+  ));
+  assert.match(ready, /Speaker ready/);
+
+  const unavailable = renderQuietHours(panel(
+    {active: false, config: baseConfig, satellites: [satellite]},
+    null,
+    {"media_player.bedroom": {state: "idle", attributes: {}}},
+  ));
+  assert.match(unavailable, /Speaker unavailable/);
 });
