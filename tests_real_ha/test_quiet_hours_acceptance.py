@@ -45,7 +45,7 @@ def _install_satellite_entities(hass: HomeAssistant) -> tuple[str, str, str]:
         "assist_satellite",
         "esphome",
         "quiet-hours-bedroom-satellite",
-        config_entry_id=source_entry.entry_id,
+        config_entry=source_entry,
         suggested_object_id="bedroom_voice",
         device_id=device.id,
         original_name="Assist satellite",
@@ -54,7 +54,7 @@ def _install_satellite_entities(hass: HomeAssistant) -> tuple[str, str, str]:
         "media_player",
         "esphome",
         "quiet-hours-bedroom-media-player",
-        config_entry_id=source_entry.entry_id,
+        config_entry=source_entry,
         suggested_object_id="bedroom_voice",
         device_id=device.id,
         original_name="Media Player",
@@ -63,7 +63,7 @@ def _install_satellite_entities(hass: HomeAssistant) -> tuple[str, str, str]:
         "switch",
         "esphome",
         "quiet-hours-bedroom-wake-sound",
-        config_entry_id=source_entry.entry_id,
+        config_entry=source_entry,
         suggested_object_id="bedroom_voice_wake_sound",
         device_id=device.id,
         original_name="Wake sound",
@@ -188,7 +188,9 @@ async def test_real_ha_quiet_hours_discovers_applies_survives_restart_and_restor
     assert restarted_wake_state is not None
     assert restarted_media_state.attributes["volume_level"] == pytest.approx(0.20)
     assert restarted_wake_state.state == "off"
-    assert hass.states.get(_STATE_ENTITY_ID).state == "on"
+    restarted_state = hass.states.get(_STATE_ENTITY_ID)
+    assert restarted_state is not None
+    assert restarted_state.state == "on"
 
     # Disabling the schedule uses the same conditional restoration path as the end
     # boundary and must return both controls to their pre-Quiet-Hours values.
