@@ -43,7 +43,7 @@ function renderAllRulesForInPlaceSearch(panel, module) {
 function addRequestRuleManagementClarity(panel, html) {
   const rules = panel._result?.rules || [];
   const diagnostics = panel._result?.diagnostics || {};
-  const routingHelp = '<section class="notice"><strong>AI routing command behavior</strong><p><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> routing rules are complete commands: they are acknowledged locally and apply to the rest of the current conversation; they are not sent to the AI provider. <strong>Starts with</strong>, <strong>Ends with</strong>, and <strong>Contains</strong> select a route and send the original request unchanged to the provider; matched words are not stripped.</p><p>A request-only reset bypasses a conversation override for that one provider request; it does not clear the saved conversation route. Rule order is only the final tie-breaker after match type and phrase specificity.</p></section>';
+  const routingHelp = '<section class="notice"><strong>AI routing command behavior</strong><p><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> routing rules are complete commands by default: they are acknowledged locally and apply to the rest of the current conversation. Enable <strong>Continue to AI</strong> to send the original request to the provider unchanged after applying the route. <strong>Starts with</strong>, <strong>Ends with</strong>, and <strong>Contains</strong> continue to the provider by default; matched words are not stripped.</p><p>A request-only reset bypasses a conversation override for that one provider request; it does not clear the saved conversation route. Rule order is only the final tie-breaker after match type and phrase specificity.</p></section>';
   let transformed = html.replace(
     '<section class="content-card rule-settings">',
     `${routingHelp}<section class="content-card rule-settings">`,
@@ -82,12 +82,15 @@ export function syncRequestRuleRoutingControls(root, efforts = null, selectedEff
   const actionType = root.querySelector("#rule-action-type");
   const matchType = root.querySelector("#rule-match");
   const scope = root.querySelector("#rule-scope");
+  const continueToAi = root.querySelector("#rule-continue-to-ai");
   const reasoning = root.querySelector("#rule-reasoning");
   const help = root.querySelector("#rule-routing-scope-help");
   if (!actionType || !matchType || !scope) return;
 
   const modelRouting = actionType.value === "model_routing";
-  const consumed = modelRouting && ["equals", "sentence_pattern"].includes(matchType.value);
+  const consumed = modelRouting
+    && ["equals", "sentence_pattern"].includes(matchType.value)
+    && !(continueToAi?.checked ?? false);
   const requestOption = scope.querySelector('option[value="request"]');
   if (requestOption) requestOption.disabled = consumed;
   if (consumed) scope.value = "conversation";
@@ -101,7 +104,7 @@ export function syncRequestRuleRoutingControls(root, efforts = null, selectedEff
   if (help) {
     help.textContent = consumed
       ? "This is a complete routing command. It is acknowledged locally and is not sent to the AI provider, so it must change or reset the rest of this conversation."
-      : "Broad matches send the original request to the AI unchanged. This request only affects that provider call; Rest of this conversation also changes later requests.";
+      : "This sends the original request to the AI unchanged after applying the route. This request only affects that provider call; Rest of this conversation also changes later requests.";
   }
 }
 
@@ -151,7 +154,7 @@ export function bindRequestRules(panel) {
     } catch (err) { panel._toast(`Unable to load model choices: ${err.message || String(err)}`, true); }
   };
   root?.querySelectorAll(".rule-edit,#rule-add,#rule-empty-add").forEach((button) => button.addEventListener("click", refreshRouting));
-  for (const selector of ["#rule-action-type", "#rule-match", "#rule-scope", "#rule-model", "#rule-reset"]) {
+  for (const selector of ["#rule-action-type", "#rule-match", "#rule-scope", "#rule-model", "#rule-reset", "#rule-continue-to-ai"]) {
     const element = root?.querySelector(selector);
     if (!element) continue;
     element.addEventListener(selector === "#rule-model" ? "input" : "change", refreshRouting);
@@ -165,7 +168,7 @@ export function requestRulesDialog(...args) {
   const dialog = getRequestRulesModule()?.requestRulesDialog(...args) || "";
   return dialog.replace(
     '<div id="rule-routing-config" hidden>',
-    '<div id="rule-routing-config" hidden><p class="help"><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> are complete commands: they are acknowledged locally and can only change or reset the rest of this conversation. Broader Starts/Ends/Contains matches preserve and send the entire original request to the provider.</p><p class="help" id="rule-routing-scope-help"></p>',
+    '<div id="rule-routing-config" hidden><p class="help"><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> are complete commands by default. Enable <strong>Continue to AI</strong> to send the original request to the provider unchanged after applying the route. Broader Starts/Ends/Contains matches continue to the provider by default.</p><p class="help" id="rule-routing-scope-help"></p>',
   );
 }
 

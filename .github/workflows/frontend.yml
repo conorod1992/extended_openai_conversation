@@ -12,6 +12,7 @@ on:
       - "tests/*.test.mjs"
       - "tests_browser/**"
       - "tests_real_ha/test_browser_backend_acceptance.py"
+      - "tests_real_ha/test_browser_runtime_acceptance.py"
       - "tests_real_ha/test_management_backend_acceptance.py"
       - "playwright.config.mjs"
       - "playwright.real-ha-shell.config.mjs"
@@ -30,6 +31,7 @@ on:
       - "tests/*.test.mjs"
       - "tests_browser/**"
       - "tests_real_ha/test_browser_backend_acceptance.py"
+      - "tests_real_ha/test_browser_runtime_acceptance.py"
       - "tests_real_ha/test_management_backend_acceptance.py"
       - "playwright.config.mjs"
       - "playwright.real-ha-shell.config.mjs"
@@ -183,11 +185,13 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Run browser against genuine HA management backend and frontend shell
+      - name: Run browser against genuine HA management backend, frontend shell, and live runtime
         env:
           RUN_REAL_HA_BROWSER: "1"
         run: |
-          pytest tests_real_ha/test_browser_backend_acceptance.py \
+          pytest \
+            tests_real_ha/test_browser_backend_acceptance.py \
+            tests_real_ha/test_browser_runtime_acceptance.py \
             -v \
             --asyncio-mode=auto \
             --timeout=180
