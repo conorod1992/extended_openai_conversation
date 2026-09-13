@@ -139,27 +139,20 @@ async def test_manager_contract_enforces_owner_and_owned_helpers(
                 "expired", owner="user:alice", expires_delta=timedelta(hours=-1)
             ),
             "invalid": _record("invalid", owner="device:kitchen"),
-            "bad_expiry": _record("bad_expiry", owner="user:alice"),
+            "bad_expiry": TemporaryMemoryRecord(
+                memory_id="bad_expiry",
+                scope_id="conversation:test",
+                content="bad",
+                category="general",
+                source="automatic",
+                expires_at="not-a-date",
+                created_at=datetime.now(UTC).isoformat(),
+                updated_at=datetime.now(UTC).isoformat(),
+                owner_scope_id="user:alice",
+            ),
         },
         invalid_owners_pruned=2,
         overflow_pruned=3,
-    )
-    fake_manager._records["bad_expiry"] = TemporaryMemoryRecord(
-        **{
-            **fake_manager._records["bad_expiry"].__dict__
-            if hasattr(fake_manager._records["bad_expiry"], "__dict__")
-            else {
-                "memory_id": "bad_expiry",
-                "scope_id": "conversation:test",
-                "content": "bad",
-                "category": "general",
-                "source": "automatic",
-                "expires_at": "not-a-date",
-                "created_at": datetime.now(UTC).isoformat(),
-                "updated_at": datetime.now(UTC).isoformat(),
-                "owner_scope_id": "user:alice",
-            }
-        }
     )
 
     assert await TemporaryMemory.async_active_snapshot(fake_manager, "scope") == []
@@ -205,7 +198,9 @@ async def test_manager_contract_enforces_owner_and_owned_helpers(
     assert len(replacement_batches) == 1
     assert len(replacement_batches[0]) == MAX_ACTIVE_RECORDS
     assert replacement_batches[0][0].memory_id == f"m{MAX_ACTIVE_RECORDS + 1:03d}"
-    assert all(record.owner_scope_id == "user:alice" for record in replacement_batches[0])
+    assert all(
+        record.owner_scope_id == "user:alice" for record in replacement_batches[0]
+    )
 
 
 @pytest.mark.asyncio
@@ -309,7 +304,6 @@ async def test_management_contract_validates_and_enriches_owner_operations(
     """Management commands cannot escape Personal/Shared ownership boundaries."""
     from custom_components.extended_openai_conversation_responses import management_ui
 
-    # Register every attribute directly mutated by the installer for clean teardown.
     monkeypatch.setattr(
         management_ui,
         "MANAGEMENT_FRONTEND_MODULES",
