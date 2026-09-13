@@ -57,8 +57,10 @@ test("shipped management panel loads and persists configuration inside the genui
 
   expect(integrationRequestFailures).toEqual([]);
   expect(integrationPageErrors).toEqual([]);
-  expect(integrationResponses.some(({url, status}) =>
-    url.endsWith("/extended_openai_conversation_responses/management-panel.js") && status === 200,
-  )).toBe(true);
+  expect(integrationResponses.some(({url, status}) => {
+    const path = new URL(url).pathname;
+    return /^\/extended_openai_conversation_responses\/assets\/[^/]+\/management-panel\.js$/.test(path)
+      && status === 200;
+  })).toBe(true);
   expect(integrationResponses.filter(({status}) => status >= 400)).toEqual([]);
 });
