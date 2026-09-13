@@ -388,16 +388,18 @@ export function installManagementStateSafety(registry = globalThis.customElement
         return originalSetConfigDirty.call(this, false);
       }
       const result = originalSetConfigDirty.call(this, true);
-      if (this._eocDirtyConfigKeys instanceof Set) {
-        queueMicrotask(() => {
-          if (!(this._eocDirtyConfigKeys instanceof Set) || this._eocDirtyConfigKeys.size) return;
-          const changed = rebuildConfigDirtyKeys(this);
-          const dirty = changed.size > 0;
-          const wasDirty = Boolean(this._configDirty);
-          originalSetConfigDirty.call(this, dirty);
-          if (wasDirty && !dirty) this._render?.();
-        });
-      }
+      queueMicrotask(() => {
+        if (!(this._eocDirtyConfigKeys instanceof Set)) return;
+        // Configuration editor dirty signals are emitted only after readConfig()
+        // has copied the rendered controls into the shared draft. Reconcile the
+        // complete draft every time so a second dirty field cannot be missed just
+        // because another key was already present in the incremental set.
+        const changed = rebuildConfigDirtyKeys(this);
+        const dirty = changed.size > 0;
+        const wasDirty = Boolean(this._configDirty);
+        originalSetConfigDirty.call(this, dirty);
+        if (wasDirty && !dirty) this._render?.();
+      });
       return result;
     };
 
