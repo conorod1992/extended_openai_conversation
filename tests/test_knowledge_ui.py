@@ -215,7 +215,7 @@ async def test_websocket_reports_errors_and_results(monkeypatch) -> None:
         "async_manage_knowledge_command",
         AsyncMock(side_effect=HomeAssistantError("bad request")),
     )
-    await knowledge_ui.websocket_manage_knowledge(
+    await knowledge_ui.websocket_manage_knowledge.__wrapped__(
         _hass(), connection, {"id": 7, "action": "agents", "type": knowledge_ui.WS_COMMAND}
     )
     connection.send_error.assert_called_once_with(7, "invalid_request", "bad request")
@@ -228,7 +228,7 @@ async def test_websocket_reports_errors_and_results(monkeypatch) -> None:
         "async_manage_knowledge_command",
         AsyncMock(return_value={"ok": True}),
     )
-    await knowledge_ui.websocket_manage_knowledge(
+    await knowledge_ui.websocket_manage_knowledge.__wrapped__(
         _hass(), connection, {"id": 8, "action": "agents", "type": knowledge_ui.WS_COMMAND}
     )
     connection.send_result.assert_called_once_with(8, {"ok": True})
