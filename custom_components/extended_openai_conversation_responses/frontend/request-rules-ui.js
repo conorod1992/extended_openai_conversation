@@ -43,7 +43,7 @@ function renderAllRulesForInPlaceSearch(panel, module) {
 function addRequestRuleManagementClarity(panel, html) {
   const rules = panel._result?.rules || [];
   const diagnostics = panel._result?.diagnostics || {};
-  const routingHelp = '<section class="notice"><strong>AI routing command behavior</strong><p><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> routing rules are complete commands by default: they are acknowledged locally and apply to the rest of the current conversation. Enable <strong>Continue to AI</strong> to send the original request unchanged to the provider after applying the route. <strong>Starts with</strong>, <strong>Ends with</strong>, and <strong>Contains</strong> continue to the provider by default; matched words are not stripped.</p><p>A request-only reset bypasses a conversation override for that one provider request; it does not clear the saved conversation route. Rule order is only the final tie-breaker after match type and phrase specificity.</p></section>';
+  const routingHelp = '<section class="notice"><strong>AI routing command behavior</strong><p><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> routing rules are complete commands by default: they are acknowledged locally and apply to the rest of the current conversation. Enable <strong>Continue to AI</strong> to send the original request to the provider unchanged after applying the route. <strong>Starts with</strong>, <strong>Ends with</strong>, and <strong>Contains</strong> continue to the provider by default; matched words are not stripped.</p><p>A request-only reset bypasses a conversation override for that one provider request; it does not clear the saved conversation route. Rule order is only the final tie-breaker after match type and phrase specificity.</p></section>';
   let transformed = html.replace(
     '<section class="content-card rule-settings">',
     `${routingHelp}<section class="content-card rule-settings">`,
@@ -168,7 +168,7 @@ export function requestRulesDialog(...args) {
   const dialog = getRequestRulesModule()?.requestRulesDialog(...args) || "";
   return dialog.replace(
     '<div id="rule-routing-config" hidden>',
-    '<div id="rule-routing-config" hidden><p class="help"><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> are complete commands by default. Enable <strong>Continue to AI</strong> to send the original request unchanged to the provider after applying the route. Broader Starts/Ends/Contains matches continue to the provider by default.</p><p class="help" id="rule-routing-scope-help"></p>',
+    '<div id="rule-routing-config" hidden><p class="help"><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> are complete commands by default. Enable <strong>Continue to AI</strong> to send the original request to the provider unchanged after applying the route. Broader Starts/Ends/Contains matches continue to the provider by default.</p><p class="help" id="rule-routing-scope-help"></p>',
   );
 }
 
