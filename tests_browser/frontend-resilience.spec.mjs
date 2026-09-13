@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {browserToolYaml, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptConfirmation, browserToolYaml, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 async function failNextManagementCall(page, section, action, message) {
   await page.evaluate(({section, action, message}) => {
@@ -14,6 +14,21 @@ async function failNextManagementCall(page, section, action, message) {
       return original(request);
     };
   }, {section, action, message});
+}
+
+async function returnNextManagementResult(page, section, action, result) {
+  await page.evaluate(({section, action, result}) => {
+    const hass = window.browserHarness.hass;
+    const original = hass.callWS.bind(hass);
+    let returned = false;
+    hass.callWS = async (request) => {
+      if (!returned && request.section === section && request.action === action) {
+        returned = true;
+        return structuredClone(result);
+      }
+      return original(request);
+    };
+  }, {section, action, result});
 }
 
 test("failed Memory save keeps the editor and draft intact, then retries cleanly", async ({page}) => {
@@ -90,10 +105,14 @@ test("malformed Function Tool YAML stays editable and cannot mutate persisted to
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
   const malformed = "spec:\n  description: Missing name on purpose\nfunction:\n  type: script\n  sequence: []\n";
   await panel.locator("#tool-yaml").fill(malformed);
+  await returnNextManagementResult(page, "tools", "validate_yaml", {
+    valid: false,
+    errors: {"functions[0].spec.name": "is required"},
+  });
   await panel.locator("#tool-save").click();
 
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
-  await expect(panel.locator("#tool-error")).toContainText("spec.name is required");
+  await expect(panel.locator("#tool-error")).toContainText("functions[0].spec.name: is required");
   await expect(panel.locator("#tool-yaml")).toHaveValue(malformed);
   expect(await page.evaluate(() => window.browserHarness.getState().configuration.config.functions)).toHaveLength(1);
 
@@ -190,5 +209,50 @@ test("server-rejected general configuration save remains dirty and retries witho
   await page.goto(fixtureUrl("assistant/basics"));
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator('[data-config="__title"]')).toHaveValue("Retry-safe agent title");
+  await expectHarnessClean(page, pageErrors);
+});
+
+test("malformed backup import leaves persisted state untouched and a valid retry restores cleanly", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
+
+  let panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#transfer-export-mode").selectOption("full");
+  const downloadPromise = page.waitForEvent("download");
+  await panel.locator("#create-backup-transfer").click();
+  const backup = await downloadPromise;
+  const backupPath = await backup.path();
+  expect(backupPath).toBeTruthy();
+
+  await page.goto(fixtureUrl("assistant/basics"));
+  panel = page.locator("extended-openai-management-panel");
+  await panel.locator('[data-config="__title"]').fill("Changed before malformed restore");
+  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  expect(await page.evaluate(() => window.browserHarness.getState().configuration.title)).toBe("Changed before malformed restore");
+
+  await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
+  panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#backup-file-transfer").setInputFiles({
+    name: "malformed-backup.zip",
+    mimeType: "application/zip",
+    buffer: Buffer.from("not a valid backup document"),
+  });
+
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", false);
+  await expect(panel.locator("#restore-transfer-apply")).toBeDisabled();
+  expect(await page.evaluate(() => window.browserHarness.getState().configuration.title)).toBe("Changed before malformed restore");
+
+  await panel.locator("#backup-file-transfer").setInputFiles(backupPath);
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
+  await expect(panel.locator("#restore-backup-name")).toHaveText("Jarvis");
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
+  await panel.locator("#restore-transfer-apply").click();
+  await acceptConfirmation(panel);
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", false);
+
+  expect(await page.evaluate(() => window.browserHarness.getState().configuration.title)).toBe("Jarvis");
+  await page.goto(fixtureUrl("assistant/basics"));
+  panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue("Jarvis");
   await expectHarnessClean(page, pageErrors);
 });
