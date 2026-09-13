@@ -159,7 +159,7 @@ async def test_execute_diagnostic_failure_never_masks_tool_result(monkeypatch) -
         debug._ACTIVE_DEBUG_TRACE.reset(token)
 
     assert result is expected
-    assert request_diagnostics._INTERNAL_TOOL_CALLS not in trace.memory
+    assert trace.memory[request_diagnostics._INTERNAL_TOOL_CALLS] == []
 
 
 def test_provider_serialization_cache_metric_failure_is_transparent(monkeypatch) -> None:
