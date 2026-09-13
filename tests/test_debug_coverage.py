@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -36,7 +33,7 @@ class _ToDict:
         return {"value": "to-dict"}
 
 
-class _BrokenAdapters:
+class _AdapterFallback:
     def model_dump(self, **_kwargs):
         raise RuntimeError("model dump failed")
 
@@ -44,11 +41,16 @@ class _BrokenAdapters:
         raise RuntimeError("as dict failed")
 
     def to_dict(self):
-        raise RuntimeError("to dict failed")
+        return {"value": "to-dict-after-errors"}
 
-    @property
-    def __dict__(self):
-        raise RuntimeError("vars failed")
+
+class _VarsPayload:
+    def __init__(self) -> None:
+        self.value = "vars"
+
+
+class _ReprOnly:
+    __slots__ = ()
 
     def __repr__(self) -> str:
         return "<fallback>"
@@ -80,6 +82,7 @@ def test_jsonable_bounds_and_redacts_arbitrary_sdk_values(monkeypatch) -> None:
         "model": _ModelDump(),
         "as_dict": _AsDict(),
         "to_dict": _ToDict(),
+        "vars": _VarsPayload(),
     }
 
     serialized = debug._jsonable(value)
@@ -93,11 +96,13 @@ def test_jsonable_bounds_and_redacts_arbitrary_sdk_values(monkeypatch) -> None:
     assert serialized["model"]["api_key"] == "<redacted credential>"
     assert serialized["as_dict"] == {"value": "as-dict"}
     assert serialized["to_dict"] == {"value": "to-dict"}
+    assert serialized["vars"] == {"value": "vars"}
     assert sorted(serialized["items"][1]) == [2, 3]
 
 
-def test_jsonable_adapter_failures_fall_back_without_breaking_capture() -> None:
-    assert debug._jsonable(_BrokenAdapters()) == "<fallback>"
+def test_jsonable_adapter_failures_fall_through_without_breaking_capture() -> None:
+    assert debug._jsonable(_AdapterFallback()) == {"value": "to-dict-after-errors"}
+    assert debug._jsonable(_ReprOnly()) == "<fallback>"
 
     nested: object = "leaf"
     for _ in range(22):
@@ -126,9 +131,11 @@ def test_usage_text_and_action_detection_support_provider_variants() -> None:
         "cached_input_tokens": 2,
         "reasoning_tokens": 1,
     }
-    assert debug._extract_usage(
+    usage = debug._extract_usage(
         {"usage": {"input_tokens": -1, "output_tokens": "4", "total_tokens": 9}}
-    )["total_tokens"] == 9
+    )
+    assert usage is not None
+    assert usage["total_tokens"] == 9
 
     assert debug._event_has_text({"type": "response.output_text.delta", "delta": "x"})
     assert debug._event_has_text({"choices": [{"delta": {"content": "x"}}]})
@@ -161,7 +168,9 @@ def test_provider_request_records_timings_usage_and_truncates(monkeypatch) -> No
     assert request.first_text_ms is not None
     assert request.usage["total_tokens"] == 5
 
-    request.add_event({"type": "response.function_call_arguments.delta", "payload": "x" * 200})
+    request.add_event(
+        {"type": "response.function_call_arguments.delta", "payload": "x" * 200}
+    )
     assert request.first_action_ms is not None
     assert request.response_events_truncated is True
     retained = list(request.response_events)
@@ -179,12 +188,10 @@ def test_provider_request_records_timings_usage_and_truncates(monkeypatch) -> No
     assert request.as_dict()["request_id"] == "req-1"
 
 
-def test_trace_request_metrics_summary_and_manager_lifecycle(monkeypatch) -> None:
+def test_trace_request_metrics_summary_and_manager_lifecycle() -> None:
     trace = _trace()
     first = trace.start_provider_request(
-        "responses",
-        ("arg",),
-        {"input": "hello", "tools": [{"type": "function"}]},
+        "responses", ("arg",), {"input": "hello", "tools": [{"type": "function"}]}
     )
     second = trace.start_provider_request("embeddings", (), {"input": "world"})
     first.usage = {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
@@ -233,7 +240,9 @@ def test_debug_manager_is_scoped_per_agent() -> None:
     assert debug.get_debug_manager(hass, "entry", "two") is not first
 
 
-def test_record_current_provider_failure_is_optional_and_finishes_latest_request(monkeypatch) -> None:
+def test_record_current_provider_failure_is_optional_and_finishes_latest_request(
+    monkeypatch,
+) -> None:
     error = RuntimeError("boom")
     monkeypatch.setattr(debug, "provider_error_metadata", lambda err: {"message": str(err)})
 
@@ -286,7 +295,10 @@ async def test_debug_async_stream_records_success_error_context_and_close() -> N
     delegate = _Stream([{"type": "response.output_text.delta", "delta": "hi"}])
     wrapped = debug._DebugAsyncStream(delegate, request)
     assert wrapped.__aiter__() is wrapped
-    assert await wrapped.__anext__() == {"type": "response.output_text.delta", "delta": "hi"}
+    assert await wrapped.__anext__() == {
+        "type": "response.output_text.delta",
+        "delta": "hi",
+    }
     with pytest.raises(StopAsyncIteration):
         await wrapped.__anext__()
     assert request.successful is True
@@ -294,7 +306,9 @@ async def test_debug_async_stream_records_success_error_context_and_close() -> N
     failed_request = debug.DebugProviderRequest(
         "req2", "responses", "now", 0, {}, {}, _started_monotonic=debug.time.monotonic()
     )
-    failed = debug._DebugAsyncStream(_Stream([], error=RuntimeError("stream failed")), failed_request)
+    failed = debug._DebugAsyncStream(
+        _Stream([], error=RuntimeError("stream failed")), failed_request
+    )
     with pytest.raises(RuntimeError, match="stream failed"):
         await failed.__anext__()
     assert failed_request.successful is False
@@ -340,9 +354,9 @@ async def test_endpoint_proxy_is_transparent_without_trace_and_records_calls_wit
     trace = _trace()
     token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     try:
-        result = await debug._DebugEndpointProxy(_Endpoint(plain_result), "responses").create(
-            model="gpt-test", input="hello"
-        )
+        result = await debug._DebugEndpointProxy(
+            _Endpoint(plain_result), "responses"
+        ).create(model="gpt-test", input="hello")
     finally:
         debug._ACTIVE_DEBUG_TRACE.reset(token)
     assert result is plain_result
@@ -366,9 +380,9 @@ async def test_endpoint_proxy_is_transparent_without_trace_and_records_calls_wit
     stream_trace = _trace()
     token = debug._ACTIVE_DEBUG_TRACE.set(stream_trace)
     try:
-        stream = await debug._DebugEndpointProxy(_Endpoint(_Stream([{"type": "event"}])), "responses").create(
-            input="hello"
-        )
+        stream = await debug._DebugEndpointProxy(
+            _Endpoint(_Stream([{"type": "event"}])), "responses"
+        ).create(input="hello")
         assert isinstance(stream, debug._DebugAsyncStream)
         assert await stream.__anext__() == {"type": "event"}
     finally:
@@ -391,7 +405,9 @@ def test_openai_client_proxy_wraps_supported_resources_and_delegates_other_attrs
     assert proxy.api_key == "secret"
 
 
-async def test_install_debug_instrumentation_covers_trace_lifecycle_and_phase_wrappers(monkeypatch) -> None:
+async def test_install_debug_instrumentation_covers_lifecycle_and_phase_wrappers(
+    monkeypatch,
+) -> None:
     from custom_components.extended_openai_conversation_responses.continuity import (
         ConversationContinuity,
     )
@@ -399,24 +415,48 @@ async def test_install_debug_instrumentation_covers_trace_lifecycle_and_phase_wr
         ExtendedOpenAIAgentEntity,
     )
 
-    process = AsyncMock(return_value={"response": "ok"})
-    handle = AsyncMock(return_value="handled")
-    retrieve = AsyncMock(return_value=[{"id": "persistent"}])
-    retrieve_temporary = AsyncMock(return_value=[{"id": "temporary"}, {"id": "two"}])
-    build_prompt = Mock(return_value="system prompt")
+    async def process(_self, _user_input):
+        return {"response": "ok"}
+
+    async def handle(_self, *_args, **_kwargs):
+        return "handled"
+
+    async def retrieve(_self, *_args, **_kwargs):
+        return [{"id": "persistent"}]
+
+    async def retrieve_temporary(_self, *_args, **_kwargs):
+        return [{"id": "temporary"}, {"id": "two"}]
+
+    def build_prompt(_self, *_args, **_kwargs):
+        return "system prompt"
+
     resolve_result = SimpleNamespace(
         conversation_id="resolved",
         key="scope-key",
         resumed=True,
         history=[1, 2],
     )
-    resolve = AsyncMock(return_value=resolve_result)
+
+    async def resolve(
+        _self,
+        _mode,
+        _scope,
+        _device_id,
+        _incoming_conversation_id,
+        _timeout_minutes,
+        *,
+        namespace=None,
+    ):
+        assert namespace == "ns"
+        return resolve_result
 
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_process", process)
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_handle_message", handle)
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_retrieve_memories", retrieve)
     monkeypatch.setattr(
-        ExtendedOpenAIAgentEntity, "_async_retrieve_temporary_memories", retrieve_temporary
+        ExtendedOpenAIAgentEntity,
+        "_async_retrieve_temporary_memories",
+        retrieve_temporary,
     )
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_build_system_prompt", build_prompt)
     monkeypatch.setattr(ConversationContinuity, "async_resolve", resolve)
@@ -439,9 +479,7 @@ async def test_install_debug_instrumentation_covers_trace_lifecycle_and_phase_wr
         hass=hass,
         entry=SimpleNamespace(entry_id="entry"),
         subentry=SimpleNamespace(subentry_id="agent"),
-        _usage=SimpleNamespace(
-            current_run=lambda: SimpleNamespace(run_id="usage-run")
-        ),
+        _usage=SimpleNamespace(current_run=lambda: SimpleNamespace(run_id="usage-run")),
     )
     user_input = SimpleNamespace(conversation_id="incoming", text="hello")
 
@@ -451,15 +489,17 @@ async def test_install_debug_instrumentation_covers_trace_lifecycle_and_phase_wr
     manager.configure(enabled=True)
     assert await wrapped_process(entity, user_input) == {"response": "ok"}
     assert manager.status()["count"] == 1
-    completed = manager.summaries()[0]
-    assert completed["successful"] is True
+    assert manager.summaries()[0]["successful"] is True
 
     trace = _trace()
     token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     try:
         assert await wrapped_handle(entity) == "handled"
         assert await wrapped_retrieve(entity) == [{"id": "persistent"}]
-        assert await wrapped_temporary(entity) == [{"id": "temporary"}, {"id": "two"}]
+        assert await wrapped_temporary(entity) == [
+            {"id": "temporary"},
+            {"id": "two"},
+        ]
         assert wrapped_prompt(entity) == "system prompt"
         continuity = SimpleNamespace()
         assert (
@@ -496,25 +536,37 @@ async def test_traced_process_records_failure_and_resets_context(monkeypatch) ->
         ExtendedOpenAIAgentEntity,
     )
 
-    error = RuntimeError("pipeline failed")
-
     async def fail(_self, _user_input):
-        raise error
+        raise RuntimeError("pipeline failed")
+
+    async def no_result(_self, *_args, **_kwargs):
+        return []
+
+    def empty_prompt(_self, *_args, **_kwargs):
+        return ""
+
+    async def no_resolve(
+        _self,
+        _mode,
+        _scope,
+        _device_id,
+        _incoming_conversation_id,
+        _timeout_minutes,
+        *,
+        namespace=None,
+    ):
+        return None
 
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_process", fail)
-    monkeypatch.setattr(
-        ExtendedOpenAIAgentEntity, "_async_handle_message", AsyncMock(return_value=None)
-    )
-    monkeypatch.setattr(
-        ExtendedOpenAIAgentEntity, "_async_retrieve_memories", AsyncMock(return_value=[])
-    )
+    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_handle_message", no_result)
+    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_retrieve_memories", no_result)
     monkeypatch.setattr(
         ExtendedOpenAIAgentEntity,
         "_async_retrieve_temporary_memories",
-        AsyncMock(return_value=[]),
+        no_result,
     )
-    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_build_system_prompt", Mock(return_value=""))
-    monkeypatch.setattr(ConversationContinuity, "async_resolve", AsyncMock())
+    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_build_system_prompt", empty_prompt)
+    monkeypatch.setattr(ConversationContinuity, "async_resolve", no_resolve)
     monkeypatch.setattr(debug, "provider_error_metadata", lambda err: {"message": str(err)})
     monkeypatch.setattr(debug, "_INSTRUMENTATION_INSTALLED", False)
 
