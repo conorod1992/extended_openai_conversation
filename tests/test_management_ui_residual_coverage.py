@@ -10,11 +10,13 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import management_ui
 from custom_components.extended_openai_conversation_responses.agent_config import (
-    AGENT_CONFIG_EXPORT_VERSION,
     AgentConfigError,
     agent_config_defaults,
 )
-from custom_components.extended_openai_conversation_responses.const import DOMAIN
+from custom_components.extended_openai_conversation_responses.const import (
+    AGENT_CONFIG_EXPORT_VERSION,
+    DOMAIN,
+)
 from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeSource,
 )
