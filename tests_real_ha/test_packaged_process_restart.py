@@ -192,7 +192,7 @@ async def _first_boot(config_dir: Path) -> None:
 
     sys.path.insert(0, str(config_dir))
     hass = await bootstrap.async_setup_hass(
-        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=True)
+        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
     )
     assert hass is not None
     await hass.async_start()
@@ -241,7 +241,7 @@ async def _second_boot(config_dir: Path) -> None:
     marker = json.loads((config_dir / _ENTRY_MARKER).read_text(encoding="utf-8"))
 
     hass = await bootstrap.async_setup_hass(
-        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=True)
+        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
     )
     assert hass is not None
     await hass.async_start()
