@@ -32,6 +32,44 @@ _REFERENCE_FIELDS = frozenset(
 )
 
 
+def _install_openapi_serializer_compat() -> None:
+    """Bridge HA's legacy serializer sentinel to the Probatio converter."""
+    converter = getattr(llm, "to_openapi", None)
+    if converter is None or getattr(converter, "_extended_openai_serializer_compat", False):
+        return
+
+    try:
+        from probatio import UNSUPPORTED as probatio_unsupported
+        from voluptuous_openapi import UNSUPPORTED as voluptuous_unsupported
+    except ImportError:
+        return
+
+    def compatible_to_openapi(
+        schema: Any,
+        *args: Any,
+        custom_serializer: Callable[[Any], Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        if custom_serializer is None:
+            return converter(schema, *args, custom_serializer=None, **kwargs)
+
+        def compatible_serializer(value: Any) -> Any:
+            result = custom_serializer(value)
+            if result is voluptuous_unsupported:
+                return probatio_unsupported
+            return result
+
+        return converter(
+            schema, *args, custom_serializer=compatible_serializer, **kwargs
+        )
+
+    compatible_to_openapi._extended_openai_serializer_compat = True  # type: ignore[attr-defined]
+    setattr(llm, "to_openapi", compatible_to_openapi)
+
+
+_install_openapi_serializer_compat()
+
+
 def is_ha_tool(tool: Mapping[str, Any]) -> bool:
     """Identify externally owned references without interpreting their names."""
     function = tool.get("function")
