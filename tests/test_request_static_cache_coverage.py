@@ -136,7 +136,9 @@ def test_render_template_fast_path_and_fallback_preserve_behavior(monkeypatch) -
         calls.append((raw, current_device_id))
         return f"original:{raw}:{len(exposed_entities)}:{len(skills)}"
 
-    monkeypatch.setattr(prompt, "_DEFAULT_EXPOSED_ENTITIES_CONTEXT", "MAINTAINED")
+    monkeypatch.setattr(
+        prompt, "_DEFAULT_EXPOSED_ENTITIES_CONTEXT", "MAINTAINED", raising=False
+    )
     monkeypatch.setattr(prompt, "_render_template", original_render)
     monkeypatch.setattr(
         request_static_cache,
