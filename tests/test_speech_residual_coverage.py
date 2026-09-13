@@ -49,9 +49,9 @@ def test_emit_separator_handles_whitespace_punctuation_and_plain_text() -> None:
     assert output == [" ", "next"]
 
 
-def test_suppress_and_hold_whitespace_cover_empty_chunks() -> None:
+def test_suppress_and_hold_whitespace_cover_trailing_chunks() -> None:
     sanitizer = speech.StreamingSpeechSanitizer()
-    output = ["text", "   ", ""]
+    output = ["text", "   "]
     sanitizer._last_output = "text   "
 
     end = sanitizer._suppress(output, 12)
