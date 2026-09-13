@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import quiet_hours
+from custom_components.extended_openai_conversation_responses import quiet_hours_runtime
 from custom_components.extended_openai_conversation_responses.quiet_hours import (
     QuietHoursManager,
     _config_from_data,
@@ -30,14 +30,9 @@ def _config(**overrides):
         "enabled": True,
         "start": "22:00",
         "end": "07:00",
-        "volume_level": 0.2,
-        "wake_sound_enabled": False,
-        "overrides": {
-            "assist_satellite.bedroom": {
-                "media_player_entity_id": "media_player.bedroom",
-                "wake_sound_entity_id": "switch.bedroom_wake_sound",
-            }
-        },
+        "max_volume": 0.2,
+        "wake_sound": "off",
+        "overrides": {},
     }
     value.update(overrides)
     return _config_from_data(value)
@@ -72,14 +67,61 @@ async def _install_services(hass):
     return volume_calls, switch_calls
 
 
-def _seed_bedroom(hass, *, volume=0.55, wake="on") -> None:
+def _entity(
+    entity_id: str,
+    domain: str,
+    device_id: str,
+    *,
+    platform: str = "esphome",
+    original_name: str | None = None,
+):
+    return SimpleNamespace(
+        entity_id=entity_id,
+        domain=domain,
+        device_id=device_id,
+        disabled_by=None,
+        platform=platform,
+        original_name=original_name,
+        name=None,
+    )
+
+
+def _install_registry(monkeypatch, *rooms: str) -> None:
+    entries = {}
+    for room in rooms:
+        device_id = f"device-{room}"
+        entries[f"assist_satellite.{room}"] = _entity(
+            f"assist_satellite.{room}",
+            "assist_satellite",
+            device_id,
+            original_name="Assist satellite",
+        )
+        entries[f"media_player.{room}"] = _entity(
+            f"media_player.{room}",
+            "media_player",
+            device_id,
+            original_name="Media Player",
+        )
+        entries[f"switch.{room}_wake_sound"] = _entity(
+            f"switch.{room}_wake_sound",
+            "switch",
+            device_id,
+            original_name="Wake sound",
+        )
+    registry = SimpleNamespace(entities=entries)
+    monkeypatch.setattr(quiet_hours_runtime.er, "async_get", lambda _hass: registry)
+
+
+def _seed_room(hass, room: str, *, volume=0.55, wake="on") -> None:
     hass.states.async_set(
-        "assist_satellite.bedroom", "idle", {"friendly_name": "Bedroom Voice"}
+        f"assist_satellite.{room}",
+        "idle",
+        {"friendly_name": f"{room.title()} Voice"},
     )
     hass.states.async_set(
-        "media_player.bedroom", "idle", {"volume_level": volume}
+        f"media_player.{room}", "idle", {"volume_level": volume}
     )
-    hass.states.async_set("switch.bedroom_wake_sound", wake)
+    hass.states.async_set(f"switch.{room}_wake_sound", wake)
 
 
 def test_quiet_period_for_overnight_window() -> None:
@@ -100,16 +142,21 @@ def test_quiet_period_for_overnight_window() -> None:
     ) is None
 
 
-def test_config_validates_global_policy_and_manual_mappings() -> None:
+def test_config_uses_ceiling_tri_state_and_migrates_prototype_names() -> None:
     config = _config()
-    assert config.volume_level == 0.2
-    assert config.wake_sound_enabled is False
-    assert config.override_for("assist_satellite.bedroom").media_player_entity_id == (
-        "media_player.bedroom"
+    assert config.max_volume == 0.2
+    assert config.wake_sound == "off"
+
+    migrated = _config_from_data(
+        {"volume_level": 0.3, "wake_sound_enabled": True}
     )
+    assert migrated.max_volume == 0.3
+    assert migrated.wake_sound == "on"
 
     with pytest.raises(ValueError, match="between 0 and 1"):
-        _config_from_data({"volume_level": 1.2})
+        _config_from_data({"max_volume": 1.2})
+    with pytest.raises(ValueError, match="on, off, or unchanged"):
+        _config_from_data({"wake_sound": "sometimes"})
     with pytest.raises(ValueError, match="assist_satellite"):
         _config_from_data({"overrides": {"sensor.bad": {}}})
     with pytest.raises(ValueError, match="media_player"):
@@ -125,68 +172,10 @@ def test_config_validates_global_policy_and_manual_mappings() -> None:
 
 
 def test_discovery_uses_same_device_and_voice_pe_wake_sound(monkeypatch, hass) -> None:
-    entries = {
-        "assist_satellite.bedroom": SimpleNamespace(
-            entity_id="assist_satellite.bedroom",
-            domain="assist_satellite",
-            device_id="device-1",
-            disabled_by=None,
-            platform="esphome",
-            original_name="Assist satellite",
-            name=None,
-        ),
-        "media_player.bedroom": SimpleNamespace(
-            entity_id="media_player.bedroom",
-            domain="media_player",
-            device_id="device-1",
-            disabled_by=None,
-            platform="esphome",
-            original_name="Media Player",
-            name=None,
-        ),
-        "switch.bedroom_wake_sound": SimpleNamespace(
-            entity_id="switch.bedroom_wake_sound",
-            domain="switch",
-            device_id="device-1",
-            disabled_by=None,
-            platform="esphome",
-            original_name="Wake sound",
-            name=None,
-        ),
-        "media_player.other": SimpleNamespace(
-            entity_id="media_player.other",
-            domain="media_player",
-            device_id="device-2",
-            disabled_by=None,
-            platform="esphome",
-            original_name="Media Player",
-            name=None,
-        ),
-    }
-    registry = SimpleNamespace(
-        entities=entries,
-        async_get=lambda entity_id: entries.get(entity_id),
-    )
-    monkeypatch.setattr(quiet_hours.er, "async_get", lambda _hass: registry)
-    hass.states.async_set(
-        "assist_satellite.bedroom", "idle", {"friendly_name": "Bedroom Voice"}
-    )
-    hass.states.async_set(
-        "media_player.bedroom", "idle", {"volume_level": 0.5}
-    )
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom")
 
-    discovered = discover_satellite_capabilities(
-        hass,
-        _config_from_data(
-            {
-                "enabled": True,
-                "start": "22:00",
-                "end": "07:00",
-                "volume_level": 0.2,
-                "wake_sound_enabled": False,
-            }
-        ),
-    )
+    discovered = discover_satellite_capabilities(hass, _config())
 
     assert len(discovered) == 1
     assert discovered[0].media_player_entity_id == "media_player.bedroom"
@@ -195,10 +184,72 @@ def test_discovery_uses_same_device_and_voice_pe_wake_sound(monkeypatch, hass) -
     assert discovered[0].wake_sound_source == "auto"
 
 
-async def test_quiet_hours_applies_volume_and_wake_sound_after_persisting(hass) -> None:
+def test_manual_mapping_overrides_auto_discovery(monkeypatch, hass) -> None:
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom")
+    hass.states.async_set("media_player.manual", "idle", {"volume_level": 0.7})
+    hass.states.async_set("switch.manual_wake", "on")
+
+    discovered = discover_satellite_capabilities(
+        hass,
+        _config(
+            overrides={
+                "assist_satellite.bedroom": {
+                    "media_player_entity_id": "media_player.manual",
+                    "wake_sound_entity_id": "switch.manual_wake",
+                }
+            }
+        ),
+    )
+
+    assert discovered[0].media_player_entity_id == "media_player.manual"
+    assert discovered[0].media_player_source == "manual"
+    assert discovered[0].wake_sound_entity_id == "switch.manual_wake"
+    assert discovered[0].wake_sound_source == "manual"
+
+
+async def test_ceiling_lowers_only_satellites_above_limit(monkeypatch, hass) -> None:
+    _install_registry(monkeypatch, "bedroom", "kitchen")
+    _seed_room(hass, "bedroom", volume=0.55)
+    _seed_room(hass, "kitchen", volume=0.1)
+    manager = _manager(hass)
+    manager._config = _config(wake_sound="unchanged")
+    volume_calls, switch_calls = await _install_services(hass)
+
+    await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 0, tzinfo=UTC))
+
+    assert volume_calls == [("media_player.bedroom", 0.2)]
+    assert switch_calls == []
+    assert "media_player.bedroom" in manager.active["controls"]
+    assert "media_player.kitchen" not in manager.active["controls"]
+    assert hass.states["media_player.kitchen"].attributes["volume_level"] == 0.1
+
+
+async def test_active_entity_tracks_schedule_even_when_nothing_changes(monkeypatch, hass) -> None:
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom", volume=0.1, wake="off")
     manager = _manager(hass)
     manager._config = _config()
-    _seed_bedroom(hass)
+    await _install_services(hass)
+
+    await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 0, tzinfo=UTC))
+
+    state = hass.states["binary_sensor.extended_openai_quiet_hours"]
+    assert state.state == "on"
+    assert state.attributes["max_volume"] == 0.2
+    assert state.attributes["wake_sound"] == "off"
+    assert manager.active is not None
+    assert manager.active["controls"] == {}
+
+    await manager.async_reconcile(now=datetime(2026, 9, 12, 7, 0, tzinfo=UTC))
+    assert hass.states["binary_sensor.extended_openai_quiet_hours"].state == "off"
+
+
+async def test_quiet_hours_persists_ownership_before_mutation(monkeypatch, hass) -> None:
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom")
+    manager = _manager(hass)
+    manager._config = _config()
     volume_calls, switch_calls = await _install_services(hass)
 
     await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 0, tzinfo=UTC))
@@ -215,8 +266,6 @@ async def test_quiet_hours_applies_volume_and_wake_sound_after_persisting(hass) 
     assert manager.active["controls"]["switch.bedroom_wake_sound"][
         "original_value"
     ] is True
-
-    # Ownership is saved before the first external volume mutation.
     saves = manager._store.async_save.await_args_list
     assert any(
         "media_player.bedroom" in call.args[0].get("active", {}).get("controls", {})
@@ -224,7 +273,10 @@ async def test_quiet_hours_applies_volume_and_wake_sound_after_persisting(hass) 
     )
 
 
-async def test_restart_same_period_preserves_originals_and_does_not_reapply(hass) -> None:
+async def test_restart_same_period_preserves_originals_and_does_not_reapply(
+    monkeypatch, hass
+) -> None:
+    _install_registry(monkeypatch, "bedroom")
     manager = _manager(hass)
     manager._config = _config()
     manager._active = {
@@ -246,7 +298,7 @@ async def test_restart_same_period_preserves_originals_and_does_not_reapply(hass
             },
         },
     }
-    _seed_bedroom(hass, volume=0.2, wake="off")
+    _seed_room(hass, "bedroom", volume=0.2, wake="off")
     volume_calls, switch_calls = await _install_services(hass)
 
     await manager.async_reconcile(now=datetime(2026, 9, 12, 2, 0, tzinfo=UTC))
@@ -256,17 +308,17 @@ async def test_restart_same_period_preserves_originals_and_does_not_reapply(hass
     assert manager.active["controls"]["media_player.bedroom"]["original_value"] == 0.55
 
 
-async def test_manual_changes_are_not_reapplied_or_restored(hass) -> None:
+async def test_manual_changes_are_not_reapplied_or_restored(monkeypatch, hass) -> None:
+    _install_registry(monkeypatch, "bedroom")
     manager = _manager(hass)
     manager._config = _config()
-    _seed_bedroom(hass)
+    _seed_room(hass, "bedroom")
     volume_calls, switch_calls = await _install_services(hass)
 
     await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 0, tzinfo=UTC))
     hass.states.async_set("media_player.bedroom", "idle", {"volume_level": 0.35})
     hass.states.async_set("switch.bedroom_wake_sound", "on")
 
-    # Reconciliation in the same period respects both manual changes.
     await manager.async_reconcile(now=datetime(2026, 9, 12, 2, 0, tzinfo=UTC))
     await manager.async_reconcile(now=datetime(2026, 9, 12, 7, 0, tzinfo=UTC))
 
@@ -277,10 +329,11 @@ async def test_manual_changes_are_not_reapplied_or_restored(hass) -> None:
     assert manager.active is None
 
 
-async def test_end_restores_controls_still_owned(hass) -> None:
+async def test_end_restores_controls_still_owned(monkeypatch, hass) -> None:
+    _install_registry(monkeypatch, "bedroom")
     manager = _manager(hass)
     manager._config = _config()
-    _seed_bedroom(hass)
+    _seed_room(hass, "bedroom")
     volume_calls, switch_calls = await _install_services(hass)
 
     await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 0, tzinfo=UTC))
@@ -297,30 +350,20 @@ async def test_end_restores_controls_still_owned(hass) -> None:
     assert manager.active is None
 
 
-async def test_same_period_reconcile_can_pick_up_new_satellite_without_reclaiming_old(hass) -> None:
+async def test_same_period_discovers_new_satellite_without_reclaiming_manual_change(
+    monkeypatch, hass
+) -> None:
+    _install_registry(monkeypatch, "bedroom")
     manager = _manager(hass)
-    manager._config = _config(
-        overrides={
-            "assist_satellite.bedroom": {
-                "media_player_entity_id": "media_player.bedroom",
-            },
-            "assist_satellite.kitchen": {
-                "media_player_entity_id": "media_player.kitchen",
-            },
-        }
-    )
-    _seed_bedroom(hass)
+    manager._config = _config(wake_sound="unchanged")
+    _seed_room(hass, "bedroom")
     volume_calls, _ = await _install_services(hass)
 
     await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 0, tzinfo=UTC))
     hass.states.async_set("media_player.bedroom", "idle", {"volume_level": 0.35})
 
-    hass.states.async_set(
-        "assist_satellite.kitchen", "idle", {"friendly_name": "Kitchen Voice"}
-    )
-    hass.states.async_set(
-        "media_player.kitchen", "idle", {"volume_level": 0.6}
-    )
+    _install_registry(monkeypatch, "bedroom", "kitchen")
+    _seed_room(hass, "kitchen", volume=0.6)
     await manager.async_reconcile(now=datetime(2026, 9, 11, 23, 0, tzinfo=UTC))
 
     assert volume_calls == [
