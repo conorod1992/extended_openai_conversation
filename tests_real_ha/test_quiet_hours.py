@@ -14,7 +14,7 @@ from custom_components.extended_openai_conversation_responses.quiet_hours import
 from custom_components.extended_openai_conversation_responses.quiet_hours_runtime import (
     SatelliteCapabilities,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
 
 
 def _capabilities() -> list[SatelliteCapabilities]:
@@ -46,6 +46,12 @@ def _manager(hass: HomeAssistant) -> QuietHoursManager:
         }
     )
     return manager
+
+
+def _state(hass: HomeAssistant, entity_id: str) -> State:
+    state = hass.states.get(entity_id)
+    assert state is not None
+    return state
 
 
 async def _install_control_services(hass: HomeAssistant):
@@ -103,9 +109,9 @@ async def test_real_ha_quiet_hours_applies_and_restores_owned_controls(
 
     await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 0, tzinfo=UTC))
 
-    assert hass.states["media_player.bedroom"].attributes["volume_level"] == 0.2
-    assert hass.states["switch.bedroom_wake_sound"].state == "off"
-    quiet_state = hass.states[manager.snapshot()["state_entity_id"]]
+    assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.2
+    assert _state(hass, "switch.bedroom_wake_sound").state == "off"
+    quiet_state = _state(hass, manager.snapshot()["state_entity_id"])
     assert quiet_state.state == "on"
     assert quiet_state.attributes["max_volume"] == 0.2
     assert volume_calls == [("media_player.bedroom", 0.2)]
@@ -113,9 +119,9 @@ async def test_real_ha_quiet_hours_applies_and_restores_owned_controls(
 
     await manager.async_reconcile(now=datetime(2026, 9, 12, 7, 0, tzinfo=UTC))
 
-    assert hass.states["media_player.bedroom"].attributes["volume_level"] == 0.55
-    assert hass.states["switch.bedroom_wake_sound"].state == "on"
-    assert hass.states[manager.snapshot()["state_entity_id"]].state == "off"
+    assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.55
+    assert _state(hass, "switch.bedroom_wake_sound").state == "on"
+    assert _state(hass, manager.snapshot()["state_entity_id"]).state == "off"
     assert volume_calls == [
         ("media_player.bedroom", 0.2),
         ("media_player.bedroom", 0.55),
@@ -145,8 +151,8 @@ async def test_real_ha_manual_changes_opt_out_of_restore(
     await manager.async_reconcile(now=datetime(2026, 9, 12, 2, 0, tzinfo=UTC))
     await manager.async_reconcile(now=datetime(2026, 9, 12, 7, 0, tzinfo=UTC))
 
-    assert hass.states["media_player.bedroom"].attributes["volume_level"] == 0.35
-    assert hass.states["switch.bedroom_wake_sound"].state == "on"
+    assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.35
+    assert _state(hass, "switch.bedroom_wake_sound").state == "on"
     assert volume_calls == [("media_player.bedroom", 0.2)]
     assert switch_calls == [("switch.bedroom_wake_sound", False)]
 
@@ -164,7 +170,7 @@ async def test_real_ha_ceiling_never_raises_and_manual_later_change_is_respected
     volume_calls, switch_calls = await _install_control_services(hass)
 
     await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 0, tzinfo=UTC))
-    assert hass.states["media_player.bedroom"].attributes["volume_level"] == 0.1
+    assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.1
     assert volume_calls == []
     assert switch_calls == []
 
@@ -174,7 +180,7 @@ async def test_real_ha_ceiling_never_raises_and_manual_later_change_is_respected
     hass.states.async_set("switch.bedroom_wake_sound", "on")
     await manager.async_reconcile(now=datetime(2026, 9, 11, 23, 0, tzinfo=UTC))
 
-    assert hass.states["media_player.bedroom"].attributes["volume_level"] == 0.45
-    assert hass.states["switch.bedroom_wake_sound"].state == "on"
+    assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.45
+    assert _state(hass, "switch.bedroom_wake_sound").state == "on"
     assert volume_calls == []
     assert switch_calls == []
