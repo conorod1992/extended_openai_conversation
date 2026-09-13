@@ -123,6 +123,7 @@ function applyTargetedConfigDirty(panel, keys, control = null) {
   const wasDirty = Boolean(panel._configDirty);
   const changed = syncConfigDirtyKeys(panel, keys);
   panel._setConfigDirty(changed.size > 0);
+  panel.shadowRoot?.dispatchEvent?.(new Event("eoc-config-dirty-changed"));
   if (wasDirty && !panel._configDirty) {
     panel._render?.();
     restoreConfigFocus(panel, control);
@@ -398,6 +399,11 @@ export function installManagementStateSafety(registry = globalThis.customElement
     prototype._syncConfigDirty = function() {
       const changed = rebuildConfigDirtyKeys(this);
       return originalSetConfigDirty.call(this, changed.size > 0);
+    };
+
+    prototype._syncConfigControlDirty = function(control) {
+      const key = configKeyForControl(control);
+      if (key) applyTargetedConfigDirty(this, [key], control);
     };
 
     const originalNavigate = prototype._navigate;
