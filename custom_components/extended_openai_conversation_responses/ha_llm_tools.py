@@ -32,6 +32,62 @@ _REFERENCE_FIELDS = frozenset(
 )
 
 
+def _install_openapi_serializer_compat() -> None:
+    """Bridge legacy and Probatio OpenAPI schema/serializer contracts."""
+    existing = getattr(llm, "to_openapi", None)
+    if existing is not None and getattr(
+        existing, "_extended_openai_serializer_compat", False
+    ):
+        return
+
+    try:
+        import probatio
+        from voluptuous_openapi import (
+            UNSUPPORTED as voluptuous_unsupported,
+            convert as voluptuous_convert,
+        )
+    except ImportError:
+        return
+
+    def compatible_to_openapi(
+        schema: Any,
+        *args: Any,
+        custom_serializer: Callable[[Any], Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        if existing is not None:
+            converter = existing
+            target_unsupported = probatio.UNSUPPORTED
+            foreign_unsupported = voluptuous_unsupported
+        elif isinstance(schema, probatio.Schema):
+            converter = probatio.to_openapi
+            target_unsupported = probatio.UNSUPPORTED
+            foreign_unsupported = voluptuous_unsupported
+        else:
+            converter = voluptuous_convert
+            target_unsupported = voluptuous_unsupported
+            foreign_unsupported = probatio.UNSUPPORTED
+
+        if custom_serializer is None:
+            return converter(schema, *args, custom_serializer=None, **kwargs)
+
+        def compatible_serializer(value: Any) -> Any:
+            result = custom_serializer(value)
+            if result is foreign_unsupported:
+                return target_unsupported
+            return result
+
+        return converter(
+            schema, *args, custom_serializer=compatible_serializer, **kwargs
+        )
+
+    compatible_to_openapi._extended_openai_serializer_compat = True  # type: ignore[attr-defined]
+    llm.to_openapi = compatible_to_openapi  # type: ignore[attr-defined]
+
+
+_install_openapi_serializer_compat()
+
+
 def is_ha_tool(tool: Mapping[str, Any]) -> bool:
     """Identify externally owned references without interpreting their names."""
     function = tool.get("function")
