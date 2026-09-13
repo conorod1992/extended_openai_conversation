@@ -30,7 +30,14 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         if self._registered_state_entity_id is not None:
             return self._registered_state_entity_id
         registry = er.async_get(self.hass)
-        entry = registry.async_get_or_create(
+        create = getattr(registry, "async_get_or_create", None)
+        if not callable(create):
+            # Home Assistant's real entity registry always exposes this method.
+            # Retaining a deterministic fallback keeps reduced test/runtime stubs
+            # usable without weakening normal registry-backed identity.
+            self._registered_state_entity_id = _STATE_FALLBACK_ENTITY_ID
+            return self._registered_state_entity_id
+        entry = create(
             domain="binary_sensor",
             platform=DOMAIN,
             unique_id=_STATE_UNIQUE_ID,
