@@ -181,3 +181,139 @@ async def test_authenticated_request_skips_configured_user_validation() -> None:
 
     assert active == frozenset()
     auth_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("device_id", "mappings"),
+    [
+        (None, {"kitchen": "user:mapped-user"}),
+        ("kitchen", ["not", "a", "mapping"]),
+    ],
+)
+async def test_device_mapping_requires_device_and_mapping_shape(
+    device_id, mappings
+) -> None:
+    """Incomplete or malformed mapping configuration must not confer user scope."""
+    auth_lookup = AsyncMock()
+    agent = SimpleNamespace(
+        hass=SimpleNamespace(auth=SimpleNamespace(async_get_user=auth_lookup)),
+        subentry=SimpleNamespace(
+            data={
+                CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_DEVICE_MAPPING,
+                CONF_VOICE_DEVICE_MAPPINGS: mappings,
+            }
+        ),
+    )
+    user_input = SimpleNamespace(device_id=device_id, satellite_id=None)
+
+    active = await voice_identity_runtime._active_configured_users(agent, user_input)
+
+    assert active == frozenset()
+    auth_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_shared_device_mapping_never_validates_or_binds_a_user() -> None:
+    """An explicitly shared source remains outside any configured user scope."""
+    auth_lookup = AsyncMock()
+    agent = SimpleNamespace(
+        hass=SimpleNamespace(auth=SimpleNamespace(async_get_user=auth_lookup)),
+        subentry=SimpleNamespace(
+            data={
+                CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_DEVICE_MAPPING,
+                CONF_VOICE_DEVICE_MAPPINGS: {"kitchen": VOICE_POLICY_SHARED},
+            }
+        ),
+    )
+    user_input = SimpleNamespace(device_id="kitchen", satellite_id=None)
+
+    active = await voice_identity_runtime._active_configured_users(agent, user_input)
+
+    assert active == frozenset()
+    auth_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_active_mapped_user_is_the_only_bound_identity() -> None:
+    """A valid active device mapping selects exactly that configured user."""
+    auth_lookup = AsyncMock(return_value=SimpleNamespace(is_active=True))
+    agent = SimpleNamespace(
+        hass=SimpleNamespace(auth=SimpleNamespace(async_get_user=auth_lookup)),
+        subentry=SimpleNamespace(
+            data={
+                CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_DEVICE_MAPPING,
+                CONF_VOICE_DEVICE_MAPPINGS: {"kitchen": "user:mapped-user"},
+            }
+        ),
+    )
+    user_input = SimpleNamespace(device_id="kitchen", satellite_id=None)
+
+    active = await voice_identity_runtime._active_configured_users(agent, user_input)
+
+    assert active == frozenset({"mapped-user"})
+    auth_lookup.assert_awaited_once_with("mapped-user")
+
+
+@pytest.mark.asyncio
+async def test_explicit_unretained_mapping_uses_configured_unmapped_fallback() -> None:
+    """Unretained mappings do not become user IDs and follow the fallback policy."""
+    auth_lookup = AsyncMock(return_value=SimpleNamespace(is_active=True))
+    agent = SimpleNamespace(
+        hass=SimpleNamespace(auth=SimpleNamespace(async_get_user=auth_lookup)),
+        subentry=SimpleNamespace(
+            data={
+                CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_DEVICE_MAPPING,
+                CONF_VOICE_DEVICE_MAPPINGS: {"kitchen": "unretained"},
+                CONF_VOICE_UNMAPPED_POLICY: VOICE_POLICY_DEFAULT_USER,
+                CONF_VOICE_DEFAULT_USER_ID: "default-user",
+            }
+        ),
+    )
+    user_input = SimpleNamespace(device_id="kitchen", satellite_id=None)
+
+    active = await voice_identity_runtime._active_configured_users(agent, user_input)
+
+    assert active == frozenset({"default-user"})
+    auth_lookup.assert_awaited_once_with("default-user")
+
+
+@pytest.mark.asyncio
+async def test_inactive_default_user_cannot_be_bound() -> None:
+    """A stale default-user setting fails closed rather than retaining user scope."""
+    auth_lookup = AsyncMock(return_value=SimpleNamespace(is_active=False))
+    agent = SimpleNamespace(
+        hass=SimpleNamespace(auth=SimpleNamespace(async_get_user=auth_lookup)),
+        subentry=SimpleNamespace(
+            data={
+                CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_DEFAULT_USER,
+                CONF_VOICE_DEFAULT_USER_ID: "inactive-user",
+            }
+        ),
+    )
+    user_input = SimpleNamespace(device_id="kitchen", satellite_id=None)
+
+    active = await voice_identity_runtime._active_configured_users(agent, user_input)
+
+    assert active == frozenset()
+    auth_lookup.assert_awaited_once_with("inactive-user")
+
+
+def test_installer_recognizes_existing_voice_identity_wrapper(monkeypatch) -> None:
+    """An existing marked wrapper is adopted instead of being wrapped a second time."""
+
+    async def existing_wrapper(_self, _user_input):
+        return "processed"
+
+    existing_wrapper._extended_openai_voice_identity_device = True
+    monkeypatch.setattr(
+        conversation.ExtendedOpenAIAgentEntity,
+        "_async_process",
+        existing_wrapper,
+    )
+    monkeypatch.setattr(voice_identity_runtime, "_INSTALLED", False)
+
+    voice_identity_runtime.install_voice_identity_runtime()
+
+    assert voice_identity_runtime._INSTALLED is True
+    assert conversation.ExtendedOpenAIAgentEntity._async_process is existing_wrapper
