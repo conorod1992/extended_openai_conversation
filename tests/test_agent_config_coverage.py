@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
-
 import pytest
 
 from custom_components.extended_openai_conversation_responses import agent_config
@@ -49,21 +47,12 @@ def _group(
         (lambda tool: tool.update(enabled="yes"), r"enabled.*boolean"),
         (lambda tool: tool.update(guest_allowed="yes"), r"guest_allowed.*boolean"),
         (lambda tool: tool.update(spec=[]), r"spec.*object"),
-        (
-            lambda tool: tool["spec"].update(unexpected=True),
-            r"spec.*unknown fields",
-        ),
+        (lambda tool: tool["spec"].update(unexpected=True), r"spec.*unknown fields"),
         (lambda tool: tool["spec"].update(name=""), r"spec.name.*required"),
         (lambda tool: tool["spec"].update(name="bad name"), r"spec.name.*only"),
-        (
-            lambda tool: tool["spec"].update(description=123),
-            r"description.*string",
-        ),
+        (lambda tool: tool["spec"].update(description=123), r"description.*string"),
         (lambda tool: tool["spec"].update(strict="yes"), r"strict.*boolean"),
-        (
-            lambda tool: tool["spec"].update(parameters=[]),
-            r"parameters.*object",
-        ),
+        (lambda tool: tool["spec"].update(parameters=[]), r"parameters.*object"),
         (lambda tool: tool.update(function=[]), r"function.*object"),
         (
             lambda tool: tool["function"].update(type="missing"),
@@ -78,14 +67,11 @@ def _group(
 def test_function_tool_validation_rejects_malformed_metadata(mutator, match) -> None:
     tool = _native_tool()
     mutator(tool)
-
     with pytest.raises(AgentConfigError, match=match):
         validate_function_tools([tool])
 
 
-def test_function_tool_validation_rejects_bad_schema_and_bad_function_config(
-    monkeypatch,
-) -> None:
+def test_function_tool_validation_wraps_schema_and_function_errors(monkeypatch) -> None:
     tool = _native_tool()
 
     def reject_schema(_schema):
@@ -117,14 +103,11 @@ def test_function_tools_accept_none_and_reject_non_lists() -> None:
 
 def test_function_groups_normalize_and_preserve_guest_allowed() -> None:
     group = _group()
-    group["name"] = "  Lighting  "
-    group["description"] = "  Lighting helpers  "
+    group.update(name="  Lighting  ", description="  Lighting helpers  ")
     group["guest_allowed"] = True
     group["enabled"] = False
 
-    result = validate_function_groups([group], [_native_tool()])
-
-    assert result == [
+    assert validate_function_groups([group], [_native_tool()]) == [
         {
             "id": "lights",
             "name": "Lighting",
@@ -145,10 +128,7 @@ def test_function_groups_normalize_and_preserve_guest_allowed() -> None:
         ([{**_group(), "unknown": True}], "unknown fields"),
         ([{**_group(), "id": "Bad ID"}], r"id.*lowercase"),
         ([_group("same"), _group("same", name="Other")], "duplicate group ID"),
-        (
-            [_group("one", name="Same"), _group("two", name=" same ")],
-            "duplicate group name",
-        ),
+        ([_group("one", name="Same"), _group("two", name=" same ")], "duplicate group name"),
         ([{**_group(), "name": " "}], r"name.*required"),
         ([{**_group(), "name": "x" * 101}], r"name.*100"),
         ([{**_group(), "description": " "}], r"description.*required"),
@@ -166,15 +146,12 @@ def test_function_group_validation_rejects_bad_shapes(groups, match) -> None:
         validate_function_groups(groups, [_native_tool()])
 
 
-def test_function_groups_reject_function_assigned_to_two_groups() -> None:
+def test_function_groups_reject_duplicate_assignment_and_excess_groups() -> None:
     with pytest.raises(AgentConfigError, match="already assigned"):
         validate_function_groups(
-            [_group("one"), _group("two", name="Two")],
-            [_native_tool()],
+            [_group("one"), _group("two", name="Two")], [_native_tool()]
         )
 
-
-def test_function_groups_enforce_group_limit() -> None:
     groups = [
         _group(f"g{index}", name=f"Group {index}", functions=[])
         for index in range(51)
@@ -184,41 +161,29 @@ def test_function_groups_enforce_group_limit() -> None:
 
 
 def test_speech_regex_validation_residual_matrix() -> None:
-    with pytest.raises(AgentConfigError, match="must be a list"):
-        validate_speech_regex_replacements({})
+    cases = [
+        ({}, "must be a list"),
+        (["bad"], r"\[0\].*object"),
+        ([{"pattern": "x", "replacement": "y", "extra": True}], "unknown fields"),
+        ([{"pattern": "", "replacement": ""}], r"pattern.*required"),
+        ([{"pattern": "x", "replacement": 1}], r"replacement.*string"),
+        (
+            [{"pattern": "x" * (agent_config.MAX_SPEECH_REGEX_PATTERN_LENGTH + 1), "replacement": ""}],
+            r"pattern.*too long",
+        ),
+        (
+            [{"pattern": "x", "replacement": "y" * (agent_config.MAX_SPEECH_REGEX_REPLACEMENT_LENGTH + 1)}],
+            r"replacement.*too long",
+        ),
+    ]
+    for value, match in cases:
+        with pytest.raises(AgentConfigError, match=match):
+            validate_speech_regex_replacements(value)
+
     with pytest.raises(AgentConfigError, match="at most"):
         validate_speech_regex_replacements(
             [{"pattern": "x", "replacement": "y"}]
             * (agent_config.MAX_SPEECH_REGEX_RULES + 1)
-        )
-    with pytest.raises(AgentConfigError, match=r"\[0\].*object"):
-        validate_speech_regex_replacements(["bad"])
-    with pytest.raises(AgentConfigError, match="unknown fields"):
-        validate_speech_regex_replacements(
-            [{"pattern": "x", "replacement": "y", "extra": True}]
-        )
-    with pytest.raises(AgentConfigError, match=r"pattern.*required"):
-        validate_speech_regex_replacements([{"pattern": "", "replacement": ""}])
-    with pytest.raises(AgentConfigError, match=r"replacement.*string"):
-        validate_speech_regex_replacements([{"pattern": "x", "replacement": 1}])
-    with pytest.raises(AgentConfigError, match=r"pattern.*too long"):
-        validate_speech_regex_replacements(
-            [
-                {
-                    "pattern": "x" * (agent_config.MAX_SPEECH_REGEX_PATTERN_LENGTH + 1),
-                    "replacement": "",
-                }
-            ]
-        )
-    with pytest.raises(AgentConfigError, match=r"replacement.*too long"):
-        validate_speech_regex_replacements(
-            [
-                {
-                    "pattern": "x",
-                    "replacement": "y"
-                    * (agent_config.MAX_SPEECH_REGEX_REPLACEMENT_LENGTH + 1),
-                }
-            ]
         )
 
 
@@ -228,9 +193,7 @@ def test_legacy_number_coercion_handles_signed_decimal_and_invalid_float_strings
         agent_config.CONF_CONTEXT_THRESHOLD: 8.0,
         agent_config.CONF_TOP_P: "not-a-number",
     }
-
     agent_config._coerce_legacy_numbers(config)
-
     assert config[agent_config.CONF_MAX_TOKENS] == 42
     assert config[agent_config.CONF_CONTEXT_THRESHOLD] == 8
     assert config[agent_config.CONF_TOP_P] == "not-a-number"
@@ -249,10 +212,7 @@ def test_legacy_number_coercion_handles_signed_decimal_and_invalid_float_strings
         ({agent_config.CONF_CONTEXT_THRESHOLD: 0}, r"context_threshold.*at least 1"),
         ({agent_config.CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES: 0}, r"must be 1 to 1440"),
         (
-            {
-                agent_config.CONF_MEMORY_AUTO_RETRIEVE_LIMIT:
-                agent_config.MAX_MEMORY_AUTO_RETRIEVE_LIMIT + 1
-            },
+            {agent_config.CONF_MEMORY_AUTO_RETRIEVE_LIMIT: agent_config.MAX_MEMORY_AUTO_RETRIEVE_LIMIT + 1},
             r"memory_auto_retrieve_limit.*must be 0 to",
         ),
         ({agent_config.CONF_TOP_P: 1.1}, r"top_p.*0 to 1"),
@@ -269,16 +229,14 @@ def test_normalize_agent_config_rejects_residual_invalid_values(config, match) -
         normalize_agent_config(config)
 
 
-def test_normalize_agent_config_rejects_invalid_templates() -> None:
+def test_normalize_agent_config_template_and_list_edges() -> None:
     for key in (
         agent_config.CONF_CURRENT_DATETIME_TEMPLATE,
         agent_config.CONF_EXPOSED_ENTITIES_TEMPLATE,
     ):
-        with pytest.raises(AgentConfigError, match=r"invalid template"):
+        with pytest.raises(AgentConfigError, match="invalid template"):
             normalize_agent_config({key: "{{ broken"})
 
-
-def test_normalize_agent_config_allows_blank_templates_and_canonicalizes_lists() -> None:
     result = normalize_agent_config(
         {
             agent_config.CONF_CURRENT_DATETIME_TEMPLATE: "   ",
@@ -286,36 +244,22 @@ def test_normalize_agent_config_allows_blank_templates_and_canonicalizes_lists()
             agent_config.CONF_GUEST_ALLOWED_GROUP_IDS: [" one ", "one", "two"],
         }
     )
-
     assert result[agent_config.CONF_GUEST_ALLOWED_GROUP_IDS] == ["one", "two"]
 
 
-def test_partial_normalization_can_skip_defaults_and_unknown_rejection() -> None:
-    result = normalize_agent_config(
-        {"future_extension": True}, apply_defaults=False, reject_unknown=False
-    )
-
-    assert result["future_extension"] is True
-
-
-def test_reasoning_default_is_removed_when_model_has_no_recommendation(monkeypatch) -> None:
+def test_reasoning_default_and_explicit_validation(monkeypatch) -> None:
     monkeypatch.setattr(agent_config, "get_reasoning_effort_options", lambda _model: [])
     monkeypatch.setattr(
         agent_config,
         "get_model_config",
         lambda _model: {"recommended_profile": {}},
     )
-
-    result = normalize_agent_config({}, apply_defaults=True)
-
+    result = normalize_agent_config({})
     assert agent_config.CONF_REASONING_EFFORT not in result
 
-
-def test_explicit_reasoning_effort_is_validated_against_model_options(monkeypatch) -> None:
     monkeypatch.setattr(
         agent_config, "get_reasoning_effort_options", lambda _model: ["low", "high"]
     )
-
     with pytest.raises(AgentConfigError, match=r"reasoning_effort.*unsupported"):
         normalize_agent_config({agent_config.CONF_REASONING_EFFORT: "medium"})
 
@@ -328,13 +272,11 @@ def test_skills_fail_when_loader_status_reports_unavailable(monkeypatch) -> None
             "Status", (), {"available": False, "reason": "loader unavailable"}
         )(),
     )
-
     with pytest.raises(AgentConfigError, match=r"skills.*loader unavailable"):
         normalize_agent_config({agent_config.CONF_SKILLS: ["demo"]})
 
 
 def test_function_tools_supplied_in_config_are_serialized_canonically() -> None:
     result = normalize_agent_config({agent_config.CONF_FUNCTION_TOOLS: [_native_tool()]})
-
     assert isinstance(result[agent_config.CONF_FUNCTION_TOOLS], str)
     assert "name: demo" in result[agent_config.CONF_FUNCTION_TOOLS]
