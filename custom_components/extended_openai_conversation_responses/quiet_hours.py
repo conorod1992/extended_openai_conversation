@@ -136,13 +136,22 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         if not callable(create):
             self._registered_state_entity_id = _STATE_FALLBACK_ENTITY_ID
             return self._registered_state_entity_id
-        entry = create(
-            domain="binary_sensor",
-            platform=DOMAIN,
-            unique_id=_STATE_UNIQUE_ID,
-            suggested_object_id="extended_openai_quiet_hours",
-            original_name="Quiet Hours",
-        )
+        try:
+            entry = create(
+                domain="binary_sensor",
+                platform=DOMAIN,
+                unique_id=_STATE_UNIQUE_ID,
+                suggested_object_id="extended_openai_quiet_hours",
+                original_name="Quiet Hours",
+            )
+        except AttributeError as err:
+            # Integrations can be set up before the entity registry has loaded its
+            # backing collection. Publishing the state must not make startup depend
+            # on that internal initialization detail.
+            if err.name != "entities":
+                raise
+            self._registered_state_entity_id = _STATE_FALLBACK_ENTITY_ID
+            return self._registered_state_entity_id
         entity_id = getattr(entry, "entity_id", None)
         if not isinstance(entity_id, str):
             self._registered_state_entity_id = _STATE_FALLBACK_ENTITY_ID

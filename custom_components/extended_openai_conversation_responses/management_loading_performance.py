@@ -53,6 +53,8 @@ _EXTRA_FRONTEND_MODULES = (
     "management-bootstrap.js",
     "management-route-performance.js",
     "agent-config-loader.js",
+    "quiet-hours-ui.js",
+    "management-capabilities-ia.js",
     "agent-config-editor-base.js",
     "ha-llm-tools.js",
     "request-rules-loader.js",

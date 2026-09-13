@@ -142,6 +142,7 @@ def _register_split_frontend_modules() -> None:
         "model-catalog.js",
         "ha-llm-tools.js",
         "agent-config-loader.js",
+        "quiet-hours-ui.js",
         "exposed-attributes-ui.js",
         "backup-transfer-ui.js",
         "guide-page-base.js",

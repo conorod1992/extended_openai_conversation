@@ -54,9 +54,7 @@ def _install_state_machine(hass) -> dict[str, SimpleNamespace]:
         else:
             domains = set(domain)
         return [
-            state
-            for state in values
-            if state.entity_id.partition(".")[0] in domains
+            state for state in values if state.entity_id.partition(".")[0] in domains
         ]
 
     def async_remove(entity_id: str) -> bool:
@@ -78,6 +76,22 @@ def _manager(hass) -> QuietHoursManager:
     manager._registered_state_entity_id = "binary_sensor.extended_openai_quiet_hours"
     manager._unsubscribers = []
     return manager
+
+
+def test_state_entity_falls_back_while_entity_registry_is_loading(
+    monkeypatch, hass
+) -> None:
+    class LoadingRegistry:
+        def async_get_or_create(self, **kwargs):
+            return self.entities.get(kwargs["unique_id"])
+
+    monkeypatch.setattr(
+        quiet_hours_runtime.er, "async_get", lambda _hass: LoadingRegistry()
+    )
+    manager = QuietHoursManager(hass)
+
+    assert manager._state_entity_id() == "binary_sensor.extended_openai_quiet_hours"
+    assert manager._registered_state_entity_id == manager._state_entity_id()
 
 
 def _entry(entity_id: str, domain: str, device_id: str, *, name: str):
@@ -133,7 +147,9 @@ async def _install_services(hass):
             current = hass.states.get(entity_id)
             attrs = dict(current.attributes) if current else {}
             attrs["volume_level"] = volume
-            hass.states.async_set(entity_id, current.state if current else "idle", attrs)
+            hass.states.async_set(
+                entity_id, current.state if current else "idle", attrs
+            )
             return
         if domain == "switch" and service in {"turn_on", "turn_off"}:
             enabled = service == "turn_on"
@@ -369,20 +385,19 @@ async def test_enable_disable_actions_are_global_and_idempotently_registered(
 
     registered = {}
     hass.services.has_service.side_effect = lambda domain, service: (
-        domain,
-        service,
-    ) in registered
-    hass.services.async_register.side_effect = (
-        lambda domain, service, handler: registered.__setitem__(
-            (domain, service), handler
+        (
+            domain,
+            service,
         )
+        in registered
+    )
+    hass.services.async_register.side_effect = lambda domain, service, handler: (
+        registered.__setitem__((domain, service), handler)
     )
 
     async def async_call(domain, service, data, *, blocking=False):
         handler = registered[(domain, service)]
-        await handler(
-            SimpleNamespace(data=data, context=SimpleNamespace(user_id=None))
-        )
+        await handler(SimpleNamespace(data=data, context=SimpleNamespace(user_id=None)))
 
     hass.services.async_call = AsyncMock(side_effect=async_call)
 

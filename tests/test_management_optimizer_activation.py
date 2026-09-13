@@ -25,6 +25,7 @@ def test_management_bootstrap_dependencies_are_registered() -> None:
         "management-memory-settings.js",
         "memory-settings-ui.js",
         "management-capabilities-ia.js",
+        "quiet-hours-ui.js",
         "management-voice-identity.js",
         "voice-identity-ui.js",
         "management-permission-boundaries.js",
