@@ -13,6 +13,7 @@ from .management_browser import install_management_browser
 from .management_configuration_guidance import install_management_configuration_guidance
 from .management_history_runtime import install_management_history_bounds
 from .management_setup_health import install_management_setup_health
+from .quiet_hours import async_get_quiet_hours
 
 _PATCHED = "extended_openai_management_permissions"
 _OPTIMIZED_OVERVIEW_PATCHED = "extended_openai_management_overview_permissions"
@@ -34,6 +35,26 @@ def sanitize_non_admin_overview(result: dict[str, Any]) -> dict[str, Any]:
     return {**result, "usage": {**usage, "latest": None}}
 
 
+async def _quiet_hours_command(
+    hass: HomeAssistant, is_admin: bool, message: dict[str, Any]
+) -> dict[str, Any]:
+    """Handle the domain-global Quiet Hours management surface."""
+    _require_admin(is_admin)
+    manager = await async_get_quiet_hours(hass)
+    action = message.get("action")
+    if action in {"get", "discover"}:
+        return manager.snapshot()
+    if action == "update":
+        config = message.get("config")
+        if not isinstance(config, dict):
+            raise HomeAssistantError("config must be an object")
+        try:
+            return await manager.async_update_config(config)
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+    raise HomeAssistantError(f"Unknown Quiet Hours action: {action}")
+
+
 def wrap_management_permissions(original: ManagementCommand) -> ManagementCommand:
     """Protect agent-global data and paid diagnostics from normal HA users."""
 
@@ -45,6 +66,11 @@ def wrap_management_permissions(original: ManagementCommand) -> ManagementComman
     ) -> dict[str, Any]:
         section = message.get("section", "overview")
         action = message.get("action")
+
+        # Quiet Hours is integration-global rather than agent-specific, so handle it
+        # before the underlying dispatcher requires an entry/subentry selection.
+        if section == "quiet_hours":
+            return await _quiet_hours_command(hass, is_admin, message)
 
         # Knowledge sources belong to the agent rather than an individual user.
         # Reading them can expose private reference material, while writes affect
