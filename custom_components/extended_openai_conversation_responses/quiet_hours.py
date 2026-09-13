@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -10,6 +11,9 @@ from homeassistant.helpers import entity_registry as er
 from .const import DOMAIN
 from .quiet_hours_runtime import *  # noqa: F403
 from .quiet_hours_runtime import (
+    _VOLUME_TOLERANCE,
+    _current_switch,
+    _current_volume,
     QuietHoursManager as _RuntimeQuietHoursManager,
     QuietPeriod,
 )
@@ -68,6 +72,88 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         result = super().snapshot()
         result["state_entity_id"] = self._state_entity_id()
         return result
+
+    async def _async_apply_volume_locked(
+        self,
+        satellite_entity_id: str,
+        entity_id: str,
+        controls: dict[str, Any],
+    ) -> None:
+        observed = self._active.setdefault("observed_controls", []) if self._active else []
+        if entity_id in controls or entity_id in observed:
+            return
+        original = _current_volume(self.hass, entity_id)
+        if original is None:
+            return
+
+        # A successfully readable control is evaluated only once per Quiet Hours
+        # occurrence. This lets periodic discovery find newly available satellites
+        # without later mistaking a user's manual change for a new policy target.
+        observed.append(entity_id)
+        await self._async_save_locked()
+        if original <= self._config.max_volume + _VOLUME_TOLERANCE:
+            return
+
+        controls[entity_id] = {
+            "kind": "volume",
+            "satellite_entity_id": satellite_entity_id,
+            "original_value": original,
+            "quiet_value": self._config.max_volume,
+        }
+        await self._async_save_locked()
+        try:
+            await self._async_set_volume(entity_id, self._config.max_volume)
+        except Exception:
+            controls.pop(entity_id, None)
+            observed.remove(entity_id)
+            await self._async_save_locked()
+
+    async def _async_apply_switch_locked(
+        self,
+        satellite_entity_id: str,
+        entity_id: str,
+        desired: bool,
+        controls: dict[str, Any],
+    ) -> None:
+        observed = self._active.setdefault("observed_controls", []) if self._active else []
+        if entity_id in controls or entity_id in observed:
+            return
+        original = _current_switch(self.hass, entity_id)
+        if original is None:
+            return
+
+        observed.append(entity_id)
+        await self._async_save_locked()
+        if original == desired:
+            return
+
+        controls[entity_id] = {
+            "kind": "switch",
+            "satellite_entity_id": satellite_entity_id,
+            "original_value": original,
+            "quiet_value": desired,
+        }
+        await self._async_save_locked()
+        try:
+            await self._async_set_switch(entity_id, desired)
+        except Exception:
+            controls.pop(entity_id, None)
+            observed.remove(entity_id)
+            await self._async_save_locked()
+
+    def _normalize_active(self, value: Any) -> dict[str, Any] | None:
+        normalized = super()._normalize_active(value)
+        if normalized is None:
+            return None
+        raw_observed = value.get("observed_controls") if isinstance(value, Mapping) else None
+        observed = {
+            item for item in raw_observed or [] if isinstance(item, str)
+        }
+        # Older stored active state did not record no-op evaluations. Owned controls
+        # are necessarily already evaluated, so include them during migration.
+        observed.update(normalized.get("controls", {}))
+        normalized["observed_controls"] = sorted(observed)
+        return normalized
 
     async def async_shutdown(self) -> None:
         for unsubscribe in self._unsubscribers:
