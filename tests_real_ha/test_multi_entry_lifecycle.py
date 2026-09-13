@@ -91,6 +91,13 @@ def _guest_mode_entity_id(hass: HomeAssistant, entry: MockConfigEntry) -> str:
     )
 
 
+def _state_value(hass: HomeAssistant, entity_id: str) -> str:
+    """Return a state value through Home Assistant's StateMachine API."""
+    state = hass.states.get(entity_id)
+    assert state is not None
+    return state.state
+
+
 def _integration_tasks() -> Counter[tuple[str, str]]:
     """Snapshot pending asyncio tasks whose coroutine originates in this integration."""
     current = asyncio.current_task()
@@ -185,8 +192,8 @@ async def test_real_ha_multi_entry_reload_isolated_without_lifecycle_leaks(
         assert manager._remove_stop_listener is manager_stop_listener
         assert manager.in_use
         assert hass.services.has_service(DOMAIN, SERVICE_PROCESS)
-        assert hass.states[first_guest_mode].state == STATE_UNAVAILABLE
-        assert hass.states[second_guest_mode].state != STATE_UNAVAILABLE
+        assert _state_value(hass, first_guest_mode) == STATE_UNAVAILABLE
+        assert _state_value(hass, second_guest_mode) != STATE_UNAVAILABLE
         assert _registry_entity_ids(hass, second) == second_entity_ids
 
         await _assert_agent_can_answer(
@@ -210,8 +217,8 @@ async def test_real_ha_multi_entry_reload_isolated_without_lifecycle_leaks(
         assert manager._remove_stop_listener is manager_stop_listener
         assert _registry_entity_ids(hass, first) == first_entity_ids
         assert _registry_entity_ids(hass, second) == second_entity_ids
-        assert hass.states[first_guest_mode].state != STATE_UNAVAILABLE
-        assert hass.states[second_guest_mode].state != STATE_UNAVAILABLE
+        assert _state_value(hass, first_guest_mode) != STATE_UNAVAILABLE
+        assert _state_value(hass, second_guest_mode) != STATE_UNAVAILABLE
 
         # Completed unload/reload cycles must not accumulate integration-owned tasks.
         assert _integration_tasks() == baseline_tasks
@@ -248,8 +255,9 @@ async def test_real_ha_multi_entry_reload_isolated_without_lifecycle_leaks(
     assert manager._remove_stop_listener is None
     assert manager._original_init is None
     assert manager._replacement_init is None
-    assert hass.states[first_guest_mode].state == STATE_UNAVAILABLE
-    assert hass.states[second_guest_mode].state == STATE_UNAVAILABLE
+    assert hass.services.has_service(DOMAIN, SERVICE_PROCESS)
+    assert _state_value(hass, first_guest_mode) == STATE_UNAVAILABLE
+    assert _state_value(hass, second_guest_mode) == STATE_UNAVAILABLE
 
     # Final teardown may remove legitimate entry-owned tasks; it must never leave
     # additional integration tasks that were not present in the stable loaded state.
