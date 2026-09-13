@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from custom_components.extended_openai_conversation_responses import debug
 
 
@@ -224,6 +222,16 @@ async def test_instrumentation_helpers_are_transparent_without_trace(monkeypatch
         )
         is resolved
     )
+
+    # Cover an active trace where no usage manager is attached.
+    no_usage_trace = _trace()
+    token = debug._ACTIVE_DEBUG_TRACE.set(no_usage_trace)
+    try:
+        assert await ExtendedOpenAIAgentEntity._async_handle_message(entity) == "handled"
+    finally:
+        debug._ACTIVE_DEBUG_TRACE.reset(token)
+    assert no_usage_trace.usage_run_id is None
+    assert "model_path_total" in no_usage_trace.phases_ms
 
     # Also cover an active trace whose usage manager exists but has no current run.
     trace = _trace()
