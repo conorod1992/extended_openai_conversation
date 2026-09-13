@@ -599,7 +599,10 @@ async def test_conversation_cleanup_and_admin_temporary_delete(
     runtime.end.assert_called_once_with("continuity:key")
     reset.assert_called_once_with(hass, "entry-1", "agent-1", "key")
 
-    temporary = SimpleNamespace(async_delete=AsyncMock(return_value=1))
+    temporary = SimpleNamespace(
+        async_delete=AsyncMock(return_value=1),
+        async_delete_owned=AsyncMock(return_value=1),
+    )
     monkeypatch.setattr(
         management_ui, "async_get_temporary_memory", AsyncMock(return_value=temporary)
     )
@@ -655,7 +658,7 @@ async def test_fallthrough_branches_and_scope_catalog(
     monkeypatch.setattr(
         management_ui,
         "async_get_temporary_memory",
-        AsyncMock(return_value=SimpleNamespace()),
+        AsyncMock(return_value=SimpleNamespace(owner_counts=lambda: {})),
     )
     monkeypatch.setattr(
         management_ui,
