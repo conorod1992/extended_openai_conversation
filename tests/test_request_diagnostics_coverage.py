@@ -79,12 +79,13 @@ def test_helper_aggregation_filters_and_orders_values() -> None:
 def test_prompt_entity_and_tool_preparation_wrappers_record_debug_metrics(monkeypatch) -> None:
     trace = _trace()
     agent_type = conversation_module.ExtendedOpenAIAgentEntity
+    prompt = SimpleNamespace(text="Rendered prompt text", sections=[])
 
     monkeypatch.setattr(request_diagnostics, "_debug_trace", lambda: trace)
     monkeypatch.setattr(
         conversation_module,
         "render_effective_prompt",
-        lambda *_args, **_kwargs: "Rendered prompt text",
+        lambda *_args, **_kwargs: prompt,
     )
     monkeypatch.setattr(
         agent_type,
@@ -109,7 +110,7 @@ def test_prompt_entity_and_tool_preparation_wrappers_record_debug_metrics(monkey
         entry=SimpleNamespace(entry_id="entry-1"),
         subentry=SimpleNamespace(subentry_id="agent-1"),
     )
-    assert conversation_module.render_effective_prompt() == "Rendered prompt text"
+    assert conversation_module.render_effective_prompt() is prompt
     assert agent_type._get_exposed_entities(agent) == [{"entity_id": "light.kitchen"}]
     assert agent_type._get_function_tools(agent) == [{"spec": {"name": "demo"}}]
 
@@ -118,7 +119,9 @@ def test_prompt_entity_and_tool_preparation_wrappers_record_debug_metrics(monkey
     assert preparation["exposed_entity_context"]["last_count"] == 1
     assert preparation["function_tool_assembly"]["last_count"] == 1
     assert preparation["function_groups"] == {"loaded_groups": 2}
-    assert trace.memory[request_diagnostics._INTERNAL_PROMPT_METRICS]["characters"] > 0
+    assert trace.memory[request_diagnostics._INTERNAL_PROMPT_METRICS]["characters"] == len(
+        prompt.text
+    )
 
 
 @pytest.mark.asyncio
@@ -202,8 +205,9 @@ def test_provider_request_metrics_compare_rounds_and_serialize_cache_usage() -> 
 
     first.usage.update({"input_tokens": 100, "cached_input_tokens": 25})
     serialized = first.as_dict()
-    assert serialized["metrics"]["cache_usage"]["input_tokens"] == 100
-    assert serialized["metrics"]["cache_usage"]["cached_input_tokens"] == 25
+    cache = serialized["metrics"]["cache_usage"]
+    assert cache["provider_reported_cached_input_tokens"] == 25
+    assert cache["provider_reported_cache_ratio"] == 0.25
 
 
 def test_trace_and_summary_expose_aggregated_model_diagnostics() -> None:
