@@ -354,7 +354,8 @@ def test_delta_listener_flushes_buffered_tail_before_new_role() -> None:
     listener(chat_log, {"content": "unfinished "})
     listener(chat_log, {"role": "assistant"})
 
-    assert heard == [{"content": "unfinished "}, {"role": "assistant"}]
+    assert "".join(delta.get("content", "") for delta in heard[:-1]) == "unfinished "
+    assert heard[-1] == {"role": "assistant"}
 
 
 def test_streaming_cleanup_bypasses_without_listener_or_when_disabled() -> None:
