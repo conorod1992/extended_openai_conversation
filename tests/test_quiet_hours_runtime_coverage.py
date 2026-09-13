@@ -60,7 +60,10 @@ def _install_registry(monkeypatch, *rooms: str) -> None:
     for room in rooms:
         device_id = f"device-{room}"
         entries[f"assist_satellite.{room}"] = _entry(
-            f"assist_satellite.{room}", "assist_satellite", device_id, name="Assist satellite"
+            f"assist_satellite.{room}",
+            "assist_satellite",
+            device_id,
+            name="Assist satellite",
         )
         entries[f"media_player.{room}"] = _entry(
             f"media_player.{room}", "media_player", device_id, name="Media Player"
@@ -76,9 +79,7 @@ def _seed_room(hass, room: str, *, volume: float = 0.55, wake: str = "on") -> No
     hass.states.async_set(
         f"assist_satellite.{room}", "idle", {"friendly_name": f"{room.title()} Voice"}
     )
-    hass.states.async_set(
-        f"media_player.{room}", "idle", {"volume_level": volume}
-    )
+    hass.states.async_set(f"media_player.{room}", "idle", {"volume_level": volume})
     hass.states.async_set(f"switch.{room}_wake_sound", wake)
 
 
@@ -131,7 +132,9 @@ async def test_ceiling_only_lowers_louder_satellites(monkeypatch, hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_schedule_entity_turns_on_even_when_policy_is_noop(monkeypatch, hass) -> None:
+async def test_schedule_entity_turns_on_even_when_policy_is_noop(
+    monkeypatch, hass
+) -> None:
     _install_registry(monkeypatch, "bedroom")
     _seed_room(hass, "bedroom", volume=0.10, wake="off")
     manager = _manager(hass)
@@ -163,7 +166,10 @@ async def test_ownership_is_saved_before_mutating_controls(monkeypatch, hass) ->
     assert volume_calls == [("media_player.bedroom", 0.2)]
     assert switch_calls == [("switch.bedroom_wake_sound", False)]
     assert manager.active["controls"]["media_player.bedroom"]["original_value"] == 0.55
-    assert manager.active["controls"]["switch.bedroom_wake_sound"]["original_value"] is True
+    assert (
+        manager.active["controls"]["switch.bedroom_wake_sound"]["original_value"]
+        is True
+    )
     saves = manager._store.async_save.await_args_list
     assert any(
         "media_player.bedroom" in call.args[0].get("active", {}).get("controls", {})
@@ -172,7 +178,9 @@ async def test_ownership_is_saved_before_mutating_controls(monkeypatch, hass) ->
 
 
 @pytest.mark.asyncio
-async def test_restart_same_period_preserves_originals_without_reapplying(monkeypatch, hass) -> None:
+async def test_restart_same_period_preserves_originals_without_reapplying(
+    monkeypatch, hass
+) -> None:
     _install_registry(monkeypatch, "bedroom")
     _seed_room(hass, "bedroom", volume=0.2, wake="off")
     manager = _manager(hass)
@@ -254,7 +262,9 @@ async def test_end_restores_controls_that_are_still_owned(monkeypatch, hass) -> 
 
 
 @pytest.mark.asyncio
-async def test_periodic_discovery_adds_new_satellite_but_not_manual_change(monkeypatch, hass) -> None:
+async def test_periodic_discovery_adds_new_satellite_but_not_manual_change(
+    monkeypatch, hass
+) -> None:
     _install_registry(monkeypatch, "bedroom")
     _seed_room(hass, "bedroom")
     manager = _manager(hass)
@@ -315,7 +325,9 @@ async def test_async_set_enabled_preserves_policy(monkeypatch, hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_enable_disable_actions_are_global_and_idempotently_registered(hass) -> None:
+async def test_enable_disable_actions_are_global_and_idempotently_registered(
+    hass,
+) -> None:
     manager = _manager(hass)
     manager._config = _config(enabled=False)
     manager.async_set_enabled = AsyncMock()
@@ -327,10 +339,14 @@ async def test_enable_disable_actions_are_global_and_idempotently_registered(has
     assert hass.services.has_service(DOMAIN, SERVICE_ENABLE_QUIET_HOURS)
     assert hass.services.has_service(DOMAIN, SERVICE_DISABLE_QUIET_HOURS)
 
-    await hass.services.async_call(DOMAIN, SERVICE_ENABLE_QUIET_HOURS, {}, blocking=True)
+    await hass.services.async_call(
+        DOMAIN, SERVICE_ENABLE_QUIET_HOURS, {}, blocking=True
+    )
     manager.async_set_enabled.assert_awaited_once_with(True)
 
-    await hass.services.async_call(DOMAIN, SERVICE_DISABLE_QUIET_HOURS, {}, blocking=True)
+    await hass.services.async_call(
+        DOMAIN, SERVICE_DISABLE_QUIET_HOURS, {}, blocking=True
+    )
     manager.async_set_enabled.assert_awaited_with(False)
 
 
