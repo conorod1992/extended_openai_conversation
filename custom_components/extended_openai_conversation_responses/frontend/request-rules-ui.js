@@ -104,7 +104,7 @@ export function syncRequestRuleRoutingControls(root, efforts = null, selectedEff
   if (help) {
     help.textContent = consumed
       ? "This is a complete routing command. It is acknowledged locally and is not sent to the AI provider, so it must change or reset the rest of this conversation."
-      : "The original request continues to the AI provider unchanged. This request only affects that provider call; Rest of this conversation also changes later requests.";
+      : "The original request to the AI unchanged will continue after applying this route. This request only affects that provider call; Rest of this conversation also changes later requests.";
   }
 }
 
