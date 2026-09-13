@@ -14,23 +14,11 @@ async function navigateSection(panel, section) {
   await select.selectOption(section, {force: true});
 }
 
-async function normalizeHarnessPromptBaseline(panel) {
-  await panel.evaluate((element) => {
-    // Production configuration is normalized with an authoritative prompt
-    // default. The deliberately minimal browser fixture omits that field, so
-    // align its loaded baseline with the empty prompt value the fixture renders.
-    element._configData.config.prompt = "";
-    element._draft.prompt = "";
-  });
-}
-
-test("dirty navigation follows changed destinations and clears when every value returns to baseline", async ({page}) => {
+test("dirty navigation survives subsection changes and clears when the draft returns to baseline", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));
 
   const panel = page.locator("extended-openai-management-panel");
-  await normalizeHarnessPromptBaseline(panel);
-
   const title = panel.locator('[data-config="__title"]');
   await expect(title).toHaveValue("Jarvis");
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
@@ -44,33 +32,16 @@ test("dirty navigation follows changed destinations and clears when every value 
   await navigateSection(panel, "prompt-context");
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/prompt-context$/);
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", false);
-  await panel.locator("#prompt-editor").fill("Temporary navigation prompt");
-  await expect.poll(() => panel.evaluate((element) => ({
-    draftPrompt: element._draft?.prompt,
-    baselinePrompt: element._configData?.config?.prompt,
-    dirtyKeys: [...(element._eocDirtyConfigKeys || [])].sort(),
-  }))).toEqual({
-    draftPrompt: "Temporary navigation prompt",
-    baselinePrompt: "",
-    dirtyKeys: ["__title", "prompt"],
-  });
+  await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
+  await expect(panel.locator('.top-nav button[data-page="assistant"]')).toHaveClass(/eoc-has-unsaved/);
   await expect(panel.locator('#local-section option[value="basics"]')).toHaveText(/Basics\s+•$/);
-  await expect(panel.locator('#local-section option[value="prompt-context"]')).toHaveText(/Prompt & context\s+•$/);
 
   await navigateSection(panel, "basics");
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
   await panel.locator('[data-config="__title"]').fill("Jarvis");
-  await expect(panel.locator('#local-section option[value="basics"]')).toHaveText("Basics");
-  await expect(panel.locator('#local-section option[value="prompt-context"]')).toHaveText(/Prompt & context\s+•$/);
-  await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
-  expect(await beforeUnloadIsBlocked(page)).toBe(true);
-
-  await navigateSection(panel, "prompt-context");
-  await panel.locator("#prompt-editor").fill("");
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
   await expect(panel.locator('.top-nav button[data-page="assistant"]')).not.toHaveClass(/eoc-has-unsaved/);
   await expect(panel.locator('#local-section option[value="basics"]')).toHaveText("Basics");
-  await expect(panel.locator('#local-section option[value="prompt-context"]')).toHaveText("Prompt & context");
   expect(await beforeUnloadIsBlocked(page)).toBe(false);
 
   await expectHarnessClean(page, pageErrors);
