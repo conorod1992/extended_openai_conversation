@@ -12,10 +12,10 @@ from .const import DOMAIN
 from .quiet_hours_runtime import *  # noqa: F403
 from .quiet_hours_runtime import (
     _VOLUME_TOLERANCE,
-    _current_switch,
-    _current_volume,
     QuietHoursManager as _RuntimeQuietHoursManager,
     QuietPeriod,
+    _current_switch,
+    _current_volume,
 )
 
 _RUNTIME_KEY = "quiet_hours_manager"
@@ -79,7 +79,9 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         entity_id: str,
         controls: dict[str, Any],
     ) -> None:
-        observed = self._active.setdefault("observed_controls", []) if self._active else []
+        observed = (
+            self._active.setdefault("observed_controls", []) if self._active else []
+        )
         if entity_id in controls or entity_id in observed:
             return
         original = _current_volume(self.hass, entity_id)
@@ -115,7 +117,9 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         desired: bool,
         controls: dict[str, Any],
     ) -> None:
-        observed = self._active.setdefault("observed_controls", []) if self._active else []
+        observed = (
+            self._active.setdefault("observed_controls", []) if self._active else []
+        )
         if entity_id in controls or entity_id in observed:
             return
         original = _current_switch(self.hass, entity_id)
@@ -145,10 +149,10 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         normalized = super()._normalize_active(value)
         if normalized is None:
             return None
-        raw_observed = value.get("observed_controls") if isinstance(value, Mapping) else None
-        observed = {
-            item for item in raw_observed or [] if isinstance(item, str)
-        }
+        raw_observed = (
+            value.get("observed_controls") if isinstance(value, Mapping) else None
+        )
+        observed = {item for item in raw_observed or [] if isinstance(item, str)}
         # Older stored active state did not record no-op evaluations. Owned controls
         # are necessarily already evaluated, so include them during migration.
         observed.update(normalized.get("controls", {}))
