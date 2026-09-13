@@ -418,3 +418,9 @@ guest_mode_disable:
           filter:
             integration: extended_openai_conversation_responses
             domain: conversation
+enable_quiet_hours:
+  name: Enable Quiet Hours schedule
+  description: Enable the configured global Quiet Hours daily schedule. If the current time is inside the schedule, the policy is applied immediately.
+disable_quiet_hours:
+  name: Disable Quiet Hours schedule
+  description: Disable the global Quiet Hours schedule and immediately restore any controls that are still owned by Quiet Hours.
