@@ -332,26 +332,29 @@ def _pick_wake_sound(entries: list[er.RegistryEntry]) -> str | None:
 def discover_satellite_capabilities(
     hass: HomeAssistant, config: QuietHoursConfig
 ) -> list[SatelliteCapabilities]:
-    """Resolve optional controls attached to each registered Assist satellite."""
-    registry = er.async_get(hass)
-    entries_by_device: dict[str, list[er.RegistryEntry]] = {}
-    for entry in registry.entities.values():
-        if entry.device_id:
-            entries_by_device.setdefault(entry.device_id, []).append(entry)
+    """Resolve optional controls attached to each live Assist satellite.
 
+    Home Assistant's entity-registry storage layout is intentionally private and
+    has changed across releases.  Discover the satellites from the state machine,
+    then use the supported per-device registry helper for associated controls.
+    """
+    registry = er.async_get(hass)
     overrides = _override_map(config)
     result: list[SatelliteCapabilities] = []
-    satellite_entries = sorted(
-        (
-            entry
-            for entry in registry.entities.values()
-            if entry.domain == "assist_satellite" and entry.disabled_by is None
-        ),
-        key=lambda entry: entry.entity_id,
-    )
-    for satellite in satellite_entries:
-        same_device = entries_by_device.get(satellite.device_id or "", [])
-        override = overrides.get(satellite.entity_id)
+
+    for state in sorted(
+        hass.states.async_all("assist_satellite"), key=lambda item: item.entity_id
+    ):
+        satellite = registry.async_get(state.entity_id)
+        if satellite is not None and satellite.disabled_by is not None:
+            continue
+        device_id = satellite.device_id if satellite is not None else None
+        same_device = (
+            er.async_entries_for_device(registry, device_id)
+            if device_id is not None
+            else []
+        )
+        override = overrides.get(state.entity_id)
         auto_media = _pick_media_player(hass, same_device)
         auto_wake = _pick_wake_sound(same_device)
         media = (
@@ -364,18 +367,17 @@ def discover_satellite_capabilities(
             if override and override.wake_sound_entity_id
             else auto_wake
         )
-        state = hass.states.get(satellite.entity_id)
         name = (
-            (state.attributes.get("friendly_name") if state else None)
-            or satellite.name
-            or satellite.original_name
-            or satellite.entity_id
+            state.attributes.get("friendly_name")
+            or (satellite.name if satellite is not None else None)
+            or (satellite.original_name if satellite is not None else None)
+            or state.entity_id
         )
         result.append(
             SatelliteCapabilities(
-                satellite_entity_id=satellite.entity_id,
+                satellite_entity_id=state.entity_id,
                 name=str(name),
-                device_id=satellite.device_id,
+                device_id=device_id,
                 media_player_entity_id=media,
                 wake_sound_entity_id=wake,
                 media_player_source=(
@@ -602,7 +604,9 @@ class QuietHoursManager:
                     if (
                         kind == "volume"
                         and isinstance(original, (int, float))
+                        and not isinstance(original, bool)
                         and isinstance(quiet, (int, float))
+                        and not isinstance(quiet, bool)
                     ):
                         current = _current_volume(self.hass, entity_id)
                         if current is not None and math.isclose(
@@ -673,11 +677,14 @@ class QuietHoursManager:
             kind = raw.get("kind")
             original = raw.get("original_value")
             quiet = raw.get("quiet_value")
-            if kind == "volume" and all(
-                isinstance(item, (int, float))
-                and not isinstance(item, bool)
-                and 0.0 <= float(item) <= 1.0
-                for item in (original, quiet)
+            if (
+                kind == "volume"
+                and isinstance(original, (int, float))
+                and not isinstance(original, bool)
+                and isinstance(quiet, (int, float))
+                and not isinstance(quiet, bool)
+                and 0.0 <= float(original) <= 1.0
+                and 0.0 <= float(quiet) <= 1.0
             ):
                 controls[entity_id] = {
                     "kind": "volume",
