@@ -35,7 +35,9 @@ _REFERENCE_FIELDS = frozenset(
 def _install_openapi_serializer_compat() -> None:
     """Bridge HA's legacy serializer sentinel to the Probatio converter."""
     converter = getattr(llm, "to_openapi", None)
-    if converter is None or getattr(converter, "_extended_openai_serializer_compat", False):
+    if converter is None or getattr(
+        converter, "_extended_openai_serializer_compat", False
+    ):
         return
 
     try:
