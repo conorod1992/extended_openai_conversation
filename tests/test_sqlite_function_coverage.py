@@ -10,11 +10,10 @@ from urllib import parse
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses.functions import (
     sqlite as sqlite_module,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def _make_db(tmp_path: Path) -> Path:
@@ -47,12 +46,22 @@ def test_read_only_authorizer_denies_mutation_and_allows_reads() -> None:
     )
 
 
-def test_read_only_uri_validation_and_mode_override(tmp_path: Path) -> None:
+def test_read_only_uri_validation_and_mode_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with pytest.raises(HomeAssistantError, match="in-memory"):
         sqlite_module._read_only_sqlite_uri(":memory:")
 
-    with pytest.raises(HomeAssistantError, match="filesystem path or file: URI"):
-        sqlite_module._read_only_sqlite_uri("https://example.test/db.sqlite")
+    # Non-file strings are valid filesystem paths, so force Path.as_uri() to
+    # return a URI with an unsupported scheme to exercise the scheme guard.
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            sqlite_module.Path,
+            "as_uri",
+            lambda _path: "https://example.test/db.sqlite",
+        )
+        with pytest.raises(HomeAssistantError, match="filesystem path or file: URI"):
+            sqlite_module._read_only_sqlite_uri("db.sqlite")
 
     path = tmp_path / "db.sqlite"
     uri = sqlite_module._read_only_sqlite_uri(str(path))
@@ -174,7 +183,9 @@ def test_execute_query_translates_deadline_expiry(
     )
     monkeypatch.setattr(sqlite_module.sqlite3, "connect", lambda *_a, **_k: conn)
     times = iter((10.0, 20.0))
-    monkeypatch.setattr(sqlite_module.time, "monotonic", lambda: next(times))
+    # sqlite_module.time is the process-wide time module. Keep the replacement
+    # safe for framework cleanup that may also call monotonic before restoration.
+    monkeypatch.setattr(sqlite_module.time, "monotonic", lambda: next(times, 20.0))
 
     with pytest.raises(HomeAssistantError, match="execution deadline of 5 seconds"):
         sqlite_module._execute_sqlite_query(
