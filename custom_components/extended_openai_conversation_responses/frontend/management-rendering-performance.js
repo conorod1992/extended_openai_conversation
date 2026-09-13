@@ -100,6 +100,9 @@ function bindIncrementalDraftUpdates(panel) {
       const counter = root.querySelector("#prompt-count");
       if (counter) counter.textContent = `${control.value.length.toLocaleString()} characters`;
     }
+    // The optimized handler stops the original event before bubble listeners,
+    // so reconcile this control explicitly after updating the shared draft.
+    panel._syncConfigControlDirty?.(control);
   }, true);
 }
 

@@ -315,6 +315,7 @@ function bindInteractionRefresh(panel) {
     root.addEventListener("input", () => scheduleEnhance(panel));
     root.addEventListener("change", () => scheduleEnhance(panel));
     root.addEventListener("value-changed", () => scheduleEnhance(panel));
+    root.addEventListener("eoc-config-dirty-changed", () => scheduleEnhance(panel));
   }
   const searchTarget = root?.querySelector("#eoc-settings-host") || root;
   if (searchTarget && panel._eocClarityObservedTarget !== searchTarget) {
