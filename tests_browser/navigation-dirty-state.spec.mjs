@@ -14,9 +14,21 @@ async function navigateSection(panel, section) {
   await select.selectOption(section, {force: true});
 }
 
+async function normalizeHarnessPromptBaseline(page) {
+  await page.evaluate(() => {
+    const panel = document.querySelector("extended-openai-management-panel");
+    // Production configuration is normalized with an authoritative prompt
+    // default. The deliberately minimal browser fixture omits that field, so
+    // align its loaded baseline with the empty prompt value the fixture renders.
+    panel._configData.config.prompt = "";
+    panel._draft.prompt = "";
+  });
+}
+
 test("dirty navigation follows changed destinations and clears when every value returns to baseline", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));
+  await normalizeHarnessPromptBaseline(page);
 
   const panel = page.locator("extended-openai-management-panel");
   const title = panel.locator('[data-config="__title"]');
