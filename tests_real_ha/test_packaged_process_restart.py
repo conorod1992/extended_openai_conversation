@@ -302,7 +302,7 @@ def test_packaged_release_survives_a_true_process_restart(tmp_path: Path) -> Non
     destination.parent.mkdir(parents=True)
     shutil.copytree(source, destination)
     (config_dir / "configuration.yaml").write_text(
-        "homeassistant:\n  name: Packaged Process Acceptance\n",
+        "homeassistant:\n  name: Packaged Process Acceptance\nrecorder:\n",
         encoding="utf-8",
     )
 
