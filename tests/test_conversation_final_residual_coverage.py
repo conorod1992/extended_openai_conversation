@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses import conversation
+
+
+def _conversation_method(name: str):
+    """Return the underlying conversation.py method beneath installed wrappers."""
+    return inspect.unwrap(getattr(conversation.ExtendedOpenAIAgentEntity, name))
 
 
 @pytest.mark.asyncio
@@ -20,7 +26,7 @@ async def test_archive_turn_with_empty_chat_log_records_empty_assistant_text() -
         ),
     )
 
-    await conversation.ExtendedOpenAIAgentEntity._async_archive_turn(
+    await _conversation_method("_async_archive_turn")(
         entity,
         SimpleNamespace(session_id="session-1"),
         "run-1",
@@ -51,7 +57,7 @@ async def test_retrieve_memories_returns_empty_when_unavailable(mode: str) -> No
         subentry=SimpleNamespace(data={}),
     )
 
-    result = await conversation.ExtendedOpenAIAgentEntity._async_retrieve_memories(
+    result = await _conversation_method("_async_retrieve_memories")(
         entity, SimpleNamespace(), "where are my keys"
     )
 
@@ -74,7 +80,7 @@ async def test_retrieve_memories_failure_is_best_effort() -> None:
         subentry=SimpleNamespace(data={}),
     )
 
-    result = await conversation.ExtendedOpenAIAgentEntity._async_retrieve_memories(
+    result = await _conversation_method("_async_retrieve_memories")(
         entity, SimpleNamespace(), "remember this"
     )
 
@@ -101,9 +107,7 @@ async def test_retrieve_temporary_memories_returns_empty_when_unavailable(
     scope = None if mode == "missing_scope" else "conversation:test"
     token = conversation._ACTIVE_TEMPORARY_SCOPE.set(scope)
     try:
-        result = await conversation.ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories(
-            entity
-        )
+        result = await _conversation_method("_async_retrieve_temporary_memories")(entity)
     finally:
         conversation._ACTIVE_TEMPORARY_SCOPE.reset(token)
 
