@@ -12,6 +12,7 @@ from typing import Any
 
 from aiohttp import web
 import pytest
+from homeassistant.components import onboarding
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import CLIENT_ID, MockUser
@@ -135,9 +136,17 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
 async def test_shipped_browser_frontend_loads_inside_real_home_assistant_shell(
     hass: HomeAssistant,
     aiohttp_client: Any,
+    hass_storage: dict[str, Any],
     socket_enabled: Any,
 ) -> None:
     """HA itself must register, serve, instantiate, and connect the shipped panel."""
+    # A pristine pytest HA instance is in onboarding mode. Persist the normal
+    # completed-onboarding state so Chromium reaches the actual application shell.
+    hass_storage[onboarding.STORAGE_KEY] = {
+        "version": onboarding.STORAGE_VERSION,
+        "data": {"done": list(onboarding.STEPS)},
+    }
+
     assert await async_setup_component(hass, "websocket_api", {})
     assert await async_setup_component(hass, "frontend", {})
 
