@@ -337,10 +337,10 @@ def test_catalog_handles_registryless_satellites_and_filters_related_metadata(
     result = IntercomManager(hass).catalog()
 
     assert [item["id"] for item in result["satellites"]] == [
-        kitchen_entity,
         portable_entity,
+        kitchen_entity,
     ]
-    assert result["satellites"][1]["name"] == portable_entity
+    assert result["satellites"][0]["name"] == portable_entity
     assert [item["id"] for item in result["areas"]] == ["kitchen"]
     assert [item["id"] for item in result["floors"]] == ["ground"]
     assert {item["id"] for item in result["labels"]} == {
