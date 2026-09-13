@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
@@ -21,6 +22,8 @@ from .quiet_hours_runtime import (
 _RUNTIME_KEY = "quiet_hours_manager"
 _STATE_UNIQUE_ID = "quiet_hours"
 _STATE_FALLBACK_ENTITY_ID = "binary_sensor.extended_openai_quiet_hours"
+SERVICE_ENABLE_QUIET_HOURS = "enable_quiet_hours"
+SERVICE_DISABLE_QUIET_HOURS = "disable_quiet_hours"
 
 
 class QuietHoursManager(_RuntimeQuietHoursManager):
@@ -72,6 +75,14 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         result = super().snapshot()
         result["state_entity_id"] = self._state_entity_id()
         return result
+
+    async def async_set_enabled(self, enabled: bool) -> dict[str, Any]:
+        """Enable or disable the daily schedule without changing its policy."""
+        if not isinstance(enabled, bool):
+            raise ValueError("enabled must be a boolean")
+        config = self.config.as_dict()
+        config["enabled"] = enabled
+        return await self.async_update_config(config)
 
     async def _async_apply_volume_locked(
         self,
@@ -166,6 +177,45 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         self.hass.states.async_remove(self._state_entity_id())
 
 
+async def _async_require_admin(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Allow system automations and require admins for user-originated actions."""
+    user_id = getattr(getattr(call, "context", None), "user_id", None)
+    if user_id is None:
+        return
+    user = await hass.auth.async_get_user(user_id)
+    if user is None or not user.is_admin:
+        raise HomeAssistantError("Administrator permission is required")
+
+
+def _register_quiet_hours_actions(hass: HomeAssistant) -> None:
+    """Register global schedule enable/disable actions exactly once."""
+    if not hass.services.has_service(DOMAIN, SERVICE_ENABLE_QUIET_HOURS):
+
+        async def enable_quiet_hours(call: ServiceCall) -> None:
+            await _async_require_admin(hass, call)
+            manager = await async_get_quiet_hours(hass)
+            await manager.async_set_enabled(True)
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_ENABLE_QUIET_HOURS,
+            enable_quiet_hours,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_DISABLE_QUIET_HOURS):
+
+        async def disable_quiet_hours(call: ServiceCall) -> None:
+            await _async_require_admin(hass, call)
+            manager = await async_get_quiet_hours(hass)
+            await manager.async_set_enabled(False)
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_DISABLE_QUIET_HOURS,
+            disable_quiet_hours,
+        )
+
+
 async def async_get_quiet_hours(hass: HomeAssistant) -> QuietHoursManager:
     """Return the initialized integration-global Quiet Hours manager."""
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -174,4 +224,5 @@ async def async_get_quiet_hours(hass: HomeAssistant) -> QuietHoursManager:
         manager = QuietHoursManager(hass)
         domain_data[_RUNTIME_KEY] = manager
     await manager.async_setup()
+    _register_quiet_hours_actions(hass)
     return manager
