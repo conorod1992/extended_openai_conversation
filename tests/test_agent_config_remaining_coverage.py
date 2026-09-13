@@ -33,7 +33,7 @@ def test_validate_function_tools_normalizes_reference_errors(
 
     with pytest.raises(
         agent_config.AgentConfigError,
-        match=r"function_tools\[0\]: invalid HA tool reference",
+        match=r"functions\[0\]: invalid HA tool reference",
     ):
         agent_config.validate_function_tools(
             [{"spec": {"name": "ha_ref"}, "function": {"platform": "test"}}]
