@@ -97,7 +97,9 @@ def test_function_tools_accept_none_and_reject_non_lists() -> None:
     assert validate_function_tools(None) == []
     with pytest.raises(AgentConfigError, match="top-level value must be a list"):
         validate_function_tools({"spec": {}})
-    with pytest.raises(AgentConfigError, match=r"function_tools\[0\].*object"):
+    with pytest.raises(
+        AgentConfigError, match=rf"{agent_config.CONF_FUNCTION_TOOLS}\[0\].*object"
+    ):
         validate_function_tools(["not-a-tool"])
 
 
