@@ -671,9 +671,11 @@ async def test_fallthrough_branches_and_scope_catalog(
         AsyncMock(return_value=[{"scope_id": "user:user"}]),
     )
 
-    assert await management_ui.async_management_command(
+    catalog = await management_ui.async_management_command(
         hass, "admin", True, _message("scopes", "catalog")
-    ) == {"scopes": [{"scope_id": "user:user"}]}
+    )
+    assert catalog["scopes"][0]["scope_id"] == "user:user"
+    assert catalog["scopes"][0].get("temporary_memory_count", 0) == 0
 
     with pytest.raises(HomeAssistantError, match="Unknown memories management action"):
         await management_ui.async_management_command(
