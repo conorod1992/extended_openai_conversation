@@ -118,18 +118,19 @@ async def test_initialize_truncates_oversized_stored_rules(monkeypatch) -> None:
 
 async def test_function_references_and_rename_cover_noop_and_save() -> None:
     manager, store = await initialized_manager({"rules": [function_rule()]})
+    initial_saves = store.saves
     assert manager.function_references("missing") == []
     assert manager.function_references("weather") == [
         {"id": "rule-1", "name": "Rule one"}
     ]
     assert await manager.async_rename_function_reference("weather", "weather") == 0
-    assert store.saves == 0
+    assert store.saves == initial_saves
 
     changed = await manager.async_rename_function_reference("weather", "forecast")
     assert changed == 1
     assert manager.function_references("weather") == []
     assert manager.function_references("forecast")[0]["id"] == "rule-1"
-    assert store.saves == 1
+    assert store.saves == initial_saves + 1
 
 
 async def test_manager_mutation_limits_and_shape_guards(monkeypatch) -> None:
@@ -409,6 +410,7 @@ def test_routing_and_name_helpers_cover_remaining_guards() -> None:
 async def test_shared_manager_and_runtime_factories(monkeypatch) -> None:
     hass = SimpleNamespace(data={})
     initialize = AsyncMock()
+    monkeypatch.setattr(rr, "RequestRuleStore", lambda *_args: MemoryStore(None))
     monkeypatch.setattr(rr.RequestRules, "async_initialize", initialize)
     first = await rr.async_get_request_rules(hass, "entry", "agent")
     second = await rr.async_get_request_rules(hass, "entry", "agent")
