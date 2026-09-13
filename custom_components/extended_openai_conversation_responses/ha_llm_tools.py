@@ -64,7 +64,7 @@ def _install_openapi_serializer_compat() -> None:
         )
 
     compatible_to_openapi._extended_openai_serializer_compat = True  # type: ignore[attr-defined]
-    setattr(llm, "to_openapi", compatible_to_openapi)
+    llm.to_openapi = compatible_to_openapi  # type: ignore[attr-defined]
 
 
 _install_openapi_serializer_compat()
