@@ -306,14 +306,14 @@ function scheduleEnhance(panel) {
 }
 
 function bindInteractionRefresh(panel) {
-  if (!panel._eocClarityHostBound) {
-    panel._eocClarityHostBound = true;
-    panel.addEventListener("input", () => scheduleEnhance(panel), true);
-    panel.addEventListener("change", () => scheduleEnhance(panel), true);
-  }
   const root = panel.shadowRoot;
-  if (root && !root.__eocClarityValueBound) {
-    root.__eocClarityValueBound = true;
+  if (root && !root.__eocClarityInteractionBound) {
+    root.__eocClarityInteractionBound = true;
+    // State-safety registers its shadow-root listeners before this layer. Run
+    // clarity refreshes in the same bubble phase so the authoritative dirty-key
+    // set has already been updated when navigation markers are projected.
+    root.addEventListener("input", () => scheduleEnhance(panel));
+    root.addEventListener("change", () => scheduleEnhance(panel));
     root.addEventListener("value-changed", () => scheduleEnhance(panel));
   }
   const searchTarget = root?.querySelector("#eoc-settings-host") || root;
