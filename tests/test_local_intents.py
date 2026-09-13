@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -288,3 +289,259 @@ async def test_delayed_command_setting_is_applied_to_home_assistant_filter(
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_targeted_broadcast_skips_non_text_without_loading_manager(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called = False
+
+    async def fake_get_manager(_hass):
+        nonlocal called
+        called = True
+        return SimpleNamespace(enabled=True)
+
+    monkeypatch.setattr(local_intents, "async_get_intercom", fake_get_manager)
+
+    result = await local_intents._async_try_targeted_broadcast(
+        hass, cast(Any, SimpleNamespace(text=None))
+    )
+
+    assert result is None
+    assert not called
+
+
+@pytest.mark.asyncio
+async def test_targeted_broadcast_enabled_manager_can_have_no_parse_match(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = SimpleNamespace(enabled=True)
+
+    async def fake_get_manager(_hass):
+        return manager
+
+    monkeypatch.setattr(local_intents, "async_get_intercom", fake_get_manager)
+    monkeypatch.setattr(
+        local_intents, "parse_targeted_broadcast", lambda _text, _manager: None
+    )
+
+    assert (
+        await local_intents._async_try_targeted_broadcast(
+            hass, cast(Any, SimpleNamespace(text="turn on the kitchen"))
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_targeted_broadcast_queues_resolved_target_with_origin_context(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def async_send(message: str, **kwargs: Any) -> None:
+        calls.append((message, kwargs))
+
+    manager = SimpleNamespace(enabled=True, async_send=async_send)
+
+    async def fake_get_manager(_hass):
+        return manager
+
+    monkeypatch.setattr(local_intents, "async_get_intercom", fake_get_manager)
+    monkeypatch.setattr(
+        local_intents,
+        "parse_targeted_broadcast",
+        lambda _text, _manager: (
+            {"entity_ids": ["assist_satellite.kitchen"]},
+            "Dinner is ready",
+        ),
+    )
+
+    result = await local_intents._async_try_targeted_broadcast(
+        hass,
+        cast(
+            Any,
+            SimpleNamespace(
+                text="Broadcast to kitchen that dinner is ready",
+                language="en-IE",
+                satellite_id="assist_satellite.hall",
+                device_id="device-1",
+            ),
+        ),
+    )
+
+    assert result is not None
+    assert result.intent_name == "ExtendedBroadcast"
+    assert calls == [
+        (
+            "Dinner is ready",
+            {
+                "entity_ids": ["assist_satellite.kitchen"],
+                "origin_entity_id": "assist_satellite.hall",
+                "origin_device_id": "device-1",
+                "source": "local_voice",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_missing_home_assistant_intent_handler_falls_through(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def no_targeted_match(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(local_intents, "_async_try_targeted_broadcast", no_targeted_match)
+    monkeypatch.setattr(conversation, "async_handle_intents", None)
+
+    assert (
+        await async_try_handle_local_intent(
+            hass,
+            cast(Any, SimpleNamespace(text="turn on the kitchen")),
+            cast(Any, SimpleNamespace()),
+            {CONF_LOCAL_INTENTS_ENABLED: True},
+            guest_active=False,
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_response_without_filter_match_reports_unknown_intent(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    response = ha_intent.IntentResponse(language="en")
+
+    async def no_targeted_match(*args, **kwargs):
+        return None
+
+    async def fake_handle(hass, user_input, chat_log, *, intent_filter=None):
+        return response
+
+    monkeypatch.setattr(local_intents, "_async_try_targeted_broadcast", no_targeted_match)
+    monkeypatch.setattr(conversation, "async_handle_intents", fake_handle)
+
+    result = await async_try_handle_local_intent(
+        hass,
+        cast(Any, SimpleNamespace(text="hello")),
+        cast(Any, SimpleNamespace()),
+        {CONF_LOCAL_INTENTS_ENABLED: True},
+        guest_active=False,
+    )
+
+    assert result is not None
+    assert result.response is response
+    assert result.intent_name == "unknown"
+
+
+def test_registered_intent_catalog_ignores_invalid_names(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    handlers = [
+        SimpleNamespace(intent_type="HassTurnOn"),
+        SimpleNamespace(intent_type=""),
+        SimpleNamespace(intent_type=None),
+        SimpleNamespace(intent_type=123),
+    ]
+    monkeypatch.setattr(ha_intent, "async_get", lambda hass: handlers)
+
+    catalog = registered_intent_catalog(hass, ["", "   ", 123, "HassMissing"])
+
+    assert [item["intent"] for item in catalog] == ["HassMissing", "HassTurnOn"]
+    assert [item["available"] for item in catalog] == [False, True]
+
+
+def test_conversation_entity_resolution_handles_registry_compatibility(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = object()
+    monkeypatch.setattr(local_intents.er, "async_get", lambda _hass: registry)
+
+    def unsupported(_registry, _entry_id):
+        raise AttributeError
+
+    monkeypatch.setattr(local_intents.er, "async_entries_for_config_entry", unsupported)
+    assert local_intents._conversation_entity_id(hass, "entry", "agent") is None
+
+
+def test_conversation_entity_resolution_selects_exact_agent(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = object()
+    monkeypatch.setattr(local_intents.er, "async_get", lambda _hass: registry)
+    monkeypatch.setattr(
+        local_intents.er,
+        "async_entries_for_config_entry",
+        lambda _registry, _entry_id: [
+            SimpleNamespace(
+                config_subentry_id="other",
+                domain="conversation",
+                entity_id="conversation.other",
+            ),
+            SimpleNamespace(
+                config_subentry_id="agent",
+                domain="sensor",
+                entity_id="sensor.agent",
+            ),
+            SimpleNamespace(
+                config_subentry_id="agent",
+                domain="conversation",
+                entity_id="conversation.agent",
+            ),
+        ],
+    )
+
+    assert (
+        local_intents._conversation_entity_id(hass, "entry", "agent")
+        == "conversation.agent"
+    )
+
+
+def test_get_assist_pipelines_returns_snapshot_list(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pipeline = SimpleNamespace(id="one")
+    fake_assist_pipeline = SimpleNamespace(
+        async_get_pipelines=lambda _hass: (item for item in [pipeline])
+    )
+    components = sys.modules["homeassistant.components"]
+    monkeypatch.setitem(
+        sys.modules, "homeassistant.components.assist_pipeline", fake_assist_pipeline
+    )
+    monkeypatch.setattr(
+        components, "assist_pipeline", fake_assist_pipeline, raising=False
+    )
+
+    assert local_intents._get_assist_pipelines(hass) == [pipeline]
+
+
+def test_pipeline_conflicts_stop_when_agent_entity_is_missing(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        local_intents,
+        "_conversation_entity_id",
+        lambda hass, entry_id, subentry_id: None,
+    )
+
+    assert conflicting_assist_pipelines(hass, "entry", "agent") == []
+
+
+@pytest.mark.parametrize("error", [ImportError, KeyError, RuntimeError])
+def test_pipeline_conflicts_tolerate_unavailable_pipeline_state(
+    hass, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
+) -> None:
+    monkeypatch.setattr(
+        local_intents,
+        "_conversation_entity_id",
+        lambda hass, entry_id, subentry_id: "conversation.agent",
+    )
+
+    def fail(_hass):
+        raise error("unavailable")
+
+    monkeypatch.setattr(local_intents, "_get_assist_pipelines", fail)
+
+    assert conflicting_assist_pipelines(hass, "entry", "agent") == []
