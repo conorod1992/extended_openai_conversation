@@ -12,7 +12,6 @@ from homeassistant.exceptions import HomeAssistantError
 from custom_components.extended_openai_conversation_responses import services
 from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
-    SERVICE_DOWNLOAD_SKILL,
     SERVICE_PROCESS,
 )
 from tests.test_service_handlers import _Response, _call, _download_handler, _handlers
