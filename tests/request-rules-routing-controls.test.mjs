@@ -32,7 +32,7 @@ continueToAi.checked = true;
 syncRequestRuleRoutingControls(root);
 assert.equal(scope.disabled, false);
 assert.equal(requestOption.disabled, false);
-assert.match(help.textContent, /continues to the AI provider/);
+assert.match(help.textContent, /original request to the AI unchanged/);
 
 scope.value = "request";
 syncRequestRuleRoutingControls(root);
