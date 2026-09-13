@@ -9,6 +9,11 @@ async function beforeUnloadIsBlocked(page) {
   });
 }
 
+async function navigateSection(panel, section) {
+  const select = panel.locator("#local-section");
+  await select.selectOption(section, {force: true});
+}
+
 test("dirty navigation follows changed destinations and clears when every value returns to baseline", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));
@@ -24,14 +29,14 @@ test("dirty navigation follows changed destinations and clears when every value 
   await expect(panel.locator('#local-section option[value="basics"]')).toHaveText(/Basics\s+•$/);
   expect(await beforeUnloadIsBlocked(page)).toBe(true);
 
-  await panel.locator("#local-section").selectOption("prompt-context");
+  await navigateSection(panel, "prompt-context");
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/prompt-context$/);
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", false);
   await panel.locator("#prompt-editor").fill("Temporary navigation prompt");
   await expect(panel.locator('#local-section option[value="basics"]')).toHaveText(/Basics\s+•$/);
   await expect(panel.locator('#local-section option[value="prompt-context"]')).toHaveText(/Prompt & context\s+•$/);
 
-  await panel.locator("#local-section").selectOption("basics");
+  await navigateSection(panel, "basics");
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
   await panel.locator('[data-config="__title"]').fill("Jarvis");
   await expect(panel.locator('#local-section option[value="basics"]')).toHaveText("Basics");
@@ -39,7 +44,7 @@ test("dirty navigation follows changed destinations and clears when every value 
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
   expect(await beforeUnloadIsBlocked(page)).toBe(true);
 
-  await panel.locator("#local-section").selectOption("prompt-context");
+  await navigateSection(panel, "prompt-context");
   await panel.locator("#prompt-editor").fill("");
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
   await expect(panel.locator('.top-nav button[data-page="assistant"]')).not.toHaveClass(/eoc-has-unsaved/);
@@ -64,7 +69,7 @@ test("leaving dirty configuration can be cancelled without losing the draft or d
   await panel.locator("#confirm-cancel").click();
 
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
-  await expect(panel.locator('[data-config="__title"]')).toHaveValue("Unsaved navigation title");
+  await expect(panel.locator('[data-config="__title"]').toHaveValue("Unsaved navigation title");
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
   expect(await page.evaluate(() => window.browserHarness.getState().configuration.title)).toBe("Jarvis");
 
