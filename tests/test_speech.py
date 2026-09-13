@@ -3,15 +3,19 @@
 import logging
 from types import SimpleNamespace
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.speech import (
     DEFAULT_STREAMING_BUFFER_LIMIT,
     StreamingSpeechSanitizer,
+    _SpeechDeltaListener,
     async_streaming_speech_cleanup,
     has_custom_speech_replacements,
     process_speech_text,
+    streaming_speech_processing_enabled,
 )
 from homeassistant.components import conversation
 
@@ -234,3 +238,157 @@ def test_custom_regex_disables_agent_progressive_streaming() -> None:
     subentry.data = _config()
     entity = ExtendedOpenAIAgentEntity(SimpleNamespace(), subentry)
     assert entity.supports_streaming is True
+
+
+def test_streaming_buffer_limit_rejects_too_small_values() -> None:
+    with pytest.raises(ValueError, match="at least 32"):
+        StreamingSpeechSanitizer(max_buffer_chars=31)
+
+
+def test_empty_delta_and_terminal_separator_are_safe() -> None:
+    sanitizer = StreamingSpeechSanitizer()
+    assert sanitizer.feed("") == ""
+    assert sanitizer.feed("Answer [source](https://example.com)") == "Answer"
+    assert sanitizer.finish() == ""
+
+
+def test_partial_url_prefix_is_buffered_until_resolved() -> None:
+    sanitizer = StreamingSpeechSanitizer(markdown=False, urls=True)
+    assert sanitizer.feed("See htt") == "See"
+    assert sanitizer.feed("ps://example.com/path") == ""
+    assert sanitizer.feed(" next") == " next"
+    assert sanitizer.finish() == ""
+
+
+def test_url_like_text_inside_identifier_is_not_suppressed() -> None:
+    assert _stream(["mailboxhttps://example.com done"], markdown=False) == (
+        "mailboxhttps://example.com done"
+    )
+
+
+def test_final_incomplete_markdown_constructs_are_preserved() -> None:
+    assert _stream(["Keep [unfinished"], urls=False) == "Keep [unfinished"
+    assert _stream(["Keep [label]"], urls=False) == "Keep [label]"
+    assert _stream(["Keep [label]("], urls=False) == "Keep [label]("
+    assert _stream(["Keep [label](bad url"], urls=False) == "Keep [label](bad url"
+
+
+def test_nested_parentheses_in_markdown_url_are_suppressed() -> None:
+    assert _stream(["Before [label](https://example.com/a(b)c) after"]) == (
+        "Before after"
+    )
+
+
+def test_markdown_disabled_returns_text_without_format_buffering() -> None:
+    sanitizer = StreamingSpeechSanitizer(markdown=False, urls=False)
+    assert sanitizer.feed("**literal** `code`") == "**literal** `code`"
+    assert sanitizer.finish() == ""
+
+
+def test_line_prefix_boundaries_and_non_markers() -> None:
+    sanitizer = StreamingSpeechSanitizer()
+    assert sanitizer._line_prefix("   ", False) == ("incomplete", 0)
+    assert sanitizer._line_prefix("   ", True) == ("none", 0)
+    assert sanitizer._line_prefix("###", False) == ("incomplete", 0)
+    assert sanitizer._line_prefix("###", True) == ("none", 0)
+    assert sanitizer._line_prefix("-", False) == ("incomplete", 0)
+    assert sanitizer._line_prefix("-", True) == ("none", 0)
+    assert sanitizer._line_prefix("12", False) == ("incomplete", 0)
+    assert sanitizer._line_prefix("12", True) == ("none", 0)
+    assert sanitizer._line_prefix("12.", False) == ("incomplete", 0)
+    assert sanitizer._line_prefix("12.", True) == ("none", 0)
+    assert sanitizer._line_prefix("word", False) == ("none", 0)
+
+
+def test_streaming_enablement_matrix() -> None:
+    assert not streaming_speech_processing_enabled(
+        _config(speech_processing_enabled=False)
+    )
+    assert not streaming_speech_processing_enabled(
+        _config(
+            speech_regex_replacements=[{"pattern": "x", "replacement": "y"}]
+        )
+    )
+    assert not streaming_speech_processing_enabled(
+        _config(speech_strip_markdown=False, speech_strip_urls=False)
+    )
+    assert streaming_speech_processing_enabled(
+        _config(speech_strip_markdown=False, speech_strip_urls=True)
+    )
+
+
+def test_has_custom_replacements_rejects_disabled_or_non_list_rules() -> None:
+    assert not has_custom_speech_replacements(
+        _config(speech_processing_enabled=False, speech_regex_replacements=[{}])
+    )
+    assert not has_custom_speech_replacements(
+        _config(speech_regex_replacements={"pattern": "x"})
+    )
+
+
+def test_delta_listener_forwards_role_non_string_and_metadata_only_deltas() -> None:
+    heard: list[dict] = []
+    listener = _SpeechDeltaListener(
+        lambda _chat_log, delta: heard.append(delta), _config()
+    )
+    chat_log = object()
+
+    listener(chat_log, {"role": "assistant"})
+    listener(chat_log, {"content": 42})
+    listener(chat_log, {"content": "[source](https://example.com)", "id": "chunk"})
+
+    assert heard == [
+        {"role": "assistant"},
+        {"content": 42},
+        {"id": "chunk"},
+    ]
+
+
+def test_delta_listener_flushes_buffered_tail_before_new_role() -> None:
+    heard: list[dict] = []
+    listener = _SpeechDeltaListener(
+        lambda _chat_log, delta: heard.append(delta), _config()
+    )
+    chat_log = object()
+
+    listener(chat_log, {"content": "unfinished "})
+    listener(chat_log, {"role": "assistant"})
+
+    assert heard == [{"content": "unfinished "}, {"role": "assistant"}]
+
+
+def test_streaming_cleanup_bypasses_without_listener_or_when_disabled() -> None:
+    chat_log = SimpleNamespace(delta_listener=None)
+    with async_streaming_speech_cleanup(chat_log, _config()):
+        assert chat_log.delta_listener is None
+
+    original = lambda _chat_log, _delta: None
+    chat_log = SimpleNamespace(delta_listener=original)
+    with async_streaming_speech_cleanup(
+        chat_log, _config(speech_processing_enabled=False)
+    ):
+        assert chat_log.delta_listener is original
+    assert chat_log.delta_listener is original
+
+
+def test_streaming_cleanup_restores_listener_after_exception() -> None:
+    original = lambda _chat_log, _delta: None
+    chat_log = SimpleNamespace(delta_listener=original)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with async_streaming_speech_cleanup(chat_log, _config()):
+            assert chat_log.delta_listener is not original
+            raise RuntimeError("boom")
+
+    assert chat_log.delta_listener is original
+
+
+def test_process_speech_text_skips_non_mapping_and_missing_key_rules(caplog) -> None:
+    config = _config(
+        speech_strip_markdown=False,
+        speech_strip_urls=False,
+        speech_regex_replacements=["not-a-rule", {"pattern": "missing replacement"}],
+    )
+    with caplog.at_level(logging.WARNING):
+        assert process_speech_text("unchanged", config) == "unchanged"
+    assert caplog.text.count("Skipping invalid speech regex replacement") == 2
