@@ -55,18 +55,39 @@ def _discovery_hass(monkeypatch):
             original_name="Wake sound",
         ),
     }
-    registry = SimpleNamespace(entities=entries)
+    registry = SimpleNamespace(async_get=entries.get)
     monkeypatch.setattr(quiet_hours_runtime.er, "async_get", lambda _hass: registry)
+    monkeypatch.setattr(
+        quiet_hours_runtime.er,
+        "async_entries_for_device",
+        lambda _registry, device_id: [
+            entry for entry in entries.values() if entry.device_id == device_id
+        ],
+    )
     states = {
         "assist_satellite.bedroom": SimpleNamespace(
-            state="idle", attributes={"friendly_name": "Bedroom Voice"}
+            entity_id="assist_satellite.bedroom",
+            state="idle",
+            attributes={"friendly_name": "Bedroom Voice"},
         ),
         "media_player.bedroom": SimpleNamespace(
-            state="idle", attributes={"volume_level": 0.55}
+            entity_id="media_player.bedroom",
+            state="idle",
+            attributes={"volume_level": 0.55},
         ),
-        "switch.bedroom_wake_sound": SimpleNamespace(state="on", attributes={}),
+        "switch.bedroom_wake_sound": SimpleNamespace(
+            entity_id="switch.bedroom_wake_sound", state="on", attributes={}
+        ),
     }
-    return SimpleNamespace(states=SimpleNamespace(get=states.get))
+    state_machine = SimpleNamespace(
+        get=states.get,
+        async_all=lambda domain=None: [
+            state
+            for entity_id, state in states.items()
+            if domain is None or entity_id.startswith(f"{domain}.")
+        ],
+    )
+    return SimpleNamespace(states=state_machine)
 
 
 def test_quiet_period_for_overnight_window() -> None:
