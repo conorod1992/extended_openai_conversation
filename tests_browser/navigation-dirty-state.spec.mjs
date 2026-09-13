@@ -69,7 +69,7 @@ test("leaving dirty configuration can be cancelled without losing the draft or d
   await panel.locator("#confirm-cancel").click();
 
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
-  await expect(panel.locator('[data-config="__title"]').toHaveValue("Unsaved navigation title");
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue("Unsaved navigation title");
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
   expect(await page.evaluate(() => window.browserHarness.getState().configuration.title)).toBe("Jarvis");
 
