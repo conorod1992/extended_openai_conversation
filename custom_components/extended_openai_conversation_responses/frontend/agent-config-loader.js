@@ -1,3 +1,5 @@
+import "./quiet-hours-ui.js";
+
 let implementation = null;
 let loadPromise = null;
 
