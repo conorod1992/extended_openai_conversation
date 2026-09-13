@@ -1,0 +1,28 @@
+name: Quiet Hours branch verification
+
+on:
+  push:
+    branches:
+      - feature/quiet-hours-v2
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install test dependencies
+        run: python -m pip install -r requirements_test.txt
+      - name: Ruff
+        run: |
+          python -m ruff check custom_components/extended_openai_conversation_responses/quiet_hours.py custom_components/extended_openai_conversation_responses/quiet_hours_runtime.py tests/test_quiet_hours.py
+          python -m ruff format --check custom_components/extended_openai_conversation_responses/quiet_hours.py custom_components/extended_openai_conversation_responses/quiet_hours_runtime.py tests/test_quiet_hours.py
+      - name: Quiet Hours tests
+        run: python -m pytest -q tests/test_quiet_hours.py
+      - name: Frontend syntax
+        run: |
+          node --check custom_components/extended_openai_conversation_responses/frontend/quiet-hours-ui.js
+          node --check custom_components/extended_openai_conversation_responses/frontend/agent-config-loader.js
