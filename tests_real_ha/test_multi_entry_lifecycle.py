@@ -131,7 +131,7 @@ async def _assert_agent_can_answer(
             conversation_id=None,
             context=Context(),
             language="en",
-            agent_id=agent.config_entry.entry_id,
+            agent_id=agent.entry.entry_id,
         )
     finally:
         agent._async_handle_chat_log = original
