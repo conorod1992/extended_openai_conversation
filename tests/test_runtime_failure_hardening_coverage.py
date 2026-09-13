@@ -6,7 +6,6 @@ import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-import pytest
 from openai import OpenAIError
 
 from homeassistant.exceptions import HomeAssistantError
