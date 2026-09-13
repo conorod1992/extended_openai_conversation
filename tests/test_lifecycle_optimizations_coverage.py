@@ -12,6 +12,8 @@ from custom_components.extended_openai_conversation_responses import (
     lifecycle_optimizations as lifecycle,
 )
 
+_ORIGINAL_PRUNE_USAGE_IF_DUE = lifecycle._async_prune_usage_if_due
+
 
 class _MutatingLock:
     """Async lock stand-in that mutates manager state on acquisition."""
@@ -49,7 +51,7 @@ async def test_prune_due_fast_paths_skip_duplicate_and_cooldown_work(
     duplicate = SimpleNamespace()
     setattr(duplicate, lifecycle._LAST_USAGE_PRUNE_DATE, today)
     duplicate._lock = _MutatingLock(lambda: None)
-    await lifecycle._async_prune_usage_if_due(duplicate)
+    await _ORIGINAL_PRUNE_USAGE_IF_DUE(duplicate)
 
     cooling_down = SimpleNamespace()
     setattr(
@@ -58,7 +60,7 @@ async def test_prune_due_fast_paths_skip_duplicate_and_cooldown_work(
         lifecycle.time.monotonic() + 60.0,
     )
     cooling_down._lock = _MutatingLock(lambda: None)
-    await lifecycle._async_prune_usage_if_due(cooling_down)
+    await _ORIGINAL_PRUNE_USAGE_IF_DUE(cooling_down)
 
     assert prune_calls == 0
 
@@ -81,7 +83,7 @@ async def test_prune_due_rechecks_guards_after_lock_acquisition(
     duplicate._lock = _MutatingLock(
         lambda: setattr(duplicate, lifecycle._LAST_USAGE_PRUNE_DATE, today)
     )
-    await lifecycle._async_prune_usage_if_due(duplicate)
+    await _ORIGINAL_PRUNE_USAGE_IF_DUE(duplicate)
 
     cooling_down = SimpleNamespace(_detail_storage=None)
     cooling_down._lock = _MutatingLock(
@@ -91,7 +93,7 @@ async def test_prune_due_rechecks_guards_after_lock_acquisition(
             lifecycle.time.monotonic() + 60.0,
         )
     )
-    await lifecycle._async_prune_usage_if_due(cooling_down)
+    await _ORIGINAL_PRUNE_USAGE_IF_DUE(cooling_down)
 
     assert prune_calls == 0
 
@@ -121,7 +123,7 @@ async def test_prune_due_immediate_save_fallback_clears_pending_state(
     )
     monkeypatch.setattr(lifecycle, "_schedule_store_snapshot", lambda *_args: False)
 
-    await lifecycle._async_prune_usage_if_due(manager)
+    await _ORIGINAL_PRUNE_USAGE_IF_DUE(manager)
 
     assert saves == 1
     assert getattr(manager, lifecycle._USAGE_PRUNE_SAVE_PENDING) is False
@@ -155,7 +157,7 @@ async def test_prune_due_failure_preserves_pending_save_and_sets_retry(
     before = lifecycle.time.monotonic()
 
     with pytest.raises(OSError, match="disk unavailable"):
-        await lifecycle._async_prune_usage_if_due(manager)
+        await _ORIGINAL_PRUNE_USAGE_IF_DUE(manager)
 
     assert getattr(manager, lifecycle._USAGE_PRUNE_SAVE_PENDING) is True
     assert getattr(manager, lifecycle._NEXT_USAGE_PRUNE_RETRY) >= (
@@ -164,9 +166,13 @@ async def test_prune_due_failure_preserves_pending_save_and_sets_retry(
     assert getattr(manager, lifecycle._LAST_USAGE_PRUNE_DATE, None) is None
 
 
-def _install_usage_wrappers(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any, Any, Any]:
+def _install_usage_wrappers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Any, Any, Any, Any]:
     """Install wrappers around harmless stand-ins and return the captured wrappers."""
-    from custom_components.extended_openai_conversation_responses.usage import UsageManager
+    from custom_components.extended_openai_conversation_responses.usage import (
+        UsageManager,
+    )
 
     async def _original_save(manager: Any, label: str, save: Any) -> None:
         manager.original_save_calls.append((label, save))
@@ -251,7 +257,9 @@ async def test_usage_prune_and_clear_wrappers_cover_save_and_confirmation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Explicit maintenance mutates details atomically and resets retry state."""
-    _save, _finalize, wrapped_prune, wrapped_clear = _install_usage_wrappers(monkeypatch)
+    _save, _finalize, wrapped_prune, wrapped_clear = _install_usage_wrappers(
+        monkeypatch
+    )
     save_calls = 0
 
     async def _save_details() -> None:
@@ -296,7 +304,9 @@ def test_usage_install_preserves_transactional_detail_methods(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Persist-first UsageManager implementations retain their own detail methods."""
-    from custom_components.extended_openai_conversation_responses.usage import UsageManager
+    from custom_components.extended_openai_conversation_responses.usage import (
+        UsageManager,
+    )
 
     async def _save(*_args: Any, **_kwargs: Any) -> None:
         return None
@@ -310,7 +320,7 @@ def test_usage_install_preserves_transactional_detail_methods(
     async def _clear(*_args: Any, **_kwargs: Any) -> dict[str, int]:
         return {}
 
-    setattr(_persist_first_prune, "_extended_openai_persist_first", True)
+    _persist_first_prune._extended_openai_persist_first = True
     monkeypatch.setattr(UsageManager, "_async_save_safely", _save)
     monkeypatch.setattr(UsageManager, "_async_finalize_run", _finalize)
     monkeypatch.setattr(UsageManager, "async_prune_details", _persist_first_prune)
@@ -329,11 +339,11 @@ def _install_memory_wrappers(
     owner: Any,
 ) -> tuple[Any, Any, Any]:
     """Install memory wrappers around controlled retrieval stand-ins."""
-    from custom_components.extended_openai_conversation_responses.conversation import (
-        ExtendedOpenAIAgentEntity,
-    )
     from custom_components.extended_openai_conversation_responses import (
         temporary_memory_ownership as ownership,
+    )
+    from custom_components.extended_openai_conversation_responses.conversation import (
+        ExtendedOpenAIAgentEntity,
     )
 
     monkeypatch.setattr(
