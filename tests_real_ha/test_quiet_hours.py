@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from custom_components.extended_openai_conversation_responses import quiet_hours_runtime
+from custom_components.extended_openai_conversation_responses import quiet_hours
 from custom_components.extended_openai_conversation_responses.quiet_hours import (
     QuietHoursManager,
     _config_from_data,
@@ -99,7 +99,7 @@ async def test_real_ha_quiet_hours_applies_and_restores_owned_controls(
     hass: HomeAssistant, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        quiet_hours_runtime,
+        quiet_hours,
         "discover_satellite_capabilities",
         lambda *_: _capabilities(),
     )
@@ -136,7 +136,7 @@ async def test_real_ha_manual_changes_opt_out_of_restore(
     hass: HomeAssistant, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        quiet_hours_runtime,
+        quiet_hours,
         "discover_satellite_capabilities",
         lambda *_: _capabilities(),
     )
@@ -161,7 +161,7 @@ async def test_real_ha_ceiling_never_raises_and_manual_later_change_is_respected
     hass: HomeAssistant, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        quiet_hours_runtime,
+        quiet_hours,
         "discover_satellite_capabilities",
         lambda *_: _capabilities(),
     )
@@ -174,8 +174,6 @@ async def test_real_ha_ceiling_never_raises_and_manual_later_change_is_respected
     assert volume_calls == []
     assert switch_calls == []
 
-    # Periodic discovery must not reinterpret a user's later adjustment as a new
-    # satellite/control and push it back under the ceiling.
     hass.states.async_set("media_player.bedroom", "idle", {"volume_level": 0.45})
     hass.states.async_set("switch.bedroom_wake_sound", "on")
     await manager.async_reconcile(now=datetime(2026, 9, 11, 23, 0, tzinfo=UTC))
