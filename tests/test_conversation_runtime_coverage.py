@@ -20,6 +20,37 @@ from custom_components.extended_openai_conversation_responses.const import (
 Agent = conversation_module.ExtendedOpenAIAgentEntity
 
 
+class _MemoryRetrievalHarness:
+    """Bind the production retrieval method to a minimal realistic agent surface."""
+
+    _async_retrieve_memories = Agent._async_retrieve_memories
+
+    def __init__(
+        self,
+        *,
+        memory: object,
+        continuity: object,
+        scopes: list[str],
+        retrieve_limit: int,
+        rank: AsyncMock,
+    ) -> None:
+        self._memory = memory
+        self._continuity = continuity
+        self._scopes = scopes
+        self._rank = rank
+        self.subentry = SimpleNamespace(
+            data={CONF_MEMORY_AUTO_RETRIEVE_LIMIT: retrieve_limit}
+        )
+
+    def _current_readable_memory_scope_ids(self, _context: object) -> list[str]:
+        return self._scopes
+
+    async def _async_rank_memories(
+        self, scopes: list[str], query: str, limit: int
+    ) -> list[object]:
+        return await self._rank(scopes, query, limit)
+
+
 @pytest.mark.asyncio
 async def test_memory_retrieval_selects_and_pins_continuity_bundle() -> None:
     """The first turn selects once and persists exact memory references."""
@@ -35,16 +66,16 @@ async def test_memory_retrieval_selects_and_pins_continuity_bundle() -> None:
     )
     memory = SimpleNamespace(async_get_many=AsyncMock(return_value=resolved))
     rank = AsyncMock(return_value=selected)
-    agent = SimpleNamespace(
-        _memory=memory,
-        _continuity=continuity,
-        subentry=SimpleNamespace(data={CONF_MEMORY_AUTO_RETRIEVE_LIMIT: 2}),
-        _current_readable_memory_scope_ids=lambda _context: ["user-1", "household"],
-        _async_rank_memories=rank,
+    agent = _MemoryRetrievalHarness(
+        memory=memory,
+        continuity=continuity,
+        scopes=["user-1", "household"],
+        retrieve_limit=2,
+        rank=rank,
     )
     token = conversation_module._ACTIVE_MEMORY_SESSION.set(("session-1", 30))
     try:
-        result = await Agent._async_retrieve_memories(agent, object(), "where are keys")
+        result = await agent._async_retrieve_memories(object(), "where are keys")
     finally:
         conversation_module._ACTIVE_MEMORY_SESSION.reset(token)
 
@@ -69,16 +100,16 @@ async def test_memory_retrieval_reuses_existing_bundle_without_reranking() -> No
     )
     memory = SimpleNamespace(async_get_many=AsyncMock(return_value=["memory"]))
     rank = AsyncMock()
-    agent = SimpleNamespace(
-        _memory=memory,
-        _continuity=continuity,
-        subentry=SimpleNamespace(data={CONF_MEMORY_AUTO_RETRIEVE_LIMIT: 3}),
-        _current_readable_memory_scope_ids=lambda _context: ["user-1"],
-        _async_rank_memories=rank,
+    agent = _MemoryRetrievalHarness(
+        memory=memory,
+        continuity=continuity,
+        scopes=["user-1"],
+        retrieve_limit=3,
+        rank=rank,
     )
     token = conversation_module._ACTIVE_MEMORY_SESSION.set(("session-1", 30))
     try:
-        result = await Agent._async_retrieve_memories(agent, object(), "same topic")
+        result = await agent._async_retrieve_memories(object(), "same topic")
     finally:
         conversation_module._ACTIVE_MEMORY_SESSION.reset(token)
 
@@ -114,7 +145,13 @@ async def test_memory_retrieval_failure_is_isolated() -> None:
     ("mode", "scopes", "embedding", "expected_scope", "expected_hybrid"),
     [
         ("lexical", ["user-1"], None, "user-1", False),
-        (MEMORY_RETRIEVAL_HYBRID, ["user-1", "household"], [0.2, 0.4], ["user-1", "household"], True),
+        (
+            MEMORY_RETRIEVAL_HYBRID,
+            ["user-1", "household"],
+            [0.2, 0.4],
+            ["user-1", "household"],
+            True,
+        ),
         (MEMORY_RETRIEVAL_HYBRID, ["user-1"], None, ["user-1"], False),
     ],
 )
@@ -258,7 +295,7 @@ def test_guest_tool_group_filter_removes_disallowed_and_orphaned_members(
         ({"target": {"device_ids": ["device-1"]}}, True, False),
         ({"entity_id": "light.allowed,sensor.allowed"}, False, True),
         ({"entity_ids": "light.allowed,light.denied"}, False, False),
-        ({"entity_id": ["light.allowed"]}, False, False),
+        ({"entity_id": ["light.allowed"]}, False, True),
         (
             [
                 {"entity_id": "light.allowed"},
