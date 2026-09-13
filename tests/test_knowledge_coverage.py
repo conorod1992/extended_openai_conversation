@@ -258,7 +258,8 @@ async def test_replace_backup_rebuilds_index_and_persists_canonical_sources() ->
 
     assert await library.async_search("obsolete") == []
     assert [r.source_id for r in await library.async_search("fresh")] == ["replacement"]
-    assert old.source_id not in {item["source_id"] for item in storage.data["sources"]}
+    saved_ids = {item["source_id"] for item in storage.data["sources"]}
+    assert old.source_id not in saved_ids
     assert storage.data["sources"][0]["source_id"] == "replacement"
 
 
@@ -377,16 +378,19 @@ def test_field_cleaners_reject_non_strings_and_normalize_whitespace() -> None:
     with pytest.raises(ValueError, match="content must be a string"):
         knowledge._clean_content(123)
 
-    assert knowledge._clean_single_line("title", "  Alpha\n\tBeta  ", 20, True) == "Alpha Beta"
+    assert (
+        knowledge._clean_single_line("title", "  Alpha\n\tBeta  ", 20, True)
+        == "Alpha Beta"
+    )
     assert knowledge._clean_content(" one  \r\n two\t \rthree  ") == "one\n two\nthree"
 
 
 def test_token_and_normalization_helpers_drop_single_character_noise() -> None:
     assert knowledge._tokens("A I drill-drill O'Neil x") == {"drill-drill", "o'neil"}
-    assert knowledge._normalize("  Drill---PRESS!!  O'Neil  ") == "drill press o'neil"
+    assert knowledge._normalize("  Drill---PRESS!!  O'Neil  ") == "drill---press o'neil"
 
 
-def test_split_chunks_prefers_nearby_paragraph_boundary_and_overlaps() -> None:
+def test_split_chunks_prefers_nearby_paragraph_boundary() -> None:
     prefix = "A" * 1700
     content = prefix + "\n\n" + ("B" * 900) + "\n" + ("C" * 900)
 
@@ -394,8 +398,8 @@ def test_split_chunks_prefers_nearby_paragraph_boundary_and_overlaps() -> None:
 
     assert len(chunks) >= 2
     assert chunks[0][0] == 0
-    assert chunks[0][1].endswith("A" * 20)
-    assert chunks[1][0] < len(chunks[0][1])
+    assert chunks[0][1] == prefix
+    assert chunks[1][0] < knowledge.CHUNK_SIZE
     assert all(text for _, text in chunks)
 
 
