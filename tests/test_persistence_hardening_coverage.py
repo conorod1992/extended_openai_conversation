@@ -52,26 +52,16 @@ def test_repair_private_store_mode_changes_only_insecure_existing_file(
 ) -> None:
     chmod_calls: list[tuple[str, int]] = []
     current_mode = ph._PRIVATE_STORE_MODE
-
-    monkeypatch.setattr(
-        ph.os,
-        "stat",
-        lambda _path: SimpleNamespace(st_mode=current_mode),
+    fake_os = SimpleNamespace(
+        stat=lambda _path: SimpleNamespace(st_mode=current_mode),
+        chmod=lambda path, mode: chmod_calls.append((path, mode)),
     )
-    monkeypatch.setattr(
-        ph.os,
-        "chmod",
-        lambda path, mode: chmod_calls.append((path, mode)),
-    )
+    monkeypatch.setattr(ph, "os", fake_os)
 
     ph._repair_private_store_mode("/config/.storage/already-private")
     assert chmod_calls == []
 
-    monkeypatch.setattr(
-        ph.os,
-        "stat",
-        lambda _path: SimpleNamespace(st_mode=0o644),
-    )
+    fake_os.stat = lambda _path: SimpleNamespace(st_mode=0o644)
     ph._repair_private_store_mode("/config/.storage/insecure")
     assert chmod_calls == [
         ("/config/.storage/insecure", ph._PRIVATE_STORE_MODE)
@@ -84,12 +74,11 @@ def test_repair_private_store_mode_ignores_missing_file(
     def _missing(_path: str) -> Any:
         raise FileNotFoundError
 
-    monkeypatch.setattr(ph.os, "stat", _missing)
-    monkeypatch.setattr(
-        ph.os,
-        "chmod",
-        lambda *_args: pytest.fail("missing files must not be chmodded"),
+    fake_os = SimpleNamespace(
+        stat=_missing,
+        chmod=lambda *_args: pytest.fail("missing files must not be chmodded"),
     )
+    monkeypatch.setattr(ph, "os", fake_os)
 
     ph._repair_private_store_mode("/config/.storage/not-created-yet")
 
