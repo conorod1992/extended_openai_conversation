@@ -45,6 +45,15 @@ test("dirty navigation follows changed destinations and clears when every value 
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/prompt-context$/);
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", false);
   await panel.locator("#prompt-editor").fill("Temporary navigation prompt");
+  await expect.poll(() => panel.evaluate((element) => ({
+    draftPrompt: element._draft?.prompt,
+    baselinePrompt: element._configData?.config?.prompt,
+    dirtyKeys: [...(element._eocDirtyConfigKeys || [])].sort(),
+  }))).toEqual({
+    draftPrompt: "Temporary navigation prompt",
+    baselinePrompt: "",
+    dirtyKeys: ["__title", "prompt"],
+  });
   await expect(panel.locator('#local-section option[value="basics"]')).toHaveText(/Basics\s+•$/);
   await expect(panel.locator('#local-section option[value="prompt-context"]')).toHaveText(/Prompt & context\s+•$/);
 
