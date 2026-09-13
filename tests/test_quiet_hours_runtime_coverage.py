@@ -71,8 +71,15 @@ def _install_registry(monkeypatch, *rooms: str) -> None:
         entries[f"switch.{room}_wake_sound"] = _entry(
             f"switch.{room}_wake_sound", "switch", device_id, name="Wake sound"
         )
-    registry = SimpleNamespace(entities=entries)
+    registry = SimpleNamespace(async_get=entries.get)
     monkeypatch.setattr(quiet_hours_runtime.er, "async_get", lambda _hass: registry)
+    monkeypatch.setattr(
+        quiet_hours_runtime.er,
+        "async_entries_for_device",
+        lambda _registry, device_id: [
+            entry for entry in entries.values() if entry.device_id == device_id
+        ],
+    )
 
 
 def _seed_room(hass, room: str, *, volume: float = 0.55, wake: str = "on") -> None:
