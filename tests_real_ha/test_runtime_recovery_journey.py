@@ -210,7 +210,7 @@ async def test_dirty_session_recovers_across_ha_failure_config_mutation_and_relo
     assert len(failing_wire.requests) == 1
 
     # The failed turn must release its continuity claim and must not replace the last
-    # known-good history with a half-finished provider/tool exchange.
+    # known-good continuity snapshot with a half-finished provider/tool exchange.
     active_after_failure = continuity._sessions[_OWNER_SCOPE]
     assert active_after_failure.in_flight is False
     assert active_after_failure.claim_token is None
@@ -276,11 +276,39 @@ async def test_dirty_session_recovers_across_ha_failure_config_mutation_and_relo
 
     first_recovery_request = recovery_wire.requests[0]["body"]
     first_recovery_text = _serialized(first_recovery_request)
-    # Continuity survived the reload, but failed-turn provider/tool artifacts did not.
     assert "Initial recovery state established." in first_recovery_text
-    assert "call-recovery-stale-b" not in first_recovery_text
-    assert "call-recovery-valid-c" not in first_recovery_text
-    assert entity_b not in first_recovery_text
+
+    # Home Assistant's chat log intentionally retains the failed user turn. What must
+    # not survive is an *open* tool exchange. Every provider-emitted call is paired
+    # with a terminal output: A succeeded, B failed explicitly, and C was skipped.
+    failed_call_ids = {
+        "call-recovery-valid-a",
+        "call-recovery-stale-b",
+        "call-recovery-valid-c",
+    }
+    failed_calls = {
+        item["call_id"]: item
+        for item in first_recovery_request["input"]
+        if item.get("type") == "function_call" and item.get("call_id") in failed_call_ids
+    }
+    failed_outputs = {
+        item["call_id"]: item
+        for item in first_recovery_request["input"]
+        if item.get("type") == "function_call_output"
+        and item.get("call_id") in failed_call_ids
+    }
+    assert set(failed_calls) == failed_call_ids
+    assert set(failed_outputs) == failed_call_ids
+
+    output_a = json.loads(failed_outputs["call-recovery-valid-a"]["output"])
+    output_b = json.loads(failed_outputs["call-recovery-stale-b"]["output"])
+    output_c = json.loads(failed_outputs["call-recovery-valid-c"]["output"])
+    assert output_a["result"] == {"entity_id": entity_a, "state": "ready"}
+    assert output_b["result"]["status"] == "error"
+    assert entity_b in output_b["result"]["error"]
+    assert output_c["result"]["status"] == "skipped"
+    assert "failed" in output_c["result"]["error"]
+
     # Function-group runtime state is intentionally transient, so reload requires an
     # explicit fresh load rather than inheriting the old session's loaded group.
     assert _GROUP_TOOL not in _tool_names(first_recovery_request, API_MODE_RESPONSES)
