@@ -6,27 +6,29 @@ import sys
 from types import SimpleNamespace
 
 import openai
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, create_model
 import pytest
 
 from custom_components.extended_openai_conversation_responses import openai_compat
 
 
-def _install_usage_models(monkeypatch: pytest.MonkeyPatch, input_model: type[BaseModel]) -> type[BaseModel]:
+def _install_usage_models(
+    monkeypatch: pytest.MonkeyPatch, input_model: type[BaseModel]
+) -> type[BaseModel]:
     """Install isolated usage models at the SDK import path used by the patch."""
-
-    class ResponseUsage(BaseModel):
-        input_tokens_details: input_model
-
+    response_usage = create_model(
+        "ResponseUsage",
+        input_tokens_details=(input_model, ...),
+    )
     monkeypatch.setitem(
         sys.modules,
         "openai.types.responses.response_usage",
         SimpleNamespace(
             InputTokensDetails=input_model,
-            ResponseUsage=ResponseUsage,
+            ResponseUsage=response_usage,
         ),
     )
-    return ResponseUsage
+    return response_usage
 
 
 def _prepare_patch(monkeypatch: pytest.MonkeyPatch, version: str = "2.45.0") -> None:
