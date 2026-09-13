@@ -6,8 +6,6 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from homeassistant.core import HomeAssistant
-
 from custom_components.extended_openai_conversation_responses import quiet_hours_runtime
 from custom_components.extended_openai_conversation_responses.quiet_hours import (
     QuietHoursManager,
@@ -16,6 +14,7 @@ from custom_components.extended_openai_conversation_responses.quiet_hours import
 from custom_components.extended_openai_conversation_responses.quiet_hours_runtime import (
     SatelliteCapabilities,
 )
+from homeassistant.core import HomeAssistant
 
 
 def _capabilities() -> list[SatelliteCapabilities]:
@@ -60,7 +59,9 @@ async def _install_control_services(hass: HomeAssistant):
         current = hass.states.get(entity_id)
         attributes = dict(current.attributes) if current else {}
         attributes["volume_level"] = volume
-        hass.states.async_set(entity_id, current.state if current else "idle", attributes)
+        hass.states.async_set(
+            entity_id, current.state if current else "idle", attributes
+        )
 
     async def switch_on(call) -> None:
         entity_id = call.data["entity_id"]
@@ -84,9 +85,7 @@ def _seed(hass: HomeAssistant, *, volume: float = 0.55, wake: str = "on") -> Non
         "idle",
         {"friendly_name": "Bedroom Voice"},
     )
-    hass.states.async_set(
-        "media_player.bedroom", "idle", {"volume_level": volume}
-    )
+    hass.states.async_set("media_player.bedroom", "idle", {"volume_level": volume})
     hass.states.async_set("switch.bedroom_wake_sound", wake)
 
 
@@ -94,7 +93,9 @@ async def test_real_ha_quiet_hours_applies_and_restores_owned_controls(
     hass: HomeAssistant, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        quiet_hours_runtime, "discover_satellite_capabilities", lambda *_: _capabilities()
+        quiet_hours_runtime,
+        "discover_satellite_capabilities",
+        lambda *_: _capabilities(),
     )
     _seed(hass)
     manager = _manager(hass)
@@ -129,7 +130,9 @@ async def test_real_ha_manual_changes_opt_out_of_restore(
     hass: HomeAssistant, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        quiet_hours_runtime, "discover_satellite_capabilities", lambda *_: _capabilities()
+        quiet_hours_runtime,
+        "discover_satellite_capabilities",
+        lambda *_: _capabilities(),
     )
     _seed(hass)
     manager = _manager(hass)
@@ -152,7 +155,9 @@ async def test_real_ha_ceiling_never_raises_and_manual_later_change_is_respected
     hass: HomeAssistant, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        quiet_hours_runtime, "discover_satellite_capabilities", lambda *_: _capabilities()
+        quiet_hours_runtime,
+        "discover_satellite_capabilities",
+        lambda *_: _capabilities(),
     )
     _seed(hass, volume=0.1, wake="off")
     manager = _manager(hass)
