@@ -339,6 +339,99 @@ async def test_guest_backup_and_service_dispatch_edges(monkeypatch) -> None:
     ) == {"services": {"light": {}}}
 
 
+async def test_configuration_transfer_and_validation_routes(monkeypatch) -> None:
+    entry, subentry = _entry_pair()
+    hass = _hass(entry)
+    monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
+
+    with pytest.raises(HomeAssistantError, match="config must be an object"):
+        await management_ui.async_management_command(
+            hass, "admin", True, _message("configuration", "validate", config=[])
+        )
+    validated = await management_ui.async_management_command(
+        hass, "admin", True, _message("configuration", "validate", config={})
+    )
+    assert validated["valid"] is True
+    assert "model_capabilities" in validated
+    with pytest.raises(HomeAssistantError, match="config must be an object"):
+        await management_ui.async_management_command(
+            hass, "admin", True, _message("configuration", "update", config=[])
+        )
+
+    duplicate = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        _message("configuration", "duplicate", title="A deliberate copy"),
+    )
+    assert duplicate["title"] == "A deliberate copy"
+
+    exported = await management_ui.async_management_command(
+        hass, "admin", True, _message("configuration", "export")
+    )
+    assert exported["document"]["schema"] == "extended_openai_conversation.agent"
+    assert '"title": "Jarvis"' in exported["json"]
+    document = {
+        "schema": "extended_openai_conversation.agent",
+        "version": AGENT_CONFIG_EXPORT_VERSION,
+        "title": "Imported",
+        "config": agent_config_defaults(),
+    }
+    preview = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        _message("configuration", "import_preview", document=document),
+    )
+    assert preview["valid"] is True
+    assert preview["summary"]["model"] == document["config"]["chat_model"]
+
+    with pytest.raises(HomeAssistantError, match="Explicit confirmation"):
+        await management_ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            _message("configuration", "import", document=document),
+        )
+    current = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        _message("configuration", "import", document=document, confirm=True),
+    )
+    assert current["status"] == "updated"
+    assert current["subentry_id"] == "agent-1"
+    with pytest.raises(HomeAssistantError, match="mode must be current or new"):
+        await management_ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            _message("configuration", "import", document=document, mode="replacement"),
+        )
+    created = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        _message("configuration", "import", document=document, mode="new"),
+    )
+    assert created["status"] == "created"
+
+    with pytest.raises(HomeAssistantError, match="sample_text and config are invalid"):
+        await management_ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            _message("configuration", "speech_preview", sample_text=1),
+        )
+    with pytest.raises(HomeAssistantError, match="config must be an object"):
+        await management_ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            _message("configuration", "request_preview", config=[]),
+        )
+
+
 @dataclass
 class _LatestRun:
     run_id: str
