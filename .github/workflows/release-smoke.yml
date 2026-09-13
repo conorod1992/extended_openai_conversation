@@ -92,12 +92,14 @@ jobs:
           echo "root=$PAYLOAD_ROOT" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Run clean packaged-install smoke
+      - name: Run clean packaged-install and cold-restart acceptance
         env:
           RELEASE_COMPONENT_DIR: ${{ steps.payload.outputs.root }}/custom_components/extended_openai_conversation_responses
           RELEASE_EXPECTED_VERSION: ${{ steps.payload.outputs.version }}
         run: |
-          pytest tests_real_ha/test_packaged_release.py \
+          pytest \
+            tests_real_ha/test_packaged_release.py \
+            tests_real_ha/test_packaged_process_restart.py \
             -v \
             --asyncio-mode=auto \
-            --timeout=60
+            --timeout=210
