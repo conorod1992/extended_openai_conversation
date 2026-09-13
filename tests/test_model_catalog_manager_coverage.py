@@ -89,12 +89,17 @@ async def test_load_rejects_invalid_storage_metadata(hass, saved) -> None:
     assert manager.status()["source"] == "bundled"
 
 
-async def test_load_discards_download_older_than_bundled(hass) -> None:
+async def test_load_discards_download_older_than_bundled(hass, monkeypatch) -> None:
     manager = _manager(hass)
     old = deepcopy(data.BUNDLED_CATALOG)
     old["catalog_version"] -= 1
     manager.store = MemoryStore(
         {"catalog": old, "etag": '"stale"', "last_checked": 0}
+    )
+    monkeypatch.setattr(
+        runtime,
+        "validate_or_migrate_catalog",
+        lambda value: (deepcopy(value), False),
     )
 
     await manager.async_load()
@@ -237,12 +242,12 @@ async def test_dynamic_and_reset_rules_do_not_block_catalog_reset(
                 {"action_type": "model_routing", "action": {"reset": True}},
                 {
                     "action_type": "model_routing",
-                    "action": {"reasoning_effort": "{{ effort }}"},
+                    "action": {"reasoning_effort": "{effort}"},
                 },
                 {
                     "action_type": "model_routing",
                     "action": {
-                        "model": "{{ model }}",
+                        "model": "{model}",
                         "reasoning_effort": "medium",
                     },
                 },
