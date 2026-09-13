@@ -80,6 +80,34 @@ def test_legacy_action_migration_covers_unknown_source_and_home_assistant_type()
     }
 
 
+def test_legacy_slot_migration_recurses_and_slot_discovery_ignores_native_actions() -> None:
+    """Legacy slot syntax is migrated recursively without misclassifying native actions."""
+    assert rr._migrate_slot_templates(
+        {
+            "text": "Weather in {place}",
+            "nested": [{"value_from": "slot", "slot": "room"}],
+        }
+    ) == {
+        "text": "Weather in {{ place }}",
+        "nested": ["{{ room }}"],
+    }
+
+    assert rr._legacy_action_slots(
+        {
+            "actions": [
+                {"action": "light.turn_on", "target": {"entity_id": "light.kitchen"}},
+                {
+                    "type": "function",
+                    "function": "weather",
+                    "arguments": {"place": {"source": "slot", "slot": "place"}},
+                },
+                "not-an-action",
+            ]
+        }
+    ) == {"place"}
+    assert rr._legacy_action_slots({"actions": "not-a-sequence"}) == set()
+
+
 def test_script_template_masking_preserves_shape_and_masks_action_templates() -> None:
     """Schema-only masking replaces templates without mutating their container shape."""
     value = {
@@ -103,6 +131,42 @@ def test_script_template_masking_preserves_shape_and_masks_action_templates() ->
     assert value["action"] == "{{ request.slots.action }}"
 
 
+def test_script_iterator_skips_malformed_nested_shapes_and_bounds_depth() -> None:
+    """Malformed optional branches are ignored while excessive valid nesting is rejected."""
+    root = {
+        "action": "light.turn_on",
+        "sequence": "not-a-sequence",
+        "choose": ["bad-branch", {"sequence": "bad-sequence"}],
+        "repeat": {"sequence": "bad-sequence"},
+    }
+    assert list(rr._iter_script_actions([root])) == [root]
+
+    nested = [{"action": "light.turn_on"}]
+    for _ in range(rr.MAX_SCRIPT_DEPTH + 1):
+        nested = [{"sequence": nested}]
+    with pytest.raises(ValueError, match="maximum depth"):
+        list(rr._iter_script_actions(nested))
+
+
+def test_sensitive_action_detection_handles_nonlocal_and_cover_controls() -> None:
+    """Sensitivity detection distinguishes routing rules from security-relevant cover control."""
+    assert not rr.rule_has_sensitive_actions(
+        {"action_type": "route_to_ai", "action": {"actions": [{"action": "lock.unlock"}]}}
+    )
+    assert rr.rule_has_sensitive_actions(
+        {
+            "action_type": "local_action",
+            "action": {"actions": [{"action": "cover.open_cover"}]},
+        }
+    )
+    assert not rr.rule_has_sensitive_actions(
+        {
+            "action_type": "local_action",
+            "action": {"actions": [{"action": "cover.stop_cover"}]},
+        }
+    )
+
+
 def test_guest_preflight_accepts_allowed_configured_tool() -> None:
     """The positive configured-tool path is authorized without HA service dispatch."""
     policy = SimpleNamespace(allows_configured_tool=lambda name: name == "weather")
@@ -116,6 +180,32 @@ def test_guest_preflight_accepts_allowed_configured_tool() -> None:
         ],
         policy,
     )
+
+
+def test_guest_preflight_rejects_missing_or_disallowed_configured_tool() -> None:
+    """Guest preflight rejects configured-function actions unless the named tool is allowed."""
+    policy = rr.GuestCapabilityPolicy(
+        guest_active=True,
+        configured_tool_names=frozenset({"safe_tool"}),
+    )
+    service = f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}"
+
+    assert not rr._guest_script_allowed(
+        SimpleNamespace(),
+        [{"action": service, "data": {"function": 42}}],
+        policy,
+    )
+    assert not rr._guest_script_allowed(
+        SimpleNamespace(),
+        [{"action": service, "data": {"function": "blocked_tool"}}],
+        policy,
+    )
+
+
+def test_invalid_native_script_sequence_is_reported_as_value_error() -> None:
+    """Home Assistant schema failures are normalized at the Request Rules boundary."""
+    with pytest.raises(ValueError, match="invalid Home Assistant action sequence"):
+        rr._validate_script_sequence([{"action": 12345}])
 
 
 @pytest.mark.asyncio
