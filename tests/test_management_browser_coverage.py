@@ -16,12 +16,13 @@ from custom_components.extended_openai_conversation_responses import management_
 async def test_wrapper_delegates_non_browser_commands() -> None:
     original = AsyncMock(return_value={"delegated": True})
     wrapped = management_browser.wrap_management_browser(original)
+    hass = object()
     message = {"section": "knowledge", "action": "list"}
 
-    result = await wrapped(object(), "user-a", False, message)
+    result = await wrapped(hass, "user-a", False, message)
 
     assert result == {"delegated": True}
-    original.assert_awaited_once_with(object(), "user-a", False, message)
+    original.assert_awaited_once_with(hass, "user-a", False, message)
 
 
 @pytest.mark.asyncio
