@@ -118,9 +118,7 @@ def _seed_room(hass, room: str, *, volume=0.55, wake="on") -> None:
         "idle",
         {"friendly_name": f"{room.title()} Voice"},
     )
-    hass.states.async_set(
-        f"media_player.{room}", "idle", {"volume_level": volume}
-    )
+    hass.states.async_set(f"media_player.{room}", "idle", {"volume_level": volume})
     hass.states.async_set(f"switch.{room}_wake_sound", wake)
 
 
@@ -137,9 +135,10 @@ def test_quiet_period_for_overnight_window() -> None:
     assert before_midnight.start == datetime(2026, 9, 11, 22, 0, tzinfo=UTC)
     assert after_midnight.start == before_midnight.start
     assert after_midnight.end == datetime(2026, 9, 12, 7, 0, tzinfo=UTC)
-    assert quiet_period_for(
-        datetime(2026, 9, 12, 7, 0, tzinfo=UTC), "22:00", "07:00"
-    ) is None
+    assert (
+        quiet_period_for(datetime(2026, 9, 12, 7, 0, tzinfo=UTC), "22:00", "07:00")
+        is None
+    )
 
 
 def test_config_uses_ceiling_tri_state_and_migrates_prototype_names() -> None:
@@ -147,9 +146,7 @@ def test_config_uses_ceiling_tri_state_and_migrates_prototype_names() -> None:
     assert config.max_volume == 0.2
     assert config.wake_sound == "off"
 
-    migrated = _config_from_data(
-        {"volume_level": 0.3, "wake_sound_enabled": True}
-    )
+    migrated = _config_from_data({"volume_level": 0.3, "wake_sound_enabled": True})
     assert migrated.max_volume == 0.3
     assert migrated.wake_sound == "on"
 
@@ -225,7 +222,9 @@ async def test_ceiling_lowers_only_satellites_above_limit(monkeypatch, hass) -> 
     assert hass.states["media_player.kitchen"].attributes["volume_level"] == 0.1
 
 
-async def test_active_entity_tracks_schedule_even_when_nothing_changes(monkeypatch, hass) -> None:
+async def test_active_entity_tracks_schedule_even_when_nothing_changes(
+    monkeypatch, hass
+) -> None:
     _install_registry(monkeypatch, "bedroom")
     _seed_room(hass, "bedroom", volume=0.1, wake="off")
     manager = _manager(hass)
@@ -245,7 +244,9 @@ async def test_active_entity_tracks_schedule_even_when_nothing_changes(monkeypat
     assert hass.states["binary_sensor.extended_openai_quiet_hours"].state == "off"
 
 
-async def test_quiet_hours_persists_ownership_before_mutation(monkeypatch, hass) -> None:
+async def test_quiet_hours_persists_ownership_before_mutation(
+    monkeypatch, hass
+) -> None:
     _install_registry(monkeypatch, "bedroom")
     _seed_room(hass, "bedroom")
     manager = _manager(hass)
@@ -263,9 +264,10 @@ async def test_quiet_hours_persists_ownership_before_mutation(monkeypatch, hass)
         "original_value": 0.55,
         "quiet_value": 0.2,
     }
-    assert manager.active["controls"]["switch.bedroom_wake_sound"][
-        "original_value"
-    ] is True
+    assert (
+        manager.active["controls"]["switch.bedroom_wake_sound"]["original_value"]
+        is True
+    )
     saves = manager._store.async_save.await_args_list
     assert any(
         "media_player.bedroom" in call.args[0].get("active", {}).get("controls", {})

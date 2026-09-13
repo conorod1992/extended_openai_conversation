@@ -17,7 +17,10 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.event import async_track_time_change, async_track_time_interval
+from homeassistant.helpers.event import (
+    async_track_time_change,
+    async_track_time_interval,
+)
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
@@ -212,9 +215,9 @@ def _config_from_data(value: Any) -> QuietHoursConfig:
 
     overrides: list[SatelliteOverride] = []
     for satellite_entity_id, raw in raw_overrides.items():
-        if not isinstance(satellite_entity_id, str) or not satellite_entity_id.startswith(
-            "assist_satellite."
-        ):
+        if not isinstance(
+            satellite_entity_id, str
+        ) or not satellite_entity_id.startswith("assist_satellite."):
             raise ValueError("Override keys must be assist_satellite entities")
         if not isinstance(raw, Mapping):
             raise ValueError(f"Override for {satellite_entity_id} must be an object")
@@ -351,8 +354,16 @@ def discover_satellite_capabilities(
         override = overrides.get(satellite.entity_id)
         auto_media = _pick_media_player(hass, same_device)
         auto_wake = _pick_wake_sound(same_device)
-        media = override.media_player_entity_id if override and override.media_player_entity_id else auto_media
-        wake = override.wake_sound_entity_id if override and override.wake_sound_entity_id else auto_wake
+        media = (
+            override.media_player_entity_id
+            if override and override.media_player_entity_id
+            else auto_media
+        )
+        wake = (
+            override.wake_sound_entity_id
+            if override and override.wake_sound_entity_id
+            else auto_wake
+        )
         state = hass.states.get(satellite.entity_id)
         name = (
             (state.attributes.get("friendly_name") if state else None)
@@ -368,10 +379,18 @@ def discover_satellite_capabilities(
                 media_player_entity_id=media,
                 wake_sound_entity_id=wake,
                 media_player_source=(
-                    "manual" if override and override.media_player_entity_id else "auto" if auto_media else None
+                    "manual"
+                    if override and override.media_player_entity_id
+                    else "auto"
+                    if auto_media
+                    else None
                 ),
                 wake_sound_source=(
-                    "manual" if override and override.wake_sound_entity_id else "auto" if auto_wake else None
+                    "manual"
+                    if override and override.wake_sound_entity_id
+                    else "auto"
+                    if auto_wake
+                    else None
                 ),
             )
         )
@@ -428,11 +447,18 @@ class QuietHoursManager:
         self.hass.states.async_remove(_STATE_ENTITY_ID)
 
     def discovery_snapshot(self) -> list[dict[str, Any]]:
-        return [item.as_dict() for item in discover_satellite_capabilities(self.hass, self._config)]
+        return [
+            item.as_dict()
+            for item in discover_satellite_capabilities(self.hass, self._config)
+        ]
 
     def snapshot(self) -> dict[str, Any]:
         now = dt_util.now()
-        period = quiet_period_for(now, self._config.start, self._config.end) if self._config.enabled else None
+        period = (
+            quiet_period_for(now, self._config.start, self._config.end)
+            if self._config.enabled
+            else None
+        )
         return {
             "config": self._config.as_dict(),
             "active": period is not None,
@@ -463,14 +489,21 @@ class QuietHoursManager:
         async with self._lock:
             if not self._initialized:
                 return
-            period = quiet_period_for(now, self._config.start, self._config.end) if self._config.enabled else None
+            period = (
+                quiet_period_for(now, self._config.start, self._config.end)
+                if self._config.enabled
+                else None
+            )
             self._publish_state(period)
             if period is None:
                 await self._async_restore_locked()
                 return
 
             period_id = period.start.isoformat()
-            if self._active is not None and self._active.get("period_started_at") != period_id:
+            if (
+                self._active is not None
+                and self._active.get("period_started_at") != period_id
+            ):
                 # If HA was unavailable across the old end boundary, first give back
                 # controls that still carry our old values, then begin the new period.
                 await self._async_restore_locked()
@@ -492,7 +525,10 @@ class QuietHoursManager:
                         capability.media_player_entity_id,
                         controls,
                     )
-                if capability.wake_sound_entity_id and self._config.wake_sound != "unchanged":
+                if (
+                    capability.wake_sound_entity_id
+                    and self._config.wake_sound != "unchanged"
+                ):
                     await self._async_apply_switch_locked(
                         capability.satellite_entity_id,
                         capability.wake_sound_entity_id,
@@ -563,11 +599,21 @@ class QuietHoursManager:
                 original = raw.get("original_value")
                 quiet = raw.get("quiet_value")
                 try:
-                    if kind == "volume" and isinstance(original, (int, float)) and isinstance(quiet, (int, float)):
+                    if (
+                        kind == "volume"
+                        and isinstance(original, (int, float))
+                        and isinstance(quiet, (int, float))
+                    ):
                         current = _current_volume(self.hass, entity_id)
-                        if current is not None and math.isclose(current, float(quiet), abs_tol=_VOLUME_TOLERANCE):
+                        if current is not None and math.isclose(
+                            current, float(quiet), abs_tol=_VOLUME_TOLERANCE
+                        ):
                             await self._async_set_volume(entity_id, float(original))
-                    elif kind == "switch" and isinstance(original, bool) and isinstance(quiet, bool):
+                    elif (
+                        kind == "switch"
+                        and isinstance(original, bool)
+                        and isinstance(quiet, bool)
+                    ):
                         current_switch = _current_switch(self.hass, entity_id)
                         if current_switch is quiet:
                             await self._async_set_switch(entity_id, original)
@@ -594,7 +640,9 @@ class QuietHoursManager:
         )
 
     async def _async_save_locked(self) -> None:
-        await self._store.async_save({"config": self._config.as_dict(), "active": self._active})
+        await self._store.async_save(
+            {"config": self._config.as_dict(), "active": self._active}
+        )
 
     def _normalize_active(self, value: Any) -> dict[str, Any] | None:
         if not isinstance(value, Mapping):
@@ -626,7 +674,9 @@ class QuietHoursManager:
             original = raw.get("original_value")
             quiet = raw.get("quiet_value")
             if kind == "volume" and all(
-                isinstance(item, (int, float)) and not isinstance(item, bool) and 0.0 <= float(item) <= 1.0
+                isinstance(item, (int, float))
+                and not isinstance(item, bool)
+                and 0.0 <= float(item) <= 1.0
                 for item in (original, quiet)
             ):
                 controls[entity_id] = {
@@ -635,7 +685,11 @@ class QuietHoursManager:
                     "original_value": float(original),
                     "quiet_value": float(quiet),
                 }
-            elif kind == "switch" and isinstance(original, bool) and isinstance(quiet, bool):
+            elif (
+                kind == "switch"
+                and isinstance(original, bool)
+                and isinstance(quiet, bool)
+            ):
                 controls[entity_id] = {
                     "kind": "switch",
                     "satellite_entity_id": str(raw.get("satellite_entity_id") or ""),
