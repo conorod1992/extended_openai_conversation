@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections import defaultdict
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from dataclasses import asdict, dataclass
 from types import SimpleNamespace
 from typing import Any
 
@@ -312,7 +310,7 @@ async def test_delete_selected_checks_scope_ownership_before_mutating(
         {"foreign": [_turn("foreign")]},
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="conversation session not found"):
         await archive.async_delete_selected("scope-a", ["foreign"], confirm=True)
 
     assert set(archive._sessions) == {"foreign"}
@@ -336,7 +334,7 @@ async def test_replace_backup_rebuilds_partitions_and_clears_active_state(
     assert archive._active == {}
     assert archive._partitions == {"2026-04"}
     assert storage.partitions["2026-01"] == {"turns": []}
-    assert storage.partitions["2026-04"] == {"turns": [replacement_turn.__dict__]}
+    assert storage.partitions["2026-04"] == {"turns": [asdict(replacement_turn)]}
 
 
 @dataclass(frozen=True)
