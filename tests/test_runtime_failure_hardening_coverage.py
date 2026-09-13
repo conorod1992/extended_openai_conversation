@@ -187,6 +187,7 @@ async def test_archive_wrapper_delegates_non_archive_and_blocks_disallowed_guest
     monkeypatch,
 ) -> None:
     original = AsyncMock(return_value="delegated")
+    original._extended_openai_archive_failure_label = False
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_execute_function_tool", original)
     hardening._install_archive_failure_label()
     installed = ExtendedOpenAIAgentEntity._execute_function_tool
@@ -217,6 +218,7 @@ async def test_archive_wrapper_maps_value_error_without_mislabeling_as_unavailab
     monkeypatch,
 ) -> None:
     original = AsyncMock(return_value="unused")
+    original._extended_openai_archive_failure_label = False
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_execute_function_tool", original)
     hardening._install_archive_failure_label()
 
