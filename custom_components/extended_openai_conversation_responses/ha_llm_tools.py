@@ -33,16 +33,19 @@ _REFERENCE_FIELDS = frozenset(
 
 
 def _install_openapi_serializer_compat() -> None:
-    """Bridge HA's legacy serializer sentinel to the Probatio converter."""
-    converter = getattr(llm, "to_openapi", None)
-    if converter is None or getattr(
-        converter, "_extended_openai_serializer_compat", False
+    """Bridge legacy and Probatio OpenAPI schema/serializer contracts."""
+    existing = getattr(llm, "to_openapi", None)
+    if existing is not None and getattr(
+        existing, "_extended_openai_serializer_compat", False
     ):
         return
 
     try:
-        from probatio import UNSUPPORTED as probatio_unsupported
-        from voluptuous_openapi import UNSUPPORTED as voluptuous_unsupported
+        import probatio
+        from voluptuous_openapi import (
+            UNSUPPORTED as voluptuous_unsupported,
+            convert as voluptuous_convert,
+        )
     except ImportError:
         return
 
@@ -52,13 +55,26 @@ def _install_openapi_serializer_compat() -> None:
         custom_serializer: Callable[[Any], Any] | None = None,
         **kwargs: Any,
     ) -> Any:
+        if existing is not None:
+            converter = existing
+            target_unsupported = probatio.UNSUPPORTED
+            foreign_unsupported = voluptuous_unsupported
+        elif isinstance(schema, probatio.Schema):
+            converter = probatio.to_openapi
+            target_unsupported = probatio.UNSUPPORTED
+            foreign_unsupported = voluptuous_unsupported
+        else:
+            converter = voluptuous_convert
+            target_unsupported = voluptuous_unsupported
+            foreign_unsupported = probatio.UNSUPPORTED
+
         if custom_serializer is None:
             return converter(schema, *args, custom_serializer=None, **kwargs)
 
         def compatible_serializer(value: Any) -> Any:
             result = custom_serializer(value)
-            if result is voluptuous_unsupported:
-                return probatio_unsupported
+            if result is foreign_unsupported:
+                return target_unsupported
             return result
 
         return converter(
