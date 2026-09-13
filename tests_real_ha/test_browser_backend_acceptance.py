@@ -135,6 +135,7 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
 async def test_shipped_browser_frontend_loads_inside_real_home_assistant_shell(
     hass: HomeAssistant,
     aiohttp_client: Any,
+    socket_enabled: Any,
 ) -> None:
     """HA itself must register, serve, instantiate, and connect the shipped panel."""
     assert await async_setup_component(hass, "websocket_api", {})
