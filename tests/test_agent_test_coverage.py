@@ -5,8 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, cast
 
-import pytest
 from openai import OpenAIError
+import pytest
 
 from custom_components.extended_openai_conversation_responses import agent_test
 
@@ -42,6 +42,11 @@ def _subentry(**data: Any) -> SimpleNamespace:
 
 def _patch_common(monkeypatch: pytest.MonkeyPatch, usage: _Usage | None = None) -> _Usage:
     usage = usage or _Usage()
+    monkeypatch.setattr(
+        agent_test,
+        "get_api_mode",
+        lambda *_args: agent_test.API_MODE_RESPONSES,
+    )
     monkeypatch.setattr(agent_test, "_validate_function_schema", lambda _subentry: 2)
     monkeypatch.setattr(agent_test, "get_loaded_guest_mode", lambda *args: None)
     monkeypatch.setattr(
@@ -348,7 +353,7 @@ async def test_agent_test_successful_responses_probe_records_usage_and_web_searc
 async def test_agent_test_chat_completions_probe_uses_wrapped_function_schema(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    usage = _patch_common(monkeypatch)
+    _patch_common(monkeypatch)
     monkeypatch.setattr(agent_test, "get_api_mode", lambda *_args: agent_test.API_MODE_CHAT_COMPLETIONS)
     monkeypatch.setattr(agent_test, "extract_usage", lambda _raw: {})
     create = _Create(result=SimpleNamespace(usage=None))
