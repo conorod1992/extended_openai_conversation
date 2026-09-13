@@ -253,6 +253,8 @@ def test_string_set_and_timestamp_guards(hass, monkeypatch) -> None:
         "light.two",
     }
 
+    hass.config.time_zone = "UTC"
+
     with pytest.raises(ValueError, match="ISO 8601"):
         guest_mode._parse_timestamp(hass, "not-a-date", "active_from")
 
