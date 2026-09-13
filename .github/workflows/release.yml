@@ -150,6 +150,15 @@ jobs:
               pending.extend(manifest.get("dependencies", []))
               pending.extend(manifest.get("after_dependencies", []))
 
+          # Home Assistant imports these entity integrations while setting up the
+          # declared dependency graph, but they are not themselves reachable via
+          # manifest dependencies. The child process must still have their Python
+          # requirements because it intentionally exercises a real clean HA boot.
+          for domain in ("infrared", "radio_frequency"):
+              manifest_path = components / domain / "manifest.json"
+              manifest = json.loads(manifest_path.read_text())
+              requirements.update(manifest.get("requirements", []))
+
           if requirements:
               subprocess.check_call(
                   [sys.executable, "-m", "pip", "install", *sorted(requirements)]
@@ -168,15 +177,17 @@ jobs:
           done < <(git ls-files -z custom_components/extended_openai_conversation_responses)
           echo "root=$PAYLOAD_ROOT" >> "$GITHUB_OUTPUT"
 
-      - name: Smoke-test clean release installation
+      - name: Verify clean packaged install and cold restart
         env:
           RELEASE_COMPONENT_DIR: ${{ steps.payload.outputs.root }}/custom_components/extended_openai_conversation_responses
           RELEASE_EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          pytest tests_real_ha/test_packaged_release.py \
+          pytest \
+            tests_real_ha/test_packaged_release.py \
+            tests_real_ha/test_packaged_process_restart.py \
             -v \
             --asyncio-mode=auto \
-            --timeout=60
+            --timeout=210
 
       - name: Refuse to publish from stale develop
         env:
