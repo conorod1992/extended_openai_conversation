@@ -26,6 +26,16 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
 )
 from homeassistant.exceptions import HomeAssistantError
 
+_ORIGINAL_MANAGEMENT_COMMAND = management_ui.async_management_command
+
+
+@pytest.fixture(autouse=True)
+def _isolate_management_command(monkeypatch) -> None:
+    """Keep these unit tests independent from wrappers installed by other tests."""
+    monkeypatch.setattr(
+        management_ui, "async_management_command", _ORIGINAL_MANAGEMENT_COMMAND
+    )
+
 
 def _entry_pair():
     subentry = SimpleNamespace(
@@ -634,16 +644,13 @@ async def test_websocket_and_setup_wiring(monkeypatch) -> None:
         "async_management_command",
         AsyncMock(side_effect=HomeAssistantError("bad request")),
     )
-    await management_ui.websocket_management(
-        _hass(), connection, {"id": 7, "action": "x"}
-    )
+    websocket_handler = management_ui.websocket_management.__wrapped__
+    await websocket_handler(_hass(), connection, {"id": 7, "action": "x"})
     connection.send_error.assert_called_once_with(7, "invalid_request", "bad request")
 
     management_ui.async_management_command.side_effect = None
     management_ui.async_management_command.return_value = {"ok": True}
-    await management_ui.websocket_management(
-        _hass(), connection, {"id": 8, "action": "x"}
-    )
+    await websocket_handler(_hass(), connection, {"id": 8, "action": "x"})
     connection.send_result.assert_called_once_with(8, {"ok": True})
 
     hass = _hass()
