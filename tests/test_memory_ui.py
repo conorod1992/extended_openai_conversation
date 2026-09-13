@@ -44,6 +44,8 @@ def _install_agent(monkeypatch, *, data: dict | None = None):
 
 
 async def _manage(hass, action: str, **message):
+    if not hasattr(hass, "data"):
+        hass.data = {}
     return await memory_ui.async_manage_command(
         hass,
         "user-1",
