@@ -208,9 +208,10 @@ async def test_optimized_overview_guard_sanitizes_non_admin_and_is_idempotent(
         }
 
     monkeypatch.setattr(management_loading_performance, "async_overview_summary", original)
-    monkeypatch.delattr(
+    monkeypatch.setattr(
         management_loading_performance,
         management_permissions._OPTIMIZED_OVERVIEW_PATCHED,
+        False,
         raising=False,
     )
 
@@ -281,9 +282,10 @@ def test_install_management_permissions_is_idempotent_and_keeps_guidance(
         return {"ok": True}
 
     monkeypatch.setattr(management_permissions.management_ui, "async_management_command", original)
-    monkeypatch.delattr(
+    monkeypatch.setattr(
         management_permissions.management_ui,
         management_permissions._PATCHED,
+        False,
         raising=False,
     )
 
