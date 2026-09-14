@@ -213,6 +213,7 @@ async def test_browser_created_request_rule_survives_unload_reload_and_stays_liv
     assert request["body"]["reasoning_effort"] == "xhigh"
 
 
+@pytest.mark.usefixtures("socket_enabled")
 @pytest.mark.asyncio
 async def test_browser_survives_true_home_assistant_process_restart(
     tmp_path: Path,
