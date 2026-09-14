@@ -27,7 +27,7 @@ function insertGuideTopic(html, groupId, topic) {
 }
 
 function removeEmptyGuideGroups(html) {
-  return html.replace(/<section class="guide-group" data-guide-group="[^"]+"><div class="guide-group-heading">[\s\S]*?<\/div><div class="guide-topics"><\/div><\/section>/g, "");
+  return html.replace(/<section class="guide-group" data-guide-group="[^"]+"><div class="guide-group-heading">(?:(?!<\/div>)[\s\S])*?<\/div><div class="guide-topics"><\/div><\/section>/g, "");
 }
 
 function extraGuideTopic(panel, {id, title, summary, body, action}) {
