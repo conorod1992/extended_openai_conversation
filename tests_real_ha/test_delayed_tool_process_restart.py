@@ -16,6 +16,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import yaml
 
 DOMAIN = "extended_openai_conversation_responses"
 _CHILD_PHASE = "DELAYED_TOOL_PROCESS_PHASE"
@@ -154,7 +155,13 @@ async def _create_entry_and_schedule(config_dir: Path) -> None:
             if item.subentry_type == "conversation"
         )
         updated = dict(subentry.data)
-        updated[const.CONF_FUNCTION_TOOLS] = [_tool_config()]
+        # Production agent storage keeps Function Tools as YAML text. Persist the
+        # acceptance fixture through that same representation so a cold process
+        # exercises the real deserialize/validate path rather than an impossible
+        # in-memory list shape.
+        updated[const.CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+            [_tool_config()], sort_keys=False, allow_unicode=True
+        )
         hass.config_entries.async_update_subentry(entry, subentry, data=updated)
         await hass.async_block_till_done()
 
