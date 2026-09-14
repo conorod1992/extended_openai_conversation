@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from types import SimpleNamespace
 
 import pytest
 
