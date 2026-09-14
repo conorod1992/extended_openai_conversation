@@ -163,8 +163,11 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
     with pytest.raises(ValueError, match="knowledge source not found"):
         await knowledge.async_get(target_knowledge.source_id)
 
-    # A fully loaded conversation entry owns periodic archive timers. Unload it so
-    # the acceptance test also proves clean lifecycle teardown instead of leaking a
-    # pending timer into pytest's lingering-task check.
+    # Updating the subentry during rollback schedules a real config-entry reload.
+    # Let that lifecycle transition finish before asking HA to unload the entry;
+    # otherwise the cleanup races SETUP_IN_PROGRESS and HA correctly refuses it.
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.NOT_LOADED
