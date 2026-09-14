@@ -64,3 +64,57 @@ test("shipped management panel loads and persists configuration inside the genui
   })).toBe(true);
   expect(integrationResponses.filter(({status}) => status >= 400)).toEqual([]);
 });
+
+test("genuine Home Assistant shell follows deep links and browser history", async ({context, page}) => {
+  const authData = JSON.parse(authDataRaw);
+  await context.addInitScript((tokens) => {
+    window.localStorage.setItem("hassTokens", JSON.stringify(tokens));
+  }, authData);
+
+  // Start on a nested deep link, not the panel's normal landing page.
+  await page.goto(`${baseUrl}/extended-openai/data-memory/knowledge`, {waitUntil: "domcontentloaded"});
+  await expect(page.locator("home-assistant")).toHaveCount(1);
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel).toHaveCount(1);
+  await expect(page).toHaveURL(`${baseUrl}/extended-openai/data-memory/knowledge`);
+  await expect(panel.getByRole("heading", {name: "Knowledge Library", exact: true})).toBeVisible();
+
+  // Build history through the shipped panel's own navigation handlers.
+  await panel.getByRole("button", {name: "Assistant", exact: true}).click();
+  await expect(page).toHaveURL(`${baseUrl}/extended-openai/assistant/basics`);
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+
+  await panel.getByRole("button", {name: "Capabilities", exact: true}).click();
+  await expect(page).toHaveURL(`${baseUrl}/extended-openai/capabilities/home-assistant`);
+  await expect(panel.getByText("Use Extended OpenAI local handling", {exact: true})).toBeVisible();
+
+  await panel.getByRole("button", {name: "Functions", exact: true}).click();
+  await expect(page).toHaveURL(`${baseUrl}/extended-openai/capabilities/functions`);
+  await expect(panel.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
+
+  // Home Assistant owns popstate handling. The custom panel must follow the URL
+  // backward and forward instead of leaving stale content from the previous view.
+  await page.goBack();
+  await expect(page).toHaveURL(`${baseUrl}/extended-openai/capabilities/home-assistant`);
+  await expect(panel.getByText("Use Extended OpenAI local handling", {exact: true})).toBeVisible();
+
+  await page.goBack();
+  await expect(page).toHaveURL(`${baseUrl}/extended-openai/assistant/basics`);
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+
+  await page.goBack();
+  await expect(page).toHaveURL(`${baseUrl}/extended-openai/data-memory/knowledge`);
+  await expect(panel.getByRole("heading", {name: "Knowledge Library", exact: true})).toBeVisible();
+
+  await page.goForward();
+  await expect(page).toHaveURL(`${baseUrl}/extended-openai/assistant/basics`);
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+
+  await page.goForward();
+  await expect(page).toHaveURL(`${baseUrl}/extended-openai/capabilities/home-assistant`);
+  await expect(panel.getByText("Use Extended OpenAI local handling", {exact: true})).toBeVisible();
+
+  await page.goForward();
+  await expect(page).toHaveURL(`${baseUrl}/extended-openai/capabilities/functions`);
+  await expect(panel.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
+});
