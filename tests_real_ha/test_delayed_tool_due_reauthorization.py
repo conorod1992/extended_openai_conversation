@@ -61,9 +61,11 @@ def _restricted_user() -> MockUser:
 
 
 def _set_control_permission(user: MockUser, *, allowed: bool) -> None:
-    """Change the live HA permission policy and invalidate its cached lookup."""
-    user.groups[:] = [_permission_group(control=allowed)]
-    user._permissions = None  # noqa: SLF001 - exercise HA's live permission model
+    """Change the live HA permission policy through HA's cache-invalidating setter."""
+    # User.groups has Home Assistant's permissions-change on_setattr hook. Replacing
+    # the list therefore invalidates the cached PolicyPermissions object; mutating the
+    # existing list in place bypasses that hook and leaves stale permissions active.
+    user.groups = [_permission_group(control=allowed)]
 
 
 async def _schedule_delayed_call(
