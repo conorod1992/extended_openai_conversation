@@ -211,8 +211,12 @@ async def test_multiple_indirect_target_kinds_union_dedupe_and_exposure(
     assert failed.response.error_code is not None
     assert service_calls == []
     assert resolved_per_call == []
-    assert hass.states[entity_a_id].state == "idle"
-    assert hass.states[entity_b_id].state == "idle"
+    state_a = hass.states.get(entity_a_id)
+    state_b = hass.states.get(entity_b_id)
+    assert state_a is not None
+    assert state_b is not None
+    assert state_a.state == "idle"
+    assert state_b.state == "idle"
     assert len(failing_wire.requests) == 1
 
     # Expose B and repeat the identical overlapping selector pair. The service must
@@ -245,8 +249,12 @@ async def test_multiple_indirect_target_kinds_union_dedupe_and_exposure(
     assert service_calls[0].data[ATTR_DEVICE_ID] == device_a.id
     assert resolved_per_call == [[entity_a_id, entity_b_id]]
     assert len(resolved_per_call[0]) == len(set(resolved_per_call[0])) == 2
-    assert hass.states[entity_a_id].state == "combined-success"
-    assert hass.states[entity_b_id].state == "combined-success"
+    state_a = hass.states.get(entity_a_id)
+    state_b = hass.states.get(entity_b_id)
+    assert state_a is not None
+    assert state_b is not None
+    assert state_a.state == "combined-success"
+    assert state_b.state == "combined-success"
     assert len(success_wire.requests) == 2
 
     success_result = _tool_result(
