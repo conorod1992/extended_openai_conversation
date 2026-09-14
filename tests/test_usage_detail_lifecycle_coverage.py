@@ -6,11 +6,18 @@ from datetime import timedelta
 import pytest
 from homeassistant.util import dt as dt_util
 
+from custom_components.extended_openai_conversation_responses.durable_state_hardening import (
+    _install_usage_transactions,
+)
 from custom_components.extended_openai_conversation_responses.usage import (
     UsageManager,
     UsageRequest,
     UsageRun,
 )
+
+
+# Exercise the effective Usage lifecycle contract installed at integration startup.
+_install_usage_transactions()
 
 
 class DetailStorage:
@@ -157,25 +164,29 @@ async def test_clear_without_detail_store_still_reports_and_clears_live_state() 
     assert manager.runs == []
 
 
-async def test_clear_save_failure_propagates_after_live_clear_and_can_converge() -> None:
-    """A failed detail write is explicit, and a later save can persist the live truth."""
+async def test_clear_save_failure_preserves_live_state_and_can_converge() -> None:
+    """A failed durable clear stays unpublished, and a later retry can converge."""
     details = DetailStorage()
     manager = _manager(details)
     now = dt_util.utcnow().isoformat()
-    manager.requests = [_request("request", now)]
-    manager.runs = [_run("run", now)]
+    request = _request("request", now)
+    run = _run("run", now)
+    manager.requests = [request]
+    manager.runs = [run]
     details.fail_save = True
 
     with pytest.raises(OSError, match="detail store unavailable"):
         await manager.async_clear_details(confirm=True)
 
-    # Clear mutates the authoritative live lists before the awaited Store write.
-    assert manager.requests == []
-    assert manager.runs == []
+    # Durable-state hardening persists the candidate clear before publishing it.
+    assert manager.requests == [request]
+    assert manager.runs == [run]
     assert details.data is None
 
     details.fail_save = False
-    result = await manager.async_prune_details(save=True)
+    result = await manager.async_clear_details(confirm=True)
 
-    assert result == {"deleted_requests": 0, "deleted_runs": 0}
+    assert result == {"deleted_requests": 1, "deleted_runs": 1}
+    assert manager.requests == []
+    assert manager.runs == []
     assert details.data == {"requests": [], "runs": []}
