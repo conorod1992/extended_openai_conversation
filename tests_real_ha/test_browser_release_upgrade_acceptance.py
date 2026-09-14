@@ -41,6 +41,13 @@ def _run_child(config_dir: Path, phase: str) -> subprocess.CompletedProcess[str]
     env = os.environ.copy()
     env[_CHILD_PHASE_ENV] = phase
     env[_CONFIG_DIR_ENV] = str(config_dir)
+    repo_root = Path(__file__).resolve().parent.parent
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        os.pathsep.join((str(repo_root), existing_pythonpath))
+        if existing_pythonpath
+        else str(repo_root)
+    )
     return subprocess.run(
         [sys.executable, str(Path(__file__).resolve())],
         cwd=config_dir,
