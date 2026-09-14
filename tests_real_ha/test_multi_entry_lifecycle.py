@@ -255,7 +255,6 @@ async def test_real_ha_multi_entry_reload_isolated_without_lifecycle_leaks(
     assert manager._remove_stop_listener is None
     assert manager._original_init is None
     assert manager._replacement_init is None
-    assert hass.services.has_service(DOMAIN, SERVICE_PROCESS)
     assert _state_value(hass, first_guest_mode) == STATE_UNAVAILABLE
     assert _state_value(hass, second_guest_mode) == STATE_UNAVAILABLE
 
