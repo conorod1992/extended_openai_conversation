@@ -30,11 +30,15 @@ export function renderGuide(panel) {
     )
     .replaceAll(
       "Home Assistant sentence patterns are for more flexible command shapes. They use Home Assistant's Hassil sentence format: square brackets such as [please] mean optional words, brackets such as (on|off) mean one of several choices, and slots such as {room} can capture part of the sentence.",
-      "ExtendedOpenAI sentence patterns provide bounded matching for flexible command shapes: [please] means optional words, (on|off) gives alternatives, {room} captures free text, {room=kitchen|bedroom} restricts a capture to listed choices, and {level=0..100} captures an integer in a range. This is ExtendedOpenAI syntax, not the full Home Assistant/Hassil grammar. For AI routing, an Equals or sentence-pattern match is a complete routing command: Extended OpenAI acknowledges it locally and applies the selected route to the rest of the current conversation instead of forwarding that command as a normal prompt."
+      "Extended OpenAI sentence patterns provide bounded matching for flexible command shapes: [please] means optional words, (on|off) gives alternatives, {room} captures free text, {room=kitchen|bedroom} restricts a capture to listed choices, and {level=0..100} captures an integer in a range. This is Extended OpenAI's own pattern syntax, not a promise of Home Assistant/Hassil compatibility. For AI routing, an Equals or sentence-pattern match is a complete routing command: Extended OpenAI acknowledges it locally and applies the selected route to the rest of the current conversation instead of forwarding that command as a normal prompt."
+    )
+    .replaceAll(
+      "Named Hassil expansions written like <expansion> are not supported here because Request Rules do not have their own expansion catalogue.",
+      "Angle-bracket named expansions such as <expansion> are not supported. Request Rules use the Extended OpenAI sentence-pattern syntax described here rather than the full Home Assistant/Hassil grammar."
     )
     .replaceAll(
       "Word forms and editable wording alternatives let Extended OpenAI accept small, predictable wording differences. Fuzzy matching is a final fallback that can accept a slightly imperfect match, but it is only tried if no stricter rule matched first.",
-      "Word forms and editable wording alternatives let Extended OpenAI accept small, predictable wording differences. Fuzzy matching is a final fallback that can accept a slightly imperfect match, but it is only tried if no stricter rule matched first. If otherwise equivalent rules still tie, their saved order is the final tie-breaker; moving a rule does not override match type or phrase specificity."
+      "Word forms and editable wording alternatives let Extended OpenAI accept small, predictable wording differences. Enabled deterministic rules are evaluated from top to bottom in the order shown, and the first deterministic rule that matches wins. Move rules to change that priority. Fuzzy matching is considered only if no deterministic rule matches."
     )
     .replaceAll(
       "Every Function Tool needs instructions that explain it to the model. If you have many tools, sending all of those instructions with every request can use unnecessary input tokens. Function Groups let you decide which tool instructions are always sent and which are loaded only when needed.",
