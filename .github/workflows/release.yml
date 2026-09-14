@@ -56,6 +56,7 @@ jobs:
           echo "version=$TARGET_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Verify release does not already exist
+        id: release_guard
         env:
           GH_TOKEN: ${{ github.token }}
           CURRENT_VERSION: ${{ steps.version.outputs.current_version }}
@@ -71,6 +72,7 @@ jobs:
           fi
 
           LATEST_RELEASE="$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          echo "latest_release=$LATEST_RELEASE" >> "$GITHUB_OUTPUT"
           if [[ -n "$LATEST_RELEASE" ]]; then
             python - "$LATEST_RELEASE" "$CURRENT_VERSION" "$VERSION" <<'PY'
           import re
@@ -176,6 +178,63 @@ jobs:
             cp "$file" "$PAYLOAD_ROOT/$file"
           done < <(git ls-files -z custom_components/extended_openai_conversation_responses)
           echo "root=$PAYLOAD_ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Stage latest published release for upgrade acceptance
+        id: previous_release
+        env:
+          LATEST_RELEASE: ${{ steps.release_guard.outputs.latest_release }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$LATEST_RELEASE" ]]; then
+            echo "has_previous=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git fetch --force --tags origin
+          git rev-parse --verify "refs/tags/${LATEST_RELEASE}^{commit}" >/dev/null
+          PREVIOUS_ROOT="${RUNNER_TEMP}/previous-release"
+          rm -rf "$PREVIOUS_ROOT"
+          mkdir -p "$PREVIOUS_ROOT"
+          git archive "$LATEST_RELEASE" \
+            custom_components/extended_openai_conversation_responses \
+            | tar -x -C "$PREVIOUS_ROOT"
+
+          PREVIOUS_COMPONENT="$PREVIOUS_ROOT/custom_components/extended_openai_conversation_responses"
+          PREVIOUS_MANIFEST_VERSION="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$PREVIOUS_COMPONENT/manifest.json")"
+          if [[ "$PREVIOUS_MANIFEST_VERSION" != "$LATEST_RELEASE" ]]; then
+            echo "Latest release tag $LATEST_RELEASE contains manifest version $PREVIOUS_MANIFEST_VERSION"
+            exit 1
+          fi
+
+          echo "has_previous=true" >> "$GITHUB_OUTPUT"
+          echo "version=$LATEST_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "component=$PREVIOUS_COMPONENT" >> "$GITHUB_OUTPUT"
+
+      - name: Install requirements for previous and candidate payloads
+        if: steps.previous_release.outputs.has_previous == 'true'
+        env:
+          FROM_COMPONENT: ${{ steps.previous_release.outputs.component }}
+          TO_COMPONENT: ${{ steps.payload.outputs.root }}/custom_components/extended_openai_conversation_responses
+        run: |
+          python scripts/upgrade_acceptance_requirements.py \
+            "$FROM_COMPONENT" "$TO_COMPONENT" \
+            > "${RUNNER_TEMP}/upgrade-requirements.txt"
+          if [[ -s "${RUNNER_TEMP}/upgrade-requirements.txt" ]]; then
+            python -m pip install -r "${RUNNER_TEMP}/upgrade-requirements.txt"
+          fi
+
+      - name: Verify latest published release upgrades to staged candidate
+        if: steps.previous_release.outputs.has_previous == 'true'
+        env:
+          UPGRADE_FROM_COMPONENT_DIR: ${{ steps.previous_release.outputs.component }}
+          UPGRADE_TO_COMPONENT_DIR: ${{ steps.payload.outputs.root }}/custom_components/extended_openai_conversation_responses
+          UPGRADE_FROM_VERSION: ${{ steps.previous_release.outputs.version }}
+          UPGRADE_TO_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          pytest tests_real_ha/test_release_upgrade_acceptance.py \
+            -v \
+            --asyncio-mode=auto \
+            --timeout=180
 
       - name: Verify clean packaged install and cold restart
         env:
