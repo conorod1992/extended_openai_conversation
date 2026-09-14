@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -153,7 +154,6 @@ async def _configure_tool(hass: Any, entry: Any) -> Any:
 
 async def _configured_tool(agent: Any) -> dict[str, Any]:
     agent_config = importlib.import_module(f"custom_components.{DOMAIN}.agent_config")
-    const = importlib.import_module(f"custom_components.{DOMAIN}.const")
     configured = agent_config.configured_function_tools_from_data(agent.subentry.data)
     return next(tool for tool in configured if tool["spec"]["name"] == _TOOL_NAME)
 
@@ -181,7 +181,6 @@ async def _crash_phase(config_dir: Path) -> None:
     """Execute the side effect, then remain blocked until the parent SIGKILLs HA."""
     from homeassistant import bootstrap, runner
 
-    sys.path.insert(0, str(config_dir))
     hass = await bootstrap.async_setup_hass(
         runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
     )
@@ -215,7 +214,6 @@ async def _recovery_phase(config_dir: Path) -> None:
     from homeassistant.components import conversation
     from homeassistant.config_entries import ConfigEntryState
 
-    sys.path.insert(0, str(config_dir))
     hass = await bootstrap.async_setup_hass(
         runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
     )
@@ -254,8 +252,9 @@ async def _recovery_phase(config_dir: Path) -> None:
 
 async def _child_main() -> None:
     config_dir = Path(os.environ[_CONFIG_DIR_ENV]).resolve()
-    phase = os.environ[_CHILD_PHASE]
+    sys.path.insert(0, str(config_dir))
     _assert_source_component(config_dir)
+    phase = os.environ[_CHILD_PHASE]
     if phase == "crash":
         await _crash_phase(config_dir)
     elif phase == "recover":
@@ -311,8 +310,6 @@ def test_immediate_tool_side_effect_is_not_replayed_after_process_crash(
                     "immediate-tool crash child exited before the side effect boundary:\n"
                     + output
                 )
-            import time
-
             time.sleep(0.1)
         else:
             crash.kill()
