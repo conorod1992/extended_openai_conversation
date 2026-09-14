@@ -123,7 +123,9 @@ async def test_runtime_401_drives_native_ha_reauthentication_and_reload(
     )
     assert len(flows) == 1
     reauth = flows[0]
-    assert reauth["type"] is FlowResultType.FORM
+    # Progress snapshots are not FlowResult objects and therefore intentionally do
+    # not carry a `type` field. The active step/context are the public proof that the
+    # native reauthentication flow reached our confirmation form.
     assert reauth["step_id"] == "reauth_confirm"
     assert reauth["context"]["source"] == SOURCE_REAUTH
     assert reauth["context"]["entry_id"] == entry_id
