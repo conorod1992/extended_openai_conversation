@@ -340,7 +340,7 @@ async def test_fuzzy_is_fallback_and_threshold_boundary() -> None:
     assert strict.match("good nigt") is None
 
 
-async def test_strict_match_wins_over_fuzzy_and_equals_beats_contains() -> None:
+async def test_first_deterministic_rule_wins_over_fuzzy_and_specificity() -> None:
     fuzzy = {**DEFAULT_MATCHING, "fuzzy": True, "fuzzy_threshold": 70}
     rules = await manager(
         local_rule(
@@ -357,8 +357,24 @@ async def test_strict_match_wins_over_fuzzy_and_equals_beats_contains() -> None:
     )
     match = rules.match("good night")
     assert match is not None
-    assert match.rule["name"] == "Exact"
+    assert match.rule["name"] == "Contains"
     assert match.fuzzy is False
+
+
+async def test_moving_rule_changes_deterministic_priority() -> None:
+    rules = await manager(
+        local_rule(
+            name="Contains", phrases=["good night"], match_type="contains", order=0
+        ),
+        local_rule(name="Exact", phrases=["good night"], match_type="equals", order=1),
+    )
+    match = rules.match("good night")
+    assert match is not None and match.rule["name"] == "Contains"
+
+    await rules.async_move("exact", "up")
+
+    match = rules.match("good night")
+    assert match is not None and match.rule["name"] == "Exact"
 
 
 async def test_crud_duplicate_and_persistence_round_trip() -> None:
@@ -1137,7 +1153,6 @@ async def test_management_api_permissions_crud_and_delete_confirmation(
     )
     assert deleted["deleted"] is True
     assert isinstance(deleted["revision"], str)
-
 
 
 @pytest.mark.parametrize(
