@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+import json
 from typing import Any
 
 import pytest
@@ -32,11 +33,7 @@ from tests_real_ha.test_knowledge_provider_wire_e2e import (
     _chat_sse_text,
     _chat_sse_tool_call,
 )
-from tests_real_ha.test_provider_wire_e2e import (
-    _install_wire,
-    _speech,
-    _tool_result_from_chat_request,
-)
+from tests_real_ha.test_provider_wire_e2e import _install_wire, _speech
 
 _ENTITY_ID = "light.native_disappearing_target"
 _DOMAIN = "light"
@@ -82,6 +79,17 @@ async def _say(
         language="en",
         agent_id=entry_id,
     )
+
+
+def _tool_result_from_chat_request(
+    request: dict[str, Any], expected_call_id: str
+) -> dict[str, Any]:
+    """Decode one Chat Completions tool result for this test's call id."""
+    tool_message = next(
+        item for item in request["messages"] if item.get("role") == "tool"
+    )
+    assert tool_message["tool_call_id"] == expected_call_id
+    return json.loads(tool_message["content"])
 
 
 @pytest.mark.asyncio
@@ -183,7 +191,7 @@ async def test_native_service_target_disappears_before_dispatch_and_next_turn_re
     assert len(failing_wire.requests) == 2
 
     failed_tool_result = _tool_result_from_chat_request(
-        failing_wire.requests[1]["body"]
+        failing_wire.requests[1]["body"], "call-native-target-disappears"
     )
     assert "result" in failed_tool_result
     assert len(failed_tool_result["result"]) == 1
@@ -221,7 +229,7 @@ async def test_native_service_target_disappears_before_dispatch_and_next_turn_re
     assert service_calls[0].data[ATTR_ENTITY_ID] == [_ENTITY_ID]
     assert len(recovered_wire.requests) == 2
     recovered_tool_result = _tool_result_from_chat_request(
-        recovered_wire.requests[1]["body"]
+        recovered_wire.requests[1]["body"], "call-native-target-recovers"
     )
     assert recovered_tool_result["result"][0]["success"] is True
     assert "error" not in recovered_tool_result["result"][0]
