@@ -279,6 +279,7 @@ async def _recovery_phase(hass: Any, config_dir: Path) -> None:
 async def _child_main() -> None:
     """Run one independent Home Assistant process for one acceptance phase."""
     from homeassistant import bootstrap, runner
+    from homeassistant.helpers import recorder as recorder_helper
 
     config_dir = Path(os.environ[_CONFIG_DIR]).resolve()
     phase = os.environ[_CHILD_PHASE]
@@ -287,6 +288,14 @@ async def _child_main() -> None:
         runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
     )
     assert hass is not None
+
+    # bootstrap.async_setup_hass() is being used directly rather than via HA's
+    # normal runner. Mirror the runner's recorder initialization contract before
+    # the config flow loads this integration and its recorder/history/energy
+    # dependencies.
+    if recorder_helper.DATA_RECORDER not in hass.data:
+        recorder_helper.async_initialize_recorder(hass)
+
     await hass.async_start()
 
     if phase == "interrupt":
