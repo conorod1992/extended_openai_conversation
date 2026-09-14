@@ -19,6 +19,9 @@ from pytest_homeassistant_custom_component.common import MockUser
 from custom_components.extended_openai_conversation_responses.agent_config import (
     configured_function_tools_from_data,
 )
+from custom_components.extended_openai_conversation_responses.agent_maintenance import (
+    get_agent_maintenance_gate,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     DOMAIN,
@@ -118,8 +121,10 @@ async def _schedule_delayed_call(
     return delayed_call_id
 
 
-async def _execute_now(manager: DelayedToolManager, call_id: str) -> None:
-    """Bypass only wall-clock waiting; execute the production due-time seam."""
+async def _execute_now(
+    hass: HomeAssistant, manager: DelayedToolManager, call_id: str
+) -> None:
+    """Bypass only wall-clock waiting; retain the production due-time lease/seam."""
     task = manager._tasks.get(call_id)  # noqa: SLF001
     if task is not None and not task.done():
         task.cancel()
@@ -127,7 +132,10 @@ async def _execute_now(manager: DelayedToolManager, call_id: str) -> None:
             await task
     assert call_id not in manager._tasks  # noqa: SLF001
 
-    retry = await manager._async_execute_due(call_id)  # noqa: SLF001
+    record = manager._records[call_id]  # noqa: SLF001
+    gate = get_agent_maintenance_gate(hass, record.entry_id, record.subentry_id)
+    async with gate.shared():
+        retry = await manager._async_execute_due(call_id)  # noqa: SLF001
 
     assert retry is False
     assert call_id not in manager._records  # noqa: SLF001
@@ -178,7 +186,7 @@ async def test_delayed_native_tool_reauthorizes_live_user_when_due(
     assert user.permissions.check_entity(_ENTITY_ID, POLICY_READ)
     assert not user.permissions.check_entity(_ENTITY_ID, POLICY_CONTROL)
 
-    await _execute_now(manager, permission_call)
+    await _execute_now(hass, manager, permission_call)
 
     assert calls == []
 
@@ -195,7 +203,7 @@ async def test_delayed_native_tool_reauthorizes_live_user_when_due(
     await hass.async_block_till_done()
     assert user.is_active is False
 
-    await _execute_now(manager, inactive_call)
+    await _execute_now(hass, manager, inactive_call)
 
     assert calls == []
 
@@ -213,7 +221,7 @@ async def test_delayed_native_tool_reauthorizes_live_user_when_due(
         user,
         "call-delayed-reauthorization-recovered",
     )
-    await _execute_now(manager, recovery_call)
+    await _execute_now(hass, manager, recovery_call)
 
     assert len(calls) == 1
     assert calls[0].data["entity_id"] == [_ENTITY_ID]
