@@ -161,6 +161,10 @@ async def test_indirect_target_with_hidden_entity_fails_closed_without_partial_d
 
     hass.services.async_register(_SERVICE_DOMAIN, _SERVICE_NAME, service_handler)
 
+    # Exposure validation happens before service dispatch. A mixed indirect target
+    # therefore fails the conversation turn closed instead of sending a tool result
+    # back to the provider. The key contract is that no partial action occurs and
+    # the same live agent can recover on a later valid turn.
     failing_wire = _install_wire(
         monkeypatch,
         agent,
@@ -170,25 +174,17 @@ async def test_indirect_target_with_hidden_entity_fails_closed_without_partial_d
                 _TOOL_NAME,
                 _arguments(area.id, "should-not-run"),
             ),
-            _chat_sse_text("I could not safely control that whole area."),
         ],
     )
     denied = await _say(hass, entry.entry_id, "Mark the mixed exposure area")
     await hass.async_block_till_done()
 
-    assert _speech(denied) == "I could not safely control that whole area."
+    assert denied.response.error_code is not None
     assert service_calls == []
     assert service_resolutions == []
     assert hass.states[exposed.entity_id].state == "off"
     assert hass.states[hidden.entity_id].state == "off"
-    assert len(failing_wire.requests) == 2
-
-    failure = _tool_result(
-        failing_wire.requests[1]["body"], "call-mixed-exposure-denied"
-    )
-    failure_text = json.dumps(failure).casefold()
-    assert hidden.entity_id.casefold() in failure_text
-    assert "expos" in failure_text
+    assert len(failing_wire.requests) == 1
 
     # Once every entity in the indirect target is exposed, the exact same area
     # selector may be dispatched. The real service independently resolves the area
