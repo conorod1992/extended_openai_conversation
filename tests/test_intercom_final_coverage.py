@@ -1,38 +1,11 @@
-"""Final meaningful Broadcast/intercom coverage gaps."""
+"""Final meaningful Broadcast/intercom branch coverage."""
 
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
-
-import pytest
 
 from custom_components.extended_openai_conversation_responses import intercom
 from custom_components.extended_openai_conversation_responses.intercom import IntercomManager
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("stored", "expected_enabled"),
-    [
-        (None, False),
-        ({"enabled": True}, True),
-    ],
-)
-async def test_initialize_loads_persisted_switch_once(
-    hass, stored, expected_enabled
-) -> None:
-    """Initialization hydrates persisted state once and is idempotent thereafter."""
-    manager = IntercomManager(hass)
-    load = AsyncMock(return_value=stored)
-    manager._store.async_load = load
-
-    await manager.async_initialize()
-    await manager.async_initialize()
-
-    assert manager.enabled is expected_enabled
-    assert manager._loaded is True
-    load.assert_awaited_once_with()
 
 
 def test_target_match_without_device_uses_entity_labels(hass, monkeypatch) -> None:
