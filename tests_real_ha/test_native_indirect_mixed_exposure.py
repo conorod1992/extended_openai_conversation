@@ -182,8 +182,8 @@ async def test_indirect_target_with_hidden_entity_fails_closed_without_partial_d
     assert denied.response.error_code is not None
     assert service_calls == []
     assert service_resolutions == []
-    assert hass.states[exposed.entity_id].state == "off"
-    assert hass.states[hidden.entity_id].state == "off"
+    assert hass.states.get(exposed.entity_id).state == "off"
+    assert hass.states.get(hidden.entity_id).state == "off"
     assert len(failing_wire.requests) == 1
 
     # Once every entity in the indirect target is exposed, the exact same area
@@ -210,8 +210,8 @@ async def test_indirect_target_with_hidden_entity_fails_closed_without_partial_d
     assert _speech(allowed) == "The whole area was controlled safely."
     assert len(service_calls) == 1
     assert service_resolutions == [{exposed.entity_id, hidden.entity_id}]
-    assert hass.states[exposed.entity_id].state == "allowed"
-    assert hass.states[hidden.entity_id].state == "allowed"
+    assert hass.states.get(exposed.entity_id).state == "allowed"
+    assert hass.states.get(hidden.entity_id).state == "allowed"
     assert len(recovered_wire.requests) == 2
 
     success = _tool_result(
