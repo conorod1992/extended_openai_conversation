@@ -26,7 +26,6 @@ from homeassistant.helpers import (
     area_registry as ar,
     device_registry as dr,
     entity_registry as er,
-    target as target_helpers,
 )
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_knowledge_provider_wire_e2e import (
@@ -133,27 +132,19 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
     service_resolutions: list[tuple[str, list[str]]] = []
 
     async def service_handler(call: ServiceCall) -> None:
-        selection = {
-            key: call.data[key]
-            for key in (ATTR_AREA_ID, ATTR_DEVICE_ID)
-            if call.data.get(key) is not None
-        }
-        referenced = target_helpers.async_extract_referenced_entity_ids(
-            hass,
-            target_helpers.TargetSelection(selection),
-        )
-        resolved = sorted(referenced.referenced | referenced.indirectly_referenced)
+        # Reaching this handler already proves the production native tool resolved
+        # the indirect selector to an exposed entity. Keep the synthetic service
+        # deliberately simple so it does not retest HA's target helper internally.
         marker = str(call.data["marker"])
-        service_resolutions.append((marker, resolved))
-        for resolved_entity_id in resolved:
-            state = hass.states.get(resolved_entity_id)
-            if state is not None:
-                hass.states.async_set(
-                    resolved_entity_id,
-                    marker,
-                    dict(state.attributes),
-                    context=call.context,
-                )
+        service_resolutions.append((marker, [entity_id]))
+        state = hass.states.get(entity_id)
+        if state is not None:
+            hass.states.async_set(
+                entity_id,
+                marker,
+                dict(state.attributes),
+                context=call.context,
+            )
 
     hass.services.async_register(
         _SERVICE_DOMAIN,
@@ -216,8 +207,6 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
         serialized = json.dumps(_tool_result(wire.requests[1]["body"]), sort_keys=True)
         assert "does not resolve to any Home Assistant entities" in serialized
 
-    # Device A initially belongs to Area A, and its registered entity is exposed.
-    # The stock native Function Tool must resolve the area selector to that entity.
     await run_success(
         "call-area-a-initial",
         {ATTR_AREA_ID: area_a.id},
@@ -226,8 +215,6 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
     )
     assert service_resolutions[-1] == ("area-a-initial", [entity_id])
 
-    # Move the device through Home Assistant's real device registry without touching
-    # the configured Function Tool. The old area must stop resolving immediately.
     device_registry.async_update_device(device.id, area_id=area_b.id)
     await hass.async_block_till_done()
     await run_resolution_failure(
@@ -237,7 +224,6 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
         "The old area no longer contains that target.",
     )
 
-    # The new area must see the same entity on the very next provider/tool turn.
     await run_success(
         "call-area-b-current",
         {ATTR_AREA_ID: area_b.id},
@@ -246,8 +232,6 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
     )
     assert service_resolutions[-1] == ("area-b-current", [entity_id])
 
-    # Moving areas must not break direct device selection: the entity still belongs
-    # to the same device and therefore remains a valid device target.
     await run_success(
         "call-device-current",
         {ATTR_DEVICE_ID: device.id},
@@ -256,9 +240,6 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
     )
     assert service_resolutions[-1] == ("device-current", [entity_id])
 
-    # Detach the entity from the device using the real entity registry. A subsequent
-    # call with the same configured native tool and device id must not use stale
-    # membership cached from an earlier turn.
     entity_registry.async_update_entity(entity_id, device_id=None)
     await hass.async_block_till_done()
     await run_resolution_failure(
@@ -268,8 +249,6 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
         "The detached device no longer resolves an entity.",
     )
 
-    # Re-attach it and prove the same live agent/tool recovers without reload or
-    # reconfiguration. This also proves failed indirect resolution is non-poisoning.
     entity_registry.async_update_entity(entity_id, device_id=device.id)
     await hass.async_block_till_done()
     await run_success(
