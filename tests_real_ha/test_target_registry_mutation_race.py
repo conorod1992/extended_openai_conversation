@@ -15,6 +15,7 @@ from homeassistant.helpers import (
     device_registry as dr,
     entity_registry as er,
 )
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 _WAIT_TIMEOUT = 10
 _DOMAIN = "registry_race_test"
@@ -31,10 +32,13 @@ async def test_registry_reassignment_between_resolution_and_dispatch_fails_close
     device_registry = dr.async_get(hass)
     entity_registry = er.async_get(hass)
 
+    config_entry = MockConfigEntry(domain=_DOMAIN)
+    config_entry.add_to_hass(hass)
+
     area_a = area_registry.async_create("Registry race A")
     area_b = area_registry.async_create("Registry race B")
     device = device_registry.async_get_or_create(
-        config_entry_id="registry-race-entry",
+        config_entry_id=config_entry.entry_id,
         identifiers={("registry_race_test", "device")},
         name="Registry race device",
     )
