@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +40,7 @@ _USER_ID = "corrupt-store-user"
 _SCOPE_ID = f"user:{_USER_ID}"
 _TEMPORARY_MARKER = "Sibling temporary memory survives the corrupt knowledge store."
 _KNOWLEDGE_MARKER = "knowledge-store-before-corruption"
+_MANAGER_TYPES = (KnowledgeLibrary, TemporaryMemory, UsageManager)
 
 
 def _system_prompt(request_body: dict[str, Any]) -> str:
@@ -61,16 +62,26 @@ def _provider_tool_names(request_body: dict[str, Any]) -> set[str]:
 
 def _purge_cached_managers(value: Any) -> None:
     """Remove cached subsystem managers recursively from Home Assistant data."""
-    manager_types = (KnowledgeLibrary, TemporaryMemory, UsageManager)
     if isinstance(value, dict):
         for key, item in list(value.items()):
-            if isinstance(item, manager_types):
+            if isinstance(item, _MANAGER_TYPES):
                 del value[key]
             else:
                 _purge_cached_managers(item)
     elif isinstance(value, list):
         for item in value:
             _purge_cached_managers(item)
+
+
+def _contains_cached_manager(value: Any) -> bool:
+    """Return whether a purged subsystem-manager instance remains nested here."""
+    if isinstance(value, _MANAGER_TYPES):
+        return True
+    if isinstance(value, dict):
+        return any(_contains_cached_manager(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_cached_manager(item) for item in value)
+    return False
 
 
 @pytest.mark.asyncio
@@ -113,7 +124,7 @@ async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
         "Valid source persisted before simulating disk corruption.",
         f"The marker is {_KNOWLEDGE_MARKER}.",
     )
-    expires_at = (dt_util.utcnow() + dt_util.dt.timedelta(hours=1)).isoformat()
+    expires_at = (dt_util.utcnow() + timedelta(hours=1)).isoformat()
     await old_temporary.async_add(
         _SCOPE_ID,
         _TEMPORARY_MARKER,
@@ -137,10 +148,7 @@ async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
     assert conversation.async_get_agent(hass, entry.entry_id) is None
 
     _purge_cached_managers(hass.data)
-    assert not any(
-        isinstance(value, (KnowledgeLibrary, TemporaryMemory, UsageManager))
-        for value in hass.data.values()
-    )
+    assert not _contains_cached_manager(hass.data)
 
     # Damage the actual Home Assistant Store file, not an injected storage adapter.
     # The malformed JSON forces the next freshly-created Knowledge Store to exercise
