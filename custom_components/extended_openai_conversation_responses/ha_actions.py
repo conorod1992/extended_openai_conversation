@@ -10,7 +10,9 @@ import voluptuous as vol
 try:
     from probatio.error import Invalid as ProbatioInvalid
 except ImportError:  # pragma: no cover - compatibility with older HA releases
-    ProbatioInvalid = vol.Invalid
+    _SERVICE_SCHEMA_ERRORS: tuple[type[Exception], ...] = (vol.Invalid,)
+else:
+    _SERVICE_SCHEMA_ERRORS = (vol.Invalid, ProbatioInvalid)
 
 from homeassistant.const import (
     ATTR_AREA_ID,
@@ -78,7 +80,7 @@ async def _async_call_ha_action_unchecked(
         kwargs["context"] = context
     try:
         await hass.services.async_call(domain=domain, service=service, **kwargs)
-    except (vol.Invalid, ProbatioInvalid) as err:
+    except _SERVICE_SCHEMA_ERRORS as err:
         # Home Assistant has transitioned service schemas from voluptuous to
         # probatio. Keep the integration's action boundary stable across both: a
         # schema rejection is an ordinary Home Assistant action failure that the
