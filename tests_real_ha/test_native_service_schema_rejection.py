@@ -163,7 +163,9 @@ async def test_live_service_schema_rejection_is_model_visible_and_next_turn_reco
 
     assert _speech(failed) == "Home Assistant rejected that service value."
     assert calls == []
-    assert hass.states[_ENTITY_ID].state == "idle"
+    failed_state = hass.states.get(_ENTITY_ID)
+    assert failed_state is not None
+    assert failed_state.state == "idle"
     assert len(failing_wire.requests) == 2
 
     failed_tool_result = _tool_result_from_chat_request(
@@ -202,7 +204,9 @@ async def test_live_service_schema_rejection_is_model_visible_and_next_turn_reco
     assert len(calls) == 1
     assert calls[0].data[ATTR_ENTITY_ID] == [_ENTITY_ID]
     assert calls[0].data["mode"] == "eco"
-    assert hass.states[_ENTITY_ID].state == "eco"
+    recovered_state = hass.states.get(_ENTITY_ID)
+    assert recovered_state is not None
+    assert recovered_state.state == "eco"
     assert len(recovered_wire.requests) == 2
 
     recovered_tool_result = _tool_result_from_chat_request(
