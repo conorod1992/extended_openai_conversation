@@ -25,6 +25,10 @@ export function renderGuide(panel) {
       "Home Assistant Assist has its own Prefer local handling option, which runs before the request reaches Extended OpenAI. That is simple and fast, but Extended OpenAI cannot then apply Request Rules or choose a Function Tool for that command. Extended OpenAI local handling runs after Request Rules instead, so you can keep simple commands local while making exceptions. For example, a normal light command can stay local while a delayed light command goes to a deferred-action Function Tool. Turn Home Assistant's pipeline option off if you want Extended OpenAI to control this order."
     )
     .replaceAll(
+      'data-page="assistant" data-subsection="conversation">Configure local handling',
+      'data-page="capabilities" data-subsection="home-assistant">Configure local handling'
+    )
+    .replaceAll(
       "Starts with, Ends with and Contains are broader. They can be useful when your trigger phrase may appear as part of a longer request.",
       "Starts with, Ends with and Contains are broader. They can be useful when your trigger phrase may appear as part of a longer request. For AI-routing rules these matches only choose the route: the entire original request is still sent unchanged, and the matched words are not stripped."
     )
