@@ -172,6 +172,11 @@ async def _cancel_wall_clock_waiter(
     """Remove only the 30-second timer while preserving its durable pending record."""
     task = manager._tasks.get(call_id)  # noqa: SLF001
     if task is not None and not task.done():
+        # Let the production waiter enter _async_wait_and_execute() before cancelling
+        # the artificial wall-clock sleep. A task cancelled before its first turn can
+        # skip that coroutine's finally block, which is responsible for removing the
+        # completed waiter from manager._tasks.
+        await asyncio.sleep(0)
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
