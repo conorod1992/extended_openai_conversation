@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
@@ -20,7 +21,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     TEMPORARY_MEMORY_BALANCED,
 )
 from custom_components.extended_openai_conversation_responses.knowledge import (
-    STORAGE_KEY_PREFIX as KNOWLEDGE_STORAGE_KEY_PREFIX,
     KnowledgeLibrary,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
@@ -31,7 +31,6 @@ from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockUser
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_knowledge_provider_wire_e2e import _chat_sse_text
 from tests_real_ha.test_provider_wire_e2e import _install_wire, _speech
@@ -134,11 +133,8 @@ async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
     )
     await hass.async_block_till_done()
 
-    knowledge_key = (
-        f"{KNOWLEDGE_STORAGE_KEY_PREFIX}.{entry.entry_id}.{subentry_id}"
-    )
-    knowledge_path = Path(hass.config.config_dir) / ".storage" / knowledge_key
-    assert knowledge_path.exists()
+    knowledge_path = Path(old_knowledge._storage._store.path)
+    assert await hass.async_add_executor_job(knowledge_path.exists)
 
     # Cross a genuine config-entry unload boundary first. Then evict subsystem-manager
     # objects from hass.data so the next setup cannot accidentally reuse warmed state.
@@ -153,7 +149,9 @@ async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
     # Damage the actual Home Assistant Store file, not an injected storage adapter.
     # The malformed JSON forces the next freshly-created Knowledge Store to exercise
     # Home Assistant's real persistence/parse failure path.
-    knowledge_path.write_text('{"version": 2, "data": ', encoding="utf-8")
+    await hass.async_add_executor_job(
+        knowledge_path.write_text, '{"version": 2, "data": ', "utf-8"
+    )
 
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -211,4 +209,7 @@ async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
 
     # The intentionally corrupt Store remains corrupt; startup isolation must not
     # silently overwrite the failed subsystem while proving sibling availability.
-    assert knowledge_path.read_text(encoding="utf-8") == '{"version": 2, "data": '
+    assert (
+        await hass.async_add_executor_job(knowledge_path.read_text, "utf-8")
+        == '{"version": 2, "data": '
+    )
