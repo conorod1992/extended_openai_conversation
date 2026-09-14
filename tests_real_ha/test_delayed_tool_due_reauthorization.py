@@ -130,6 +130,11 @@ async def _execute_now(
     """Bypass only wall-clock waiting; retain the production due-time lease/seam."""
     task = manager._tasks.get(call_id)  # noqa: SLF001
     if task is not None and not task.done():
+        # Give the production waiter one event-loop turn so cancellation is handled
+        # inside _async_wait_and_execute(). Cancelling a task before its coroutine has
+        # ever started can skip that coroutine's finally block, which owns _tasks
+        # cleanup, and would make this wall-clock shortcut manufacture stale state.
+        await asyncio.sleep(0)
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
