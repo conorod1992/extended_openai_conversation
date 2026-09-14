@@ -78,7 +78,7 @@ async def test_text_modes_require_whole_phrase_at_the_right_position(
 
 
 @pytest.mark.parametrize(
-    ("higher_type", "higher_phrase", "lower_type", "lower_phrase"),
+    ("later_type", "later_phrase", "earlier_type", "earlier_phrase"),
     [
         ("equals", "turn on kitchen", "sentence_pattern", "turn on {room}"),
         ("sentence_pattern", "turn on {room}", "starts_with", "turn on kitchen"),
@@ -86,28 +86,28 @@ async def test_text_modes_require_whole_phrase_at_the_right_position(
         ("ends_with", "kitchen", "contains", "turn on kitchen"),
     ],
 )
-async def test_strict_type_rank_beats_length_and_earlier_order(
-    higher_type, higher_phrase, lower_type, lower_phrase
+async def test_earlier_strict_rule_beats_later_type_specificity(
+    later_type, later_phrase, earlier_type, earlier_phrase
 ):
     rules = await manager(
-        rule("earlier", lower_phrase, lower_type),
-        rule("winner", higher_phrase, higher_type, order=1),
+        rule("earlier", earlier_phrase, earlier_type),
+        rule("later", later_phrase, later_type, order=1),
     )
     match = rules.match("turn on kitchen")
     assert match is not None
-    assert match.rule["id"] == "winner"
+    assert match.rule["id"] == "earlier"
     assert match.fuzzy is False
 
 
-async def test_longer_strict_phrase_beats_order_then_order_breaks_equal_ties():
+async def test_rule_order_beats_phrase_length_and_move_changes_priority():
     rules = await manager(
         rule("short", "turn", "contains"),
         rule("first-long", "turn on", "contains", order=1),
         rule("second-long", "turn on", "contains", order=2),
     )
+    assert rules.match("please turn on kitchen").rule["id"] == "short"
+    await rules.async_move("first-long", "up")
     assert rules.match("please turn on kitchen").rule["id"] == "first-long"
-    await rules.async_move("second-long", "up")
-    assert rules.match("please turn on kitchen").rule["id"] == "second-long"
 
 
 async def test_nonmatching_higher_ranked_rules_fall_through_to_later_variant():

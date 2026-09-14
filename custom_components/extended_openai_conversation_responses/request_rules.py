@@ -561,7 +561,7 @@ class RequestRules:
         *,
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
-        """Move one rule by one position while preserving matching precedence."""
+        """Move one rule by one position and update matching priority."""
         if direction not in {"up", "down"}:
             raise ValueError("direction must be up or down")
         async with self._lock:
@@ -581,7 +581,7 @@ class RequestRules:
             return dict(self._rules[target])
 
     def match(self, text: str) -> RuleMatch | None:
-        """Use one generation and existing precedence, with fuzzy only as fallback."""
+        """Use list-order deterministic precedence, with fuzzy only as fallback."""
         snapshot = self._matching_snapshot
         validate_match_input(text)
         normalized_candidates: dict[tuple[bool, bool], str] = {}
@@ -712,23 +712,10 @@ class RequestRules:
                 compiled_rules.extend(
                     (rule, dict(settings), phrase) for phrase in phrases
                 )
-        deterministic = sorted(
-            compiled_rules,
-            key=lambda item: (
-                _MATCH_RANK[item[0]["match_type"]],
-                len(
-                    item[2].original
-                    if item[2].sentence_pattern is not None
-                    else cast(str, item[2].normalized)
-                ),
-                -item[0]["order"],
-            ),
-            reverse=True,
-        )
         self._matching_snapshot = _MatchingSnapshot(
             tuple(compiled_rules),
             tuple(_copy_wording_groups(self._wording_groups)),
-            tuple(deterministic),
+            tuple(compiled_rules),
         )
         self._diagnostics = diagnostics
         return order_changed
