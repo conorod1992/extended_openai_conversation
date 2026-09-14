@@ -26,6 +26,7 @@ from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import Context, HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_knowledge_provider_wire_e2e import (
     _chat_sse_text,
@@ -99,7 +100,7 @@ async def test_native_service_target_disappears_before_dispatch_and_next_turn_re
             if hass.states.get(entity_id) is None
         ]
         if missing:
-            raise vol.Invalid(
+            raise HomeAssistantError(
                 f"Target entity no longer exists: {', '.join(missing)}"
             )
         return value
