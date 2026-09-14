@@ -79,6 +79,24 @@ test("open Home Assistant page survives a real backend process death and restart
     {timeout: 30_000},
   ).toBe(sentinel);
 
+  // Prove the Home Assistant shell's existing websocket connection object has
+  // recovered before exercising the integration again.
+  await expect.poll(
+    async () => page.evaluate(async () => {
+      const hass = document.querySelector("home-assistant")?.hass;
+      if (!hass?.callWS) {
+        return false;
+      }
+      try {
+        await hass.callWS({type: "get_config"});
+        return true;
+      } catch {
+        return false;
+      }
+    }),
+    {timeout: 45_000},
+  ).toBe(true);
+
   await expect(panel.locator('[data-config="__title"]')).toBeVisible({timeout: 30_000});
   await expect(title).toHaveValue("Before real HA restart", {timeout: 30_000});
 
