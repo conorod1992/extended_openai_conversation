@@ -155,5 +155,5 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
         (current_memory_id, "Current memory that must survive the failed restore.")
     ]
     assert await knowledge.async_get(current_knowledge.source_id) == current_knowledge
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="knowledge source not found"):
         await knowledge.async_get(target_knowledge.source_id)
