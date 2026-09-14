@@ -27,10 +27,16 @@
               "features/responses-api",
               "features/web-search",
               "features/conversation-continuity",
-              "features/context-management",
+              "features/context-management"
+            ]
+          },
+          {
+            "group": "Voice & Speech",
+            "pages": [
               "features/voice-identity",
               "features/voice-followups",
-              "features/speech-processing"
+              "features/speech-processing",
+              "features/quiet-hours"
             ]
           },
           {
@@ -38,7 +44,6 @@
             "pages": [
               "features/home-assistant-access",
               "features/exposed-entity-attributes",
-              "features/quiet-hours",
               "features/guest-mode"
             ]
           },
@@ -47,7 +52,9 @@
             "pages": [
               "features/request-rules",
               "features/function-groups",
-              "features/delayed-function-tools"
+              "features/delayed-function-tools",
+              "features/ai-task",
+              "services"
             ]
           },
           {
@@ -60,14 +67,12 @@
             ]
           },
           {
-            "group": "Operations",
+            "group": "Usage & Maintenance",
             "pages": [
-              "features/model-data",
               "features/usage-statistics",
               "features/request-debugging",
               "features/backup-restore",
-              "features/ai-task",
-              "services"
+              "features/model-data"
             ]
           },
           {
