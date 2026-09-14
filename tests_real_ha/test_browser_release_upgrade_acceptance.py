@@ -14,9 +14,17 @@ from typing import Any
 from aiohttp import web
 import pytest
 
-from tests_real_ha import test_release_upgrade_acceptance as upgrade
+from tests_real_ha.test_release_upgrade_acceptance import (
+    DOMAIN,
+    _STATE_FILE as UPGRADE_STATE_FILE,
+    _assert_child_ok as assert_upgrade_child_ok,
+    _conversation_subentry as conversation_subentry,
+    _exercise_public_conversation as exercise_public_conversation,
+    _install_component as install_component,
+    _manifest as manifest,
+    _run_child as run_upgrade_child,
+)
 
-DOMAIN = upgrade.DOMAIN
 _CHILD_PHASE_ENV = "UPGRADE_BROWSER_CHILD_PHASE"
 _CONFIG_DIR_ENV = "UPGRADE_BROWSER_CONFIG_DIR"
 _SAVED_TITLE = "Upgrade Acceptance Agent - Browser Saved"
@@ -115,7 +123,7 @@ async def _browser_candidate_phase(hass: Any, config_dir: Path) -> None:
     from custom_components.extended_openai_conversation_responses import const
     from homeassistant.config_entries import ConfigEntryState
 
-    state = json.loads((config_dir / upgrade._STATE_FILE).read_text(encoding="utf-8"))
+    state = json.loads((config_dir / UPGRADE_STATE_FILE).read_text(encoding="utf-8"))
     entries = hass.config_entries.async_entries(DOMAIN)
     assert len(entries) == 1
     entry = entries[0]
@@ -124,7 +132,7 @@ async def _browser_candidate_phase(hass: Any, config_dir: Path) -> None:
     assert entry.entry_id == state["entry_id"]
     assert entry.version == const.CONFIG_ENTRY_VERSION
 
-    subentry = upgrade._conversation_subentry(entry)
+    subentry = conversation_subentry(entry)
     assert subentry.subentry_id == state["subentry_id"]
     assert subentry.title == state["title"]
     for key, value in state["custom_values"].items():
@@ -141,7 +149,7 @@ async def _browser_candidate_phase(hass: Any, config_dir: Path) -> None:
     await hass.async_block_till_done()
     current_entry = hass.config_entries.async_get_entry(entry.entry_id)
     assert current_entry is not None
-    current = upgrade._conversation_subentry(current_entry)
+    current = conversation_subentry(current_entry)
     assert current.subentry_id == state["subentry_id"]
     assert current.title == _SAVED_TITLE
     assert current.data[const.CONF_CHAT_MODEL] == model
@@ -149,7 +157,7 @@ async def _browser_candidate_phase(hass: Any, config_dir: Path) -> None:
     state["browser_saved_title"] = current.title
     state["browser_saved_model"] = model
     state["candidate_entry_version"] = current_entry.version
-    (config_dir / upgrade._STATE_FILE).write_text(json.dumps(state), encoding="utf-8")
+    (config_dir / UPGRADE_STATE_FILE).write_text(json.dumps(state), encoding="utf-8")
 
 
 async def _browser_restart_phase(hass: Any, config_dir: Path) -> None:
@@ -157,7 +165,7 @@ async def _browser_restart_phase(hass: Any, config_dir: Path) -> None:
     from custom_components.extended_openai_conversation_responses import const
     from homeassistant.config_entries import ConfigEntryState
 
-    state = json.loads((config_dir / upgrade._STATE_FILE).read_text(encoding="utf-8"))
+    state = json.loads((config_dir / UPGRADE_STATE_FILE).read_text(encoding="utf-8"))
     entries = hass.config_entries.async_entries(DOMAIN)
     assert len(entries) == 1
     entry = entries[0]
@@ -166,12 +174,12 @@ async def _browser_restart_phase(hass: Any, config_dir: Path) -> None:
     assert entry.entry_id == state["entry_id"]
     assert entry.version == const.CONFIG_ENTRY_VERSION == state["candidate_entry_version"]
 
-    subentry = upgrade._conversation_subentry(entry)
+    subentry = conversation_subentry(entry)
     assert subentry.subentry_id == state["subentry_id"]
     assert subentry.title == state["browser_saved_title"] == _SAVED_TITLE
     assert subentry.data[const.CONF_CHAT_MODEL] == state["browser_saved_model"]
 
-    await upgrade._exercise_public_conversation(
+    await exercise_public_conversation(
         hass, entry.entry_id, "Browser-upgraded state survived a cold restart."
     )
 
@@ -207,8 +215,8 @@ def test_published_release_upgrade_is_visible_and_editable_in_candidate_browser(
     from_component = Path(os.environ["UPGRADE_FROM_COMPONENT_DIR"]).resolve()
     to_component = Path(os.environ["UPGRADE_TO_COMPONENT_DIR"]).resolve()
 
-    from_manifest = upgrade._manifest(from_component)
-    to_manifest = upgrade._manifest(to_component)
+    from_manifest = manifest(from_component)
+    to_manifest = manifest(to_component)
     assert from_manifest["domain"] == DOMAIN
     assert to_manifest["domain"] == DOMAIN
     expected_from = os.environ.get("UPGRADE_FROM_VERSION")
@@ -225,13 +233,13 @@ def test_published_release_upgrade_is_visible_and_editable_in_candidate_browser(
         encoding="utf-8",
     )
 
-    upgrade._install_component(from_component, config_dir)
-    released = upgrade._run_child(config_dir, "released")
-    upgrade._assert_child_ok(released, "released")
+    install_component(from_component, config_dir)
+    released = run_upgrade_child(config_dir, "released")
+    assert_upgrade_child_ok(released, "released")
     assert (config_dir / ".storage" / "core.config_entries").exists()
-    assert (config_dir / upgrade._STATE_FILE).exists()
+    assert (config_dir / UPGRADE_STATE_FILE).exists()
 
-    upgrade._install_component(to_component, config_dir)
+    install_component(to_component, config_dir)
     browser = _run_child(config_dir, "candidate-browser")
     _assert_child_ok(browser, "candidate-browser")
 
