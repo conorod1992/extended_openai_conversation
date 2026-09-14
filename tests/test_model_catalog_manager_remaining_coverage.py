@@ -6,7 +6,7 @@ from copy import deepcopy
 import inspect
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, call
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
