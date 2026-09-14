@@ -65,6 +65,9 @@ class ConversationContinuity:
         self._memory_bundles: dict[str, ConversationMemoryBundle] = {}
         self._pending_ends: set[str] = set()
         self._ignored_conversation_ids: dict[str, None] = {}
+        self._ha_default_locks: dict[str, asyncio.Lock] = {}
+        self._ha_default_lock_users: dict[str, int] = {}
+        self._ha_default_claims: dict[str, tuple[str, asyncio.Lock]] = {}
         self._lock = asyncio.Lock()
         self.resume_count = 0
         self.new_session_count = 0
@@ -117,17 +120,25 @@ class ConversationContinuity:
             incoming_conversation_id = None
         if mode == CONVERSATION_CONTINUITY_HA_DEFAULT:
             if namespace is None:
-                return ContinuityResolution(incoming_conversation_id, None, [], False)
-            # Preserve HA-default session behavior, but accept only a Guest-issued
-            # ID. An owner ID starts a fresh, structurally marked Guest ChatLog.
-            conversation_id = (
-                incoming_conversation_id
-                if self._is_namespaced_conversation_id(
-                    incoming_conversation_id, namespace
+                conversation_id = incoming_conversation_id
+            else:
+                # Preserve HA-default session behavior, but accept only a Guest-issued
+                # ID. An owner ID starts a fresh, structurally marked Guest ChatLog.
+                conversation_id = (
+                    incoming_conversation_id
+                    if self._is_namespaced_conversation_id(
+                        incoming_conversation_id, namespace
+                    )
+                    else self._new_conversation_id(namespace)
                 )
-                else self._new_conversation_id(namespace)
+            claim_token = (
+                await self._async_claim_ha_default_conversation(conversation_id)
+                if conversation_id is not None
+                else None
             )
-            return ContinuityResolution(conversation_id, None, [], False)
+            return ContinuityResolution(
+                conversation_id, None, [], False, claim_token=claim_token
+            )
         key, label = self.identity_key(mode, scope, device_id, namespace)
         if key is None:
             if namespace is not None:
@@ -179,6 +190,47 @@ class ConversationContinuity:
                 conversation_id, key, [], False, claim_token=claim_token
             )
 
+    async def _async_claim_ha_default_conversation(
+        self, conversation_id: str
+    ) -> str:
+        """Serialize mutations of one caller-owned HA-default ChatLog."""
+        lock = self._ha_default_locks.get(conversation_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._ha_default_locks[conversation_id] = lock
+            self._ha_default_lock_users[conversation_id] = 0
+        self._ha_default_lock_users[conversation_id] += 1
+        try:
+            await lock.acquire()
+        except BaseException:
+            self._drop_ha_default_lock_user(conversation_id, lock)
+            raise
+        claim_token = uuid4().hex
+        self._ha_default_claims[claim_token] = (conversation_id, lock)
+        return claim_token
+
+    def _release_ha_default_claim(self, claim_token: str) -> bool:
+        """Release one HA-default ChatLog claim and prune its lock when unused."""
+        claim = self._ha_default_claims.pop(claim_token, None)
+        if claim is None:
+            return False
+        conversation_id, lock = claim
+        lock.release()
+        self._drop_ha_default_lock_user(conversation_id, lock)
+        return True
+
+    def _drop_ha_default_lock_user(
+        self, conversation_id: str, lock: asyncio.Lock
+    ) -> None:
+        """Drop one user reference without replacing a lock that still has waiters."""
+        users = self._ha_default_lock_users.get(conversation_id, 0) - 1
+        if users > 0:
+            self._ha_default_lock_users[conversation_id] = users
+            return
+        self._ha_default_lock_users.pop(conversation_id, None)
+        if self._ha_default_locks.get(conversation_id) is lock:
+            self._ha_default_locks.pop(conversation_id, None)
+
     def _new_conversation_id(self, namespace: str | None) -> str:
         """Create an integration-owned ID with an inspectable privacy namespace."""
         prefix = f"extended-openai-{self._agent_id}-"
@@ -227,7 +279,10 @@ class ConversationContinuity:
 
     async def async_release(self, key: str | None, claim_token: str | None) -> None:
         """Release only the request claim identified by its opaque token."""
-        if key is None or claim_token is None:
+        if claim_token is None:
+            return
+        if key is None:
+            self._release_ha_default_claim(claim_token)
             return
         async with self._lock:
             active = self._sessions.get(key)
