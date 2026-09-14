@@ -18,6 +18,7 @@ from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.extended_openai_conversation_responses.agent_config import (
     configured_function_tools_from_data,
+    normalize_agent_config,
     validate_function_tools,
 )
 from custom_components.extended_openai_conversation_responses.agent_maintenance import (
@@ -156,6 +157,24 @@ async def test_delayed_native_tool_reauthorizes_live_user_when_due(
     user = _restricted_user()
     user.add_to_hass(hass)
     agent = await _agent(hass, API_MODE_CHAT_COMPLETIONS)
+    assert agent is not None
+
+    # The shared provider-wire fixture keeps Function Tools as an in-memory list.
+    # Delayed execution intentionally reparses the live persisted subentry at due
+    # time, so put this acceptance test through the same normalization/reload path a
+    # real management save uses before exercising authorization changes.
+    entry_id = agent.entry.entry_id
+    normalized = normalize_agent_config(dict(agent.subentry.data))
+    hass.config_entries.async_update_subentry(
+        agent.entry,
+        agent.subentry,
+        data=normalized,
+    )
+    live_subentry = agent.entry.subentries[agent.subentry.subentry_id]
+    assert isinstance(live_subentry.data[CONF_FUNCTION_TOOLS], str)
+    assert await hass.config_entries.async_reload(entry_id)
+    await hass.async_block_till_done()
+    agent = conversation.async_get_agent(hass, entry_id)
     assert agent is not None
 
     manager = hass.data[DOMAIN][DATA_DELAYED_TOOL_MANAGER]
