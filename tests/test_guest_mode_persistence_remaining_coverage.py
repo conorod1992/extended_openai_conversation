@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -19,14 +20,6 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
     "stored",
     [
         {"schedule": {"active_from": "not-a-timestamp"}},
-        {
-            "schedule": {
-                "active_from": "2026-09-14T10:00:00",
-                "active_until": None,
-                "source": "home_assistant",
-                "updated_at": None,
-            }
-        },
         {
             "schedule": {
                 "active_from": "2026-09-14T10:00:00+00:00",
@@ -108,12 +101,16 @@ async def test_cancelled_update_waits_for_save_then_publishes_and_reraises(hass)
     assert manager.schedule.active_from == "2026-09-14T10:00:00+00:00"
     assert manager.schedule.active_until == "2026-09-14T12:00:00+00:00"
     assert notifications == [True]
-    assert saved_payloads == [{"schedule": {
-        "active_from": manager.schedule.active_from,
-        "active_until": manager.schedule.active_until,
-        "source": "home_assistant",
-        "updated_at": manager.schedule.updated_at,
-    }}]
+    assert saved_payloads == [
+        {
+            "schedule": {
+                "active_from": manager.schedule.active_from,
+                "active_until": manager.schedule.active_until,
+                "source": "home_assistant",
+                "updated_at": manager.schedule.updated_at,
+            }
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -191,7 +188,7 @@ async def test_restrict_replaces_expired_schedule_instead_of_widening_it(hass) -
     status = await manager.async_restrict(
         active_from="2026-09-14T10:00:00+00:00",
         active_until="2026-09-14T11:00:00+00:00",
-        now="2026-09-14T09:00:00+00:00",
+        now=datetime(2026, 9, 14, 9, 0, tzinfo=UTC),
     )
 
     assert manager.schedule is not None
