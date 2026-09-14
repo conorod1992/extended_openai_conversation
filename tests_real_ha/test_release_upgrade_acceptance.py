@@ -55,7 +55,18 @@ def _install_component(source: Path, config_dir: Path) -> None:
     shutil.copytree(source, destination)
 
 
+def _ensure_process_config(config_dir: Path) -> None:
+    """Ensure HA initializes recorder before integration dependency setup."""
+    config_path = config_dir / "configuration.yaml"
+    text = config_path.read_text(encoding="utf-8")
+    if "\nrecorder:" not in text and not text.startswith("recorder:"):
+        if text and not text.endswith("\n"):
+            text += "\n"
+        config_path.write_text(f"{text}recorder:\n", encoding="utf-8")
+
+
 def _run_child(config_dir: Path, phase: str) -> subprocess.CompletedProcess[str]:
+    _ensure_process_config(config_dir)
     env = os.environ.copy()
     env[_CHILD_PHASE_ENV] = phase
     env[_CONFIG_DIR_ENV] = str(config_dir)
