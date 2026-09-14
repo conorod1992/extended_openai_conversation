@@ -291,9 +291,9 @@ class NativeFunction(Function):
     ) -> None:
         """Resolve indirect HA targets and enforce the exposed-entity boundary."""
         selection = {
-            key: service_data[key]
+            key: value if isinstance(value, list) else [value]
             for key in _INDIRECT_TARGET_KEYS
-            if service_data.get(key) is not None
+            if (value := service_data.get(key)) is not None
         }
         if not selection:
             return
