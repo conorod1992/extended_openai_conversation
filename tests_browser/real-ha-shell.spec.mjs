@@ -8,6 +8,7 @@ test.skip(!baseUrl || !authDataRaw, "requires the dedicated genuine Home Assista
 test("shipped management panel loads and persists configuration inside the genuine HA frontend", async ({context, page}) => {
   const authData = JSON.parse(authDataRaw);
   const integrationPageErrors = [];
+  const integrationConsoleErrors = [];
   const integrationRequestFailures = [];
   const integrationResponses = [];
 
@@ -15,6 +16,18 @@ test("shipped management panel loads and persists configuration inside the genui
     const detail = [error.name, error.message, error.stack].filter(Boolean).join("\n");
     if (detail.includes("/extended_openai_conversation_responses/")) {
       integrationPageErrors.push(detail);
+    }
+  });
+  page.on("console", (message) => {
+    if (message.type() !== "error") return;
+    const location = message.location();
+    const detail = `${message.text()}${location?.url ? ` (${location.url}:${location.lineNumber ?? 0})` : ""}`;
+    if (
+      location?.url?.includes("/extended_openai_conversation_responses/")
+      || detail.includes("extended_openai_conversation_responses")
+      || detail.includes("extended-openai-management-panel")
+    ) {
+      integrationConsoleErrors.push(detail);
     }
   });
   page.on("requestfailed", (request) => {
@@ -57,6 +70,7 @@ test("shipped management panel loads and persists configuration inside the genui
 
   expect(integrationRequestFailures).toEqual([]);
   expect(integrationPageErrors).toEqual([]);
+  expect(integrationConsoleErrors).toEqual([]);
   expect(integrationResponses.some(({url, status}) => {
     const path = new URL(url).pathname;
     return /^\/extended_openai_conversation_responses\/assets\/[^/]+\/management-panel\.js$/.test(path)
