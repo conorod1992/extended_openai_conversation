@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,21 @@ _REAL_STORE_ASYNC_WRITE_DATA = Store._async_write_data
 _REAL_STORE_ASYNC_REMOVE = Store.async_remove
 
 
+@pytest.fixture
+def _real_store_io(hass: HomeAssistant) -> Iterator[None]:
+    """Temporarily restore genuine Store I/O without leaking past this test."""
+    # Depend on hass so this fixture is torn down before HA and its storage-mocking
+    # dependencies. A private MonkeyPatch context restores the fixture-provided Store
+    # mocks immediately when this fixture exits, instead of waiting for the shared
+    # monkeypatch fixture teardown and poisoning later tests with stale AsyncMocks.
+    del hass
+    with pytest.MonkeyPatch.context() as store_patch:
+        store_patch.setattr(Store, "_async_load", _REAL_STORE_ASYNC_LOAD)
+        store_patch.setattr(Store, "_async_write_data", _REAL_STORE_ASYNC_WRITE_DATA)
+        store_patch.setattr(Store, "async_remove", _REAL_STORE_ASYNC_REMOVE)
+        yield
+
+
 def _system_prompt(request_body: dict[str, Any]) -> str:
     """Return the system prompt from one serialized Chat Completions request."""
     message = next(
@@ -88,15 +104,9 @@ def _contains_cached_manager(value: Any) -> bool:
 async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
+    _real_store_io: None,
 ) -> None:
     """One corrupt real Store is quarantined while sibling state cold-starts."""
-    # The shared HA fixture intentionally mocks Store I/O. Restore the real methods
-    # before creating integration managers so this scenario genuinely persists to
-    # and reloads from Home Assistant's temporary .storage directory.
-    monkeypatch.setattr(Store, "_async_load", _REAL_STORE_ASYNC_LOAD)
-    monkeypatch.setattr(Store, "_async_write_data", _REAL_STORE_ASYNC_WRITE_DATA)
-    monkeypatch.setattr(Store, "async_remove", _REAL_STORE_ASYNC_REMOVE)
-
     MockUser(id=_USER_ID, name="Corrupt Store User").add_to_hass(hass)
 
     entry = _make_entry(
