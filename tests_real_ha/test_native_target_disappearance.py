@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-import json
 from typing import Any
 
 import pytest
 import voluptuous as vol
 
-from custom_components.extended_openai_conversation_responses import (
-    functions as functions_package,
-)
 from custom_components.extended_openai_conversation_responses.built_in_functions import (
     BUILT_IN_FUNCTION_PRESETS,
 )
@@ -93,15 +89,19 @@ async def test_native_service_target_disappears_before_dispatch_and_next_turn_re
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A target removed after tool selection fails cleanly without poisoning later use."""
-    del functions_package  # Imported above only to ensure normal Function registration.
-
     service_calls: list[ServiceCall] = []
 
     def entity_still_exists(value: Any) -> Any:
         entity_ids = value if isinstance(value, list) else [value]
-        missing = [entity_id for entity_id in entity_ids if hass.states.get(entity_id) is None]
+        missing = [
+            entity_id
+            for entity_id in entity_ids
+            if hass.states.get(entity_id) is None
+        ]
         if missing:
-            raise vol.Invalid(f"Target entity no longer exists: {', '.join(missing)}")
+            raise vol.Invalid(
+                f"Target entity no longer exists: {', '.join(missing)}"
+            )
         return value
 
     async def service_handler(call: ServiceCall) -> None:
