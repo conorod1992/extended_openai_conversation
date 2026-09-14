@@ -61,7 +61,9 @@ Reasoning effort is validated against the model that will actually receive it, i
 - **Wording alternatives** map different ways of saying the same thing to a main phrase. The seeded alternatives preserve the previous built-in behavior, such as `switch on` to `turn on` and `television` to `tv`. Alternatives can be added, edited, and removed. Ambiguous duplicate phrases are rejected.
 - **Fuzzy matching** tolerates small speech-recognition differences only after strict matching fails. Conservative, Normal, and Tolerant correspond to progressively lower thresholds. Sensitivity is unavailable when fuzzy matching is off.
 
-Strict matching always wins over fuzzy matching. More specific strict types win over broader ones, and stable rule order resolves an otherwise equal result.
+Strict matching always wins over fuzzy matching. Deterministic rules are evaluated from top to bottom in the order shown on the Request Rules screen; the first enabled rule with a strict match wins, regardless of match type. Move rules to change their priority. If no deterministic rule matches, fuzzy matching is used as a fallback; its existing score-based winner selection applies.
+
+For example, if an earlier **Contains** rule and a later **Equals** rule both match the same request, the earlier rule wins. Move the Equals rule above it when that more specific case should take priority.
 
 ### ExtendedOpenAI sentence patterns
 
@@ -137,7 +139,7 @@ The current safety limits are:
 
 The same parser, compiled matcher, input bounds, winner-selection rules, and aggregate work budget are used by live requests and Match Preview. Matching itself runs outside Home Assistant's main event loop. Each match reads one complete configuration snapshot, even if rules or defaults are being saved concurrently. Compiled patterns are immutable and reused through a bounded cache.
 
-Candidates are evaluated in the existing precedence order. Once a match is certain to win, lower-ranked patterns are skipped. An unresolved candidate that could change the winner still causes the whole evaluation to fail safely if it exceeds the work budget.
+Deterministic candidates are evaluated in displayed rule order. Once an earlier rule matches, later rules are skipped. An unresolved earlier sentence-pattern candidate that could determine the first match still causes the whole evaluation to fail safely if it exceeds the work budget.
 
 If a live request is larger than the matching limit or the aggregate work budget cannot safely complete, **no Request Rule action runs** and the original request continues through the normal AI path. The matcher never treats an interrupted higher-priority rule as a failed match and then executes a lower-priority local action. Match Preview instead reports the limit as an error.
 
