@@ -108,11 +108,11 @@ def _event(events: list[PipelineEvent], event_type: PipelineEventType) -> Pipeli
     return matches[0]
 
 
-async def test_genuine_assist_prefers_satellite_voice_identity_when_both_ids_exist(
+async def test_genuine_assist_prefers_registry_device_voice_identity_when_both_ids_exist(
     hass: HomeAssistant,
     monkeypatch: Any,
 ) -> None:
-    """Prefer satellite identity at the production data-scope resolution boundary."""
+    """Prefer the HA registry device when Assist supplies both source identifiers."""
     device_user = _add_user(hass, _DEVICE_USER_ID, "Device User")
     satellite_user = _add_user(hass, _SATELLITE_USER_ID, "Satellite User")
     entry, agent = await _agent(hass, device_user, satellite_user)
@@ -159,33 +159,32 @@ async def test_genuine_assist_prefers_satellite_voice_identity_when_both_ids_exi
         == _RESPONSE_TEXT
     )
 
+    # HA genuinely delivers both identifiers to the custom conversation agent.
     assert delivered_identities == [(_DEVICE_ID, _SATELLITE_ID)]
 
-    # This is the integration's actual Voice Identity decision boundary.  The
-    # genuine Assist turn must hand the satellite identifier to scope resolution,
-    # and that mapping must resolve to the satellite-owned personal scope.
+    # Voice Identity intentionally normalizes a dual-origin Assist request to HA's
+    # device-registry ID. The Assist satellite entity ID is a fallback only when no
+    # registry device ID exists.
     assert len(resolved_scopes) == 1
     resolved_source_id, resolved_scope = resolved_scopes[0]
-    assert resolved_source_id == _SATELLITE_ID
-    assert resolved_scope.scope_id == f"user:{satellite_user.id}"
+    assert resolved_source_id == _DEVICE_ID
+    assert resolved_scope.scope_id == f"user:{device_user.id}"
     assert resolved_scope.scope_type == "user"
     assert resolved_scope.source == "device_mapping"
-    assert resolved_scope.device_id == _SATELLITE_ID
+    assert resolved_scope.device_id == _DEVICE_ID
 
-    # Archive is exercised end-to-end as well, but ownership is deliberately not
-    # used as an indirect proxy for the precedence decision above.
     subentry = _conversation_subentry(entry)
     archive = await async_get_archive(hass, entry.entry_id, subentry.subentry_id)
-    sessions = [
-        *(
-            await archive.async_list_sessions(f"user:{satellite_user.id}")
-        )["sessions"],
-        *(
-            await archive.async_list_sessions(f"user:{device_user.id}")
-        )["sessions"],
-    ]
-    assert len(sessions) == 1
-    session = sessions[0]
+    device_sessions = await archive.async_list_sessions(f"user:{device_user.id}")
+    satellite_sessions = await archive.async_list_sessions(f"user:{satellite_user.id}")
+
+    assert len(device_sessions["sessions"]) == 1
+    assert satellite_sessions["sessions"] == []
+    session = device_sessions["sessions"][0]
+    assert session["scope_id"] == f"user:{device_user.id}"
+    assert session["scope_type"] == "user"
+    assert session["scope_source"] == "device_mapping"
+    assert session["source_device_id"] == _DEVICE_ID
     assert session["home_assistant_conversation_id"] == _CONVERSATION_ID
     assert session["turn_count"] == 1
     assert session["retention_state"] == "retained"
