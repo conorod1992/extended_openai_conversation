@@ -138,8 +138,16 @@ async def test_owner_counts_include_only_active_owned_records() -> None:
 
 async def test_backup_restore_enforces_global_record_ceiling_and_keeps_newest() -> None:
     raw = [stored_record(index) for index in range(MAX_ACTIVE_RECORDS + 4)]
-    validated = TemporaryMemory.validate_backup_data({"records": raw})
-    assert len(validated) == MAX_ACTIVE_RECORDS + 4
+
+    # Aggregate backup validation intentionally rejects oversized payloads before
+    # restore. Validate each otherwise-valid record independently so this test can
+    # exercise the effective restore wrapper's defensive ceiling as a separate contract.
+    with pytest.raises(ValueError, match="temporary memory count is invalid"):
+        TemporaryMemory.validate_backup_data({"records": raw})
+    validated = [
+        TemporaryMemory.validate_backup_data({"records": [record]})[0]
+        for record in raw
+    ]
 
     storage = Storage()
     memory = TemporaryMemory(storage)
