@@ -12,6 +12,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses import backup
 from custom_components.extended_openai_conversation_responses.agent_config import (
     configured_function_tools_from_data,
+    normalize_agent_config,
 )
 from custom_components.extended_openai_conversation_responses.agent_maintenance import (
     get_agent_maintenance_gate,
@@ -78,6 +79,25 @@ async def _prepare_runtime(
     assert getattr(
         backup.async_restore_backup, "_extended_openai_maintenance_gate", False
     )
+
+    # The shared provider-wire fixture deliberately stores Function Tools as a Python
+    # list because its tests never cross a persistence/reload boundary. This test does:
+    # delayed execution reparses the *live persisted* subentry at due time. Normalize
+    # through the production config contract first so the race starts from the same
+    # YAML-backed storage shape a real management/configuration save would create.
+    entry_id = agent.entry.entry_id
+    normalized = normalize_agent_config(dict(agent.subentry.data))
+    hass.config_entries.async_update_subentry(
+        agent.entry,
+        agent.subentry,
+        data=normalized,
+    )
+    live_subentry = agent.entry.subentries[agent.subentry.subentry_id]
+    assert isinstance(live_subentry.data[CONF_FUNCTION_TOOLS], str)
+    assert await hass.config_entries.async_reload(entry_id)
+    await hass.async_block_till_done()
+    agent = conversation.async_get_agent(hass, entry_id)
+    assert agent is not None
 
     manager = hass.data[DOMAIN][DATA_DELAYED_TOOL_MANAGER]
     assert isinstance(manager, DelayedToolManager)
