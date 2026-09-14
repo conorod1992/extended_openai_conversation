@@ -43,6 +43,16 @@ test("open Home Assistant page survives a real backend process death and restart
   await expect(panel).toHaveCount(1);
   await expect(panel.locator('[data-config="__title"]')).toBeVisible();
 
+  // This standalone HA process intentionally binds a random loopback port instead
+  // of HA's defaults. HA presents its own one-time confirmation dialog for that
+  // HTTP configuration, and the modal blocks clicks on the integration panel until
+  // it is acknowledged. Confirm it explicitly so the restart journey tests the
+  // ExtendedOpenAI panel rather than timing out behind HA's safety dialog.
+  const confirmHttpSettings = page.getByRole("button", {name: "Confirm", exact: true});
+  await expect(confirmHttpSettings).toBeVisible();
+  await confirmHttpSettings.click();
+  await expect(confirmHttpSettings).toHaveCount(0);
+
   const title = panel.locator('[data-config="__title"]');
   await title.fill("Before real HA restart");
   await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
