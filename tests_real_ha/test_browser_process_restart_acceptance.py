@@ -36,13 +36,6 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-async def _wait_for_marker(path: Path, *, timeout: float = 60) -> None:
-    """Wait for a cross-process marker file."""
-    async with asyncio.timeout(timeout):
-        while not path.exists():
-            await asyncio.sleep(0.1)
-
-
 async def _wait_for_process_marker(
     process: asyncio.subprocess.Process,
     path: Path,
@@ -249,6 +242,11 @@ async def test_open_browser_survives_true_home_assistant_process_restart(
         )
         await _wait_for_process_marker(browser, sync_dir / "browser-ready", timeout=60)
 
+        # The browser's management save has completed. Let HA's delayed atomic
+        # config-entry write settle so this test kills a normally-saved runtime,
+        # not an intentionally interrupted write transaction.
+        await asyncio.sleep(2)
+
         # Hard-kill the HA process rather than invoking hass.async_stop(), unloading
         # the config entry, or restarting only the integration.
         await _stop_child(first, first_handle, kill=True)
@@ -391,6 +389,16 @@ async def _child_main() -> None:
     entry = await _ensure_entry(hass)
     base_url = f"http://127.0.0.1:{port}"
     await _ensure_browser_auth(hass, sync_dir, base_url)
+
+    if generation == 2:
+        conversation_titles = {
+            subentry.title
+            for subentry in entry.subentries.values()
+            if subentry.subentry_type == "conversation"
+        }
+        assert "Before real HA restart" in conversation_titles
+        auth_data = json.loads((sync_dir / _AUTH_FILE).read_text(encoding="utf-8"))
+        assert hass.auth.async_validate_access_token(auth_data["access_token"]) is not None
 
     # Home Assistant's auth/config-entry stores use delayed atomic writes. Give
     # first-boot mutations time to hit disk before announcing that SIGKILL is safe.
