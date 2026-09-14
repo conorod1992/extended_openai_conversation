@@ -24,7 +24,6 @@ from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,
     _install_wire,
     _speech,
-    _tool_result_from_chat_request,
 )
 
 _ALLOWED_ENTITY = "light.permission_allowed"
@@ -69,6 +68,17 @@ def _chat_sse_tool_call(entity_id: str, call_id: str) -> bytes:
         ],
     }
     return f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n".encode()
+
+
+def _tool_result_from_chat_request(
+    request: dict[str, Any], expected_call_id: str
+) -> dict[str, Any]:
+    """Decode the tool result while asserting this test's own call identity."""
+    tool_message = next(
+        item for item in request["messages"] if item.get("role") == "tool"
+    )
+    assert tool_message["tool_call_id"] == expected_call_id
+    return json.loads(tool_message["content"])
 
 
 def _restricted_user() -> MockUser:
@@ -146,11 +156,12 @@ async def test_restricted_user_cannot_bypass_ha_entity_or_management_permissions
     async_expose_entity(hass, conversation.DOMAIN, _ALLOWED_ENTITY, True)
     async_expose_entity(hass, conversation.DOMAIN, _DENIED_ENTITY, True)
 
+    denied_call_id = "call-permission-denied"
     denied_wire = _install_wire(
         monkeypatch,
         agent,
         [
-            _chat_sse_tool_call(_DENIED_ENTITY, "call-permission-denied"),
+            _chat_sse_tool_call(_DENIED_ENTITY, denied_call_id),
             _chat_sse_text("The denied light was not changed."),
         ],
     )
@@ -160,18 +171,21 @@ async def test_restricted_user_cannot_bypass_ha_entity_or_management_permissions
 
     assert _speech(denied) == "The denied light was not changed."
     assert calls == []
-    denied_tool_result = _tool_result_from_chat_request(denied_wire.requests[1]["body"])
+    denied_tool_result = _tool_result_from_chat_request(
+        denied_wire.requests[1]["body"], denied_call_id
+    )
     assert "error" in denied_tool_result["result"][0]
     assert "does not have permission to control" in denied_tool_result["result"][0][
         "error"
     ]
     assert _DENIED_ENTITY in denied_tool_result["result"][0]["error"]
 
+    allowed_call_id = "call-permission-allowed"
     allowed_wire = _install_wire(
         monkeypatch,
         agent,
         [
-            _chat_sse_tool_call(_ALLOWED_ENTITY, "call-permission-allowed"),
+            _chat_sse_tool_call(_ALLOWED_ENTITY, allowed_call_id),
             _chat_sse_text("The allowed light is off."),
         ],
     )
@@ -184,7 +198,7 @@ async def test_restricted_user_cannot_bypass_ha_entity_or_management_permissions
     assert calls[0].data["entity_id"] == [_ALLOWED_ENTITY]
     assert calls[0].context.user_id == user.id
     allowed_tool_result = _tool_result_from_chat_request(
-        allowed_wire.requests[1]["body"]
+        allowed_wire.requests[1]["body"], allowed_call_id
     )
     assert allowed_tool_result["result"][0]["success"] is True
 
