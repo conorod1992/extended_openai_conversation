@@ -96,7 +96,7 @@ async def test_move_changes_only_final_order_tiebreaker() -> None:
     store.async_save.assert_awaited_once()
 
 
-async def test_move_does_not_override_match_type_or_specificity() -> None:
+async def test_move_overrides_match_type_specificity_via_list_order() -> None:
     broad = _routing_rule(
         "broad",
         "Broad",
@@ -113,7 +113,7 @@ async def test_move_does_not_override_match_type_or_specificity() -> None:
     )
     manager, _store = _manager([broad, exact])
 
-    assert manager.match("use the careful model").rule["id"] == "exact"
+    assert manager.match("use the careful model").rule["id"] == "broad"
 
     await manager.async_move("exact", "up", expected_revision=manager.revision())
 
