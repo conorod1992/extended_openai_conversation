@@ -279,7 +279,11 @@ async def test_open_browser_survives_true_home_assistant_process_restart(
 
         (sync_dir / "ha-restarted").write_text("restarted\n", encoding="utf-8")
 
-        async with asyncio.timeout(90):
+        # Playwright itself has a 120-second ceiling for this deliberately heavy
+        # process-boundary journey. Keep the parent guard above that so pytest does
+        # not kill a still-valid browser/HA pair before Playwright can report its
+        # own success or diagnostic failure.
+        async with asyncio.timeout(150):
             stdout, _ = await browser.communicate()
         output = stdout.decode("utf-8", errors="replace")
         assert browser.returncode == 0, (
