@@ -76,6 +76,15 @@ def test_reasoning_validation_rejects_settings_for_unsupported_model(
         model_capabilities.validate_reasoning_effort("model", "low")
 
 
+def test_reasoning_validation_accepts_omitted_effort_for_supported_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reasoning-capable models allow the effort setting to remain omitted."""
+    _install_capabilities(monkeypatch, _capabilities())
+
+    assert model_capabilities.validate_reasoning_effort("model", None) is None
+
+
 def test_reasoning_validation_rejects_unknown_supported_effort(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
