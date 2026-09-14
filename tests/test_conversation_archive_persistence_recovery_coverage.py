@@ -34,8 +34,7 @@ class FailingArchiveStorage:
         self.partitions[partition] = deepcopy(data)
 
 
-async def test_loaded_archive_converges_after_partition_failure_without_restart() -> None:
-    """A later successful commit must absorb and clear an earlier pending journal."""
+async def _archive_with_failed_turn():
     storage = FailingArchiveStorage()
     archive = ConversationArchive(storage, "agent-1")
     await archive.async_initialize()
@@ -60,6 +59,12 @@ async def test_loaded_archive_converges_after_partition_failure_without_restart(
 
     assert archive._pending_partitions
     assert "pending_partitions" in storage.metadata
+    return archive, storage, session
+
+
+async def test_loaded_archive_converges_after_partition_failure_without_restart() -> None:
+    """A later successful commit must absorb and clear an earlier pending journal."""
+    archive, storage, session = await _archive_with_failed_turn()
 
     second = await archive.async_record_turn(
         session.session_id,
@@ -82,3 +87,37 @@ async def test_loaded_archive_converges_after_partition_failure_without_restart(
         "second turn",
     ]
     assert result["session"]["turn_count"] == 2
+
+
+async def test_later_session_publish_preserves_pending_transaction_for_restart() -> None:
+    """Unrelated metadata writes cannot erase an unfinished partition journal."""
+    archive, storage, failed_session = await _archive_with_failed_turn()
+
+    later_session = await archive.async_begin_session(
+        "kitchen",
+        user_scope("bob", source="test"),
+        "conversation-2",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+
+    assert later_session is not None
+    assert "pending_partitions" in storage.metadata
+    persisted_ids = {item["session_id"] for item in storage.metadata["sessions"]}
+    assert failed_session.session_id in persisted_ids
+    assert later_session.session_id in persisted_ids
+
+    # No successful commit happened on the loaded manager. Restart recovery
+    # must still replay the original pending partition and retain the newer
+    # session metadata written after the failure.
+    restarted = ConversationArchive(storage, "agent-1")
+    await restarted.async_initialize()
+
+    failed = await restarted.async_get("user:alice", failed_session.session_id)
+    assert [turn["user_text"] for turn in failed["turns"]] == ["first turn"]
+    listed = await restarted.async_list_sessions("user:bob")
+    assert [item["session_id"] for item in listed["sessions"]] == [
+        later_session.session_id
+    ]
+    assert "pending_partitions" not in storage.metadata
