@@ -9,7 +9,14 @@ from custom_components.extended_openai_conversation_responses.function_tool_reco
 )
 
 
-@pytest.mark.parametrize("arguments", [{}, None, "ordinary arguments"])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param({}, id="mapping"),
+        pytest.param(None, id="none"),
+        pytest.param("ordinary arguments", id="string"),
+    ],
+)
 def test_provider_argument_text_rejects_ordinary_arguments(arguments: object) -> None:
     """Ordinary argument values are not malformed provider input."""
     with pytest.raises(TypeError) as exc_info:
