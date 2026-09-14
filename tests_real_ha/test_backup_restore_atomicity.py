@@ -109,7 +109,12 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
 
     memory_before = await memory.async_backup_data()
     knowledge_before = await knowledge.async_backup_data()
-    subentry_data_before = dict(subentry.data)
+    # Restore writes the integration's canonical/default-expanded agent config, so
+    # compare against the same canonical representation rather than the sparse raw
+    # subentry mapping Home Assistant happened to start with.
+    subentry_data_before = backup.preserve_legacy_guest_policy(
+        dict(subentry.data), backup.agent_config_snapshot(subentry.data)
+    )
     subentry_title_before = subentry.title
 
     original_memory_replace = memory.async_replace_backup
@@ -157,3 +162,9 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
     assert await knowledge.async_get(current_knowledge.source_id) == current_knowledge
     with pytest.raises(ValueError, match="knowledge source not found"):
         await knowledge.async_get(target_knowledge.source_id)
+
+    # A fully loaded conversation entry owns periodic archive timers. Unload it so
+    # the acceptance test also proves clean lifecycle teardown instead of leaking a
+    # pending timer into pytest's lingering-task check.
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
