@@ -223,7 +223,7 @@ async def test_lightweight_host_matching_is_off_loop(monkeypatch) -> None:
     assert await manager.async_match(SimpleNamespace(), "hello") != event_loop_thread
 
 
-async def test_certain_equals_winner_skips_lower_ranked_sentence_work(
+async def test_certain_earlier_winner_skips_later_sentence_work(
     monkeypatch,
 ) -> None:
     from custom_components.extended_openai_conversation_responses import (
@@ -234,8 +234,8 @@ async def test_certain_equals_winner_skips_lower_ranked_sentence_work(
         MemoryStore(
             {
                 "rules": [
-                    _rule(0, "hello {name}"),
-                    _rule(1, "hello world", match_type="equals"),
+                    _rule(0, "hello world", match_type="equals"),
+                    _rule(1, "hello {name}"),
                 ]
             }
         )
@@ -243,10 +243,10 @@ async def test_certain_equals_winner_skips_lower_ranked_sentence_work(
     await manager.async_initialize()
 
     def unexpected(*_args):
-        raise AssertionError("a lower ranked pattern cannot affect the winner")
+        raise AssertionError("a later pattern cannot affect an earlier winner")
 
     monkeypatch.setattr(module, "_match_compiled_sentence", unexpected)
-    assert manager.match("hello world").rule["id"] == "rule-1"
+    assert manager.match("hello world").rule["id"] == "rule-0"
 
 
 async def test_higher_ranked_sentence_limit_does_not_run_broader_match(
