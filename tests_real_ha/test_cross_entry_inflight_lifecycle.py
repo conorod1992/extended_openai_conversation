@@ -86,6 +86,7 @@ async def test_other_entry_reload_does_not_disturb_inflight_request(
 
     agent_a = _agent(hass, entry_a)
     agent_b_before = _agent(hass, entry_b)
+    original_a_handler = agent_a._async_handle_chat_log
 
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -155,8 +156,9 @@ async def test_other_entry_reload_does_not_disturb_inflight_request(
     assert _agent(hass, entry_a) is agent_a
     assert _agent(hass, entry_b) is agent_b_after
 
-    # Finally prove A still accepts a subsequent request after the cross-entry
-    # lifecycle churn, rather than merely allowing the pre-existing call to end.
+    # Restore A's normal provider path, then prove it still accepts a genuinely
+    # fresh request after the unrelated entry's lifecycle churn.
+    monkeypatch.setattr(agent_a, "_async_handle_chat_log", original_a_handler)
     wire_a = _install_wire(
         monkeypatch,
         agent_a,
