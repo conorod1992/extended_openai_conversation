@@ -1,75 +1,90 @@
 ---
-description: "A Home Assistant custom component that extends OpenAI Conversation with service calls, automation creation, and advanced AI capabilities"
-title: "Introduction"
+description: "Extended OpenAI Conversation for Home Assistant: modern OpenAI APIs, Home Assistant control, memory, voice, tools, privacy controls, and management features"
+title: "Extended OpenAI Conversation"
 ---
 
-Extended OpenAI Conversation (Responses) is a custom component for Home Assistant that enhances the official OpenAI Conversation integration with powerful new features.
+Extended OpenAI Conversation (Responses) is a Home Assistant conversation integration for OpenAI and compatible providers. It combines Home Assistant entity and service access with modern model APIs, Web Search, memory, voice features, custom Function Tools, privacy controls, and a dedicated management interface.
 
-This experimental fork adds OpenAI Responses API support. Its separate `extended_openai_conversation_responses` domain allows it to run alongside the original Extended OpenAI Conversation integration.
+The project began as a fork of `jekalmin/extended_openai_conversation` and has since diverged substantially while retaining the original project's flexible custom-function framework.
 
-## Key Features
+## What it can do
 
 <Columns cols={2}>
-  <Card title="Service Calls" icon="gears">
-    Call any Home Assistant service through natural language conversations
+  <Card title="Home Assistant control" icon="house">
+    Work with Assist-exposed entities and Home Assistant services while respecting the requesting user's Home Assistant permissions and any stricter Extended OpenAI policy.
   </Card>
-  <Card title="Automation Creation" icon="robot">
-    Create automations dynamically using AI-generated YAML configurations
+  <Card title="Modern model APIs" icon="sparkles">
+    Use Chat Completions or the Responses API with model-aware reasoning and response controls.
   </Card>
-  <Card title="External Data" icon="globe">
-    Retrieve data from external APIs and web pages
+  <Card title="Web Search" icon="globe">
+    Let supported providers search current public information through hosted Web Search.
   </Card>
-  <Card title="State History" icon="clock-rotate-left">
-    Access historical entity states and analyze trends
+  <Card title="Memory & Knowledge" icon="brain">
+    Combine persistent memory, expiring temporary memory, Knowledge Library sources, and retained conversation archives.
   </Card>
-  <Card title="Skills System" icon="puzzle-piece">
-    Extend AI capabilities with reusable skill modules
+  <Card title="Voice Identity" icon="users">
+    Scope retained personal data by Home Assistant user, voice device, shared household, or no-personal-data policies.
   </Card>
-  <Card title="Function Types" icon="function">
-    Multiple function types: native, template, script, REST, scrape, composite, and SQLite
+  <Card title="Quiet Hours" icon="volume-low">
+    Reduce Assist satellite volume and optionally suppress wake-word sounds on a daily schedule.
+  </Card>
+  <Card title="Request Rules" icon="route">
+    Handle predictable phrases locally or route selected requests without relying on free-form model interpretation.
+  </Card>
+  <Card title="Function Tools & Groups" icon="function">
+    Add custom tools and keep large tool collections efficient with optional on-demand Function Groups.
+  </Card>
+  <Card title="Skills" icon="puzzle-piece">
+    Give agents reusable instruction sets that can be loaded when needed.
+  </Card>
+  <Card title="Guest Mode" icon="user-lock">
+    Apply a backend-enforced visitor policy to entities, functions, Knowledge, memory, and retained conversations.
+  </Card>
+  <Card title="Conversation management" icon="messages">
+    Continue recent conversations, trim or summarize long context, and optionally retain searchable archives.
+  </Card>
+  <Card title="Operations & recovery" icon="wrench">
+    Inspect usage and requests, refresh model data, run diagnostics, and create full private agent backups.
   </Card>
 </Columns>
 
-## How It Works
-
-Extended OpenAI Conversation (Responses) leverages OpenAI's [function calling](https://platform.openai.com/docs/guides/function-calling) feature to enable the AI to interact with Home Assistant services.
-
-Since OpenAI models already understand how to control smart home devices, you simply need to expose your entities through the [Voice Assistants](https://my.home-assistant.io/redirect/voice_assistants/) interface.
-
-<Note>
-  The AI uses the exposed entities to understand your home's capabilities and generate appropriate service calls.
-</Note>
-
-## Quick Example
-
-<Steps>
-  <Step title="Ask a question">
-    "Turn on the living room lights"
-  </Step>
-  <Step title="AI understands">
-    The model identifies which service to call (`light.turn_on`)
-  </Step>
-  <Step title="Function executes">
-    The component calls the service with the correct entity
-  </Step>
-  <Step title="Confirmation">
-    You receive a natural language confirmation
-  </Step>
-</Steps>
-
-## Get Started
+## Start here
 
 <CardGroup cols={2}>
   <Card title="Installation" icon="download" href="/installation">
-    Install the component via HACS or manually
+    Install the integration and connect a provider.
   </Card>
   <Card title="Configuration" icon="sliders" href="/configuration">
-    Configure options and customize behavior
+    Understand the current sidebar management interface and main agent settings.
   </Card>
-  <Card title="Functions" icon="code" href="/functions/overview">
-    Learn about available function types
+  <Card title="Home Assistant access" icon="shield" href="/features/home-assistant-access">
+    Understand Assist exposure, Home Assistant user permissions, and Extended OpenAI restrictions.
   </Card>
-  <Card title="Skills" icon="graduation-cap" href="/skills/overview">
-    Extend capabilities with skills
+  <Card title="Troubleshooting" icon="life-ring" href="/troubleshooting">
+    Diagnose provider, tool, configuration, and Home Assistant integration issues.
   </Card>
 </CardGroup>
+
+## Feature guides
+
+Use the navigation for detailed guides. Good starting points include:
+
+- [Conversation continuity](/features/conversation-continuity) and [context management](/features/context-management)
+- [Persistent memory](/features/persistent-memory), [temporary memory](/features/temporary-memory), [Knowledge Library](/features/knowledge-library), and [conversation archive](/features/conversation-archive)
+- [Voice Identity](/features/voice-identity), [voice follow-ups](/features/voice-followups), [speech processing](/features/speech-processing), and [Quiet Hours](/features/quiet-hours)
+- [Request Rules](/features/request-rules), [Function Groups](/features/function-groups), and the [Function reference](/functions/overview)
+- [Guest Mode](/features/guest-mode), [model data](/features/model-data), [usage statistics](/features/usage-statistics), and [Backup & Restore](/features/backup-restore)
+
+## Permissions and privacy
+
+Assist exposure determines which entities are normally available to conversation agents, but exposure does not grant every authenticated user control permission. Model-driven actions are also checked against the requesting Home Assistant user's permissions. Guest Mode, Function Tool state, and other Extended OpenAI policies can restrict access further; they cannot elevate access Home Assistant has denied.
+
+For shared voice devices, configure [Voice Identity](/features/voice-identity) deliberately so personal memories and retained conversations are not attached to the wrong speaker simply because several people use the same satellite.
+
+## Reliability
+
+The integration is validated with layered automated testing rather than only isolated unit tests. The suite includes genuine Home Assistant acceptance tests, browser-to-Home-Assistant tests, upgrade testing from a previously published release to the candidate build, and selected cross-browser coverage. Runtime-sensitive areas such as authorization, entity/service lifecycle changes, backup restoration, conversation ownership, and delayed execution have dedicated real-Home-Assistant coverage.
+
+## OpenAI API billing
+
+A ChatGPT subscription is not an OpenAI API subscription. This integration sends requests to the configured API provider, and API usage may be billed separately by that provider. Keep provider credentials private.

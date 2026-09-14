@@ -1,62 +1,56 @@
 # Extended OpenAI Conversation (Responses)
 
-**Extended OpenAI Conversation (Responses)** is a Home Assistant conversation integration for OpenAI and compatible providers. It combines Home Assistant tool use with modern OpenAI features such as the Responses API, Web Search, persistent memory, reasoning controls, and richer conversation management.
+**Extended OpenAI Conversation (Responses)** is a Home Assistant conversation integration for OpenAI and compatible providers. It combines Home Assistant entity and service access with modern model APIs, Web Search, memory, voice features, custom Function Tools, privacy controls, and a dedicated management interface.
 
 The project began as a fork of [jekalmin/extended_openai_conversation](https://github.com/jekalmin/extended_openai_conversation), but has since diverged substantially while retaining the original project's flexible custom-function framework.
 
 ## What can it do?
 
-- Control exposed Home Assistant entities and call Home Assistant services.
-- Query entity history and use it in answers.
-- Use either Chat Completions or the Responses API.
-- Search the web through OpenAI's hosted Web Search tool when supported.
-- Remember selected facts across conversations.
+- Control Assist-exposed Home Assistant entities and call services, subject to the requesting Home Assistant user's permissions and any stricter Extended OpenAI policy.
+- Use either Chat Completions or the Responses API with model-aware response and reasoning controls.
+- Search current public information through supported hosted Web Search.
+- Use persistent memory, expiring temporary memory, a Knowledge Library, and retained conversation archives for different kinds of reusable context.
+- Continue recent conversations and trim or summarize older context when conversations grow large.
+- Map voice devices to Home Assistant users, shared-household data, or no-personal-data scopes with Voice Identity.
 - Keep voice satellites listening when an immediate follow-up is expected.
-- Manage long conversation context by retaining or summarizing older turns.
-- Load reusable skills per conversation agent.
-- Define custom tools using Home Assistant scripts, templates, REST requests, scraping, composites, SQLite, and native functions.
-- Track provider-reported request and token usage.
-- Test an agent's configuration from the Home Assistant UI.
+- Clean Markdown, citations and URLs from spoken output without replacing the original retained response.
+- Apply Quiet Hours to lower Assist satellite volume and optionally suppress wake-word sounds on a daily schedule.
+- Handle predictable phrases locally or route requests with Request Rules.
+- Define custom Function Tools, including durable delayed execution, and organize large tool collections with optional on-demand Function Groups.
+- Load reusable Skills per conversation agent.
+- Apply Guest Mode as a backend-enforced visitor restriction layer.
+- Track usage, inspect requests, run diagnostics, refresh model capability data, and create full private agent backups.
 - Provide model-backed AI Task agents.
 
 ## Start here
 
-New to the integration? Follow these two guides in order:
+1. [Install the integration](installation.mdx)
+2. [Configure the assistant](configuration.mdx)
+3. Review [Home Assistant access and permissions](features/home-assistant-access.md), especially for multi-user or shared-voice installations.
 
-1. [Install the integration](getting-started/installation.md)
-2. [Complete first setup](getting-started/setup.md)
+The GitHub Pages navigation is the canonical user-facing feature manual. The in-app Guide provides shorter contextual help and links users back to the relevant management areas.
 
-After that, the [configuration guide](configuration.md) explains the main options and links to detailed feature guides.
+## Feature guides
 
-## Common examples
+Useful starting points include:
 
-Once your entities are exposed and the appropriate features are enabled, you can ask things like:
+- [Responses API](features/responses-api.md) and [Web Search](features/web-search.md)
+- [Conversation continuity](features/conversation-continuity.md) and [context management](features/context-management.md)
+- [Persistent memory](features/persistent-memory.md), [temporary memory](features/temporary-memory.md), [Knowledge Library](features/knowledge-library.md), and [conversation archive](features/conversation-archive.md)
+- [Voice Identity](features/voice-identity.md), [voice follow-ups](features/voice-followups.md), [speech processing](features/speech-processing.md), and [Quiet Hours](features/quiet-hours.md)
+- [Request Rules](features/request-rules.md), [Function Groups](features/function-groups.md), [delayed Function Tools](features/delayed-function-tools.md), and [custom functions](functions/overview.mdx)
+- [Guest Mode](features/guest-mode.md), [model data](features/model-data.md), [usage statistics](features/usage-statistics.md), [request debugging](features/request-debugging.md), and [Backup & Restore](features/backup-restore.md)
 
-> Turn off everything downstairs except the hallway light.
+## Permissions and privacy
 
-> Was the kitchen window left open overnight?
+Assist exposure controls which normal Home Assistant entities are available to conversation agents, but exposure does not by itself grant every user control permission. Model-driven actions are also checked against the requesting Home Assistant user's permissions. Guest Mode and other Extended OpenAI policies can narrow access further; they cannot elevate access that Home Assistant has denied.
 
-> Remember that I prefer temperatures in Celsius.
+For shared voice devices, configure Voice Identity deliberately so personal memories and retained conversations are not attached to the wrong speaker merely because several people use the same satellite.
 
-> What's the latest Home Assistant release?
+## Reliability
 
-> Create an automation that turns on the porch light when I arrive home after sunset.
+Testing includes unit/integration coverage, genuine Home Assistant acceptance tests, browser-to-Home-Assistant tests, upgrade testing from previously published releases, and selected cross-browser checks. Runtime-sensitive areas such as authorization, entity/service lifecycle changes, backup restoration, conversation ownership, and delayed execution have dedicated real-Home-Assistant coverage.
 
-What the assistant can actually do depends on the model, provider, exposed entities, functions, and enabled features.
+## OpenAI API billing
 
-## New to OpenAI APIs?
-
-A ChatGPT subscription is not an OpenAI API subscription. This integration sends requests to the configured API provider and API usage may be billed separately by that provider.
-
-For direct OpenAI usage, create an API key through the OpenAI platform and keep it private.
-
-## Next steps
-
-- [Configuration](configuration.md)
-- [Responses API](features/responses-api.md)
-- [Web Search](features/web-search.md)
-- [Persistent memory](features/persistent-memory.md)
-- [Conversation archive, privacy, and voice ownership](features/conversation-archive.md)
-- [Voice follow-ups](features/voice-followups.md)
-- [Custom functions](functions/index.md)
-- [Troubleshooting](troubleshooting.md)
+A ChatGPT subscription is not an OpenAI API subscription. This integration sends requests to the configured API provider and API usage may be billed separately by that provider. Keep provider credentials private.
