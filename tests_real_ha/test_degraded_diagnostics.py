@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import conversation as runtime
+from custom_components.extended_openai_conversation_responses import knowledge as knowledge_module
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_KNOWLEDGE_ENABLED,
     CONF_TEMPORARY_MEMORY,
@@ -35,13 +35,18 @@ async def test_diagnostics_remain_safe_and_useful_when_optional_subsystem_failed
 ) -> None:
     """A degraded optional subsystem must not break diagnostics or the live agent."""
 
-    async def broken_knowledge(*args, **kwargs):
-        del args, kwargs
+    async def broken_knowledge_load(self):
+        del self
         raise RuntimeError("simulated knowledge initialization failure")
 
-    # Fail one optional subsystem during the real conversation entity lifecycle.
-    # The entity deliberately catches this failure and remains usable.
-    monkeypatch.setattr(runtime, "async_get_knowledge", broken_knowledge)
+    # Fail Knowledge at its actual Home Assistant storage boundary. This keeps the
+    # real async_get_knowledge/lifecycle path intact while deterministically making
+    # initialization fail after the manager has been constructed.
+    monkeypatch.setattr(
+        knowledge_module.HomeAssistantKnowledgeStorage,
+        "async_load",
+        broken_knowledge_load,
+    )
 
     entry = _make_entry(
         "Degraded Diagnostics",
