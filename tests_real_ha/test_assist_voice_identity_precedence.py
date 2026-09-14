@@ -114,11 +114,19 @@ async def test_genuine_assist_prefers_satellite_voice_identity_when_both_ids_exi
     satellite_user = _add_user(hass, _SATELLITE_USER_ID, "Satellite User")
     entry, agent = await _agent(hass, device_user, satellite_user)
 
-    delivered_inputs: list[Any] = []
+    # Assert the test itself really configured both possible Voice Identity owners.
+    mappings = agent.subentry.data[CONF_VOICE_DEVICE_MAPPINGS]
+    assert mappings[_DEVICE_ID] == device_user.id
+    assert mappings[_SATELLITE_ID] == satellite_user.id
+
+    delivered_identities: list[tuple[str | None, str | None]] = []
     original_process = agent.async_process
 
     async def capture_input(user_input: Any):
-        delivered_inputs.append(user_input)
+        # Snapshot at the exact agent ingress boundary. Do not retain the mutable
+        # ConversationInput object and inspect it after processing, because HA or an
+        # agent may legitimately mutate/reuse request objects during the turn.
+        delivered_identities.append((user_input.device_id, user_input.satellite_id))
         return await original_process(user_input)
 
     monkeypatch.setattr(agent, "async_process", capture_input)
@@ -134,22 +142,25 @@ async def test_genuine_assist_prefers_satellite_voice_identity_when_both_ids_exi
 
     intent_end = _event(events, PipelineEventType.INTENT_END)
     assert intent_end.data is not None
-    assert intent_end.data["intent_output"]["response"]["speech"]["plain"]["speech"] == _RESPONSE_TEXT
+    assert (
+        intent_end.data["intent_output"]["response"]["speech"]["plain"]["speech"]
+        == _RESPONSE_TEXT
+    )
 
-    assert len(delivered_inputs) == 1
-    delivered = delivered_inputs[0]
-    assert delivered.device_id == _DEVICE_ID
+    assert len(delivered_identities) == 1
+    delivered_device_id, delivered_satellite_id = delivered_identities[0]
+    assert delivered_device_id == _DEVICE_ID
     # HA releases differ at this boundary: some expose satellite_id in the pipeline
-    # event but do not forward it into ConversationInput. The integration can only
+    # event but do not forward it into ConversationInput. ExtendedOpenAI can only
     # apply satellite precedence when HA actually supplies that field to the agent.
-    assert delivered.satellite_id in (None, _SATELLITE_ID)
+    assert delivered_satellite_id in (None, _SATELLITE_ID)
 
     subentry = _conversation_subentry(entry)
     archive = await async_get_archive(hass, entry.entry_id, subentry.subentry_id)
     satellite_sessions = await archive.async_list_sessions(f"user:{satellite_user.id}")
     device_sessions = await archive.async_list_sessions(f"user:{device_user.id}")
 
-    if delivered.satellite_id == _SATELLITE_ID:
+    if delivered_satellite_id == _SATELLITE_ID:
         assert device_sessions["sessions"] == []
         assert len(satellite_sessions["sessions"]) == 1
         session = satellite_sessions["sessions"][0]
