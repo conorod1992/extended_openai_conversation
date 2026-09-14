@@ -209,7 +209,7 @@ async def test_same_title_recreation_gets_fresh_storage_and_runtime_identity(
             owner_scope, owner_scope_id=owner_scope
         )
     ] == [_TEMPORARY_MARKER]
-    assert (await old_archive.async_search(scope.scope_id, "violet orbit"))["results"]
+    assert (await old_archive.async_search(scope.scope_id, "violet-orbit"))["results"]
     assert old_usage.totals.conversation_count == 1
     assert old_usage.totals.api_request_count == 1
     assert len(old_usage.requests) == 1
@@ -267,7 +267,7 @@ async def test_same_title_recreation_gets_fresh_storage_and_runtime_identity(
         )
         == []
     )
-    assert (await new_agent._archive.async_search(scope.scope_id, "violet orbit"))[
+    assert (await new_agent._archive.async_search(scope.scope_id, "violet-orbit"))[
         "results"
     ] == []
     assert new_agent._archive.stats()["session_count"] == 0
@@ -293,7 +293,7 @@ async def test_same_title_recreation_gets_fresh_storage_and_runtime_identity(
             owner_scope, owner_scope_id=owner_scope
         )
     ] == [_TEMPORARY_MARKER]
-    assert (await old_archive.async_search(scope.scope_id, "violet orbit"))["results"]
+    assert (await old_archive.async_search(scope.scope_id, "violet-orbit"))["results"]
     assert old_usage.totals.api_request_count == 1
 
     # Finally cross the public Assist/provider seam. Old Memory/Temporary Memory must
