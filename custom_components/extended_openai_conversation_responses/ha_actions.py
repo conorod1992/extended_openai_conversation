@@ -46,6 +46,17 @@ async def async_call_ha_action(
     context = context or get_active_ha_context()
     entity_ids = _resolve_target_entity_ids(hass, data, target)
     await async_require_control_permission(hass, entity_ids, context=context)
+
+    # Area/device/floor/label membership can change while an async permission
+    # check is in progress. Never dispatch an action to a different resolved set
+    # than the one that was authorized; require a fresh request instead.
+    resolved_after_authorization = _resolve_target_entity_ids(hass, data, target)
+    if resolved_after_authorization != entity_ids:
+        raise HomeAssistantError(
+            "Home Assistant target changed while authorization was in progress; "
+            "please retry"
+        )
+
     return await _async_call_ha_action_unchecked(
         hass,
         domain,
