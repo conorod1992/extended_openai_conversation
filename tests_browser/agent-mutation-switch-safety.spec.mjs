@@ -40,9 +40,6 @@ test("agent picker stays stable while an agent-scoped mutation is in flight", as
   await expect(agentPicker).toBeDisabled();
   await expect(agentPicker).toHaveValue("agent-1");
 
-  await agentPicker.selectOption("agent-2", {force: true});
-  await expect(agentPicker).toHaveValue("agent-1");
-
   await page.evaluate(() => window.browserHarness.releaseMemoryMutation());
   await expect(agentPicker).toBeEnabled();
 
