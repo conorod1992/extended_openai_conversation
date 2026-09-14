@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 import json
+from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses import entity as entity_module
-from custom_components.extended_openai_conversation_responses.entity import (
-    ExtendedOpenAIBaseLLMEntity,
-)
 from custom_components.extended_openai_conversation_responses import (
     function_tool_resolution,
+)
+from custom_components.extended_openai_conversation_responses.entity import (
+    ExtendedOpenAIBaseLLMEntity,
 )
 
 
@@ -126,7 +126,7 @@ async def test_successful_request_usage_failure_appends_unresolved_results(
     call = SimpleNamespace(id="tool-call", tool_name="demo", tool_args={})
     chat_log = _ChatLog([_AssistantContent([call])])
     provider_loop_entity._usage = _UsageFailure()
-    append_unresolved = AsyncMock()
+    append_unresolved = Mock()
     monkeypatch.setattr(entity_module, "append_unresolved_tool_results", append_unresolved)
 
     with pytest.raises(RuntimeError, match="usage write failed"):
@@ -176,7 +176,7 @@ async def test_function_group_loader_failure_appends_unresolved_results(
     """A loader exception marks that call unresolved before propagating."""
     call = _loader_call()
     chat_log = _ChatLog([_AssistantContent([call])])
-    append_unresolved = AsyncMock()
+    append_unresolved = Mock()
     monkeypatch.setattr(entity_module, "append_unresolved_tool_results", append_unresolved)
 
     def failing_loader(_groups):
