@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from types import SimpleNamespace
 from typing import Any
 
@@ -239,21 +239,19 @@ async def test_restore_wins_collision_and_due_tool_uses_restored_configuration(
 
     restore_entered = asyncio.Event()
     release_restore = asyncio.Event()
-    original_apply_restore = backup._apply_restore  # noqa: SLF001
-    apply_count = 0
+    original_exclusive = gate.exclusive
 
-    async def blocking_apply_restore(managers: Any, prepared: Any) -> None:
-        nonlocal apply_count
-        apply_count += 1
-        if apply_count == 1:
-            # The guarded public restore cannot reach this point until it owns the
-            # exclusive maintenance lease. Hold it here while the due call queues.
+    @asynccontextmanager
+    async def blocking_exclusive():
+        async with original_exclusive():
+            # Pause only after the production gate has genuinely granted the writer
+            # lease. This avoids depending on backup internals as synchronization hooks.
             assert gate._writer_active is True  # noqa: SLF001
             restore_entered.set()
             await release_restore.wait()
-        await original_apply_restore(managers, prepared)
+            yield
 
-    monkeypatch.setattr(backup, "_apply_restore", blocking_apply_restore)
+    monkeypatch.setattr(gate, "exclusive", blocking_exclusive)
 
     restore_task = asyncio.create_task(
         backup.async_restore_backup(hass, agent.entry, subentry, target_snapshot)
@@ -338,15 +336,6 @@ async def test_due_tool_wins_collision_and_restore_waits_for_exactly_once_comple
 
     monkeypatch.setattr(agent, "_execute_function_tool", blocking_delayed_execute)
 
-    restore_apply_entered = asyncio.Event()
-    original_apply_restore = backup._apply_restore  # noqa: SLF001
-
-    async def observed_apply_restore(managers: Any, prepared: Any) -> None:
-        restore_apply_entered.set()
-        await original_apply_restore(managers, prepared)
-
-    monkeypatch.setattr(backup, "_apply_restore", observed_apply_restore)
-
     due_task = asyncio.create_task(
         _execute_due_under_production_lease(hass, manager, call_id)
     )
@@ -359,10 +348,9 @@ async def test_due_tool_wins_collision_and_restore_waits_for_exactly_once_comple
     )
     await _wait_for_writer(gate)
 
-    # Restore is now definitely trying to acquire exclusivity, but cannot enter the
-    # mutable restore body while the delayed side effect/finalization lease is live.
+    # Restore is now definitely trying to acquire exclusivity, but cannot mutate the
+    # agent while the delayed side effect/finalization lease is live.
     assert not restore_task.done()
-    assert not restore_apply_entered.is_set()
     live_entry = hass.config_entries.async_get_entry(agent.entry.entry_id)
     assert live_entry is not None
     assert live_entry.subentries[subentry.subentry_id].title == original_title
@@ -376,7 +364,6 @@ async def test_due_tool_wins_collision_and_restore_waits_for_exactly_once_comple
 
     restored = await restore_task
     assert restored["status"] == "restored"
-    assert restore_apply_entered.is_set()
     await hass.async_block_till_done()
 
     # The restore may refresh/reload the live entity, but it cannot retroactively
