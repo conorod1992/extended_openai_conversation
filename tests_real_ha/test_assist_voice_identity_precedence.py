@@ -6,6 +6,9 @@ from typing import Any
 
 from pytest_homeassistant_custom_component.common import MockUser
 
+from custom_components.extended_openai_conversation_responses import (
+    conversation as extended_conversation,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     CONF_API_MODE,
@@ -109,12 +112,11 @@ async def test_genuine_assist_prefers_satellite_voice_identity_when_both_ids_exi
     hass: HomeAssistant,
     monkeypatch: Any,
 ) -> None:
-    """Use satellite identity whenever the HA ConversationInput actually carries it."""
+    """Prefer satellite identity at the production data-scope resolution boundary."""
     device_user = _add_user(hass, _DEVICE_USER_ID, "Device User")
     satellite_user = _add_user(hass, _SATELLITE_USER_ID, "Satellite User")
     entry, agent = await _agent(hass, device_user, satellite_user)
 
-    # Assert the test itself really configured both possible Voice Identity owners.
     mappings = agent.subentry.data[CONF_VOICE_DEVICE_MAPPINGS]
     assert mappings[_DEVICE_ID] == device_user.id
     assert mappings[_SATELLITE_ID] == satellite_user.id
@@ -123,13 +125,23 @@ async def test_genuine_assist_prefers_satellite_voice_identity_when_both_ids_exi
     original_process = agent.async_process
 
     async def capture_input(user_input: Any):
-        # Snapshot at the exact agent ingress boundary. Do not retain the mutable
-        # ConversationInput object and inspect it after processing, because HA or an
-        # agent may legitimately mutate/reuse request objects during the turn.
         delivered_identities.append((user_input.device_id, user_input.satellite_id))
         return await original_process(user_input)
 
     monkeypatch.setattr(agent, "async_process", capture_input)
+
+    resolved_scopes: list[tuple[str | None, Any]] = []
+    original_resolve_data_scope = extended_conversation.resolve_data_scope
+
+    def capture_resolved_scope(context: Any, options: Any):
+        scope = original_resolve_data_scope(context, options)
+        resolved_scopes.append((getattr(context, "device_id", None), scope))
+        return scope
+
+    monkeypatch.setattr(
+        extended_conversation, "resolve_data_scope", capture_resolved_scope
+    )
+
     wire = _install_wire(monkeypatch, agent, [_chat_sse_text(_RESPONSE_TEXT)])
     events = await _run_genuine_assist(hass, pipeline_id=agent.entity_id)
 
@@ -147,34 +159,33 @@ async def test_genuine_assist_prefers_satellite_voice_identity_when_both_ids_exi
         == _RESPONSE_TEXT
     )
 
-    assert len(delivered_identities) == 1
-    delivered_device_id, delivered_satellite_id = delivered_identities[0]
-    assert delivered_device_id == _DEVICE_ID
-    # HA releases differ at this boundary: some expose satellite_id in the pipeline
-    # event but do not forward it into ConversationInput. ExtendedOpenAI can only
-    # apply satellite precedence when HA actually supplies that field to the agent.
-    assert delivered_satellite_id in (None, _SATELLITE_ID)
+    assert delivered_identities == [(_DEVICE_ID, _SATELLITE_ID)]
 
+    # This is the integration's actual Voice Identity decision boundary.  The
+    # genuine Assist turn must hand the satellite identifier to scope resolution,
+    # and that mapping must resolve to the satellite-owned personal scope.
+    assert len(resolved_scopes) == 1
+    resolved_source_id, resolved_scope = resolved_scopes[0]
+    assert resolved_source_id == _SATELLITE_ID
+    assert resolved_scope.scope_id == f"user:{satellite_user.id}"
+    assert resolved_scope.scope_type == "user"
+    assert resolved_scope.source == "device_mapping"
+    assert resolved_scope.device_id == _SATELLITE_ID
+
+    # Archive is exercised end-to-end as well, but ownership is deliberately not
+    # used as an indirect proxy for the precedence decision above.
     subentry = _conversation_subentry(entry)
     archive = await async_get_archive(hass, entry.entry_id, subentry.subentry_id)
-    satellite_sessions = await archive.async_list_sessions(f"user:{satellite_user.id}")
-    device_sessions = await archive.async_list_sessions(f"user:{device_user.id}")
-
-    if delivered_satellite_id == _SATELLITE_ID:
-        assert device_sessions["sessions"] == []
-        assert len(satellite_sessions["sessions"]) == 1
-        session = satellite_sessions["sessions"][0]
-        assert session["scope_id"] == f"user:{satellite_user.id}"
-        assert session["source_device_id"] == _SATELLITE_ID
-    else:
-        assert satellite_sessions["sessions"] == []
-        assert len(device_sessions["sessions"]) == 1
-        session = device_sessions["sessions"][0]
-        assert session["scope_id"] == f"user:{device_user.id}"
-        assert session["source_device_id"] == _DEVICE_ID
-
-    assert session["scope_type"] == "user"
-    assert session["scope_source"] == "device_mapping"
+    sessions = [
+        *(
+            await archive.async_list_sessions(f"user:{satellite_user.id}")
+        )["sessions"],
+        *(
+            await archive.async_list_sessions(f"user:{device_user.id}")
+        )["sessions"],
+    ]
+    assert len(sessions) == 1
+    session = sessions[0]
     assert session["home_assistant_conversation_id"] == _CONVERSATION_ID
     assert session["turn_count"] == 1
     assert session["retention_state"] == "retained"
