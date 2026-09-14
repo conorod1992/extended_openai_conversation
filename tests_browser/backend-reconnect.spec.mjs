@@ -30,15 +30,18 @@ test("mounted management panel recovers after HA backend disconnect and reconnec
   await expect(page).toHaveURL(/\/extended-openai\/usage-maintenance\/usage$/);
   await expect.poll(async () => page.evaluate(() => window.browserHarness.backendDisconnectAttempts)).toBeGreaterThan(0);
 
-  // A failed section load must not tear down the mounted panel. The current
-  // successfully rendered section remains usable until a later navigation can
-  // load data again; the panel does not promise a dedicated disconnect alert.
-  await expect(panel.getByRole("heading", {name: "Knowledge Library", exact: true})).toBeVisible();
+  // A disconnected backend must not tear down the mounted panel. The requested
+  // section still renders with explicit unavailable states for backend-backed
+  // data, while locally renderable usage content remains usable.
+  await expect(panel.getByRole("heading", {name: "Input footprint", exact: true})).toBeVisible();
+  await expect(panel.getByText("Usage summary unavailable", {exact: true})).toBeVisible();
+  await expect(panel.getByText(/Home Assistant backend disconnected/).first()).toBeVisible();
   const disconnectedState = await page.evaluate(() => ({
     marker: window.browserHarness.panel.__reconnectMarker,
     connected: window.browserHarness.panel.isConnected,
+    samePanel: window.browserHarness.panel === document.querySelector("extended-openai-management-panel"),
   }));
-  expect(disconnectedState).toEqual({marker, connected: true});
+  expect(disconnectedState).toEqual({marker, connected: true, samePanel: true});
 
   await page.evaluate(() => { window.browserHarness.backendOnline = true; });
   await panel.locator('.top-nav button[data-page="capabilities"]').click();
