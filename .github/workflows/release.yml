@@ -105,6 +105,20 @@ jobs:
           python scripts/set_release_version.py --check
           git diff --check
 
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Install Playwright test runner
+        run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+
+      - name: Install Firefox and WebKit
+        run: npx playwright install --with-deps firefox webkit
+
+      - name: Verify Firefox and WebKit critical browser paths
+        run: npx playwright test --config=playwright.cross-browser-smoke.config.mjs
+
       - name: Install stable Home Assistant test harness
         run: |
           python -m pip install --upgrade pip

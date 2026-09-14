@@ -1,0 +1,51 @@
+name: Cross-browser smoke
+
+on:
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "playwright.cross-browser-smoke.config.mjs"
+      - ".github/workflows/cross-browser-smoke.yml"
+
+concurrency:
+  group: cross-browser-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Firefox and WebKit critical paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Install Playwright test runner
+        run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+
+      - name: Install Firefox and WebKit
+        run: npx playwright install --with-deps firefox webkit
+
+      - name: Run critical functional smoke journeys
+        run: npx playwright test --config=playwright.cross-browser-smoke.config.mjs
+
+      - name: Upload cross-browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cross-browser-smoke-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 7
