@@ -19,6 +19,34 @@ async function waitForMarker(name, timeout = 45_000) {
   await expect.poll(() => fs.existsSync(marker(name)), {timeout}).toBe(true);
 }
 
+async function clearOptionalHttpConfirmation(page, panel) {
+  const title = panel.locator('[data-config="__title"]');
+  const confirmHttpSettings = page.getByRole("button", {name: "Confirm", exact: true});
+
+  // Depending on whether HA has already persisted acknowledgement of the staged
+  // HTTP settings, startup either reaches the panel directly or first presents
+  // its one-time confirmation dialog. Both are valid HA startup states.
+  await expect.poll(async () => (
+    await title.isVisible().catch(() => false)
+    || await confirmHttpSettings.isVisible().catch(() => false)
+  )).toBe(true);
+
+  if (!await confirmHttpSettings.isVisible().catch(() => false)) {
+    return;
+  }
+
+  await confirmHttpSettings.click();
+  await expect(confirmHttpSettings).toHaveCount(0);
+
+  // Acknowledging the dialog can rebuild/navigate HA's shell. Re-enter before
+  // establishing the browser state that must survive the later process death.
+  await page.goto(`${baseUrl}/extended-openai/assistant/basics`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect(page.locator("home-assistant")).toHaveCount(1);
+  await expect(panel).toHaveCount(1);
+}
+
 test("open Home Assistant page survives a real backend process death and restart", async ({context, page}) => {
   const authData = JSON.parse(authDataRaw);
   const integrationPageErrors = [];
@@ -41,26 +69,7 @@ test("open Home Assistant page survives a real backend process death and restart
   await expect(page.locator("home-assistant")).toHaveCount(1);
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel).toHaveCount(1);
-
-  // This standalone HA process intentionally binds a random loopback port instead
-  // of HA's defaults. HA presents its own one-time confirmation dialog for that
-  // HTTP configuration, and the modal blocks clicks on the integration panel until
-  // it is acknowledged. Confirm it explicitly so the restart journey tests the
-  // ExtendedOpenAI panel rather than timing out behind HA's safety dialog.
-  const confirmHttpSettings = page.getByRole("button", {name: "Confirm", exact: true});
-  await expect(confirmHttpSettings).toBeVisible();
-  await confirmHttpSettings.click();
-  await expect(confirmHttpSettings).toHaveCount(0);
-
-  // Confirming HA's one-time HTTP settings can rebuild or navigate the shell.
-  // Re-enter the integration route before establishing the state that must
-  // survive the later backend process death; there is deliberately no reload
-  // after the restart-under-test begins below.
-  await page.goto(`${baseUrl}/extended-openai/assistant/basics`, {
-    waitUntil: "domcontentloaded",
-  });
-  await expect(page.locator("home-assistant")).toHaveCount(1);
-  await expect(panel).toHaveCount(1);
+  await clearOptionalHttpConfirmation(page, panel);
   await expect(panel.locator('[data-config="__title"]')).toBeVisible();
 
   const title = panel.locator('[data-config="__title"]');
