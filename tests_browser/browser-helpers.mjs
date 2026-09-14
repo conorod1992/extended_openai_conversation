@@ -33,7 +33,7 @@ export function trackPageErrors(page) {
 
 export async function expectHarnessClean(page, diagnostics) {
   const harness = await page.evaluate(() => ({errors: window.browserHarness?.windowErrors || [], rejections: window.browserHarness?.rejections || []}));
-  expect(diagnostics).toEqual([]);
+  expect(diagnostics).toHaveLength(0);
   expect(diagnostics.consoleErrors || []).toEqual([]);
   expect(diagnostics.requestFailures || []).toEqual([]);
   expect(diagnostics.badResponses || []).toEqual([]);
