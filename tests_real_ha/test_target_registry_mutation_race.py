@@ -1,0 +1,119 @@
+"""Real-HA acceptance for indirect target registry mutation during authorization."""
+
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+
+from custom_components.extended_openai_conversation_responses import ha_actions
+from homeassistant.const import ATTR_AREA_ID
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
+
+_WAIT_TIMEOUT = 10
+_DOMAIN = "registry_race_test"
+_SERVICE = "mark"
+
+
+@pytest.mark.asyncio
+async def test_registry_reassignment_between_resolution_and_dispatch_fails_closed(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An indirect target may not change membership after authorization starts."""
+    area_registry = ar.async_get(hass)
+    device_registry = dr.async_get(hass)
+    entity_registry = er.async_get(hass)
+
+    area_a = area_registry.async_create("Registry race A")
+    area_b = area_registry.async_create("Registry race B")
+    device = device_registry.async_get_or_create(
+        config_entry_id="registry-race-entry",
+        identifiers={("registry_race_test", "device")},
+        name="Registry race device",
+    )
+    device = device_registry.async_update_device(device.id, area_id=area_a.id)
+    entity = entity_registry.async_get_or_create(
+        domain="light",
+        platform="registry_race_test",
+        unique_id="registry-race-light",
+        suggested_object_id="registry_race_light",
+        device_id=device.id,
+    )
+    entity_id = entity.entity_id
+    hass.states.async_set(entity_id, "off")
+    await hass.async_block_till_done()
+
+    service_calls: list[ServiceCall] = []
+
+    async def service_handler(call: ServiceCall) -> None:
+        service_calls.append(call)
+
+    hass.services.async_register(_DOMAIN, _SERVICE, service_handler)
+
+    permission_entered = asyncio.Event()
+    allow_permission = asyncio.Event()
+    permission_calls = 0
+
+    async def gated_permission(
+        _hass: HomeAssistant,
+        entity_ids: set[str],
+        *,
+        context=None,
+    ) -> None:
+        nonlocal permission_calls
+        del _hass, context
+        permission_calls += 1
+        assert entity_ids == {entity_id}
+        if permission_calls == 1:
+            permission_entered.set()
+            await allow_permission.wait()
+
+    monkeypatch.setattr(
+        ha_actions,
+        "async_require_control_permission",
+        gated_permission,
+    )
+
+    action_task = asyncio.create_task(
+        ha_actions.async_call_ha_action(
+            hass,
+            _DOMAIN,
+            _SERVICE,
+            data={ATTR_AREA_ID: area_a.id},
+            blocking=True,
+        )
+    )
+    await asyncio.wait_for(permission_entered.wait(), timeout=_WAIT_TIMEOUT)
+
+    # The first target resolution and authorization input are now fixed to the
+    # entity in area A. Move the device while the permission await is suspended;
+    # the same area selector no longer resolves to that authorized entity.
+    device_registry.async_update_device(device.id, area_id=area_b.id)
+    await hass.async_block_till_done()
+    allow_permission.set()
+
+    with pytest.raises(HomeAssistantError, match="target changed.*retry"):
+        await asyncio.wait_for(action_task, timeout=_WAIT_TIMEOUT)
+
+    assert service_calls == []
+    assert permission_calls == 1
+
+    # A fresh action using the current registry assignment remains healthy. The
+    # protection rejects only the stale in-flight resolution, not later requests.
+    await ha_actions.async_call_ha_action(
+        hass,
+        _DOMAIN,
+        _SERVICE,
+        data={ATTR_AREA_ID: area_b.id},
+        blocking=True,
+    )
+    assert len(service_calls) == 1
+    assert service_calls[0].data[ATTR_AREA_ID] == area_b.id
+    assert permission_calls == 2
