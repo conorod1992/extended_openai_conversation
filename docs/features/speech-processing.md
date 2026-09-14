@@ -2,25 +2,25 @@
 
 Configure spoken-output cleanup from **Extended OpenAI → Assistant → Speech**.
 
-Speech processing creates a TTS-safe version of the assistant response without replacing the original provider text stored in conversation history, archives, ChatLog and request context.
+Speech processing creates a cleaner version of the assistant response for text-to-speech without replacing the original model response stored in conversation history, archives, ChatLog and later conversation context.
 
 ## Built-in cleanup
 
-The built-in sanitizer can remove content that is useful on screen but awkward when spoken, including:
+The built-in cleanup can remove content that is useful on screen but awkward when spoken, including:
 
 - Markdown links and citation-style text
 - formatting markers
 - bare URLs
 
-The sanitizer is provider-neutral and works with Responses, Chat Completions and compatible-provider streams. It is stateful across streaming deltas, so a Markdown link or URL split across multiple provider chunks can still be removed before it reaches progressive TTS.
+It works with Responses, Chat Completions and compatible providers. It also keeps track of text across streamed chunks, so a Markdown link or URL split across several pieces can still be removed before it is spoken.
 
-Home Assistant currently uses a shared progressive listener for visual streaming and TTS. As a result, live visual deltas receive the same speech-safe progressive text, while the original provider response remains retained for history and later conversation context.
+Home Assistant currently uses the same progressive stream for live visual updates and TTS. This means the live on-screen stream also receives the speech-safe text, while the original model response is still retained for history and future conversation context.
 
-Responses API URL-citation annotations remain attached to the native response item for replay/context even though their spoken representation is cleaned.
+For Responses API replies, structured URL citation information is still retained with the original response even when the spoken version is cleaned.
 
 ## Custom replacements
 
-Advanced replacement rules use Python regular expressions and run in order on the **completed** response.
+Advanced replacement rules use Python regular expressions and run in order after the full response is complete.
 
 ```yaml
 - pattern: '\\[[0-9]+\\]'
@@ -29,12 +29,12 @@ Advanced replacement rules use Python regular expressions and run in order on th
   replacement: 'Home Assistant'
 ```
 
-Arbitrary regular expressions may depend on text that has not arrived yet, so configuring any custom replacement disables progressive TTS for that response. The completed response is cleaned first, then custom replacements are applied.
+Because a custom regular expression may depend on text that has not arrived yet, configuring any custom replacement disables progressive TTS for that response. Extended OpenAI waits for the completed answer, applies the normal cleanup, and then runs the custom replacements.
 
-Custom processing is bounded and isolated. Invalid saved rules, timeouts, worker failures, oversized input or excessive output growth cause the custom-replacement stage to fail open atomically to the speech text from before custom replacements. A partial replacement result is not spoken.
+Custom processing has safety limits. If a saved rule is invalid, takes too long, fails, receives too much input, or produces excessive output, Extended OpenAI falls back to the cleaned speech text from before the custom replacements. It will not speak a partially modified result.
 
 Use **Preview spoken text** in the Speech section to check the completed-response pipeline without making a provider request.
 
 ## What speech processing does not change
 
-Speech cleanup does not rewrite the assistant's canonical response for future model context. It is an output presentation layer for spoken text, not a second conversation-history format.
+Speech cleanup does not rewrite the assistant's original response for future model context. It only changes the version intended to be spoken aloud.
