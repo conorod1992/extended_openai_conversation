@@ -51,6 +51,16 @@ test("open Home Assistant page survives a real backend process death and restart
   await expect(confirmHttpSettings).toBeVisible();
   await confirmHttpSettings.click();
   await expect(confirmHttpSettings).toHaveCount(0);
+
+  // Confirming HA's one-time HTTP settings can rebuild or navigate the shell.
+  // Re-enter the integration route before establishing the state that must
+  // survive the later backend process death; there is deliberately no reload
+  // after the restart-under-test begins below.
+  await page.goto(`${baseUrl}/extended-openai/assistant/basics`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect(page.locator("home-assistant")).toHaveCount(1);
+  await expect(panel).toHaveCount(1);
   await expect(panel.locator('[data-config="__title"]')).toBeVisible();
 
   const title = panel.locator('[data-config="__title"]');
