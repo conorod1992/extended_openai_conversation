@@ -187,7 +187,9 @@ async def test_multiple_indirect_target_kinds_union_dedupe_and_exposure(
     )
 
     # area_id resolves A+B while device_id resolves A again. Because B is hidden,
-    # policy must reject the complete union before the service sees any subset.
+    # exposure validation fails the whole conversation turn before service dispatch.
+    # That fail-closed boundary is intentional: no partial action or tool result may
+    # be sent after the union has been rejected.
     failing_wire = _install_wire(
         monkeypatch,
         agent,
@@ -197,7 +199,6 @@ async def test_multiple_indirect_target_kinds_union_dedupe_and_exposure(
                 _TOOL_NAME,
                 _arguments(area.id, device_a.id, "must-not-run"),
             ),
-            _chat_sse_text("One resolved target is not exposed."),
         ],
     )
     failed = await _say(
@@ -207,21 +208,12 @@ async def test_multiple_indirect_target_kinds_union_dedupe_and_exposure(
     )
     await hass.async_block_till_done()
 
-    assert _speech(failed) == "One resolved target is not exposed."
+    assert failed.response.error_code is not None
     assert service_calls == []
     assert resolved_per_call == []
     assert hass.states[entity_a_id].state == "idle"
     assert hass.states[entity_b_id].state == "idle"
-    assert len(failing_wire.requests) == 2
-
-    failed_result = _tool_result(
-        failing_wire.requests[1]["body"], "call-multi-indirect-hidden"
-    )
-    assert "result" in failed_result
-    assert len(failed_result["result"]) == 1
-    error = failed_result["result"][0]
-    assert "error" in error
-    assert entity_b_id in error["error"]
+    assert len(failing_wire.requests) == 1
 
     # Expose B and repeat the identical overlapping selector pair. The service must
     # dispatch exactly once and HA's real resolver must yield each entity once.
