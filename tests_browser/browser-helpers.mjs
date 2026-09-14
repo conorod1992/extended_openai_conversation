@@ -1,10 +1,43 @@
 import {expect} from "@playwright/test";
 
 export const fixtureUrl = (route, extra = "") => `/tests_browser/fixture.html?route=${route}${extra}`;
-export function trackPageErrors(page) { const errors = []; page.on("pageerror", (error) => errors.push(error.message)); return errors; }
-export async function expectHarnessClean(page, pageErrors) {
+
+export function trackPageErrors(page) {
+  const diagnostics = [];
+  diagnostics.consoleErrors = [];
+  diagnostics.requestFailures = [];
+  diagnostics.badResponses = [];
+
+  page.on("pageerror", (error) => diagnostics.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() !== "error") return;
+    const location = message.location();
+    const suffix = location?.url
+      ? ` (${location.url}${location.lineNumber != null ? `:${location.lineNumber}` : ""})`
+      : "";
+    diagnostics.consoleErrors.push(`${message.text()}${suffix}`);
+  });
+  page.on("requestfailed", (request) => {
+    diagnostics.requestFailures.push(
+      `${request.method()} ${request.url()}: ${request.failure()?.errorText || "request failed"}`,
+    );
+  });
+  page.on("response", (response) => {
+    if (response.status() < 400) return;
+    diagnostics.badResponses.push(
+      `${response.status()} ${response.request().method()} ${response.url()}`,
+    );
+  });
+  return diagnostics;
+}
+
+export async function expectHarnessClean(page, diagnostics) {
   const harness = await page.evaluate(() => ({errors: window.browserHarness?.windowErrors || [], rejections: window.browserHarness?.rejections || []}));
-  expect(pageErrors).toEqual([]); expect(harness).toEqual({errors: [], rejections: []});
+  expect(diagnostics).toEqual([]);
+  expect(diagnostics.consoleErrors || []).toEqual([]);
+  expect(diagnostics.requestFailures || []).toEqual([]);
+  expect(diagnostics.badResponses || []).toEqual([]);
+  expect(harness).toEqual({errors: [], rejections: []});
 }
 export async function acceptConfirmation(panel) {
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
