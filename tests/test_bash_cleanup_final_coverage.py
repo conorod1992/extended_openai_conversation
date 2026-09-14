@@ -24,6 +24,10 @@ async def test_cleanup_cancels_and_awaits_pipe_readers_after_timeout(monkeypatch
 
     stdout_task = asyncio.create_task(stubborn_reader(stdout_cancelled))
     stderr_task = asyncio.create_task(stubborn_reader(stderr_cancelled))
+    # Let both tasks enter their coroutine before cleanup cancels them. Cancelling a
+    # task before its first scheduling turn prevents the coroutine body/finally block
+    # from running, which would make this assertion depend on event-loop timing.
+    await asyncio.sleep(0)
     process = SimpleNamespace(pid=1234, returncode=0)
 
     wait_for_calls = 0
