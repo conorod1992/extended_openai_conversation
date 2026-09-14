@@ -125,11 +125,12 @@ async def _interrupt_phase(hass: Any, config_dir: Path, mode: str) -> None:
         async with asyncio.timeout(15):
             await save_reached.wait()
 
-        # The mutation has changed live state but is still awaiting its persistence
-        # boundary. Shutdown must not leave a malformed or half-written Store file.
-        assert _NEW_MARKER in _contents(
-            await manager.async_active_snapshot(_SCOPE_ID, _SCOPE_ID)
-        )
+        # async_add() still owns the manager lock while it awaits Store.async_save(),
+        # so inspect the already-mutated private record set here rather than trying
+        # to re-enter the lock through a public snapshot method.
+        assert _NEW_MARKER in {
+            record.content for record in manager._records.values()
+        }
         async with asyncio.timeout(20):
             await hass.async_stop()
 
