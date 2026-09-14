@@ -80,8 +80,10 @@ async def _say(
     )
 
 
-def _serialized_request(body: dict[str, Any]) -> str:
-    return json.dumps(body, ensure_ascii=False, sort_keys=True)
+def _tool_result(body: dict[str, Any]) -> dict[str, Any]:
+    """Decode the real Chat Completions tool-result message."""
+    message = next(item for item in body["messages"] if item.get("role") == "tool")
+    return json.loads(message["content"])
 
 
 @pytest.mark.asyncio
@@ -178,10 +180,14 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
             ],
         )
         result = await _say(hass, entry.entry_id, f"Run {marker}")
+        await hass.async_block_till_done()
         assert _speech(result) == final_text
         assert len(wire.requests) == 2
-        assert f'"success":true' in _serialized_request(wire.requests[1]["body"])
-        assert hass.states[entity_id].state == marker
+        tool_result = _tool_result(wire.requests[1]["body"])
+        assert tool_result["result"][0]["success"] is True
+        state = hass.states.get(entity_id)
+        assert state is not None
+        assert state.state == marker
 
     async def run_resolution_failure(
         call_id: str,
@@ -203,10 +209,11 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
             ],
         )
         result = await _say(hass, entry.entry_id, f"Run {marker}")
+        await hass.async_block_till_done()
         assert _speech(result) == final_text
         assert len(wire.requests) == 2
         assert service_resolutions == before
-        serialized = _serialized_request(wire.requests[1]["body"])
+        serialized = json.dumps(_tool_result(wire.requests[1]["body"]), sort_keys=True)
         assert "does not resolve to any Home Assistant entities" in serialized
 
     # Device A initially belongs to Area A, and its registered entity is exposed.
