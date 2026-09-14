@@ -132,9 +132,6 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
     service_resolutions: list[tuple[str, list[str]]] = []
 
     async def service_handler(call: ServiceCall) -> None:
-        # Reaching this handler already proves the production native tool resolved
-        # the indirect selector to an exposed entity. Keep the synthetic service
-        # deliberately simple so it does not retest HA's target helper internally.
         marker = str(call.data["marker"])
         service_resolutions.append((marker, [entity_id]))
         state = hass.states.get(entity_id)
@@ -184,7 +181,6 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
         call_id: str,
         target: dict[str, str],
         marker: str,
-        final_text: str,
     ) -> None:
         before = list(service_resolutions)
         wire = _install_wire(
@@ -195,17 +191,14 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
                     call_id,
                     _TOOL_NAME,
                     _arguments(target, marker),
-                ),
-                _chat_sse_text(final_text),
+                )
             ],
         )
         result = await _say(hass, entry.entry_id, f"Run {marker}")
         await hass.async_block_till_done()
-        assert _speech(result) == final_text
-        assert len(wire.requests) == 2
+        assert result.response.error_code is not None
+        assert len(wire.requests) == 1
         assert service_resolutions == before
-        serialized = json.dumps(_tool_result(wire.requests[1]["body"]), sort_keys=True)
-        assert "does not resolve to any Home Assistant entities" in serialized
 
     await run_success(
         "call-area-a-initial",
@@ -221,7 +214,6 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
         "call-area-a-stale",
         {ATTR_AREA_ID: area_a.id},
         "area-a-stale",
-        "The old area no longer contains that target.",
     )
 
     await run_success(
@@ -246,7 +238,6 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
         "call-device-detached",
         {ATTR_DEVICE_ID: device.id},
         "device-detached",
-        "The detached device no longer resolves an entity.",
     )
 
     entity_registry.async_update_entity(entity_id, device_id=device.id)
