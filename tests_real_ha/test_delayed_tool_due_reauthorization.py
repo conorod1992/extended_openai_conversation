@@ -18,12 +18,14 @@ from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.extended_openai_conversation_responses.agent_config import (
     configured_function_tools_from_data,
+    validate_function_tools,
 )
 from custom_components.extended_openai_conversation_responses.agent_maintenance import (
     get_agent_maintenance_gate,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
+    CONF_FUNCTION_TOOLS,
     DOMAIN,
 )
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
@@ -45,13 +47,7 @@ def _permission_group(*, control: bool) -> Group:
     return Group(
         id="delayed-due-reauthorization-group",
         name="Delayed due reauthorization",
-        policy={
-            CAT_ENTITIES: {
-                ENTITY_ENTITY_IDS: {
-                    _ENTITY_ID: entity_policy,
-                }
-            }
-        },
+        policy={CAT_ENTITIES: {ENTITY_ENTITY_IDS: {_ENTITY_ID: entity_policy}}},
     )
 
 
@@ -77,7 +73,12 @@ async def _schedule_delayed_call(
     call_id: str,
 ) -> str:
     """Schedule through the integration's effective configured-tool seam."""
-    configured = configured_function_tools_from_data(agent.subentry.data)
+    raw_tools = agent.subentry.data.get(CONF_FUNCTION_TOOLS)
+    configured = (
+        validate_function_tools(raw_tools)
+        if isinstance(raw_tools, list)
+        else configured_function_tools_from_data(agent.subentry.data)
+    )
     function_tool = next(
         tool for tool in configured if tool["spec"]["name"] == _TOOL_NAME
     )
@@ -166,60 +167,39 @@ async def test_delayed_native_tool_reauthorizes_live_user_when_due(
     )
     async_expose_entity(hass, conversation.DOMAIN, _ENTITY_ID, True)
 
-    # Establish the scheduling-time security state: this user can read/control the
-    # target when the durable delayed call is accepted.
     assert user.permissions.check_entity(_ENTITY_ID, POLICY_READ)
     assert user.permissions.check_entity(_ENTITY_ID, POLICY_CONTROL)
 
     permission_call = await _schedule_delayed_call(
-        agent,
-        manager,
-        user,
-        "call-delayed-permission-revoked",
+        agent, manager, user, "call-delayed-permission-revoked"
     )
     assert calls == []
 
-    # Revoke CONTROL after persistence but before the call becomes due. The delayed
-    # executor must rebuild the original user's HA Context and hit today's permission
-    # policy, rather than trusting the authorization state at scheduling time.
     _set_control_permission(user, allowed=False)
     assert user.permissions.check_entity(_ENTITY_ID, POLICY_READ)
     assert not user.permissions.check_entity(_ENTITY_ID, POLICY_CONTROL)
 
     await _execute_now(hass, manager, permission_call)
-
     assert calls == []
 
-    # The scheduler separately promises that the originating HA user must still be
-    # active when execution begins. Exercise that live identity boundary as well.
     _set_control_permission(user, allowed=True)
     inactive_call = await _schedule_delayed_call(
-        agent,
-        manager,
-        user,
-        "call-delayed-user-deactivated",
+        agent, manager, user, "call-delayed-user-deactivated"
     )
     await hass.auth.async_update_user(user, is_active=False)
     await hass.async_block_till_done()
     assert user.is_active is False
 
     await _execute_now(hass, manager, inactive_call)
-
     assert calls == []
 
-    # Recovery proves the earlier denials did not disable the tool or poison the
-    # scheduler: with the same user reactivated and CONTROL restored, a fresh delayed
-    # call executes exactly once under the original authenticated HA user context.
     await hass.auth.async_update_user(user, is_active=True)
     await hass.async_block_till_done()
     assert user.is_active is True
     assert user.permissions.check_entity(_ENTITY_ID, POLICY_CONTROL)
 
     recovery_call = await _schedule_delayed_call(
-        agent,
-        manager,
-        user,
-        "call-delayed-reauthorization-recovered",
+        agent, manager, user, "call-delayed-reauthorization-recovered"
     )
     await _execute_now(hass, manager, recovery_call)
 
