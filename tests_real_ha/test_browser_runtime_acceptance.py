@@ -211,3 +211,15 @@ async def test_browser_created_request_rule_survives_unload_reload_and_stays_liv
     assert request["path"] == "/v1/chat/completions"
     assert request["body"]["model"] == "gpt-6-astra"
     assert request["body"]["reasoning_effort"] == "xhigh"
+
+
+@pytest.mark.asyncio
+async def test_browser_survives_true_home_assistant_process_restart(
+    tmp_path: Path,
+) -> None:
+    """Run the process-boundary browser recovery journey in the existing CI job."""
+    from tests_real_ha.test_browser_process_restart_acceptance import (
+        test_open_browser_survives_true_home_assistant_process_restart,
+    )
+
+    await test_open_browser_survives_true_home_assistant_process_restart(tmp_path)
