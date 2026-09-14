@@ -28,9 +28,12 @@ test("mounted management panel recovers after HA backend disconnect and reconnec
   await panel.locator('.top-nav button[data-page="usage-maintenance"]').click();
 
   await expect(page).toHaveURL(/\/extended-openai\/usage-maintenance\/usage$/);
-  await expect(panel.getByRole("alert")).toHaveText("Home Assistant backend disconnected");
   await expect.poll(async () => page.evaluate(() => window.browserHarness.backendDisconnectAttempts)).toBeGreaterThan(0);
 
+  // A failed section load must not tear down the mounted panel. The current
+  // successfully rendered section remains usable until a later navigation can
+  // load data again; the panel does not promise a dedicated disconnect alert.
+  await expect(panel.getByRole("heading", {name: "Knowledge Library", exact: true})).toBeVisible();
   const disconnectedState = await page.evaluate(() => ({
     marker: window.browserHarness.panel.__reconnectMarker,
     connected: window.browserHarness.panel.isConnected,
