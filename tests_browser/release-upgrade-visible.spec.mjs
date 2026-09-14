@@ -29,18 +29,27 @@ test("migrated release settings render, save, and reload through the candidate U
   await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
 
+  // The fixture page owns the browser-side call log. Capture the save before
+  // navigating, because the reload below creates a fresh fixture/harness instance.
+  const saveActions = await page.evaluate(() =>
+    window.browserHarness.calls
+      .filter((call) => call.section === "configuration")
+      .map((call) => call.action),
+  );
+  expect(saveActions).toContain("get");
+  expect(saveActions).toContain("update");
+
   await page.goto(realFixtureUrl("assistant/basics"));
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator('[data-config="__title"]')).toHaveValue(savedTitle);
   await expect(panel.locator('[data-config="chat_model"]')).toHaveValue(expectedModel);
   await expect(panel.locator("#agent option:checked")).toHaveText(savedTitle);
 
-  const configurationActions = await page.evaluate(() =>
+  const reloadActions = await page.evaluate(() =>
     window.browserHarness.calls
       .filter((call) => call.section === "configuration")
       .map((call) => call.action),
   );
-  expect(configurationActions).toContain("get");
-  expect(configurationActions).toContain("update");
+  expect(reloadActions).toContain("get");
   await expectHarnessClean(page, pageErrors);
 });
