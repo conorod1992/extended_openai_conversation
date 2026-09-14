@@ -2,15 +2,15 @@
 
 Configure Quiet Hours from **Extended OpenAI → Capabilities → Quiet Hours**.
 
-Quiet Hours provides one daily schedule for Assist satellites. During the configured period, Extended OpenAI can lower satellite speaker volume to a maximum level and optionally change the wake-word sound where a compatible switch is available.
+Quiet Hours gives Assist satellites a daily night-time schedule. During that period, Extended OpenAI can lower a satellite's speaker volume to a maximum level and optionally change its wake-word sound where Home Assistant exposes a compatible switch.
 
 ## Volume behaviour
 
-Quiet Hours applies a ceiling, not a fixed volume. A satellite that is louder than the configured maximum is turned down; a satellite that is already quieter is left alone.
+Think of the configured volume as a **maximum**, not a fixed value. A satellite that is louder is turned down; a satellite that is already quieter is left alone.
 
-When Extended OpenAI changes a speaker, it records the value it replaced. At the end of Quiet Hours it restores that earlier value only if Quiet Hours still owns the current value. If you or another automation changes the volume while Quiet Hours is active, that newer value is preserved rather than overwritten.
+When Extended OpenAI changes a speaker, it remembers the earlier volume. At the end of Quiet Hours it restores that earlier value only if the speaker still has the value Quiet Hours set. If you or another automation changes the volume in the meantime, that newer change is preserved.
 
-If Home Assistant starts or restarts while the current time is already inside the saved Quiet Hours period, the integration catches up and applies the active policy.
+If Home Assistant starts or restarts while the current time is already inside the saved Quiet Hours period, the integration catches up and applies the active settings.
 
 ## Wake-word sound
 
@@ -24,7 +24,7 @@ This controls the short sound played when a compatible satellite detects its wak
 
 ## Satellite discovery and overrides
 
-Extended OpenAI discovers Assist satellites from Home Assistant and attempts to associate each one with its speaker media player and wake-word sound switch. The Quiet Hours page shows the detected entities and whether the speaker is currently usable.
+Extended OpenAI discovers Assist satellites from Home Assistant and tries to associate each one with its speaker media player and wake-word sound switch. The Quiet Hours page shows the detected entities and whether the speaker is currently usable.
 
 Use the per-satellite overrides when automatic discovery finds the wrong entity or cannot identify one. Leaving an override empty returns that satellite to automatic discovery.
 
@@ -37,7 +37,7 @@ The saved schedule can also be enabled or disabled with:
 - `extended_openai_conversation_responses.enable_quiet_hours`
 - `extended_openai_conversation_responses.disable_quiet_hours`
 
-These actions change whether the saved daily schedule is enabled; they do not create a separate second schedule.
+These actions simply turn the saved daily schedule on or off; they do not create a second schedule.
 
 ## Practical notes
 
