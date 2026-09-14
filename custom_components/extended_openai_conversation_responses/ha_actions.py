@@ -5,6 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import voluptuous as vol
+
+try:
+    from probatio.error import Invalid as ProbatioInvalid
+except ImportError:  # pragma: no cover - compatibility with older HA releases
+    ProbatioInvalid = vol.Invalid
+
 from homeassistant.const import (
     ATTR_AREA_ID,
     ATTR_DEVICE_ID,
@@ -13,7 +20,7 @@ from homeassistant.const import (
     ATTR_LABEL_ID,
 )
 from homeassistant.core import Context, HomeAssistant, State
-from homeassistant.exceptions import ServiceNotFound
+from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import target as target_helpers
 
 from .ha_permissions import async_require_control_permission, get_active_ha_context
@@ -69,7 +76,14 @@ async def _async_call_ha_action_unchecked(
         kwargs["blocking"] = True
     if context is not None:
         kwargs["context"] = context
-    await hass.services.async_call(domain=domain, service=service, **kwargs)
+    try:
+        await hass.services.async_call(domain=domain, service=service, **kwargs)
+    except (vol.Invalid, ProbatioInvalid) as err:
+        # Home Assistant has transitioned service schemas from voluptuous to
+        # probatio. Keep the integration's action boundary stable across both: a
+        # schema rejection is an ordinary Home Assistant action failure that the
+        # caller can surface to the model/user, not an uncaught conversation error.
+        raise HomeAssistantError(str(err)) from err
     return previous_state
 
 
