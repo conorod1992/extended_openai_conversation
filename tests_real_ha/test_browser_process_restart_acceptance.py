@@ -372,6 +372,7 @@ async def _ensure_browser_auth(hass: Any, sync_dir: Path, base_url: str) -> None
 async def _child_main() -> None:
     """Run one real Home Assistant process until the parent kills/terminates it."""
     from homeassistant import bootstrap, runner
+    from homeassistant.helpers import recorder as recorder_helper
 
     config_dir = Path(os.environ[_CONFIG_DIR_ENV]).resolve()
     port = int(os.environ[_PORT_ENV])
@@ -384,6 +385,13 @@ async def _child_main() -> None:
         runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
     )
     assert hass is not None
+
+    # The normal HA runner initializes recorder's shared data before recorder setup.
+    # This child calls bootstrap.async_setup_hass() directly, so mirror that runner
+    # contract before loading our integration and its recorder/history dependencies.
+    if recorder_helper.DATA_RECORDER not in hass.data:
+        recorder_helper.async_initialize_recorder(hass)
+
     await hass.async_start()
 
     entry = await _ensure_entry(hass)
