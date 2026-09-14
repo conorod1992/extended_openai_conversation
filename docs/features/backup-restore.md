@@ -2,36 +2,36 @@
 
 Open **Extended OpenAI → Usage & Maintenance → Backup & Restore** to create or restore a private backup for one conversation agent.
 
-This is different from **Export configuration**. Configuration export is intended for copying agent behaviour and settings; a full backup also carries the agent's durable retained data.
+This is different from **Export configuration**. Configuration export is mainly for copying agent behaviour and settings; a full backup also carries the agent's saved memories, Knowledge, conversation history and other retained data.
 
 ## What a full backup includes
 
 A full backup contains the selected agent's:
 
-- normalized saved configuration
+- saved configuration
 - Request Rules
 - persistent memories
-- active temporary memories with their original absolute expiry
+- active temporary memories with their original expiry time
 - Knowledge Library source text and metadata
 - retained conversation archive sessions and turns
 - Guest Mode schedule
-- persisted lifetime, daily, request and run usage data
+- saved lifetime, daily, request and run usage data
 
 ## What it does not include
 
-Provider API keys, OAuth tokens and parent config-entry credentials are excluded. Runtime-only state such as in-flight conversations, loaded on-demand Function Groups, caches and locks is also excluded.
+Provider API keys, OAuth tokens and parent config-entry credentials are excluded. Temporary runtime state such as requests currently in progress, Function Groups loaded only for the active conversation, caches and locks is also excluded.
 
 When moving a backup to another Home Assistant installation, reconnect or recreate the provider connection separately.
 
-## Restore behaviour
+## What happens when you restore
 
-Selecting a backup validates its format and categories before any state is replaced. Temporary memories that have already expired are discarded during restore.
+Selecting a backup validates it before anything is replaced. Temporary memories that have already expired are discarded during restore.
 
-**Restore everything** uses replacement semantics rather than merging data into the current agent. Knowledge indexes are rebuilt from the restored canonical source content, and usage totals are replaced rather than added a second time.
+**Restore everything** replaces the agent's corresponding saved data rather than merging the backup with what is already there. Knowledge search indexes are rebuilt from the restored source text, and usage totals are replaced rather than added again.
 
-Restore is designed to avoid a partially applied durable state. If a storage write fails after restoration begins, Extended OpenAI attempts to restore the pre-restore snapshot rather than deliberately leaving, for example, restored memories alongside old Knowledge or archive data.
+Restore is designed to avoid leaving only half of the backup applied. If saving the restored data fails part-way through, Extended OpenAI attempts to return the agent to the state it had before the restore began.
 
-While a full restore is applying, delayed Function Tool execution is serialized with the same maintenance boundary so a due action does not execute against a half-restored policy/configuration state.
+Delayed Function Tools are paused behind the same restore operation, so a due action is not deliberately run while the agent's configuration or restrictions are only partly restored.
 
 ## Security
 
