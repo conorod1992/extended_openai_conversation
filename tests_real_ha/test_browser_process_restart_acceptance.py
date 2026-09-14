@@ -240,7 +240,9 @@ async def test_open_browser_survives_true_home_assistant_process_restart(
             auth_data=auth_data,
             sync_dir=sync_dir,
         )
-        await _wait_for_process_marker(browser, sync_dir / "browser-ready", timeout=60)
+        # Playwright owns a 120-second test timeout. The parent must not kill a
+        # still-valid browser journey halfway through that diagnostic window.
+        await _wait_for_process_marker(browser, sync_dir / "browser-ready", timeout=130)
 
         # The browser's management save has completed. Let HA's delayed atomic
         # config-entry write settle so this test kills a normally-saved runtime,
