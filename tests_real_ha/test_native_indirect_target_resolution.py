@@ -116,8 +116,8 @@ async def test_native_area_and_device_targets_follow_live_ha_registries(
         config_entry_id=entry.entry_id,
         identifiers={("indirect_target_test", "device-a")},
         name="Indirect target device",
-        area_id=area_a.id,
     )
+    device = device_registry.async_update_device(device.id, area_id=area_a.id)
     entity = entity_registry.async_get_or_create(
         domain="light",
         platform="indirect_target_test",
