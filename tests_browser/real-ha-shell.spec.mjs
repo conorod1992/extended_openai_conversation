@@ -1,12 +1,30 @@
 import {expect, test} from "@playwright/test";
+import {acceptConfirmation} from "./browser-helpers.mjs";
 
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
 
 test.skip(!baseUrl || !authDataRaw, "requires the dedicated genuine Home Assistant frontend-shell harness");
 
-test("shipped management panel loads and persists configuration inside the genuine HA frontend", async ({context, page}) => {
+async function authenticate(context) {
   const authData = JSON.parse(authDataRaw);
+  await context.addInitScript((tokens) => {
+    window.localStorage.setItem("hassTokens", JSON.stringify(tokens));
+  }, authData);
+}
+
+async function openAssistantFromOverview(page) {
+  await page.goto(`${baseUrl}/extended-openai/overview`, {waitUntil: "domcontentloaded"});
+  await expect(page.locator("home-assistant")).toHaveCount(1);
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel).toHaveCount(1);
+  await panel.locator('.top-nav button[data-page="assistant"]').click();
+  await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+  return panel;
+}
+
+test("shipped management panel loads and persists configuration inside the genuine HA frontend", async ({context, page}) => {
   const integrationPageErrors = [];
   const integrationRequestFailures = [];
   const integrationResponses = [];
@@ -28,10 +46,7 @@ test("shipped management panel loads and persists configuration inside the genui
     }
   });
 
-  await context.addInitScript((tokens) => {
-    window.localStorage.setItem("hassTokens", JSON.stringify(tokens));
-  }, authData);
-
+  await authenticate(context);
   await page.goto(`${baseUrl}/extended-openai/assistant/basics`, {waitUntil: "domcontentloaded"});
 
   // These two elements distinguish this acceptance path from the standalone
@@ -63,4 +78,52 @@ test("shipped management panel loads and persists configuration inside the genui
       && status === 200;
   })).toBe(true);
   expect(integrationResponses.filter(({status}) => status >= 400)).toEqual([]);
+});
+
+test("browser Back cancellation repairs the route and preserves a dirty configuration draft", async ({context, page}) => {
+  await authenticate(context);
+  const panel = await openAssistantFromOverview(page);
+  const title = panel.locator('[data-config="__title"]');
+  const baselineTitle = await title.inputValue();
+
+  await title.fill("Unsaved Back navigation draft");
+  await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
+
+  await page.goBack();
+  await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
+  await panel.locator("#confirm-cancel").click();
+
+  // HA has already moved browser history when the route setter receives the
+  // Back navigation. Cancelling must restore the panel's previous URL as well as
+  // retaining the exact draft rather than leaving URL and rendered state split.
+  await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
+  await expect(title).toHaveValue("Unsaved Back navigation draft");
+  await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
+
+  await panel.getByRole("button", {name: "Revert", exact: true}).click();
+  await expect(title).toHaveValue(baselineTitle);
+  await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
+});
+
+test("discarding a dirty Back navigation keeps Forward history coherent", async ({context, page}) => {
+  await authenticate(context);
+  const panel = await openAssistantFromOverview(page);
+  const title = panel.locator('[data-config="__title"]');
+  const baselineTitle = await title.inputValue();
+
+  await title.fill("Discarded Back navigation draft");
+  await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
+
+  await page.goBack();
+  await acceptConfirmation(panel);
+  await expect(page).toHaveURL(/\/extended-openai\/overview$/);
+  await expect(panel.getByRole("heading", {name: "Overview", exact: true})).toBeVisible();
+
+  // Because the discard path accepts the browser's history movement rather than
+  // repairing it with pushState, Forward must still return to the prior Assistant
+  // entry. The discarded draft must not reappear when that history entry is revisited.
+  await page.goForward();
+  await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue(baselineTitle);
+  await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
 });
