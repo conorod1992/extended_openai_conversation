@@ -5,6 +5,33 @@ const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
 
 test.skip(!baseUrl || !authDataRaw, "requires the dedicated genuine Home Assistant frontend-shell harness");
 
+async function clearOptionalHttpConfirmation(page, panel) {
+  const title = panel.locator('[data-config="__title"]');
+  const confirmHttpSettings = page.getByRole("button", {name: "Confirm", exact: true});
+
+  // A fresh HA test profile may show the one-time HTTP server confirmation before
+  // the custom panel finishes rendering. A reused/confirmed profile goes straight
+  // to the panel. Accept either state rather than making the one-time dialog part
+  // of the integration's acceptance contract.
+  await expect.poll(async () => (
+    await title.isVisible().catch(() => false)
+    || await confirmHttpSettings.isVisible().catch(() => false)
+  )).toBe(true);
+
+  if (!await confirmHttpSettings.isVisible().catch(() => false)) {
+    return;
+  }
+
+  await confirmHttpSettings.click();
+  await expect(confirmHttpSettings).toHaveCount(0);
+
+  // Confirming HA's HTTP settings can rebuild/navigate the shell. Re-enter the
+  // integration route before asserting against the shipped management panel.
+  await page.goto(`${baseUrl}/extended-openai/assistant/basics`, {waitUntil: "domcontentloaded"});
+  await expect(page.locator("home-assistant")).toHaveCount(1);
+  await expect(panel).toHaveCount(1);
+}
+
 test("shipped management panel loads and persists configuration inside the genuine HA frontend", async ({context, page}) => {
   const authData = JSON.parse(authDataRaw);
   const integrationPageErrors = [];
@@ -40,6 +67,7 @@ test("shipped management panel loads and persists configuration inside the genui
   await expect(page.locator("home-assistant")).toHaveCount(1);
   let panel = page.locator("extended-openai-management-panel");
   await expect(panel).toHaveCount(1);
+  await clearOptionalHttpConfirmation(page, panel);
   await expect(panel.locator('[data-config="__title"]')).toBeVisible();
   await expect(panel.locator('[data-config="chat_model"]')).toBeVisible();
 
