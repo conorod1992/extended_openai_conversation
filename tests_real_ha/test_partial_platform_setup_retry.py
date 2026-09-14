@@ -128,7 +128,7 @@ async def test_late_setup_failure_unloads_registered_platforms_and_retry_is_clea
     await hass.async_block_till_done()
 
     assert template_setup_calls == 1
-    assert entry.state is not ConfigEntryState.LOADED
+    assert entry.state is ConfigEntryState.SETUP_ERROR
     assert failure_snapshot
     assert conversation.async_get_agent(hass, entry.entry_id) is None
 
@@ -142,9 +142,10 @@ async def test_late_setup_failure_unloads_registered_platforms_and_retry_is_clea
     assert guest_mode_state is not None
     assert guest_mode_state.state == STATE_UNAVAILABLE
 
-    # The patched setup hook succeeds on its second call, exercising a genuine HA
-    # retry rather than directly invoking platform setup helpers.
-    assert await hass.config_entries.async_setup(entry.entry_id)
+    # A failed setup leaves the entry in SETUP_ERROR. Home Assistant deliberately
+    # rejects another direct async_setup() from that state; async_reload() is the
+    # supported public recovery path and performs a fresh setup attempt.
+    assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
 
     assert template_setup_calls == 2
