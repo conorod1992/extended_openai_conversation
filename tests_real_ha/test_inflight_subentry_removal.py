@@ -142,7 +142,7 @@ async def test_removing_exact_subentry_during_request_cannot_resurrect_or_touch_
     survivor_entity_id = survivor_row.entity_id
 
     removed_agent = _agent(hass, removed_entity_id)
-    old_survivor_agent = _agent(hass, survivor_entity_id)
+    _agent(hass, survivor_entity_id)
 
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -169,7 +169,7 @@ async def test_removing_exact_subentry_during_request_cannot_resurrect_or_touch_
     assert not removed_request.done()
 
     # Remove the exact subentry whose request is blocked. Home Assistant should be
-    # able to reload the parent immediately and retain only the untouched sibling.
+    # able to update the parent immediately and retain only the untouched sibling.
     assert hass.config_entries.async_remove_subentry(
         entry, removed_subentry.subentry_id
     )
@@ -196,9 +196,8 @@ async def test_removing_exact_subentry_during_request_cannot_resurrect_or_touch_
     assert len(surviving_rows) == 1
     assert surviving_rows[0].entity_id == survivor_entity_id
     survivor_agent = _agent(hass, survivor_entity_id)
-    assert survivor_agent is not old_survivor_agent
 
-    # Prove the replacement sibling is already healthy before the stale request is
+    # Prove the surviving sibling is already healthy before the stale request is
     # allowed to finish. Its provider payload must contain no history from the
     # removed subentry.
     before_wire = _install_wire(
@@ -220,7 +219,7 @@ async def test_removing_exact_subentry_during_request_cannot_resurrect_or_touch_
 
     # The request that began while the deleted entity still existed is permitted to
     # complete. Completion must not re-register that entity or otherwise replace the
-    # sibling runtime installed by the removal reload.
+    # surviving runtime established after removal.
     release.set()
     removed_result = await asyncio.wait_for(removed_request, timeout=_WAIT_TIMEOUT)
     assert _speech(removed_result) == _REMOVED_RESPONSE_TEXT
