@@ -1,0 +1,18 @@
+"""Focused tests for Function Tool recovery helpers."""
+
+from __future__ import annotations
+
+import pytest
+
+from custom_components.extended_openai_conversation_responses.function_tool_recovery import (
+    provider_argument_text,
+)
+
+
+@pytest.mark.parametrize("arguments", [{}, None, "ordinary arguments"])
+def test_provider_argument_text_rejects_ordinary_arguments(arguments: object) -> None:
+    """Ordinary argument values are not malformed provider input."""
+    with pytest.raises(TypeError) as exc_info:
+        provider_argument_text(arguments)
+
+    assert str(exc_info.value) == "arguments are not malformed provider input"
