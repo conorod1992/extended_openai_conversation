@@ -7,46 +7,7 @@ Extended OpenAI Conversation (Responses) is a Home Assistant conversation integr
 
 The project began as a fork of `jekalmin/extended_openai_conversation` and has since diverged substantially while retaining the original project's flexible custom-function framework.
 
-## What it can do
-
-<Columns cols={2}>
-  <Card title="Home Assistant control" icon="house">
-    Work with Assist-exposed entities and Home Assistant services while respecting the requesting user's Home Assistant permissions and any stricter Extended OpenAI policy.
-  </Card>
-  <Card title="Modern model APIs" icon="sparkles">
-    Use Chat Completions or the Responses API with model-aware reasoning and response controls.
-  </Card>
-  <Card title="Web Search" icon="globe">
-    Let supported providers search current public information through hosted Web Search.
-  </Card>
-  <Card title="Memory & Knowledge" icon="brain">
-    Combine persistent memory, expiring temporary memory, Knowledge Library sources, and retained conversation archives.
-  </Card>
-  <Card title="Voice Identity" icon="users">
-    Scope retained personal data by Home Assistant user, voice device, shared household, or no-personal-data policies.
-  </Card>
-  <Card title="Quiet Hours" icon="volume-low">
-    Reduce Assist satellite volume and optionally suppress wake-word sounds on a daily schedule.
-  </Card>
-  <Card title="Request Rules" icon="route">
-    Handle predictable phrases locally or route selected requests without relying on free-form model interpretation.
-  </Card>
-  <Card title="Function Tools & Groups" icon="function">
-    Add custom tools and keep large tool collections efficient with optional on-demand Function Groups.
-  </Card>
-  <Card title="Skills" icon="puzzle-piece">
-    Give agents reusable instruction sets that can be loaded when needed.
-  </Card>
-  <Card title="Guest Mode" icon="user-lock">
-    Apply a backend-enforced visitor policy to entities, functions, Knowledge, memory, and retained conversations.
-  </Card>
-  <Card title="Conversation management" icon="messages">
-    Continue recent conversations, trim or summarize long context, and optionally retain searchable archives.
-  </Card>
-  <Card title="Operations & recovery" icon="wrench">
-    Inspect usage and requests, refresh model data, run diagnostics, and create full private agent backups.
-  </Card>
-</Columns>
+You can start with a simple conversation agent and add advanced features only when you need them.
 
 ## Start here
 
@@ -54,36 +15,78 @@ The project began as a fork of `jekalmin/extended_openai_conversation` and has s
   <Card title="Installation" icon="download" href="/installation">
     Install the integration and connect a provider.
   </Card>
-  <Card title="Configuration" icon="sliders" href="/configuration">
-    Understand the current sidebar management interface and main agent settings.
+  <Card title="First setup" icon="play" href="/getting-started/setup">
+    Connect Extended OpenAI to Assist, expose a few entities, and test a simple request.
   </Card>
-  <Card title="Home Assistant access" icon="shield" href="/features/home-assistant-access">
-    Understand Assist exposure, Home Assistant user permissions, and Extended OpenAI restrictions.
+  <Card title="Configuration" icon="sliders" href="/configuration">
+    Learn where the main settings live and what each section is for.
   </Card>
   <Card title="Troubleshooting" icon="life-ring" href="/troubleshooting">
     Diagnose provider, tool, configuration, and Home Assistant integration issues.
   </Card>
 </CardGroup>
 
-## Feature guides
+## What it can do
 
-Use the navigation for detailed guides. Good starting points include:
+<Columns cols={2}>
+  <Card title="Home Assistant control" icon="house">
+    Work with Assist-exposed entities and Home Assistant services while respecting the requesting user's Home Assistant permissions and any stricter Extended OpenAI policy.
+  </Card>
+  <Card title="Web Search" icon="globe">
+    Let supported providers search current public information when needed.
+  </Card>
+  <Card title="Memory & Knowledge" icon="brain">
+    Remember useful facts, keep short-lived information with an expiry, and search larger local reference material.
+  </Card>
+  <Card title="Voice features" icon="microphone">
+    Use Voice Identity, follow-up listening, speech cleanup, Quiet Hours, and Broadcast to improve Assist conversations.
+  </Card>
+  <Card title="Request Rules & local handling" icon="route">
+    Handle predictable requests locally or route selected requests differently.
+  </Card>
+  <Card title="Function Tools & Skills" icon="function">
+    Add custom capabilities, organize large tool collections, and load reusable instructions when needed.
+  </Card>
+  <Card title="Privacy & guest access" icon="user-lock">
+    Combine Home Assistant permissions, Voice Identity, and Guest Mode to control what different users may access.
+  </Card>
+  <Card title="Usage & maintenance" icon="wrench">
+    Inspect usage and requests, run diagnostics, refresh model data, and create private agent backups.
+  </Card>
+</Columns>
 
-- [Conversation continuity](/features/conversation-continuity) and [context management](/features/context-management)
-- [Persistent memory](/features/persistent-memory), [temporary memory](/features/temporary-memory), [Knowledge Library](/features/knowledge-library), and [conversation archive](/features/conversation-archive)
-- [Voice Identity](/features/voice-identity), [voice follow-ups](/features/voice-followups), [speech processing](/features/speech-processing), and [Quiet Hours](/features/quiet-hours)
-- [Request Rules](/features/request-rules), [Function Groups](/features/function-groups), and the [Function reference](/functions/overview)
-- [Guest Mode](/features/guest-mode), [model data](/features/model-data), [usage statistics](/features/usage-statistics), and [Backup & Restore](/features/backup-restore)
+## Find the right guide
+
+Use the left-hand navigation by task:
+
+- **Assistant** — model/API behaviour, Web Search, conversation continuity, and context management
+- **Voice & Speech** — Voice Identity, follow-ups, spoken-output cleanup, and Quiet Hours
+- **Home Assistant & Access** — entity exposure, permissions, and Guest Mode
+- **Automation & Tools** — Request Rules, Function Groups, delayed tools, AI Task, and Home Assistant services
+- **Memory & Data** — persistent memory, temporary memory, Knowledge Library, and conversation archive
+- **Usage & Maintenance** — usage statistics, request debugging, Backup & Restore, and model data
+- **Functions** and **Skills** — detailed advanced reference material
+- **Help & Reference** — troubleshooting, migration, and FAQ
+
+Useful direct links include:
+
+- [Home Assistant access](/features/home-assistant-access)
+- [Voice Identity](/features/voice-identity), [speech processing](/features/speech-processing), and [Quiet Hours](/features/quiet-hours)
+- [Persistent memory](/features/persistent-memory), [temporary memory](/features/temporary-memory), and [Knowledge Library](/features/knowledge-library)
+- [Request Rules](/features/request-rules), [Function Groups](/features/function-groups), and [delayed Function Tools](/features/delayed-function-tools)
+- [Usage statistics](/features/usage-statistics), [request debugging](/features/request-debugging), and [Backup & Restore](/features/backup-restore)
 
 ## Permissions and privacy
 
-Assist exposure determines which entities are normally available to conversation agents, but exposure does not grant every authenticated user control permission. Model-driven actions are also checked against the requesting Home Assistant user's permissions. Guest Mode, Function Tool state, and other Extended OpenAI policies can restrict access further; they cannot elevate access Home Assistant has denied.
+A useful rule of thumb is that three things must all allow an action: the entity must be available to Assist, the Home Assistant user must have permission, and any Extended OpenAI restrictions must also allow it.
 
-For shared voice devices, configure [Voice Identity](/features/voice-identity) deliberately so personal memories and retained conversations are not attached to the wrong speaker simply because several people use the same satellite.
+Guest Mode and other Extended OpenAI policies can make access more restrictive, but they cannot grant permission that Home Assistant has denied. For shared voice devices, configure [Voice Identity](/features/voice-identity) deliberately so personal memories and retained conversations are associated with the intended user.
 
 ## Reliability
 
-The integration is validated with layered automated testing rather than only isolated unit tests. The suite includes genuine Home Assistant acceptance tests, browser-to-Home-Assistant tests, upgrade testing from a previously published release to the candidate build, and selected cross-browser coverage. Runtime-sensitive areas such as authorization, entity/service lifecycle changes, backup restoration, conversation ownership, and delayed execution have dedicated real-Home-Assistant coverage.
+The integration is validated with layered automated testing rather than only isolated unit tests. The suite includes genuine Home Assistant acceptance tests, browser-to-Home-Assistant tests, upgrade testing from a previously published release to the candidate build, and selected cross-browser coverage.
+
+No automated suite can guarantee every provider or custom setup, but the project deliberately exercises important real Home Assistant boundaries such as authorization, entity/service changes, backup restoration, conversation ownership, and delayed execution.
 
 ## OpenAI API billing
 
