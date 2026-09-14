@@ -37,7 +37,7 @@ test("migrated release settings render, save, and reload through the candidate U
       .map((call) => call.action),
   );
   expect(saveActions).toContain("get");
-  expect(saveActions).toContain("update");
+  expect(saveActions).toContain("save");
 
   await page.goto(realFixtureUrl("assistant/basics"));
   panel = page.locator("extended-openai-management-panel");
