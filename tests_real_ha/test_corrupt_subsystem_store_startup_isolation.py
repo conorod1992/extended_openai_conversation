@@ -30,6 +30,7 @@ from custom_components.extended_openai_conversation_responses.usage import Usage
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context, HomeAssistant
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_knowledge_provider_wire_e2e import _chat_sse_text
@@ -40,6 +41,14 @@ _SCOPE_ID = f"user:{_USER_ID}"
 _TEMPORARY_MARKER = "Sibling temporary memory survives the corrupt knowledge store."
 _KNOWLEDGE_MARKER = "knowledge-store-before-corruption"
 _MANAGER_TYPES = (KnowledgeLibrary, TemporaryMemory, UsageManager)
+_CORRUPT_CONTENT = '{"version": 2, "data": '
+
+# pytest-homeassistant-custom-component normally replaces these Store methods with
+# an in-memory storage harness. Capture Home Assistant's genuine methods at module
+# import time so this one acceptance test can cross the real .storage boundary.
+_REAL_STORE_ASYNC_LOAD = Store._async_load
+_REAL_STORE_ASYNC_WRITE_DATA = Store._async_write_data
+_REAL_STORE_ASYNC_REMOVE = Store.async_remove
 
 
 def _system_prompt(request_body: dict[str, Any]) -> str:
@@ -48,15 +57,6 @@ def _system_prompt(request_body: dict[str, Any]) -> str:
         item for item in request_body["messages"] if item.get("role") == "system"
     )
     return str(message["content"])
-
-
-def _provider_tool_names(request_body: dict[str, Any]) -> set[str]:
-    """Return function-tool names exposed to the provider."""
-    return {
-        str(tool["function"]["name"])
-        for tool in request_body.get("tools", [])
-        if tool.get("type") == "function" and isinstance(tool.get("function"), dict)
-    }
 
 
 def _purge_cached_managers(value: Any) -> None:
@@ -83,12 +83,20 @@ def _contains_cached_manager(value: Any) -> bool:
     return False
 
 
+@pytest.mark.no_fail_on_log_exception
 @pytest.mark.asyncio
 async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """One unreadable real Store degrades Knowledge while siblings cold-start."""
+    """One corrupt real Store is quarantined while sibling state cold-starts."""
+    # The shared HA fixture intentionally mocks Store I/O. Restore the real methods
+    # before creating integration managers so this scenario genuinely persists to
+    # and reloads from Home Assistant's temporary .storage directory.
+    monkeypatch.setattr(Store, "_async_load", _REAL_STORE_ASYNC_LOAD)
+    monkeypatch.setattr(Store, "_async_write_data", _REAL_STORE_ASYNC_WRITE_DATA)
+    monkeypatch.setattr(Store, "async_remove", _REAL_STORE_ASYNC_REMOVE)
+
     MockUser(id=_USER_ID, name="Corrupt Store User").add_to_hass(hass)
 
     entry = _make_entry(
@@ -147,10 +155,8 @@ async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
     assert not _contains_cached_manager(hass.data)
 
     # Damage the actual Home Assistant Store file, not an injected storage adapter.
-    # The malformed JSON forces the next freshly-created Knowledge Store to exercise
-    # Home Assistant's real persistence/parse failure path.
     await hass.async_add_executor_job(
-        knowledge_path.write_text, '{"version": 2, "data": ', "utf-8"
+        knowledge_path.write_text, _CORRUPT_CONTENT, "utf-8"
     )
 
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -161,9 +167,12 @@ async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
     assert restarted is not None
     assert restarted is not agent
 
-    # Knowledge alone is degraded. Its previous warmed object must not have hidden
-    # the disk corruption, while sibling managers are newly constructed and healthy.
-    assert restarted._knowledge is None
+    # Home Assistant owns malformed-JSON recovery at the Store boundary: it moves the
+    # corrupt file aside and returns an empty store. The integration should therefore
+    # cold-start a fresh, healthy Knowledge manager rather than fail the whole agent.
+    assert restarted._knowledge is not None
+    assert restarted._knowledge is not old_knowledge
+    assert restarted._knowledge.source_count == 0
     assert restarted._temporary_memory is not None
     assert restarted._temporary_memory is not old_temporary
     assert restarted._usage is not None
@@ -171,7 +180,7 @@ async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
 
     statuses = hass.data[SUBSYSTEM_STATUS_KEY][(entry.entry_id, subentry_id)]
     assert statuses["knowledge"]["configured"] is True
-    assert statuses["knowledge"]["status"] == "failed"
+    assert statuses["knowledge"]["status"] == "healthy"
     assert statuses["temporary_memory"]["configured"] is True
     assert statuses["temporary_memory"]["status"] == "healthy"
 
@@ -180,9 +189,8 @@ async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
     )
     assert [record.content for record in restored_temporary] == [_TEMPORARY_MARKER]
 
-    # Finally prove the degraded fresh-start agent still completes a real public HA
-    # Conversation turn. The surviving temporary record reaches the provider prompt,
-    # while Knowledge tools are absent because only that subsystem failed startup.
+    # Prove the recovered fresh-start agent still completes a public HA Conversation
+    # turn and that the healthy sibling Temporary Memory survived the disk boundary.
     wire = _install_wire(
         monkeypatch,
         restarted,
@@ -201,15 +209,15 @@ async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
     assert len(wire.requests) == 1
     request_body = wire.requests[0]["body"]
     assert _TEMPORARY_MARKER in _system_prompt(request_body)
-    assert {
-        "knowledge_search",
-        "knowledge_list",
-        "knowledge_get",
-    }.isdisjoint(_provider_tool_names(request_body))
 
-    # The intentionally corrupt Store remains corrupt; startup isolation must not
-    # silently overwrite the failed subsystem while proving sibling availability.
+    # HA must preserve the malformed bytes in its quarantine file rather than silently
+    # replacing them. The active path is moved aside during the real Store load.
+    assert not await hass.async_add_executor_job(knowledge_path.exists)
+    corrupt_paths = await hass.async_add_executor_job(
+        lambda: list(knowledge_path.parent.glob(f"{knowledge_path.name}.corrupt.*"))
+    )
+    assert len(corrupt_paths) == 1
     assert (
-        await hass.async_add_executor_job(knowledge_path.read_text, "utf-8")
-        == '{"version": 2, "data": '
+        await hass.async_add_executor_job(corrupt_paths[0].read_text, "utf-8")
+        == _CORRUPT_CONTENT
     )
