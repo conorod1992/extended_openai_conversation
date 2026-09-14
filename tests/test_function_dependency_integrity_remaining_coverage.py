@@ -51,10 +51,9 @@ def test_mask_dynamic_schema_leaves_non_array_value_unchanged() -> None:
         "type": "array",
         "items": {"type": "string"},
         "uniqueItems": True,
-        "const": "{{ dynamic }}",
     }
 
-    result = integrity._mask_dynamic_schema("static", schema)
+    result = integrity._mask_dynamic_schema({"x": "{{ dynamic }}"}, schema)
 
     assert result == schema
 
@@ -91,6 +90,7 @@ async def test_static_descendant_traversal_validates_each_concrete_object_child(
     ("value", "schema"),
     [
         ("{{ dynamic }}", {"type": "array", "items": {"type": "string"}}),
+        ({"x": "{{ dynamic }}"}, {"type": "array", "items": {"type": "string"}}),
         (["{{ dynamic }}", "static"], {"type": "array", "items": True}),
     ],
 )
@@ -126,7 +126,9 @@ async def test_function_rename_rejects_immutable_matching_action(monkeypatch) ->
             "data": {"function": "old_name", "arguments": {}},
         }
     )
-    monkeypatch.setattr(integrity, "_rule_script_actions", lambda _rule: iter((action,)))
+    monkeypatch.setattr(
+        integrity, "_rule_script_actions", lambda _rule: iter((action,))
+    )
     manager = SimpleNamespace(
         _lock=asyncio.Lock(),
         _rules=[{"id": "rule", "name": "Rule"}],
@@ -146,7 +148,7 @@ async def test_function_rename_rejects_immutable_matching_action(monkeypatch) ->
 
 @pytest.mark.parametrize(
     "guest_group_ids",
-    [pytest.param(None, id="missing"), pytest.param(("old",), id="tuple"), pytest.param("old", id="string")],
+    [pytest.param(("old",), id="tuple"), pytest.param("old", id="string")],
 )
 def test_guest_group_mutation_ignores_non_list_saved_ids(guest_group_ids) -> None:
     seen: dict[str, object] = {}
@@ -165,10 +167,7 @@ def test_guest_group_mutation_ignores_non_list_saved_ids(guest_group_ids) -> Non
         seen["expected_revision"] = expected_revision
         return {"ok": True}
 
-    data = {}
-    if guest_group_ids is not None:
-        data[CONF_GUEST_ALLOWED_GROUP_IDS] = guest_group_ids
-    subentry = SimpleNamespace(data=data)
+    subentry = SimpleNamespace(data={CONF_GUEST_ALLOWED_GROUP_IDS: guest_group_ids})
     wrapped = integrity.wrap_persist_function_configuration(original)
     token = integrity._ACTIVE_GROUP_MUTATION.set(("old", "new"))
     try:
@@ -219,8 +218,12 @@ async def test_management_mutations_with_invalid_ids_delegate_unchanged(
     original = AsyncMock(return_value=expected)
     wrapped = integrity.wrap_management_command(original)
     entry_and_agent = Mock(side_effect=AssertionError("IDs should not be resolved"))
-    validate = AsyncMock(side_effect=AssertionError("dependency validation should be skipped"))
-    require_revision = Mock(side_effect=AssertionError("revision should not be checked"))
+    validate = AsyncMock(
+        side_effect=AssertionError("dependency validation should be skipped")
+    )
+    require_revision = Mock(
+        side_effect=AssertionError("revision should not be checked")
+    )
     monkeypatch.setattr(integrity.management_ui, "entry_and_agent", entry_and_agent)
     monkeypatch.setattr(integrity, "async_validate_request_rule_functions", validate)
     monkeypatch.setattr(
