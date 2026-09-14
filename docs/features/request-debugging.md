@@ -1,29 +1,29 @@
 # Request debugging
 
-Open **Extended OpenAI → Usage & Maintenance → Request debugging** to inspect complete recent provider requests when ordinary usage summaries are not enough to explain what the model received.
+Open **Extended OpenAI → Usage & Maintenance → Request debugging** when you need to see what was actually sent to the AI provider for a recent request.
 
-Request debugging is intended for targeted troubleshooting of prompts, context, tool definitions, request parameters and provider-facing structure. Because captured requests can contain private Home Assistant context or conversation content, treat them as sensitive diagnostic data.
+This is mainly a troubleshooting tool. Captured requests can contain private Home Assistant context or conversation content, so treat them as sensitive diagnostic data.
 
 ## Preview effective request vs request debugging
 
-**Preview effective request** is a safe local preview for a brand-new message. It assembles the inspectable system/context blocks, first-request custom tools, Function Group catalogue/loader, provider-hosted tools and non-secret request settings without calling the provider or mutating agent state.
+**Preview effective request** shows a safe local preview for a brand-new message. It can show the main prompts/context, available tools and non-secret request settings without calling the provider or changing agent state.
 
-It deliberately cannot include information that exists only for a real request, such as the actual user input, prior conversation/tool-call history, query-selected memories, credentials, or opaque provider framing.
+Because it is only a preview, it cannot include details that exist only during a real conversation, such as the actual user message, previous conversation/tool-call history, memories chosen for that request, credentials, or provider-only framing.
 
-**Request debugging** records real request data and is therefore the better tool when you need to understand an actual failed or surprising provider call.
+**Request debugging** records a real request. Use it when you need to understand why an actual provider call behaved unexpectedly.
 
 ## What to check
 
-When diagnosing a request, compare:
+When diagnosing a request, look at:
 
 - the system prompt and generated Home Assistant context
-- which Function Tools and hosted tools were actually exposed
-- model/API mode and supported request parameters
+- which Function Tools and hosted tools were actually available
+- the selected model/API mode and request parameters
 - conversation and tool-call history relevant to the request
-- whether current memory, Knowledge or archive retrieval contributed context
-- provider errors or malformed responses shown alongside the request/run
+- whether memory, Knowledge or archive retrieval added context
+- any provider error or malformed response shown with the request/run
 
-For token and request totals rather than request contents, use [Usage statistics](usage-statistics.md). For provider connectivity and selected-agent health checks, use **Usage & Maintenance → Diagnostics**.
+For token and request totals rather than request contents, use [Usage statistics](usage-statistics.md). For provider connectivity and general agent health checks, use **Usage & Maintenance → Diagnostics**.
 
 ## Privacy and retention
 
