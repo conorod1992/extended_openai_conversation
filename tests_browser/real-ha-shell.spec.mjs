@@ -42,6 +42,16 @@ async function openAssistantFromOverview(page) {
   return panel;
 }
 
+async function openFunctionsFromOverview(page) {
+  const panel = await openAssistantFromOverview(page);
+  await panel.getByRole("button", {name: "Capabilities", exact: true}).click();
+  await expect(page).toHaveURL(/\/extended-openai\/capabilities\/home-assistant$/);
+  await panel.getByRole("button", {name: "Functions", exact: true}).click();
+  await expect(page).toHaveURL(/\/extended-openai\/capabilities\/functions$/);
+  await expect(panel.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
+  return panel;
+}
+
 test("shipped management panel loads and persists one configuration change inside the genuine HA frontend", async ({context, page}) => {
   const integrationPageErrors = [];
   const integrationConsoleErrors = [];
@@ -159,4 +169,88 @@ test("genuine Home Assistant shell follows deep links and browser history", asyn
   await page.goForward();
   await expect(page).toHaveURL(`${baseUrl}/extended-openai/capabilities/functions`);
   await expect(panel.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
+});
+
+test("genuine HA native YAML editor saves with Ctrl+S and survives a fresh panel lifecycle", async ({context, page}) => {
+  await authenticate(context);
+  let panel = await openFunctionsFromOverview(page);
+
+  await panel.locator("#add-tool").click();
+  await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
+  const nativeEditor = panel.locator("#tool-yaml-native");
+  const fallback = panel.locator("#tool-yaml");
+  await expect(nativeEditor).toBeVisible({timeout: 30_000});
+  await expect(fallback).toBeHidden();
+  await expect(nativeEditor).toHaveJSProperty("tagName", "HA-YAML-EDITOR");
+  expect(await nativeEditor.evaluate(() => Boolean(customElements.get("ha-yaml-editor")))).toBe(true);
+
+  const initialTool = {
+    spec: {
+      name: "real_shell_native_tool",
+      description: "Genuine HA native YAML editor",
+      parameters: {type: "object", properties: {}},
+    },
+    function: {type: "native", name: "get_user_from_user_id"},
+  };
+  await nativeEditor.evaluate((element, value) => {
+    element.setValue(value);
+    element.dispatchEvent(new CustomEvent("value-changed", {
+      bubbles: true,
+      composed: true,
+      detail: {value, isValid: true, errorMsg: ""},
+    }));
+  }, initialTool);
+  await expect(panel.locator("#tool-error")).toContainText("YAML changed");
+
+  // Exercise the actual HA editor focus/keyboard path rather than synthesizing
+  // the adapter's editor-save event directly.
+  await nativeEditor.evaluate((element) => element.focus());
+  expect(await nativeEditor.evaluate((element) => Boolean(element.shadowRoot?.activeElement))).toBe(true);
+  await page.keyboard.press("Control+s");
+
+  let card = panel.locator(".tool-card").filter({hasText: "real_shell_native_tool"});
+  await expect(card).toContainText("Genuine HA native YAML editor");
+  await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+  await expect(panel.locator(".tool-card").filter({hasText: "real_shell_native_tool"})).toHaveCount(1);
+
+  panel = await openFunctionsFromOverview(page);
+  card = panel.locator(".tool-card").filter({hasText: "real_shell_native_tool"});
+  await expect(card).toContainText("Genuine HA native YAML editor");
+  await card.locator(".edit-tool").click();
+  const reopenedEditor = panel.locator("#tool-yaml-native");
+  await expect(reopenedEditor).toBeVisible();
+  await expect.poll(() => reopenedEditor.evaluate((element) => element.yaml)).toContain("real_shell_native_tool");
+
+  const editedTool = structuredClone(initialTool);
+  editedTool.spec.description = "Genuine HA native YAML editor edited";
+  await reopenedEditor.evaluate((element, value) => {
+    element.setValue(value);
+    element.dispatchEvent(new CustomEvent("value-changed", {
+      bubbles: true,
+      composed: true,
+      detail: {value, isValid: true, errorMsg: ""},
+    }));
+  }, editedTool);
+  await panel.locator("#tool-validate").click();
+  await expect(panel.locator("#tool-error")).toHaveClass(/valid/);
+  await expect(panel.locator("#tool-error")).toContainText("Name: real_shell_native_tool");
+  await panel.locator("#tool-save").click();
+
+  panel = await openFunctionsFromOverview(page);
+  card = panel.locator(".tool-card").filter({hasText: "real_shell_native_tool"});
+  await expect(card).toContainText("Genuine HA native YAML editor edited");
+
+  // Prove the panel remains healthy outside Function Tools after native-editor use.
+  await panel.getByRole("button", {name: "Data & Memory", exact: true}).click();
+  await panel.getByRole("button", {name: "Knowledge Library", exact: true}).click();
+  await expect(page).toHaveURL(/\/extended-openai\/data-memory\/knowledge$/);
+  await expect(panel.getByRole("heading", {name: "Knowledge Library", exact: true})).toBeVisible();
+
+  // Clean up the acceptance tool so this test remains friendly to retries.
+  panel = await openFunctionsFromOverview(page);
+  card = panel.locator(".tool-card").filter({hasText: "real_shell_native_tool"});
+  await card.locator(".delete-tool").click();
+  await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
+  await panel.locator("#confirm-accept").click();
+  await expect(panel.locator(".tool-card").filter({hasText: "real_shell_native_tool"})).toHaveCount(0);
 });
