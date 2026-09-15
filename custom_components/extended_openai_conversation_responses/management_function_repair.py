@@ -55,9 +55,7 @@ def repair_revision(management_ui: Any, subentry: Any) -> str:
     return _revision_for_data(management_ui, subentry.title, dict(subentry.data))
 
 
-def require_repair_revision(
-    management_ui: Any, subentry: Any, revision: Any
-) -> None:
+def require_repair_revision(management_ui: Any, subentry: Any, revision: Any) -> None:
     """Reject stale repair writes without validating the broken configuration."""
     if not isinstance(revision, str) or revision != repair_revision(
         management_ui, subentry
