@@ -15,7 +15,7 @@ const NATIVE_STYLE = `
   #tool-yaml[hidden] { display: none !important; }
 `;
 
-function decorateToolYamlEditor(html) {
+export function decorateToolYamlEditor(html) {
   if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
   const template = document.createElement("template");
   template.innerHTML = html;
@@ -42,7 +42,7 @@ function installNativeStyle(root) {
   root.append(style);
 }
 
-function bindNativeToolYaml(panel) {
+export function bindNativeToolYaml(panel) {
   const root = panel?.shadowRoot;
   const textarea = root?.querySelector("#tool-yaml");
   const nativeEditor = root?.querySelector(`#${NATIVE_EDITOR_ID}`);
