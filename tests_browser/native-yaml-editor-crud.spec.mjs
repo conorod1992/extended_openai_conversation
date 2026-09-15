@@ -132,3 +132,42 @@ test("native YAML editor validates, duplicates, isolates tool state, deletes, an
 
   await expectHarnessClean(page, pageErrors);
 });
+
+test("modified native YAML is protected before built-in preset replacement", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/functions"));
+  const panel = page.locator("extended-openai-management-panel");
+  const presetYaml = toolYaml("browser_tool", "Protected built-in replacement");
+
+  await panel.evaluate((element, yaml) => {
+    const originalCall = element._call.bind(element);
+    element._call = async (section, action, payload) => {
+      if (section === "tools" && action === "built_in_catalog") {
+        return {functions: [{implementation: "protected_preset", label: "Protected preset", yaml, already_configured: false}]};
+      }
+      return originalCall(section, action, payload);
+    };
+  }, presetYaml);
+
+  await panel.locator("#add-tool").click();
+  const nativeEditor = panel.locator("#tool-yaml-native");
+  await waitForNativeTool(nativeEditor, "browser_tool");
+
+  const unsavedYaml = toolYaml("browser_tool", "Unsaved custom YAML");
+  await nativeEditor.evaluate((element, yaml) => element.setYamlForTest(yaml), unsavedYaml);
+  await panel.locator("#built-in-function").selectOption("protected_preset");
+
+  const confirm = panel.locator("#confirm-dialog");
+  await expect(confirm).toHaveJSProperty("open", true);
+  await expect(confirm).toContainText("Replace current YAML with this built-in function preset?");
+  await confirm.getByRole("button", {name: "Cancel", exact: true}).click();
+  await expect(confirm).toHaveJSProperty("open", false);
+  await expect.poll(() => nativeEditor.evaluate((element) => element.yaml)).toBe(unsavedYaml);
+
+  await panel.locator("#built-in-function").selectOption("protected_preset");
+  await acceptConfirmation(panel);
+  await expect.poll(() => nativeDescription(nativeEditor)).toBe("Protected built-in replacement");
+  await expect(panel.locator("#tool-error")).toHaveClass(/valid/);
+
+  await expectHarnessClean(page, pageErrors);
+});
