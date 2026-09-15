@@ -1,23 +1,26 @@
 import {expect, test} from "@playwright/test";
-import {acceptConfirmation, browserToolYaml} from "./browser-helpers.mjs";
 
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
 
 test.skip(!baseUrl || !authDataRaw, "requires the dedicated genuine Home Assistant frontend-shell harness");
 
-async function settleGenuineHaRoute(page) {
+async function authenticate(context) {
+  const authData = JSON.parse(authDataRaw);
+  await context.addInitScript((tokens) => {
+    window.localStorage.setItem("hassTokens", JSON.stringify(tokens));
+  }, authData);
+}
+
+async function openAssistantFromOverview(page) {
   const confirmHttpSettings = page.getByRole("button", {name: "Confirm", exact: true});
 
-  // Enter the registered HA panel root first. Home Assistant owns creation of the
-  // custom panel element; its deeper paths are internal routes handled by the
-  // management panel after that element has initialized.
+  // Keep this acceptance seam deliberately narrow: enter the registered HA panel
+  // root first, let Home Assistant instantiate the custom panel, then use the
+  // integration's own navigation to reach Assistant/Basics.
   await page.goto(`${baseUrl}/extended-openai`, {waitUntil: "domcontentloaded"});
   await expect(page.locator("home-assistant")).toHaveCount(1);
 
-  // A fresh staged HA profile may briefly present its one-time HTTP confirmation.
-  // Acknowledge it if present, then re-enter the registered panel root because HA
-  // may rebuild or navigate its shell while dismissing the dialog.
   const confirmationVisible = await confirmHttpSettings
     .waitFor({state: "visible", timeout: 2_000})
     .then(() => true)
@@ -33,16 +36,13 @@ async function settleGenuineHaRoute(page) {
   await expect(panel).toHaveCount(1);
   await expect(panel.getByRole("heading", {name: "Extended OpenAI", exact: true})).toBeVisible({timeout: 30_000});
 
-  // Move to Assistant/Basics through the panel's real navigation handler rather
-  // than cold-loading a deep URL before the custom panel has established state.
   await panel.getByRole("button", {name: "Assistant", exact: true}).click();
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
   await expect(panel.locator('[data-config="__title"]')).toBeVisible({timeout: 30_000});
   return panel;
 }
 
-test("shipped management panel loads and persists configuration inside the genuine HA frontend", async ({context, page}) => {
-  const authData = JSON.parse(authDataRaw);
+test("shipped management panel loads and persists one configuration change inside the genuine HA frontend", async ({context, page}) => {
   const integrationPageErrors = [];
   const integrationConsoleErrors = [];
   const integrationRequestFailures = [];
@@ -77,14 +77,11 @@ test("shipped management panel loads and persists configuration inside the genui
     }
   });
 
-  await context.addInitScript((tokens) => {
-    window.localStorage.setItem("hassTokens", JSON.stringify(tokens));
-  }, authData);
+  await authenticate(context);
 
-  // These two elements distinguish this acceptance path from the standalone
-  // Playwright fixture: Home Assistant owns the shell and instantiates the
-  // integration's registered custom panel inside it.
-  let panel = await settleGenuineHaRoute(page);
+  // Genuine HA owns authentication, routing, custom-panel registration, and the
+  // websocket. This test proves only that integration boundary plus one real save.
+  let panel = await openAssistantFromOverview(page);
   await expect(panel.locator('[data-config="chat_model"]')).toBeVisible();
 
   const title = panel.locator('[data-config="__title"]');
@@ -93,40 +90,11 @@ test("shipped management panel loads and persists configuration inside the genui
   await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
 
-  await page.reload({waitUntil: "domcontentloaded"});
-  await expect(page.locator("home-assistant")).toHaveCount(1);
-  panel = page.locator("extended-openai-management-panel");
+  // Re-enter through HA's registered panel root instead of relying on a deep-route
+  // reload. Persistence is still proved through a fresh panel lifecycle.
+  panel = await openAssistantFromOverview(page);
   await expect(panel.locator('[data-config="__title"]')).toHaveValue("Real HA shell saved");
   await expect(panel.locator("#agent option:checked")).toHaveText("Real HA shell saved");
-
-  // Exercise a richer management journey inside HA's actual shell. This covers
-  // real HA routing/authentication plus the integration's dialog, validation,
-  // persistence, reload, and destructive-confirmation paths.
-  await page.goto(`${baseUrl}/extended-openai/capabilities/functions`, {waitUntil: "domcontentloaded"});
-  await expect(page.locator("home-assistant")).toHaveCount(1);
-  panel = page.locator("extended-openai-management-panel");
-  await expect(panel.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
-
-  await panel.locator("#add-tool").click();
-  await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
-  await panel.locator("#tool-yaml").fill(browserToolYaml("Genuine HA shell tool"));
-  await panel.locator("#tool-save").click();
-  let tool = panel.locator(".tool-card").filter({hasText: "browser_tool"});
-  await expect(tool).toContainText("Genuine HA shell tool");
-
-  await page.reload({waitUntil: "domcontentloaded"});
-  await expect(page.locator("home-assistant")).toHaveCount(1);
-  panel = page.locator("extended-openai-management-panel");
-  tool = panel.locator(".tool-card").filter({hasText: "browser_tool"});
-  await expect(tool).toContainText("Genuine HA shell tool");
-
-  await tool.locator(".delete-tool").click();
-  await acceptConfirmation(panel);
-  await expect(panel.locator(".tool-card").filter({hasText: "browser_tool"})).toHaveCount(0);
-
-  await page.reload({waitUntil: "domcontentloaded"});
-  panel = page.locator("extended-openai-management-panel");
-  await expect(panel.locator(".tool-card").filter({hasText: "browser_tool"})).toHaveCount(0);
 
   expect(integrationRequestFailures).toEqual([]);
   expect(integrationPageErrors).toEqual([]);

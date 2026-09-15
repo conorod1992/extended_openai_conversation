@@ -71,16 +71,22 @@ def _conversation_subentry(entry: MockConfigEntry):
     )
 
 
-async def _admin_client(hass: HomeAssistant, hass_ws_client: Any) -> Any:
+async def _admin_client(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+    *,
+    user_id: str = ADMIN_ID,
+    name: str = "Management Acceptance Admin",
+) -> Any:
     """Create a genuine authenticated Home Assistant admin WebSocket client."""
-    admin = MockUser(id=ADMIN_ID, name="Management Acceptance Admin", is_owner=True)
+    admin = MockUser(id=user_id, name=name, is_owner=True)
     admin.add_to_hass(hass)
     refresh_token = await hass.auth.async_create_refresh_token(admin, CLIENT_ID)
     access_token = hass.auth.async_create_access_token(refresh_token)
     return await hass_ws_client(hass, access_token)
 
 
-async def _management_call(
+async def _management_response(
     client: Any,
     *,
     entry: MockConfigEntry,
@@ -88,7 +94,7 @@ async def _management_call(
     action: str,
     **payload: Any,
 ) -> dict[str, Any]:
-    """Call the registered management command and require a successful response."""
+    """Call the registered management command and return the raw HA WS response."""
     subentry = _conversation_subentry(entry)
     await client.send_json_auto_id(
         {
@@ -100,7 +106,25 @@ async def _management_call(
             **payload,
         }
     )
-    response = await client.receive_json()
+    return await client.receive_json()
+
+
+async def _management_call(
+    client: Any,
+    *,
+    entry: MockConfigEntry,
+    section: str,
+    action: str,
+    **payload: Any,
+) -> dict[str, Any]:
+    """Call the registered management command and require a successful response."""
+    response = await _management_response(
+        client,
+        entry=entry,
+        section=section,
+        action=action,
+        **payload,
+    )
     assert response["success"], response
     return response["result"]
 
@@ -161,6 +185,85 @@ async def test_configuration_round_trip_through_management_websocket(
     )
     assert reloaded["title"] == "Configuration Acceptance Saved"
     assert reloaded["config"][CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES] == 47
+
+
+@pytest.mark.asyncio
+async def test_stale_configuration_revision_cannot_overwrite_newer_save(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+) -> None:
+    """Two genuine HA clients must not lose a newer configuration update."""
+    entry = _entry("Configuration Concurrency Acceptance")
+    await _setup_entry(hass, entry)
+    client_a = await _admin_client(
+        hass,
+        hass_ws_client,
+        user_id="management-concurrency-a",
+        name="Management Concurrency A",
+    )
+    client_b = await _admin_client(
+        hass,
+        hass_ws_client,
+        user_id="management-concurrency-b",
+        name="Management Concurrency B",
+    )
+
+    snapshot_a = await _management_call(
+        client_a, entry=entry, section="configuration", action="get"
+    )
+    snapshot_b = await _management_call(
+        client_b, entry=entry, section="configuration", action="get"
+    )
+    assert snapshot_b["revision"] == snapshot_a["revision"]
+    assert snapshot_b["title"] == snapshot_a["title"]
+    baseline_timeout = snapshot_a["config"][CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES]
+
+    winner = await _management_call(
+        client_a,
+        entry=entry,
+        section="configuration",
+        action="update",
+        revision=snapshot_a["revision"],
+        title="Configuration Concurrency Winner",
+        config={CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES: 41},
+    )
+    assert winner["title"] == "Configuration Concurrency Winner"
+    assert winner["config"][CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES] == 41
+    assert winner["revision"] != snapshot_a["revision"]
+
+    stale_response = await _management_response(
+        client_b,
+        entry=entry,
+        section="configuration",
+        action="update",
+        revision=snapshot_b["revision"],
+        title="Configuration Concurrency Stale",
+        config={CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES: 52},
+    )
+    assert stale_response["success"] is False
+    assert "changed in another tab" in stale_response["error"]["message"].lower()
+
+    authoritative = await _management_call(
+        client_b, entry=entry, section="configuration", action="get"
+    )
+    assert authoritative["title"] == "Configuration Concurrency Winner"
+    assert authoritative["config"][CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES] == 41
+    assert authoritative["revision"] == winner["revision"]
+
+    # After re-reading the authoritative revision, the stale client is healthy and
+    # can make a normal subsequent write. Restore the original values as cleanup.
+    recovered = await _management_call(
+        client_b,
+        entry=entry,
+        section="configuration",
+        action="update",
+        revision=authoritative["revision"],
+        title=snapshot_a["title"],
+        config={CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES: baseline_timeout},
+    )
+    assert recovered["title"] == snapshot_a["title"]
+    assert recovered["config"][CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES] == baseline_timeout
+    assert recovered["revision"] != winner["revision"]
 
 
 @pytest.mark.asyncio
