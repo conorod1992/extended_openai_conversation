@@ -272,6 +272,17 @@ try {
   }
 
   {
+    const harness = makeHarness({initialYaml: ""});
+    harness.editor.setValue = () => { throw new Error("native editor setValue failed"); };
+    bindNativeToolYaml(harness.panel);
+    await flush();
+    assert.equal(harness.editor.hidden, true, "a throwing native editor must be hidden rather than breaking the Function Tool dialog");
+    assert.equal(harness.textarea.hidden, false, "the raw textarea must remain usable when native initialization throws");
+    harness.textarea.focus();
+    assert.equal(harness.textarea.focusCalls, 1);
+  }
+
+  {
     const definition = deferred();
     const yaml = "name: Delayed definition\ntype: script\n";
     const harness = makeHarness({
