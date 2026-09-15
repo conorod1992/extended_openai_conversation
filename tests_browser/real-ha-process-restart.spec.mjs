@@ -48,7 +48,7 @@ async function settleGenuineHaRoute(page) {
 
   // Move to Assistant/Basics through the panel's real navigation handler rather
   // than cold-loading a deep URL before the custom panel has established state.
-  await panel.locator('button[data-page="assistant"]').click();
+  await panel.getByRole("button", {name: "Assistant", exact: true}).click();
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
   await expect(panel.locator('[data-config="__title"]')).toBeVisible({timeout: 30_000});
   return panel;
