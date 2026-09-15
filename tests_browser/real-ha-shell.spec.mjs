@@ -1,4 +1,5 @@
 import {expect, test} from "@playwright/test";
+import {acceptConfirmation, browserToolYaml} from "./browser-helpers.mjs";
 
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
@@ -30,12 +31,11 @@ async function settleGenuineHaRoute(page) {
 
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel).toHaveCount(1);
-  const assistantNav = panel.locator('.top-nav button[data-page="assistant"]');
-  await expect(assistantNav).toBeVisible({timeout: 30_000});
+  await expect(panel.getByRole("heading", {name: "Extended OpenAI", exact: true})).toBeVisible({timeout: 30_000});
 
   // Move to Assistant/Basics through the panel's real navigation handler rather
   // than cold-loading a deep URL before the custom panel has established state.
-  await assistantNav.click();
+  await panel.getByRole("button", {name: "Assistant", exact: true}).click();
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
   await expect(panel.locator('[data-config="__title"]')).toBeVisible({timeout: 30_000});
   return panel;
@@ -71,7 +71,7 @@ test("shipped management panel loads and persists configuration inside the genui
   // These two elements distinguish this acceptance path from the standalone
   // Playwright fixture: Home Assistant owns the shell and instantiates the
   // integration's registered custom panel inside it.
-  const panel = await settleGenuineHaRoute(page);
+  let panel = await settleGenuineHaRoute(page);
   await expect(panel.locator('[data-config="chat_model"]')).toBeVisible();
 
   const title = panel.locator('[data-config="__title"]');
@@ -82,9 +82,38 @@ test("shipped management panel loads and persists configuration inside the genui
 
   await page.reload({waitUntil: "domcontentloaded"});
   await expect(page.locator("home-assistant")).toHaveCount(1);
-  const reloadedPanel = page.locator("extended-openai-management-panel");
-  await expect(reloadedPanel.locator('[data-config="__title"]')).toHaveValue("Real HA shell saved");
-  await expect(reloadedPanel.locator("#agent option:checked")).toHaveText("Real HA shell saved");
+  panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue("Real HA shell saved");
+  await expect(panel.locator("#agent option:checked")).toHaveText("Real HA shell saved");
+
+  // Exercise a richer management journey inside HA's actual shell. This covers
+  // real HA routing/authentication plus the integration's dialog, validation,
+  // persistence, reload, and destructive-confirmation paths.
+  await page.goto(`${baseUrl}/extended-openai/capabilities/functions`, {waitUntil: "domcontentloaded"});
+  await expect(page.locator("home-assistant")).toHaveCount(1);
+  panel = page.locator("extended-openai-management-panel");
+  await expect(panel.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
+
+  await panel.locator("#add-tool").click();
+  await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
+  await panel.locator("#tool-yaml").fill(browserToolYaml("Genuine HA shell tool"));
+  await panel.locator("#tool-save").click();
+  let tool = panel.locator(".tool-card").filter({hasText: "browser_tool"});
+  await expect(tool).toContainText("Genuine HA shell tool");
+
+  await page.reload({waitUntil: "domcontentloaded"});
+  await expect(page.locator("home-assistant")).toHaveCount(1);
+  panel = page.locator("extended-openai-management-panel");
+  tool = panel.locator(".tool-card").filter({hasText: "browser_tool"});
+  await expect(tool).toContainText("Genuine HA shell tool");
+
+  await tool.locator(".delete-tool").click();
+  await acceptConfirmation(panel);
+  await expect(panel.locator(".tool-card").filter({hasText: "browser_tool"})).toHaveCount(0);
+
+  await page.reload({waitUntil: "domcontentloaded"});
+  panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".tool-card").filter({hasText: "browser_tool"})).toHaveCount(0);
 
   expect(integrationRequestFailures).toEqual([]);
   expect(integrationPageErrors).toEqual([]);

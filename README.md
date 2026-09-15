@@ -2,53 +2,38 @@
 
 Bring a more capable AI conversation agent to Home Assistant.
 
-Extended OpenAI Conversation connects Home Assistant Assist to the OpenAI API (or a compatible provider) and adds features such as device control, conversation memory, web search, request rules, local Home Assistant handling, custom tools, voice follow-ups, a knowledge library, guest controls, and more.
+Extended OpenAI Conversation connects Home Assistant Assist to the OpenAI API, or a compatible provider, and adds richer Home Assistant control, memory, web search, local request handling, custom tools, voice features, privacy controls, diagnostics, and more.
 
-You can start with a simple setup and leave the advanced features alone until you need them.
+It is designed to work well with a simple setup first, while keeping advanced features available when you need them.
 
 > [!IMPORTANT]
 > **A ChatGPT subscription does not include OpenAI API usage.**
 >
-> This integration uses the OpenAI API, which is billed separately by OpenAI or by the compatible provider you configure. If you use OpenAI directly, make sure API billing or credits are configured for your API account.
+> This integration uses the OpenAI API or another configured provider. API usage may be billed separately by that provider.
 
-This project began as a fork of [jekalmin/extended_openai_conversation](https://github.com/jekalmin/extended_openai_conversation), but has since diverged substantially in features, configuration, architecture, and user interface.
+This project began as a fork of [jekalmin/extended_openai_conversation](https://github.com/jekalmin/extended_openai_conversation), but has since diverged substantially in features, architecture, configuration, testing, and user interface.
 
-## What can it do?
+## Highlights
 
-With a basic setup, you can use natural language through Home Assistant Assist to ask questions and control entities you have exposed to Assist.
+- **Home Assistant control** — work with entities exposed to Assist and call supported Home Assistant capabilities.
+- **Responses API + Chat Completions** — use automatic API selection or choose a compatible mode explicitly.
+- **Web Search** — let supported OpenAI models retrieve current public information when needed.
+- **Conversation continuity & context management** — preserve useful conversational context while keeping long conversations bounded.
+- **Temporary & Persistent Memory** — retain short-lived context with expiry or longer-term useful facts and preferences.
+- **Knowledge Library** — give agents larger local reference material that can be searched on demand.
+- **Request Rules & local handling** — handle predictable requests locally, call configured actions/tools, or route selected requests differently.
+- **Function Tools & Function Groups** — add custom capabilities and load large tool collections only when needed.
+- **Delayed Function Tools** — persist eligible delayed work and re-check current authorization before it executes.
+- **Voice Identity** — map Assist devices/satellites to Home Assistant users so retained data can follow the person speaking.
+- **Voice follow-ups, speech cleanup & Quiet Hours** — improve spoken conversations and manage satellite behaviour overnight.
+- **Broadcast** — send one-way spoken announcements to selected Assist satellites or the whole home.
+- **Guest Mode** — apply a backend-enforced visitor policy that can only narrow normal access.
+- **Conversation archive** — optionally retain searchable conversation history locally.
+- **Skills** — load reusable instruction sets for an agent when needed.
+- **AI Task support** — create model-backed AI Task agents.
+- **Usage, request debugging, diagnostics & backups** — inspect operation and maintain or migrate individual agents.
 
-For example:
-
-> Turn off everything downstairs except the hallway light.
-
-> Was the kitchen window left open overnight?
-
-> Set the living room lights to 30%.
-
-Common optional additions include:
-
-- **Web Search** — allow supported models to look up current information.
-- **Temporary Memory** — automatically retain useful short-lived facts, such as plans for today or tomorrow, until they expire.
-- **Persistent Memory** — let the assistant remember useful facts between conversations.
-- **Local handling** — let Home Assistant handle simple built-in commands before an AI request, while more complex requests continue to the normal AI path.
-- **Broadcast** — send one-way spoken messages to selected Assist satellites or the whole home, without interrupting satellites that are currently busy.
-- **Voice follow-ups** — control whether Assist keeps listening after a reply.
-
-More advanced or specialist features include:
-
-- **Knowledge Library** — give an agent larger reference material that it can search when needed.
-- **Request Rules** — handle selected requests locally without calling the AI provider, call configured actions or tools, or route requests to different models.
-- **Guest Mode** — restrict what visitors can access and keep guest conversations separate.
-- **Conversation archive** — optionally keep searchable conversation history locally.
-- **Skills** — give agents reusable sets of instructions.
-- **Custom Functions** — add tools for Home Assistant actions, scripts, templates, REST APIs, SQLite queries, and more.
-- **Function Groups** — keep large sets of tools out of every request and load them only when needed.
-- **Image and PDF input** — available with compatible models in Responses mode.
-- **AI Task support** — create dedicated AI Task agents.
-- **Usage diagnostics and agent testing** — inspect provider-reported usage and check an agent's configuration from the UI.
-- **Backup & Restore** — back up or restore an individual agent and its associated data.
-
-You do **not** need to understand or configure all of these features to use the integration.
+You do **not** need to configure all of these features. A basic conversation agent can be set up with mostly default settings.
 
 ## Before you install
 
@@ -56,523 +41,133 @@ You will need:
 
 - Home Assistant
 - an OpenAI API key, or credentials for a compatible provider
-- a Home Assistant Assist pipeline if you want to use it as a conversation agent
+- a Home Assistant Assist pipeline if you want to use Extended OpenAI as a conversation agent
 
-If you want the assistant to know about or control Home Assistant entities, those entities also need to be **exposed to Assist**.
+For normal Home Assistant entity knowledge and control, expose the entities you want the assistant to use under **Settings → Voice assistants → Expose**.
 
-For a first setup, start by exposing only a few useful entities and add more later. With the default entity-context setup, exposed entities contribute context to model requests, so keeping the initial set focused also keeps requests easier to understand and smaller.
-
-Broadcast is different: Assist Satellite entities used as Broadcast destinations do **not** need to be exposed to Assist. The integration discovers announcement-capable Assist satellites directly from Home Assistant.
-
-HACS is the easiest installation method, although manual installation is also supported.
+> [!NOTE]
+> Assist exposure is not an authorization bypass. The requesting Home Assistant user's permissions still apply, and Extended OpenAI policies such as Guest Mode can further restrict access.
 
 ## Installation
 
-### Recommended: HACS
-
-If you have not added a custom HACS repository before:
+### HACS
 
 1. Open **HACS** in Home Assistant.
-2. Open the HACS menu and choose **Custom repositories**.
-3. Enter:
+2. Choose **Custom repositories**.
+3. Add:
 
    `https://github.com/conorod1992/extended_openai_conversation`
 
-4. Choose **Integration** as the repository type.
-5. Add the repository.
-6. Find **Extended OpenAI Conversation (Responses)** in HACS and download it.
-7. Restart Home Assistant.
+4. Select **Integration** as the repository type.
+5. Install **Extended OpenAI Conversation (Responses)**.
+6. Restart Home Assistant.
 
-> [!TIP]
-> A **custom repository** is simply a Home Assistant integration that is installed through HACS but is not part of HACS's default repository list.
-
-### Manual installation
+### Manual
 
 Copy:
 
 `custom_components/extended_openai_conversation_responses`
 
-from this repository into:
+into:
 
 `<config>/custom_components/extended_openai_conversation_responses`
 
-in your Home Assistant configuration directory, then restart Home Assistant.
+and restart Home Assistant.
 
-For more detail, see [Installation](docs/getting-started/installation.md).
+See the [installation guide](docs/getting-started/installation.md) for the full walkthrough.
 
-## First-time setup
-
-### 1. Add the integration
+## First setup
 
 After restarting Home Assistant:
 
-1. Open **Settings → Devices & services**.
-2. Select **Add Integration**.
-3. Search for **Extended OpenAI Conversation (Responses)**.
-4. Enter your API key.
-5. If you are using OpenAI directly, leave **Base URL** unchanged.
+1. Open **Settings → Devices & services → Add Integration**.
+2. Add **Extended OpenAI Conversation (Responses)** and configure your provider credentials.
+3. Open **Extended OpenAI** from the Home Assistant sidebar and select the conversation agent you want to configure.
+4. Open **Settings → Voice assistants**, edit the Assist pipeline you want to use, and select **Extended OpenAI Conversation (Responses)** as its conversation agent.
+5. Under **Settings → Voice assistants → Expose**, expose a small set of entities for an initial test.
+6. Try a simple request such as:
 
-You normally only need to change **Base URL** when using another compatible provider.
+   > What lights are on?
 
-If you are using OpenAI directly, remember that API billing is separate from ChatGPT billing. A valid ChatGPT subscription on its own does not provide API usage.
+   or:
 
-### 2. Open Extended OpenAI
+   > Turn off the kitchen light.
 
-After adding the integration, open **Extended OpenAI** from the Home Assistant sidebar.
-
-This is where most configuration is managed.
-
-The interface is split into sections for:
-
-- assistant settings
-- capabilities
-- data and memory
-- usage and maintenance
-
-There is also an **Overview** page for common tasks and a **Guide** that explains the major features. The optional Broadcast controls are also on the Overview page, so Broadcast does not add a second Home Assistant sidebar item.
-
-For a first setup, you can usually leave most settings at their defaults.
-
-### 3. Select the conversation agent
-
-To make your Home Assistant voice assistant use Extended OpenAI:
-
-1. Open **Settings → Voice assistants**.
-2. Edit the assistant you want to use.
-3. Under **Conversation agent**, select **Extended OpenAI Conversation (Responses)**.
-
-### 4. Expose the entities you want it to use
-
-Open:
-
-**Settings → Voice assistants → Expose**
-
-and expose the entities the assistant should be able to know about or control.
-
-For example, if `light.kitchen` is not exposed to Assist, the conversation agent should not be expected to know about or control it through normal Home Assistant entity control.
-
-Start with a small, easy-to-test set such as one or two lights. Once basic control works, expose the other entities you actually want the assistant to use.
-
-You do **not** need to create custom functions just to control ordinary exposed Home Assistant entities.
-
-### 5. Try it
-
-Start with something simple, such as:
-
-> What lights are on?
-
-or:
-
-> Turn off the kitchen light.
-
-Once that works, you can enable additional features such as Web Search, memory, Request Rules, local handling, Broadcast, or custom functions as needed.
-
-### If the first test does not work
-
-- **No useful response at all:** run **Test agent** and check the API credentials and provider/API billing.
-- **It responds but cannot see or control a device:** check that the entity is exposed under **Settings → Voice assistants → Expose**.
-- **Voice is using a different assistant or agent:** check the selected **Conversation agent** under **Settings → Voice assistants**.
-- **Basic requests work:** keep the basic setup as-is and enable optional features one at a time. This makes later problems much easier to isolate.
+Once basic operation works, enable optional features one at a time.
 
 For a fuller walkthrough, see [First setup](docs/getting-started/setup.md).
 
-## Which feature do I need?
+## Where configuration lives
 
-Several features deal with context or actions, but they solve different problems.
+Provider connection details are managed through Home Assistant's integration configuration. Conversation-agent behaviour is managed from the **Extended OpenAI** sidebar panel.
 
-### Conversation information and memory
+The management interface is organised around:
 
-| Feature | Best thought of as |
+- **Assistant** — models, API behaviour, prompt/context, conversation, voice and speech
+- **Capabilities** — Home Assistant access, Request Rules, Function Tools/Groups and Guest Mode
+- **Data & Memory** — memories, Knowledge Library and conversation history
+- **Usage & Maintenance** — usage, request debugging, backups, diagnostics and retention
+
+The built-in **Guide** provides concise in-app orientation. The repository documentation under [`docs/`](docs/) is the canonical reference for feature behaviour and edge cases.
+
+## Start with the right guide
+
+| If you want to… | Read |
 | --- | --- |
-| **Conversation context** | What has been said in the current conversation or retained conversation session. |
-| **Temporary Memory** | Useful short-lived facts that should survive beyond the immediate conversation but expire automatically, such as plans for today or tomorrow. |
-| **Persistent Memory** | Durable facts or preferences that remain useful indefinitely until changed or deleted. |
-| **Knowledge Library** | Larger reference material, notes, or documents that the model can search when needed. |
-| **Conversation archive** | An optional local history of previous user text and final assistant responses for searching and management. |
+| Understand the main settings | [Configuration](docs/configuration.md) |
+| Use Responses API features or a compatible provider | [Responses API](docs/features/responses-api.md) |
+| Let the model search the web | [Web Search](docs/features/web-search.md) |
+| Manage long conversations | [Conversation continuity](docs/features/conversation-continuity.md) and [Context management](docs/features/context-management.md) |
+| Store durable facts/preferences | [Persistent Memory](docs/features/persistent-memory.md) |
+| Store short-lived facts that expire | [Temporary Memory](docs/features/temporary-memory.md) |
+| Give the agent larger reference material | [Knowledge Library](docs/features/knowledge-library.md) |
+| Keep/search previous conversations | [Conversation Archive](docs/features/conversation-archive.md) |
+| Handle predictable requests specially | [Request Rules](docs/features/request-rules.md) |
+| Add or organise model-callable tools | [Functions](docs/functions/overview.mdx) and [Function Groups](docs/features/function-groups.md) |
+| Delay a configured Function Tool safely | [Delayed Function Tools](docs/features/delayed-function-tools.md) |
+| Understand entity exposure and permissions | [Home Assistant access](docs/features/home-assistant-access.md) |
+| Associate voice requests with individual users | [Voice Identity](docs/features/voice-identity.md) |
+| Keep Assist listening for follow-up speech | [Voice follow-ups](docs/features/voice-followups.md) |
+| Clean spoken output | [Speech processing](docs/features/speech-processing.md) |
+| Reduce satellite volume overnight | [Quiet Hours](docs/features/quiet-hours.md) |
+| Restrict visitor access | [Guest Mode](docs/features/guest-mode.md) |
+| Inspect provider usage | [Usage statistics](docs/features/usage-statistics.md) |
+| Inspect an individual request | [Request debugging](docs/features/request-debugging.md) |
+| Refresh model capability metadata | [Model data](docs/features/model-data.md) |
+| Back up or restore an agent | [Backup & Restore](docs/features/backup-restore.md) |
+| Use AI Task | [AI Task](docs/features/ai-task.md) |
+| Migrate from the original integration | [Migration](docs/migration.md) |
+| Diagnose a problem | [Troubleshooting](docs/troubleshooting.md) |
 
-### Ways requests can be handled
+## Permissions, privacy and data
 
-| Feature | What it is for |
-| --- | --- |
-| **Local handling** | Lets Home Assistant itself complete simple built-in commands before making an AI request. |
-| **Request Rules** | Lets you define special behaviour for requests that match specific patterns or conditions. |
-| **Function Tools** | Capabilities the AI model can choose to call while working through a request. The integration includes Function Tools by default; custom functions are additional or modified tool definitions you configure yourself. |
+Extended OpenAI combines local Home Assistant processing/storage with requests to the AI provider you configure.
 
-## A few terms you may see
+Home Assistant Assist exposure defines the normal entity set available to the assistant, but authenticated Home Assistant user permissions still apply to protected actions. Extended OpenAI policy layers such as Guest Mode can make access more restrictive; they cannot grant permissions that Home Assistant denied.
 
-You do not need to know these before getting started, but they are useful when exploring the settings.
+When model processing is needed, relevant prompt/context, request text, available tool definitions, and retrieved memory or Knowledge content may be sent to the configured provider. Provider-side retention and processing are governed by that provider's policies.
 
-| Term | What it means |
-| --- | --- |
-| **Conversation agent** | The system Home Assistant Assist sends your request to for a response. |
-| **Exposed entity** | A Home Assistant entity you have allowed Assist to know about or control. |
-| **Model** | The AI model used to answer a request, such as an OpenAI GPT model. |
-| **API** | The connection used by Home Assistant to send requests to the AI provider. |
-| **Responses API** | OpenAI's newer API used by supported models and features. |
-| **Chat Completions** | An older OpenAI-compatible API format that remains supported. |
-| **Function / tool** | A capability the model can call, such as controlling Home Assistant or running a custom action. |
-| **Prompt** | Instructions and context supplied to the model. |
+Memories, Knowledge Library content, Request Rules, optional archived conversations, usage data, and related integration state are stored locally in Home Assistant. Features that complete a request locally can avoid a provider request for that request.
 
-## Recommended starting settings
+Full backups can contain private prompts, memories, Knowledge content, archived conversations and usage metadata. Treat exported backup files accordingly.
 
-Most users can begin with the defaults and change only what they actually need.
+## Provider compatibility
 
-| Setting | Default | What it does |
-| --- | --- | --- |
-| **Completion Model** | `gpt-5-mini` | Selects the model used by the configured provider. |
-| **API mode** | Auto | Automatically chooses the appropriate supported API mode. |
-| **Continue conversation** | HA Default | Uses Home Assistant's normal voice follow-up behaviour. |
-| **Local handling** | Off | Optionally lets Home Assistant complete simple built-in commands before an AI request. |
-| **Broadcast** | Off | Enables one-way spoken messages to selected Assist satellites or the whole home. |
-| **Web Search** | Off | Lets compatible OpenAI Responses models search the web when needed. |
-| **Temporary Memory** | Off | Optionally retains useful short-lived facts until their inferred or explicit expiry. |
-| **Memory mode** | Off | Enables persistent memory in Manual or Automatic mode. |
-| **Knowledge Library** | Off | Lets an agent search longer reference material stored locally. |
-| **Conversation archive** | Off | Optionally keeps searchable conversation text locally. |
-| **Maximum tokens** | 500 | Limits the length of generated replies. |
-| **Maximum function calls** | 10 | Limits model-requested function executions while producing a response. |
-| **Context strategy** | Keep recent messages | Controls how long conversations are managed. |
-| **Speech cleanup** | Off | Optionally cleans formatting or selected text from spoken replies. |
+The integration supports both **Responses API** and **Chat Completions**. For most users, **API mode: Auto** is the recommended starting point.
 
-See the [full configuration guide](docs/configuration.md) for all options.
+Some features depend on the selected model, API mode, or provider. For example, hosted Web Search and some multimodal/reasoning capabilities require a compatible Responses implementation. A provider that supports Chat Completions is not automatically compatible with `/v1/responses`.
 
-## Key features
+Model capability metadata can be refreshed independently of an integration release, with bundled metadata retained as the fallback. See [Model data](docs/features/model-data.md).
 
-### Home Assistant control
+## Reliability and testing
 
-Extended OpenAI can work with entities exposed to Home Assistant Assist and can use included Home Assistant tools to perform supported actions.
+The integration is exercised through unit/integration tests plus genuine Home Assistant acceptance tests. Selected critical flows are also tested through a real browser against Home Assistant, including upgrade-from-a-previous-release scenarios and cross-browser smoke coverage.
 
-This is enough for normal requests such as turning lights on or off, changing supported settings, or asking about entity state.
-
-For supported entity changes, the integration can also keep a small snapshot of the previous state in the conversation so follow-up requests such as “undo that” can sometimes restore the previous setting.
-
-This is not a universal undo system. Actions that are not reversible, are not supported by the snapshot system, or happened outside Extended OpenAI may not have enough information to be undone accurately.
-
-### Local handling
-
-Local handling is an optional shortcut for commands that Home Assistant already understands on its own.
-
-When it is enabled, the order is:
-
-1. **Request Rules** get the first chance to handle or route the request.
-2. Home Assistant can handle a clear built-in command locally.
-3. Anything that was not handled locally continues through Extended OpenAI and the AI model normally.
-
-This means a simple request such as “turn off the kitchen light”, “what time is it?”, or “set a 20 minute timer” can be completed without an AI API request when Home Assistant has a matching built-in command. A more flexible request that Home Assistant does not understand still reaches the AI as usual.
-
-The settings page shows the command types currently provided by your Home Assistant version. You can choose any command types that should **always continue to AI** instead of using the local shortcut.
-
-There is also a separate option for **delayed device commands**. Home Assistant uses its timer command for both ordinary timers and requests such as “turn off the lights in 20 minutes”. You can keep normal timers local while sending delayed device actions to the normal AI / Function Tool path.
-
-> [!TIP]
-> Home Assistant Assist also has its own **Prefer local handling** pipeline setting. If that is enabled, Home Assistant may complete a command before it reaches Extended OpenAI at all. The Extended OpenAI settings page warns when a pipeline using the current agent is configured this way. Turn the pipeline option off if you want Extended OpenAI to control the order and apply its command-type exceptions.
-
-When Guest Mode is active, this shortcut is deliberately skipped so guest requests continue through Extended OpenAI's existing policy checks.
-
-### Broadcast
-
-Broadcast is an optional, one-way way to send a spoken message to Assist satellites around the home. It is disabled by default and can be enabled from **Extended OpenAI → Overview**.
-
-From the Overview you can type a message, select one or more Assist satellites, or choose **Whole home**. The same delivery system is also available to voice requests, the optional **Send broadcast** Function Tool, and the `extended_openai_conversation_responses.broadcast` Home Assistant action.
-
-When local handling is enabled, explicit targeted phrases can be handled without an AI request. Examples include:
-
-> Broadcast to kitchen that dinner is ready.
-
-> Tell bedroom I'll be up in five minutes.
-
-> Announce to upstairs saying the dog needs to go out.
-
-Targets can be Assist satellites, devices, areas, floors, or labels. Local matching uses the normal Home Assistant names and any aliases available on those registry entries. Common whole-home wording such as “everyone”, “everywhere”, “whole home”, and “all speakers” is also understood.
-
-Assist Satellite entities do **not** need to be exposed to Assist for Broadcast. The integration discovers announcement-capable Assist satellites directly and calls Home Assistant's Assist Satellite announcement action itself.
-
-If a target satellite is listening, processing, or speaking, Broadcast queues that target instead of intentionally interrupting the active voice session. Each target is handled separately and queued messages expire after a bounded wait rather than remaining pending forever.
-
-Broadcast is intentionally one-way in this release. There is no reply thread, live two-way conversation, or recorded-voice mode.
-
-### Web Search
-
-When Web Search is enabled with a compatible direct OpenAI Responses setup, the model can decide when it needs current information.
-
-It does **not** search the web for every request.
-
-[Read the Web Search guide](docs/features/web-search.md)
-
-### Temporary Memory
-
-Temporary Memory is separate from Persistent Memory. It is intended for useful facts that matter beyond the immediate conversation but should disappear automatically when they are no longer relevant.
-
-Examples include a visitor arriving tomorrow, a parcel expected today, or another short-lived plan.
-
-- **Off** — no temporary memories are created or supplied.
-- **Balanced** — clearly useful short-lived facts can be stored automatically.
-- **Eager** — useful temporary context is retained more proactively when it may plausibly matter again.
-
-Temporary memories are stored locally in Home Assistant, have an expiry, and are removed after they expire. They can also be viewed and deleted from the Memories interface.
-
-[Read the Temporary Memory guide](docs/features/temporary-memory.md)
-
-### Persistent Memory
-
-Persistent Memory lets the assistant keep useful facts beyond a single conversation.
-
-- **Off** — no persistent memory.
-- **Manual** — facts are stored when explicitly requested.
-- **Automatic** — the assistant can also save stable, useful information automatically.
-
-The integration retrieves only a limited selection of relevant memories for a conversation instead of placing every saved memory into every prompt.
-
-[Read the Persistent Memory guide](docs/features/persistent-memory.md)
-
-### Knowledge Library
-
-The Knowledge Library is intended for larger reference material that should not be placed into every request.
-
-Examples might include:
-
-- household information
-- appliance notes
-- procedures
-- inventories
-- reference documents
-
-The model can search the library when it needs information from it. Knowledge sources are read-only from the model's point of view. Individual sources can be disabled without deleting them; disabled sources remain stored and editable but are unavailable to the model until re-enabled.
-
-[Read the Knowledge Library guide](docs/features/knowledge-library.md)
-
-### Request Rules
-
-Request Rules let you define special handling for selected requests.
-
-They can, for example:
-
-- handle a simple command locally without making an AI API request
-- call an enabled Function Tool directly
-- run a Home Assistant action
-- route a request or conversation to another model
-- change reasoning effort for matching requests
-
-Sentence patterns can also capture changing values. For example:
-
-`Add {item} to my shopping list`
-
-can capture the words spoken in place of `{item}` and use them in a supported action or function.
-
-[Read the Request Rules guide](docs/features/request-rules.md)
-
-### Guest Mode
-
-Guest Mode provides a separate policy for visitors using an assistant.
-
-It can restrict available Home Assistant access, tools, and Knowledge sources while keeping guest conversation continuity separate from the owner's retained data.
-
-[Read the Guest Mode guide](docs/features/guest-mode.md)
-
-### Voice follow-ups
-
-You can choose whether Home Assistant:
-
-- uses its normal follow-up behaviour
-- always listens for another request
-- lets the model indicate when an immediate reply is expected
-
-[Read the Voice Follow-ups guide](docs/features/voice-followups.md)
-
-### Conversation archive and privacy
-
-Conversation archiving is optional and disabled by default.
-
-When enabled, the integration locally retains the user's text and the final assistant response so conversations can be searched and managed from **Extended OpenAI → Conversations**.
-
-Provider payloads, attachments, tool data, and hidden reasoning are not stored as archive conversation text.
-
-[Read the Conversation Archive guide](docs/features/conversation-archive.md)
-
-### Skills
-
-Skills are reusable instruction sets that can be made available to an agent.
-
-They are useful when you want the assistant to follow a particular workflow or set of instructions without adding all of that text permanently to the main prompt. Selected Skills rely on the built-in `load_skill` Function Tool, so configuration changes that would make that loader unavailable are rejected rather than leaving Skills silently broken.
-
-The `download_skill` Home Assistant action normally downloads bundled example Skills from the Git tag matching the installed integration version. Development and testing installs can explicitly choose another source ref when needed.
-
-[Read about Skills](docs/features/skills.md)
-
-### Custom Functions
-
-Function Tools are capabilities the model can call while working through a request. The integration includes Function Tools in its default configuration, so seeing Function Tools in the UI does **not** mean you need to create any yourself.
-
-Custom Functions are additional or modified Function Tools that you configure for more advanced workflows involving:
-
-- Home Assistant scripts and actions
-- templates
-- REST endpoints
-- web scraping
-- composite functions
-- SQLite queries
-
-They are an advanced feature. Basic control of exposed Home Assistant entities does not require you to create custom functions.
-
-[Read about Custom Functions](docs/functions/index.md)
-
-### Function Groups
-
-If an agent has many functions, Function Groups can reduce how much tool information is sent with every request.
-
-A group can be:
-
-- **Always available**, or
-- **Load when needed**
-
-For a load-on-demand group, the model initially receives only a short description of the group. If it needs those functions, it can load their full definitions for the active conversation.
-
-A Function Group can also be disabled independently without changing the enabled state of its member Function Tools. While disabled, the group and its members are unavailable to the model. Re-enabling the group restores only the members that are individually enabled.
-
-This can reduce request size for agents with large tool collections, although the first use of a group may require an additional provider round-trip.
-
-[Read the Function Groups guide](docs/features/function-groups.md)
-
-### Context management
-
-Long conversations can be managed by:
-
-- keeping recent complete turns
-- clearing older conversation history
-- summarising older context
-
-[Read the Context Management guide](docs/features/context-management.md)
-
-### Image and PDF input
-
-Compatible models using Responses mode can accept supported image and PDF input.
-
-Availability depends on the model and provider.
-
-[Read about Responses API support](docs/features/responses-api.md)
-
-### Speech cleanup
-
-Optional speech cleanup can remove things such as Markdown links and bare URLs from text sent to text-to-speech while preserving the original model response elsewhere.
-
-Advanced users can also configure ordered regular-expression replacements.
-
-### Usage statistics and agent testing
-
-The integration can expose a disabled-by-default diagnostic Usage sensor using provider-reported request and token counts.
-
-The **Test agent** tool checks the current agent configuration and can make at most one small model request. It does not execute Home Assistant device or service actions.
-
-[Read the Usage Statistics guide](docs/features/usage-statistics.md)
-
-### Backup & Restore
-
-Each agent can be backed up independently for recovery or migration.
-
-Backups can include the agent configuration and associated Extended OpenAI data such as Request Rules, memories, Knowledge sources, archived conversations, Guest Mode settings, and usage history.
-
-Treat backup files as private data.
-
-## Privacy and data flow
-
-Extended OpenAI combines local Home Assistant storage and processing with requests to the AI provider you configure.
-
-- Requests that need the AI model send the relevant request text, prompt/context, and available tool information to the configured provider.
-- Relevant memories or Knowledge Library content retrieved for an AI request can become part of the context supplied to that provider.
-- Extended OpenAI's memories, Knowledge Library data, optional Conversation Archive, Request Rules, and related integration data are stored locally in Home Assistant.
-- Features that successfully complete a request locally, such as eligible Local handling or local Request Rules, can avoid an AI provider request for that request.
-
-Exactly what a provider retains or processes after receiving a request is governed by that provider's own service and data policies.
-
-## Responses API and provider compatibility
-
-The integration supports both OpenAI's newer **Responses API** and **Chat Completions**.
-
-For most users, **API mode: Auto** is the best starting point.
-
-Some features depend on the API mode, model, or provider. For example:
-
-- OpenAI Web Search requires a compatible Responses setup.
-- image/PDF support depends on the selected model and API mode.
-- reasoning settings are model-dependent.
-- a custom OpenAI-compatible provider may support Chat Completions without supporting the Responses API.
-
-Do not manually select **Responses** for a custom provider unless that provider implements `/v1/responses` compatibly.
-
-See [Responses API and compatibility](docs/features/responses-api.md).
-
-## Advanced: direct processing from an automation
-
-Most users do not need this. Normal Assist usage should continue to use the selected conversation agent.
-
-For automations or sentence triggers that need to send text directly into Extended OpenAI's processing pipeline, use:
-
-```yaml
-action: extended_openai_conversation_responses.process
-data:
-  text: "Turn off the kitchen light"
-response_variable: result
-```
-
-When multiple Extended OpenAI agents exist, you can also specify `agent_id`.
-
-The action supports additional context fields such as `conversation_id`, `device_id`, `satellite_id`, and `language`.
-
-Request Rules, local handling, Guest Mode, memory, tools, model routing, conversation continuity, and response cleanup still apply.
-
-> [!WARNING]
-> The Request Rules **Test request** feature uses the real processing path. It can perform Home Assistant actions and is not a dry run.
-
-## Saving, duplicating and exporting agents
-
-Most agent settings are edited as a draft and are not applied until you select **Save**.
-
-Function Tools and Function Groups are managed separately and save their own create, edit, enable/disable, and delete operations immediately.
-
-When duplicating or exporting an agent:
-
-- API credentials remain with the parent integration entry
-- memories are not copied as part of normal agent duplication/export
-- conversation archives are not copied
-- Knowledge content is not copied
-- usage history is not copied
-
-Exports attempt to redact common credential fields, but custom Function Tool definitions can contain secrets in arbitrary text, URLs, templates, commands, or provider-specific fields.
-
-**Always review an exported file before sharing it.**
-
-## Migrating from the original Extended OpenAI Conversation
-
-Home Assistant treats this fork as a separate integration with the domain:
-
-`extended_openai_conversation_responses`
-
-It can be installed alongside the original `extended_openai_conversation` integration.
-
-Existing configuration entries are not automatically migrated. Add this integration separately, configure the agents you want, and update only the automations or scripts that should use this fork.
-
-[Read the migration guide](docs/migration.md)
-
-## Documentation
-
-More detailed documentation is available in [`docs/`](docs/).
-
-Good places to start:
-
-- [Installation](docs/getting-started/installation.md)
-- [First setup](docs/getting-started/setup.md)
-- [Full configuration reference](docs/configuration.md)
-- [Request Rules](docs/features/request-rules.md)
-- [Temporary Memory](docs/features/temporary-memory.md)
-- [Persistent Memory](docs/features/persistent-memory.md)
-- [Knowledge Library](docs/features/knowledge-library.md)
-- [Guest Mode](docs/features/guest-mode.md)
-- [Custom Functions](docs/functions/index.md)
-- [Migration from the original integration](docs/migration.md)
+Green CI cannot prove that every provider, Home Assistant installation, entity combination, or custom Function Tool will behave identically, but the test suite is designed to cover the real runtime boundaries rather than only isolated helpers.
 
 ## Debug logging
 
-If you need integration debug logs, add the following to your Home Assistant YAML configuration:
+If troubleshooting requires integration debug logs, add:
 
 ```yaml
 logger:
@@ -580,10 +175,18 @@ logger:
     custom_components.extended_openai_conversation_responses: debug
 ```
 
-Restart Home Assistant after changing logger configuration if required by your setup.
-
 > [!CAUTION]
 > Debug logs can be verbose and may contain information you do not want to retain. Avoid leaving debug logging enabled permanently.
+
+## Documentation
+
+The full user documentation is in [`docs/`](docs/). Start with:
+
+- [Documentation overview](docs/index.md)
+- [Installation](docs/getting-started/installation.md)
+- [First setup](docs/getting-started/setup.md)
+- [Configuration](docs/configuration.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
 ## Credits
 

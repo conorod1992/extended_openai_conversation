@@ -158,7 +158,7 @@ def _register_split_frontend_modules() -> None:
         "usage-input-footprint.js",
         "management-provider-credentials.js",
         "management-function-dependencies.js",
-        "management-mutation-safety.js",
+        "management-action-safety.js",
     )
     modules = tuple(
         dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
