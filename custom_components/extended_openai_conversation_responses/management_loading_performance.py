@@ -9,6 +9,8 @@ from pathlib import Path
 import sys
 from typing import Any
 
+import yaml
+
 from homeassistant.components import panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
@@ -49,6 +51,7 @@ _ORIGINAL_MANAGEMENT_COMMAND: Callable[..., Awaitable[dict[str, Any]]] | None = 
 _EXTRA_FRONTEND_MODULES = (
     "management-rendering-performance.js",
     "management-loading-performance.js",
+    "management-function-repair.js",
     "management-state-safety.js",
     "management-bootstrap.js",
     "management-route-performance.js",
@@ -82,6 +85,28 @@ def _guest_has_ha_exclusions(options: dict[str, Any]) -> bool:
     )
 
 
+def _function_tools_issue(options: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
+    """Return configured tools or the narrow persisted validation failure."""
+    try:
+        return cached_configured_function_tools_from_data(options), None
+    except HomeAssistantError as err:
+        return [], str(err) or type(err).__name__
+
+
+def _editable_function_tools(options: dict[str, Any]) -> Any:
+    """Return persisted Function Tools without applying the current strict schema."""
+    raw = options.get(CONF_FUNCTION_TOOLS)
+    if raw is None:
+        return []
+    if not isinstance(raw, str):
+        return deepcopy(raw)
+    try:
+        parsed = yaml.safe_load(raw)
+    except yaml.YAMLError:
+        return raw
+    return [] if parsed is None else parsed
+
+
 def _agent_snapshot(
     hass: HomeAssistant,
     entry: Any,
@@ -97,7 +122,7 @@ def _agent_snapshot(
     """Build the cheap frontend metadata shared by bootstrap and overview."""
     options = config if config is not None else dict(subentry.data)
     management_ui = _management_ui()
-    configured_tools = cached_configured_function_tools_from_data(options)
+    configured_tools, function_issue = _function_tools_issue(options)
     if guest_status is None:
         loaded_guest = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
         guest_status = (
@@ -108,7 +133,7 @@ def _agent_snapshot(
     else:
         guest_status = dict(guest_status)
     guest_status["has_home_assistant_exclusions"] = _guest_has_ha_exclusions(options)
-    return {
+    snapshot = {
         "entry_id": entry.entry_id,
         "entry_title": entry.title,
         "subentry_id": subentry.subentry_id,
@@ -131,6 +156,13 @@ def _agent_snapshot(
         "tokens_today": tokens_today,
         "guest_mode": guest_status,
     }
+    if function_issue is not None:
+        snapshot["configuration_issue"] = {
+            "field": CONF_FUNCTION_TOOLS,
+            "message": function_issue,
+            "repairable": True,
+        }
+    return snapshot
 
 
 def _management_ui():
@@ -329,6 +361,55 @@ async def _async_save_configuration(
     }
 
 
+async def _async_function_repair(
+    hass: HomeAssistant,
+    user_id: str,
+    is_admin: bool,
+    message: dict[str, Any],
+) -> dict[str, Any]:
+    """Expose an isolated repair seam for invalid persisted Function Tools."""
+    del user_id
+    management_ui = _management_ui()
+    management_ui._require_admin(is_admin)
+    entry, subentry = management_ui.entry_and_agent(
+        hass, message.get("entry_id"), message.get("subentry_id")
+    )
+    _configured, issue = _function_tools_issue(dict(subentry.data))
+    if issue is None:
+        raise HomeAssistantError("Function Tools do not require repair")
+
+    action = message.get("action")
+    if action == "get":
+        return {
+            "tools": _editable_function_tools(dict(subentry.data)),
+            "validation_error": issue,
+            "revision": management_ui._agent_config_revision(
+                subentry.data, subentry.title
+            ),
+        }
+    if action != "save":
+        raise HomeAssistantError(f"Unknown Function Tool repair action: {action}")
+
+    management_ui._require_agent_config_revision(subentry, message.get("revision"))
+    candidate = message.get("tools")
+    if not isinstance(candidate, list):
+        raise HomeAssistantError("tools must be a JSON array")
+    validated = validate_function_tools(candidate)
+    validate_function_groups(
+        subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS), validated
+    )
+    persisted = dict(subentry.data)
+    persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+        validated, sort_keys=False, allow_unicode=True
+    )
+    hass.config_entries.async_update_subentry(entry, subentry, data=persisted)
+    return {
+        "valid": True,
+        "tools": deepcopy(validated),
+        "revision": management_ui._agent_config_revision(persisted, subentry.title),
+    }
+
+
 async def optimized_management_command(
     hass: HomeAssistant,
     user_id: str,
@@ -346,6 +427,8 @@ async def optimized_management_command(
         return await async_overview_summary(hass, user_id, is_admin, message)
     if message.get("section") == "configuration" and message.get("action") == "save":
         return await _async_save_configuration(hass, user_id, is_admin, message)
+    if message.get("section") == "function_repair":
+        return await _async_function_repair(hass, user_id, is_admin, message)
     return await original(hass, user_id, is_admin, message)
 
 
