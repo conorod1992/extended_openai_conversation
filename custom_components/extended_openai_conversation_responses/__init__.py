@@ -139,6 +139,7 @@ def _register_split_frontend_modules() -> None:
     extras = (
         "agent-config-editor-base.js",
         "agent-config-editor-model-v2.js",
+        "agent-config-native-yaml.js",
         "model-catalog.js",
         "ha-llm-tools.js",
         "agent-config-loader.js",
