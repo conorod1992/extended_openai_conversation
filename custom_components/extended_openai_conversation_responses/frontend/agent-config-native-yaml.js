@@ -106,6 +106,14 @@ export function bindNativeToolYaml(panel) {
     },
   });
 
+  // Browser/user edits use the native HTMLTextAreaElement value setter directly
+  // in some environments (including Playwright), bypassing the instance-level
+  // property above. Keep the raw-YAML bridge synchronized from the real DOM value
+  // so textarea fallback remains fully functional when ha-yaml-editor is absent.
+  textarea.addEventListener("input", () => {
+    rawYaml = String(valueDescriptor.get.call(textarea) ?? "");
+  });
+
   textarea.focus = (...args) => {
     if (nativeReady && typeof nativeEditor.focus === "function") nativeEditor.focus();
     else originalFocus(...args);
