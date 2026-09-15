@@ -14,8 +14,7 @@ on:
       - "tests_real_ha/test_browser_backend_acceptance.py"
       - "tests_real_ha/test_browser_runtime_acceptance.py"
       - "tests_real_ha/test_management_backend_acceptance.py"
-      - "playwright.config.mjs"
-      - "playwright.real-ha-shell.config.mjs"
+      - "playwright*.config.mjs"
       - "requirements_test.txt"
       - ".github/workflows/frontend.yml"
   push:
@@ -33,8 +32,7 @@ on:
       - "tests_real_ha/test_browser_backend_acceptance.py"
       - "tests_real_ha/test_browser_runtime_acceptance.py"
       - "tests_real_ha/test_management_backend_acceptance.py"
-      - "playwright.config.mjs"
-      - "playwright.real-ha-shell.config.mjs"
+      - "playwright*.config.mjs"
       - "requirements_test.txt"
       - ".github/workflows/frontend.yml"
 
