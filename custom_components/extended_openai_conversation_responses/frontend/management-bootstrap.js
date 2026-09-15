@@ -13,6 +13,7 @@ const BOOTSTRAP_MODULES = [
   "./management-loading-performance.js",
   "./management-route-performance.js",
   "./management-navigation-search.js",
+  "./management-toolbar-layout.js",
   "./management-history-pagination.js",
   "./usage-input-footprint.js",
   "./debug-management.js",
@@ -131,6 +132,7 @@ if (typeof customElements !== "undefined") {
     await import("./management-loading-performance.js");
     await import("./management-route-performance.js");
     await import("./management-navigation-search.js");
+    await import("./management-toolbar-layout.js");
     // Retained Conversation data has explicit result pages independent of the
     // general management renderer, so install its navigation before registration.
     await import("./management-history-pagination.js");
