@@ -190,9 +190,7 @@ class ConversationContinuity:
                 conversation_id, key, [], False, claim_token=claim_token
             )
 
-    async def _async_claim_ha_default_conversation(
-        self, conversation_id: str
-    ) -> str:
+    async def _async_claim_ha_default_conversation(self, conversation_id: str) -> str:
         """Serialize mutations of one caller-owned HA-default ChatLog."""
         lock = self._ha_default_locks.get(conversation_id)
         if lock is None:
