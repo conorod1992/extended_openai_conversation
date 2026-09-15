@@ -98,6 +98,7 @@ def _seed(hass: HomeAssistant, *, volume: float = 0.55, wake: str = "on") -> Non
 async def test_real_ha_quiet_hours_applies_and_restores_owned_controls(
     hass: HomeAssistant, monkeypatch
 ) -> None:
+    await hass.config.async_set_time_zone("UTC")
     monkeypatch.setattr(
         quiet_hours,
         "discover_satellite_capabilities",
@@ -135,6 +136,7 @@ async def test_real_ha_quiet_hours_applies_and_restores_owned_controls(
 async def test_real_ha_manual_changes_opt_out_of_restore(
     hass: HomeAssistant, monkeypatch
 ) -> None:
+    await hass.config.async_set_time_zone("UTC")
     monkeypatch.setattr(
         quiet_hours,
         "discover_satellite_capabilities",
@@ -160,6 +162,7 @@ async def test_real_ha_manual_changes_opt_out_of_restore(
 async def test_real_ha_ceiling_never_raises_and_manual_later_change_is_respected(
     hass: HomeAssistant, monkeypatch
 ) -> None:
+    await hass.config.async_set_time_zone("UTC")
     monkeypatch.setattr(
         quiet_hours,
         "discover_satellite_capabilities",
