@@ -22,9 +22,15 @@ async function waitForMarker(name, timeout = 45_000) {
 async function settleGenuineHaRoute(page) {
   const confirmHttpSettings = page.getByRole("button", {name: "Confirm", exact: true});
 
-  // HA may briefly show its one-time HTTP confirmation while the shell is still
-  // settling. Acknowledge it if it appears, but do not make either that modal or
-  // the panel itself a prerequisite for the transient startup phase.
+  // Enter the registered HA panel root first. Home Assistant owns creation of the
+  // custom panel element; its deeper paths are internal routes handled by the
+  // management panel after that element has initialized.
+  await page.goto(`${baseUrl}/extended-openai`, {waitUntil: "domcontentloaded"});
+  await expect(page.locator("home-assistant")).toHaveCount(1);
+
+  // A fresh staged HA profile may briefly present its one-time HTTP confirmation.
+  // Acknowledge it if present, then re-enter the registered panel root because HA
+  // may rebuild or navigate its shell while dismissing the dialog.
   const confirmationVisible = await confirmHttpSettings
     .waitFor({state: "visible", timeout: 2_000})
     .then(() => true)
@@ -32,17 +38,18 @@ async function settleGenuineHaRoute(page) {
   if (confirmationVisible) {
     await confirmHttpSettings.click();
     await expect(confirmHttpSettings).toHaveCount(0);
+    await page.goto(`${baseUrl}/extended-openai`, {waitUntil: "domcontentloaded"});
+    await expect(page.locator("home-assistant")).toHaveCount(1);
   }
 
-  // Establish the route that must later survive the real backend process death.
-  // Re-entering here is setup only; there is deliberately no navigation or reload
-  // after the restart-under-test begins below.
-  await page.goto(`${baseUrl}/extended-openai/assistant/basics`, {
-    waitUntil: "domcontentloaded",
-  });
-  await expect(page.locator("home-assistant")).toHaveCount(1);
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel).toHaveCount(1);
+  await expect(panel.getByRole("heading", {name: "Extended OpenAI", exact: true})).toBeVisible({timeout: 30_000});
+
+  // Move to Assistant/Basics through the panel's real navigation handler rather
+  // than cold-loading a deep URL before the custom panel has established state.
+  await panel.locator('button[data-page="assistant"]').click();
+  await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
   await expect(panel.locator('[data-config="__title"]')).toBeVisible({timeout: 30_000});
   return panel;
 }
@@ -62,11 +69,6 @@ test("open Home Assistant page survives a real backend process death and restart
     window.localStorage.setItem("hassTokens", JSON.stringify(tokens));
   }, authData);
 
-  await page.goto(`${baseUrl}/extended-openai/assistant/basics`, {
-    waitUntil: "domcontentloaded",
-  });
-
-  await expect(page.locator("home-assistant")).toHaveCount(1);
   const panel = await settleGenuineHaRoute(page);
 
   const title = panel.locator('[data-config="__title"]');
