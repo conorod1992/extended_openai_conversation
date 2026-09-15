@@ -29,7 +29,7 @@ test("every management bootstrap module is registered as a served frontend asset
     "custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js",
   );
   const moduleBlock = bootstrap.match(
-    /const BOOTSTRAP_MODULES = Object\.freeze\(\[([\s\S]*?)\]\);/,
+    /const BOOTSTRAP_MODULES = \[([\s\S]*?)\];/,
   );
   assert.ok(moduleBlock, "management bootstrap module list was not found");
 
