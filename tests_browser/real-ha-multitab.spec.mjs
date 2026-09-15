@@ -38,10 +38,15 @@ test("a stale second tab cannot overwrite a newer agent configuration", async ({
 
   // Tab B still holds the older revision. Its disjoint local draft must be
   // rejected rather than replacing Tab A's newer full configuration snapshot.
+  // HA's WebSocket client and the standalone bridge do not expose server errors
+  // with an identical JavaScript Error shape, so assert the stable frontend
+  // failure surface here rather than coupling this browser test to transport
+  // error wording. The fresh third page below proves the backend conflict itself.
   await titleB.fill("Browser multi-tab stale draft");
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
   await saveConfig(panelB);
-  await expect(panelB.getByText(/Configuration changed in another tab/i)).toBeVisible();
+  await expect(panelB.locator("#toast.toast-error")).toBeVisible();
+  await expect(panelB.locator("#toast.toast-error")).toContainText("Unable to save configuration");
   await expect(titleB).toHaveValue("Browser multi-tab stale draft");
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
 
