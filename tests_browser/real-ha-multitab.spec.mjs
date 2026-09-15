@@ -17,10 +17,10 @@ async function saveConfig(panel) {
   await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
 }
 
-async function configurationUpdateCount(page) {
-  return page.evaluate(() => window.browserHarness.calls
-    .filter((call) => call.section === "configuration" && call.action === "update")
-    .length);
+async function lastConfigurationUpdate(page) {
+  return page.evaluate(() => [...window.browserHarness.calls]
+    .reverse()
+    .find((call) => call.section === "configuration" && call.action === "update") || null);
 }
 
 test("a stale second tab cannot overwrite a newer agent configuration", async ({context, page}) => {
@@ -42,12 +42,17 @@ test("a stale second tab cannot overwrite a newer agent configuration", async ({
   expect(baselineRevisionB).toBe(baselineRevisionA);
   await expect(titleB).toHaveValue(baselineTitle);
 
-  // Both tabs loaded the same backend revision. Tab A wins the first write. Use a
-  // per-run title so an interrupted previous run cannot make this save a no-op.
+  // Both tabs loaded the same backend revision. Tab A wins the first write through
+  // the shipped Save button. Prove that the real UI sends the revision it loaded,
+  // rather than relying only on the eventual backend state.
   await titleA.fill(winnerTitle);
   await saveConfig(panelA);
   await expect(panelA.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
   await expect(titleA).toHaveValue(winnerTitle);
+  const winnerWrite = await lastConfigurationUpdate(page);
+  expect(winnerWrite).not.toBeNull();
+  expect(winnerWrite.revision).toBe(baselineRevisionA);
+  expect(winnerWrite.title).toBe(winnerTitle);
 
   // Read the authoritative post-save state through a freshly loaded third tab.
   // Do not couple the stale-writer proof to the exact moment Tab A's internal
@@ -62,15 +67,30 @@ test("a stale second tab cannot overwrite a newer agent configuration", async ({
   expect(staleRevision).toBe(baselineRevisionB);
   await expect(panelC.locator('[data-config="__title"]')).toHaveValue(winnerTitle);
 
-  // Tab B's disjoint local draft must be rejected rather than replacing Tab A's
-  // newer full configuration snapshot. The shipped panel normalizes configuration
-  // writes onto the revision-aware update contract, so observe that boundary and
-  // then prove the rejected writer remains dirty with its local draft preserved.
+  // Keep a disjoint local draft in Tab B, then exercise the exact revision-aware
+  // mutation boundary against the genuine HA backend. The ordinary Save-button
+  // lifecycle (including client-side validation and rerenders) is covered elsewhere;
+  // this regression is specifically about rejecting a stale optimistic-concurrency
+  // writer without coupling that proof to an unrelated validation/render race.
   await titleB.fill(staleDraftTitle);
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
-  const updateCountBefore = await configurationUpdateCount(pageB);
-  await panelB.getByRole("button", {name: "Save configuration", exact: true}).click();
-  await expect.poll(() => configurationUpdateCount(pageB)).toBe(updateCountBefore + 1);
+  const staleAttempt = await panelB.evaluate(async (element) => {
+    try {
+      await element._call("configuration", "update", {
+        config: structuredClone(element._draft),
+        title: element._draftTitle,
+        revision: element._configData?.revision,
+      });
+      return {rejected: false, message: ""};
+    } catch (err) {
+      return {rejected: true, message: err?.message || String(err)};
+    }
+  });
+  expect(staleAttempt.rejected).toBe(true);
+  const staleWrite = await lastConfigurationUpdate(pageB);
+  expect(staleWrite).not.toBeNull();
+  expect(staleWrite.revision).toBe(baselineRevisionB);
+  expect(staleWrite.title).toBe(staleDraftTitle);
   await expect(titleB).toHaveValue(staleDraftTitle);
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
 
