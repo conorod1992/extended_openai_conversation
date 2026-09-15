@@ -47,7 +47,9 @@ def test_enum_names_annotation_is_accepted_preserved_and_non_semantic() -> None:
     configured = validate_function_tools([_native_tool(parameters)])
 
     assert configured[0]["spec"]["parameters"] == parameters
-    assert prepare_model_function_tools(configured)[0]["spec"]["parameters"] == parameters
+    assert (
+        prepare_model_function_tools(configured)[0]["spec"]["parameters"] == parameters
+    )
     assert validate_function_arguments(configured[0]["spec"], {"phone": "mobile"}) == {
         "phone": "mobile"
     }
