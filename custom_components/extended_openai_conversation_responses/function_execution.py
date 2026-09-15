@@ -24,12 +24,14 @@ _ARRAY_KEYWORDS = {"items", "minItems", "maxItems", "uniqueItems"}
 _STRING_KEYWORDS = {"minLength", "maxLength", "pattern"}
 _NUMBER_KEYWORDS = {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"}
 _COMMON_SCHEMA_KEYWORDS = {"type", "description", "enum", "const", "default"}
+_COMPATIBILITY_SCHEMA_ANNOTATIONS = {"enumNames"}
 _SUPPORTED_SCHEMA_KEYWORDS = (
     _COMMON_SCHEMA_KEYWORDS
     | _OBJECT_KEYWORDS
     | _ARRAY_KEYWORDS
     | _STRING_KEYWORDS
     | _NUMBER_KEYWORDS
+    | _COMPATIBILITY_SCHEMA_ANNOTATIONS
 )
 _LEGACY_DELAY_FIELDS = frozenset({"hours", "minutes", "seconds"})
 
@@ -40,7 +42,9 @@ def validate_function_schema(schema: Mapping[str, Any]) -> None:
     The provider may understand a wider JSON-Schema vocabulary, but configured tools
     are also validated locally before execution. Rejecting unsupported constraints at
     configuration time prevents the provider and the local runtime from disagreeing
-    about what inputs are valid.
+    about what inputs are valid. Historical non-semantic annotations explicitly
+    listed in ``_COMPATIBILITY_SCHEMA_ANNOTATIONS`` remain accepted and are ignored by
+    local argument validation.
     """
     if not isinstance(schema, Mapping):
         raise _schema_error("parameters must be an object schema")
