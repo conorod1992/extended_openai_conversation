@@ -6,13 +6,14 @@ const frontend = (name) => new URL(
   import.meta.url,
 );
 
-const [loading, overview, guide, debug, agentEditor, agentLoader, requestRules, requestRulesLoader, bootstrap, routes] = await Promise.all([
+const [loading, overview, guide, debug, agentEditor, agentLoader, agentNativeYaml, requestRules, requestRulesLoader, bootstrap, routes] = await Promise.all([
   readFile(frontend("management-loading-performance.js"), "utf8"),
   readFile(frontend("overview-page.js"), "utf8"),
   readFile(frontend("guide-page.js"), "utf8"),
   readFile(frontend("debug-management.js"), "utf8"),
   readFile(frontend("agent-config-editor.js"), "utf8"),
   readFile(frontend("agent-config-loader.js"), "utf8"),
+  readFile(frontend("agent-config-native-yaml.js"), "utf8"),
   readFile(frontend("request-rules-ui.js"), "utf8"),
   readFile(frontend("request-rules-loader.js"), "utf8"),
   readFile(frontend("management-bootstrap.js"), "utf8"),
@@ -45,7 +46,10 @@ assert.doesNotMatch(debug, /^import "\.\/debug-panel\.js"/m);
 assert.match(agentEditor, /import "\.\/management-bootstrap\.js"/);
 assert.doesNotMatch(agentEditor, /from "\.\/agent-config-editor-base\.js"/);
 assert.doesNotMatch(agentEditor, /export \* from "\.\/agent-config-editor-base\.js"/);
-assert.match(agentLoader, /import\("\.\/agent-config-editor-model-v2\.js"\)/);
+assert.match(agentLoader, /import\("\.\/agent-config-native-yaml\.js"\)/);
+assert.doesNotMatch(agentLoader, /agent-config-editor-model-v2\.js/);
+assert.match(agentNativeYaml, /import \* as base from "\.\/agent-config-editor-model-v2\.js"/);
+assert.match(agentNativeYaml, /export \* from "\.\/agent-config-editor-model-v2\.js"/);
 assert.doesNotMatch(requestRules, /from "\.\/request-rules-ui-impl\.js"/);
 assert.match(requestRulesLoader, /import\("\.\/request-rules-ui-impl\.js"\)/);
 assert.match(bootstrap, /await import\("\.\/management-rendering-performance\.js"\)/);
