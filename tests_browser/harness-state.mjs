@@ -31,7 +31,7 @@ function freshState() {
     memories: [{memory_id: "memory-1", scope_id: "user:test-user", content: "Baseline browser fixture memory", category: "general", source: "manual", created_at: "2026-09-01T12:00:00Z", updated_at: "2026-09-01T12:00:00Z"}],
     requestRules: {
       revision: 3, defaults: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, wording_groups: [], diagnostics: {},
-      rules: [{id: "rule-1", name: "Night", enabled: true, phrases: ["good night", "bed time", "sleep now", "lights out", "hidden fifth phrase"], match_type: "contains", action_type: "local_action", action: {}, matching_behavior: "defaults", matching: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, order: 0}],
+      rules: [{id: "rule-1", name: "Baseline rule", enabled: true, phrases: ["baseline route"], match_type: "contains", action_type: "model_routing", action: {model: "gpt-5-mini", reasoning_effort: "", scope: "request", reset: false, success_response: "Updated"}, matching_behavior: "defaults", matching: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, order: 0}],
     },
     toolYamls: {baseline_tool: "spec:\n  name: baseline_tool\n  description: Baseline browser fixture Function Tool\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: script\n  sequence: []\n"},
     nextMemoryId: 2, nextRuleId: 2, failedConfigurationOnce: false,
