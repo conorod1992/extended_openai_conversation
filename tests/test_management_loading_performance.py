@@ -81,20 +81,20 @@ def _hass_with_agent():
     return hass, entry, subentry
 
 
-def _legacy_invalid_function_tools() -> str:
+def _persisted_invalid_function_tools() -> str:
     return yaml.safe_dump(
         [
             {
                 "spec": {
-                    "name": "legacy_phone_tool",
-                    "description": "Legacy schema metadata accepted by an older release.",
+                    "name": "invalid_phone_tool",
+                    "description": "Persisted schema containing an unsupported keyword.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "phone": {
                                 "type": "string",
                                 "enum": ["home", "mobile"],
-                                "enumNames": ["Home", "Mobile"],
+                                "unsupportedLegacyKeyword": True,
                             }
                         },
                     },
@@ -151,7 +151,7 @@ def test_agent_snapshot_accepts_frontend_normalized_function_tools() -> None:
 
 def test_agent_snapshot_keeps_invalid_function_tool_agent_discoverable() -> None:
     hass, entry, subentry = _hass_with_agent()
-    subentry.data["functions"] = _legacy_invalid_function_tools()
+    subentry.data["functions"] = _persisted_invalid_function_tools()
 
     result = _agent_snapshot(hass, entry, subentry)
 
@@ -159,7 +159,7 @@ def test_agent_snapshot_keeps_invalid_function_tool_agent_discoverable() -> None
     assert result["function_count"] == 0
     assert result["configuration_issue"]["field"] == "functions"
     assert result["configuration_issue"]["repairable"] is True
-    assert "enumNames" in result["configuration_issue"]["message"]
+    assert "unsupportedLegacyKeyword" in result["configuration_issue"]["message"]
 
 
 async def test_agent_catalog_does_not_initialize_per_agent_managers(monkeypatch) -> None:
@@ -185,7 +185,7 @@ async def test_agent_catalog_does_not_initialize_per_agent_managers(monkeypatch)
 
 async def test_agent_catalog_keeps_invalid_function_tool_agent_visible(monkeypatch) -> None:
     hass, _entry, subentry = _hass_with_agent()
-    subentry.data["functions"] = _legacy_invalid_function_tools()
+    subentry.data["functions"] = _persisted_invalid_function_tools()
     monkeypatch.setattr(management_ui, "_scope_catalog", AsyncMock(return_value=[]))
 
     result = await async_agent_catalog(hass, "admin", True)
@@ -194,12 +194,12 @@ async def test_agent_catalog_keeps_invalid_function_tool_agent_visible(monkeypat
     issue = result["agents"][0]["configuration_issue"]
     assert issue["field"] == "functions"
     assert issue["repairable"] is True
-    assert "enumNames" in issue["message"]
+    assert "unsupportedLegacyKeyword" in issue["message"]
 
 
 async def test_function_repair_get_exposes_invalid_persisted_tools_without_normalizing() -> None:
     hass, _entry, subentry = _hass_with_agent()
-    subentry.data["functions"] = _legacy_invalid_function_tools()
+    subentry.data["functions"] = _persisted_invalid_function_tools()
 
     result = await _async_function_repair(
         hass,
@@ -213,16 +213,16 @@ async def test_function_repair_get_exposes_invalid_persisted_tools_without_norma
     )
 
     assert result["tools"][0]["spec"]["parameters"]["properties"]["phone"][
-        "enumNames"
-    ] == ["Home", "Mobile"]
-    assert "enumNames" in result["validation_error"]
+        "unsupportedLegacyKeyword"
+    ] is True
+    assert "unsupportedLegacyKeyword" in result["validation_error"]
     assert isinstance(result["revision"], str)
     assert hass.config_entries.updates == 0
 
 
 async def test_function_repair_save_is_atomic_and_preserves_unrelated_data() -> None:
     hass, _entry, subentry = _hass_with_agent()
-    subentry.data["functions"] = _legacy_invalid_function_tools()
+    subentry.data["functions"] = _persisted_invalid_function_tools()
     subentry.data["repair_sentinel"] = {"nested": ["leave", "untouched"]}
     original_sentinel = subentry.data["repair_sentinel"]
     repair = await _async_function_repair(
@@ -258,7 +258,7 @@ async def test_function_repair_save_is_atomic_and_preserves_unrelated_data() -> 
 
 async def test_function_repair_rejects_still_invalid_tools_without_persisting() -> None:
     hass, _entry, subentry = _hass_with_agent()
-    subentry.data["functions"] = _legacy_invalid_function_tools()
+    subentry.data["functions"] = _persisted_invalid_function_tools()
     repair = await _async_function_repair(
         hass,
         "admin",
@@ -269,9 +269,9 @@ async def test_function_repair_rejects_still_invalid_tools_without_persisting() 
             "action": "get",
         },
     )
-    invalid = yaml.safe_load(_legacy_invalid_function_tools())
+    invalid = yaml.safe_load(_persisted_invalid_function_tools())
 
-    with pytest.raises(Exception, match="enumNames"):
+    with pytest.raises(Exception, match="unsupportedLegacyKeyword"):
         await _async_function_repair(
             hass,
             "admin",
@@ -286,7 +286,7 @@ async def test_function_repair_rejects_still_invalid_tools_without_persisting() 
         )
 
     assert hass.config_entries.updates == 0
-    assert "enumNames" in subentry.data["functions"]
+    assert "unsupportedLegacyKeyword" in subentry.data["functions"]
 
 
 async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) -> None:
