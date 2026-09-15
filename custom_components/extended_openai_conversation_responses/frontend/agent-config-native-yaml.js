@@ -89,6 +89,7 @@ export function bindNativeToolYaml(panel) {
       const result = await panel._call("tools", "validate_yaml", {yaml});
       if (!nativeReady || generation !== syncGeneration) return;
       if (result?.valid) setNativeValue(result.config);
+      else showFallback();
     } catch (_err) {
       // The existing backend validation/save flow remains authoritative. If the
       // native editor cannot be initialised from persisted YAML, keep the plain
