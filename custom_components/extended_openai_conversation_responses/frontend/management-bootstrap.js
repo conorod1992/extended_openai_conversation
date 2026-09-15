@@ -1,5 +1,6 @@
 const PANEL_TAG = "extended-openai-management-panel";
 const PROPERTY_REPLAY_PATCHED = Symbol.for("extended-openai.management-property-replay");
+const CONFIGURATION_CONCURRENCY_PATCHED = Symbol.for("extended-openai.management-configuration-concurrency");
 const BOOTSTRAP_MODULES = [
   "./management-state-safety.js",
   "./management-function-dependencies.js",
@@ -55,6 +56,24 @@ function installPreDefinitionPropertyReplay(constructor) {
   return true;
 }
 
+function installConfigurationConcurrency(constructor) {
+  const prototype = constructor?.prototype;
+  if (!prototype || prototype[CONFIGURATION_CONCURRENCY_PATCHED] || typeof prototype._call !== "function") return false;
+  prototype[CONFIGURATION_CONCURRENCY_PATCHED] = true;
+
+  const originalCall = prototype._call;
+  prototype._call = function(section, action, extra = {}) {
+    if (section !== "configuration" || !["save", "update"].includes(action)) {
+      return originalCall.call(this, section, action, extra);
+    }
+    return originalCall.call(this, section, "update", {
+      ...extra,
+      revision: extra.revision ?? this._configData?.revision,
+    });
+  };
+  return true;
+}
+
 function capturePreRegistrationInstallers(registry) {
   if (!registry || registry.get?.(PANEL_TAG)) return () => {};
   const hadOwnDefine = Object.prototype.hasOwnProperty.call(registry, "define");
@@ -102,6 +121,9 @@ function capturePreRegistrationInstallers(registry) {
     try {
       installPreDefinitionPropertyReplay(constructor);
       for (const install of pending.splice(0)) install();
+      // Install last so configuration writes cannot bypass the backend's
+      // optimistic-concurrency contract through a compatibility save action.
+      installConfigurationConcurrency(constructor);
     } finally {
       restoreProperty("get", previousGet, hadOwnGet);
       restored = true;
@@ -153,6 +175,7 @@ if (typeof customElements !== "undefined") {
 export {
   BOOTSTRAP_MODULES,
   capturePreRegistrationInstallers,
+  installConfigurationConcurrency,
   installPreDefinitionPropertyReplay,
   preloadBootstrapModules,
 };
