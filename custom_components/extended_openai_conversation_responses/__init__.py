@@ -155,6 +155,7 @@ def _register_split_frontend_modules() -> None:
         "management-voice-identity.js",
         "voice-identity-ui.js",
         "management-navigation-search.js",
+        "management-toolbar-layout.js",
         "usage-input-footprint.js",
         "management-provider-credentials.js",
         "management-function-dependencies.js",
