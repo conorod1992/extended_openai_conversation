@@ -74,9 +74,11 @@ async def async_function_repair(
     from . import management_loading_performance, management_ui
 
     management_ui._require_admin(is_admin)
-    entry, subentry = management_ui.entry_and_agent(
-        hass, message.get("entry_id"), message.get("subentry_id")
-    )
+    entry_id = message.get("entry_id")
+    subentry_id = message.get("subentry_id")
+    if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
+        raise HomeAssistantError("entry_id and subentry_id are required")
+    entry, subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
     _configured, issue = function_tools_issue(dict(subentry.data))
     if issue is None:
         raise HomeAssistantError("Function Tools do not require repair")
