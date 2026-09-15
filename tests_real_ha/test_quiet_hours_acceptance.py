@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from pytest_homeassistant_custom_component.common import (
@@ -20,6 +21,7 @@ from homeassistant.util import dt as dt_util
 
 _STATE_ENTITY_ID = "binary_sensor.extended_openai_quiet_hours"
 _RUNTIME_KEY = "quiet_hours_manager"
+_DUBLIN = ZoneInfo("Europe/Dublin")
 
 
 def _active_window() -> tuple[str, str]:
@@ -224,16 +226,16 @@ async def test_real_ha_quiet_hours_discovers_applies_survives_restart_and_restor
 
 
 @pytest.mark.asyncio
-async def test_real_ha_clock_callbacks_activate_rediscover_and_restore(
+async def test_real_ha_clock_callbacks_activate_and_restore(
     hass: HomeAssistant,
 ) -> None:
-    """Prove HA's clock listeners drive start, rediscovery, and end transitions."""
+    """Prove HA's local wall-clock callbacks drive start and end transitions."""
     _satellite_id, media_player_id, wake_sound_id = _install_satellite_entities(hass)
     _install_control_services(hass)
 
     now = dt_util.now()
     start_at = (now + timedelta(minutes=2)).replace(second=0, microsecond=0)
-    end_at = (now + timedelta(minutes=10)).replace(second=0, microsecond=0)
+    end_at = (now + timedelta(minutes=6)).replace(second=0, microsecond=0)
 
     manager = await async_get_quiet_hours(hass)
     await manager.async_update_config(
@@ -257,6 +259,7 @@ async def test_real_ha_clock_callbacks_activate_rediscover_and_restore(
     assert media_state.attributes["volume_level"] == pytest.approx(0.60)
     assert wake_state.state == "on"
     assert quiet_state.state == "off"
+    assert len(manager._unsubscribers) == 3
 
     # Do not call async_reconcile directly: crossing the configured wall-clock
     # boundary must invoke the listener registered by _reschedule().
@@ -273,8 +276,53 @@ async def test_real_ha_clock_callbacks_activate_rediscover_and_restore(
     assert wake_state.state == "off"
     assert quiet_state.state == "on"
 
-    # A satellite that appears after Quiet Hours starts should remain untouched
-    # until the periodic five-minute discovery callback performs a reconciliation.
+    async_fire_time_changed(hass, end_at.astimezone(UTC))
+    await hass.async_block_till_done()
+
+    media_state = hass.states.get(media_player_id)
+    wake_state = hass.states.get(wake_sound_id)
+    quiet_state = hass.states.get(_STATE_ENTITY_ID)
+    assert media_state is not None
+    assert wake_state is not None
+    assert quiet_state is not None
+    assert media_state.attributes["volume_level"] == pytest.approx(0.60)
+    assert wake_state.state == "on"
+    assert quiet_state.state == "off"
+    assert manager.active is None
+
+
+@pytest.mark.asyncio
+async def test_real_ha_discovery_tick_normalizes_utc_to_ha_local_time(
+    hass: HomeAssistant,
+) -> None:
+    """A UTC interval callback must reconcile against the HA-local schedule."""
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    _satellite_id, media_player_id, wake_sound_id = _install_satellite_entities(hass)
+    _install_control_services(hass)
+
+    manager = await async_get_quiet_hours(hass)
+    await manager.async_update_config(
+        {
+            "enabled": True,
+            "start": "22:00",
+            "end": "07:00",
+            "max_volume": 0.20,
+            "wake_sound": "off",
+            "overrides": {},
+        }
+    )
+
+    # Activate a summer occurrence in HA local time. Dublin is UTC+1 here.
+    await manager.async_reconcile(
+        now=datetime(2026, 7, 15, 22, 0, tzinfo=_DUBLIN)
+    )
+    media_state = hass.states.get(media_player_id)
+    wake_state = hass.states.get(wake_sound_id)
+    assert media_state is not None
+    assert wake_state is not None
+    assert media_state.attributes["volume_level"] == pytest.approx(0.20)
+    assert wake_state.state == "off"
+
     _kitchen_satellite_id, kitchen_media_id, kitchen_wake_id = _install_satellite_entities(
         hass,
         slug="kitchen",
@@ -289,23 +337,11 @@ async def test_real_ha_clock_callbacks_activate_rediscover_and_restore(
     assert kitchen_media.attributes["volume_level"] == pytest.approx(0.75)
     assert kitchen_wake.state == "on"
 
-    async_fire_time_changed(
-        hass,
-        (start_at + timedelta(minutes=5)).astimezone(UTC),
+    # async_track_time_interval supplies UTC. 21:05 UTC is 22:05 in Dublin and
+    # therefore still inside the configured Quiet Hours occurrence.
+    await manager._handle_discovery_tick(
+        datetime(2026, 7, 15, 21, 5, tzinfo=UTC)
     )
-    await hass.async_block_till_done()
-
-    kitchen_media = hass.states.get(kitchen_media_id)
-    kitchen_wake = hass.states.get(kitchen_wake_id)
-    assert kitchen_media is not None
-    assert kitchen_wake is not None
-    assert kitchen_media.attributes["volume_level"] == pytest.approx(0.20)
-    assert kitchen_wake.state == "off"
-
-    # The configured end boundary must restore every control acquired during the
-    # occurrence, including the satellite discovered after the period began.
-    async_fire_time_changed(hass, end_at.astimezone(UTC))
-    await hass.async_block_till_done()
 
     media_state = hass.states.get(media_player_id)
     wake_state = hass.states.get(wake_sound_id)
@@ -317,9 +353,9 @@ async def test_real_ha_clock_callbacks_activate_rediscover_and_restore(
     assert kitchen_media is not None
     assert kitchen_wake is not None
     assert quiet_state is not None
-    assert media_state.attributes["volume_level"] == pytest.approx(0.60)
-    assert wake_state.state == "on"
-    assert kitchen_media.attributes["volume_level"] == pytest.approx(0.75)
-    assert kitchen_wake.state == "on"
-    assert quiet_state.state == "off"
-    assert manager.active is None
+    assert media_state.attributes["volume_level"] == pytest.approx(0.20)
+    assert wake_state.state == "off"
+    assert kitchen_media.attributes["volume_level"] == pytest.approx(0.20)
+    assert kitchen_wake.state == "off"
+    assert quiet_state.state == "on"
+    assert manager.active is not None
