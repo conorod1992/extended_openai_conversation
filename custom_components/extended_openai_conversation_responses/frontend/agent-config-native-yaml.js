@@ -68,18 +68,27 @@ export function bindNativeToolYaml(panel) {
     textarea.hidden = false;
   };
 
+  const setNativeValue = (value) => {
+    try {
+      nativeEditor.setValue(value);
+      return true;
+    } catch (_err) {
+      showFallback();
+      return false;
+    }
+  };
+
   const syncNativeFromYaml = async (yaml) => {
     if (!nativeReady || typeof nativeEditor.setValue !== "function") return;
     const generation = ++syncGeneration;
     if (!String(yaml || "").trim()) {
-      nativeEditor.setValue({});
-      nativeEditor.isValid = true;
+      if (setNativeValue({})) nativeEditor.isValid = true;
       return;
     }
     try {
       const result = await panel._call("tools", "validate_yaml", {yaml});
       if (!nativeReady || generation !== syncGeneration) return;
-      if (result?.valid) nativeEditor.setValue(result.config);
+      if (result?.valid) setNativeValue(result.config);
     } catch (_err) {
       // The existing backend validation/save flow remains authoritative. If the
       // native editor cannot be initialised from persisted YAML, keep the plain
@@ -123,11 +132,15 @@ export function bindNativeToolYaml(panel) {
 
   const activate = () => {
     if (!nativeEditor.isConnected || typeof nativeEditor.setValue !== "function") return;
-    nativeReady = true;
-    textarea.hidden = true;
-    nativeEditor.hidden = false;
-    nativeEditor.inDialog = true;
-    void syncNativeFromYaml(rawYaml);
+    try {
+      nativeReady = true;
+      textarea.hidden = true;
+      nativeEditor.hidden = false;
+      nativeEditor.inDialog = true;
+      void syncNativeFromYaml(rawYaml);
+    } catch (_err) {
+      showFallback();
+    }
   };
 
   if (customElements.get(NATIVE_EDITOR_TAG)) activate();
