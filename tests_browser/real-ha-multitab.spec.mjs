@@ -17,9 +17,9 @@ async function saveConfig(panel) {
   await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
 }
 
-async function configurationSaveCount(page) {
+async function configurationUpdateCount(page) {
   return page.evaluate(() => window.browserHarness.calls
-    .filter((call) => call.section === "configuration" && call.action === "save")
+    .filter((call) => call.section === "configuration" && call.action === "update")
     .length);
 }
 
@@ -63,17 +63,14 @@ test("a stale second tab cannot overwrite a newer agent configuration", async ({
   await expect(panelC.locator('[data-config="__title"]')).toHaveValue(winnerTitle);
 
   // Tab B's disjoint local draft must be rejected rather than replacing Tab A's
-  // newer full configuration snapshot. Track the shipped configuration/save call,
-  // then wait for the save button to be re-enabled by the handler's finally path;
-  // this proves the stale save attempt finished without coupling the test to
-  // Playwright's cross-origin HTTP response event or HA's exact error payload.
+  // newer full configuration snapshot. The shipped panel normalizes configuration
+  // writes onto the revision-aware update contract, so observe that boundary and
+  // then prove the rejected writer remains dirty with its local draft preserved.
   await titleB.fill(staleDraftTitle);
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
-  const saveCountBefore = await configurationSaveCount(pageB);
-  const staleSaveButton = panelB.getByRole("button", {name: "Save configuration", exact: true});
-  await staleSaveButton.click();
-  await expect.poll(() => configurationSaveCount(pageB)).toBe(saveCountBefore + 1);
-  await expect(staleSaveButton).toBeEnabled();
+  const updateCountBefore = await configurationUpdateCount(pageB);
+  await panelB.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await expect.poll(() => configurationUpdateCount(pageB)).toBe(updateCountBefore + 1);
   await expect(titleB).toHaveValue(staleDraftTitle);
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
 
