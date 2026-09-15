@@ -57,8 +57,9 @@ const toolSaveCalls = (page) => page.evaluate(() => window.browserHarness.calls.
 const waitForNativeStarter = async (nativeEditor) => {
   await expect.poll(() => nativeEditor.evaluate((element) => element.lastSetValue?.spec?.name)).toBe("browser_tool");
 };
+const nativeDescription = (nativeEditor) => nativeEditor.evaluate((element) => element.lastSetValue?.spec?.description);
 
- test("Function Tool YAML uses the Home Assistant editor when it is registered", async ({page}) => {
+test("Function Tool YAML uses the Home Assistant editor when it is registered", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await installFakeHaYamlEditor(page);
 
@@ -116,6 +117,35 @@ test("Function Tool YAML activates after Home Assistant defines the editor late"
   await expectHarnessClean(page, pageErrors);
 });
 
+test("built-in Function Tool presets replace the raw YAML bridge and refresh the native editor", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await installFakeHaYamlEditor(page);
+
+  await page.goto(fixtureUrl("capabilities/functions"));
+  const panel = page.locator("extended-openai-management-panel");
+  const presetYaml = browserToolYaml("Native built-in preset");
+  await panel.evaluate((element, yaml) => {
+    const originalCall = element._call.bind(element);
+    element._call = async (section, action, payload) => {
+      if (section === "tools" && action === "built_in_catalog") {
+        return {functions: [{implementation: "native_test_preset", label: "Native test preset", yaml, already_configured: false}]};
+      }
+      return originalCall(section, action, payload);
+    };
+  }, presetYaml);
+
+  await panel.locator("#add-tool").click();
+  const nativeEditor = panel.locator("#tool-yaml-native");
+  await waitForNativeStarter(nativeEditor);
+  await panel.locator("#built-in-function").selectOption("native_test_preset");
+  await expect.poll(() => nativeDescription(nativeEditor)).toBe("Native built-in preset");
+  await expect(panel.locator("#tool-error")).toHaveClass(/valid/);
+
+  await panel.locator("#tool-save").click();
+  await expect(panel.locator(".tool-card").filter({hasText: "browser_tool"})).toContainText("Native built-in preset");
+  await expectHarnessClean(page, pageErrors);
+});
+
 test("native YAML validation errors are surfaced and a valid edit can recover and save", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await installFakeHaYamlEditor(page);
@@ -140,7 +170,7 @@ test("native YAML validation errors are surfaced and a valid edit can recover an
   await expectHarnessClean(page, pageErrors);
 });
 
-test("native editor save shortcut respects dialog lifecycle and does not duplicate saves after reopen", async ({page}) => {
+test("native editor save shortcut respects dialog lifecycle and cancelled YAML is not persisted", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await installFakeHaYamlEditor(page);
 
@@ -156,7 +186,7 @@ test("native editor save shortcut respects dialog lifecycle and does not duplica
 
   await panel.locator(".tool-card").filter({hasText: "browser_tool"}).locator(".edit-tool").click();
   nativeEditor = panel.locator("#tool-yaml-native");
-  await waitForNativeStarter(nativeEditor);
+  await expect.poll(() => nativeDescription(nativeEditor)).toBe("First shortcut save");
   await nativeEditor.evaluate((element, value) => element.setYamlForTest(value), browserToolYaml("Cancelled shortcut edit"));
   await panel.locator("#tool-cancel").click();
   await nativeEditor.evaluate((element) => element.saveForTest());
@@ -164,7 +194,7 @@ test("native editor save shortcut respects dialog lifecycle and does not duplica
 
   await panel.locator(".tool-card").filter({hasText: "browser_tool"}).locator(".edit-tool").click();
   nativeEditor = panel.locator("#tool-yaml-native");
-  await waitForNativeStarter(nativeEditor);
+  await expect.poll(() => nativeDescription(nativeEditor)).toBe("First shortcut save");
   await nativeEditor.evaluate((element, value) => element.setYamlForTest(value), browserToolYaml("Second shortcut save"));
   await nativeEditor.evaluate((element) => element.saveForTest());
   await expect(panel.locator(".tool-card").filter({hasText: "browser_tool"})).toContainText("Second shortcut save");
