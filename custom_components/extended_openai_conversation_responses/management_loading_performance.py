@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
+from hashlib import sha256
 from pathlib import Path
 import sys
 from typing import Any
@@ -85,7 +86,9 @@ def _guest_has_ha_exclusions(options: dict[str, Any]) -> bool:
     )
 
 
-def _function_tools_issue(options: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
+def _function_tools_issue(
+    options: dict[str, Any],
+) -> tuple[list[dict[str, Any]], str | None]:
     """Return configured tools or the narrow persisted validation failure."""
     try:
         return cached_configured_function_tools_from_data(options), None
@@ -105,6 +108,27 @@ def _editable_function_tools(options: dict[str, Any]) -> Any:
     except yaml.YAMLError:
         return raw
     return [] if parsed is None else parsed
+
+
+def _repair_revision(data: Any, title: str) -> str:
+    """Hash raw persisted data without invoking current configuration validation."""
+    management_ui = _management_ui()
+    payload = management_ui.canonical_json(
+        {"title": title, "config": deepcopy(dict(data))}
+    )
+    return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _require_repair_revision(subentry: Any, expected_revision: Any) -> None:
+    """Reject a stale repair writer without normalizing the invalid config."""
+    if expected_revision is None:
+        return
+    if not isinstance(expected_revision, str):
+        raise HomeAssistantError("revision must be a string")
+    if expected_revision != _repair_revision(subentry.data, subentry.title):
+        raise HomeAssistantError(
+            "Configuration changed in another tab. Reload the latest saved settings before saving."
+        )
 
 
 def _agent_snapshot(
@@ -383,14 +407,12 @@ async def _async_function_repair(
         return {
             "tools": _editable_function_tools(dict(subentry.data)),
             "validation_error": issue,
-            "revision": management_ui._agent_config_revision(
-                subentry.data, subentry.title
-            ),
+            "revision": _repair_revision(subentry.data, subentry.title),
         }
     if action != "save":
         raise HomeAssistantError(f"Unknown Function Tool repair action: {action}")
 
-    management_ui._require_agent_config_revision(subentry, message.get("revision"))
+    _require_repair_revision(subentry, message.get("revision"))
     candidate = message.get("tools")
     if not isinstance(candidate, list):
         raise HomeAssistantError("tools must be a JSON array")
@@ -406,7 +428,7 @@ async def _async_function_repair(
     return {
         "valid": True,
         "tools": deepcopy(validated),
-        "revision": management_ui._agent_config_revision(persisted, subentry.title),
+        "revision": _repair_revision(persisted, subentry.title),
     }
 
 
