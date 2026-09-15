@@ -19,32 +19,32 @@ async function waitForMarker(name, timeout = 45_000) {
   await expect.poll(() => fs.existsSync(marker(name)), {timeout}).toBe(true);
 }
 
-async function clearOptionalHttpConfirmation(page, panel) {
-  const title = panel.locator('[data-config="__title"]');
+async function settleGenuineHaRoute(page) {
   const confirmHttpSettings = page.getByRole("button", {name: "Confirm", exact: true});
 
-  // Depending on whether HA has already persisted acknowledgement of the staged
-  // HTTP settings, startup either reaches the panel directly or first presents
-  // its one-time confirmation dialog. Both are valid HA startup states.
-  await expect.poll(async () => (
-    await title.isVisible().catch(() => false)
-    || await confirmHttpSettings.isVisible().catch(() => false)
-  )).toBe(true);
-
-  if (!await confirmHttpSettings.isVisible().catch(() => false)) {
-    return;
+  // HA may briefly show its one-time HTTP confirmation while the shell is still
+  // settling. Acknowledge it if it appears, but do not make either that modal or
+  // the panel itself a prerequisite for the transient startup phase.
+  const confirmationVisible = await confirmHttpSettings
+    .waitFor({state: "visible", timeout: 2_000})
+    .then(() => true)
+    .catch(() => false);
+  if (confirmationVisible) {
+    await confirmHttpSettings.click();
+    await expect(confirmHttpSettings).toHaveCount(0);
   }
 
-  await confirmHttpSettings.click();
-  await expect(confirmHttpSettings).toHaveCount(0);
-
-  // Acknowledging the dialog can rebuild/navigate HA's shell. Re-enter before
-  // establishing the browser state that must survive the later process death.
+  // Establish the route that must later survive the real backend process death.
+  // Re-entering here is setup only; there is deliberately no navigation or reload
+  // after the restart-under-test begins below.
   await page.goto(`${baseUrl}/extended-openai/assistant/basics`, {
     waitUntil: "domcontentloaded",
   });
   await expect(page.locator("home-assistant")).toHaveCount(1);
+  const panel = page.locator("extended-openai-management-panel");
   await expect(panel).toHaveCount(1);
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible({timeout: 30_000});
+  return panel;
 }
 
 test("open Home Assistant page survives a real backend process death and restart", async ({context, page}) => {
@@ -67,10 +67,7 @@ test("open Home Assistant page survives a real backend process death and restart
   });
 
   await expect(page.locator("home-assistant")).toHaveCount(1);
-  const panel = page.locator("extended-openai-management-panel");
-  await expect(panel).toHaveCount(1);
-  await clearOptionalHttpConfirmation(page, panel);
-  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+  const panel = await settleGenuineHaRoute(page);
 
   const title = panel.locator('[data-config="__title"]');
   await title.fill("Before real HA restart");
