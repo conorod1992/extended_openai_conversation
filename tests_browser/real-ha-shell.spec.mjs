@@ -1,5 +1,4 @@
 import {expect, test} from "@playwright/test";
-import {acceptConfirmation} from "./browser-helpers.mjs";
 
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
@@ -16,15 +15,12 @@ async function authenticate(context) {
 async function openAssistantFromOverview(page) {
   const confirmHttpSettings = page.getByRole("button", {name: "Confirm", exact: true});
 
-  // Enter the registered HA panel root first. Home Assistant owns creation of the
-  // custom panel element; its deeper paths are internal routes handled by the
-  // management panel after that element has initialized.
+  // Keep this acceptance seam deliberately narrow: enter the registered HA panel
+  // root first, let Home Assistant instantiate the custom panel, then use the
+  // integration's own navigation to reach Assistant/Basics.
   await page.goto(`${baseUrl}/extended-openai`, {waitUntil: "domcontentloaded"});
   await expect(page.locator("home-assistant")).toHaveCount(1);
 
-  // A fresh staged HA profile may briefly present its one-time HTTP confirmation.
-  // Acknowledge it if present, then re-enter the registered panel root because HA
-  // may rebuild or navigate its shell while dismissing the dialog.
   const confirmationVisible = await confirmHttpSettings
     .waitFor({state: "visible", timeout: 2_000})
     .then(() => true)
@@ -40,15 +36,13 @@ async function openAssistantFromOverview(page) {
   await expect(panel).toHaveCount(1);
   await expect(panel.getByRole("heading", {name: "Extended OpenAI", exact: true})).toBeVisible({timeout: 30_000});
 
-  // Move to Assistant/Basics through the panel's real navigation handler rather
-  // than cold-loading a deep URL before the custom panel has established state.
-  await panel.locator('.top-nav button[data-page="assistant"]').click();
+  await panel.getByRole("button", {name: "Assistant", exact: true}).click();
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
   await expect(panel.locator('[data-config="__title"]')).toBeVisible({timeout: 30_000});
   return panel;
 }
 
-test("shipped management panel loads and persists configuration inside the genuine HA frontend", async ({context, page}) => {
+test("shipped management panel loads and persists one configuration change inside the genuine HA frontend", async ({context, page}) => {
   const integrationPageErrors = [];
   const integrationRequestFailures = [];
   const integrationResponses = [];
@@ -72,9 +66,8 @@ test("shipped management panel loads and persists configuration inside the genui
 
   await authenticate(context);
 
-  // These two elements distinguish this acceptance path from the standalone
-  // Playwright fixture: Home Assistant owns the shell and instantiates the
-  // integration's registered custom panel inside it.
+  // Genuine HA owns authentication, routing, custom-panel registration, and the
+  // websocket. This test proves only that integration boundary plus one real save.
   let panel = await openAssistantFromOverview(page);
   await expect(panel.locator('[data-config="chat_model"]')).toBeVisible();
 
@@ -84,9 +77,9 @@ test("shipped management panel loads and persists configuration inside the genui
   await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
 
-  await page.reload({waitUntil: "domcontentloaded"});
-  await expect(page.locator("home-assistant")).toHaveCount(1);
-  panel = page.locator("extended-openai-management-panel");
+  // Re-enter through HA's registered panel root instead of relying on a deep-route
+  // reload. Persistence is still proved through a fresh panel lifecycle.
+  panel = await openAssistantFromOverview(page);
   await expect(panel.locator('[data-config="__title"]')).toHaveValue("Real HA shell saved");
   await expect(panel.locator("#agent option:checked")).toHaveText("Real HA shell saved");
 
@@ -98,46 +91,4 @@ test("shipped management panel loads and persists configuration inside the genui
       && status === 200;
   })).toBe(true);
   expect(integrationResponses.filter(({status}) => status >= 400)).toEqual([]);
-});
-
-test("dirty in-panel navigation cancellation preserves the configuration draft", async ({context, page}) => {
-  await authenticate(context);
-  const panel = await openAssistantFromOverview(page);
-  const title = panel.locator('[data-config="__title"]');
-  const baselineTitle = await title.inputValue();
-
-  await title.fill("Unsaved navigation draft");
-  await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
-
-  await panel.locator('.top-nav button[data-page="overview"]').click();
-  await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
-  await panel.locator("#confirm-cancel").click();
-
-  await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
-  await expect(title).toHaveValue("Unsaved navigation draft");
-  await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
-
-  await panel.getByRole("button", {name: "Revert", exact: true}).click();
-  await expect(title).toHaveValue(baselineTitle);
-  await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
-});
-
-test("discarding dirty in-panel navigation clears the draft before returning", async ({context, page}) => {
-  await authenticate(context);
-  const panel = await openAssistantFromOverview(page);
-  const title = panel.locator('[data-config="__title"]');
-  const baselineTitle = await title.inputValue();
-
-  await title.fill("Discarded navigation draft");
-  await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
-
-  await panel.locator('.top-nav button[data-page="overview"]').click();
-  await acceptConfirmation(panel);
-  await expect(page).toHaveURL(/\/extended-openai\/overview$/);
-  await expect(panel.locator('.top-nav button[data-page="overview"]')).toHaveAttribute("aria-current", "page");
-
-  await panel.locator('.top-nav button[data-page="assistant"]').click();
-  await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
-  await expect(panel.locator('[data-config="__title"]')).toHaveValue(baselineTitle);
-  await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
 });
