@@ -4,6 +4,15 @@ export * from "./agent-config-editor-model-v2.js";
 
 const NATIVE_EDITOR_TAG = "ha-yaml-editor";
 const NATIVE_EDITOR_ID = "tool-yaml-native";
+const NEW_TOOL_STARTER_YAML = `spec:\n  name: my_tool\n  description: Describe what this tool does.\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: native\n  name: ''\n`;
+const NEW_TOOL_STARTER_CONFIG = Object.freeze({
+  spec: Object.freeze({
+    name: "my_tool",
+    description: "Describe what this tool does.",
+    parameters: Object.freeze({type: "object", properties: Object.freeze({})}),
+  }),
+  function: Object.freeze({type: "native", name: ""}),
+});
 const NATIVE_STYLE = `
   #${NATIVE_EDITOR_ID} {
     display: block;
@@ -14,6 +23,20 @@ const NATIVE_STYLE = `
   #${NATIVE_EDITOR_ID}[hidden] { display: none; }
   #tool-yaml[hidden] { display: none !important; }
 `;
+
+export function nativeStarterConfig(yaml, originalName = null) {
+  if (originalName !== null) return null;
+  const normalized = String(yaml || "").replace(/\r\n/g, "\n");
+  if (normalized !== NEW_TOOL_STARTER_YAML) return null;
+  return {
+    spec: {
+      name: NEW_TOOL_STARTER_CONFIG.spec.name,
+      description: NEW_TOOL_STARTER_CONFIG.spec.description,
+      parameters: {type: "object", properties: {}},
+    },
+    function: {type: "native", name: ""},
+  };
+}
 
 export function decorateToolYamlEditor(html) {
   if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
@@ -88,7 +111,18 @@ export function bindNativeToolYaml(panel) {
     try {
       const result = await panel._call("tools", "validate_yaml", {yaml});
       if (!nativeReady || generation !== syncGeneration) return;
-      if (result?.valid) setNativeValue(result.config);
+      if (result?.valid) {
+        setNativeValue(result.config);
+        return;
+      }
+      // The backend's generic new-tool starter is intentionally semantically
+      // incomplete (native implementation name is blank) so it cannot pass the
+      // save validator yet. It is nevertheless valid YAML and has a stable,
+      // controlled shape; hydrate that partial object so Add Function Tool still
+      // opens in Home Assistant's native editor. Other backend-invalid documents
+      // fall back to the raw textarea rather than showing an empty/stale editor.
+      const starter = nativeStarterConfig(yaml, panel._toolOriginalName ?? null);
+      if (starter) setNativeValue(starter);
       else showFallback();
     } catch (_err) {
       // The existing backend validation/save flow remains authoritative. If the
