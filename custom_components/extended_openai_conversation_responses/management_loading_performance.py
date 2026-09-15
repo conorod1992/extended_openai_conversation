@@ -5,12 +5,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
-from hashlib import sha256
 from pathlib import Path
 import sys
 from typing import Any
-
-import yaml
 
 from homeassistant.components import panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
@@ -43,8 +40,11 @@ from .frontend_version import FRONTEND_VERSION
 from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
 from .knowledge import async_get_knowledge
 from .local_intents import CONF_LOCAL_INTENT_EXCLUSIONS
+from .management_function_repair import (
+    async_function_repair as _async_function_repair,
+    function_tools_issue as _function_tools_issue,
+)
 from .memory import async_get_memory, get_memory_mode
-from .performance import cached_configured_function_tools_from_data
 from .usage import async_get_usage
 
 _INSTALLED = False
@@ -84,51 +84,6 @@ def _guest_has_ha_exclusions(options: dict[str, Any]) -> bool:
             "guest_excluded_entities",
         )
     )
-
-
-def _function_tools_issue(
-    options: dict[str, Any],
-) -> tuple[list[dict[str, Any]], str | None]:
-    """Return configured tools or the narrow persisted validation failure."""
-    try:
-        return cached_configured_function_tools_from_data(options), None
-    except HomeAssistantError as err:
-        return [], str(err) or type(err).__name__
-
-
-def _editable_function_tools(options: dict[str, Any]) -> Any:
-    """Return persisted Function Tools without applying the current strict schema."""
-    raw = options.get(CONF_FUNCTION_TOOLS)
-    if raw is None:
-        return []
-    if not isinstance(raw, str):
-        return deepcopy(raw)
-    try:
-        parsed = yaml.safe_load(raw)
-    except yaml.YAMLError:
-        return raw
-    return [] if parsed is None else parsed
-
-
-def _repair_revision(data: Any, title: str) -> str:
-    """Hash raw persisted data without invoking current configuration validation."""
-    management_ui = _management_ui()
-    payload = management_ui.canonical_json(
-        {"title": title, "config": deepcopy(dict(data))}
-    )
-    return sha256(payload.encode("utf-8")).hexdigest()
-
-
-def _require_repair_revision(subentry: Any, expected_revision: Any) -> None:
-    """Reject a stale repair writer without normalizing the invalid config."""
-    if expected_revision is None:
-        return
-    if not isinstance(expected_revision, str):
-        raise HomeAssistantError("revision must be a string")
-    if expected_revision != _repair_revision(subentry.data, subentry.title):
-        raise HomeAssistantError(
-            "Configuration changed in another tab. Reload the latest saved settings before saving."
-        )
 
 
 def _agent_snapshot(
@@ -382,53 +337,6 @@ async def _async_save_configuration(
             config=snapshot,
             title=saved_title,
         ),
-    }
-
-
-async def _async_function_repair(
-    hass: HomeAssistant,
-    user_id: str,
-    is_admin: bool,
-    message: dict[str, Any],
-) -> dict[str, Any]:
-    """Expose an isolated repair seam for invalid persisted Function Tools."""
-    del user_id
-    management_ui = _management_ui()
-    management_ui._require_admin(is_admin)
-    entry, subentry = management_ui.entry_and_agent(
-        hass, message.get("entry_id"), message.get("subentry_id")
-    )
-    _configured, issue = _function_tools_issue(dict(subentry.data))
-    if issue is None:
-        raise HomeAssistantError("Function Tools do not require repair")
-
-    action = message.get("action")
-    if action == "get":
-        return {
-            "tools": _editable_function_tools(dict(subentry.data)),
-            "validation_error": issue,
-            "revision": _repair_revision(subentry.data, subentry.title),
-        }
-    if action != "save":
-        raise HomeAssistantError(f"Unknown Function Tool repair action: {action}")
-
-    _require_repair_revision(subentry, message.get("revision"))
-    candidate = message.get("tools")
-    if not isinstance(candidate, list):
-        raise HomeAssistantError("tools must be a JSON array")
-    validated = validate_function_tools(candidate)
-    validate_function_groups(
-        subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS), validated
-    )
-    persisted = dict(subentry.data)
-    persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-        validated, sort_keys=False, allow_unicode=True
-    )
-    hass.config_entries.async_update_subentry(entry, subentry, data=persisted)
-    return {
-        "valid": True,
-        "tools": deepcopy(validated),
-        "revision": _repair_revision(persisted, subentry.title),
     }
 
 
