@@ -34,6 +34,7 @@ test("Guide explains broad versus complete AI-routing matches", async () => {
   assert.match(source, /entire original request is still sent unchanged/);
   assert.match(source, /complete routing command/);
   assert.match(source, /acknowledges it locally/);
-  assert.match(source, /saved order is the final tie-breaker/);
-  assert.match(source, /does not override match type or phrase specificity/);
+  assert.match(source, /evaluated from top to bottom in the order shown/);
+  assert.match(source, /first deterministic rule that matches wins/);
+  assert.match(source, /Fuzzy matching is considered only if no deterministic rule matches/);
 });

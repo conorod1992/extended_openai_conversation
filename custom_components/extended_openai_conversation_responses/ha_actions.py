@@ -46,6 +46,22 @@ async def async_call_ha_action(
     context = context or get_active_ha_context()
     entity_ids = _resolve_target_entity_ids(hass, data, target)
     await async_require_control_permission(hass, entity_ids, context=context)
+
+    # Registry-backed selectors can resolve to a different entity set while the
+    # async permission check is in progress. Direct entity_id targets cannot, so
+    # avoid resolving those a second time (and avoid unnecessary registry work).
+    selection = _target_selection(data, target)
+    if any(
+        key in selection
+        for key in (ATTR_DEVICE_ID, ATTR_AREA_ID, ATTR_FLOOR_ID, ATTR_LABEL_ID)
+    ):
+        resolved_after_authorization = _resolve_target_entity_ids(hass, data, target)
+        if resolved_after_authorization != entity_ids:
+            raise HomeAssistantError(
+                "Home Assistant target changed while authorization was in progress; "
+                "please retry"
+            )
+
     return await _async_call_ha_action_unchecked(
         hass,
         domain,
