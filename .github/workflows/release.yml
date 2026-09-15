@@ -245,10 +245,12 @@ jobs:
           UPGRADE_FROM_VERSION: ${{ steps.previous_release.outputs.version }}
           UPGRADE_TO_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          pytest tests_real_ha/test_release_upgrade_acceptance.py \
+          pytest \
+            tests_real_ha/test_release_upgrade_acceptance.py \
+            tests_real_ha/test_release_upgrade_custom_function_tool.py \
             -v \
             --asyncio-mode=auto \
-            --timeout=180
+            --timeout=300
 
       - name: Verify clean packaged install and cold restart
         env:

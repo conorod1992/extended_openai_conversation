@@ -66,10 +66,51 @@ def _assert_child_ok(result: subprocess.CompletedProcess[str], phase: str) -> No
     )
 
 
+async def _model_catalog_result(hass: Any, message: dict[str, Any]) -> dict[str, Any]:
+    """Dispatch the browser fixture's model-catalog calls to real backend logic."""
+    from custom_components.extended_openai_conversation_responses.model_catalog import (
+        all_reasoning_efforts,
+        catalog_picker_models,
+        compatibility_capabilities,
+        model_metadata,
+    )
+    from custom_components.extended_openai_conversation_responses.model_catalog_manager import (
+        DATA_MANAGER,
+        ModelCatalogManager,
+    )
+    from homeassistant.exceptions import HomeAssistantError
+
+    manager: ModelCatalogManager = hass.data[DATA_MANAGER]
+    action = str(message.get("action", "lookup"))
+    if action == "update":
+        status = await manager.async_update(force=True)
+        if status["last_error"]:
+            raise HomeAssistantError(status["last_error"])
+    elif action == "reset":
+        await manager.async_reset()
+    elif action != "lookup":
+        raise HomeAssistantError(f"Unsupported model catalogue action: {action}")
+
+    model = str(message.get("model", ""))
+    metadata = model_metadata(model)
+    return {
+        **manager.status(),
+        "model_capabilities": compatibility_capabilities(model),
+        "model_metadata": metadata,
+        "catalog_models": catalog_picker_models(manager.catalog, model),
+        "reasoning_effort_options": metadata["reasoning"]["efforts"]
+        if model
+        else all_reasoning_efforts(),
+    }
+
+
 async def _start_management_bridge(hass: Any, user_id: str) -> tuple[web.AppRunner, str]:
-    """Expose the candidate's real management command to the shipped browser fixture."""
+    """Expose candidate WebSocket-backed UI calls to the shipped browser fixture."""
     from custom_components.extended_openai_conversation_responses.management_ui import (
         async_management_command,
+    )
+    from custom_components.extended_openai_conversation_responses.model_catalog_manager import (
+        WS_CATALOG,
     )
     from homeassistant.exceptions import HomeAssistantError
 
@@ -79,7 +120,10 @@ async def _start_management_bridge(hass: Any, user_id: str) -> tuple[web.AppRunn
             message = json.loads(await request.text())
             if not isinstance(message, dict):
                 raise HomeAssistantError("Management message must be an object")
-            result = await async_management_command(hass, user_id, True, message)
+            if message.get("type") == WS_CATALOG:
+                result = await _model_catalog_result(hass, message)
+            else:
+                result = await async_management_command(hass, user_id, True, message)
         except (json.JSONDecodeError, HomeAssistantError, ValueError) as err:
             return web.json_response({"message": str(err)}, status=400, headers=headers)
         return web.json_response(result, headers=headers)
