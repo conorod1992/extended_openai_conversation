@@ -202,9 +202,11 @@ test("genuine HA native YAML editor saves with Ctrl+S and survives a fresh panel
   }, initialTool);
   await expect(panel.locator("#tool-error")).toContainText("YAML changed");
 
-  // Exercise the actual HA editor focus/keyboard path rather than synthesizing
-  // the adapter's editor-save event directly.
-  await nativeEditor.evaluate((element) => element.focus());
+  // Exercise keyboard reachability through the real HA component before using its
+  // native save shortcut. Hidden fallback controls must not trap focus.
+  await panel.locator("#built-in-function").focus();
+  await page.keyboard.press("Tab");
+  await expect.poll(() => nativeEditor.evaluate((element) => element.matches(":focus-within"))).toBe(true);
   expect(await nativeEditor.evaluate((element) => Boolean(element.shadowRoot?.activeElement))).toBe(true);
   await page.keyboard.press("Control+s");
 
