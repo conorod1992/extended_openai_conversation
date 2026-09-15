@@ -114,7 +114,7 @@ test("discarding dirty in-panel navigation clears the draft before returning", a
   await panel.locator('.top-nav button[data-page="overview"]').click();
   await acceptConfirmation(panel);
   await expect(page).toHaveURL(/\/extended-openai\/overview$/);
-  await expect(panel.getByRole("heading", {name: "Overview", exact: true})).toBeVisible();
+  await expect(panel.locator('.top-nav button[data-page="overview"]')).toHaveAttribute("aria-current", "page");
 
   await panel.locator('.top-nav button[data-page="assistant"]').click();
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
