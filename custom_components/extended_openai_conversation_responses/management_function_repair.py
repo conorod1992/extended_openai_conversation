@@ -12,11 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import validate_function_groups, validate_function_tools
-from .const import (
-    CONF_FUNCTION_GROUPS,
-    CONF_FUNCTION_TOOLS,
-    DEFAULT_FUNCTION_GROUPS,
-)
+from .const import CONF_FUNCTION_GROUPS, CONF_FUNCTION_TOOLS, DEFAULT_FUNCTION_GROUPS
 from .performance import cached_configured_function_tools_from_data
 
 _STALE_CONFIGURATION_ERROR = (
