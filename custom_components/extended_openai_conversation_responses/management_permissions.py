@@ -11,6 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 from . import management_ui
 from .management_browser import install_management_browser
 from .management_configuration_guidance import install_management_configuration_guidance
+from .management_function_repair import install_management_function_repair
 from .management_history_runtime import install_management_history_bounds
 from .management_setup_health import install_management_setup_health
 from .quiet_hours import async_get_quiet_hours
@@ -129,6 +130,7 @@ def _install_optimized_overview_guard() -> None:
 def install_management_permissions() -> bool:
     """Install management result bounds inside the authorization wrapper."""
     install_management_browser()
+    install_management_function_repair()
     _install_optimized_overview_guard()
     install_management_setup_health()
     # Result bounds must sit inside authorization so they cannot bypass existing
