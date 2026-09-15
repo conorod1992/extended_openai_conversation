@@ -11,6 +11,7 @@ const BOOTSTRAP_MODULES = [
   "./management-permission-boundaries.js",
   "./management-rendering-performance.js",
   "./management-loading-performance.js",
+  "./management-function-repair.js",
   "./management-route-performance.js",
   "./management-navigation-search.js",
   "./management-history-pagination.js",
@@ -129,6 +130,7 @@ if (typeof customElements !== "undefined") {
     await import("./management-permission-boundaries.js");
     await import("./management-rendering-performance.js");
     await import("./management-loading-performance.js");
+    await import("./management-function-repair.js");
     await import("./management-route-performance.js");
     await import("./management-navigation-search.js");
     // Retained Conversation data has explicit result pages independent of the
