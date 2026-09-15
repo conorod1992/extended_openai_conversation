@@ -19,7 +19,6 @@ from .const import (
 )
 from .performance import cached_configured_function_tools_from_data
 
-_PATCHED = "extended_openai_management_function_repair"
 _STALE_CONFIGURATION_ERROR = (
     "Agent configuration changed in another tab; reload before saving"
 )
@@ -125,16 +124,3 @@ class _PersistedSubentry:
     def __init__(self, source: Any, data: dict[str, Any]) -> None:
         self.title = source.title
         self.data = data
-
-
-def install_management_function_repair() -> bool:
-    """Install recovery helpers into the optimized management dispatcher."""
-    from . import management_loading_performance
-
-    if getattr(management_loading_performance, _PATCHED, False):
-        return False
-    management_loading_performance._function_tools_issue = function_tools_issue  # type: ignore[attr-defined]
-    management_loading_performance._editable_function_tools = editable_function_tools  # type: ignore[attr-defined]
-    management_loading_performance._async_function_repair = async_function_repair  # type: ignore[attr-defined]
-    setattr(management_loading_performance, _PATCHED, True)
-    return True
