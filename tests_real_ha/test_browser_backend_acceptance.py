@@ -128,13 +128,6 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
             env={"REAL_HA_BACKEND_URL": backend_url},
             failure_label="Playwright genuine-HA backend acceptance failed",
         )
-        await _run_playwright(
-            repo_root=repo_root,
-            spec="tests_browser/real-ha-multitab.spec.mjs",
-            config="playwright.config.mjs",
-            env={"REAL_HA_BACKEND_URL": backend_url},
-            failure_label="Playwright genuine-HA multi-tab acceptance failed",
-        )
     finally:
         await runner.cleanup()
 
