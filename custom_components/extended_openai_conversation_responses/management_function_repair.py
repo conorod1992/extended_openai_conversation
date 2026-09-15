@@ -48,12 +48,15 @@ def editable_function_tools(options: dict[str, Any]) -> Any:
     return [] if parsed is None else parsed
 
 
-def repair_revision(management_ui: Any, subentry: Any) -> str:
+def _revision_for_data(management_ui: Any, title: str, data: dict[str, Any]) -> str:
     """Hash raw persisted state without invoking strict agent normalization."""
-    document = management_ui.canonical_json(
-        {"title": subentry.title, "config": dict(subentry.data)}
-    )
+    document = management_ui.canonical_json({"title": title, "config": data})
     return sha256(document.encode("utf-8")).hexdigest()
+
+
+def repair_revision(management_ui: Any, subentry: Any) -> str:
+    """Return the optimistic-concurrency revision for a broken agent config."""
+    return _revision_for_data(management_ui, subentry.title, dict(subentry.data))
 
 
 def require_repair_revision(
@@ -111,16 +114,8 @@ async def async_function_repair(
     return {
         "valid": True,
         "tools": deepcopy(validated),
-        "revision": repair_revision(management_ui, _PersistedSubentry(subentry, persisted)),
+        "revision": _revision_for_data(management_ui, subentry.title, persisted),
         "agent": management_loading_performance._agent_snapshot(
             hass, entry, subentry, config=persisted
         ),
     }
-
-
-class _PersistedSubentry:
-    """Minimal post-save view used to calculate the returned raw revision."""
-
-    def __init__(self, source: Any, data: dict[str, Any]) -> None:
-        self.title = source.title
-        self.data = data
