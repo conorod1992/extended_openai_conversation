@@ -25,6 +25,21 @@ function syncAgentPicker(panel) {
   else picker.removeAttribute("aria-busy");
 }
 
+async function runMutation(panel, originalCall, section, action, extra) {
+  panel._eocAgentMutations = Number(panel._eocAgentMutations || 0) + 1;
+  syncAgentPicker(panel);
+  try {
+    const result = await originalCall.call(panel, section, action, extra);
+    if (section === "tools" && typeof result?.revision === "string" && panel._configData) {
+      panel._configData = {...panel._configData, revision: result.revision};
+    }
+    return result;
+  } finally {
+    panel._eocAgentMutations = Math.max(0, Number(panel._eocAgentMutations || 1) - 1);
+    syncAgentPicker(panel);
+  }
+}
+
 export function installManagementActionSafety(registry = globalThis.customElements) {
   if (typeof window === "undefined" || !registry?.whenDefined) return Promise.resolve(false);
   return registry.whenDefined("extended-openai-management-panel").then(() => {
@@ -50,18 +65,21 @@ export function installManagementActionSafety(registry = globalThis.customElemen
     };
 
     const originalCall = prototype._call;
-    prototype._call = async function(section, action, extra = {}) {
+    prototype._call = function(section, action, extra = {}) {
       if (!isAgentMutation(section, action)) {
         return originalCall.call(this, section, action, extra);
       }
-      this._eocAgentMutations = Number(this._eocAgentMutations || 0) + 1;
-      syncAgentPicker(this);
-      try {
-        return await originalCall.call(this, section, action, extra);
-      } finally {
-        this._eocAgentMutations = Math.max(0, Number(this._eocAgentMutations || 1) - 1);
-        syncAgentPicker(this);
+      if (section !== "tools") {
+        return runMutation(this, originalCall, section, action, extra);
       }
+
+      const previous = this._eocFunctionMutationTail || Promise.resolve();
+      const pending = previous.catch(() => {}).then(() =>
+        runMutation(this, originalCall, section, action, extra));
+      this._eocFunctionMutationTail = pending;
+      return pending.finally(() => {
+        if (this._eocFunctionMutationTail === pending) this._eocFunctionMutationTail = null;
+      });
     };
 
     const originalRender = prototype._render;
