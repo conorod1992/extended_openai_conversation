@@ -17,6 +17,16 @@ async function saveConfig(panel) {
   await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
 }
 
+function isConfigurationUpdate(response) {
+  if (response.url() !== backendUrl || response.request().method() !== "POST") return false;
+  try {
+    const message = response.request().postDataJSON();
+    return message?.section === "configuration" && message?.action === "update";
+  } catch {
+    return false;
+  }
+}
+
 test("a stale second tab cannot overwrite a newer agent configuration", async ({context, page}) => {
   const pageErrorsA = trackPageErrors(page);
   const pageB = await context.newPage();
@@ -38,15 +48,16 @@ test("a stale second tab cannot overwrite a newer agent configuration", async ({
 
   // Tab B still holds the older revision. Its disjoint local draft must be
   // rejected rather than replacing Tab A's newer full configuration snapshot.
-  // The genuine HA WebSocket client and the standalone bridge differ in how a
-  // backend error is surfaced to transient toast UI, so the durable assertions
-  // are that the failed save leaves Tab B dirty and a fresh third page still
-  // reads Tab A's winner from the backend.
+  // Wait for the actual configuration/update bridge response rather than a DOM
+  // node: the panel may re-render while handling the failed request, replacing
+  // the save button and transient toast. The completed non-2xx update plus the
+  // durable draft/backend assertions below prove the stale write was rejected.
   await titleB.fill("Browser multi-tab stale draft");
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
-  const staleSave = panelB.getByRole("button", {name: "Save configuration", exact: true});
-  await staleSave.click();
-  await expect(staleSave).toBeEnabled();
+  const staleUpdateResponse = pageB.waitForResponse(isConfigurationUpdate);
+  await panelB.getByRole("button", {name: "Save configuration", exact: true}).click();
+  const staleResponse = await staleUpdateResponse;
+  expect(staleResponse.ok()).toBe(false);
   await expect(titleB).toHaveValue("Browser multi-tab stale draft");
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
 
