@@ -24,6 +24,19 @@ function quotedJsFiles(source) {
   );
 }
 
+function frontendRegistrationSources() {
+  return fs
+    .readdirSync(COMPONENT, {withFileTypes: true})
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".py"))
+    .map((entry) => ({
+      name: entry.name,
+      source: fs.readFileSync(path.join(COMPONENT, entry.name), "utf8"),
+    }))
+    .filter(({source}) =>
+      /\b(?:MANAGEMENT_FRONTEND_MODULES|DEBUG_FRONTEND_MODULES)\b/.test(source),
+    );
+}
+
 test("every management bootstrap module is registered as a served frontend asset", () => {
   const bootstrap = read(
     "custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js",
@@ -38,15 +51,14 @@ test("every management bootstrap module is registered as a served frontend asset
   );
   assert.ok(bootstrapModules.length > 0, "management bootstrap module list is empty");
 
-  // Management assets are registered through the base management UI, split-module
-  // additions in __init__, and the separately initialized request-debug UI.
-  const registrationSources = [
-    path.join(COMPONENT, "management_ui.py"),
-    path.join(COMPONENT, "__init__.py"),
-    path.join(COMPONENT, "debug_ui.py"),
-  ].map((filename) => fs.readFileSync(filename, "utf8"));
+  // Several runtime hardening installers extend MANAGEMENT_FRONTEND_MODULES before
+  // management_ui registers static paths. Discover those registration sources by
+  // the variable they mutate rather than maintaining a second filename allowlist.
+  const registrationSources = frontendRegistrationSources();
+  assert.ok(registrationSources.length > 0, "frontend registration sources were not found");
+
   const servedModules = new Set(
-    registrationSources.flatMap((source) => [...quotedJsFiles(source)]),
+    registrationSources.flatMap(({source}) => [...quotedJsFiles(source)]),
   );
 
   const missing = bootstrapModules.filter((moduleName) => !servedModules.has(moduleName));
