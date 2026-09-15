@@ -217,6 +217,8 @@ async def test_guest_to_owner_never_inherits_guest_history() -> None:
             30,
             namespace=GUEST_CONTINUITY_NAMESPACE,
         )
+        await manager.async_release(guest.key, guest.claim_token)
+
         guest_follow_up = await manager.async_resolve(
             mode,
             scope,
@@ -225,6 +227,7 @@ async def test_guest_to_owner_never_inherits_guest_history() -> None:
             30,
             namespace=GUEST_CONTINUITY_NAMESPACE,
         )
+        await manager.async_release(guest_follow_up.key, guest_follow_up.claim_token)
 
         owner = await manager.async_resolve(
             mode,
