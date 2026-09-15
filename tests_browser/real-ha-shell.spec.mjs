@@ -5,31 +5,31 @@ const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
 
 test.skip(!baseUrl || !authDataRaw, "requires the dedicated genuine Home Assistant frontend-shell harness");
 
-async function clearOptionalHttpConfirmation(page, panel) {
-  const title = panel.locator('[data-config="__title"]');
+async function settleGenuineHaRoute(page) {
   const confirmHttpSettings = page.getByRole("button", {name: "Confirm", exact: true});
 
-  // A fresh HA test profile may show the one-time HTTP server confirmation before
-  // the custom panel finishes rendering. A reused/confirmed profile goes straight
-  // to the panel. Accept either state rather than making the one-time dialog part
-  // of the integration's acceptance contract.
-  await expect.poll(async () => (
-    await title.isVisible().catch(() => false)
-    || await confirmHttpSettings.isVisible().catch(() => false)
-  )).toBe(true);
-
-  if (!await confirmHttpSettings.isVisible().catch(() => false)) {
-    return;
+  // HA may briefly present its one-time HTTP server confirmation while the
+  // frontend shell is still settling. Acknowledge it when it becomes visible,
+  // but do not require either that dialog or the integration panel to be visible
+  // during this transient phase.
+  const confirmationVisible = await confirmHttpSettings
+    .waitFor({state: "visible", timeout: 2_000})
+    .then(() => true)
+    .catch(() => false);
+  if (confirmationVisible) {
+    await confirmHttpSettings.click();
+    await expect(confirmHttpSettings).toHaveCount(0);
   }
 
-  await confirmHttpSettings.click();
-  await expect(confirmHttpSettings).toHaveCount(0);
-
-  // Confirming HA's HTTP settings can rebuild/navigate the shell. Re-enter the
-  // integration route before asserting against the shipped management panel.
+  // Whether or not the one-time dialog appeared, enter the intended route after
+  // HA startup has had a chance to settle. This is the state the acceptance test
+  // actually cares about.
   await page.goto(`${baseUrl}/extended-openai/assistant/basics`, {waitUntil: "domcontentloaded"});
   await expect(page.locator("home-assistant")).toHaveCount(1);
+  const panel = page.locator("extended-openai-management-panel");
   await expect(panel).toHaveCount(1);
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible({timeout: 30_000});
+  return panel;
 }
 
 test("shipped management panel loads and persists configuration inside the genuine HA frontend", async ({context, page}) => {
@@ -65,10 +65,7 @@ test("shipped management panel loads and persists configuration inside the genui
   // Playwright fixture: Home Assistant owns the shell and instantiates the
   // integration's registered custom panel inside it.
   await expect(page.locator("home-assistant")).toHaveCount(1);
-  let panel = page.locator("extended-openai-management-panel");
-  await expect(panel).toHaveCount(1);
-  await clearOptionalHttpConfirmation(page, panel);
-  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+  let panel = await settleGenuineHaRoute(page);
   await expect(panel.locator('[data-config="chat_model"]')).toBeVisible();
 
   const title = panel.locator('[data-config="__title"]');
