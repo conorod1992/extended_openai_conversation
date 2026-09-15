@@ -10,7 +10,7 @@ export function getAgentConfigModule() {
 export async function ensureAgentConfigModule() {
   if (implementation) return implementation;
   if (!loadPromise) {
-    loadPromise = import("./agent-config-editor-model-v2.js")
+    loadPromise = import("./agent-config-native-yaml.js")
       .then((module) => {
         implementation = module;
         return module;
