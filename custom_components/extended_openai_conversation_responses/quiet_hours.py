@@ -197,7 +197,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
 
     async def async_reconcile(self, *, now: datetime | None = None) -> None:
         """Reconcile the scheduled policy using cross-version-safe discovery."""
-        now = now or dt_util.now()
+        now = dt_util.now() if now is None else dt_util.as_local(now)
         async with self._lock:
             if not self._initialized:
                 return
