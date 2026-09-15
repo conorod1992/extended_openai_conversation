@@ -54,8 +54,11 @@ async function installFakeHaYamlEditor(page, {defineImmediately = true} = {}) {
 }
 
 const toolSaveCalls = (page) => page.evaluate(() => window.browserHarness.calls.filter((call) => call.section === "tools" && call.action === "save"));
+const waitForNativeStarter = async (nativeEditor) => {
+  await expect.poll(() => nativeEditor.evaluate((element) => element.lastSetValue?.spec?.name)).toBe("browser_tool");
+};
 
-test("Function Tool YAML uses the Home Assistant editor when it is registered", async ({page}) => {
+ test("Function Tool YAML uses the Home Assistant editor when it is registered", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await installFakeHaYamlEditor(page);
 
@@ -71,6 +74,7 @@ test("Function Tool YAML uses the Home Assistant editor when it is registered", 
   await expect(nativeEditor).toBeVisible();
   await expect(fallback).toBeHidden();
   await expect(nativeEditor).toHaveAttribute("in-dialog", "");
+  await waitForNativeStarter(nativeEditor);
 
   const yaml = browserToolYaml("Native Home Assistant YAML editor");
   await nativeEditor.evaluate((element, value) => element.setYamlForTest(value), yaml);
@@ -104,7 +108,7 @@ test("Function Tool YAML activates after Home Assistant defines the editor late"
   await page.evaluate(() => window.defineFakeHaYamlEditor());
   await expect(nativeEditor).toBeVisible();
   await expect(fallback).toBeHidden();
-  await expect.poll(() => nativeEditor.evaluate((element) => element.lastSetValue?.spec?.name)).toBe("browser_tool");
+  await waitForNativeStarter(nativeEditor);
 
   await nativeEditor.evaluate((element, value) => element.setYamlForTest(value), browserToolYaml("Late native registration"));
   await panel.locator("#tool-save").click();
@@ -121,6 +125,7 @@ test("native YAML validation errors are surfaced and a valid edit can recover an
   await panel.locator("#add-tool").click();
   const nativeEditor = panel.locator("#tool-yaml-native");
   const status = panel.locator("#tool-error");
+  await waitForNativeStarter(nativeEditor);
 
   await nativeEditor.evaluate((element) => element.setYamlForTest("spec:\n  description: broken", false, "Missing required spec.name"));
   await expect(status).toHaveClass(/invalid/);
@@ -143,6 +148,7 @@ test("native editor save shortcut respects dialog lifecycle and does not duplica
   const panel = page.locator("extended-openai-management-panel");
   await panel.locator("#add-tool").click();
   let nativeEditor = panel.locator("#tool-yaml-native");
+  await waitForNativeStarter(nativeEditor);
   await nativeEditor.evaluate((element, value) => element.setYamlForTest(value), browserToolYaml("First shortcut save"));
   await nativeEditor.evaluate((element) => element.saveForTest());
   await expect(panel.locator(".tool-card").filter({hasText: "browser_tool"})).toContainText("First shortcut save");
@@ -150,6 +156,7 @@ test("native editor save shortcut respects dialog lifecycle and does not duplica
 
   await panel.locator(".tool-card").filter({hasText: "browser_tool"}).locator(".edit-tool").click();
   nativeEditor = panel.locator("#tool-yaml-native");
+  await waitForNativeStarter(nativeEditor);
   await nativeEditor.evaluate((element, value) => element.setYamlForTest(value), browserToolYaml("Cancelled shortcut edit"));
   await panel.locator("#tool-cancel").click();
   await nativeEditor.evaluate((element) => element.saveForTest());
@@ -157,6 +164,7 @@ test("native editor save shortcut respects dialog lifecycle and does not duplica
 
   await panel.locator(".tool-card").filter({hasText: "browser_tool"}).locator(".edit-tool").click();
   nativeEditor = panel.locator("#tool-yaml-native");
+  await waitForNativeStarter(nativeEditor);
   await nativeEditor.evaluate((element, value) => element.setYamlForTest(value), browserToolYaml("Second shortcut save"));
   await nativeEditor.evaluate((element) => element.saveForTest());
   await expect(panel.locator(".tool-card").filter({hasText: "browser_tool"})).toContainText("Second shortcut save");
@@ -186,6 +194,7 @@ test("Function Tool YAML falls back to the textarea if native editor initialisat
   await expect(panel.locator("#tool-yaml-native")).toBeHidden();
   const fallback = panel.locator("#tool-yaml");
   await expect(fallback).toBeVisible();
+  await expect(panel.locator("#tool-error")).toContainText("Edit the YAML");
   await fallback.fill(browserToolYaml("Fallback after native init failure"));
   await panel.locator("#tool-save").click();
   await expect(panel.locator(".tool-card").filter({hasText: "browser_tool"})).toContainText("Fallback after native init failure");
@@ -199,8 +208,10 @@ test("Function Tool YAML keeps the textarea fallback when the HA editor is unava
   await panel.locator("#add-tool").click();
 
   await expect(panel.locator("#tool-yaml-native")).toBeHidden();
-  await expect(panel.locator("#tool-yaml")).toBeVisible();
-  await panel.locator("#tool-yaml").fill(browserToolYaml("Textarea fallback"));
+  const fallback = panel.locator("#tool-yaml");
+  await expect(fallback).toBeVisible();
+  await expect(panel.locator("#tool-error")).toContainText("Edit the YAML");
+  await fallback.fill(browserToolYaml("Textarea fallback"));
   await panel.locator("#tool-save").click();
   await expect(panel.locator(".tool-card").filter({hasText: "browser_tool"})).toContainText("Textarea fallback");
 
