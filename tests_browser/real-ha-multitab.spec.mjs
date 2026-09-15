@@ -17,14 +17,10 @@ async function saveConfig(panel) {
   await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
 }
 
-function isConfigurationUpdate(response) {
-  if (response.url() !== backendUrl || response.request().method() !== "POST") return false;
-  try {
-    const message = response.request().postDataJSON();
-    return message?.section === "configuration" && message?.action === "update";
-  } catch {
-    return false;
-  }
+async function configurationUpdateCount(page) {
+  return page.evaluate(() => window.browserHarness.calls
+    .filter((call) => call.section === "configuration" && call.action === "update")
+    .length);
 }
 
 test("a stale second tab cannot overwrite a newer agent configuration", async ({context, page}) => {
@@ -37,6 +33,10 @@ test("a stale second tab cannot overwrite a newer agent configuration", async ({
   const titleA = panelA.locator('[data-config="__title"]');
   const titleB = panelB.locator('[data-config="__title"]');
   const baselineTitle = await titleA.inputValue();
+  const baselineRevisionA = await panelA.evaluate((element) => element._configData?.revision);
+  const baselineRevisionB = await panelB.evaluate((element) => element._configData?.revision);
+  expect(baselineRevisionA).toBeDefined();
+  expect(baselineRevisionB).toBe(baselineRevisionA);
   await expect(titleB).toHaveValue(baselineTitle);
 
   // Both tabs loaded the same backend revision. Tab A wins the first write and
@@ -46,18 +46,26 @@ test("a stale second tab cannot overwrite a newer agent configuration", async ({
   await expect(panelA.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
   await expect(titleA).toHaveValue("Browser multi-tab winner");
 
-  // Tab B still holds the older revision. Its disjoint local draft must be
-  // rejected rather than replacing Tab A's newer full configuration snapshot.
-  // Wait for the actual configuration/update bridge response rather than a DOM
-  // node: the panel may re-render while handling the failed request, replacing
-  // the save button and transient toast. The completed non-2xx update plus the
-  // durable draft/backend assertions below prove the stale write was rejected.
+  // Prove this is genuinely a stale-writer scenario before Tab B attempts its
+  // save: A has advanced while B still holds the original loaded revision.
+  const winnerRevision = await panelA.evaluate((element) => element._configData?.revision);
+  const staleRevision = await panelB.evaluate((element) => element._configData?.revision);
+  expect(winnerRevision).toBeDefined();
+  expect(winnerRevision).not.toBe(baselineRevisionA);
+  expect(staleRevision).toBe(baselineRevisionB);
+
+  // Tab B's disjoint local draft must be rejected rather than replacing Tab A's
+  // newer full configuration snapshot. Track the shipped harness call itself,
+  // then wait for the save button to be re-enabled by the handler's finally path;
+  // this proves the stale update attempt finished without coupling the test to
+  // Playwright's cross-origin HTTP response event or HA's exact error payload.
   await titleB.fill("Browser multi-tab stale draft");
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
-  const staleUpdateResponse = pageB.waitForResponse(isConfigurationUpdate);
-  await panelB.getByRole("button", {name: "Save configuration", exact: true}).click();
-  const staleResponse = await staleUpdateResponse;
-  expect(staleResponse.ok()).toBe(false);
+  const updateCountBefore = await configurationUpdateCount(pageB);
+  const staleSaveButton = panelB.getByRole("button", {name: "Save configuration", exact: true});
+  await staleSaveButton.click();
+  await expect.poll(() => configurationUpdateCount(pageB)).toBe(updateCountBefore + 1);
+  await expect(staleSaveButton).toBeEnabled();
   await expect(titleB).toHaveValue("Browser multi-tab stale draft");
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
 
