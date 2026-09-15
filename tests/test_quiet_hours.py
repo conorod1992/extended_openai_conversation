@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -13,6 +14,8 @@ from custom_components.extended_openai_conversation_responses.quiet_hours import
     discover_satellite_capabilities,
     quiet_period_for,
 )
+
+_DUBLIN = ZoneInfo("Europe/Dublin")
 
 
 def _entry(
@@ -106,6 +109,55 @@ def test_quiet_period_for_overnight_window() -> None:
     assert (
         quiet_period_for(datetime(2026, 9, 12, 7, 0, tzinfo=UTC), "22:00", "07:00")
         is None
+    )
+
+
+def test_quiet_period_for_same_day_window_uses_start_inclusive_end_exclusive() -> None:
+    assert (
+        quiet_period_for(datetime(2026, 9, 12, 12, 59, tzinfo=UTC), "13:00", "15:00")
+        is None
+    )
+
+    at_start = quiet_period_for(
+        datetime(2026, 9, 12, 13, 0, tzinfo=UTC), "13:00", "15:00"
+    )
+    assert at_start is not None
+    assert at_start.start == datetime(2026, 9, 12, 13, 0, tzinfo=UTC)
+    assert at_start.end == datetime(2026, 9, 12, 15, 0, tzinfo=UTC)
+
+    assert (
+        quiet_period_for(datetime(2026, 9, 12, 15, 0, tzinfo=UTC), "13:00", "15:00")
+        is None
+    )
+
+
+def test_quiet_period_for_dublin_spring_forward_keeps_local_wall_clock_window() -> None:
+    period = quiet_period_for(
+        datetime(2026, 3, 29, 3, 30, tzinfo=_DUBLIN), "22:00", "07:00"
+    )
+
+    assert period is not None
+    assert period.start == datetime(2026, 3, 28, 22, 0, tzinfo=_DUBLIN)
+    assert period.end == datetime(2026, 3, 29, 7, 0, tzinfo=_DUBLIN)
+    assert period.start.utcoffset() == timedelta(0)
+    assert period.end.utcoffset() == timedelta(hours=1)
+    assert period.end.astimezone(UTC) - period.start.astimezone(UTC) == timedelta(
+        hours=8
+    )
+
+
+def test_quiet_period_for_dublin_fall_back_keeps_local_wall_clock_window() -> None:
+    period = quiet_period_for(
+        datetime(2026, 10, 25, 3, 30, tzinfo=_DUBLIN), "22:00", "07:00"
+    )
+
+    assert period is not None
+    assert period.start == datetime(2026, 10, 24, 22, 0, tzinfo=_DUBLIN)
+    assert period.end == datetime(2026, 10, 25, 7, 0, tzinfo=_DUBLIN)
+    assert period.start.utcoffset() == timedelta(hours=1)
+    assert period.end.utcoffset() == timedelta(0)
+    assert period.end.astimezone(UTC) - period.start.astimezone(UTC) == timedelta(
+        hours=10
     )
 
 
