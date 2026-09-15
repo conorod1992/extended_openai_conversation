@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import yaml
 
 from custom_components.extended_openai_conversation_responses import management_ui
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -20,6 +21,7 @@ import custom_components.extended_openai_conversation_responses.management_loadi
 from custom_components.extended_openai_conversation_responses.management_loading_performance import (
     _agent_snapshot,
     _asset_url,
+    _async_function_repair,
     _async_save_configuration,
     _static_paths,
     async_agent_catalog,
@@ -79,6 +81,31 @@ def _hass_with_agent():
     return hass, entry, subentry
 
 
+def _persisted_invalid_function_tools() -> str:
+    return yaml.safe_dump(
+        [
+            {
+                "spec": {
+                    "name": "invalid_phone_tool",
+                    "description": "Persisted schema containing an unsupported keyword.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "phone": {
+                                "type": "string",
+                                "enum": ["home", "mobile"],
+                                "unsupportedLegacyKeyword": True,
+                            }
+                        },
+                    },
+                },
+                "function": {"type": "native", "name": "legacy_implementation"},
+            }
+        ],
+        sort_keys=False,
+    )
+
+
 def test_frontend_asset_version_matches_manifest() -> None:
     manifest = json.loads(
         (
@@ -122,6 +149,19 @@ def test_agent_snapshot_accepts_frontend_normalized_function_tools() -> None:
     )
 
 
+def test_agent_snapshot_keeps_invalid_function_tool_agent_discoverable() -> None:
+    hass, entry, subentry = _hass_with_agent()
+    subentry.data["functions"] = _persisted_invalid_function_tools()
+
+    result = _agent_snapshot(hass, entry, subentry)
+
+    assert result["title"] == "Jarvis"
+    assert result["function_count"] == 0
+    assert result["configuration_issue"]["field"] == "functions"
+    assert result["configuration_issue"]["repairable"] is True
+    assert "unsupportedLegacyKeyword" in result["configuration_issue"]["message"]
+
+
 async def test_agent_catalog_does_not_initialize_per_agent_managers(monkeypatch) -> None:
     hass, _entry, _subentry = _hass_with_agent()
     for name in (
@@ -141,6 +181,112 @@ async def test_agent_catalog_does_not_initialize_per_agent_managers(monkeypatch)
     assert [agent["title"] for agent in result["agents"]] == ["Jarvis"]
     assert result["agents"][0]["model"] == agent_config_defaults()["chat_model"]
     assert result["is_admin"] is True
+
+
+async def test_agent_catalog_keeps_invalid_function_tool_agent_visible(monkeypatch) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    subentry.data["functions"] = _persisted_invalid_function_tools()
+    monkeypatch.setattr(management_ui, "_scope_catalog", AsyncMock(return_value=[]))
+
+    result = await async_agent_catalog(hass, "admin", True)
+
+    assert [agent["subentry_id"] for agent in result["agents"]] == ["agent-1"]
+    issue = result["agents"][0]["configuration_issue"]
+    assert issue["field"] == "functions"
+    assert issue["repairable"] is True
+    assert "unsupportedLegacyKeyword" in issue["message"]
+
+
+async def test_function_repair_get_exposes_invalid_persisted_tools_without_normalizing() -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    subentry.data["functions"] = _persisted_invalid_function_tools()
+
+    result = await _async_function_repair(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "action": "get",
+        },
+    )
+
+    assert result["tools"][0]["spec"]["parameters"]["properties"]["phone"][
+        "unsupportedLegacyKeyword"
+    ] is True
+    assert "unsupportedLegacyKeyword" in result["validation_error"]
+    assert isinstance(result["revision"], str)
+    assert hass.config_entries.updates == 0
+
+
+async def test_function_repair_save_is_atomic_and_preserves_unrelated_data() -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    subentry.data["functions"] = _persisted_invalid_function_tools()
+    subentry.data["repair_sentinel"] = {"nested": ["leave", "untouched"]}
+    original_sentinel = subentry.data["repair_sentinel"]
+    repair = await _async_function_repair(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "action": "get",
+        },
+    )
+
+    result = await _async_function_repair(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "action": "save",
+            "revision": repair["revision"],
+            "tools": [],
+        },
+    )
+
+    assert result["valid"] is True
+    assert yaml.safe_load(subentry.data["functions"]) == []
+    assert subentry.data["repair_sentinel"] is original_sentinel
+    assert subentry.data["repair_sentinel"] == {"nested": ["leave", "untouched"]}
+    assert hass.config_entries.updates == 1
+
+
+async def test_function_repair_rejects_still_invalid_tools_without_persisting() -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    subentry.data["functions"] = _persisted_invalid_function_tools()
+    repair = await _async_function_repair(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "action": "get",
+        },
+    )
+    invalid = yaml.safe_load(_persisted_invalid_function_tools())
+
+    with pytest.raises(Exception, match="unsupportedLegacyKeyword"):
+        await _async_function_repair(
+            hass,
+            "admin",
+            True,
+            {
+                "entry_id": "entry-1",
+                "subentry_id": "agent-1",
+                "action": "save",
+                "revision": repair["revision"],
+                "tools": invalid,
+            },
+        )
+
+    assert hass.config_entries.updates == 0
+    assert "unsupportedLegacyKeyword" in subentry.data["functions"]
 
 
 async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) -> None:

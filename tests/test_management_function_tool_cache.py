@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import custom_components.extended_openai_conversation_responses.management_function_repair as repair
 import custom_components.extended_openai_conversation_responses.management_loading_performance as loading
 from custom_components.extended_openai_conversation_responses import management_ui
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -22,7 +23,7 @@ def test_agent_snapshot_uses_authoritative_cached_function_parser(monkeypatch) -
         ]
     )
     monkeypatch.setattr(
-        loading,
+        repair,
         "cached_configured_function_tools_from_data",
         cached_parser,
     )

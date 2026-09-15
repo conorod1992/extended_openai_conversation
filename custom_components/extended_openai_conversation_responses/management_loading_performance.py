@@ -40,8 +40,11 @@ from .frontend_version import FRONTEND_VERSION
 from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
 from .knowledge import async_get_knowledge
 from .local_intents import CONF_LOCAL_INTENT_EXCLUSIONS
+from .management_function_repair import (
+    async_function_repair as _async_function_repair,
+    function_tools_issue as _function_tools_issue,
+)
 from .memory import async_get_memory, get_memory_mode
-from .performance import cached_configured_function_tools_from_data
 from .usage import async_get_usage
 
 _INSTALLED = False
@@ -49,6 +52,7 @@ _ORIGINAL_MANAGEMENT_COMMAND: Callable[..., Awaitable[dict[str, Any]]] | None = 
 _EXTRA_FRONTEND_MODULES = (
     "management-rendering-performance.js",
     "management-loading-performance.js",
+    "management-function-repair.js",
     "management-state-safety.js",
     "management-bootstrap.js",
     "management-route-performance.js",
@@ -97,7 +101,7 @@ def _agent_snapshot(
     """Build the cheap frontend metadata shared by bootstrap and overview."""
     options = config if config is not None else dict(subentry.data)
     management_ui = _management_ui()
-    configured_tools = cached_configured_function_tools_from_data(options)
+    configured_tools, function_issue = _function_tools_issue(options)
     if guest_status is None:
         loaded_guest = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
         guest_status = (
@@ -108,7 +112,7 @@ def _agent_snapshot(
     else:
         guest_status = dict(guest_status)
     guest_status["has_home_assistant_exclusions"] = _guest_has_ha_exclusions(options)
-    return {
+    snapshot = {
         "entry_id": entry.entry_id,
         "entry_title": entry.title,
         "subentry_id": subentry.subentry_id,
@@ -131,6 +135,13 @@ def _agent_snapshot(
         "tokens_today": tokens_today,
         "guest_mode": guest_status,
     }
+    if function_issue is not None:
+        snapshot["configuration_issue"] = {
+            "field": CONF_FUNCTION_TOOLS,
+            "message": function_issue,
+            "repairable": True,
+        }
+    return snapshot
 
 
 def _management_ui():
@@ -346,6 +357,8 @@ async def optimized_management_command(
         return await async_overview_summary(hass, user_id, is_admin, message)
     if message.get("section") == "configuration" and message.get("action") == "save":
         return await _async_save_configuration(hass, user_id, is_admin, message)
+    if message.get("section") == "function_repair":
+        return await _async_function_repair(hass, user_id, is_admin, message)
     return await original(hass, user_id, is_admin, message)
 
 
