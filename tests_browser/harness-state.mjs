@@ -31,7 +31,7 @@ function freshState() {
     memories: [{memory_id: "memory-1", scope_id: "user:test-user", content: "Baseline browser fixture memory", category: "general", source: "manual", created_at: "2026-09-01T12:00:00Z", updated_at: "2026-09-01T12:00:00Z"}],
     requestRules: {
       revision: 3, defaults: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, wording_groups: [], diagnostics: {},
-      rules: [{id: "rule-1", name: "Baseline rule", enabled: true, phrases: ["baseline route"], match_type: "contains", action_type: "model_routing", action: {model: "gpt-5-mini", reasoning_effort: "", scope: "request", reset: false, success_response: "Updated"}, matching_behavior: "defaults", matching: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, order: 0}],
+      rules: [{id: "rule-1", name: "Night", enabled: true, phrases: ["good night", "bed time", "sleep now", "lights out", "hidden fifth phrase"], match_type: "contains", action_type: "local_action", action: {}, matching_behavior: "defaults", matching: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, order: 0}],
     },
     toolYamls: {baseline_tool: "spec:\n  name: baseline_tool\n  description: Baseline browser fixture Function Tool\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: script\n  sequence: []\n"},
     nextMemoryId: 2, nextRuleId: 2, failedConfigurationOnce: false,
@@ -45,6 +45,7 @@ function load() {
 
 export function createStateBackend({partialOverview = false, failConfigurationOnce = false} = {}) {
   let state = load();
+  const pendingToolYamls = new Map();
   const save = () => localStorage.setItem(KEY, JSON.stringify(state));
   const counts = () => {
     state.agent.function_count = state.configuration.config.functions?.length || 0;
@@ -61,7 +62,7 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     const type = (text.match(/(?:^|\n)function:\s*\n([\s\S]*)/m)?.[1] || "").match(/^\s*type:\s*([^\n#]+)/m)?.[1]?.trim() || "script";
     if (!name) return {valid: false, errors: [{message: "spec.name is required"}]};
     const config = {spec: {name, description, parameters: {type: "object", properties: {}}}, function: {type, sequence: []}, enabled: true};
-    state.toolYamls[name] = text; save();
+    pendingToolYamls.set(name, text);
     return {valid: true, errors: [], name, type, config};
   };
   const backup = () => JSON.stringify({fixture_format: 1, title: state.configuration.title, created_at: now(), state: clone(state)}, null, 2);
@@ -122,10 +123,13 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     if (key === "tools/save") {
       const tool = clone(message.tool), list = state.configuration.config.functions || [], original = message.original_name;
       const i = list.findIndex((t) => t.spec?.name === (original || tool.spec?.name)); if (i >= 0) list[i] = tool; else list.push(tool);
-      if (original && original !== tool.spec?.name) { for (const g of state.configuration.config.function_groups || []) g.functions = (g.functions || []).map((n) => n === original ? tool.spec.name : n); delete state.toolYamls[original]; }
+      const name = tool.spec?.name;
+      if (name && pendingToolYamls.has(name)) state.toolYamls[name] = pendingToolYamls.get(name);
+      if (name) pendingToolYamls.delete(name);
+      if (original && original !== tool.spec?.name) { for (const g of state.configuration.config.function_groups || []) g.functions = (g.functions || []).map((n) => n === original ? tool.spec.name : n); delete state.toolYamls[original]; pendingToolYamls.delete(original); }
       counts(); save(); return tools();
     }
-    if (key === "tools/delete") { state.configuration.config.functions = (state.configuration.config.functions || []).filter((t) => t.spec?.name !== message.name); for (const g of state.configuration.config.function_groups || []) g.functions = (g.functions || []).filter((n) => n !== message.name); delete state.toolYamls[message.name]; counts(); save(); return tools(); }
+    if (key === "tools/delete") { state.configuration.config.functions = (state.configuration.config.functions || []).filter((t) => t.spec?.name !== message.name); for (const g of state.configuration.config.function_groups || []) g.functions = (g.functions || []).filter((n) => n !== message.name); delete state.toolYamls[message.name]; pendingToolYamls.delete(message.name); counts(); save(); return tools(); }
     if (key === "tools/set_enabled") { const tool = (state.configuration.config.functions || []).find((t) => t.spec?.name === message.name); if (tool) tool.enabled = message.enabled; save(); return tools(); }
     if (key === "tools/save_group") { const group = clone(message.group), list = state.configuration.config.function_groups || [], original = message.original_id || group.id; for (const g of list) if (g.id !== original) g.functions = (g.functions || []).filter((n) => !(group.functions || []).includes(n)); const i = list.findIndex((g) => g.id === original); if (i >= 0) list[i] = group; else list.push(group); counts(); save(); return tools(); }
     if (key === "tools/delete_group") { state.configuration.config.function_groups = (state.configuration.config.function_groups || []).filter((g) => g.id !== message.group_id); counts(); save(); return tools(); }
@@ -133,11 +137,11 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
 
     if (key === "backup/create") return {json: backup(), filename: "browser-fixture-full-backup.json"};
     if (key === "backup/inspect") return inspect(message.document);
-    if (key === "backup/restore") { const doc = JSON.parse(message.document); if (!doc?.state?.configuration) throw new Error("Invalid browser fixture backup"); state = clone(doc.state); counts(); save(); return {restored: true}; }
+    if (key === "backup/restore") { const doc = JSON.parse(message.document); if (!doc?.state?.configuration) throw new Error("Invalid browser fixture backup"); state = clone(doc.state); pendingToolYamls.clear(); counts(); save(); return {restored: true}; }
 
     return ({"conversations/list": {sessions: []}, "conversations/active": {active: []}, "usage/daily": {days: []}, "usage/runs": {runs: []}, "usage/retention": {}})[key] ?? {};
   }
 
   counts();
-  return {call, state: () => clone(state), reset: () => { state = freshState(); save(); return clone(state); }, agent: () => clone(state.agent), scopes: () => clone(state.scopes)};
+  return {call, state: () => clone(state), reset: () => { state = freshState(); pendingToolYamls.clear(); save(); return clone(state); }, agent: () => clone(state.agent), scopes: () => clone(state.scopes)};
 }
