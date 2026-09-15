@@ -17,9 +17,9 @@ async function saveConfig(panel) {
   await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
 }
 
-async function configurationUpdateCount(page) {
+async function configurationSaveCount(page) {
   return page.evaluate(() => window.browserHarness.calls
-    .filter((call) => call.section === "configuration" && call.action === "update")
+    .filter((call) => call.section === "configuration" && call.action === "save")
     .length);
 }
 
@@ -63,16 +63,16 @@ test("a stale second tab cannot overwrite a newer agent configuration", async ({
   await expect(panelC.locator('[data-config="__title"]')).toHaveValue(winnerTitle);
 
   // Tab B's disjoint local draft must be rejected rather than replacing Tab A's
-  // newer full configuration snapshot. Track the shipped harness call itself,
+  // newer full configuration snapshot. Track the shipped configuration/save call,
   // then wait for the save button to be re-enabled by the handler's finally path;
-  // this proves the stale update attempt finished without coupling the test to
+  // this proves the stale save attempt finished without coupling the test to
   // Playwright's cross-origin HTTP response event or HA's exact error payload.
   await titleB.fill(staleDraftTitle);
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
-  const updateCountBefore = await configurationUpdateCount(pageB);
+  const saveCountBefore = await configurationSaveCount(pageB);
   const staleSaveButton = panelB.getByRole("button", {name: "Save configuration", exact: true});
   await staleSaveButton.click();
-  await expect.poll(() => configurationUpdateCount(pageB)).toBe(updateCountBefore + 1);
+  await expect.poll(() => configurationSaveCount(pageB)).toBe(saveCountBefore + 1);
   await expect(staleSaveButton).toBeEnabled();
   await expect(titleB).toHaveValue(staleDraftTitle);
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
