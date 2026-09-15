@@ -33,6 +33,9 @@ test("a stale second tab cannot overwrite a newer agent configuration", async ({
   const titleA = panelA.locator('[data-config="__title"]');
   const titleB = panelB.locator('[data-config="__title"]');
   const baselineTitle = await titleA.inputValue();
+  const runToken = Date.now().toString(36);
+  const winnerTitle = `Browser multi-tab winner ${runToken}`;
+  const staleDraftTitle = `Browser multi-tab stale ${runToken}`;
   const baselineRevisionA = await panelA.evaluate((element) => element._configData?.revision);
   const baselineRevisionB = await panelB.evaluate((element) => element._configData?.revision);
   expect(baselineRevisionA).toBeDefined();
@@ -40,11 +43,12 @@ test("a stale second tab cannot overwrite a newer agent configuration", async ({
   await expect(titleB).toHaveValue(baselineTitle);
 
   // Both tabs loaded the same backend revision. Tab A wins the first write and
-  // receives the new revision returned by the genuine HA management API.
-  await titleA.fill("Browser multi-tab winner");
+  // receives the new revision returned by the genuine HA management API. Use a
+  // per-run title so an interrupted previous run cannot make this save a no-op.
+  await titleA.fill(winnerTitle);
   await saveConfig(panelA);
   await expect(panelA.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
-  await expect(titleA).toHaveValue("Browser multi-tab winner");
+  await expect(titleA).toHaveValue(winnerTitle);
 
   // Prove this is genuinely a stale-writer scenario before Tab B attempts its
   // save: A has advanced while B still holds the original loaded revision.
@@ -59,14 +63,14 @@ test("a stale second tab cannot overwrite a newer agent configuration", async ({
   // then wait for the save button to be re-enabled by the handler's finally path;
   // this proves the stale update attempt finished without coupling the test to
   // Playwright's cross-origin HTTP response event or HA's exact error payload.
-  await titleB.fill("Browser multi-tab stale draft");
+  await titleB.fill(staleDraftTitle);
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
   const updateCountBefore = await configurationUpdateCount(pageB);
   const staleSaveButton = panelB.getByRole("button", {name: "Save configuration", exact: true});
   await staleSaveButton.click();
   await expect.poll(() => configurationUpdateCount(pageB)).toBe(updateCountBefore + 1);
   await expect(staleSaveButton).toBeEnabled();
-  await expect(titleB).toHaveValue("Browser multi-tab stale draft");
+  await expect(titleB).toHaveValue(staleDraftTitle);
   await expect(panelB.getByText("Unsaved changes", {exact: true})).toBeVisible();
 
   // A third independently loaded page proves the backend retained the winner and
@@ -74,7 +78,7 @@ test("a stale second tab cannot overwrite a newer agent configuration", async ({
   const pageC = await context.newPage();
   const pageErrorsC = trackPageErrors(pageC);
   let panelC = await openConfig(pageC);
-  await expect(panelC.locator('[data-config="__title"]')).toHaveValue("Browser multi-tab winner");
+  await expect(panelC.locator('[data-config="__title"]')).toHaveValue(winnerTitle);
 
   // Restore the original title using Tab A, whose successful write advanced its
   // revision. This also proves the rejected stale write did not wedge future saves.
