@@ -13,6 +13,7 @@ on:
   pull_request:
     paths:
       - "tests_real_ha/test_release_upgrade_acceptance.py"
+      - "tests_real_ha/test_release_upgrade_custom_function_tool.py"
       - "tests_real_ha/test_browser_release_upgrade_acceptance.py"
       - "tests_browser/release-upgrade-visible.spec.mjs"
       - "tests_browser/real-ha-fixture.html"
@@ -127,10 +128,11 @@ jobs:
         run: |
           pytest \
             tests_real_ha/test_release_upgrade_acceptance.py \
+            tests_real_ha/test_release_upgrade_custom_function_tool.py \
             tests_real_ha/test_browser_release_upgrade_acceptance.py \
             -v \
             --asyncio-mode=auto \
-            --timeout=210
+            --timeout=300
 
       - name: Upload browser diagnostics
         if: failure()
