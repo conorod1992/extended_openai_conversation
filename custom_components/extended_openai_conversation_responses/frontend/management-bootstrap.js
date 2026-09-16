@@ -23,6 +23,7 @@ const BOOTSTRAP_MODULES = [
   "./management-configuration-guidance.js",
   "./management-decision-guidance.js",
   "./management-conversation-default-label.js",
+  "./management-overview-health-clarity.js",
 ];
 
 function preloadBootstrapModules(documentRef = globalThis.document) {
@@ -153,6 +154,8 @@ if (typeof customElements !== "undefined") {
     await import("./management-decision-guidance.js");
     // Keep default badges aligned with the labels users can actually select.
     await import("./management-conversation-default-label.js");
+    // Distinguish actionable health issues from checks whose status is unavailable.
+    await import("./management-overview-health-clarity.js");
   } catch (err) {
     restore();
     throw err;
