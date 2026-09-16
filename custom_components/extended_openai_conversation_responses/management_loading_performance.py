@@ -546,9 +546,13 @@ def install_management_loading_optimizations() -> None:
     # Performance optimization installs a strict cached loader first. Keep strict
     # validation at configuration boundaries, but make live conversations resilient to
     # persisted invalid siblings by quarantining only those tools at request assembly.
-    conversation.configured_function_tools_from_data = _runtime_configured_function_tools  # type: ignore[assignment]
+    conversation.configured_function_tools_from_data = (
+        _runtime_configured_function_tools  # type: ignore[assignment]
+    )
     conversation.validate_function_groups = _runtime_validate_function_groups  # type: ignore[assignment]
-    function_tool_resolution.validate_function_groups = _runtime_validate_function_groups  # type: ignore[assignment]
+    function_tool_resolution.validate_function_groups = (
+        _runtime_validate_function_groups  # type: ignore[assignment]
+    )
 
     management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(
         dict.fromkeys(
