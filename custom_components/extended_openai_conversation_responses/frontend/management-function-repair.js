@@ -49,7 +49,7 @@ function invalidToolCards(panel, repair) {
         const groupText = groups.length ? `Assigned to: ${groups.join(", ")}. Assignment is retained while this tool is unavailable.` : "Not currently assigned to a Function Group.";
         return `<article class="list-card tool-card tool-card-invalid" data-repair-index="${escapeHtml(panel, item.index)}" data-tool-search="${escapeHtml(panel, `${label} invalid needs repair ${item.validation_error || ""}`.toLowerCase())}">
           <div class="tool-card-main"><div class="tool-title"><h3>${escapeHtml(panel, label)}</h3><span class="status-pill status-off">Needs repair</span></div><p>${escapeHtml(panel, item.validation_error || "This Function Tool does not pass the current validation rules.")}</p><small>${escapeHtml(panel, groupText)}</small></div>
-          <div class="tool-actions"><button type="button" class="secondary edit-invalid-tool" data-repair-index="${escapeHtml(panel, item.index)}">Edit</button><button type="button" class="secondary delete-invalid-tool" data-repair-index="${escapeHtml(panel, item.index)}">Delete</button></div>
+          <div class="actions tool-card-actions"><button type="button" class="secondary edit-invalid-tool" data-repair-index="${escapeHtml(panel, item.index)}">Edit</button><button type="button" class="danger delete-invalid-tool" data-repair-index="${escapeHtml(panel, item.index)}">Delete</button></div>
         </article>`;
       }).join("")}
     </div></details>
