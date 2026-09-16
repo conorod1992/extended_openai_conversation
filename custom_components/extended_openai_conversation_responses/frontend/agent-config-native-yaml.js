@@ -70,6 +70,18 @@ const FUNCTION_GROUP_ASSIGNMENT_STYLE = `
     cursor: pointer;
   }
   .function-group-assignment:disabled { cursor: progress; }
+  .function-group-card[data-group-id] {
+    background: var(--secondary-background-color, var(--card-background-color));
+    background: color-mix(in srgb, var(--primary-color) 5%, var(--card-background-color));
+    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--primary-color) 28%, transparent);
+  }
+  .function-group-card[data-group-id] > details .tool-card {
+    background: var(--card-background-color);
+  }
+  .function-group-card[data-group-id] + .function-group-card[data-group-id] {
+    margin-top: 16px;
+  }
+  .group-enabled-control { flex: 0 0 auto; }
   @media (max-width: 700px) {
     .function-group-assignment-control { max-width: 100%; }
     .function-group-assignment { max-width: 210px; }
@@ -175,6 +187,28 @@ function assignmentOptions(panel, groups, currentId) {
   ].join("");
 }
 
+function decorateFunctionGroupCards(panel, root, groups) {
+  for (const card of root.querySelectorAll(".function-group-card[data-group-id]")) {
+    const group = groups.find((item) => item.id === card.dataset.groupId);
+    if (!group) continue;
+    const enabled = group.enabled !== false;
+    card.classList.toggle("is-disabled", !enabled);
+    const title = card.querySelector(".tool-title");
+    if (!enabled && title && !title.querySelector(".group-disabled-badge")) {
+      title.insertAdjacentHTML("beforeend", '<span class="availability-badge group-disabled-badge">Disabled</span>');
+    }
+    const editButton = card.querySelector(".edit-group");
+    if (editButton) {
+      editButton.disabled = !enabled;
+      editButton.title = enabled ? "" : "Enable this Function Group before editing it";
+    }
+    const actions = card.querySelector(".function-group-heading .actions");
+    if (actions && !actions.querySelector(".group-enabled")) {
+      actions.insertAdjacentHTML("afterbegin", `<label class="tool-enabled-control group-enabled-control" title="Disable the group without changing the enabled state of its member Function Tools"><span>Enabled</span><span class="switch-control"><input type="checkbox" role="switch" class="group-enabled" data-group-id="${panel._e(group.id)}" aria-label="Enable Function Group ${panel._e(group.name)}" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></span></label>`);
+    }
+  }
+}
+
 export function decorateFunctionGroupAssignments(panel, html) {
   if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
   const template = document.createElement("template");
@@ -182,6 +216,8 @@ export function decorateFunctionGroupAssignments(panel, html) {
   const config = panel?._draft || panel?._result?.config || {};
   const tools = config.functions || [];
   const groups = config.function_groups || [];
+
+  decorateFunctionGroupCards(panel, template.content, groups);
 
   for (const card of template.content.querySelectorAll(".tool-card[data-tool-index]")) {
     const index = Number(card.dataset.toolIndex);
@@ -204,6 +240,7 @@ export function decorateFunctionGroupAssignments(panel, html) {
   if (!template.content.querySelector("style[data-function-group-assignment]")) {
     const style = document.createElement("style");
     style.dataset.functionGroupAssignment = "";
+    style.dataset.functionGroupsDecorated = "";
     style.textContent = FUNCTION_GROUP_ASSIGNMENT_STYLE;
     template.content.prepend(style);
   }
