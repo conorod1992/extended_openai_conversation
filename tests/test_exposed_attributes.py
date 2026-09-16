@@ -218,11 +218,12 @@ def test_enrich_exposed_entities_handles_stale_state_and_budget(
         {"entity_id": "switch.other", "name": "Other"},
     ]
     options = {
+        ea.CONF_EXPOSED_ENTITIES_ENABLED: True,
         ea.CONF_EXPOSED_ENTITY_ATTRIBUTES: {
             "registry:one": ["brightness", "not_present"],
             "registry:two": ["anything"],
             "registry:three": ["ignored"],
-        }
+        },
     }
 
     result = ea.enrich_exposed_entities(hass, options, exposed)
@@ -242,7 +243,9 @@ def test_enrich_exposed_entities_fast_paths(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(ea, "_preferences_from_options", lambda _options: {"registry:x": ["brightness"]})
     registry = SimpleNamespace(entities=SimpleNamespace(get_entry=lambda _entry_id: None))
     monkeypatch.setattr(ea.er, "async_get", lambda _hass: registry)
-    assert ea.enrich_exposed_entities(_hass(), {}, exposed) is exposed
+    assert ea.enrich_exposed_entities(
+        _hass(), {ea.CONF_EXPOSED_ENTITIES_ENABLED: True}, exposed
+    ) is exposed
 
 
 def test_attribute_helpers_and_renderers_cover_empty_and_non_string_entities(

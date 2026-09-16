@@ -9,6 +9,9 @@ from types import SimpleNamespace
 from homeassistant.helpers import entity_registry as er
 
 from custom_components.extended_openai_conversation_responses import exposed_attributes
+from custom_components.extended_openai_conversation_responses.const import (
+    CONF_EXPOSED_ENTITIES_ENABLED,
+)
 from custom_components.extended_openai_conversation_responses.exposed_attributes import (
     CONF_EXPOSED_ENTITY_ATTRIBUTES,
     MAX_TOTAL_ATTRIBUTE_CONTEXT_CHARACTERS,
@@ -115,9 +118,10 @@ def test_aggregate_budget_counts_final_csv_encoded_attribute_cell(hass) -> None:
     result = enrich_exposed_entities(
         hass,
         {
+            CONF_EXPOSED_ENTITIES_ENABLED: True,
             CONF_EXPOSED_ENTITY_ATTRIBUTES: {
                 "registry:stable": sorted(attributes),
-            }
+            },
         },
         [
             {

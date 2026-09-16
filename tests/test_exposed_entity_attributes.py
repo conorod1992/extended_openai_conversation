@@ -41,7 +41,7 @@ from homeassistant.helpers import entity_registry as er
 
 
 def _entry(entry_id: str, entity_id: str) -> SimpleNamespace:
-    return SimpleNamespace(id=entry_id, entity_id=entity_id)
+    return SimpleNamespace(id=entry_id, entity_id=entity_id, aliases=())
 
 
 def _registry(*entries: SimpleNamespace) -> SimpleNamespace:
@@ -68,6 +68,10 @@ def _state(attributes: dict) -> SimpleNamespace:
 
 def _entity(entity_id: str, name: str = "Lamp") -> dict:
     return {"entity_id": entity_id, "name": name, "state": "on", "aliases": []}
+
+
+def _empty_prompt_metadata(_hass, _entity_id) -> SimpleNamespace:
+    return SimpleNamespace(area_id=None, aliases=())
 
 
 def test_agent_config_stores_only_stable_references_and_attribute_names() -> None:
@@ -126,7 +130,10 @@ def test_selection_follows_registry_identity_across_entity_id_rename(hass) -> No
 
     result = enrich_exposed_entities(
         hass,
-        {CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:stable": ["brightness"]}},
+        {
+            CONF_EXPOSED_ENTITIES_ENABLED: True,
+            CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:stable": ["brightness"]},
+        },
         exposed,
     )
 
@@ -141,7 +148,10 @@ def test_entity_id_reuse_cannot_inherit_deleted_registry_preference(hass) -> Non
 
     result = enrich_exposed_entities(
         hass,
-        {CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:deleted": ["brightness"]}},
+        {
+            CONF_EXPOSED_ENTITIES_ENABLED: True,
+            CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:deleted": ["brightness"]},
+        },
         exposed,
     )
 
@@ -162,7 +172,10 @@ def test_saved_preference_cannot_re_expose_an_entity(hass) -> None:
 
     result = enrich_exposed_entities(
         hass,
-        {CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:hidden": ["brightness"]}},
+        {
+            CONF_EXPOSED_ENTITIES_ENABLED: True,
+            CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:hidden": ["brightness"]},
+        },
         exposed,
     )
 
@@ -174,7 +187,8 @@ def test_missing_attribute_is_temporarily_omitted_without_clearing_selection(has
     _install_registry(hass, _entry("stable", "light.kitchen"))
     hass.states.get.return_value = _state({"supported_color_modes": ["brightness"]})
     options = {
-        CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:stable": ["brightness"]}
+        CONF_EXPOSED_ENTITIES_ENABLED: True,
+        CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:stable": ["brightness"]},
     }
 
     result = enrich_exposed_entities(hass, options, [_entity("light.kitchen")])
@@ -190,7 +204,8 @@ def test_attribute_values_are_resolved_live_for_each_render(hass) -> None:
     current = {"brightness": 10}
     hass.states.get.side_effect = lambda _entity_id: _state(dict(current))
     options = {
-        CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:stable": ["brightness"]}
+        CONF_EXPOSED_ENTITIES_ENABLED: True,
+        CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:stable": ["brightness"]},
     }
     exposed = [_entity("light.kitchen")]
 
@@ -218,7 +233,10 @@ def test_total_live_attribute_serialization_is_bounded(hass) -> None:
 
     result = enrich_exposed_entities(
         hass,
-        {CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:stable": selected}},
+        {
+            CONF_EXPOSED_ENTITIES_ENABLED: True,
+            CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:stable": selected},
+        },
         [_entity("sensor.verbose", "Verbose")],
     )
     emitted = result[0]["attributes"]
@@ -299,15 +317,19 @@ def test_maintained_default_formats_include_only_live_selected_values(
     assert '"{""brightness"":123}"' in legacy
 
 
-def test_custom_template_receives_selected_attribute_mapping(hass) -> None:
+def test_custom_template_receives_selected_attribute_mapping(hass, monkeypatch) -> None:
     _install_registry(hass, _entry("stable", "light.kitchen"))
     hass.states.get.return_value = _state({"brightness": 177})
+    monkeypatch.setattr(prompt, "get_entity_prompt_metadata", _empty_prompt_metadata)
+    monkeypatch.setattr(
+        exposed_attributes, "get_entity_prompt_metadata", _empty_prompt_metadata
+    )
     options = agent_config_defaults()
     options.update(
         {
             CONF_PROMPT: "Brightness={{ exposed_entities[0].attributes.brightness }}",
             CONF_CURRENT_DATETIME_ENABLED: False,
-            CONF_EXPOSED_ENTITIES_ENABLED: False,
+            CONF_EXPOSED_ENTITIES_ENABLED: True,
             CONF_EXPOSED_ENTITY_ATTRIBUTES: {
                 "registry:stable": ["brightness"]
             },
@@ -324,25 +346,33 @@ def test_custom_template_receives_selected_attribute_mapping(hass) -> None:
         skills=[],
     )
 
-    assert result.text == "Brightness=177"
+    assert "Brightness=177" in result.text
 
 
 @pytest.mark.asyncio
 async def test_preview_counts_rendered_attribute_context(hass, monkeypatch) -> None:
     _install_registry(hass, _entry("stable", "light.kitchen"))
     hass.states.get.return_value = _state({"brightness": 188})
+    monkeypatch.setattr(prompt, "get_entity_prompt_metadata", _empty_prompt_metadata)
+    monkeypatch.setattr(
+        exposed_attributes, "get_entity_prompt_metadata", _empty_prompt_metadata
+    )
     options = agent_config_defaults()
     options.update(
         {
             CONF_PROMPT: "Brightness={{ exposed_entities[0].attributes.brightness }}",
             CONF_CURRENT_DATETIME_ENABLED: False,
-            CONF_EXPOSED_ENTITIES_ENABLED: False,
+            CONF_EXPOSED_ENTITIES_ENABLED: True,
             CONF_EXPOSED_ENTITY_ATTRIBUTES: {
                 "registry:stable": ["brightness"]
             },
         }
     )
-    monkeypatch.setattr(management_ui, "get_exposed_entities", lambda _hass: [_entity("light.kitchen")])
+    monkeypatch.setattr(
+        management_ui,
+        "get_exposed_entities",
+        lambda _hass: [_entity("light.kitchen")],
+    )
     monkeypatch.setattr(
         management_ui,
         "render_effective_prompt",
@@ -356,7 +386,9 @@ async def test_preview_counts_rendered_attribute_context(hass, monkeypatch) -> N
         options,
         "admin",
     )
-    system = next(section for section in result["sections"] if section["key"] == "system_context")
+    system = next(
+        section for section in result["sections"] if section["key"] == "system_context"
+    )
 
     assert "Brightness=188" in result["prompt"]
     assert system["character_count"] == len(system["content"])

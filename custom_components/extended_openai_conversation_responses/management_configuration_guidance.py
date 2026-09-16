@@ -19,6 +19,7 @@ from .const import (
     DEFAULT_API_MODE,
     DEFAULT_CHAT_MODEL,
 )
+from .exposed_attributes import exposed_attribute_catalog
 from .helpers import get_api_mode, supports_openai_hosted_tools
 from .request import build_web_search_tool
 
@@ -92,7 +93,7 @@ def configuration_guidance_snapshot(
 def wrap_management_configuration_guidance(
     original: ManagementCommand,
 ) -> ManagementCommand:
-    """Attach guidance to successful configuration read/validate/save results."""
+    """Attach guidance and runtime catalogues to configuration results."""
 
     async def wrapped(
         hass: HomeAssistant,
@@ -103,7 +104,8 @@ def wrap_management_configuration_guidance(
         result = await original(hass, user_id, is_admin, message)
         if message.get("section", "overview") != "configuration":
             return result
-        if message.get("action") not in {"get", "validate", "update", "save"}:
+        action = message.get("action")
+        if action not in {"get", "validate", "update", "save"}:
             return result
         config = result.get("config") if isinstance(result, dict) else None
         if not isinstance(config, dict):
@@ -114,12 +116,17 @@ def wrap_management_configuration_guidance(
         if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
             return result
         entry, _subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
-        return {
+        decorated = {
             **result,
             "configuration_guidance": configuration_guidance_snapshot(
                 getattr(entry, "data", {}), config
             ),
         }
+        if action in {"get", "update", "save"}:
+            decorated["exposed_attribute_catalog"] = exposed_attribute_catalog(
+                hass, config
+            )
+        return decorated
 
     return wrapped
 
