@@ -161,7 +161,7 @@ def _preferences_from_options(options: Mapping[str, Any] | Any) -> dict[str, lis
     try:
         value = options.get(CONF_EXPOSED_ENTITY_ATTRIBUTES, {})
         return _validate_preferences(value)
-    except (AttributeError, agent_config.AgentConfigError):
+    except AttributeError, agent_config.AgentConfigError:
         return {}
 
 
@@ -233,7 +233,7 @@ def _safe_attribute_value(value: Any) -> Any:
             separators=(",", ":"),
             default=str,
         )
-    except (TypeError, ValueError, RecursionError):
+    except TypeError, ValueError, RecursionError:
         encoded = json.dumps(str(value), ensure_ascii=False)
     if len(encoded) > MAX_ATTRIBUTE_VALUE_CHARACTERS:
         return f"<omitted: {len(encoded)} serialized characters>"
@@ -278,7 +278,9 @@ def enrich_exposed_entities(
 ) -> list[dict[str, Any]]:
     """Attach selected values only while automatic exposed context is enabled."""
     try:
-        automatic_context_enabled = bool(options.get(CONF_EXPOSED_ENTITIES_ENABLED, False))
+        automatic_context_enabled = bool(
+            options.get(CONF_EXPOSED_ENTITIES_ENABLED, False)
+        )
     except AttributeError:
         return exposed_entities
     if not automatic_context_enabled:
