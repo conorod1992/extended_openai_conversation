@@ -42,8 +42,9 @@ test("Function Tool cards can move between groups and always available", async (
   await expect(card.locator(".function-group-assignment")).toHaveValue("card-assignment-group");
   await expect(alwaysCard.locator(".tool-card").filter({hasText: "baseline_tool"})).toHaveCount(0);
 
-  await page.reload();
+  await page.goto(fixtureUrl("capabilities/functions"));
   panel = page.locator("extended-openai-management-panel");
+  await expect(panel.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
   targetGroup = panel.locator('.function-group-card[data-group-id="card-assignment-group"]');
   await expect(targetGroup).toBeVisible();
   await targetGroup.locator("summary").click();
