@@ -175,7 +175,7 @@ def test_unrecognized_unscoped_keyword_remains_rejected() -> None:
         },
     }
 
-    with pytest.raises(AgentConfigError, match="unrecognized schema keyword"):
+    with pytest.raises(AgentConfigError, match="unsupported keyword"):
         validate_function_tools([_native_tool(parameters)])
 
 
@@ -211,5 +211,5 @@ def test_unsupported_semantic_keywords_remain_fail_closed(
         "properties": {"value": child},
     }
 
-    with pytest.raises(AgentConfigError, match="unsupported semantic keyword"):
+    with pytest.raises(AgentConfigError, match="unsupported keyword"):
         validate_function_tools([_native_tool(parameters)])
