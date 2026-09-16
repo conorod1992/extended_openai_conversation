@@ -243,7 +243,9 @@ def _persist_raw_tools(
     return persisted
 
 
-def _replace_group_function_name(groups: Any, old_name: str | None, new_name: str) -> Any:
+def _replace_group_function_name(
+    groups: Any, old_name: str | None, new_name: str
+) -> Any:
     """Retain group assignment when a repaired Function Tool is renamed."""
     updated = deepcopy(groups)
     if old_name is None or old_name == new_name or not isinstance(updated, list):
@@ -425,7 +427,9 @@ async def async_function_repair(
         if not isinstance(editable, list) or not isinstance(index, int):
             raise HomeAssistantError("A valid Function Tool index is required")
         if index < 0 or index >= len(editable):
-            raise HomeAssistantError("The Function Tool changed position; reload and try again")
+            raise HomeAssistantError(
+                "The Function Tool changed position; reload and try again"
+            )
         current = editable[index]
         old_name = None
         if isinstance(current, dict) and isinstance(current.get("spec"), dict):
