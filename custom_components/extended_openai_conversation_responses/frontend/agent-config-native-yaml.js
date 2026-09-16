@@ -4,6 +4,7 @@ export * from "./agent-config-editor-model-v2.js";
 
 const NATIVE_EDITOR_TAG = "ha-yaml-editor";
 const NATIVE_EDITOR_ID = "tool-yaml-native";
+let nativeEditorLoadPromise = null;
 const NEW_TOOL_STARTER_YAML = `spec:\n  name: my_tool\n  description: Describe what this tool does.\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: native\n  name: ''\n`;
 const NEW_TOOL_STARTER_CONFIG = Object.freeze({
   spec: Object.freeze({
@@ -69,11 +70,56 @@ const FUNCTION_GROUP_ASSIGNMENT_STYLE = `
     cursor: pointer;
   }
   .function-group-assignment:disabled { cursor: progress; }
+  .function-group-card[data-group-id] {
+    background: var(--secondary-background-color, var(--card-background-color));
+    background: color-mix(in srgb, var(--primary-color) 5%, var(--card-background-color));
+    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--primary-color) 28%, transparent);
+  }
+  .function-group-card[data-group-id] > details .tool-card {
+    background: var(--card-background-color);
+  }
+  .function-group-card[data-group-id] + .function-group-card[data-group-id] {
+    margin-top: 16px;
+  }
+  .group-enabled-control { flex: 0 0 auto; }
   @media (max-width: 700px) {
     .function-group-assignment-control { max-width: 100%; }
     .function-group-assignment { max-width: 210px; }
   }
 `;
+
+export async function ensureNativeYamlEditor(
+  registry = globalThis.customElements,
+  documentRef = globalThis.document,
+) {
+  if (registry?.get?.(NATIVE_EDITOR_TAG)) return true;
+  if (!registry?.whenDefined) return false;
+  if (!nativeEditorLoadPromise) {
+    nativeEditorLoadPromise = (async () => {
+      if (documentRef?.createElement) {
+        try {
+          const resolver = documentRef.createElement("partial-panel-resolver");
+          const routes = resolver?.getRoutes?.([
+            {component_name: "developer-tools", url_path: "a"},
+          ]);
+          await routes?.routes?.a?.load?.();
+
+          if (!registry.get?.(NATIVE_EDITOR_TAG)) {
+            const router = documentRef.createElement("developer-tools-router");
+            await router?.routerOptions?.routes?.service?.load?.();
+          }
+        } catch (_err) {
+          // Some HA versions/tests do not expose the internal lazy-loader elements.
+          // Fall through to the standards-based custom-element readiness contract.
+        }
+      }
+      if (registry.get?.(NATIVE_EDITOR_TAG)) return true;
+      await registry.whenDefined(NATIVE_EDITOR_TAG);
+      return true;
+    })().finally(() => { nativeEditorLoadPromise = null; });
+  }
+  return nativeEditorLoadPromise;
+}
 
 export function nativeStarterConfig(yaml, originalName = null) {
   if (originalName !== null) return null;
@@ -87,6 +133,17 @@ export function nativeStarterConfig(yaml, originalName = null) {
     },
     function: {type: "native", name: ""},
   };
+}
+
+export function repairToolConfig(panel) {
+  const index = panel?._repairToolIndex;
+  if (!Number.isInteger(index)) return null;
+  const invalidTools = panel?._result?.function_repair?.invalid_tools;
+  if (!Array.isArray(invalidTools)) return null;
+  const item = invalidTools.find((candidate) => Number(candidate?.index) === index);
+  const tool = item?.tool;
+  if (!tool || typeof tool !== "object" || Array.isArray(tool)) return null;
+  return tool;
 }
 
 export function decorateToolYamlEditor(html) {
@@ -147,7 +204,7 @@ function decorateFunctionGroupCards(panel, root, groups) {
     }
     const actions = card.querySelector(".function-group-heading .actions");
     if (actions && !actions.querySelector(".group-enabled")) {
-      actions.insertAdjacentHTML("afterbegin", `<label class="compact-toggle" title="Disable the group without changing the enabled state of its member Function Tools"><input type="checkbox" class="group-enabled" data-group-id="${panel._e(group.id)}" ${enabled ? "checked" : ""}><span>Enabled</span></label>`);
+      actions.insertAdjacentHTML("afterbegin", `<label class="tool-enabled-control group-enabled-control" title="Disable the group without changing the enabled state of its member Function Tools"><span>Enabled</span><span class="switch-control"><input type="checkbox" role="switch" class="group-enabled" data-group-id="${panel._e(group.id)}" aria-label="Enable Function Group ${panel._e(group.name)}" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></span></label>`);
     }
   }
 }
@@ -284,6 +341,13 @@ export function bindNativeToolYaml(panel) {
       if (setNativeValue({})) nativeEditor.isValid = true;
       return;
     }
+
+    const repairConfig = repairToolConfig(panel);
+    if (repairConfig) {
+      setNativeValue(repairConfig);
+      return;
+    }
+
     try {
       const result = await panel._call("tools", "validate_yaml", {yaml});
       if (!nativeReady || generation !== syncGeneration) return;
@@ -291,19 +355,10 @@ export function bindNativeToolYaml(panel) {
         setNativeValue(result.config);
         return;
       }
-      // The backend's generic new-tool starter is intentionally semantically
-      // incomplete (native implementation name is blank) so it cannot pass the
-      // save validator yet. It is nevertheless valid YAML and has a stable,
-      // controlled shape; hydrate that partial object so Add Function Tool still
-      // opens in Home Assistant's native editor. Other backend-invalid documents
-      // fall back to the raw textarea rather than showing an empty/stale editor.
       const starter = nativeStarterConfig(yaml, panel._toolOriginalName ?? null);
       if (starter) setNativeValue(starter);
       else showFallback();
     } catch (_err) {
-      // The existing backend validation/save flow remains authoritative. If the
-      // native editor cannot be initialised from persisted YAML, keep the plain
-      // textarea usable rather than making Function Tools inaccessible.
       if (generation === syncGeneration) showFallback();
     }
   };
@@ -317,10 +372,6 @@ export function bindNativeToolYaml(panel) {
     },
   });
 
-  // Browser/user edits use the native HTMLTextAreaElement value setter directly
-  // in some environments (including Playwright), bypassing the instance-level
-  // property above. Keep the raw-YAML bridge synchronized from the real DOM value
-  // so textarea fallback remains fully functional when ha-yaml-editor is absent.
   textarea.addEventListener?.("input", () => {
     rawYaml = String(valueDescriptor.get.call(textarea) ?? "");
   });
@@ -363,7 +414,11 @@ export function bindNativeToolYaml(panel) {
   };
 
   if (customElements.get(NATIVE_EDITOR_TAG)) activate();
-  else customElements.whenDefined(NATIVE_EDITOR_TAG).then(activate).catch(showFallback);
+  else {
+    void ensureNativeYamlEditor()
+      .then((ready) => { if (ready) activate(); else showFallback(); })
+      .catch(showFallback);
+  }
 }
 
 export function configurationDialogs(panel) {
