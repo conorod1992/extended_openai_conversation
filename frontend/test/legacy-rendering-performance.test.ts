@@ -51,10 +51,11 @@ describe("legacy management rendering optimizations", () => {
     expect(source).toContain("extended-openai:render");
   });
 
-  it("does not run model DOM decoration on unrelated configuration subsections", async () => {
+  it("runs model DOM decoration only where model-aware controls exist", async () => {
     const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-model-v2.js", import.meta.url), "utf8");
-    expect(source).toContain("includes('id=\"config-model\"')");
-    expect(source.indexOf("includes('id=\"config-model\"')")).toBeLessThan(source.indexOf('document.createElement("template")'));
+    const guard = "if (!source.includes('id=\"config-general\"') && !source.includes('id=\"config-model\"')) return html;";
+    expect(source).toContain(guard);
+    expect(source.indexOf(guard)).toBeLessThan(source.indexOf('document.createElement("template")'));
   });
 
   it("skips unrelated configuration decorator parse passes", async () => {
