@@ -22,6 +22,7 @@ const BOOTSTRAP_MODULES = [
   "./management-configuration-clarity.js",
   "./management-configuration-guidance.js",
   "./management-decision-guidance.js",
+  "./management-conversation-default-label.js",
 ];
 
 function preloadBootstrapModules(documentRef = globalThis.document) {
@@ -150,6 +151,8 @@ if (typeof customElements !== "undefined") {
     await import("./management-configuration-clarity.js");
     await import("./management-configuration-guidance.js");
     await import("./management-decision-guidance.js");
+    // Keep default badges aligned with the labels users can actually select.
+    await import("./management-conversation-default-label.js");
   } catch (err) {
     restore();
     throw err;
