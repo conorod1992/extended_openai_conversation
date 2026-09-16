@@ -72,6 +72,16 @@ describe("legacy management rendering optimizations", () => {
     expect(source).toContain("html.includes('id=\"config-backup\"') ? decorateBackupMarkup(html) : html");
   });
 
+  it("caches only clean stable configuration subsections", async () => {
+    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
+    expect(source).toContain('const CACHEABLE_CONFIG_SECTIONS = new Set(["capabilities", "archive", "voice", "speech", "context", "retention", "backup"]);');
+    expect(source).toContain("if (panel?._configDirty) return null;");
+    expect(source).toContain("state.result !== panel._result");
+    expect(source).toContain("MAX_CONFIG_RENDER_CACHE_ENTRIES = 8");
+    expect(source).toContain("const cached = getCachedConfigurationMarkup(panel, cacheKey);");
+    expect(source).toContain("if (cached !== null) return cached;");
+  });
+
   it("decorates Function Groups in the existing assignment DOM pass", async () => {
     const nativeSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-native-yaml.js", import.meta.url), "utf8");
     const editorSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
