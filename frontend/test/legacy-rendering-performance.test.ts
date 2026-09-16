@@ -56,4 +56,12 @@ describe("legacy management rendering optimizations", () => {
     expect(source).toContain("includes('id=\"config-model\"')");
     expect(source.indexOf("includes('id=\"config-model\"')")).toBeLessThan(source.indexOf('document.createElement("template")'));
   });
+
+  it("skips unrelated configuration decorator parse passes", async () => {
+    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
+    expect(source).toContain("const needsDecoration = stripped.includes('id=\"config-local\"')");
+    expect(source).toContain("if (!needsDecoration) return stripped;");
+    expect(source).toContain("if (!String(html || \"\").includes('id=\"config-prompt\"')) return html;");
+    expect(source).toContain("html.includes('id=\"config-backup\"') ? decorateBackupMarkup(html) : html");
+  });
 });
