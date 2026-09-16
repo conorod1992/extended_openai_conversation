@@ -89,6 +89,7 @@ export function renderExposedAttributeSettings(panel) {
   const saved = Array.isArray(catalog?.saved_unexposed) ? catalog.saved_unexposed : [];
   const configured = entities.filter((entity) => selectedFor(panel, entity.reference, entity.selected_attributes || []).length);
   const editorEntity = entities.find((entity) => entity.entity_id === panel?._exposedAttributeEntityId) || null;
+  const automaticContextEnabled = panel?._draft?.exposed_entities_enabled === true;
   return `<div class="exposed-attribute-settings" data-setting data-search="exposed entity attributes additional state context brightness color temperature live values">
     <style>
       .exposed-attribute-settings{display:grid;gap:14px;padding:16px 0 4px;border-top:1px solid var(--divider-color)}
@@ -100,9 +101,11 @@ export function renderExposedAttributeSettings(panel) {
       .exposed-configured{display:grid;gap:8px}.exposed-configured h4{margin:0}.exposed-configured-list{display:grid;border:1px solid var(--divider-color);border-radius:10px;overflow:hidden}.exposed-configured-entity{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 14px;border-bottom:1px solid var(--divider-color)}.exposed-configured-entity:last-child{border-bottom:0}.exposed-configured-entity>div:first-child{display:grid;gap:2px;min-width:0}.exposed-configured-entity small{color:var(--secondary-text-color);overflow-wrap:anywhere}.exposed-configured-actions{display:flex;gap:8px;flex-shrink:0}
       .exposed-saved{display:grid;gap:8px;margin-top:4px}.exposed-saved h4{margin:0}.exposed-saved-preference{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px;border:1px solid var(--divider-color);border-radius:9px}.exposed-saved-preference>div{display:grid;gap:3px;min-width:0}.exposed-saved-preference small{overflow-wrap:anywhere}
       .exposed-catalog-error{padding:12px 14px;border:1px solid var(--error-color);border-radius:9px}.exposed-catalog-error strong,.exposed-catalog-error p{margin:0}.exposed-catalog-error p{margin-top:4px}
+      .exposed-inactive-notice{padding:12px 14px;border:1px solid var(--divider-color);border-radius:9px;background:var(--secondary-background-color)}.exposed-inactive-notice strong,.exposed-inactive-notice p{margin:0}.exposed-inactive-notice p{margin-top:4px;color:var(--secondary-text-color)}
       @media(max-width:680px){.exposed-attribute-grid{grid-template-columns:1fr}.exposed-saved-preference,.exposed-attribute-heading,.exposed-configured-entity,.exposed-editor-heading{display:grid}.exposed-saved-preference button,.exposed-configured-actions{width:100%}.exposed-configured-actions button{flex:1}}
     </style>
-    <div class="exposed-attribute-heading"><div><h3>Additional entity attributes</h3><p>Select extra state attributes to include with exposed-device context. Values are read live for each request, and only entities exposed to Assist are eligible.</p></div></div>
+    <div class="exposed-attribute-heading"><div><h3>Additional entity attributes</h3><p>Select extra state attributes to include with automatic exposed-device context. Values are read live for each request, and only entities exposed to Assist are eligible.</p></div></div>
+    ${!automaticContextEnabled ? `<div class="exposed-inactive-notice"><strong>Inactive while automatic entity context is off</strong><p>Your selections are preserved and can still be edited here, but Extended OpenAI will not add these attributes while you manage entity context manually in your prompt.</p></div>` : ""}
     ${!catalogAvailable
       ? `<div class="exposed-catalog-error" role="alert"><strong>Unable to load exposed entity attributes.</strong><p>The integration did not return the current Assist-exposed entity catalogue.</p></div>`
       : entities.length
