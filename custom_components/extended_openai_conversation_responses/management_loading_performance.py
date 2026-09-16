@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from copy import deepcopy
+import logging
 from pathlib import Path
 import sys
 from typing import Any
+
+import yaml
 
 from homeassistant.components import panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
@@ -43,12 +47,21 @@ from .local_intents import CONF_LOCAL_INTENT_EXCLUSIONS
 from .management_function_repair import (
     async_function_repair as _async_function_repair,
     function_tools_issue as _function_tools_issue,
+    isolated_function_tools as _isolated_function_tools,
 )
 from .memory import async_get_memory, get_memory_mode
 from .usage import async_get_usage
 
+_LOGGER = logging.getLogger(__name__)
+
 _INSTALLED = False
 _ORIGINAL_MANAGEMENT_COMMAND: Callable[..., Awaitable[dict[str, Any]]] | None = None
+_RUNTIME_QUARANTINED_FUNCTION_NAMES: ContextVar[frozenset[str]] = ContextVar(
+    "extended_openai_runtime_quarantined_function_names", default=frozenset()
+)
+_RUNTIME_QUARANTINE_ALL_FUNCTIONS: ContextVar[bool] = ContextVar(
+    "extended_openai_runtime_quarantine_all_functions", default=False
+)
 _EXTRA_FRONTEND_MODULES = (
     "management-rendering-performance.js",
     "management-loading-performance.js",
@@ -84,6 +97,81 @@ def _guest_has_ha_exclusions(options: dict[str, Any]) -> bool:
             "guest_excluded_entities",
         )
     )
+
+
+def _runtime_configured_function_tools(data: Any) -> list[dict[str, Any]]:
+    """Return valid runtime tools while quarantining persisted invalid siblings."""
+    from .performance import cached_configured_function_tools_from_data
+
+    try:
+        tools = cached_configured_function_tools_from_data(data)
+    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
+        valid, invalid, issue = _isolated_function_tools(dict(data))
+        if issue is None:
+            raise
+        quarantine_all = not invalid
+        quarantined_names = frozenset(
+            str(item["name"])
+            for item in invalid
+            if isinstance(item.get("name"), str) and item["name"]
+        )
+        _RUNTIME_QUARANTINED_FUNCTION_NAMES.set(quarantined_names)
+        _RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(quarantine_all)
+        safe = dict(data)
+        safe[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+            valid, sort_keys=False, allow_unicode=True
+        )
+        tools = cached_configured_function_tools_from_data(safe)
+        detail = issue or str(err) or type(err).__name__
+        if quarantine_all:
+            _LOGGER.warning(
+                "Quarantining all persisted Function Tools from this runtime request: %s",
+                detail,
+            )
+        else:
+            _LOGGER.warning(
+                "Quarantining invalid persisted Function Tools from this runtime request "
+                "(%s): %s",
+                ", ".join(sorted(quarantined_names)) or "unnamed tool",
+                detail,
+            )
+        return tools
+
+    _RUNTIME_QUARANTINED_FUNCTION_NAMES.set(frozenset())
+    _RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
+    return tools
+
+
+def _runtime_validate_function_groups(
+    value: Any, function_tools: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Ignore only group references to Function Tools quarantined for this request."""
+    from .performance import cached_validate_function_groups
+
+    quarantined_names = _RUNTIME_QUARANTINED_FUNCTION_NAMES.get()
+    quarantine_all = _RUNTIME_QUARANTINE_ALL_FUNCTIONS.get()
+    if not quarantine_all and not quarantined_names:
+        return cached_validate_function_groups(value, function_tools)
+
+    safe = deepcopy(value)
+    if isinstance(safe, list):
+        for group in safe:
+            if not isinstance(group, dict):
+                continue
+            functions = group.get("functions")
+            if not isinstance(functions, list):
+                continue
+            if quarantine_all:
+                group["functions"] = [
+                    name for name in functions if not isinstance(name, str)
+                ]
+            else:
+                group["functions"] = [
+                    name
+                    for name in functions
+                    if not isinstance(name, str) or name not in quarantined_names
+                ]
+    return cached_validate_function_groups(safe, function_tools)
 
 
 def _agent_snapshot(
@@ -442,16 +530,25 @@ async def async_setup_cached_debug_ui(hass: HomeAssistant) -> None:
 
 
 def install_management_loading_optimizations() -> None:
-    """Install frontend loading optimizations before management UI setup."""
+    """Install frontend loading optimizations and runtime Function Tool quarantine."""
     global _INSTALLED, _ORIGINAL_MANAGEMENT_COMMAND
     if _INSTALLED:
         return
     _INSTALLED = True
 
+    from . import conversation, function_tool_resolution
+
     management_ui = _management_ui()
     debug_ui = _debug_ui()
     _ORIGINAL_MANAGEMENT_COMMAND = management_ui.async_management_command
     management_ui.async_management_command = optimized_management_command  # type: ignore[assignment]
+
+    # Performance optimization installs a strict cached loader first. Keep strict
+    # validation at configuration boundaries, but make live conversations resilient to
+    # persisted invalid siblings by quarantining only those tools at request assembly.
+    conversation.configured_function_tools_from_data = _runtime_configured_function_tools  # type: ignore[assignment]
+    conversation.validate_function_groups = _runtime_validate_function_groups  # type: ignore[assignment]
+    function_tool_resolution.validate_function_groups = _runtime_validate_function_groups  # type: ignore[assignment]
 
     management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(
         dict.fromkeys(
