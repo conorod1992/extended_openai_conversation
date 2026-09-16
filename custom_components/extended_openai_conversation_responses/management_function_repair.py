@@ -62,6 +62,9 @@ def isolated_function_tools(
                     "index": index,
                     "name": name,
                     "tool": deepcopy(candidate),
+                    "yaml": yaml.safe_dump(
+                        candidate, sort_keys=False, allow_unicode=True
+                    ),
                     "validation_error": str(err) or type(err).__name__,
                 }
             )
@@ -91,9 +94,17 @@ def function_tools_issue(
         return valid, isolated_issue or str(err) or type(err).__name__
 
 
-def _safe_function_configuration(options: dict[str, Any]) -> dict[str, Any]:
-    """Build a management-only configuration with invalid tools excluded."""
-    valid, _invalid, _issue = isolated_function_tools(options)
+def effective_function_configuration(
+    options: dict[str, Any],
+) -> tuple[
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    str | None,
+]:
+    """Return a usable config while retaining metadata for quarantined siblings."""
+    valid, invalid, issue = isolated_function_tools(options)
     safe = dict(options)
     safe[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         valid, sort_keys=False, allow_unicode=True
@@ -106,16 +117,40 @@ def _safe_function_configuration(options: dict[str, Any]) -> dict[str, Any]:
         and isinstance(tool["spec"].get("name"), str)
     }
     raw_groups = deepcopy(options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS))
-    if isinstance(raw_groups, list):
-        for group in raw_groups:
+    effective_groups = deepcopy(raw_groups)
+    group_issues: list[dict[str, Any]] = []
+    if isinstance(effective_groups, list):
+        for group in effective_groups:
             if not isinstance(group, dict) or not isinstance(
                 group.get("functions"), list
             ):
                 continue
-            group["functions"] = [
-                name for name in group["functions"] if name in valid_names
+            persisted_functions = list(group["functions"])
+            unavailable = [
+                name
+                for name in persisted_functions
+                if isinstance(name, str) and name not in valid_names
             ]
-    safe[CONF_FUNCTION_GROUPS] = raw_groups
+            if unavailable:
+                group_issues.append(
+                    {
+                        "id": group.get("id"),
+                        "name": group.get("name"),
+                        "unavailable_functions": unavailable,
+                    }
+                )
+            group["functions"] = [
+                name for name in persisted_functions if name in valid_names
+            ]
+    safe[CONF_FUNCTION_GROUPS] = effective_groups
+    return safe, invalid, group_issues, raw_groups, issue
+
+
+def _safe_function_configuration(options: dict[str, Any]) -> dict[str, Any]:
+    """Build a management-only configuration with invalid tools excluded."""
+    safe, _invalid, _group_issues, _raw_groups, _issue = (
+        effective_function_configuration(options)
+    )
     return safe
 
 
@@ -145,8 +180,11 @@ def _safe_configuration_payload(
     entry: Any,
     subentry: Any,
 ) -> dict[str, Any]:
-    """Return the normal management payload with invalid Function Tools omitted."""
-    safe = _safe_function_configuration(dict(subentry.data))
+    """Return normal management data plus quarantined Function Tool metadata."""
+    persisted = dict(subentry.data)
+    safe, invalid, group_issues, raw_groups, issue = effective_function_configuration(
+        persisted
+    )
     config = management_loading_performance._snapshot_normalized_configuration(safe)
     defaults = management_loading_performance._snapshot_normalized_configuration(
         agent_config_defaults()
@@ -161,6 +199,14 @@ def _safe_configuration_payload(
             config[management_ui.CONF_CHAT_MODEL]
         ),
         "function_types": sorted(management_ui.FUNCTIONS),
+        "function_repair": {
+            "invalid_tools": invalid,
+            "invalid_count": len(invalid),
+            "group_issues": group_issues,
+            "persisted_groups": raw_groups,
+            "validation_error": issue,
+            "isolatable": bool(invalid),
+        },
         "local_handling": management_ui.local_handling_snapshot(
             hass,
             str(entry.entry_id),
@@ -178,6 +224,51 @@ def _function_fields_unchanged(
         if key in updates and updates[key] != safe_config.get(key):
             return False
     return True
+
+
+def _persist_raw_tools(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    tools: list[Any],
+    groups: Any,
+) -> dict[str, Any]:
+    """Persist a partially invalid collection without normalizing untouched siblings."""
+    persisted = dict(subentry.data)
+    persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+        tools, sort_keys=False, allow_unicode=True
+    )
+    persisted[CONF_FUNCTION_GROUPS] = deepcopy(groups)
+    hass.config_entries.async_update_subentry(entry, subentry, data=persisted)
+    return persisted
+
+
+def _replace_group_function_name(
+    groups: Any, old_name: str | None, new_name: str
+) -> Any:
+    """Retain group assignment when a repaired Function Tool is renamed."""
+    updated = deepcopy(groups)
+    if old_name is None or old_name == new_name or not isinstance(updated, list):
+        return updated
+    for group in updated:
+        if not isinstance(group, dict) or not isinstance(group.get("functions"), list):
+            continue
+        group["functions"] = [
+            new_name if name == old_name else name for name in group["functions"]
+        ]
+    return updated
+
+
+def _remove_group_function_name(groups: Any, name: str | None) -> Any:
+    """Remove references when a quarantined Function Tool is explicitly deleted."""
+    updated = deepcopy(groups)
+    if name is None or not isinstance(updated, list):
+        return updated
+    for group in updated:
+        if not isinstance(group, dict) or not isinstance(group.get("functions"), list):
+            continue
+        group["functions"] = [item for item in group["functions"] if item != name]
+    return updated
 
 
 async def async_function_repair(
@@ -231,7 +322,7 @@ async def async_function_repair(
                 management_ui.merge_agent_config(safe_base, filtered)
             )
         )
-        if result.get("valid"):
+        if result["valid"]:
             result["model_capabilities"] = management_ui.model_capabilities(
                 result["config"][management_ui.CONF_CHAT_MODEL]
             )
@@ -299,34 +390,92 @@ async def async_function_repair(
         snapshot = management_loading_performance._snapshot_normalized_configuration(
             safe_after
         )
-        return {
-            "valid": True,
-            "errors": {},
-            "title": saved_title,
-            "revision": _revision_for_data(management_ui, saved_title, persisted),
-            "config": snapshot,
-            "model_capabilities": management_ui.model_capabilities(
-                snapshot[management_ui.CONF_CHAT_MODEL]
-            ),
-            "local_handling": management_ui.local_handling_snapshot(
-                hass,
-                str(entry.entry_id),
-                str(subentry.subentry_id),
-                snapshot.get("local_intent_exclusions", []),
-            ),
-            "agent": management_loading_performance._agent_snapshot(
-                hass, entry, subentry, config=persisted, title=saved_title
-            ),
-        }
+        response = _safe_configuration_payload(
+            hass, management_ui, management_loading_performance, entry, subentry
+        )
+        response.update(
+            {
+                "valid": True,
+                "errors": {},
+                "title": saved_title,
+                "revision": _revision_for_data(management_ui, saved_title, persisted),
+                "config": snapshot,
+                "agent": management_loading_performance._agent_snapshot(
+                    hass, entry, subentry, config=persisted, title=saved_title
+                ),
+            }
+        )
+        return response
 
     if action == "get":
-        _valid, invalid, _isolated_issue = isolated_function_tools(dict(subentry.data))
+        payload = _safe_configuration_payload(
+            hass, management_ui, management_loading_performance, entry, subentry
+        )
+        repair = payload["function_repair"]
         return {
             "tools": editable_function_tools(dict(subentry.data)),
-            "invalid_tools": invalid,
+            "invalid_tools": repair["invalid_tools"],
+            "group_issues": repair["group_issues"],
             "validation_error": issue,
-            "revision": repair_revision(management_ui, subentry),
+            "revision": payload["revision"],
         }
+
+    if action in {"save_one", "delete_one"}:
+        require_repair_revision(management_ui, subentry, message.get("revision"))
+        editable = editable_function_tools(dict(subentry.data))
+        index = message.get("index")
+        if not isinstance(editable, list) or not isinstance(index, int):
+            raise HomeAssistantError("A valid Function Tool index is required")
+        if index < 0 or index >= len(editable):
+            raise HomeAssistantError(
+                "The Function Tool changed position; reload and try again"
+            )
+        current = editable[index]
+        old_name = None
+        if isinstance(current, dict) and isinstance(current.get("spec"), dict):
+            candidate_name = current["spec"].get("name")
+            if isinstance(candidate_name, str):
+                old_name = candidate_name
+        groups = subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS)
+
+        if action == "delete_one":
+            editable.pop(index)
+            persisted = _persist_raw_tools(
+                hass,
+                entry,
+                subentry,
+                editable,
+                _remove_group_function_name(groups, old_name),
+            )
+        else:
+            candidate = message.get("tool")
+            if not isinstance(candidate, dict):
+                raise HomeAssistantError("tool must be an object")
+            validated_tool = validate_function_tools([candidate])[0]
+            new_name = validated_tool["spec"]["name"]
+            for sibling_index, sibling in enumerate(editable):
+                if sibling_index == index or not isinstance(sibling, dict):
+                    continue
+                spec = sibling.get("spec")
+                if isinstance(spec, dict) and spec.get("name") == new_name:
+                    raise HomeAssistantError(f"Function Tool {new_name} already exists")
+            editable[index] = validated_tool
+            persisted = _persist_raw_tools(
+                hass,
+                entry,
+                subentry,
+                editable,
+                _replace_group_function_name(groups, old_name, new_name),
+            )
+
+        payload = _safe_configuration_payload(
+            hass, management_ui, management_loading_performance, entry, subentry
+        )
+        payload["agent"] = management_loading_performance._agent_snapshot(
+            hass, entry, subentry, config=persisted
+        )
+        return payload
+
     if action != "save":
         raise HomeAssistantError(f"Unknown Function Tool repair action: {action}")
 
@@ -334,19 +483,20 @@ async def async_function_repair(
     candidate = message.get("tools")
     if not isinstance(candidate, list):
         raise HomeAssistantError("tools must be a JSON array")
-    validated = validate_function_tools(candidate)
+    validated_tools = validate_function_tools(candidate)
     validate_function_groups(
-        subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS), validated
+        subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
+        validated_tools,
     )
 
     persisted = dict(subentry.data)
     persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-        validated, sort_keys=False, allow_unicode=True
+        validated_tools, sort_keys=False, allow_unicode=True
     )
     hass.config_entries.async_update_subentry(entry, subentry, data=persisted)
     return {
         "valid": True,
-        "tools": deepcopy(validated),
+        "tools": deepcopy(validated_tools),
         "revision": _revision_for_data(management_ui, subentry.title, persisted),
         "agent": management_loading_performance._agent_snapshot(
             hass, entry, subentry, config=persisted
