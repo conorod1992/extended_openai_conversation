@@ -9,6 +9,22 @@ const DELAYED_CHOICE = (panel, enabled, checked) => `<label class="group-functio
 
 export const BACKUP_CREDENTIAL_WARNING = "Recognised API keys, tokens, passwords, authorization headers and other common secrets are redacted from full backups. Re-enter any required credentials after restore. Redaction is best-effort, so review backup files before sharing them.";
 const BACKUP_CREDENTIAL_NOTICE = `<p class="privacy-warning credential-redaction-warning"><strong>Credentials are not backed up:</strong> ${BACKUP_CREDENTIAL_WARNING}</p>`;
+const FUNCTION_GROUP_PRESENTATION_STYLE = `
+  .function-group-card[data-group-id] {
+    background: var(--secondary-background-color, var(--card-background-color));
+    background: color-mix(in srgb, var(--primary-color) 5%, var(--card-background-color));
+    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--primary-color) 28%, transparent);
+  }
+  .function-group-card[data-group-id] > details .tool-card {
+    background: var(--card-background-color);
+  }
+  .function-group-card[data-group-id] + .function-group-card[data-group-id] {
+    margin-top: 16px;
+  }
+  .group-enabled-control {
+    flex: 0 0 auto;
+  }
+`;
 
 export function reasoningEffortOptionsForResult(result = {}) {
   const values = result?.model_capabilities?.reasoning_effort_options;
@@ -114,6 +130,12 @@ function decorateFunctionGroups(panel, html) {
   if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
   const template = document.createElement("template");
   template.innerHTML = html;
+  if (!template.content.querySelector("style[data-function-group-presentation]")) {
+    const style = document.createElement("style");
+    style.dataset.functionGroupPresentation = "";
+    style.textContent = FUNCTION_GROUP_PRESENTATION_STYLE;
+    template.content.prepend(style);
+  }
   const groups = panel?._draft?.function_groups || panel?._result?.config?.function_groups || [];
   for (const card of template.content.querySelectorAll(".function-group-card[data-group-id]")) {
     const group = groups.find((item) => item.id === card.dataset.groupId);
@@ -128,7 +150,7 @@ function decorateFunctionGroups(panel, html) {
       editButton.title = enabled ? "" : "Enable this Function Group before editing it";
     }
     const actions = card.querySelector(".function-group-heading .actions");
-    if (actions && !actions.querySelector(".group-enabled")) actions.insertAdjacentHTML("afterbegin", `<label class="compact-toggle" title="Disable the group without changing the enabled state of its member Function Tools"><input type="checkbox" class="group-enabled" data-group-id="${panel._e(group.id)}" ${enabled ? "checked" : ""}><span>Enabled</span></label>`);
+    if (actions && !actions.querySelector(".group-enabled")) actions.insertAdjacentHTML("afterbegin", `<label class="tool-enabled-control group-enabled-control" title="Disable the group without changing the enabled state of its member Function Tools"><span>Enabled</span><span class="switch-control"><input type="checkbox" role="switch" class="group-enabled" data-group-id="${panel._e(group.id)}" aria-label="Enable Function Group ${panel._e(group.name)}" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></span></label>`);
   }
   return template.innerHTML;
 }
