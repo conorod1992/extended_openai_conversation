@@ -108,7 +108,9 @@ def _safe_function_configuration(options: dict[str, Any]) -> dict[str, Any]:
     raw_groups = deepcopy(options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS))
     if isinstance(raw_groups, list):
         for group in raw_groups:
-            if not isinstance(group, dict) or not isinstance(group.get("functions"), list):
+            if not isinstance(group, dict) or not isinstance(
+                group.get("functions"), list
+            ):
                 continue
             group["functions"] = [
                 name for name in group["functions"] if name in valid_names
@@ -318,9 +320,7 @@ async def async_function_repair(
         }
 
     if action == "get":
-        _valid, invalid, _isolated_issue = isolated_function_tools(
-            dict(subentry.data)
-        )
+        _valid, invalid, _isolated_issue = isolated_function_tools(dict(subentry.data))
         return {
             "tools": editable_function_tools(dict(subentry.data)),
             "invalid_tools": invalid,
