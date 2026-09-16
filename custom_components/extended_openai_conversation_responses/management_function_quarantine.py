@@ -111,7 +111,9 @@ def _management_validate_function_groups(
     safe = deepcopy(value)
     if isinstance(safe, list):
         for group in safe:
-            if not isinstance(group, dict) or not isinstance(group.get("functions"), list):
+            if not isinstance(group, dict) or not isinstance(
+                group.get("functions"), list
+            ):
                 continue
             group["functions"] = [
                 name for name in group["functions"] if name not in quarantined
@@ -220,9 +222,7 @@ def _tolerant_persist_function_configuration(
     if not isinstance(editable, list):
         raise HomeAssistantError("Saved Function Tools cannot be isolated safely")
     invalid_indices = {
-        int(item["index"])
-        for item in invalid
-        if isinstance(item.get("index"), int)
+        int(item["index"]) for item in invalid if isinstance(item.get("index"), int)
     }
     quarantined_raw = [
         deepcopy(candidate)
