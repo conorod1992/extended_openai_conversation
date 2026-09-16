@@ -146,9 +146,11 @@ function decorateApiSelector(root, config, metadata) {
 
 function decorateConfiguration(panel, html) {
   // Configuration routes already filter the base renderer to the requested
-  // subsection. Avoid parsing/serializing unrelated subsection markup when the
-  // model section is not present at all.
-  if (!String(html || "").includes('id="config-model"')) return html;
+  // subsection. Model-aware controls live in both General (model/API/output)
+  // and Model (reasoning/sampling), so only unrelated subsections can skip the
+  // parse/serialize decoration pass completely.
+  const source = String(html || "");
+  if (!source.includes('id="config-general"') && !source.includes('id="config-model"')) return html;
   if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
   const config = currentConfig(panel);
   const data = currentCatalogData(panel, config.chat_model);
