@@ -14,7 +14,10 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.template.helpers import resolve_area_id
 
 from . import agent_config
-from .const import DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE
+from .const import (
+    CONF_EXPOSED_ENTITIES_ENABLED,
+    DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE,
+)
 from .entity_context_cache import get_entity_prompt_metadata
 from .helpers import get_exposed_entities
 
@@ -158,7 +161,7 @@ def _preferences_from_options(options: Mapping[str, Any] | Any) -> dict[str, lis
     try:
         value = options.get(CONF_EXPOSED_ENTITY_ATTRIBUTES, {})
         return _validate_preferences(value)
-    except AttributeError, agent_config.AgentConfigError:
+    except (AttributeError, agent_config.AgentConfigError):
         return {}
 
 
@@ -230,7 +233,7 @@ def _safe_attribute_value(value: Any) -> Any:
             separators=(",", ":"),
             default=str,
         )
-    except TypeError, ValueError, RecursionError:
+    except (TypeError, ValueError, RecursionError):
         encoded = json.dumps(str(value), ensure_ascii=False)
     if len(encoded) > MAX_ATTRIBUTE_VALUE_CHARACTERS:
         return f"<omitted: {len(encoded)} serialized characters>"
@@ -273,7 +276,14 @@ def enrich_exposed_entities(
     options: Mapping[str, Any] | Any,
     exposed_entities: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Attach selected values only to entities already exposed for this request."""
+    """Attach selected values only while automatic exposed context is enabled."""
+    try:
+        automatic_context_enabled = bool(options.get(CONF_EXPOSED_ENTITIES_ENABLED, False))
+    except AttributeError:
+        return exposed_entities
+    if not automatic_context_enabled:
+        return exposed_entities
+
     preferences = _preferences_from_options(options)
     if not preferences or not exposed_entities:
         return exposed_entities
