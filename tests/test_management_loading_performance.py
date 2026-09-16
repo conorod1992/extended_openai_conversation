@@ -87,19 +87,19 @@ def _persisted_invalid_function_tools() -> str:
             {
                 "spec": {
                     "name": "invalid_phone_tool",
-                    "description": "Persisted schema containing an unsupported keyword.",
+                    "description": "Persisted schema containing malformed supported vocabulary.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "phone": {
                                 "type": "string",
                                 "enum": ["home", "mobile"],
-                                "unsupportedLegacyKeyword": True,
+                                "minLength": "legacy",
                             }
                         },
                     },
                 },
-                "function": {"type": "native", "name": "legacy_implementation"},
+                "function": {"type": "native", "name": "execute_service"},
             }
         ],
         sort_keys=False,
@@ -159,7 +159,7 @@ def test_agent_snapshot_keeps_invalid_function_tool_agent_discoverable() -> None
     assert result["function_count"] == 0
     assert result["configuration_issue"]["field"] == "functions"
     assert result["configuration_issue"]["repairable"] is True
-    assert "unsupportedLegacyKeyword" in result["configuration_issue"]["message"]
+    assert "minLength" in result["configuration_issue"]["message"]
 
 
 async def test_agent_catalog_does_not_initialize_per_agent_managers(monkeypatch) -> None:
@@ -194,7 +194,7 @@ async def test_agent_catalog_keeps_invalid_function_tool_agent_visible(monkeypat
     issue = result["agents"][0]["configuration_issue"]
     assert issue["field"] == "functions"
     assert issue["repairable"] is True
-    assert "unsupportedLegacyKeyword" in issue["message"]
+    assert "minLength" in issue["message"]
 
 
 async def test_function_repair_get_exposes_invalid_persisted_tools_without_normalizing() -> None:
@@ -213,9 +213,9 @@ async def test_function_repair_get_exposes_invalid_persisted_tools_without_norma
     )
 
     assert result["tools"][0]["spec"]["parameters"]["properties"]["phone"][
-        "unsupportedLegacyKeyword"
-    ] is True
-    assert "unsupportedLegacyKeyword" in result["validation_error"]
+        "minLength"
+    ] == "legacy"
+    assert "minLength" in result["validation_error"]
     assert isinstance(result["revision"], str)
     assert hass.config_entries.updates == 0
 
@@ -271,7 +271,7 @@ async def test_function_repair_rejects_still_invalid_tools_without_persisting() 
     )
     invalid = yaml.safe_load(_persisted_invalid_function_tools())
 
-    with pytest.raises(Exception, match="unsupportedLegacyKeyword"):
+    with pytest.raises(Exception, match="minLength"):
         await _async_function_repair(
             hass,
             "admin",
@@ -286,7 +286,7 @@ async def test_function_repair_rejects_still_invalid_tools_without_persisting() 
         )
 
     assert hass.config_entries.updates == 0
-    assert "unsupportedLegacyKeyword" in subentry.data["functions"]
+    assert "minLength" in subentry.data["functions"]
 
 
 async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) -> None:
@@ -420,7 +420,6 @@ async def test_management_setup_retry_resumes_after_panel_failure(monkeypatch) -
     websocket_register = MagicMock()
     panel_register = AsyncMock(side_effect=[RuntimeError("panel unavailable"), None])
     monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
-    monkeypatch.setattr(loading.websocket_api, "async_register_command", websocket_register)
     monkeypatch.setattr(loading.panel_custom, "async_register_panel", panel_register)
 
     with pytest.raises(RuntimeError, match="panel unavailable"):
