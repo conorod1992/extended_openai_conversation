@@ -10,7 +10,7 @@ export function getAgentConfigModule() {
 export async function ensureAgentConfigModule() {
   if (implementation) return implementation;
   if (!loadPromise) {
-    loadPromise = import("./agent-config-native-yaml.js")
+    loadPromise = import("./agent-config-function-group-assignment.js")
       .then((module) => {
         implementation = module;
         return module;
