@@ -316,11 +316,9 @@ def test_maintained_default_formats_include_only_live_selected_values(
 def test_custom_template_receives_selected_attribute_mapping(hass, monkeypatch) -> None:
     _install_registry(hass, _entry("stable", "light.kitchen"))
     hass.states.get.return_value = _state({"brightness": 177})
-    monkeypatch.setattr(
-        prompt,
-        "get_entity_prompt_metadata",
-        lambda _hass, _entity_id: SimpleNamespace(area_id=None, aliases=()),
-    )
+    metadata = lambda _hass, _entity_id: SimpleNamespace(area_id=None, aliases=())
+    monkeypatch.setattr(prompt, "get_entity_prompt_metadata", metadata)
+    monkeypatch.setattr(exposed_attributes, "get_entity_prompt_metadata", metadata)
     options = agent_config_defaults()
     options.update(
         {
@@ -350,11 +348,9 @@ def test_custom_template_receives_selected_attribute_mapping(hass, monkeypatch) 
 async def test_preview_counts_rendered_attribute_context(hass, monkeypatch) -> None:
     _install_registry(hass, _entry("stable", "light.kitchen"))
     hass.states.get.return_value = _state({"brightness": 188})
-    monkeypatch.setattr(
-        prompt,
-        "get_entity_prompt_metadata",
-        lambda _hass, _entity_id: SimpleNamespace(area_id=None, aliases=()),
-    )
+    metadata = lambda _hass, _entity_id: SimpleNamespace(area_id=None, aliases=())
+    monkeypatch.setattr(prompt, "get_entity_prompt_metadata", metadata)
+    monkeypatch.setattr(exposed_attributes, "get_entity_prompt_metadata", metadata)
     options = agent_config_defaults()
     options.update(
         {
@@ -366,7 +362,11 @@ async def test_preview_counts_rendered_attribute_context(hass, monkeypatch) -> N
             },
         }
     )
-    monkeypatch.setattr(management_ui, "get_exposed_entities", lambda _hass: [_entity("light.kitchen")])
+    monkeypatch.setattr(
+        management_ui,
+        "get_exposed_entities",
+        lambda _hass: [_entity("light.kitchen")],
+    )
     monkeypatch.setattr(
         management_ui,
         "render_effective_prompt",
@@ -380,7 +380,9 @@ async def test_preview_counts_rendered_attribute_context(hass, monkeypatch) -> N
         options,
         "admin",
     )
-    system = next(section for section in result["sections"] if section["key"] == "system_context")
+    system = next(
+        section for section in result["sections"] if section["key"] == "system_context"
+    )
 
     assert "Brightness=188" in result["prompt"]
     assert system["character_count"] == len(system["content"])
