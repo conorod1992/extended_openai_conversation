@@ -113,7 +113,7 @@ try {
     "../custom_components/extended_openai_conversation_responses/frontend/agent-config-native-yaml.js",
     import.meta.url,
   );
-  const {bindNativeToolYaml, decorateToolYamlEditor} = await import(moduleUrl);
+  const {bindNativeToolYaml, decorateToolYamlEditor, ensureNativeYamlEditor} = await import(moduleUrl);
 
   {
     const html = '<textarea id="tool-yaml"></textarea>';
@@ -132,6 +132,52 @@ try {
   bindNativeToolYaml({shadowRoot: {querySelector: () => null}});
 
   {
+    let defined = false;
+    let panelLoaded = 0;
+    let serviceLoaded = 0;
+    const registry = {
+      get: () => defined ? GuardEditor : undefined,
+      whenDefined: async () => {
+        if (!defined) throw new Error("editor was not registered by loader");
+      },
+    };
+    const documentRef = {
+      createElement(tag) {
+        if (tag === "partial-panel-resolver") {
+          return {
+            getRoutes: () => ({
+              routes: {
+                a: {
+                  async load() { panelLoaded += 1; },
+                },
+              },
+            }),
+          };
+        }
+        if (tag === "developer-tools-router") {
+          return {
+            routerOptions: {
+              routes: {
+                service: {
+                  async load() {
+                    serviceLoaded += 1;
+                    defined = true;
+                  },
+                },
+              },
+            },
+          };
+        }
+        throw new Error(`Unexpected createElement(${tag})`);
+      },
+    };
+
+    assert.equal(await ensureNativeYamlEditor(registry, documentRef), true);
+    assert.equal(panelLoaded, 1, "developer-tools panel should be loaded once");
+    assert.equal(serviceLoaded, 1, "service editor bundle should be loaded once to register ha-yaml-editor");
+  }
+
+  {
     const harness = makeRoot();
     const definition = deferred();
     globalThis.customElements = {
@@ -142,7 +188,7 @@ try {
     definition.reject(new Error("custom element registration failed"));
     await flush();
     assert.equal(harness.editor.hidden, true);
-    assert.equal(harness.textarea.hidden, false, "rejected custom-element registration must retain the textarea fallback");
+    assert.equal(harness.textarea.hidden, false, "failed native-editor loading must retain the textarea fallback");
   }
 
   {
@@ -200,13 +246,10 @@ try {
     };
     bindNativeToolYaml({shadowRoot: harness.root, _call: async () => ({valid: true, config: {}})});
 
-    // Simulate a browser/native DOM setter that bypasses the instance-level
-    // overridden value property, then fires the real input event.
     GuardTextArea.prototype.__lookupSetter__("value").call(harness.textarea, "typed fallback YAML");
     harness.textarea.dispatchEvent(new Event("input"));
     assert.equal(harness.textarea.value, "typed fallback YAML", "fallback input must refresh the raw-YAML bridge");
 
-    // Rebinding after a render should reuse the already-installed style node.
     bindNativeToolYaml({shadowRoot: harness.root, _call: async () => ({valid: true, config: {}})});
     assert.equal(harness.getAppendCount(), 1, "native editor styles should be installed only once per root");
     neverDefined.resolve();
