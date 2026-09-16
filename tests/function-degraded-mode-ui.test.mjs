@@ -41,7 +41,8 @@ test("invalid Function Tools render in a Needs attention group with repair-only 
   assert.match(html, /Needs repair/);
   assert.match(html, /Assigned to: Reminders/);
   assert.match(html, /edit-invalid-tool/);
-  assert.match(html, /delete-invalid-tool/);
+  assert.match(html, /class="danger delete-invalid-tool"/);
+  assert.match(html, /class="actions tool-card-actions"/);
   assert.doesNotMatch(html, /duplicate-tool/);
   assert.doesNotMatch(html, /tool-enabled/);
 });
