@@ -38,6 +38,7 @@ import {
 const basePanel = () => ({
   _e: (value) => String(value),
   _draft: {
+    exposed_entities_enabled: true,
     exposed_entity_attributes: {
       "registry:current": ["brightness", "missing"],
       "registry:inactive": ["color_temp"],
@@ -97,6 +98,7 @@ const basePanel = () => ({
   assert.match(html, /Saved preferences not currently exposed/);
   assert.match(html, /cannot make an entity visible to the model/);
   assert.match(html, /will not transfer to a new entity that reuses its old entity ID/);
+  assert.doesNotMatch(html, /Inactive while automatic entity context is off/);
 }
 
 {
@@ -119,9 +121,20 @@ const basePanel = () => ({
 }
 
 {
+  const panel = basePanel();
+  panel._draft.exposed_entities_enabled = false;
+  const html = renderExposedAttributeSettings(panel);
+  assert.match(html, /Inactive while automatic entity context is off/);
+  assert.match(html, /selections are preserved and can still be edited here/i);
+  assert.match(html, /ha-entity-picker/);
+  assert.match(html, /Configured entities/);
+  assert.match(html, /brightness, missing/);
+}
+
+{
   const panel = {
     _e: (value) => String(value),
-    _draft: {},
+    _draft: {exposed_entities_enabled: true},
     _result: {exposed_attribute_catalog: {entities: [], saved_unexposed: []}},
   };
   assert.match(renderExposedAttributeSettings(panel), /No entities are currently exposed to Assist/);
@@ -130,7 +143,7 @@ const basePanel = () => ({
 {
   const panel = {
     _e: (value) => String(value),
-    _draft: {},
+    _draft: {exposed_entities_enabled: true},
     _result: {},
   };
   const html = renderExposedAttributeSettings(panel);
