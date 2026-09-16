@@ -21,6 +21,46 @@ test("renders the shipped Guide and responds to real browser interactions", asyn
   await expectHarnessClean(page, pageErrors);
 });
 
+test("keeps page search in the header and assistant context above navigation", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview"));
+
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("header #settings-search")).toBeVisible();
+  await expect(panel.locator(".eoc-agent-context-row #agent")).toHaveValue("agent-1");
+  await expect(panel.locator(".eoc-management-toolbar")).toHaveCount(0);
+
+  const layout = await panel.evaluate((host) => {
+    const root = host.shadowRoot;
+    const header = root.querySelector("header");
+    const search = root.querySelector("#settings-search");
+    const context = root.querySelector(".eoc-agent-context-row");
+    const picker = root.querySelector(".agent-picker");
+    const nav = root.querySelector(".top-nav");
+    const pickerStyle = getComputedStyle(picker);
+    return {
+      searchInHeader: search?.parentElement?.closest("header") === header,
+      pickerInContext: picker?.parentElement === context,
+      contextBeforeNav: Boolean(
+        context && nav && (context.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING),
+      ),
+      pickerBorderStyle: pickerStyle.borderTopStyle,
+      pickerBoxShadow: pickerStyle.boxShadow,
+      pickerBackground: pickerStyle.backgroundColor,
+    };
+  });
+  expect(layout).toEqual({
+    searchInHeader: true,
+    pickerInContext: true,
+    contextBeforeNav: true,
+    pickerBorderStyle: "none",
+    pickerBoxShadow: "none",
+    pickerBackground: "rgba(0, 0, 0, 0)",
+  });
+
+  await expectHarnessClean(page, pageErrors);
+});
+
 test("replays hass and route when Home Assistant creates the panel before definition", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("guide", "&predefine=1"));
@@ -103,6 +143,8 @@ test("mobile layout exposes working responsive navigation", async ({page}) => {
 
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("heading", {name: "Guide", exact: true})).toBeVisible();
+  await expect(panel.locator("header #settings-search")).toBeVisible();
+  await expect(panel.locator(".eoc-agent-context-row #agent")).toBeVisible();
   await expect(panel.locator(".top-nav")).toBeHidden();
   await expect(panel.locator("#top-section-mobile")).toBeVisible();
 
