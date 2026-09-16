@@ -211,20 +211,15 @@ function preserveBusyMain(panel, originalRender, args) {
   );
   if (!canPreserve) return originalRender.apply(panel, args);
 
+  // A populated view already communicates useful context while the destination
+  // loads. Do not build a temporary loading render only to discard it; keep the
+  // existing DOM mounted, make it non-interactive, and render once when loading
+  // settles. Initial/empty loads still use the normal renderer above.
   ensureBusyStyle(root);
-  const fragment = document.createDocumentFragment();
-  while (main.firstChild) fragment.append(main.firstChild);
-
-  try {
-    return originalRender.apply(panel, args);
-  } finally {
-    const currentMain = root.querySelector?.("[data-eoc-main]") || root.querySelector?.("main");
-    if (!currentMain) return;
-    currentMain.replaceChildren(fragment);
-    currentMain.setAttribute("aria-busy", "true");
-    currentMain.inert = true;
-    currentMain.classList.add("eoc-loading-in-background");
-  }
+  main.setAttribute("aria-busy", "true");
+  main.inert = true;
+  main.classList.add("eoc-loading-in-background");
+  return undefined;
 }
 
 function clearBusyPresentation(panel) {
