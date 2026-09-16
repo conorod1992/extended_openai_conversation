@@ -56,6 +56,22 @@ describe("legacy management rendering optimizations", () => {
     expect(source).not.toContain("management-hot-path-performance.js");
   });
 
+  it("builds only configuration section bodies that pass the active filter", async () => {
+    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js", import.meta.url), "utf8");
+    const filterGuard = 'if (panel._configSectionFilter && !panel._configSectionFilter.has(id)) return "";';
+    const bodyEvaluation = 'const content = typeof body === "function" ? body() : body;';
+    expect(source).toContain(filterGuard);
+    expect(source).toContain(bodyEvaluation);
+    expect(source.indexOf(filterGuard)).toBeLessThan(source.indexOf(bodyEvaluation));
+    for (const section of ["general", "conversation", "prompt", "capabilities", "archive", "voice", "speech", "context", "model", "retention", "backup"]) {
+      expect(source).toContain(`section(panel,"${section}"`);
+      const start = source.indexOf(`section(panel,"${section}"`);
+      expect(source.slice(start, start + 320)).toContain(",() => `");
+    }
+    expect(source).toContain('section(panel,"local","Local handling"');
+    expect(source).toContain('() => renderLocalHandling(panel,config)');
+  });
+
   it("runs model DOM decoration only where model-aware controls exist", async () => {
     const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-model-v2.js", import.meta.url), "utf8");
     const guard = "if (!source.includes('id=\"config-general\"') && !source.includes('id=\"config-model\"')) return html;";
