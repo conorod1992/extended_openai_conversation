@@ -40,4 +40,20 @@ describe("legacy management rendering optimizations", () => {
     expect(source).toContain("event.stopImmediatePropagation()");
     expect(source).toContain("SEARCH_DEBOUNCE_MS = 80");
   });
+
+  it("keeps loaded main content mounted while a section refresh is busy", async () => {
+    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-hot-path-performance.js", import.meta.url), "utf8");
+    expect(source).toContain("document.createDocumentFragment()");
+    expect(source).toContain("currentMain.replaceChildren(fragment)");
+    expect(source).toContain('currentMain.setAttribute("aria-busy", "true")');
+    expect(source).toContain("extended-openai:navigation");
+    expect(source).toContain("extended-openai:load-section");
+    expect(source).toContain("extended-openai:render");
+  });
+
+  it("does not run model DOM decoration on unrelated configuration subsections", async () => {
+    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-model-v2.js", import.meta.url), "utf8");
+    expect(source).toContain("includes('id=\"config-model\"')");
+    expect(source.indexOf("includes('id=\"config-model\"')")).toBeLessThan(source.indexOf('document.createElement("template")'));
+  });
 });
