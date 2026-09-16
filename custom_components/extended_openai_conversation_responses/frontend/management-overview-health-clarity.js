@@ -52,22 +52,27 @@ export function installManagementOverviewHealthClarity(registry = globalThis.cus
     prototype._call = async function(section, action, extra = {}) {
       const result = await originalCall.call(this, section, action, extra);
       if (section === "overview" && action === "summary" && result?.setup_health) {
-        this._eocOverviewSetupHealth = result.setup_health;
+        this._eocOverviewSetupHealth = {
+          agentId: this._agentId,
+          facts: result.setup_health,
+        };
       }
       return result;
     };
 
     const originalRender = prototype._render;
     prototype._render = function(...args) {
+      const cachedHealth = this._eocOverviewSetupHealth;
       if (
         this._page === "overview"
         && this._result
         && !this._result.setup_health
-        && this._eocOverviewSetupHealth
+        && cachedHealth?.agentId === this._agentId
+        && cachedHealth?.facts
       ) {
         this._result = {
           ...this._result,
-          setup_health: this._eocOverviewSetupHealth,
+          setup_health: cachedHealth.facts,
         };
       }
       const result = originalRender.apply(this, args);
