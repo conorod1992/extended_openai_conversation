@@ -41,11 +41,14 @@ describe("legacy management rendering optimizations", () => {
     expect(source).toContain("SEARCH_DEBOUNCE_MS = 80");
   });
 
-  it("keeps loaded main content mounted and skips the throwaway busy render", async () => {
+  it("keeps loaded main content mounted only during navigation busy renders", async () => {
     const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url), "utf8");
     expect(source).toContain('main.setAttribute("aria-busy", "true")');
     expect(source).toContain("main.inert = true;");
     expect(source).toContain("main.inert = false;");
+    expect(source).toContain("panel._eocNavigationDepth > 0");
+    expect(source).toContain("if (navigation) this._eocNavigationDepth = (this._eocNavigationDepth || 0) + 1;");
+    expect(source).toContain("wrapAsyncMethod(prototype, \"_navigate\", NAVIGATION_MARK_PREFIX, true);");
     expect(source).toContain("return undefined;");
     expect(source).not.toContain("document.createDocumentFragment()");
     expect(source).not.toContain("replaceChildren(fragment)");
