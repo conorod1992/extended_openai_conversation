@@ -27,7 +27,11 @@ const FUNCTION_GROUP_ASSIGNMENT_STYLE = `
   .function-group-assignment-control {
     display: inline-flex;
     align-items: center;
-    max-width: min(280px, 100%);
+    gap: 0;
+    width: fit-content;
+    max-width: min(300px, 100%);
+    min-height: 32px;
+    margin-top: 9px;
     border: 1px solid var(--divider-color, rgba(127, 127, 127, .35));
     border-radius: 999px;
     background: var(--card-background-color, transparent);
@@ -44,26 +48,30 @@ const FUNCTION_GROUP_ASSIGNMENT_STYLE = `
     --mdc-icon-size: 16px;
     display: inline-flex;
     align-items: center;
+    flex: 0 0 auto;
     padding-inline-start: 10px;
     color: var(--secondary-text-color);
   }
   .function-group-assignment {
+    width: auto;
     min-width: 0;
-    max-width: 235px;
+    max-width: 250px;
+    min-height: 30px;
     border: 0;
+    border-radius: 999px;
     outline: 0;
     background: transparent;
     color: inherit;
     font: inherit;
     font-size: 13px;
     font-weight: 500;
-    padding: 6px 10px 6px 6px;
+    padding: 4px 10px 4px 6px;
     cursor: pointer;
   }
   .function-group-assignment:disabled { cursor: progress; }
   @media (max-width: 700px) {
     .function-group-assignment-control { max-width: 100%; }
-    .function-group-assignment { max-width: 190px; }
+    .function-group-assignment { max-width: 210px; }
   }
 `;
 
@@ -136,8 +144,8 @@ export function decorateFunctionGroupAssignments(panel, html) {
     const name = tool?.spec?.name;
     if (!name || card.querySelector(".function-group-assignment")) continue;
     const current = currentGroupForTool(groups, name);
-    const actions = card.querySelector(".tool-card-actions, .actions");
-    if (!actions) continue;
+    const main = card.querySelector(".card-main");
+    if (!main) continue;
 
     const label = document.createElement("label");
     label.className = `function-group-assignment-control${current?.enabled === false ? " is-disabled-group" : ""}`;
@@ -145,7 +153,7 @@ export function decorateFunctionGroupAssignments(panel, html) {
       ? `Function group: ${current.name}. This group is currently disabled.`
       : `Function group: ${current?.name || "Available on every request"}`;
     label.innerHTML = `<span class="sr-only">Function group for ${panel._e(name)}</span><ha-icon class="function-group-assignment-icon" icon="mdi:folder-outline" aria-hidden="true"></ha-icon><select class="function-group-assignment" data-index="${index}" aria-label="Function group for ${panel._e(name)}">${assignmentOptions(panel, groups, current?.id || "")}</select>`;
-    actions.insertAdjacentElement("afterbegin", label);
+    main.insertAdjacentElement("beforeend", label);
   }
 
   if (!template.content.querySelector("style[data-function-group-assignment]")) {
@@ -258,10 +266,19 @@ export function bindNativeToolYaml(panel) {
         setNativeValue(result.config);
         return;
       }
+      // The backend's generic new-tool starter is intentionally semantically
+      // incomplete (native implementation name is blank) so it cannot pass the
+      // save validator yet. It is nevertheless valid YAML and has a stable,
+      // controlled shape; hydrate that partial object so Add Function Tool still
+      // opens in Home Assistant's native editor. Other backend-invalid documents
+      // fall back to the raw textarea rather than showing an empty/stale editor.
       const starter = nativeStarterConfig(yaml, panel._toolOriginalName ?? null);
       if (starter) setNativeValue(starter);
       else showFallback();
     } catch (_err) {
+      // The existing backend validation/save flow remains authoritative. If the
+      // native editor cannot be initialised from persisted YAML, keep the plain
+      // textarea usable rather than making Function Tools inaccessible.
       if (generation === syncGeneration) showFallback();
     }
   };
@@ -275,6 +292,10 @@ export function bindNativeToolYaml(panel) {
     },
   });
 
+  // Browser/user edits use the native HTMLTextAreaElement value setter directly
+  // in some environments (including Playwright), bypassing the instance-level
+  // property above. Keep the raw-YAML bridge synchronized from the real DOM value
+  // so textarea fallback remains fully functional when ha-yaml-editor is absent.
   textarea.addEventListener?.("input", () => {
     rawYaml = String(valueDescriptor.get.call(textarea) ?? "");
   });
