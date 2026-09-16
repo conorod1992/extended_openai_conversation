@@ -43,7 +43,7 @@ def _invalid_legacy_tool_data() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     parameters = tools[0]["spec"].setdefault(
         "parameters", {"type": "object", "properties": {}}
     )
-    parameters["unsupportedLegacyKeyword"] = True
+    parameters["description"] = 123
     return (
         {
             CONF_FUNCTION_TOOLS: yaml.safe_dump(
@@ -106,7 +106,7 @@ async def test_function_repair_rejects_stale_raw_revision(
     )
     subentry.data = {**subentry.data, "concurrent_change": True}
     repaired_tools = deepcopy(tools)
-    repaired_tools[0]["spec"]["parameters"].pop("unsupportedLegacyKeyword")
+    repaired_tools[0]["spec"]["parameters"].pop("description")
 
     with pytest.raises(HomeAssistantError, match="changed in another tab"):
         await async_function_repair(
