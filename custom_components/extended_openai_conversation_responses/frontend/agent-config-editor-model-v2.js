@@ -198,9 +198,16 @@ export function renderConfiguration(panel) {
 
 export function bindConfiguration(panel) {
   const result = base.bindConfiguration(panel);
-  void ensureCatalogData(panel);
   const root = panel?.shadowRoot;
   const modelInput = root?.querySelector('[data-config="chat_model"]');
+  const reasoning = root?.querySelector('[data-config="reasoning_effort"]');
+  const hasModelAwareControls = Boolean(
+    modelInput
+    || reasoning
+    || root?.querySelector('[data-config="temperature"],[data-config="top_p"],[data-config="api_mode"],[data-config="max_tokens"]')
+  );
+  if (hasModelAwareControls) void ensureCatalogData(panel);
+
   modelInput?.addEventListener("change", async (event) => {
     event.stopImmediatePropagation();
     try {
@@ -218,7 +225,6 @@ export function bindConfiguration(panel) {
       panel._toast?.(`Unable to inspect model options: ${err.message || String(err)}`, true);
     }
   }, true);
-  const reasoning = root?.querySelector('[data-config="reasoning_effort"]');
   reasoning?.addEventListener("change", () => {
     if (!panel._draft) panel._draft = {...(panel._result?.config || {})};
     panel._draft.reasoning_effort = reasoning.value;
