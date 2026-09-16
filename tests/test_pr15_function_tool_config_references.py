@@ -174,13 +174,13 @@ def test_function_tool_name_and_spec_contract_are_validated() -> None:
         validate_function_tools([tool])
 
 
-def test_function_tool_schema_rejects_unsupported_or_malformed_keywords() -> None:
-    unsupported = {
+def test_function_tool_schema_accepts_annotations_but_rejects_malformed_supported_keywords() -> None:
+    annotated = {
         "type": "object",
         "properties": {"email": {"type": "string", "format": "email"}},
     }
-    with pytest.raises(AgentConfigError, match="unsupported keyword"):
-        validate_function_tools([_native_tool(parameters=unsupported)])
+    configured = validate_function_tools([_native_tool(parameters=annotated)])
+    assert configured[0]["spec"]["parameters"] == annotated
 
     malformed = {
         "type": "object",
