@@ -205,16 +205,17 @@ function preserveBusyMain(panel, originalRender, args) {
   const main = root?.querySelector?.("[data-eoc-main]") || root?.querySelector?.("main");
   const canPreserve = Boolean(
     panel._busy
+    && panel._eocNavigationDepth > 0
     && main
     && main.childNodes.length
     && !main.querySelector?.(".loading")
   );
   if (!canPreserve) return originalRender.apply(panel, args);
 
-  // A populated view already communicates useful context while the destination
-  // loads. Do not build a temporary loading render only to discard it; keep the
-  // existing DOM mounted, make it non-interactive, and render once when loading
-  // settles. Initial/empty loads still use the normal renderer above.
+  // A populated view already communicates useful context while a user-initiated
+  // destination loads. Keep it mounted instead of building throwaway loading DOM.
+  // Other busy renders (including Home Assistant reconnect/restart recovery) must
+  // run normally so the panel can rebuild and rebind itself after lifecycle events.
   ensureBusyStyle(root);
   main.setAttribute("aria-busy", "true");
   main.inert = true;
@@ -230,24 +231,29 @@ function clearBusyPresentation(panel) {
   main.classList.remove("eoc-loading-in-background");
 }
 
-function wrapAsyncMethod(prototype, name, prefix) {
+function wrapAsyncMethod(prototype, name, prefix, navigation = false) {
   const original = prototype[name];
   if (typeof original !== "function") return;
   prototype[name] = function(...args) {
     const view = this._viewKey?.() || null;
     const measure = startMeasure(this, prefix);
+    if (navigation) this._eocNavigationDepth = (this._eocNavigationDepth || 0) + 1;
+    const finish = (status) => {
+      if (navigation) this._eocNavigationDepth = Math.max(0, (this._eocNavigationDepth || 1) - 1);
+      finishMeasure(measure, {view, status});
+    };
     let result;
     try {
       result = original.apply(this, args);
     } catch (err) {
-      finishMeasure(measure, {view, status: "threw"});
+      finish("threw");
       throw err;
     }
     if (!result || typeof result.finally !== "function") {
-      finishMeasure(measure, {view, status: "sync"});
+      finish("sync");
       return result;
     }
-    return result.finally(() => finishMeasure(measure, {view, status: "settled"}));
+    return result.finally(() => finish("settled"));
   };
 }
 
@@ -256,7 +262,7 @@ function installManagementHotPathPerformance(Panel) {
   if (!prototype || prototype[HOT_PATH_PATCHED]) return false;
   prototype[HOT_PATH_PATCHED] = true;
 
-  wrapAsyncMethod(prototype, "_navigate", NAVIGATION_MARK_PREFIX);
+  wrapAsyncMethod(prototype, "_navigate", NAVIGATION_MARK_PREFIX, true);
   wrapAsyncMethod(prototype, "_loadSection", LOAD_MARK_PREFIX);
 
   const originalRender = prototype._render;
