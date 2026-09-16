@@ -29,6 +29,12 @@ _FRONTEND_MODULES = (
     "management-configuration-guidance.js",
     "management-decision-guidance.js",
 )
+_CONFIGURATION_ACTIONS = {"get", "validate", "update", "save"}
+_FUNCTION_REPAIR_CONFIGURATION_ACTIONS = {
+    "configuration_get": "get",
+    "configuration_validate": "validate",
+    "configuration_save": "save",
+}
 ManagementCommand = Callable[
     [HomeAssistant, str, bool, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]
 ]
@@ -90,10 +96,42 @@ def configuration_guidance_snapshot(
     }
 
 
+def decorate_configuration_result(
+    hass: HomeAssistant,
+    entry_data: Mapping[str, Any],
+    result: dict[str, Any],
+    *,
+    action: str,
+) -> dict[str, Any]:
+    """Attach the common dynamic metadata contract to one Configuration payload."""
+    config = result.get("config")
+    if not isinstance(config, dict):
+        return result
+
+    decorated = {
+        **result,
+        "configuration_guidance": configuration_guidance_snapshot(entry_data, config),
+    }
+    if action in {"get", "update", "save"}:
+        decorated["exposed_attribute_catalog"] = exposed_attribute_catalog(hass, config)
+    return decorated
+
+
+def _configuration_action(message: Mapping[str, Any]) -> str | None:
+    """Normalize normal and Function Repair requests onto one Configuration action."""
+    section = message.get("section", "overview")
+    action = message.get("action")
+    if section == "configuration" and action in _CONFIGURATION_ACTIONS:
+        return str(action)
+    if section == "function_repair":
+        return _FUNCTION_REPAIR_CONFIGURATION_ACTIONS.get(str(action))
+    return None
+
+
 def wrap_management_configuration_guidance(
     original: ManagementCommand,
 ) -> ManagementCommand:
-    """Attach guidance and runtime catalogues to configuration results."""
+    """Attach the shared Configuration metadata contract to management results."""
 
     async def wrapped(
         hass: HomeAssistant,
@@ -102,13 +140,10 @@ def wrap_management_configuration_guidance(
         message: dict[str, Any],
     ) -> dict[str, Any]:
         result = await original(hass, user_id, is_admin, message)
-        if message.get("section", "overview") != "configuration":
+        action = _configuration_action(message)
+        if action is None or not isinstance(result, dict):
             return result
-        action = message.get("action")
-        if action not in {"get", "validate", "update", "save"}:
-            return result
-        config = result.get("config") if isinstance(result, dict) else None
-        if not isinstance(config, dict):
+        if not isinstance(result.get("config"), dict):
             return result
 
         entry_id = message.get("entry_id")
@@ -116,17 +151,12 @@ def wrap_management_configuration_guidance(
         if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
             return result
         entry, _subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
-        decorated = {
-            **result,
-            "configuration_guidance": configuration_guidance_snapshot(
-                getattr(entry, "data", {}), config
-            ),
-        }
-        if action in {"get", "update", "save"}:
-            decorated["exposed_attribute_catalog"] = exposed_attribute_catalog(
-                hass, config
-            )
-        return decorated
+        return decorate_configuration_result(
+            hass,
+            getattr(entry, "data", {}),
+            result,
+            action=action,
+        )
 
     return wrapped
 
