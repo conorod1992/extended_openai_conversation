@@ -45,8 +45,31 @@ export function installManagementOverviewHealthClarity(registry = globalThis.cus
     const prototype = constructor?.prototype;
     if (!prototype || prototype[PATCHED]) return false;
 
+    // The optimized Overview loader keeps only its historical usage/conversation
+    // fields when rebuilding _result. Preserve the backend setup-health payload
+    // across that projection so health cards describe the real selected agent.
+    const originalCall = prototype._call;
+    prototype._call = async function(section, action, extra = {}) {
+      const result = await originalCall.call(this, section, action, extra);
+      if (section === "overview" && action === "summary" && result?.setup_health) {
+        this._eocOverviewSetupHealth = result.setup_health;
+      }
+      return result;
+    };
+
     const originalRender = prototype._render;
     prototype._render = function(...args) {
+      if (
+        this._page === "overview"
+        && this._result
+        && !this._result.setup_health
+        && this._eocOverviewSetupHealth
+      ) {
+        this._result = {
+          ...this._result,
+          setup_health: this._eocOverviewSetupHealth,
+        };
+      }
       const result = originalRender.apply(this, args);
       if (this._page === "overview") queueMicrotask(() => clarifySetupHealthSummary(this));
       return result;
