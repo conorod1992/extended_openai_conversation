@@ -145,6 +145,10 @@ function decorateApiSelector(root, config, metadata) {
 }
 
 function decorateConfiguration(panel, html) {
+  // Configuration routes already filter the base renderer to the requested
+  // subsection. Avoid parsing/serializing unrelated subsection markup when the
+  // model section is not present at all.
+  if (!String(html || "").includes('id="config-model"')) return html;
   if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
   const config = currentConfig(panel);
   const data = currentCatalogData(panel, config.chat_model);
