@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextvars import ContextVar
 from copy import deepcopy
 from functools import wraps
+from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -58,6 +59,7 @@ _STRICT_CONFIGURED_TOOLS = management_ui.configured_function_tools_from_data
 _STRICT_MERGE_AGENT_CONFIG = management_ui.merge_agent_config
 _STRICT_VALIDATE_FUNCTION_GROUPS = management_ui.validate_function_groups
 _STRICT_PERSIST_FUNCTION_CONFIGURATION = management_ui._persist_function_configuration
+_STRICT_AGENT_CONFIG_REVISION = management_ui._agent_config_revision
 _ORIGINAL_AGENT_TEST = management_ui.async_test_agent
 
 
@@ -119,6 +121,19 @@ def _management_validate_function_groups(
                 name for name in group["functions"] if name not in quarantined
             ]
     return _STRICT_VALIDATE_FUNCTION_GROUPS(safe, function_tools)
+
+
+def _management_agent_config_revision(data: Any, title: str) -> str:
+    """Use a raw revision only when strict normalization is blocked by Function Tools."""
+    try:
+        return _STRICT_AGENT_CONFIG_REVISION(data, title)
+    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError):
+        raw = dict(data)
+        _tools, issue = function_tools_issue(raw)
+        if issue is None:
+            raise
+        payload = management_ui.canonical_json({"title": title, "config": raw})
+        return sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _management_merge_agent_config(
@@ -386,6 +401,7 @@ def install_management_function_quarantine() -> bool:
     )
     management_ui.validate_function_groups = _management_validate_function_groups  # type: ignore[assignment]
     management_ui.merge_agent_config = _management_merge_agent_config  # type: ignore[assignment]
+    management_ui._agent_config_revision = _management_agent_config_revision  # type: ignore[assignment]
     management_ui._persist_function_configuration = (  # type: ignore[assignment]
         _tolerant_persist_function_configuration
     )
