@@ -70,6 +70,10 @@ def _entity(entity_id: str, name: str = "Lamp") -> dict:
     return {"entity_id": entity_id, "name": name, "state": "on", "aliases": []}
 
 
+def _empty_prompt_metadata(_hass, _entity_id) -> SimpleNamespace:
+    return SimpleNamespace(area_id=None, aliases=())
+
+
 def test_agent_config_stores_only_stable_references_and_attribute_names() -> None:
     normalized = normalize_agent_config(
         {
@@ -316,9 +320,10 @@ def test_maintained_default_formats_include_only_live_selected_values(
 def test_custom_template_receives_selected_attribute_mapping(hass, monkeypatch) -> None:
     _install_registry(hass, _entry("stable", "light.kitchen"))
     hass.states.get.return_value = _state({"brightness": 177})
-    metadata = lambda _hass, _entity_id: SimpleNamespace(area_id=None, aliases=())
-    monkeypatch.setattr(prompt, "get_entity_prompt_metadata", metadata)
-    monkeypatch.setattr(exposed_attributes, "get_entity_prompt_metadata", metadata)
+    monkeypatch.setattr(prompt, "get_entity_prompt_metadata", _empty_prompt_metadata)
+    monkeypatch.setattr(
+        exposed_attributes, "get_entity_prompt_metadata", _empty_prompt_metadata
+    )
     options = agent_config_defaults()
     options.update(
         {
@@ -348,9 +353,10 @@ def test_custom_template_receives_selected_attribute_mapping(hass, monkeypatch) 
 async def test_preview_counts_rendered_attribute_context(hass, monkeypatch) -> None:
     _install_registry(hass, _entry("stable", "light.kitchen"))
     hass.states.get.return_value = _state({"brightness": 188})
-    metadata = lambda _hass, _entity_id: SimpleNamespace(area_id=None, aliases=())
-    monkeypatch.setattr(prompt, "get_entity_prompt_metadata", metadata)
-    monkeypatch.setattr(exposed_attributes, "get_entity_prompt_metadata", metadata)
+    monkeypatch.setattr(prompt, "get_entity_prompt_metadata", _empty_prompt_metadata)
+    monkeypatch.setattr(
+        exposed_attributes, "get_entity_prompt_metadata", _empty_prompt_metadata
+    )
     options = agent_config_defaults()
     options.update(
         {
