@@ -9,6 +9,7 @@ const DELAYED_CHOICE = (panel, enabled, checked) => `<label class="group-functio
 
 export const BACKUP_CREDENTIAL_WARNING = "Recognised API keys, tokens, passwords, authorization headers and other common secrets are redacted from full backups. Re-enter any required credentials after restore. Redaction is best-effort, so review backup files before sharing them.";
 const BACKUP_CREDENTIAL_NOTICE = `<p class="privacy-warning credential-redaction-warning"><strong>Credentials are not backed up:</strong> ${BACKUP_CREDENTIAL_WARNING}</p>`;
+const CONFIG_JUMPS_PATTERN = /\s*<nav class="config-jumps"[^>]*>[\s\S]*?<\/nav>\s*/;
 
 export function reasoningEffortOptionsForResult(result = {}) {
   const values = result?.model_capabilities?.reasoning_effort_options;
@@ -32,7 +33,7 @@ function simplifyConfigurationMarkupLegacy(panel, html) {
   const config = panel._draft || panel._result?.config || {};
   const localEnabled = Boolean(config.local_intents_enabled);
   let result = html;
-  result = result.replace(/\s*<nav class="config-jumps"[^>]*>[\s\S]*?<\/nav>\s*/, "\n    ");
+  result = result.replace(CONFIG_JUMPS_PATTERN, "\n    ");
   result = result.replace(/(<section id="config-local"[^>]*><div class="config-section-heading"><p class="eyebrow">Local handling<\/p><p>)[^<]*(<\/p><\/div>)/, "$1Let Extended OpenAI try Home Assistant's built-in commands after Request Rules, before using AI.$2");
   const localHeading = /(<section id="config-local"[^>]*><div class="config-section-heading">[\s\S]*?<\/div>)/;
   result = result.replace(localHeading, `$1
@@ -56,11 +57,16 @@ function simplifyConfigurationMarkupLegacy(panel, html) {
 
 function simplifyConfigurationMarkup(panel, html) {
   if (typeof document === "undefined" || typeof document.createElement !== "function") return simplifyConfigurationMarkupLegacy(panel, html);
+  const stripped = String(html || "").replace(CONFIG_JUMPS_PATTERN, "\n    ");
+  const needsDecoration = stripped.includes('id="config-local"')
+    || stripped.includes('data-field="max_function_calls_per_conversation"')
+    || stripped.includes('id="config-backup"');
+  if (!needsDecoration) return stripped;
+
   const config = panel._draft || panel._result?.config || {};
   const template = document.createElement("template");
-  template.innerHTML = html;
+  template.innerHTML = stripped;
   const root = template.content;
-  root.querySelector(".config-jumps")?.remove();
 
   const local = root.querySelector("#config-local");
   if (local) {
@@ -98,6 +104,7 @@ function simplifyConfigurationMarkup(panel, html) {
 }
 
 function decorateExposedAttributesMarkup(panel, html) {
+  if (!String(html || "").includes('id="config-prompt"')) return html;
   const markup = renderExposedAttributeSettings(panel);
   if (typeof document === "undefined" || typeof document.createElement !== "function") {
     return html.replace('<details class="advanced-context-formatting"', `${markup}<details class="advanced-context-formatting"`);
@@ -156,7 +163,9 @@ export function renderConfiguration(panel) {
     return panel._loading?.() || '<div class="loading">Loading configuration…</div>';
   }
   applyModelAwareReasoningOptions(panel);
-  return decorateBackupMarkup(decorateExposedAttributesMarkup(panel, simplifyConfigurationMarkup(panel, module.renderConfiguration(panel))));
+  let html = simplifyConfigurationMarkup(panel, module.renderConfiguration(panel));
+  html = decorateExposedAttributesMarkup(panel, html);
+  return html.includes('id="config-backup"') ? decorateBackupMarkup(html) : html;
 }
 
 export function bindConfiguration(panel) {
