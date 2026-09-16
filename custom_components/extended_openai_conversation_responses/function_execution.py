@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import logging
 import math
 import re
 from typing import Any
@@ -11,6 +12,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .exceptions import FunctionValidationInfrastructureError
+
+_LOGGER = logging.getLogger(__name__)
 
 _JSON_TYPES = {"array", "boolean", "integer", "null", "number", "object", "string"}
 _OBJECT_KEYWORDS = {
@@ -93,24 +96,30 @@ _SUPPORTED_SCHEMA_KEYWORDS = (
 _LEGACY_DELAY_FIELDS = frozenset({"hours", "minutes", "seconds"})
 
 
-def validate_function_schema(schema: Mapping[str, Any]) -> None:
-    """Validate the locally enforced Function Tool JSON-schema contract.
+def validate_function_schema(schema: Mapping[str, Any]) -> tuple[str, ...]:
+    """Validate enforceable schema structure and report compatibility warnings.
 
-    Locally supported assertions are validated and enforced. Standard descriptive
-    annotations and explicit compatibility metadata are accepted and preserved but do
-    not change local argument validity. Known assertion/applicator/reference keywords
-    that are not implemented locally remain fail-closed so the provider and executor
-    cannot disagree about what inputs are valid.
+    Extended OpenAI treats local schema validation as defence in depth rather than a
+    requirement to reproduce the provider's complete JSON Schema implementation.
+    Assertions understood locally are validated and enforced. Annotation metadata is
+    accepted silently. Unknown or unsupported semantic vocabulary is preserved and
+    reported as a warning instead of making an otherwise usable Function Tool invalid.
     """
     if not isinstance(schema, Mapping):
         raise _schema_error("parameters must be an object schema")
-    _validate_schema_node("parameters", schema)
+    warnings: list[str] = []
+    _validate_schema_node("parameters", schema, warnings)
     root_type = schema.get("type")
     if root_type is not None and root_type != "object":
         raise _schema_error("function parameters must describe an object")
+    for warning in warnings:
+        _LOGGER.warning("Function Tool schema compatibility warning: %s", warning)
+    return tuple(warnings)
 
 
-def _validate_schema_node(path: str, schema: Mapping[str, Any]) -> None:
+def _validate_schema_node(
+    path: str, schema: Mapping[str, Any], warnings: list[str]
+) -> None:
     """Validate one schema node recursively without validating a concrete value."""
     unknown = {
         keyword
@@ -120,13 +129,17 @@ def _validate_schema_node(path: str, schema: Mapping[str, Any]) -> None:
     }
     unsupported_semantic = unknown.intersection(_UNSUPPORTED_SEMANTIC_SCHEMA_KEYWORDS)
     if unsupported_semantic:
-        raise _schema_error(
-            "unsupported semantic keyword at "
-            f"`{path}`: {', '.join(sorted(unsupported_semantic))}"
+        warnings.append(
+            "Extended OpenAI does not validate "
+            f"{', '.join(sorted(unsupported_semantic))} locally at `{path}`; "
+            "the schema is preserved and passed to the model/provider unchanged"
         )
-    if unknown:
-        raise _schema_error(
-            f"unrecognized schema keyword at `{path}`: {', '.join(sorted(unknown))}"
+    unrecognized = unknown - unsupported_semantic
+    if unrecognized:
+        warnings.append(
+            "Extended OpenAI does not recognize "
+            f"{', '.join(sorted(unrecognized))} at `{path}`; the schema is preserved "
+            "and passed to the model/provider unchanged"
         )
 
     description = schema.get("description")
@@ -184,7 +197,7 @@ def _validate_schema_node(path: str, schema: Mapping[str, Any]) -> None:
                 raise _schema_error(
                     f"schema for `{_field_name(path, name)}` must be an object"
                 )
-            _validate_schema_node(_field_name(path, name), child_schema)
+            _validate_schema_node(_field_name(path, name), child_schema, warnings)
 
         required = schema.get("required", [])
         if not isinstance(required, list) or not all(
@@ -202,7 +215,7 @@ def _validate_schema_node(path: str, schema: Mapping[str, Any]) -> None:
                 f"additionalProperties at `{path}` must be boolean or an object schema"
             )
         if isinstance(additional, Mapping):
-            _validate_schema_node(f"{path}.additionalProperties", additional)
+            _validate_schema_node(f"{path}.additionalProperties", additional, warnings)
         _validate_schema_length_bounds(schema, path, "minProperties", "maxProperties")
 
     if "array" in expected_types:
@@ -210,7 +223,7 @@ def _validate_schema_node(path: str, schema: Mapping[str, Any]) -> None:
         if items is not None:
             if not isinstance(items, Mapping):
                 raise _schema_error(f"items at `{path}` must be an object schema")
-            _validate_schema_node(f"{path}.items", items)
+            _validate_schema_node(f"{path}.items", items, warnings)
         unique = schema.get("uniqueItems")
         if unique is not None and not isinstance(unique, bool):
             raise _schema_error(f"uniqueItems at `{path}` must be boolean")
@@ -446,13 +459,7 @@ def _field_name(parent: str, child: str) -> str:
 
 
 def _schema_error(message: str) -> HomeAssistantError:
-    """Return a consistent invalid-schema error while preserving public wording."""
-    message = message.replace(
-        "unsupported semantic keyword at", "unsupported keyword at"
-    )
-    message = message.replace(
-        "unrecognized schema keyword at", "unsupported keyword at"
-    )
+    """Return a consistent invalid-schema error."""
     return HomeAssistantError(f"Function input schema is invalid: {message}")
 
 
