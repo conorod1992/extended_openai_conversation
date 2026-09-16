@@ -11,6 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 from . import management_ui
 from .management_browser import install_management_browser
 from .management_configuration_guidance import install_management_configuration_guidance
+from .management_function_quarantine import install_management_function_quarantine
 from .management_history_runtime import install_management_history_bounds
 from .management_setup_health import install_management_setup_health
 from .quiet_hours import async_get_quiet_hours
@@ -131,6 +132,7 @@ def install_management_permissions() -> bool:
     install_management_browser()
     _install_optimized_overview_guard()
     install_management_setup_health()
+    install_management_function_quarantine()
     # Result bounds must sit inside authorization so they cannot bypass existing
     # non-admin restrictions, while still wrapping the optimized history routes.
     install_management_history_bounds()
