@@ -20,6 +20,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
 )
+from custom_components.extended_openai_conversation_responses.management_configuration_guidance import (
+    wrap_management_configuration_guidance,
+)
 from custom_components.extended_openai_conversation_responses.management_function_repair import (
     async_function_repair,
 )
@@ -113,11 +116,15 @@ async def test_function_repair_configuration_get_preserves_dynamic_metadata(
         lambda _hass: [{"entity_id": "light.kitchen", "name": "Kitchen"}],
     )
 
-    payload = await async_function_repair(
+    repair_configuration = wrap_management_configuration_guidance(
+        async_function_repair
+    )
+    payload = await repair_configuration(
         hass,
         "admin",
         True,
         {
+            "section": "function_repair",
             "action": "configuration_get",
             "entry_id": entry.entry_id,
             "subentry_id": subentry.subentry_id,
