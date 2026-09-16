@@ -29,6 +29,14 @@ const TOOLBAR_STYLE = `
     min-width:0;
     margin:0;
   }
+  .eoc-agent-context-row .agent-picker.eoc-agent-context{
+    min-width:0;
+    padding:0;
+    border:0;
+    border-radius:0;
+    background:transparent;
+    box-shadow:none;
+  }
   .eoc-agent-context-row+.top-nav{
     margin-top:0;
   }
