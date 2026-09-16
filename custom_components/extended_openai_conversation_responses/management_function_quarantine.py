@@ -127,7 +127,7 @@ def _management_agent_config_revision(data: Any, title: str) -> str:
     """Use a raw revision only when strict normalization is blocked by Function Tools."""
     try:
         return _STRICT_AGENT_CONFIG_REVISION(data, title)
-    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError):
+    except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
         raw = dict(data)
         _tools, issue = function_tools_issue(raw)
         if issue is None:
