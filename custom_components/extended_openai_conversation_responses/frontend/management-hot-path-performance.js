@@ -2,6 +2,7 @@ const PATCHED = Symbol.for("extended-openai.management-hot-path-performance");
 const NAVIGATION_MARK_PREFIX = "extended-openai:navigation";
 const LOAD_MARK_PREFIX = "extended-openai:load-section";
 const RENDER_MARK_PREFIX = "extended-openai:render";
+const MAX_MEASURE_ENTRIES = 100;
 const BUSY_STYLE = `
   [data-eoc-main].eoc-loading-in-background,
   main.eoc-loading-in-background {
@@ -43,7 +44,17 @@ function startMeasure(panel, prefix) {
   const id = nowId(panel, prefix);
   const start = `${id}:start`;
   api.mark(start);
-  return {api, id, start};
+  return {api, id, start, panel};
+}
+
+function rememberMeasure(measure) {
+  const {api, id, panel} = measure;
+  panel._eocPerformanceMeasureIds ||= [];
+  panel._eocPerformanceMeasureIds.push(id);
+  while (panel._eocPerformanceMeasureIds.length > MAX_MEASURE_ENTRIES) {
+    const expired = panel._eocPerformanceMeasureIds.shift();
+    api.clearMeasures?.(expired);
+  }
 }
 
 function finishMeasure(measure, detail = null) {
@@ -51,11 +62,14 @@ function finishMeasure(measure, detail = null) {
   const {api, id, start} = measure;
   const end = `${id}:end`;
   api.mark(end);
-  api.measure(id, {
-    start,
-    end,
-    detail,
-  });
+  try {
+    api.measure(id, {start, end, detail});
+  } catch (_err) {
+    // Older Performance implementations accept mark names rather than the
+    // PerformanceMeasureOptions object. Timing must never break navigation.
+    api.measure(id, start, end);
+  }
+  rememberMeasure(measure);
   api.clearMarks(start);
   api.clearMarks(end);
 }
