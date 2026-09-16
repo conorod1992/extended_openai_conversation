@@ -81,23 +81,29 @@ export async function ensureNativeYamlEditor(
   documentRef = globalThis.document,
 ) {
   if (registry?.get?.(NATIVE_EDITOR_TAG)) return true;
-  if (!registry?.whenDefined || !documentRef?.createElement) return false;
+  if (!registry?.whenDefined) return false;
   if (!nativeEditorLoadPromise) {
     nativeEditorLoadPromise = (async () => {
-      const resolver = documentRef.createElement("partial-panel-resolver");
-      const routes = resolver?.getRoutes?.([
-        {component_name: "developer-tools", url_path: "a"},
-      ]);
-      await routes?.routes?.a?.load?.();
+      if (documentRef?.createElement) {
+        try {
+          const resolver = documentRef.createElement("partial-panel-resolver");
+          const routes = resolver?.getRoutes?.([
+            {component_name: "developer-tools", url_path: "a"},
+          ]);
+          await routes?.routes?.a?.load?.();
 
-      if (!registry.get?.(NATIVE_EDITOR_TAG)) {
-        const router = documentRef.createElement("developer-tools-router");
-        await router?.routerOptions?.routes?.service?.load?.();
+          if (!registry.get?.(NATIVE_EDITOR_TAG)) {
+            const router = documentRef.createElement("developer-tools-router");
+            await router?.routerOptions?.routes?.service?.load?.();
+          }
+        } catch (_err) {
+          // Some HA versions/tests do not expose the internal lazy-loader elements.
+          // Fall through to the standards-based custom-element readiness contract.
+        }
       }
-      if (!registry.get?.(NATIVE_EDITOR_TAG)) {
-        await registry.whenDefined(NATIVE_EDITOR_TAG);
-      }
-      return Boolean(registry.get?.(NATIVE_EDITOR_TAG));
+      if (registry.get?.(NATIVE_EDITOR_TAG)) return true;
+      await registry.whenDefined(NATIVE_EDITOR_TAG);
+      return true;
     })().finally(() => { nativeEditorLoadPromise = null; });
   }
   return nativeEditorLoadPromise;
