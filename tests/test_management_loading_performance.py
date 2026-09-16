@@ -420,6 +420,7 @@ async def test_management_setup_retry_resumes_after_panel_failure(monkeypatch) -
     websocket_register = MagicMock()
     panel_register = AsyncMock(side_effect=[RuntimeError("panel unavailable"), None])
     monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
+    monkeypatch.setattr(loading.websocket_api, "async_register_command", websocket_register)
     monkeypatch.setattr(loading.panel_custom, "async_register_panel", panel_register)
 
     with pytest.raises(RuntimeError, match="panel unavailable"):
