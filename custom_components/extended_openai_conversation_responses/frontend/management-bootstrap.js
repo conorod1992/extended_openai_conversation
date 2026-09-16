@@ -222,6 +222,7 @@ function preserveBusyMain(panel, originalRender, args) {
     if (!currentMain) return;
     currentMain.replaceChildren(fragment);
     currentMain.setAttribute("aria-busy", "true");
+    currentMain.inert = true;
     currentMain.classList.add("eoc-loading-in-background");
   }
 }
@@ -230,6 +231,7 @@ function clearBusyPresentation(panel) {
   const main = panel.shadowRoot?.querySelector?.("[data-eoc-main]") || panel.shadowRoot?.querySelector?.("main");
   if (!main || panel._busy) return;
   main.removeAttribute("aria-busy");
+  main.inert = false;
   main.classList.remove("eoc-loading-in-background");
 }
 
