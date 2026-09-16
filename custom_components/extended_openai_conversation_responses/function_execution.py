@@ -447,8 +447,12 @@ def _field_name(parent: str, child: str) -> str:
 
 def _schema_error(message: str) -> HomeAssistantError:
     """Return a consistent invalid-schema error while preserving public wording."""
-    message = message.replace("unsupported semantic keyword at", "unsupported keyword at")
-    message = message.replace("unrecognized schema keyword at", "unsupported keyword at")
+    message = message.replace(
+        "unsupported semantic keyword at", "unsupported keyword at"
+    )
+    message = message.replace(
+        "unrecognized schema keyword at", "unsupported keyword at"
+    )
     return HomeAssistantError(f"Function input schema is invalid: {message}")
 
 
