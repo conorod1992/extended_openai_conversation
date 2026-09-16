@@ -67,4 +67,13 @@ describe("legacy management rendering optimizations", () => {
     expect(source).toContain("if (!String(html || \"\").includes('id=\"config-prompt\"')) return html;");
     expect(source).toContain("html.includes('id=\"config-backup\"') ? decorateBackupMarkup(html) : html");
   });
+
+  it("decorates Function Groups in the existing assignment DOM pass", async () => {
+    const nativeSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-native-yaml.js", import.meta.url), "utf8");
+    const editorSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
+    expect(nativeSource).toContain("decorateFunctionGroupCards(panel, template.content, groups);");
+    expect(nativeSource).toContain("style.dataset.functionGroupsDecorated = \"\";");
+    expect(editorSource).toContain('includes("data-function-groups-decorated")');
+    expect(editorSource.indexOf('includes("data-function-groups-decorated")')).toBeLessThan(editorSource.indexOf('const template = document.createElement("template")', editorSource.indexOf("function decorateFunctionGroups")));
+  });
 });
