@@ -2,6 +2,30 @@ const PATCHED = Symbol.for("extended-openai.management-hot-path-performance");
 const NAVIGATION_MARK_PREFIX = "extended-openai:navigation";
 const LOAD_MARK_PREFIX = "extended-openai:load-section";
 const RENDER_MARK_PREFIX = "extended-openai:render";
+const BUSY_STYLE = `
+  [data-eoc-main].eoc-loading-in-background,
+  main.eoc-loading-in-background {
+    position: relative;
+  }
+  [data-eoc-main].eoc-loading-in-background::before,
+  main.eoc-loading-in-background::before {
+    content: "";
+    position: absolute;
+    z-index: 3;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--primary-color);
+    transform-origin: left center;
+    animation: eoc-background-load 900ms ease-in-out infinite alternate;
+    pointer-events: none;
+  }
+  @keyframes eoc-background-load {
+    from { transform: scaleX(.18); opacity: .55; }
+    to { transform: scaleX(1); opacity: .9; }
+  }
+`;
 
 function nowId(panel, kind) {
   panel._eocPerformanceSequence = (panel._eocPerformanceSequence || 0) + 1;
@@ -36,6 +60,14 @@ function finishMeasure(measure, detail = null) {
   api.clearMarks(end);
 }
 
+function ensureBusyStyle(root) {
+  if (!root || root.querySelector?.("style[data-eoc-hot-path-performance]")) return;
+  const style = document.createElement("style");
+  style.dataset.eocHotPathPerformance = "";
+  style.textContent = BUSY_STYLE;
+  root.append(style);
+}
+
 function preserveBusyMain(panel, originalRender, args) {
   const root = panel.shadowRoot;
   const main = root?.querySelector?.("[data-eoc-main]") || root?.querySelector?.("main");
@@ -47,9 +79,9 @@ function preserveBusyMain(panel, originalRender, args) {
   );
   if (!canPreserve) return originalRender.apply(panel, args);
 
+  ensureBusyStyle(root);
   const fragment = document.createDocumentFragment();
   while (main.firstChild) fragment.append(main.firstChild);
-  const previousBusy = main.getAttribute("aria-busy");
 
   try {
     return originalRender.apply(panel, args);
@@ -59,7 +91,6 @@ function preserveBusyMain(panel, originalRender, args) {
     currentMain.replaceChildren(fragment);
     currentMain.setAttribute("aria-busy", "true");
     currentMain.classList.add("eoc-loading-in-background");
-    if (previousBusy === "true") currentMain.dataset.eocPreviouslyBusy = "true";
   }
 }
 
@@ -68,7 +99,6 @@ function clearBusyPresentation(panel) {
   if (!main || panel._busy) return;
   main.removeAttribute("aria-busy");
   main.classList.remove("eoc-loading-in-background");
-  delete main.dataset.eocPreviouslyBusy;
 }
 
 function wrapAsyncMethod(prototype, name, prefix) {
