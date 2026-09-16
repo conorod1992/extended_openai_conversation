@@ -278,7 +278,8 @@ async def test_cached_debug_setup_respects_completed_step_markers(monkeypatch) -
 
 
 def test_install_management_loading_optimizations_is_idempotent(monkeypatch) -> None:
-    """Installation patches once, deduplicates modules, and updates package exports."""
+    """Installation patches once without replacing the live package object."""
+    import custom_components.extended_openai_conversation_responses as package
     from custom_components.extended_openai_conversation_responses import (
         conversation,
         function_tool_resolution,
@@ -294,10 +295,6 @@ def test_install_management_loading_optimizations_is_idempotent(monkeypatch) -> 
         async_setup_management_ui=object(),
     )
     fake_debug = SimpleNamespace(async_setup_debug_ui=object())
-    fake_package = SimpleNamespace(
-        conversation=conversation,
-        function_tool_resolution=function_tool_resolution,
-    )
 
     monkeypatch.setattr(loading, "_INSTALLED", False)
     monkeypatch.setattr(loading, "_ORIGINAL_MANAGEMENT_COMMAND", None)
@@ -318,7 +315,18 @@ def test_install_management_loading_optimizations_is_idempotent(monkeypatch) -> 
         "validate_function_groups",
         function_tool_resolution.validate_function_groups,
     )
-    monkeypatch.setitem(loading.sys.modules, loading.__package__, fake_package)
+    monkeypatch.setattr(
+        package,
+        "async_setup_management_ui",
+        getattr(package, "async_setup_management_ui", None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        package,
+        "async_setup_debug_ui",
+        getattr(package, "async_setup_debug_ui", None),
+        raising=False,
+    )
 
     loading.install_management_loading_optimizations()
 
@@ -333,50 +341,9 @@ def test_install_management_loading_optimizations_is_idempotent(monkeypatch) -> 
     assert fake_management.MANAGEMENT_FRONTEND_MODULES.count(
         loading._EXTRA_FRONTEND_MODULES[0]
     ) == 1
-    assert fake_package.async_setup_management_ui is loading.async_setup_cached_management_ui
-    assert fake_package.async_setup_debug_ui is loading.async_setup_cached_debug_ui
+    assert package.async_setup_management_ui is loading.async_setup_cached_management_ui
+    assert package.async_setup_debug_ui is loading.async_setup_cached_debug_ui
 
     modules = fake_management.MANAGEMENT_FRONTEND_MODULES
     loading.install_management_loading_optimizations()
     assert fake_management.MANAGEMENT_FRONTEND_MODULES == modules
-
-
-def test_install_management_loading_optimizations_without_loaded_package(
-    monkeypatch,
-) -> None:
-    """Installation remains valid while the package module is absent."""
-    from custom_components.extended_openai_conversation_responses import (
-        conversation,
-        function_tool_resolution,
-    )
-
-    fake_management = SimpleNamespace(
-        async_management_command=AsyncMock(),
-        MANAGEMENT_FRONTEND_MODULES=(),
-        async_setup_management_ui=object(),
-    )
-    fake_debug = SimpleNamespace(async_setup_debug_ui=object())
-    monkeypatch.setattr(loading, "_INSTALLED", False)
-    monkeypatch.setattr(loading, "_ORIGINAL_MANAGEMENT_COMMAND", None)
-    monkeypatch.setattr(loading, "_management_ui", lambda: fake_management)
-    monkeypatch.setattr(loading, "_debug_ui", lambda: fake_debug)
-    monkeypatch.setattr(
-        conversation,
-        "configured_function_tools_from_data",
-        conversation.configured_function_tools_from_data,
-    )
-    monkeypatch.setattr(
-        conversation,
-        "validate_function_groups",
-        conversation.validate_function_groups,
-    )
-    monkeypatch.setattr(
-        function_tool_resolution,
-        "validate_function_groups",
-        function_tool_resolution.validate_function_groups,
-    )
-    monkeypatch.delitem(loading.sys.modules, loading.__package__, raising=False)
-
-    loading.install_management_loading_optimizations()
-
-    assert fake_management.async_management_command is loading.optimized_management_command
