@@ -97,12 +97,17 @@ const FUNCTION_GROUP_ASSIGNMENT_STYLE = `
     cursor: pointer;
   }
   .function-group-assignment:disabled { cursor: progress; }
-  .function-group-card[data-group-id] {
+  .function-group-card[data-group-id],
+  .function-group-card.always-card {
     background: var(--secondary-background-color, var(--card-background-color));
     background: color-mix(in srgb, var(--primary-color) 5%, var(--card-background-color));
     box-shadow: inset 3px 0 0 color-mix(in srgb, var(--primary-color) 28%, transparent);
   }
-  .function-group-card[data-group-id] > details .tool-card {
+  .function-group-card.function-repair-attention {
+    background: color-mix(in srgb, var(--warning-color, #ff9800) 8%, var(--card-background-color));
+    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--warning-color, #ff9800) 45%, transparent);
+  }
+  .function-group-card > details .tool-card {
     background: var(--card-background-color);
   }
   .function-group-card[data-group-id] + .function-group-card[data-group-id] {
@@ -226,8 +231,16 @@ function decorateFunctionGroupCards(panel, root, groups) {
     }
     const editButton = card.querySelector(".edit-group");
     if (editButton) {
+      editButton.textContent = "Edit";
       editButton.disabled = !enabled;
-      editButton.title = enabled ? "" : "Enable this Function Group before editing it";
+      editButton.setAttribute("aria-label", `Edit Function Group ${group.name}`);
+      editButton.title = enabled ? `Edit Function Group ${group.name}` : "Enable this Function Group before editing it";
+    }
+    const deleteButton = card.querySelector(".delete-group");
+    if (deleteButton) {
+      deleteButton.textContent = "Delete";
+      deleteButton.setAttribute("aria-label", `Delete Function Group ${group.name}`);
+      deleteButton.title = `Delete Function Group ${group.name}`;
     }
     const actions = card.querySelector(".function-group-heading .actions");
     if (actions && !actions.querySelector(".group-enabled")) {
