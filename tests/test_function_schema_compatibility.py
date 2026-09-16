@@ -12,6 +12,7 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 )
 from custom_components.extended_openai_conversation_responses.function_execution import (
     validate_function_arguments,
+    validate_function_schema,
 )
 from custom_components.extended_openai_conversation_responses.model_payload import (
     prepare_model_function_tools,
@@ -100,6 +101,7 @@ def test_safe_annotations_are_accepted_recursively_and_preserved() -> None:
 
     assert configured["spec"]["parameters"] == parameters
     assert prepare_model_function_tools([configured])[0]["spec"]["parameters"] == parameters
+    assert validate_function_schema(parameters) == ()
 
 
 def test_format_is_annotation_only_for_local_argument_validation() -> None:
@@ -162,12 +164,13 @@ def test_x_prefixed_extension_metadata_is_annotation_only() -> None:
     configured = _configured(parameters)
 
     assert configured["spec"]["parameters"] == parameters
+    assert validate_function_schema(parameters) == ()
     with pytest.raises(HomeAssistantError, match="at least 2 characters"):
         validate_function_arguments(configured["spec"], {"phone": "x"})
 
 
-def test_unrecognized_unscoped_keyword_remains_rejected() -> None:
-    """Unknown un-namespaced metadata is not silently reclassified as harmless."""
+def test_unrecognized_unscoped_keyword_warns_but_remains_usable() -> None:
+    """Unknown vocabulary should not brick an otherwise usable Function Tool."""
     parameters = {
         "type": "object",
         "properties": {
@@ -175,8 +178,17 @@ def test_unrecognized_unscoped_keyword_remains_rejected() -> None:
         },
     }
 
-    with pytest.raises(AgentConfigError, match="unsupported keyword"):
-        validate_function_tools([_native_tool(parameters)])
+    warnings = validate_function_schema(parameters)
+    configured = _configured(parameters)
+
+    assert len(warnings) == 1
+    assert "mysteryConstraint" in warnings[0]
+    assert "does not recognize" in warnings[0]
+    assert configured["spec"]["parameters"] == parameters
+    assert prepare_model_function_tools([configured])[0]["spec"]["parameters"] == parameters
+    assert validate_function_arguments(configured["spec"], {"phone": "work"}) == {
+        "phone": "work"
+    }
 
 
 @pytest.mark.parametrize(
@@ -195,10 +207,10 @@ def test_unrecognized_unscoped_keyword_remains_rejected() -> None:
         ("$schema", "https://json-schema.org/draft/2020-12/schema"),
     ],
 )
-def test_unsupported_semantic_keywords_remain_fail_closed(
+def test_unsupported_semantic_keywords_warn_and_are_preserved(
     keyword: str, value: object
 ) -> None:
-    """Ignored semantic constraints must never create provider/executor disagreement."""
+    """Unsupported semantics remain provider-visible without blocking configuration."""
     child = {"type": "string", keyword: value}
     if keyword in {"dependentRequired", "patternProperties"}:
         child = {"type": "object", keyword: value}
@@ -211,5 +223,42 @@ def test_unsupported_semantic_keywords_remain_fail_closed(
         "properties": {"value": child},
     }
 
-    with pytest.raises(AgentConfigError, match="unsupported keyword"):
+    warnings = validate_function_schema(parameters)
+    configured = _configured(parameters)
+
+    assert len(warnings) == 1
+    assert keyword in warnings[0]
+    assert "does not validate" in warnings[0]
+    assert configured["spec"]["parameters"] == parameters
+    assert prepare_model_function_tools([configured])[0]["spec"]["parameters"] == parameters
+
+
+def test_malformed_supported_schema_still_fails_closed() -> None:
+    """Relaxed compatibility must not hide errors in semantics we do enforce."""
+    parameters = {
+        "type": "object",
+        "properties": {"phone": {"type": "string", "minLength": -1}},
+    }
+
+    with pytest.raises(AgentConfigError, match="non-negative integer"):
         validate_function_tools([_native_tool(parameters)])
+
+
+def test_supported_constraints_still_reject_invalid_arguments() -> None:
+    """Warnings for unsupported vocabulary must not weaken supported assertions."""
+    parameters = {
+        "type": "object",
+        "properties": {
+            "amount": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10,
+                "multipleOf": 2,
+            }
+        },
+        "required": ["amount"],
+    }
+    configured = _configured(parameters)
+
+    with pytest.raises(HomeAssistantError, match="at most 10"):
+        validate_function_arguments(configured["spec"], {"amount": 12})
