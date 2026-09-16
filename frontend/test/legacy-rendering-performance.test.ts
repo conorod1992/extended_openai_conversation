@@ -41,13 +41,14 @@ describe("legacy management rendering optimizations", () => {
     expect(source).toContain("SEARCH_DEBOUNCE_MS = 80");
   });
 
-  it("keeps loaded main content mounted and inert while a section refresh is busy", async () => {
+  it("keeps loaded main content mounted and skips the throwaway busy render", async () => {
     const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url), "utf8");
-    expect(source).toContain("document.createDocumentFragment()");
-    expect(source).toContain("currentMain.replaceChildren(fragment)");
-    expect(source).toContain('currentMain.setAttribute("aria-busy", "true")');
-    expect(source).toContain("currentMain.inert = true;");
+    expect(source).toContain('main.setAttribute("aria-busy", "true")');
+    expect(source).toContain("main.inert = true;");
     expect(source).toContain("main.inert = false;");
+    expect(source).toContain("return undefined;");
+    expect(source).not.toContain("document.createDocumentFragment()");
+    expect(source).not.toContain("replaceChildren(fragment)");
     expect(source).toContain("extended-openai:navigation");
     expect(source).toContain("extended-openai:load-section");
     expect(source).toContain("extended-openai:render");
