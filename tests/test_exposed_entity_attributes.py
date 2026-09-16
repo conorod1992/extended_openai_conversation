@@ -41,7 +41,7 @@ from homeassistant.helpers import entity_registry as er
 
 
 def _entry(entry_id: str, entity_id: str) -> SimpleNamespace:
-    return SimpleNamespace(id=entry_id, entity_id=entity_id)
+    return SimpleNamespace(id=entry_id, entity_id=entity_id, aliases=())
 
 
 def _registry(*entries: SimpleNamespace) -> SimpleNamespace:
