@@ -57,17 +57,16 @@ function simplifyConfigurationMarkupLegacy(panel, html) {
 
 function simplifyConfigurationMarkup(panel, html) {
   if (typeof document === "undefined" || typeof document.createElement !== "function") return simplifyConfigurationMarkupLegacy(panel, html);
-  const stripped = String(html || "").replace(CONFIG_JUMPS_PATTERN, "\n    ");
-  const needsDecoration = stripped.includes('id="config-local"')
-    || stripped.includes('data-field="max_function_calls_per_conversation"')
-    || stripped.includes('id="config-backup"');
-  if (!needsDecoration) return stripped;
+  const stripped = String(html || "")
+    .replace(CONFIG_JUMPS_PATTERN, "\n    ")
+    .replace("Maximum tool calls per conversation", "Maximum tool calls per request")
+    .replace("Stops the assistant after this many tool calls in one conversation to prevent runaway actions.", "Stops the assistant after this many model-requested tool calls while producing one response to a user request.");
+  if (!stripped.includes('id="config-local"')) return stripped;
 
   const config = panel._draft || panel._result?.config || {};
   const template = document.createElement("template");
   template.innerHTML = stripped;
   const root = template.content;
-
   const local = root.querySelector("#config-local");
   if (local) {
     const heading = local.querySelector(".config-section-heading");
@@ -90,16 +89,6 @@ function simplifyConfigurationMarkup(panel, html) {
 
     local.querySelector("#local-intent-list")?.insertAdjacentHTML("afterbegin", DELAYED_CHOICE(panel, Boolean(config.local_intents_enabled), Boolean(config.local_intent_delayed_commands_to_ai)));
   }
-
-  const maximumToolCalls = root.querySelector('[data-field="max_function_calls_per_conversation"]');
-  const maximumToolCallsLabel = maximumToolCalls?.querySelector("strong, .setting-label-row > span, label");
-  const maximumToolCallsDescription = maximumToolCalls?.querySelector("small");
-  if (maximumToolCallsLabel) maximumToolCallsLabel.textContent = "Maximum tool calls per request";
-  if (maximumToolCallsDescription) maximumToolCallsDescription.textContent = "Stops the assistant after this many model-requested tool calls while producing one response to a user request.";
-
-  const backupPanel = root.querySelector("#config-backup .backup-panel");
-  const privateWarning = backupPanel?.querySelector(".privacy-warning");
-  if (privateWarning && !backupPanel.querySelector(".credential-redaction-warning")) privateWarning.insertAdjacentHTML("afterend", BACKUP_CREDENTIAL_NOTICE);
   return template.innerHTML;
 }
 
