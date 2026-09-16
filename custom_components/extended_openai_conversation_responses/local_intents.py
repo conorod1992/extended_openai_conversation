@@ -254,8 +254,31 @@ def local_handling_snapshot(
     configured_exclusions: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Return frontend-safe live information for local handling settings."""
+    try:
+        intents = registered_intent_catalog(hass, configured_exclusions)
+        pipeline_conflicts = conflicting_assist_pipelines(hass, entry_id, subentry_id)
+    except TypeError:
+        # Recovery/diagnostic callers can deliberately use lightweight Home Assistant
+        # stand-ins. Live registry data is advisory and must not break configuration
+        # recovery merely because the stand-in cannot be used as HA's registry key.
+        intents = [
+            {
+                "intent": name,
+                "label": _friendly_intent_name(name),
+                "available": False,
+            }
+            for name in sorted(
+                {
+                    name
+                    for name in configured_exclusions
+                    if isinstance(name, str) and name.strip()
+                },
+                key=lambda item: (_friendly_intent_name(item), item),
+            )
+        ]
+        pipeline_conflicts = []
     return {
         "supported": callable(getattr(conversation, "async_handle_intents", None)),
-        "intents": registered_intent_catalog(hass, configured_exclusions),
-        "pipeline_conflicts": conflicting_assist_pipelines(hass, entry_id, subentry_id),
+        "intents": intents,
+        "pipeline_conflicts": pipeline_conflicts,
     }

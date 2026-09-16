@@ -24,6 +24,7 @@ from .const import (
     DEFAULT_PROMPT,
 )
 from .management_configuration_guidance import configuration_guidance_snapshot
+from .management_function_repair import editable_function_tools, isolated_function_tools
 from .memory import get_memory_mode
 
 _PATCHED = "extended_openai_management_setup_health"
@@ -48,6 +49,24 @@ def _exposed_entity_count(hass: HomeAssistant) -> int:
         async_should_expose(hass, conversation.DOMAIN, state.entity_id)
         for state in hass.states.async_all()
     )
+
+
+def _function_health(options: dict[str, Any]) -> dict[str, Any]:
+    """Summarize effective and quarantined Function Tool state."""
+    editable = editable_function_tools(options)
+    valid, invalid, issue = isolated_function_tools(options)
+    total = len(editable) if isinstance(editable, list) else None
+    return {
+        "usable_count": len(valid),
+        "invalid_count": len(invalid),
+        "total_count": total,
+        "isolatable": bool(invalid),
+        "validation_error": issue,
+        "invalid_names": [
+            str(item.get("name") or f"Function Tool {int(item.get('index', 0)) + 1}")
+            for item in invalid
+        ],
+    }
 
 
 def build_setup_health_facts(
@@ -86,6 +105,7 @@ def build_setup_health_facts(
                 options.get(CONF_API_MODE, DEFAULT_API_MODE)
             ).strip(),
         },
+        "function_tools": _function_health(options),
         "prompt_state": prompt_state,
         "exposed_entity_count": exposed_entity_count,
         "memory": {

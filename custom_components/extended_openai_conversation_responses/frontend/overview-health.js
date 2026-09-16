@@ -4,20 +4,58 @@ function titleCase(value) {
   return String(value || "").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function providerRuntimeCheck(facts) {
+function providerRuntimeCheck(facts, fallback = {}) {
   const runtime = facts.provider_runtime || {};
   const loaded = runtime.client_loaded === true;
+  const provider = runtime.provider || fallback.provider || "Unknown provider";
+  const model = runtime.model || fallback.model || "No model selected";
   return {
     id: "provider_runtime",
     state: loaded ? "ready" : "error",
     title: "Provider runtime",
-    value: `${runtime.provider || "Unknown provider"} · ${runtime.model || "No model selected"}`,
+    value: `${provider} · ${model}`,
     detail: loaded
       ? facts.can_manage
         ? "API client is loaded. Overview does not make a live provider request; use Diagnostics for an on-demand connection test."
         : "API client is loaded. Overview does not make a live provider request; an administrator can run Diagnostics for a live connection test."
-      : "The provider API client is not currently available to this config entry.",
+      : "The configured provider and model are retained, but the provider API client is not currently available to this config entry.",
     action: action("usage-maintenance", "diagnostics"),
+  };
+}
+
+function functionToolsCheck(facts) {
+  const tools = facts.function_tools || {};
+  const invalid = Number(tools.invalid_count || 0);
+  const usable = Number(tools.usable_count || 0);
+  if (tools.validation_error && tools.isolatable === false) {
+    return {
+      id: "function_tools",
+      state: "error",
+      title: "Function Tools",
+      value: "Configuration needs repair",
+      detail: "The saved Function Tool collection cannot be safely separated into valid and invalid entries. Repair it before Function Tools can be used.",
+      action: action("capabilities", "functions"),
+    };
+  }
+  if (invalid > 0) {
+    return {
+      id: "function_tools",
+      state: "warning",
+      title: "Function Tools",
+      value: `${invalid} ${invalid === 1 ? "function needs" : "functions need"} repair`,
+      detail: `${usable} valid ${usable === 1 ? "Function Tool remains" : "Function Tools remain"} available. Invalid tools are quarantined until repaired.`,
+      action: action("capabilities", "functions"),
+    };
+  }
+  return {
+    id: "function_tools",
+    state: "ready",
+    title: "Function Tools",
+    value: `${usable} ${usable === 1 ? "function" : "functions"} available`,
+    detail: usable
+      ? "All configured Function Tools pass validation."
+      : "No custom Function Tools are currently configured.",
+    action: action("capabilities", "functions"),
   };
 }
 
@@ -198,7 +236,7 @@ function webSearchCheck(facts) {
   };
 }
 
-export function buildSetupHealth(facts = {}) {
+export function buildSetupHealth(facts = {}, fallback = {}) {
   if (facts.unavailable === true) {
     return {
       state: "warning",
@@ -218,7 +256,8 @@ export function buildSetupHealth(facts = {}) {
     };
   }
   const checks = [
-    providerRuntimeCheck(facts),
+    providerRuntimeCheck(facts, fallback),
+    functionToolsCheck(facts),
     instructionsCheck(facts),
     exposureCheck(facts),
     memoryCheck(facts),
