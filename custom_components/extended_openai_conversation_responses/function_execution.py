@@ -23,28 +23,84 @@ _OBJECT_KEYWORDS = {
 _ARRAY_KEYWORDS = {"items", "minItems", "maxItems", "uniqueItems"}
 _STRING_KEYWORDS = {"minLength", "maxLength", "pattern"}
 _NUMBER_KEYWORDS = {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"}
-_COMMON_SCHEMA_KEYWORDS = {"type", "description", "enum", "const", "default"}
-_COMPATIBILITY_SCHEMA_ANNOTATIONS = {"enumNames"}
+_COMMON_ASSERTION_KEYWORDS = {"type", "enum", "const"}
+_SAFE_SCHEMA_ANNOTATIONS = {
+    # JSON Schema 2020-12 metadata / annotation vocabularies.
+    "title",
+    "description",
+    "default",
+    "deprecated",
+    "readOnly",
+    "writeOnly",
+    "examples",
+    "format",
+    "contentEncoding",
+    "contentMediaType",
+    "contentSchema",
+    "$comment",
+    # Widely used UI-only compatibility metadata seen in older Function Tools.
+    "example",
+    "enumNames",
+    "enumDescriptions",
+    "markdownDescription",
+    "markdownEnumDescriptions",
+}
+_UNSUPPORTED_SEMANTIC_SCHEMA_KEYWORDS = {
+    # Composition / conditional application.
+    "allOf",
+    "anyOf",
+    "oneOf",
+    "not",
+    "if",
+    "then",
+    "else",
+    # Object/array assertions or applicators not enforced locally.
+    "dependentRequired",
+    "dependentSchemas",
+    "dependencies",
+    "propertyNames",
+    "patternProperties",
+    "unevaluatedProperties",
+    "prefixItems",
+    "additionalItems",
+    "contains",
+    "minContains",
+    "maxContains",
+    "unevaluatedItems",
+    "multipleOf",
+    # Reference/dialect semantics would require full schema resolution.
+    "$ref",
+    "$dynamicRef",
+    "$recursiveRef",
+    "$defs",
+    "definitions",
+    "$schema",
+    "$vocabulary",
+    "$id",
+    "id",
+    "$anchor",
+    "$dynamicAnchor",
+    "$recursiveAnchor",
+}
 _SUPPORTED_SCHEMA_KEYWORDS = (
-    _COMMON_SCHEMA_KEYWORDS
+    _COMMON_ASSERTION_KEYWORDS
     | _OBJECT_KEYWORDS
     | _ARRAY_KEYWORDS
     | _STRING_KEYWORDS
     | _NUMBER_KEYWORDS
-    | _COMPATIBILITY_SCHEMA_ANNOTATIONS
+    | _SAFE_SCHEMA_ANNOTATIONS
 )
 _LEGACY_DELAY_FIELDS = frozenset({"hours", "minutes", "seconds"})
 
 
 def validate_function_schema(schema: Mapping[str, Any]) -> None:
-    """Validate the JSON-schema subset enforced by configured Function Tools.
+    """Validate the locally enforced Function Tool JSON-schema contract.
 
-    The provider may understand a wider JSON-Schema vocabulary, but configured tools
-    are also validated locally before execution. Rejecting unsupported constraints at
-    configuration time prevents the provider and the local runtime from disagreeing
-    about what inputs are valid. Historical non-semantic annotations explicitly
-    listed in ``_COMPATIBILITY_SCHEMA_ANNOTATIONS`` remain accepted and are ignored by
-    local argument validation.
+    Locally supported assertions are validated and enforced. Standard descriptive
+    annotations and explicit compatibility metadata are accepted and preserved but do
+    not change local argument validity. Known assertion/applicator/reference keywords
+    that are not implemented locally remain fail-closed so the provider and executor
+    cannot disagree about what inputs are valid.
     """
     if not isinstance(schema, Mapping):
         raise _schema_error("parameters must be an object schema")
@@ -56,10 +112,21 @@ def validate_function_schema(schema: Mapping[str, Any]) -> None:
 
 def _validate_schema_node(path: str, schema: Mapping[str, Any]) -> None:
     """Validate one schema node recursively without validating a concrete value."""
-    unknown = set(schema) - _SUPPORTED_SCHEMA_KEYWORDS
+    unknown = {
+        keyword
+        for keyword in schema
+        if keyword not in _SUPPORTED_SCHEMA_KEYWORDS
+        and not (isinstance(keyword, str) and keyword.startswith("x-"))
+    }
+    unsupported_semantic = unknown.intersection(_UNSUPPORTED_SEMANTIC_SCHEMA_KEYWORDS)
+    if unsupported_semantic:
+        raise _schema_error(
+            "unsupported semantic keyword at "
+            f"`{path}`: {', '.join(sorted(unsupported_semantic))}"
+        )
     if unknown:
         raise _schema_error(
-            f"unsupported keyword at `{path}`: {', '.join(sorted(unknown))}"
+            f"unrecognized schema keyword at `{path}`: {', '.join(sorted(unknown))}"
         )
 
     description = schema.get("description")
