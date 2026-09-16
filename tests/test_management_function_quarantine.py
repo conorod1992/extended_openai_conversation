@@ -101,7 +101,7 @@ def test_management_merge_preserves_repair_owned_function_fields(
 async def test_tolerant_management_scope_is_limited_to_affected_sections(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Request Rules/Guest Mode get valid siblings; unrelated routes stay strict."""
+    """Request Rules, Guest Mode, and Functions get valid siblings; others stay strict."""
     sentinel = [{"spec": {"name": "valid"}, "function": {"type": "template"}}]
 
     monkeypatch.setattr(quarantine, "_usable_function_tools", lambda _data: sentinel)
@@ -131,9 +131,13 @@ async def test_tolerant_management_scope_is_limited_to_affected_sections(
     guest_mode = await wrapped(
         SimpleNamespace(), "admin", True, {"section": "guest_mode"}
     )
+    functions = await wrapped(
+        SimpleNamespace(), "admin", True, {"section": "tools"}
+    )
 
     assert request_rules["tools"] == sentinel
     assert guest_mode["tools"] == sentinel
+    assert functions["tools"] == sentinel
     with pytest.raises(AssertionError, match="strict parser used"):
         await wrapped(SimpleNamespace(), "admin", True, {"section": "assistant"})
 
