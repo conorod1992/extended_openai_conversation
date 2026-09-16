@@ -42,13 +42,15 @@ describe("legacy management rendering optimizations", () => {
   });
 
   it("keeps loaded main content mounted while a section refresh is busy", async () => {
-    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-hot-path-performance.js", import.meta.url), "utf8");
+    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url), "utf8");
     expect(source).toContain("document.createDocumentFragment()");
     expect(source).toContain("currentMain.replaceChildren(fragment)");
     expect(source).toContain('currentMain.setAttribute("aria-busy", "true")');
     expect(source).toContain("extended-openai:navigation");
     expect(source).toContain("extended-openai:load-section");
     expect(source).toContain("extended-openai:render");
+    expect(source).toContain("MAX_MEASURE_ENTRIES = 100");
+    expect(source).not.toContain("management-hot-path-performance.js");
   });
 
   it("runs model DOM decoration only where model-aware controls exist", async () => {
