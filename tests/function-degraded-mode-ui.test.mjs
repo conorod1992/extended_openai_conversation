@@ -48,7 +48,8 @@ test("invalid Function Tools render in a Needs attention group with repair-only 
 
 test("Needs attention group is inserted before normal Function Groups", () => {
   const normal = '<section><div class="function-groups"><article id="normal">Normal</article></div></section>';
-  const html = decorateFunctionsContent(panel, normal, repair);
+  const decoratedPanel = {...panel, _result: {function_repair: repair}};
+  const html = decorateFunctionsContent(decoratedPanel, normal);
 
   assert.ok(html.indexOf("Needs attention") < html.indexOf('id="normal"'));
 });
