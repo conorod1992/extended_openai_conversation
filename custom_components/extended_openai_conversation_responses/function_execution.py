@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import logging
 import math
 import re
 from typing import Any
@@ -11,6 +12,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .exceptions import FunctionValidationInfrastructureError
+
+_LOGGER = logging.getLogger(__name__)
 
 _JSON_TYPES = {"array", "boolean", "integer", "null", "number", "object", "string"}
 _OBJECT_KEYWORDS = {
@@ -23,43 +26,120 @@ _OBJECT_KEYWORDS = {
 _ARRAY_KEYWORDS = {"items", "minItems", "maxItems", "uniqueItems"}
 _STRING_KEYWORDS = {"minLength", "maxLength", "pattern"}
 _NUMBER_KEYWORDS = {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"}
-_COMMON_SCHEMA_KEYWORDS = {"type", "description", "enum", "const", "default"}
-_COMPATIBILITY_SCHEMA_ANNOTATIONS = {"enumNames"}
+_COMMON_ASSERTION_KEYWORDS = {"type", "enum", "const"}
+_SAFE_SCHEMA_ANNOTATIONS = {
+    # JSON Schema 2020-12 metadata / annotation vocabularies.
+    "title",
+    "description",
+    "default",
+    "deprecated",
+    "readOnly",
+    "writeOnly",
+    "examples",
+    "format",
+    "contentEncoding",
+    "contentMediaType",
+    "contentSchema",
+    "$comment",
+    # Widely used UI-only compatibility metadata seen in older Function Tools.
+    "example",
+    "enumNames",
+    "enumDescriptions",
+    "markdownDescription",
+    "markdownEnumDescriptions",
+}
+_UNSUPPORTED_SEMANTIC_SCHEMA_KEYWORDS = {
+    # Composition / conditional application.
+    "allOf",
+    "anyOf",
+    "oneOf",
+    "not",
+    "if",
+    "then",
+    "else",
+    # Object/array assertions or applicators not enforced locally.
+    "dependentRequired",
+    "dependentSchemas",
+    "dependencies",
+    "propertyNames",
+    "patternProperties",
+    "unevaluatedProperties",
+    "prefixItems",
+    "additionalItems",
+    "contains",
+    "minContains",
+    "maxContains",
+    "unevaluatedItems",
+    "multipleOf",
+    # Reference/dialect semantics would require full schema resolution.
+    "$ref",
+    "$dynamicRef",
+    "$recursiveRef",
+    "$defs",
+    "definitions",
+    "$schema",
+    "$vocabulary",
+    "$id",
+    "id",
+    "$anchor",
+    "$dynamicAnchor",
+    "$recursiveAnchor",
+}
 _SUPPORTED_SCHEMA_KEYWORDS = (
-    _COMMON_SCHEMA_KEYWORDS
+    _COMMON_ASSERTION_KEYWORDS
     | _OBJECT_KEYWORDS
     | _ARRAY_KEYWORDS
     | _STRING_KEYWORDS
     | _NUMBER_KEYWORDS
-    | _COMPATIBILITY_SCHEMA_ANNOTATIONS
+    | _SAFE_SCHEMA_ANNOTATIONS
 )
 _LEGACY_DELAY_FIELDS = frozenset({"hours", "minutes", "seconds"})
 
 
-def validate_function_schema(schema: Mapping[str, Any]) -> None:
-    """Validate the JSON-schema subset enforced by configured Function Tools.
+def validate_function_schema(schema: Mapping[str, Any]) -> tuple[str, ...]:
+    """Validate enforceable schema structure and report compatibility warnings.
 
-    The provider may understand a wider JSON-Schema vocabulary, but configured tools
-    are also validated locally before execution. Rejecting unsupported constraints at
-    configuration time prevents the provider and the local runtime from disagreeing
-    about what inputs are valid. Historical non-semantic annotations explicitly
-    listed in ``_COMPATIBILITY_SCHEMA_ANNOTATIONS`` remain accepted and are ignored by
-    local argument validation.
+    Extended OpenAI treats local schema validation as defence in depth rather than a
+    requirement to reproduce the provider's complete JSON Schema implementation.
+    Assertions understood locally are validated and enforced. Annotation metadata is
+    accepted silently. Unknown or unsupported semantic vocabulary is preserved and
+    reported as a warning instead of making an otherwise usable Function Tool invalid.
     """
     if not isinstance(schema, Mapping):
         raise _schema_error("parameters must be an object schema")
-    _validate_schema_node("parameters", schema)
+    warnings: list[str] = []
+    _validate_schema_node("parameters", schema, warnings)
     root_type = schema.get("type")
     if root_type is not None and root_type != "object":
         raise _schema_error("function parameters must describe an object")
+    for warning in warnings:
+        _LOGGER.warning("Function Tool schema compatibility warning: %s", warning)
+    return tuple(warnings)
 
 
-def _validate_schema_node(path: str, schema: Mapping[str, Any]) -> None:
+def _validate_schema_node(
+    path: str, schema: Mapping[str, Any], warnings: list[str]
+) -> None:
     """Validate one schema node recursively without validating a concrete value."""
-    unknown = set(schema) - _SUPPORTED_SCHEMA_KEYWORDS
-    if unknown:
-        raise _schema_error(
-            f"unsupported keyword at `{path}`: {', '.join(sorted(unknown))}"
+    unknown = {
+        keyword
+        for keyword in schema
+        if keyword not in _SUPPORTED_SCHEMA_KEYWORDS
+        and not (isinstance(keyword, str) and keyword.startswith("x-"))
+    }
+    unsupported_semantic = unknown.intersection(_UNSUPPORTED_SEMANTIC_SCHEMA_KEYWORDS)
+    if unsupported_semantic:
+        warnings.append(
+            "Extended OpenAI does not validate "
+            f"{', '.join(sorted(unsupported_semantic))} locally at `{path}`; "
+            "the schema is preserved and passed to the model/provider unchanged"
+        )
+    unrecognized = unknown - unsupported_semantic
+    if unrecognized:
+        warnings.append(
+            "Extended OpenAI does not recognize "
+            f"{', '.join(sorted(unrecognized))} at `{path}`; the schema is preserved "
+            "and passed to the model/provider unchanged"
         )
 
     description = schema.get("description")
@@ -117,7 +197,7 @@ def _validate_schema_node(path: str, schema: Mapping[str, Any]) -> None:
                 raise _schema_error(
                     f"schema for `{_field_name(path, name)}` must be an object"
                 )
-            _validate_schema_node(_field_name(path, name), child_schema)
+            _validate_schema_node(_field_name(path, name), child_schema, warnings)
 
         required = schema.get("required", [])
         if not isinstance(required, list) or not all(
@@ -135,7 +215,7 @@ def _validate_schema_node(path: str, schema: Mapping[str, Any]) -> None:
                 f"additionalProperties at `{path}` must be boolean or an object schema"
             )
         if isinstance(additional, Mapping):
-            _validate_schema_node(f"{path}.additionalProperties", additional)
+            _validate_schema_node(f"{path}.additionalProperties", additional, warnings)
         _validate_schema_length_bounds(schema, path, "minProperties", "maxProperties")
 
     if "array" in expected_types:
@@ -143,7 +223,7 @@ def _validate_schema_node(path: str, schema: Mapping[str, Any]) -> None:
         if items is not None:
             if not isinstance(items, Mapping):
                 raise _schema_error(f"items at `{path}` must be an object schema")
-            _validate_schema_node(f"{path}.items", items)
+            _validate_schema_node(f"{path}.items", items, warnings)
         unique = schema.get("uniqueItems")
         if unique is not None and not isinstance(unique, bool):
             raise _schema_error(f"uniqueItems at `{path}` must be boolean")
@@ -299,8 +379,6 @@ async def async_validate_function_arguments(
             validate_function_arguments, spec, arguments
         )
 
-    # Run all non-pattern validation first, so configured regex is evaluated only
-    # against values that have already passed the normal schema/type contract.
     stripped_spec = dict(spec)
     stripped_spec["parameters"] = _schema_without_patterns(schema)
     validated = await hass.async_add_executor_job(
@@ -579,8 +657,6 @@ def _validate_value(name: str, value: Any, schema: Mapping[str, Any]) -> Any:
 
     value = _validate_type(name, value, expected)
 
-    # Type unions are uncommon in tool specs. Once one member has matched, apply
-    # constraints according to the resulting Python value as well as explicit type.
     expected_types = {expected} if isinstance(expected, str) else set(expected or [])
 
     if "object" in expected_types and isinstance(value, Mapping):

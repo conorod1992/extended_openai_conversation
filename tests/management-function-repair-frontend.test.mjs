@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import {
   editableToolsText,
+  functionRepairView,
   loadFunctionRepair,
   renderFunctionRepair,
   repairIssue,
@@ -11,10 +12,14 @@ function repairableAgent() {
   return {
     configuration_issue: {
       field: "functions",
-      message: "functions[0].spec.parameters: unsupported keyword: enumNames",
+      message: "functions[0].spec.parameters: invalid description",
       repairable: true,
     },
   };
+}
+
+function functionsView() {
+  return () => "capabilities/functions";
 }
 
 {
@@ -28,6 +33,8 @@ function repairableAgent() {
     repairIssue({_selectedAgent: () => ({configuration_issue: {...agent.configuration_issue, repairable: false}})}),
     null,
   );
+  assert.equal(functionRepairView({_viewKey: functionsView()}), true);
+  assert.equal(functionRepairView({_viewKey: () => "assistant/model"}), false);
 }
 
 {
@@ -43,6 +50,7 @@ function repairableAgent() {
   let renders = 0;
   const panel = {
     _selectedAgent: () => repairableAgent(),
+    _viewKey: functionsView(),
     _data: {is_admin: true},
     _loadToken: 0,
     _busy: false,
@@ -54,7 +62,8 @@ function repairableAgent() {
       calls.push([section, action]);
       return {
         tools: [{spec: {name: "legacy"}}],
-        validation_error: "enumNames is unsupported",
+        invalid_tools: [{index: 0, name: "legacy", tool: {spec: {name: "legacy"}}, validation_error: "bad schema"}],
+        validation_error: "bad schema",
         revision: "rev-1",
       };
     },
@@ -74,6 +83,7 @@ function repairableAgent() {
   let called = false;
   const panel = {
     _selectedAgent: () => repairableAgent(),
+    _viewKey: functionsView(),
     _data: {is_admin: false},
     _loadToken: 0,
     _busy: false,
@@ -93,18 +103,35 @@ function repairableAgent() {
 }
 
 {
+  const panel = {
+    _selectedAgent: () => repairableAgent(),
+    _viewKey: () => "assistant/model",
+  };
+  assert.equal(await loadFunctionRepair(panel), false);
+}
+
+{
   const html = renderFunctionRepair(
     {
       _data: {is_admin: true},
       _result: {
-        tools: [],
+        tools: [{spec: {name: "good"}}, {spec: {name: "bad"}}],
+        invalid_tools: [{
+          index: 1,
+          name: "bad",
+          tool: {spec: {name: "bad"}},
+          validation_error: '<script>alert("x")</script>',
+        }],
         validation_error: '<script>alert("x")</script>',
       },
     },
     repairableAgent().configuration_issue,
   );
   assert.ok(html.includes("Function Tools need repair"));
-  assert.ok(html.includes("Validate and save Function Tools"));
+  assert.ok(html.includes("Validate and save repair"));
+  assert.ok(html.includes("bad"));
+  assert.ok(!html.includes('name: "good"'));
   assert.ok(!html.includes('<script>alert("x")</script>'));
   assert.ok(html.includes("&lt;script&gt;"));
+  assert.ok(html.includes("other assistant settings remain editable"));
 }
