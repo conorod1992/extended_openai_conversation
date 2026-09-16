@@ -40,4 +40,74 @@ describe("legacy management rendering optimizations", () => {
     expect(source).toContain("event.stopImmediatePropagation()");
     expect(source).toContain("SEARCH_DEBOUNCE_MS = 80");
   });
+
+  it("keeps loaded main content mounted only during navigation busy renders", async () => {
+    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url), "utf8");
+    expect(source).toContain('main.setAttribute("aria-busy", "true")');
+    expect(source).toContain("main.inert = true;");
+    expect(source).toContain("main.inert = false;");
+    expect(source).toContain("panel._eocNavigationDepth > 0");
+    expect(source).toContain("if (navigation) this._eocNavigationDepth = (this._eocNavigationDepth || 0) + 1;");
+    expect(source).toContain("wrapAsyncMethod(prototype, \"_navigate\", NAVIGATION_MARK_PREFIX, true);");
+    expect(source).toContain("return undefined;");
+    expect(source).not.toContain("document.createDocumentFragment()");
+    expect(source).not.toContain("replaceChildren(fragment)");
+    expect(source).toContain("extended-openai:navigation");
+    expect(source).toContain("extended-openai:load-section");
+    expect(source).toContain("extended-openai:render");
+    expect(source).toContain("MAX_MEASURE_ENTRIES = 100");
+    expect(source).not.toContain("management-hot-path-performance.js");
+  });
+
+  it("builds only configuration section bodies that pass the active filter", async () => {
+    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js", import.meta.url), "utf8");
+    const filterGuard = 'if (panel._configSectionFilter && !panel._configSectionFilter.has(id)) return "";';
+    const bodyEvaluation = 'const content = typeof body === "function" ? body() : body;';
+    expect(source).toContain(filterGuard);
+    expect(source).toContain(bodyEvaluation);
+    expect(source.indexOf(filterGuard)).toBeLessThan(source.indexOf(bodyEvaluation));
+    for (const section of ["general", "conversation", "prompt", "capabilities", "archive", "voice", "speech", "context", "model", "retention", "backup"]) {
+      expect(source).toContain(`section(panel,"${section}"`);
+      const start = source.indexOf(`section(panel,"${section}"`);
+      expect(source.slice(start, start + 320)).toContain(",() => `");
+    }
+    expect(source).toContain('section(panel,"local","Local handling"');
+    expect(source).toContain('() => renderLocalHandling(panel,config)');
+  });
+
+  it("runs model DOM decoration only where model-aware controls exist", async () => {
+    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-model-v2.js", import.meta.url), "utf8");
+    const guard = "if (!source.includes('id=\"config-general\"') && !source.includes('id=\"config-model\"')) return html;";
+    expect(source).toContain(guard);
+    expect(source.indexOf(guard)).toBeLessThan(source.indexOf('document.createElement("template")'));
+    expect(source).toContain("const hasModelAwareControls = Boolean(");
+    expect(source).toContain("if (hasModelAwareControls) void ensureCatalogData(panel);");
+  });
+
+  it("skips unrelated configuration decorator parse passes", async () => {
+    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
+    expect(source).toContain("if (!stripped.includes('id=\"config-local\"')) return stripped;");
+    expect(source).toContain('.replace("Maximum tool calls per conversation", "Maximum tool calls per request")');
+    expect(source).toContain("if (!String(html || \"\").includes('id=\"config-prompt\"')) return html;");
+    expect(source).toContain("html.includes('id=\"config-backup\"') ? decorateBackupMarkup(html) : html");
+  });
+
+  it("caches only clean stable configuration subsections", async () => {
+    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
+    expect(source).toContain('const CACHEABLE_CONFIG_SECTIONS = new Set(["capabilities", "archive", "voice", "speech", "context", "retention", "backup"]);');
+    expect(source).toContain("if (panel?._configDirty) return null;");
+    expect(source).toContain("state.result !== panel._result");
+    expect(source).toContain("MAX_CONFIG_RENDER_CACHE_ENTRIES = 8");
+    expect(source).toContain("const cached = getCachedConfigurationMarkup(panel, cacheKey);");
+    expect(source).toContain("if (cached !== null) return cached;");
+  });
+
+  it("decorates Function Groups in the existing assignment DOM pass", async () => {
+    const nativeSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-native-yaml.js", import.meta.url), "utf8");
+    const editorSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
+    expect(nativeSource).toContain("decorateFunctionGroupCards(panel, template.content, groups);");
+    expect(nativeSource).toContain("style.dataset.functionGroupsDecorated = \"\";");
+    expect(editorSource).toContain('includes("data-function-groups-decorated")');
+    expect(editorSource.indexOf('includes("data-function-groups-decorated")')).toBeLessThan(editorSource.indexOf('const template = document.createElement("template")', editorSource.indexOf("function decorateFunctionGroups")));
+  });
 });

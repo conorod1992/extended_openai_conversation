@@ -145,6 +145,12 @@ function decorateApiSelector(root, config, metadata) {
 }
 
 function decorateConfiguration(panel, html) {
+  // Configuration routes already filter the base renderer to the requested
+  // subsection. Model-aware controls live in both General (model/API/output)
+  // and Model (reasoning/sampling), so only unrelated subsections can skip the
+  // parse/serialize decoration pass completely.
+  const source = String(html || "");
+  if (!source.includes('id="config-general"') && !source.includes('id="config-model"')) return html;
   if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
   const config = currentConfig(panel);
   const data = currentCatalogData(panel, config.chat_model);
@@ -192,9 +198,16 @@ export function renderConfiguration(panel) {
 
 export function bindConfiguration(panel) {
   const result = base.bindConfiguration(panel);
-  void ensureCatalogData(panel);
   const root = panel?.shadowRoot;
   const modelInput = root?.querySelector('[data-config="chat_model"]');
+  const reasoning = root?.querySelector('[data-config="reasoning_effort"]');
+  const hasModelAwareControls = Boolean(
+    modelInput
+    || reasoning
+    || root?.querySelector('[data-config="temperature"],[data-config="top_p"],[data-config="api_mode"],[data-config="max_tokens"]')
+  );
+  if (hasModelAwareControls) void ensureCatalogData(panel);
+
   modelInput?.addEventListener("change", async (event) => {
     event.stopImmediatePropagation();
     try {
@@ -212,7 +225,6 @@ export function bindConfiguration(panel) {
       panel._toast?.(`Unable to inspect model options: ${err.message || String(err)}`, true);
     }
   }, true);
-  const reasoning = root?.querySelector('[data-config="reasoning_effort"]');
   reasoning?.addEventListener("change", () => {
     if (!panel._draft) panel._draft = {...(panel._result?.config || {})};
     panel._draft.reasoning_effort = reasoning.value;

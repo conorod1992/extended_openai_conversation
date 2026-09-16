@@ -9,6 +9,9 @@ const DELAYED_CHOICE = (panel, enabled, checked) => `<label class="group-functio
 
 export const BACKUP_CREDENTIAL_WARNING = "Recognised API keys, tokens, passwords, authorization headers and other common secrets are redacted from full backups. Re-enter any required credentials after restore. Redaction is best-effort, so review backup files before sharing them.";
 const BACKUP_CREDENTIAL_NOTICE = `<p class="privacy-warning credential-redaction-warning"><strong>Credentials are not backed up:</strong> ${BACKUP_CREDENTIAL_WARNING}</p>`;
+const CONFIG_JUMPS_PATTERN = /\s*<nav class="config-jumps"[^>]*>[\s\S]*?<\/nav>\s*/;
+const CACHEABLE_CONFIG_SECTIONS = new Set(["capabilities", "archive", "voice", "speech", "context", "retention", "backup"]);
+const MAX_CONFIG_RENDER_CACHE_ENTRIES = 8;
 
 export function reasoningEffortOptionsForResult(result = {}) {
   const values = result?.model_capabilities?.reasoning_effort_options;
@@ -28,11 +31,39 @@ function applyModelAwareReasoningOptions(panel) {
   };
 }
 
+function configRenderCacheKey(panel) {
+  if (panel?._configDirty) return null;
+  const sections = Array.isArray(panel?._configSections) ? panel._configSections : [];
+  if (!sections.length || sections.some((section) => !CACHEABLE_CONFIG_SECTIONS.has(section))) return null;
+  return sections.join("|");
+}
+
+function getCachedConfigurationMarkup(panel, key) {
+  const state = panel?._eocConfigRenderCache;
+  if (!key || !state || state.result !== panel._result) return null;
+  return state.entries.get(key) ?? null;
+}
+
+function rememberConfigurationMarkup(panel, key, html) {
+  if (!key) return html;
+  let state = panel._eocConfigRenderCache;
+  if (!state || state.result !== panel._result) {
+    state = {result: panel._result, entries: new Map()};
+    panel._eocConfigRenderCache = state;
+  }
+  if (state.entries.has(key)) state.entries.delete(key);
+  state.entries.set(key, html);
+  while (state.entries.size > MAX_CONFIG_RENDER_CACHE_ENTRIES) {
+    state.entries.delete(state.entries.keys().next().value);
+  }
+  return html;
+}
+
 function simplifyConfigurationMarkupLegacy(panel, html) {
   const config = panel._draft || panel._result?.config || {};
   const localEnabled = Boolean(config.local_intents_enabled);
   let result = html;
-  result = result.replace(/\s*<nav class="config-jumps"[^>]*>[\s\S]*?<\/nav>\s*/, "\n    ");
+  result = result.replace(CONFIG_JUMPS_PATTERN, "\n    ");
   result = result.replace(/(<section id="config-local"[^>]*><div class="config-section-heading"><p class="eyebrow">Local handling<\/p><p>)[^<]*(<\/p><\/div>)/, "$1Let Extended OpenAI try Home Assistant's built-in commands after Request Rules, before using AI.$2");
   const localHeading = /(<section id="config-local"[^>]*><div class="config-section-heading">[\s\S]*?<\/div>)/;
   result = result.replace(localHeading, `$1
@@ -56,12 +87,16 @@ function simplifyConfigurationMarkupLegacy(panel, html) {
 
 function simplifyConfigurationMarkup(panel, html) {
   if (typeof document === "undefined" || typeof document.createElement !== "function") return simplifyConfigurationMarkupLegacy(panel, html);
+  const stripped = String(html || "")
+    .replace(CONFIG_JUMPS_PATTERN, "\n    ")
+    .replace("Maximum tool calls per conversation", "Maximum tool calls per request")
+    .replace("Stops the assistant after this many tool calls in one conversation to prevent runaway actions.", "Stops the assistant after this many model-requested tool calls while producing one response to a user request.");
+  if (!stripped.includes('id="config-local"')) return stripped;
+
   const config = panel._draft || panel._result?.config || {};
   const template = document.createElement("template");
-  template.innerHTML = html;
+  template.innerHTML = stripped;
   const root = template.content;
-  root.querySelector(".config-jumps")?.remove();
-
   const local = root.querySelector("#config-local");
   if (local) {
     const heading = local.querySelector(".config-section-heading");
@@ -84,20 +119,11 @@ function simplifyConfigurationMarkup(panel, html) {
 
     local.querySelector("#local-intent-list")?.insertAdjacentHTML("afterbegin", DELAYED_CHOICE(panel, Boolean(config.local_intents_enabled), Boolean(config.local_intent_delayed_commands_to_ai)));
   }
-
-  const maximumToolCalls = root.querySelector('[data-field="max_function_calls_per_conversation"]');
-  const maximumToolCallsLabel = maximumToolCalls?.querySelector("strong, .setting-label-row > span, label");
-  const maximumToolCallsDescription = maximumToolCalls?.querySelector("small");
-  if (maximumToolCallsLabel) maximumToolCallsLabel.textContent = "Maximum tool calls per request";
-  if (maximumToolCallsDescription) maximumToolCallsDescription.textContent = "Stops the assistant after this many model-requested tool calls while producing one response to a user request.";
-
-  const backupPanel = root.querySelector("#config-backup .backup-panel");
-  const privateWarning = backupPanel?.querySelector(".privacy-warning");
-  if (privateWarning && !backupPanel.querySelector(".credential-redaction-warning")) privateWarning.insertAdjacentHTML("afterend", BACKUP_CREDENTIAL_NOTICE);
   return template.innerHTML;
 }
 
 function decorateExposedAttributesMarkup(panel, html) {
+  if (!String(html || "").includes('id="config-prompt"')) return html;
   const markup = renderExposedAttributeSettings(panel);
   if (typeof document === "undefined" || typeof document.createElement !== "function") {
     return html.replace('<details class="advanced-context-formatting"', `${markup}<details class="advanced-context-formatting"`);
@@ -111,6 +137,7 @@ function decorateExposedAttributesMarkup(panel, html) {
 }
 
 function decorateFunctionGroups(panel, html) {
+  if (String(html || "").includes("data-function-groups-decorated")) return html;
   if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
   const template = document.createElement("template");
   template.innerHTML = html;
@@ -149,6 +176,12 @@ function queueRender(panel) {
     });
 }
 
+function buildConfigurationMarkup(panel, module) {
+  let html = simplifyConfigurationMarkup(panel, module.renderConfiguration(panel));
+  html = decorateExposedAttributesMarkup(panel, html);
+  return html.includes('id="config-backup"') ? decorateBackupMarkup(html) : html;
+}
+
 export function renderConfiguration(panel) {
   const module = getAgentConfigModule();
   if (!module) {
@@ -156,7 +189,10 @@ export function renderConfiguration(panel) {
     return panel._loading?.() || '<div class="loading">Loading configuration…</div>';
   }
   applyModelAwareReasoningOptions(panel);
-  return decorateBackupMarkup(decorateExposedAttributesMarkup(panel, simplifyConfigurationMarkup(panel, module.renderConfiguration(panel))));
+  const cacheKey = configRenderCacheKey(panel);
+  const cached = getCachedConfigurationMarkup(panel, cacheKey);
+  if (cached !== null) return cached;
+  return rememberConfigurationMarkup(panel, cacheKey, buildConfigurationMarkup(panel, module));
 }
 
 export function bindConfiguration(panel) {
