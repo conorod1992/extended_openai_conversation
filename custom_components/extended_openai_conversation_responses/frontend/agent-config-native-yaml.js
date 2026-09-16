@@ -130,6 +130,28 @@ function assignmentOptions(panel, groups, currentId) {
   ].join("");
 }
 
+function decorateFunctionGroupCards(panel, root, groups) {
+  for (const card of root.querySelectorAll(".function-group-card[data-group-id]")) {
+    const group = groups.find((item) => item.id === card.dataset.groupId);
+    if (!group) continue;
+    const enabled = group.enabled !== false;
+    card.classList.toggle("is-disabled", !enabled);
+    const title = card.querySelector(".tool-title");
+    if (!enabled && title && !title.querySelector(".group-disabled-badge")) {
+      title.insertAdjacentHTML("beforeend", '<span class="availability-badge group-disabled-badge">Disabled</span>');
+    }
+    const editButton = card.querySelector(".edit-group");
+    if (editButton) {
+      editButton.disabled = !enabled;
+      editButton.title = enabled ? "" : "Enable this Function Group before editing it";
+    }
+    const actions = card.querySelector(".function-group-heading .actions");
+    if (actions && !actions.querySelector(".group-enabled")) {
+      actions.insertAdjacentHTML("afterbegin", `<label class="compact-toggle" title="Disable the group without changing the enabled state of its member Function Tools"><input type="checkbox" class="group-enabled" data-group-id="${panel._e(group.id)}" ${enabled ? "checked" : ""}><span>Enabled</span></label>`);
+    }
+  }
+}
+
 export function decorateFunctionGroupAssignments(panel, html) {
   if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
   const template = document.createElement("template");
@@ -137,6 +159,8 @@ export function decorateFunctionGroupAssignments(panel, html) {
   const config = panel?._draft || panel?._result?.config || {};
   const tools = config.functions || [];
   const groups = config.function_groups || [];
+
+  decorateFunctionGroupCards(panel, template.content, groups);
 
   for (const card of template.content.querySelectorAll(".tool-card[data-tool-index]")) {
     const index = Number(card.dataset.toolIndex);
@@ -159,6 +183,7 @@ export function decorateFunctionGroupAssignments(panel, html) {
   if (!template.content.querySelector("style[data-function-group-assignment]")) {
     const style = document.createElement("style");
     style.dataset.functionGroupAssignment = "";
+    style.dataset.functionGroupsDecorated = "";
     style.textContent = FUNCTION_GROUP_ASSIGNMENT_STYLE;
     template.content.prepend(style);
   }
