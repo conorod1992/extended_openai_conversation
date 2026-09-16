@@ -60,6 +60,8 @@ describe("legacy management rendering optimizations", () => {
     const guard = "if (!source.includes('id=\"config-general\"') && !source.includes('id=\"config-model\"')) return html;";
     expect(source).toContain(guard);
     expect(source.indexOf(guard)).toBeLessThan(source.indexOf('document.createElement("template")'));
+    expect(source).toContain("const hasModelAwareControls = Boolean(");
+    expect(source).toContain("if (hasModelAwareControls) void ensureCatalogData(panel);");
   });
 
   it("skips unrelated configuration decorator parse passes", async () => {
