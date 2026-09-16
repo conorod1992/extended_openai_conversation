@@ -106,6 +106,58 @@ def _persisted_invalid_function_tools() -> str:
     )
 
 
+def test_runtime_function_quarantine_keeps_valid_siblings() -> None:
+    invalid = yaml.safe_load(_persisted_invalid_function_tools())[0]
+    valid = yaml.safe_load(_persisted_invalid_function_tools())[0]
+    valid["spec"]["name"] = "valid_phone_tool"
+    valid["spec"]["parameters"]["properties"]["phone"]["minLength"] = 1
+
+    tools = loading._runtime_configured_function_tools(
+        {"functions": yaml.safe_dump([valid, invalid], sort_keys=False)}
+    )
+
+    assert [tool["spec"]["name"] for tool in tools] == ["valid_phone_tool"]
+    assert loading._RUNTIME_QUARANTINED_FUNCTION_NAMES.get() == frozenset(
+        {"invalid_phone_tool"}
+    )
+    assert loading._RUNTIME_QUARANTINE_ALL_FUNCTIONS.get() is False
+
+    loading._RUNTIME_QUARANTINED_FUNCTION_NAMES.set(frozenset())
+    loading._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
+
+
+def test_runtime_group_quarantine_drops_only_quarantined_references(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import performance
+
+    captured = {}
+
+    def validate(groups, function_tools):
+        captured["groups"] = groups
+        captured["function_tools"] = function_tools
+        return groups
+
+    monkeypatch.setattr(performance, "cached_validate_function_groups", validate)
+    loading._RUNTIME_QUARANTINED_FUNCTION_NAMES.set(frozenset({"broken_tool"}))
+    loading._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
+    tools = [{"spec": {"name": "good_tool"}}]
+
+    result = loading._runtime_validate_function_groups(
+        [
+            {
+                "id": "test",
+                "functions": ["good_tool", "broken_tool", "unrelated_missing_tool"],
+            }
+        ],
+        tools,
+    )
+
+    assert result[0]["functions"] == ["good_tool", "unrelated_missing_tool"]
+    assert captured["function_tools"] is tools
+
+    loading._RUNTIME_QUARANTINED_FUNCTION_NAMES.set(frozenset())
+    loading._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
+
+
 def test_frontend_asset_version_matches_manifest() -> None:
     manifest = json.loads(
         (
