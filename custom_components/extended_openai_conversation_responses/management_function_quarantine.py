@@ -31,6 +31,19 @@ _ALLOW_QUARANTINED_TOOLS: ContextVar[bool] = ContextVar(
     "extended_openai_management_allow_quarantined_tools", default=False
 )
 
+# This module is imported before management_ui registers static paths, so keep the
+# UX helpers introduced alongside quarantine available to Home Assistant as served
+# frontend assets as well as management-bootstrap dependencies.
+management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(
+    dict.fromkeys(
+        (
+            *management_ui.MANAGEMENT_FRONTEND_MODULES,
+            "management-conversation-default-label.js",
+            "management-overview-health-clarity.js",
+        )
+    )
+)
+
 _STRICT_CONFIGURED_TOOLS = management_ui.configured_function_tools_from_data
 _STRICT_MERGE_AGENT_CONFIG = management_ui.merge_agent_config
 _ORIGINAL_AGENT_TEST = management_ui.async_test_agent
@@ -96,9 +109,7 @@ def _management_merge_agent_config(
     if issue is None:
         return _STRICT_MERGE_AGENT_CONFIG(source, updates)
 
-    normalized = _STRICT_MERGE_AGENT_CONFIG(
-        _safe_function_configuration(raw), updates
-    )
+    normalized = _STRICT_MERGE_AGENT_CONFIG(_safe_function_configuration(raw), updates)
     for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
         if key in raw:
             normalized[key] = deepcopy(raw[key])
