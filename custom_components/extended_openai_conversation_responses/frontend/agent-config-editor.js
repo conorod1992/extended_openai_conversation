@@ -118,6 +118,7 @@ function decorateExposedAttributesMarkup(panel, html) {
 }
 
 function decorateFunctionGroups(panel, html) {
+  if (String(html || "").includes("data-function-groups-decorated")) return html;
   if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
   const template = document.createElement("template");
   template.innerHTML = html;
