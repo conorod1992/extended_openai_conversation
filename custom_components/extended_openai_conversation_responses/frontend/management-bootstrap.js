@@ -24,6 +24,7 @@ const BOOTSTRAP_MODULES = [
   "./management-decision-guidance.js",
   "./management-conversation-default-label.js",
   "./management-overview-health-clarity.js",
+  "./management-hot-path-performance.js",
 ];
 
 function preloadBootstrapModules(documentRef = globalThis.document) {
@@ -156,6 +157,9 @@ if (typeof customElements !== "undefined") {
     await import("./management-conversation-default-label.js");
     // Distinguish actionable health issues from checks whose status is unavailable.
     await import("./management-overview-health-clarity.js");
+    // Install last so timings observe the final wrapped management methods and
+    // busy-state preservation runs outside the existing rendering optimization.
+    await import("./management-hot-path-performance.js");
   } catch (err) {
     restore();
     throw err;
