@@ -41,11 +41,13 @@ describe("legacy management rendering optimizations", () => {
     expect(source).toContain("SEARCH_DEBOUNCE_MS = 80");
   });
 
-  it("keeps loaded main content mounted while a section refresh is busy", async () => {
+  it("keeps loaded main content mounted and inert while a section refresh is busy", async () => {
     const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url), "utf8");
     expect(source).toContain("document.createDocumentFragment()");
     expect(source).toContain("currentMain.replaceChildren(fragment)");
     expect(source).toContain('currentMain.setAttribute("aria-busy", "true")');
+    expect(source).toContain("currentMain.inert = true;");
+    expect(source).toContain("main.inert = false;");
     expect(source).toContain("extended-openai:navigation");
     expect(source).toContain("extended-openai:load-section");
     expect(source).toContain("extended-openai:render");
@@ -62,8 +64,8 @@ describe("legacy management rendering optimizations", () => {
 
   it("skips unrelated configuration decorator parse passes", async () => {
     const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
-    expect(source).toContain("const needsDecoration = stripped.includes('id=\"config-local\"')");
-    expect(source).toContain("if (!needsDecoration) return stripped;");
+    expect(source).toContain("if (!stripped.includes('id=\"config-local\"')) return stripped;");
+    expect(source).toContain('.replace("Maximum tool calls per conversation", "Maximum tool calls per request")');
     expect(source).toContain("if (!String(html || \"\").includes('id=\"config-prompt\"')) return html;");
     expect(source).toContain("html.includes('id=\"config-backup\"') ? decorateBackupMarkup(html) : html");
   });
