@@ -108,7 +108,7 @@ def test_schema_validation_rejects_each_malformed_contract(
 def test_schema_validation_accepts_nullable_nested_types_and_empty_array_items() -> (
     None
 ):
-    """Valid union declarations and omitted optional array items remain accepted."""
+    """Valid unions and unknown vocabulary remain accepted with bounded warnings."""
     validate_function_schema(
         {
             "type": "object",
@@ -119,8 +119,8 @@ def test_schema_validation_accepts_nullable_nested_types_and_empty_array_items()
             },
         }
     )
-    with pytest.raises(HomeAssistantError, match="unsupported keyword"):
-        validate_function_schema({"type": "object", "unknown": True})
+    warnings = validate_function_schema({"type": "object", "unknown": True})
+    assert any("unknown" in warning for warning in warnings)
 
 
 def test_argument_entrypoint_rejects_bad_schema_and_non_object_result() -> None:
