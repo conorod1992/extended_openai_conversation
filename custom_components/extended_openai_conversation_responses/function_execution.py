@@ -366,8 +366,6 @@ async def async_validate_function_arguments(
             validate_function_arguments, spec, arguments
         )
 
-    # Run all non-pattern validation first, so configured regex is evaluated only
-    # against values that have already passed the normal schema/type contract.
     stripped_spec = dict(spec)
     stripped_spec["parameters"] = _schema_without_patterns(schema)
     validated = await hass.async_add_executor_job(
@@ -448,7 +446,9 @@ def _field_name(parent: str, child: str) -> str:
 
 
 def _schema_error(message: str) -> HomeAssistantError:
-    """Return a consistent invalid-schema error."""
+    """Return a consistent invalid-schema error while preserving public wording."""
+    message = message.replace("unsupported semantic keyword at", "unsupported keyword at")
+    message = message.replace("unrecognized schema keyword at", "unsupported keyword at")
     return HomeAssistantError(f"Function input schema is invalid: {message}")
 
 
@@ -646,8 +646,6 @@ def _validate_value(name: str, value: Any, schema: Mapping[str, Any]) -> Any:
 
     value = _validate_type(name, value, expected)
 
-    # Type unions are uncommon in tool specs. Once one member has matched, apply
-    # constraints according to the resulting Python value as well as explicit type.
     expected_types = {expected} if isinstance(expected, str) else set(expected or [])
 
     if "object" in expected_types and isinstance(value, Mapping):
