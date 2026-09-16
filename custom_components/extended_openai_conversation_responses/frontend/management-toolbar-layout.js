@@ -1,53 +1,85 @@
 const PATCHED = Symbol.for("extended-openai.management-toolbar-layout");
 
 const TOOLBAR_STYLE = `
-  .eoc-management-toolbar{
-    display:grid;
-    grid-template-columns:minmax(220px,360px) minmax(280px,1fr);
-    gap:12px;
-    align-items:end;
-    margin:0 0 12px;
-    padding:10px 12px;
-    border:1px solid var(--divider-color);
-    border-radius:12px;
-    background:var(--card-background-color);
-  }
-  .eoc-management-toolbar .agent-picker{
-    min-width:0;
+  header .global-search.eoc-global-search{
+    width:min(380px,100%);
+    max-width:100%;
+    min-width:280px;
     margin:0;
+    align-self:end;
   }
-  .eoc-management-toolbar .global-search.eoc-global-search{
-    min-width:0;
-    margin:0;
-  }
-  .eoc-management-toolbar .eoc-global-search>label{
+  header .eoc-global-search>label{
     display:block;
   }
-  .eoc-management-toolbar .eoc-global-search .search-label{
+  header .eoc-global-search .search-label{
     display:none;
   }
-  .eoc-management-toolbar .eoc-global-search .search-results{
-    width:min(760px,100%);
+  header .eoc-global-search .search-results{
+    left:auto;
+    right:0;
+    width:min(760px,calc(100vw - 56px));
   }
-  .eoc-management-toolbar+.top-nav{
+  .eoc-agent-context-row{
+    display:flex;
+    align-items:end;
+    margin:0 0 14px;
+  }
+  .eoc-agent-context-row .agent-picker{
+    width:min(390px,100%);
+    min-width:0;
+    margin:0;
+  }
+  .eoc-agent-context-row .agent-picker.eoc-agent-context{
+    min-width:0;
+    padding:0;
+    border:0;
+    border-radius:0;
+    background:transparent;
+    box-shadow:none;
+  }
+  .eoc-agent-context-row+.top-nav{
     margin-top:0;
   }
   .top-nav+.subsection-nav{
     margin-top:0;
   }
   @media (max-width:800px){
-    .eoc-management-toolbar{
-      grid-template-columns:1fr;
+    header{
+      flex-direction:column;
       align-items:stretch;
+      gap:18px;
+    }
+    header .global-search.eoc-global-search{
+      width:100%;
+      min-width:0;
+      align-self:stretch;
+    }
+    header .eoc-global-search .search-results{
+      width:100%;
+      right:auto;
+    }
+    .eoc-agent-context-row{
+      display:block;
+      margin-bottom:18px;
+    }
+    .eoc-agent-context-row .agent-picker{
+      width:100%;
     }
   }
 `;
 
-function unwrapExistingToolbar(root) {
+function clearPreviousLayout(root) {
   const toolbar = root.querySelector(".eoc-management-toolbar");
-  if (!toolbar) return;
-  while (toolbar.firstChild) toolbar.before(toolbar.firstChild);
-  toolbar.remove();
+  if (toolbar) {
+    while (toolbar.firstChild) toolbar.before(toolbar.firstChild);
+    toolbar.remove();
+  }
+
+  const contextRow = root.querySelector(".eoc-agent-context-row");
+  if (contextRow) {
+    while (contextRow.firstChild) contextRow.before(contextRow.firstChild);
+    contextRow.remove();
+  }
 }
 
 export function applyManagementToolbarLayout(panel) {
@@ -60,20 +92,23 @@ export function applyManagementToolbarLayout(panel) {
   style.textContent = TOOLBAR_STYLE;
   root.append(style);
 
-  unwrapExistingToolbar(root);
+  clearPreviousLayout(root);
 
+  const header = root.querySelector("header");
   const topNav = root.querySelector(".top-nav");
   const agentPicker = root.querySelector(".agent-picker");
   const settingsSearch = root.querySelector(".eoc-global-search");
-  if (!topNav || (!agentPicker && !settingsSearch)) return false;
+  if (!header || !topNav || (!agentPicker && !settingsSearch)) return false;
 
-  const toolbar = document.createElement("div");
-  toolbar.className = "eoc-management-toolbar";
-  toolbar.setAttribute("role", "group");
-  toolbar.setAttribute("aria-label", "Assistant and settings controls");
-  if (agentPicker) toolbar.append(agentPicker);
-  if (settingsSearch) toolbar.append(settingsSearch);
-  topNav.before(toolbar);
+  if (settingsSearch) header.append(settingsSearch);
+
+  if (agentPicker) {
+    const contextRow = document.createElement("div");
+    contextRow.className = "eoc-agent-context-row";
+    contextRow.setAttribute("aria-label", "Assistant context");
+    contextRow.append(agentPicker);
+    topNav.before(contextRow);
+  }
 
   const subsectionNav = root.querySelector(".subsection-nav");
   if (subsectionNav) topNav.after(subsectionNav);
