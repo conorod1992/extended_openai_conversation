@@ -11,6 +11,7 @@ import yaml
 
 from custom_components.extended_openai_conversation_responses import (
     exposed_attributes as ea,
+    management_configuration_guidance as guidance,
     management_ui,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -19,9 +20,6 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
-)
-from custom_components.extended_openai_conversation_responses.management_configuration_guidance import (
-    wrap_management_configuration_guidance,
 )
 from custom_components.extended_openai_conversation_responses.management_function_repair import (
     async_function_repair,
@@ -116,7 +114,7 @@ async def test_function_repair_configuration_get_preserves_dynamic_metadata(
         lambda _hass: [{"entity_id": "light.kitchen", "name": "Kitchen"}],
     )
 
-    repair_configuration = wrap_management_configuration_guidance(
+    repair_configuration = guidance.wrap_management_configuration_guidance(
         async_function_repair
     )
     payload = await repair_configuration(
@@ -145,3 +143,69 @@ async def test_function_repair_configuration_get_preserves_dynamic_metadata(
     ]
     assert "configuration_guidance" in payload
     assert "web_search" in payload["configuration_guidance"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("section", "action", "catalog_expected"),
+    [
+        ("configuration", "get", True),
+        ("configuration", "update", True),
+        ("configuration", "save", True),
+        ("configuration", "validate", False),
+        ("function_repair", "configuration_get", True),
+        ("function_repair", "configuration_save", True),
+        ("function_repair", "configuration_validate", False),
+    ],
+)
+async def test_shared_configuration_response_contract_covers_normal_and_repair_actions(
+    monkeypatch: pytest.MonkeyPatch,
+    section: str,
+    action: str,
+    catalog_expected: bool,
+) -> None:
+    """Normal and repair Configuration actions share one metadata contract."""
+    entry = SimpleNamespace(data={"provider": "test"})
+    subentry = SimpleNamespace()
+    monkeypatch.setattr(
+        management_ui,
+        "entry_and_agent",
+        lambda *_args, **_kwargs: (entry, subentry),
+    )
+    monkeypatch.setattr(
+        guidance,
+        "configuration_guidance_snapshot",
+        lambda entry_data, config: {"entry": entry_data, "config": config},
+    )
+    monkeypatch.setattr(
+        guidance,
+        "exposed_attribute_catalog",
+        lambda _hass, config: {"entities": [{"config": config}]},
+    )
+
+    async def original(
+        _hass: Any, _user_id: str, _is_admin: bool, _message: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {"config": {"marker": action}, "preserved": True}
+
+    wrapped = guidance.wrap_management_configuration_guidance(original)
+    result = await wrapped(
+        object(),
+        "admin",
+        True,
+        {
+            "section": section,
+            "action": action,
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+        },
+    )
+
+    assert result["preserved"] is True
+    assert result["configuration_guidance"]["config"] == {"marker": action}
+    if catalog_expected:
+        assert result["exposed_attribute_catalog"]["entities"] == [
+            {"config": {"marker": action}}
+        ]
+    else:
+        assert "exposed_attribute_catalog" not in result
