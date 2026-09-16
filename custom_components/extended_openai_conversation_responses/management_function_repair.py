@@ -451,15 +451,15 @@ async def async_function_repair(
             candidate = message.get("tool")
             if not isinstance(candidate, dict):
                 raise HomeAssistantError("tool must be an object")
-            validated = validate_function_tools([candidate])[0]
-            new_name = validated["spec"]["name"]
+            validated_tool = validate_function_tools([candidate])[0]
+            new_name = validated_tool["spec"]["name"]
             for sibling_index, sibling in enumerate(editable):
                 if sibling_index == index or not isinstance(sibling, dict):
                     continue
                 spec = sibling.get("spec")
                 if isinstance(spec, dict) and spec.get("name") == new_name:
                     raise HomeAssistantError(f"Function Tool {new_name} already exists")
-            editable[index] = validated
+            editable[index] = validated_tool
             persisted = _persist_raw_tools(
                 hass,
                 entry,
@@ -483,19 +483,20 @@ async def async_function_repair(
     candidate = message.get("tools")
     if not isinstance(candidate, list):
         raise HomeAssistantError("tools must be a JSON array")
-    validated = validate_function_tools(candidate)
+    validated_tools = validate_function_tools(candidate)
     validate_function_groups(
-        subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS), validated
+        subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
+        validated_tools,
     )
 
     persisted = dict(subentry.data)
     persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-        validated, sort_keys=False, allow_unicode=True
+        validated_tools, sort_keys=False, allow_unicode=True
     )
     hass.config_entries.async_update_subentry(entry, subentry, data=persisted)
     return {
         "valid": True,
-        "tools": deepcopy(validated),
+        "tools": deepcopy(validated_tools),
         "revision": _revision_for_data(management_ui, subentry.title, persisted),
         "agent": management_loading_performance._agent_snapshot(
             hass, entry, subentry, config=persisted
