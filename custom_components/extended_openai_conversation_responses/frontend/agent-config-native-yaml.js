@@ -15,11 +15,38 @@ const NEW_TOOL_STARTER_CONFIG = Object.freeze({
   function: Object.freeze({type: "native", name: ""}),
 });
 const NATIVE_STYLE = `
+  #tool-dialog.tool-dialog {
+    width: min(1100px, calc(100vw - 32px));
+    max-height: calc(100dvh - 32px);
+    overflow: hidden;
+  }
+  #tool-dialog.tool-dialog[open] {
+    display: flex;
+    flex-direction: column;
+  }
+  #tool-dialog .tool-dialog-body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  #tool-dialog #tool-editor-label {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
   #${NATIVE_EDITOR_ID} {
     display: block;
+    flex: 1 1 auto;
     width: 100%;
-    min-height: 360px;
-    height: min(58vh, 620px);
+    min-height: 240px;
+    height: 100%;
+    cursor: text;
+  }
+  #tool-dialog .dialog-actions {
+    flex: 0 0 auto;
   }
   #${NATIVE_EDITOR_ID}[hidden] { display: none; }
   #tool-yaml[hidden] { display: none !important; }
