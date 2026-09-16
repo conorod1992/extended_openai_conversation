@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -222,8 +222,12 @@ async def test_control_failure_isolated_to_one_satellite_and_retried_cleanly(
             "wake_sound": "unchanged",
         }
     )
+    local_tz = dt_util.get_time_zone(hass.config.time_zone)
+    assert local_tz is not None
 
-    await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 0, tzinfo=UTC))
+    await manager.async_reconcile(
+        now=datetime(2026, 9, 11, 22, 0, tzinfo=local_tz)
+    )
 
     assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.60
     assert _state(hass, "media_player.kitchen").attributes["volume_level"] == 0.20
@@ -231,7 +235,9 @@ async def test_control_failure_isolated_to_one_satellite_and_retried_cleanly(
     assert active is not None
     assert set(active["controls"]) == {"media_player.kitchen"}
 
-    await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 5, tzinfo=UTC))
+    await manager.async_reconcile(
+        now=datetime(2026, 9, 11, 22, 5, tzinfo=local_tz)
+    )
 
     assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.20
     assert _state(hass, "media_player.kitchen").attributes["volume_level"] == 0.20
@@ -247,7 +253,9 @@ async def test_control_failure_isolated_to_one_satellite_and_retried_cleanly(
         ("media_player.bedroom", 0.20),
     ]
 
-    await manager.async_reconcile(now=datetime(2026, 9, 12, 7, 0, tzinfo=UTC))
+    await manager.async_reconcile(
+        now=datetime(2026, 9, 12, 7, 0, tzinfo=local_tz)
+    )
     assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.60
     assert _state(hass, "media_player.kitchen").attributes["volume_level"] == 0.70
     assert manager.active is None

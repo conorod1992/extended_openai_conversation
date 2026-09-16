@@ -332,8 +332,8 @@ def test_enum_and_const_constraints_compose_after_type_validation(choice: str) -
 
 @settings(max_examples=15)
 @given(keyword=st.sampled_from(["anyOf", "allOf", "oneOf", "not", "multipleOf"]))
-def test_unsupported_schema_combinators_and_constraints_fail_closed(keyword: str) -> None:
-    """Do not silently advertise JSON-Schema features the local runtime ignores."""
+def test_unsupported_schema_combinators_and_constraints_warn(keyword: str) -> None:
+    """Unsupported semantics remain provider-visible and produce compatibility warnings."""
     schema = {
         "type": "object",
         "properties": {
@@ -344,6 +344,5 @@ def test_unsupported_schema_combinators_and_constraints_fail_closed(keyword: str
         },
     }
 
-    with pytest.raises(HomeAssistantError, match="unsupported keyword") as err:
-        validate_function_schema(schema)
-    assert keyword in str(err.value)
+    warnings = validate_function_schema(schema)
+    assert any(keyword in warning for warning in warnings)

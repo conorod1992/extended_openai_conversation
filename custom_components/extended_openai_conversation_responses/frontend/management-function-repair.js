@@ -6,6 +6,10 @@ function repairIssue(panel) {
   return issue?.field === "functions" && issue?.repairable === true ? issue : null;
 }
 
+function functionRepairView(panel) {
+  return panel._viewKey?.() === "capabilities/functions";
+}
+
 function escapeHtml(panel, value) {
   if (typeof panel._e === "function") return panel._e(String(value ?? ""));
   return String(value ?? "")
@@ -21,9 +25,13 @@ function editableToolsText(tools) {
   return JSON.stringify(Array.isArray(tools) ? tools : [], null, 2);
 }
 
+function editableToolText(tool) {
+  return JSON.stringify(tool ?? {}, null, 2);
+}
+
 async function loadFunctionRepair(panel, silent = false) {
   const issue = repairIssue(panel);
-  if (!issue) return false;
+  if (!issue || !functionRepairView(panel)) return false;
   const loadToken = ++panel._loadToken;
   if (!silent) {
     panel._busy = true;
@@ -34,6 +42,7 @@ async function loadFunctionRepair(panel, silent = false) {
     if (panel._data?.is_admin !== true) {
       result = {
         tools: [],
+        invalid_tools: [],
         validation_error: issue.message,
         administrator_required: true,
       };
@@ -55,6 +64,22 @@ async function loadFunctionRepair(panel, silent = false) {
   return true;
 }
 
+function invalidToolEditors(panel, invalidTools) {
+  return invalidTools.map((item, order) => {
+    const label = item.name || `Function Tool ${Number(item.index) + 1}`;
+    const error = item.validation_error || "This Function Tool is invalid.";
+    return `
+      <article class="function-repair-item">
+        <h3>${escapeHtml(panel, label)}</h3>
+        <div class="error" role="alert">${escapeHtml(panel, error)}</div>
+        <label class="field">
+          <span>Invalid Function Tool</span>
+          <textarea class="function-repair-item-editor" data-repair-order="${order}" data-repair-index="${escapeHtml(panel, item.index)}" rows="14" spellcheck="false">${escapeHtml(panel, editableToolText(item.tool))}</textarea>
+        </label>
+      </article>`;
+  }).join("");
+}
+
 function renderFunctionRepair(panel, issue) {
   const result = panel._result || {};
   const validationError = result.validation_error || issue.message || "The saved Function Tools are invalid.";
@@ -63,24 +88,54 @@ function renderFunctionRepair(panel, issue) {
       <section class="card function-repair" aria-labelledby="function-repair-title">
         <h2 id="function-repair-title">Function Tools need repair</h2>
         <div class="error" role="alert">${escapeHtml(panel, validationError)}</div>
-        <p>This conversation agent is still configured, but its saved Function Tools no longer pass the current validation rules.</p>
+        <p>This conversation agent is still configured, but one or more saved Function Tools no longer pass the current validation rules.</p>
         <p>Administrator permission is required to repair this configuration.</p>
       </section>`;
   }
+
+  const invalidTools = Array.isArray(result.invalid_tools) ? result.invalid_tools : [];
+  const isolated = invalidTools.length > 0;
   return `
     <section class="card function-repair" aria-labelledby="function-repair-title">
       <h2 id="function-repair-title">Function Tools need repair</h2>
-      <p>This conversation agent is still configured, but its saved Function Tools no longer pass the current validation rules. Other configuration is locked until the Function Tools are repaired.</p>
-      <div class="error" role="alert">${escapeHtml(panel, validationError)}</div>
-      <label class="field">
-        <span>Saved Function Tools</span>
-        <textarea id="function-repair-editor" rows="20" spellcheck="false" aria-describedby="function-repair-help">${escapeHtml(panel, editableToolsText(result.tools))}</textarea>
-      </label>
-      <p id="function-repair-help" class="muted">Edit this as a JSON array. Saving validates the replacement with the current Function Tool rules and changes only the Function Tools field; unrelated agent settings are preserved.</p>
+      <p>${isolated
+        ? `${invalidTools.length} invalid Function Tool${invalidTools.length === 1 ? " is" : "s are"} shown below. Valid Function Tools are left untouched, and other assistant settings remain editable.`
+        : "The saved Function Tools cannot be isolated individually, so the complete saved value is shown for repair. Other assistant settings remain editable."}</p>
+      ${isolated ? invalidToolEditors(panel, invalidTools) : `
+        <div class="error" role="alert">${escapeHtml(panel, validationError)}</div>
+        <label class="field">
+          <span>Saved Function Tools</span>
+          <textarea id="function-repair-editor" rows="20" spellcheck="false" aria-describedby="function-repair-help">${escapeHtml(panel, editableToolsText(result.tools))}</textarea>
+        </label>`}
+      <p id="function-repair-help" class="muted">Saving validates the complete Function Tool collection with the current rules and changes only the Function Tools field; unrelated agent settings are preserved.</p>
       <div class="actions">
-        <button id="function-repair-save" type="button">Validate and save Function Tools</button>
+        <button id="function-repair-save" type="button">Validate and save repair</button>
       </div>
     </section>`;
+}
+
+function repairedToolsFromEditors(panel) {
+  const result = panel._result || {};
+  const invalidTools = Array.isArray(result.invalid_tools) ? result.invalid_tools : [];
+  if (!invalidTools.length) {
+    const editor = panel.shadowRoot?.querySelector?.("#function-repair-editor");
+    const tools = JSON.parse(editor?.value || "");
+    if (!Array.isArray(tools)) throw new Error("Function Tools must be a JSON array");
+    return tools;
+  }
+
+  if (!Array.isArray(result.tools)) {
+    throw new Error("Saved Function Tools are not an array and cannot be repaired individually");
+  }
+  const tools = JSON.parse(JSON.stringify(result.tools));
+  panel.shadowRoot?.querySelectorAll?.(".function-repair-item-editor").forEach((editor) => {
+    const index = Number(editor.dataset.repairIndex);
+    if (!Number.isInteger(index) || index < 0 || index >= tools.length) {
+      throw new Error("An invalid Function Tool changed position; reload and try again");
+    }
+    tools[index] = JSON.parse(editor.value || "");
+  });
+  return tools;
 }
 
 function bindFunctionRepair(panel) {
@@ -89,16 +144,11 @@ function bindFunctionRepair(panel) {
   button.dataset.eocBound = "true";
   button.addEventListener("click", () => {
     void (async () => {
-      const editor = panel.shadowRoot?.querySelector?.("#function-repair-editor");
       let tools;
       try {
-        tools = JSON.parse(editor?.value || "");
+        tools = repairedToolsFromEditors(panel);
       } catch (err) {
         panel._toast(`Function Tools must be valid JSON: ${err.message || String(err)}`, true);
-        return;
-      }
-      if (!Array.isArray(tools)) {
-        panel._toast("Function Tools must be a JSON array", true);
         return;
       }
       if (typeof panel._setSaving === "function") panel._setSaving(button, true);
@@ -110,6 +160,8 @@ function bindFunctionRepair(panel) {
         });
         const selectedId = panel._agentId;
         await panel._loadAgents(selectedId);
+        panel._clearConfigDraft?.();
+        await panel._loadSection?.();
         panel._toast("Function Tools repaired");
       } catch (err) {
         panel._toast(`Unable to repair Function Tools: ${err.message || String(err)}`, true);
@@ -127,16 +179,38 @@ function install() {
   const prototype = Panel.prototype;
   prototype[PATCHED] = true;
 
+  const originalCall = prototype._call;
+  prototype._call = function(section, action, data = {}) {
+    if (repairIssue(this) && section === "configuration") {
+      const repairAction = {
+        get: "configuration_get",
+        validate: "configuration_validate",
+        save: "configuration_save",
+        update: "configuration_save",
+      }[action];
+      if (repairAction) {
+        return originalCall.call(this, "function_repair", repairAction, data);
+      }
+    }
+    return originalCall.call(this, section, action, data);
+  };
+
   const originalLoadSection = prototype._loadSection;
   prototype._loadSection = function(silent = false) {
-    if (repairIssue(this)) return loadFunctionRepair(this, silent);
+    if (repairIssue(this) && functionRepairView(this)) {
+      return loadFunctionRepair(this, silent);
+    }
     return originalLoadSection.call(this, silent);
   };
 
   const originalContent = prototype._content;
   prototype._content = function(agent) {
     const issue = agent?.configuration_issue;
-    if (issue?.field === "functions" && issue?.repairable === true) {
+    if (
+      functionRepairView(this)
+      && issue?.field === "functions"
+      && issue?.repairable === true
+    ) {
       return renderFunctionRepair(this, issue);
     }
     return originalContent.call(this, agent);
@@ -145,7 +219,7 @@ function install() {
   const originalRender = prototype._render;
   prototype._render = function(...args) {
     const result = originalRender.apply(this, args);
-    if (repairIssue(this)) bindFunctionRepair(this);
+    if (repairIssue(this) && functionRepairView(this)) bindFunctionRepair(this);
     return result;
   };
   return true;
@@ -158,7 +232,9 @@ if (typeof customElements !== "undefined") {
 export {
   bindFunctionRepair,
   editableToolsText,
+  functionRepairView,
   loadFunctionRepair,
   renderFunctionRepair,
   repairIssue,
+  repairedToolsFromEditors,
 };
