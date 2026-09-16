@@ -89,6 +89,17 @@ export function nativeStarterConfig(yaml, originalName = null) {
   };
 }
 
+export function repairToolConfig(panel) {
+  const index = panel?._repairToolIndex;
+  if (!Number.isInteger(index)) return null;
+  const invalidTools = panel?._result?.function_repair?.invalid_tools;
+  if (!Array.isArray(invalidTools)) return null;
+  const item = invalidTools.find((candidate) => Number(candidate?.index) === index);
+  const tool = item?.tool;
+  if (!tool || typeof tool !== "object" || Array.isArray(tool)) return null;
+  return tool;
+}
+
 export function decorateToolYamlEditor(html) {
   if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
   const template = document.createElement("template");
@@ -259,6 +270,18 @@ export function bindNativeToolYaml(panel) {
       if (setNativeValue({})) nativeEditor.isValid = true;
       return;
     }
+
+    // An isolatable repair tool is already known to be syntactically parseable: the
+    // backend supplied its parsed object alongside the semantic validation error.
+    // Keep that object in Home Assistant's native YAML editor even though it cannot
+    // yet pass Function Tool validation. Save/Validate remains the authoritative
+    // semantic boundary after the user edits it.
+    const repairConfig = repairToolConfig(panel);
+    if (repairConfig) {
+      setNativeValue(repairConfig);
+      return;
+    }
+
     try {
       const result = await panel._call("tools", "validate_yaml", {yaml});
       if (!nativeReady || generation !== syncGeneration) return;
