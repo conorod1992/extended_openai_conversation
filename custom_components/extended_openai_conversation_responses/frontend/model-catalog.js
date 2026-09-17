@@ -56,10 +56,7 @@ export function modelDataStatusText(result = {}) {
   if (result.update_available && Number.isInteger(available)) {
     return `Update available: ${activeLabel} → v${available}. The newer catalogue will not be used until you apply it.`;
   }
-  if (result.source === "bundled") {
-    return `Using bundled model data (${activeLabel}). Background checks run daily but do not apply updates automatically.`;
-  }
-  return `Model data is current (${activeLabel}). Background checks run daily; updates are applied only when you choose to apply them.`;
+  return `Up to date — model data ${activeLabel}`;
 }
 
 export function modelDataControls() {
