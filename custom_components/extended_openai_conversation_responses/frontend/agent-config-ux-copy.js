@@ -42,6 +42,15 @@ function polishRenderedCopy(panel) {
     const heading = section.querySelector("strong")?.textContent?.trim() || "";
     if (heading === "Conversation archive enabled" || heading === "Conversation archive disabled") section.remove();
   });
+
+  root.querySelectorAll("section.content-card").forEach((section) => {
+    const heading = section.querySelector(".section-heading h2");
+    if (heading?.textContent?.trim() !== "Knowledge Library") return;
+    heading.textContent = "Sources";
+    const summary = section.querySelector(".section-heading p");
+    const match = summary?.textContent?.trim().match(/^(\d[\d,]*) source(s?) stored locally for on-demand search\.$/);
+    if (match) summary.textContent = `${match[1]} source${match[2]}`;
+  });
 }
 
 export function installManagementCopyPolish(registry = globalThis.customElements) {
