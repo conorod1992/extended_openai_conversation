@@ -1,5 +1,45 @@
+const MANAGEMENT_COPY_PATCHED = Symbol.for("extended-openai.management-copy-polish");
+
 function replaceText(html, from, to) {
   return String(html || "").replace(from, to);
+}
+
+function replaceRenderedText(root, from, to) {
+  root?.querySelectorAll?.("h1,h2,h3,p,small,strong,span").forEach((node) => {
+    if (node.childElementCount === 0 && node.textContent?.trim() === from) node.textContent = to;
+  });
+}
+
+function polishRenderedCopy(panel) {
+  const root = panel?.shadowRoot;
+  if (!root) return;
+
+  replaceRenderedText(root, "Usage detail maintenance", "Manage usage history");
+  root.querySelectorAll("p").forEach((node) => {
+    if (node.textContent?.trim() === "Retention is available in the local Retention & maintenance subsection.") node.remove();
+  });
+  replaceRenderedText(
+    root,
+    "Daily, monthly, and lifetime totals are never removed by detail pruning.",
+    "Overall daily, monthly and lifetime totals are not cleared.",
+  );
+}
+
+export function installManagementCopyPolish(registry = globalThis.customElements) {
+  if (!registry?.whenDefined) return Promise.resolve(false);
+  return registry.whenDefined("extended-openai-management-panel").then(() => {
+    const constructor = registry.get("extended-openai-management-panel");
+    const prototype = constructor?.prototype;
+    if (!prototype || prototype[MANAGEMENT_COPY_PATCHED]) return false;
+    const originalRender = prototype._render;
+    prototype._render = function(...args) {
+      const result = originalRender.apply(this, args);
+      queueMicrotask(() => polishRenderedCopy(this));
+      return result;
+    };
+    prototype[MANAGEMENT_COPY_PATCHED] = true;
+    return true;
+  });
 }
 
 export function polishConfigurationCopy(panel, html) {
@@ -167,4 +207,8 @@ export function polishConfigurationCopy(panel, html) {
   );
 
   return result;
+}
+
+if (typeof document !== "undefined" && typeof customElements !== "undefined") {
+  installManagementCopyPolish();
 }
