@@ -20,6 +20,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
 )
 from custom_components.extended_openai_conversation_responses.management_function_repair import (
+    _export_safe_subentry,
     async_function_repair,
     function_tools_issue,
     isolated_function_tools,
@@ -227,3 +228,120 @@ async def test_function_repair_requires_admin() -> None:
                 "subentry_id": subentry.subentry_id,
             },
         )
+
+
+def test_management_websocket_schema_accepts_function_tool_index() -> None:
+    """The repair command index must survive WebSocket schema validation."""
+    schema = management_ui.websocket_management._ws_schema
+
+    validated = schema(
+        {
+            "id": 1,
+            "type": management_ui.WS_COMMAND,
+            "section": "function_repair",
+            "action": "delete_one",
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "index": 36,
+        }
+    )
+
+    assert validated["index"] == 36
+
+
+@pytest.mark.asyncio
+async def test_function_repair_delete_one_removes_invalid_tool_and_group_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deleting a quarantined tool uses its raw index and cleans group membership."""
+    data, mixed, valid_tool = _mixed_legacy_tool_data()
+    valid_name = valid_tool["spec"]["name"]
+    broken_name = mixed[1]["spec"]["name"]
+    data[CONF_FUNCTION_GROUPS] = [
+        {
+            "id": "repair_tools",
+            "name": "Repair tools",
+            "description": "Tools used by the repair regression test",
+            "loading_mode": "always",
+            "functions": [valid_name, broken_name],
+            "guest_allowed": False,
+            "enabled": True,
+        }
+    ]
+    entry, subentry = _entry_and_subentry(data)
+    config_entries = _FakeConfigEntries()
+    hass = SimpleNamespace(data={}, config_entries=config_entries)
+    monkeypatch.setattr(
+        management_ui,
+        "entry_and_agent",
+        lambda *_args, **_kwargs: (entry, subentry),
+    )
+
+    repair = await async_function_repair(
+        hass,
+        "admin",
+        True,
+        {
+            "action": "get",
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+        },
+    )
+    result = await async_function_repair(
+        hass,
+        "admin",
+        True,
+        {
+            "action": "delete_one",
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+            "revision": repair["revision"],
+            "index": 1,
+        },
+    )
+
+    persisted_tools = yaml.safe_load(subentry.data[CONF_FUNCTION_TOOLS])
+    assert [tool["spec"]["name"] for tool in persisted_tools] == [valid_name]
+    assert subentry.data[CONF_FUNCTION_GROUPS][0]["functions"] == [valid_name]
+    assert result["function_repair"]["invalid_count"] == 0
+    assert config_entries.updates == 1
+
+
+def test_export_safe_subentry_omits_only_invalid_tools_and_warns() -> None:
+    """Exports preserve valid siblings while quarantining invalid Function Tools."""
+    data, mixed, valid_tool = _mixed_legacy_tool_data()
+    valid_name = valid_tool["spec"]["name"]
+    broken_name = mixed[1]["spec"]["name"]
+    data[CONF_FUNCTION_GROUPS] = [
+        {
+            "id": "export_tools",
+            "name": "Export tools",
+            "description": "Tools used by the export regression test",
+            "loading_mode": "always",
+            "functions": [valid_name, broken_name],
+            "guest_allowed": False,
+            "enabled": True,
+        }
+    ]
+    subentry = SimpleNamespace(
+        subentry_id="agent-1",
+        subentry_type="conversation",
+        title="Broken agent",
+        data=data,
+    )
+
+    safe_subentry, warnings = _export_safe_subentry(subentry)
+
+    exported_tools = yaml.safe_load(safe_subentry.data[CONF_FUNCTION_TOOLS])
+    assert [tool["spec"]["name"] for tool in exported_tools] == [valid_name]
+    assert safe_subentry.data[CONF_FUNCTION_GROUPS][0]["functions"] == [valid_name]
+    assert warnings == [
+        {
+            "code": "invalid_function_tools_omitted",
+            "message": warnings[0]["message"],
+            "count": 1,
+            "names": [broken_name],
+        }
+    ]
+    assert broken_name in warnings[0]["message"]
+    assert "omitted" in warnings[0]["message"]
