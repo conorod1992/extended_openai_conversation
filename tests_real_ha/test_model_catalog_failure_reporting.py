@@ -29,12 +29,12 @@ async def test_manual_update_failure_returns_websocket_error_and_keeps_current_d
     )
 
     await admin.send_json_auto_id(
-        {"type": runtime.WS_CATALOG, "action": "update", "model": "gpt-5.6"}
+        {"type": runtime.WS_CATALOG, "action": "check", "model": "gpt-5.6"}
     )
     result = await admin.receive_json()
 
     assert result["success"] is False
-    assert result["error"]["code"] == "model_catalog_update_failed"
+    assert result["error"]["code"] == "model_catalog_check_failed"
     assert "current catalogue was kept" in result["error"]["message"]
     assert get.call_count == 1
 
@@ -42,8 +42,8 @@ async def test_manual_update_failure_returns_websocket_error_and_keeps_current_d
     assert manager.status()["source"] == "bundled"
     assert manager.status()["last_error"]
 
-    # A failed manual refresh is still just a failed refresh: the existing model
-    # catalogue remains usable immediately through the same registered WS command.
+    # A failed manual check leaves the existing model catalogue usable immediately
+    # through the same registered WebSocket command.
     await admin.send_json_auto_id(
         {"type": runtime.WS_CATALOG, "action": "lookup", "model": "gpt-5.6"}
     )
