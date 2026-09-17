@@ -48,5 +48,26 @@ export function polishConfigurationCopy(panel, html) {
     "Allow the assistant to search your Knowledge Library when useful.",
   );
 
+  result = replaceText(
+    result,
+    "Keep conversations locally so you can review them or let the assistant find earlier discussions.",
+    "Manage saved conversation history and search.",
+  );
+  result = replaceText(
+    result,
+    '<small>Stores conversations locally for later review and optional search by the assistant.</small>',
+    "",
+  );
+  result = replaceText(
+    result,
+    "Start a new archive after (minutes)",
+    "New conversation after inactivity (minutes)",
+  );
+  result = replaceText(
+    result,
+    "After this much inactivity, the next message is saved as a new archived conversation.",
+    "After this much inactivity, the next message starts a new saved conversation.",
+  );
+
   return result;
 }
