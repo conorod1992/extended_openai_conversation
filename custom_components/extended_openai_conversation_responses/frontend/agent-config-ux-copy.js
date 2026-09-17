@@ -80,5 +80,32 @@ export function polishConfigurationCopy(panel, html) {
     "",
   );
 
+  result = replaceText(
+    result,
+    "Clean text before it is spoken while retaining the original assistant response for history and context.",
+    "Adjust text before it is spoken without changing the saved assistant response.",
+  );
+  result = replaceText(result, "Speech post-processing", "Clean responses for speech");
+  result = replaceText(
+    result,
+    '<small>Cleans text before it is spoken without changing the retained original assistant response.</small>',
+    "",
+  );
+  result = replaceText(
+    result,
+    "Remove Markdown links and formatting",
+    "Remove Markdown formatting",
+  );
+  result = replaceText(
+    result,
+    "Removes Markdown links and formatting from progressive and completed spoken output.",
+    "Stops formatting and Markdown links from being read aloud.",
+  );
+  result = replaceText(
+    result,
+    "Rules run on the completed response. Progressive TTS is disabled when custom rules are configured.",
+    "Replace words or patterns in spoken responses. Streaming speech is disabled while custom replacements are active.",
+  );
+
   return result;
 }
