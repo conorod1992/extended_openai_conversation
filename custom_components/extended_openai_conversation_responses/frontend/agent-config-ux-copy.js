@@ -58,6 +58,16 @@ function polishRenderedCopy(panel) {
     healthFootnote.textContent = "Connection tests only run when you start one from Diagnostics.";
     if (icon) healthFootnote.prepend(icon, " ");
   }
+
+  const broadcastIntro = root.querySelector(".broadcast-heading p");
+  if (broadcastIntro) {
+    broadcastIntro.textContent = "Send a spoken message to selected Assist satellites or the whole home. Busy satellites wait until they are free.";
+  }
+  const broadcastState = root.querySelector(".broadcast-toggle-row p");
+  if (broadcastState) {
+    if (broadcastState.textContent?.trim().startsWith("Broadcast is available to")) broadcastState.remove();
+    else if (broadcastState.textContent?.trim().startsWith("Broadcast is off.")) broadcastState.textContent = "Broadcast is currently off.";
+  }
 }
 
 export function installManagementCopyPolish(registry = globalThis.customElements) {
