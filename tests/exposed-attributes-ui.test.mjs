@@ -103,6 +103,18 @@ const basePanel = () => ({
 
 {
   const panel = basePanel();
+  panel._result.function_repair = {
+    required: true,
+    isolatable: true,
+    invalid_count: 1,
+  };
+  const html = renderExposedAttributeSettings(panel);
+  assert.match(html, /Kitchen Lamp/);
+  assert.doesNotMatch(html, /Unable to load exposed entity attributes/);
+}
+
+{
+  const panel = basePanel();
   panel._exposedAttributeEntityId = "light.kitchen";
   const html = renderExposedAttributeSettings(panel);
   assert.match(html, /data-exposed-editor/);
