@@ -231,8 +231,10 @@ async def test_reset_persistence_failure_keeps_published_catalog_and_can_retry(
     assert succeeded["source"] == "bundled"
     assert succeeded["last_error"] is None
     assert manager.catalog is None
-    assert manager.etag is None
+    assert manager.available_catalog == downloaded
+    assert manager.etag == '"v2"'
     assert manager.store.saved["catalog"] is None
+    assert manager.store.saved["available_catalog"] == downloaded
     assert runtime.model_metadata("gpt-5.6")["reasoning"]["efforts"] == [
         "none",
         "low",
@@ -276,10 +278,13 @@ async def test_concurrent_ordinary_refreshes_share_one_fetch(manager, monkeypatc
 
     assert get.call_count == 1
     assert first_result == second_result
-    assert first_result["source"] == "downloaded"
+    assert first_result["source"] == "bundled"
+    assert first_result["update_available"] is True
     assert first_result["last_error"] is None
-    assert manager.catalog == candidate()
-    assert manager.store.saved["catalog"] == candidate()
+    assert manager.catalog is None
+    assert manager.available_catalog == candidate()
+    assert manager.store.saved["catalog"] is None
+    assert manager.store.saved["available_catalog"] == candidate()
 
 
 async def test_failed_refresh_keeps_downloaded_catalog_and_forced_retry_succeeds(
@@ -313,7 +318,10 @@ async def test_failed_refresh_keeps_downloaded_catalog_and_forced_retry_succeeds
 
     assert success_get.call_count == 1
     assert succeeded["source"] == "downloaded"
+    assert succeeded["update_available"] is True
     assert succeeded["last_error"] is None
-    assert manager.catalog == refreshed
+    assert manager.catalog == downloaded
+    assert manager.available_catalog == refreshed
     assert manager.etag == '"v3"'
-    assert manager.store.saved["catalog"] == refreshed
+    assert manager.store.saved["catalog"] == downloaded
+    assert manager.store.saved["available_catalog"] == refreshed
