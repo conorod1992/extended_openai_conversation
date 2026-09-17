@@ -139,5 +139,13 @@ export function polishConfigurationCopy(panel, html) {
     "Lets the assistant correct and retry mistakes only when no action could already have started. Other failed actions are never retried automatically.",
   );
 
+  result = replaceText(
+    result,
+    "Lightweight lexical is local and dependency-free. Hybrid semantic uses embeddings and falls back to lexical if unavailable.",
+    "Semantic matching can find memories with related meaning, not just similar words. It falls back to local matching if unavailable.",
+  );
+  result = replaceText(result, ">Lightweight lexical<", ">Fast local matching<");
+  result = replaceText(result, ">Hybrid semantic<", ">Semantic matching<");
+
   return result;
 }
