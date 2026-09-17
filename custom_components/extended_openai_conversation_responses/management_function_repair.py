@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from hashlib import sha256
+from types import SimpleNamespace
 from typing import Any
 
 import yaml
@@ -22,6 +23,7 @@ from .performance import cached_configured_function_tools_from_data
 _STALE_CONFIGURATION_ERROR = (
     "Agent configuration changed in another tab; reload before saving"
 )
+_EXPORT_RECOVERY_INSTALLED = False
 
 
 def editable_function_tools(options: dict[str, Any]) -> Any:
@@ -152,6 +154,92 @@ def _safe_function_configuration(options: dict[str, Any]) -> dict[str, Any]:
         effective_function_configuration(options)
     )
     return safe
+
+
+def _export_safe_subentry(subentry: Any) -> tuple[Any, list[dict[str, Any]]]:
+    """Return an export-only view with invalid Function Tools quarantined."""
+    persisted = dict(subentry.data)
+    _usable, issue = function_tools_issue(persisted)
+    if issue is None:
+        return subentry, []
+
+    safe, invalid, _group_issues, _raw_groups, _issue = (
+        effective_function_configuration(persisted)
+    )
+    names = [
+        str(item["name"])
+        for item in invalid
+        if isinstance(item.get("name"), str) and item["name"]
+    ]
+    if invalid:
+        count = len(invalid)
+        named = f" ({', '.join(names[:5])}{'…' if len(names) > 5 else ''})" if names else ""
+        message = (
+            f"{count} invalid Function Tool{' was' if count == 1 else 's were'} omitted "
+            f"from this export{named}. Other data was preserved unchanged; Request Rules "
+            "that reference an omitted tool may need repair before restore."
+        )
+    else:
+        message = (
+            "The invalid saved Function Tool configuration was omitted from this export. "
+            "Other data was preserved unchanged; Request Rules that reference an omitted "
+            "tool may need repair before restore."
+        )
+
+    export_subentry = SimpleNamespace(
+        data=safe,
+        subentry_id=subentry.subentry_id,
+        subentry_type=getattr(subentry, "subentry_type", "conversation"),
+        title=subentry.title,
+    )
+    return export_subentry, [
+        {
+            "code": "invalid_function_tools_omitted",
+            "message": message,
+            "count": len(invalid),
+            "names": names,
+        }
+    ]
+
+
+def install_export_function_recovery() -> bool:
+    """Keep export available while persisted Function Tools are quarantined."""
+    global _EXPORT_RECOVERY_INSTALLED
+    if _EXPORT_RECOVERY_INSTALLED:
+        return False
+
+    from . import backup_transfer, transfer
+
+    original = backup_transfer.async_backup_transfer_command
+
+    async def wrapped(hass: HomeAssistant, message: dict[str, Any]) -> dict[str, Any]:
+        action = message.get("action")
+        if action not in {"setup_export", "export_start"}:
+            return await original(hass, message)
+
+        entry_id = message.get("entry_id")
+        subentry_id = message.get("subentry_id")
+        if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
+            return await original(hass, message)
+        entry, subentry = backup_transfer._resolve_agent(hass, entry_id, subentry_id)
+        safe_subentry, warnings = _export_safe_subentry(subentry)
+        if not warnings:
+            return await original(hass, message)
+
+        if action == "setup_export":
+            result = await transfer.async_create_setup_export(hass, entry, safe_subentry)
+        else:
+            data = message.get("data") or {}
+            if not isinstance(data, dict):
+                return await original(hass, message)
+            result = await backup_transfer._start_export(
+                hass, entry, safe_subentry, data
+            )
+        return {**result, "warnings": warnings}
+
+    backup_transfer.async_backup_transfer_command = wrapped
+    _EXPORT_RECOVERY_INSTALLED = True
+    return True
 
 
 def _revision_for_data(management_ui: Any, title: str, data: dict[str, Any]) -> str:
@@ -502,3 +590,9 @@ async def async_function_repair(
             hass, entry, subentry, config=persisted
         ),
     }
+
+
+# management_loading_performance imports this recovery module during integration
+# startup, after backup_transfer is available. Keep the export seam narrow: only
+# export commands are wrapped, and only when Function Tool validation is broken.
+install_export_function_recovery()
