@@ -35,8 +35,9 @@ function ensureStyles(panel) {
     .eoc-model-data-heading{display:grid;gap:6px}
     .eoc-model-data-heading h3{margin:0;color:var(--primary-text-color);font-size:16px}
     .eoc-model-data-heading p{max-width:860px;margin:0;color:var(--secondary-text-color);font-size:13px;line-height:1.5}
-    .eoc-model-data-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .eoc-model-data-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:12px}
     .eoc-model-data-action{display:flex;min-width:0;flex-direction:column;align-items:flex-start;gap:7px;padding:14px;border:1px solid var(--divider-color);border-radius:10px;background:color-mix(in srgb,var(--secondary-background-color) 32%,var(--card-background-color))}
+    .eoc-model-data-action[hidden]{display:none}
     .eoc-model-data-action strong{color:var(--primary-text-color);font-size:13px;line-height:1.35}
     .eoc-model-data-action p{flex:1;margin:0;color:var(--secondary-text-color);font-size:12px;line-height:1.45}
     .eoc-model-data-action button{width:100%;margin-top:4px}
@@ -78,6 +79,7 @@ function modelActionCard(button, title, text) {
   if (!button) return null;
   const card = document.createElement("div");
   card.className = "eoc-model-data-action";
+  card.hidden = button.hidden;
   const heading = document.createElement("strong");
   heading.textContent = title;
   const copy = document.createElement("p");
@@ -92,12 +94,13 @@ function enhanceModelDataPanel(panel) {
   const section = root?.querySelector("#config-model");
   if (!section || section.querySelector("[data-eoc-model-data-panel]")) return;
 
-  const updateData = section.querySelector('[data-model-data="update"]');
+  const checkData = section.querySelector('[data-model-data="check"], [data-model-data="update"]');
+  const applyData = section.querySelector('[data-model-data="apply"]');
   const useBundled = section.querySelector('[data-model-data="reset"]');
   const status = section.querySelector("[data-model-data-status]");
-  if (!updateData || !useBundled || !status) return;
+  if (!checkData || !useBundled || !status) return;
 
-  const oldActions = updateData.closest(".section-actions");
+  const oldActions = checkData.closest(".section-actions");
   const panelNode = document.createElement("div");
   panelNode.className = "eoc-model-data-panel";
   panelNode.dataset.eocModelDataPanel = "";
@@ -107,23 +110,28 @@ function enhanceModelDataPanel(panel) {
   const title = document.createElement("h3");
   title.textContent = "Model capability data";
   const intro = document.createElement("p");
-  intro.textContent = "Extended OpenAI uses shared capability data to decide which parameters and API features each model supports. Update checks can be run manually here, while bundled data provides a known-good fallback shipped with the integration.";
+  intro.textContent = "Extended OpenAI uses shared capability data to decide which parameters and API features each model supports. It checks for newer data daily but applies changes only when you approve them.";
   heading.append(title, intro);
 
   const actions = document.createElement("div");
   actions.className = "eoc-model-data-actions";
   const cards = [
     modelActionCard(
-      updateData,
-      "Check for model data updates",
-      "Check the remote model catalogue now instead of waiting for the next scheduled check.",
+      checkData,
+      "Check for updates",
+      "Check the remote model catalogue now instead of waiting for the next daily background check.",
+    ),
+    modelActionCard(
+      applyData,
+      "Apply available update",
+      "Activate the newer catalogue found by the most recent check. This changes the shared capability data used by all agents.",
     ),
     modelActionCard(
       useBundled,
       "Restore bundled data",
-      "Return to the model capability data shipped with this installed integration.",
+      "Return to the known-good model capability data shipped with this installed integration. Future checks will not replace it automatically.",
     ),
-  ];
+  ].filter(Boolean);
   actions.append(...cards);
 
   const statusBox = document.createElement("div");
