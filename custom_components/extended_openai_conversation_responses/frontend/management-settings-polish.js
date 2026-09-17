@@ -14,22 +14,28 @@ function ensureStyles(panel) {
   const style = document.createElement("style");
   style.dataset.eocSettingsPolish = "";
   style.textContent = `
+    [data-eoc-guide-layout]{grid-template-columns:minmax(0,1fr)!important}
+    [data-eoc-guide-layout]>*{min-width:0;max-width:100%}
     .guide-quick-start,
     .guide-quick-tasks,
     .guide-quick-card,
+    .guide-search,
     .guide-groups,
     .guide-group,
+    .guide-group-heading,
     .guide-topics,
     .guide-topic{min-width:0;max-width:100%}
     .guide-quick-tasks{grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr))!important}
     .guide-quick-card{width:100%;overflow-wrap:anywhere}
+    .comparison-table{min-width:0;max-width:100%;overflow-x:auto}
+    .comparison-table table{max-width:none}
     [data-field="conversation_continuity"]{align-content:start}
     #config-conversation_continuity{height:42px;min-height:42px}
     .eoc-model-data-panel{display:grid;gap:14px;margin-top:30px;padding-top:26px;border-top:1px solid var(--divider-color)}
     .eoc-model-data-heading{display:grid;gap:6px}
     .eoc-model-data-heading h3{margin:0;color:var(--primary-text-color);font-size:16px}
     .eoc-model-data-heading p{max-width:860px;margin:0;color:var(--secondary-text-color);font-size:13px;line-height:1.5}
-    .eoc-model-data-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+    .eoc-model-data-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
     .eoc-model-data-action{display:flex;min-width:0;flex-direction:column;align-items:flex-start;gap:7px;padding:14px;border:1px solid var(--divider-color);border-radius:10px;background:color-mix(in srgb,var(--secondary-background-color) 32%,var(--card-background-color))}
     .eoc-model-data-action strong{color:var(--primary-text-color);font-size:13px;line-height:1.35}
     .eoc-model-data-action p{flex:1;margin:0;color:var(--secondary-text-color);font-size:12px;line-height:1.45}
@@ -40,6 +46,15 @@ function ensureStyles(panel) {
     @media(max-width:900px){.eoc-model-data-actions{grid-template-columns:1fr}}
   `;
   root.append(style);
+}
+
+function applyGuideLayout(panel) {
+  const root = panel?.shadowRoot;
+  if (!root) return;
+  const main = root.querySelector("[data-eoc-main]") || root.querySelector("main");
+  if (!main) return;
+  if (root.querySelector(".guide-quick-start")) main.dataset.eocGuideLayout = "";
+  else delete main.dataset.eocGuideLayout;
 }
 
 function pruneRedundantBadges(panel) {
@@ -77,11 +92,10 @@ function enhanceModelDataPanel(panel) {
   const section = root?.querySelector("#config-model");
   if (!section || section.querySelector("[data-eoc-model-data-panel]")) return;
 
-  const resetParameters = section.querySelector("#reset-advanced");
   const updateData = section.querySelector('[data-model-data="update"]');
   const useBundled = section.querySelector('[data-model-data="reset"]');
   const status = section.querySelector("[data-model-data-status]");
-  if (!resetParameters || !updateData || !useBundled || !status) return;
+  if (!updateData || !useBundled || !status) return;
 
   const oldActions = updateData.closest(".section-actions");
   const panelNode = document.createElement("div");
@@ -91,39 +105,31 @@ function enhanceModelDataPanel(panel) {
   const heading = document.createElement("div");
   heading.className = "eoc-model-data-heading";
   const title = document.createElement("h3");
-  title.textContent = "Model data & defaults";
+  title.textContent = "Model capability data";
   const intro = document.createElement("p");
-  intro.textContent = "Extended OpenAI uses shared model capability data to decide which parameters and API features each model supports. It checks for newer data automatically each day; the controls below are for manual refreshes, fallback, and restoring this assistant's parameter defaults.";
+  intro.textContent = "Extended OpenAI uses shared capability data to decide which parameters and API features each model supports. Update checks can be run manually here, while bundled data provides a known-good fallback shipped with the integration.";
   heading.append(title, intro);
 
   const actions = document.createElement("div");
   actions.className = "eoc-model-data-actions";
   const cards = [
     modelActionCard(
-      resetParameters,
-      "Reset this assistant's parameters",
-      "Restore the model-parameter settings above to their defaults. This does not change the shared model capability data.",
-    ),
-    modelActionCard(
       updateData,
       "Check for model data updates",
-      "Download the latest shared capability data now instead of waiting for the automatic daily check.",
+      "Check the remote model catalogue now instead of waiting for the next scheduled check.",
     ),
     modelActionCard(
       useBundled,
-      "Use bundled model data",
-      "Return to the capability data shipped with this integration. A later successful daily check can download newer data again.",
+      "Restore bundled data",
+      "Return to the model capability data shipped with this installed integration.",
     ),
-  ].filter(Boolean);
+  ];
   actions.append(...cards);
 
   const statusBox = document.createElement("div");
   statusBox.className = "eoc-model-data-status";
   const statusTitle = document.createElement("strong");
   statusTitle.textContent = "Model data status";
-  if (status.textContent?.trim().startsWith("Model data is shared by all agents")) {
-    status.textContent = "Automatic update checks run daily. Use the manual controls above only when you want to refresh or fall back immediately.";
-  }
   statusBox.append(statusTitle, status);
 
   oldActions?.remove();
@@ -133,6 +139,7 @@ function enhanceModelDataPanel(panel) {
 
 export function polishSettingsLayout(panel) {
   ensureStyles(panel);
+  applyGuideLayout(panel);
   pruneRedundantBadges(panel);
   enhanceModelDataPanel(panel);
 }
