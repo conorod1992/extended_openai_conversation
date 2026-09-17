@@ -69,5 +69,16 @@ export function polishConfigurationCopy(panel, html) {
     "After this much inactivity, the next message starts a new saved conversation.",
   );
 
+  result = replaceText(
+    result,
+    '<small>Choose whether the request uses no retained personal data, shared household data, a default user, or a device mapping.</small>',
+    "",
+  );
+  result = replaceText(
+    result,
+    '<small>Choose whose data to use when a voice device is not assigned to a user.</small>',
+    "",
+  );
+
   return result;
 }
