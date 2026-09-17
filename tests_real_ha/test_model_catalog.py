@@ -57,29 +57,44 @@ async def test_admin_update_reload_and_reset_using_registered_command(
         )
         return await client.receive_json()
 
-    denied = await command(non_admin, "update")
+    denied = await command(non_admin, "check")
     assert denied["success"] is False
     get.assert_not_called()
-    updated = await command(admin, "update")
-    assert updated["success"] is True
-    assert updated["result"]["source"] == "downloaded"
-    assert updated["result"]["reasoning_effort_options"][-1] == "minimal"
+
+    checked = await command(admin, "check")
+    assert checked["success"] is True
+    assert checked["result"]["source"] == "bundled"
+    assert checked["result"]["update_available"] is True
+    assert checked["result"]["available_catalog_version"] == value["catalog_version"]
+    assert checked["result"]["reasoning_effort_options"][-1] == "max"
+    assert get_reasoning_effort_options("gpt-5.6")[-1] == "max"
+
+    applied = await command(admin, "apply")
+    assert applied["success"] is True
+    assert applied["result"]["source"] == "downloaded"
+    assert applied["result"]["update_available"] is False
+    assert applied["result"]["reasoning_effort_options"][-1] == "minimal"
     assert get_reasoning_effort_options("gpt-5.6")[-1] == "minimal"
+
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert (await command(admin, "lookup"))["result"]["reasoning_effort_options"][
         -1
     ] == "minimal"
+
     # A fresh manager reads the real HA Store, rather than an in-memory test store.
     restarted = runtime.ModelCatalogManager(hass)
     await restarted.async_load()
     assert restarted.catalog == value
+    assert restarted.available_catalog is None
     assert restarted.etag == '"catalog-2"'
+
     denied = await command(non_admin, "reset")
     assert denied["success"] is False
     reset = await command(admin, "reset")
     assert reset["success"] is True
     assert reset["result"]["source"] == "bundled"
+    assert reset["result"]["update_available"] is True
     assert reset["result"]["reasoning_effort_options"] == [
         "none",
         "low",
@@ -88,6 +103,9 @@ async def test_admin_update_reload_and_reset_using_registered_command(
         "xhigh",
         "max",
     ]
+
     restarted = runtime.ModelCatalogManager(hass)
     await restarted.async_load()
     assert restarted.catalog is None
+    assert restarted.available_catalog == value
+    assert restarted.etag == '"catalog-2"'
