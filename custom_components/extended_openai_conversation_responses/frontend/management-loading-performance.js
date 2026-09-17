@@ -290,31 +290,42 @@ async function loadOverview(panel, silent = false) {
   }
 }
 
-function isCurrentLazyLoad(panel, view, loadToken) {
-  return panel._viewKey() === view && panel._loadToken === loadToken;
+function isCurrentLazyLoad(panel, view, assetToken) {
+  return panel._viewKey() === view && panel._eocViewAssetToken === assetToken;
 }
 
-function loadSectionAfterAsset(
+function loadSectionAlongsideAsset(
   panel,
   silent,
   originalLoadSection,
   view,
   assetPromise,
-  loadToken,
+  assetToken,
 ) {
-  return assetPromise
-    .then(() => {
-      if (!isCurrentLazyLoad(panel, view, loadToken)) return undefined;
-      if (view === "overview") return loadOverview(panel, silent);
-      return originalLoadSection.call(panel, silent);
-    })
-    .catch((err) => {
-      if (!isCurrentLazyLoad(panel, view, loadToken)) return undefined;
-      panel._busy = false;
-      panel._error = `Unable to load this frontend section: ${err.message || String(err)}`;
-      panel._render();
-      return undefined;
-    });
+  let sectionPromise;
+  try {
+    sectionPromise = Promise.resolve(
+      view === "overview"
+        ? loadOverview(panel, silent)
+        : originalLoadSection.call(panel, silent),
+    );
+  } catch (err) {
+    sectionPromise = Promise.reject(err);
+  }
+
+  return Promise.allSettled([assetPromise, sectionPromise]).then(([assetResult, sectionResult]) => {
+    if (!isCurrentLazyLoad(panel, view, assetToken)) return undefined;
+    const failure = assetResult.status === "rejected"
+      ? assetResult.reason
+      : sectionResult.status === "rejected"
+        ? sectionResult.reason
+        : null;
+    if (!failure) return sectionResult.value;
+    panel._busy = false;
+    panel._error = `Unable to load this frontend section: ${failure?.message || String(failure)}`;
+    panel._render();
+    return undefined;
+  });
 }
 
 function install() {
@@ -400,14 +411,15 @@ function install() {
     const view = this._viewKey();
     const assetPromise = viewAssetPromise(view);
     if (!assetPromise) return originalLoadSection.call(this, silent);
-    const loadToken = ++this._loadToken;
-    return loadSectionAfterAsset(
+    const assetToken = (this._eocViewAssetToken || 0) + 1;
+    this._eocViewAssetToken = assetToken;
+    return loadSectionAlongsideAsset(
       this,
       silent,
       originalLoadSection,
       view,
       assetPromise,
-      loadToken,
+      assetToken,
     );
   };
 
@@ -432,7 +444,7 @@ if (typeof customElements !== "undefined") {
 export {
   SCOPE_CACHE_TTL_MS,
   fieldErrorKey,
-  loadSectionAfterAsset,
+  loadSectionAlongsideAsset,
   normalizeGuestModeTimestamp,
   runFrontendMutation,
   validatedImportMatches,

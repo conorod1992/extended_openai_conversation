@@ -85,6 +85,32 @@ function bindRequestRuleSearch(panel) {
   }, true);
 }
 
+function loadSectionAlongsideAsset(panel, silent, originalLoadSection, view, assetPromise, token) {
+  let sectionPromise;
+  try {
+    // The route renderers already tolerate a still-loading implementation module and
+    // queue a final render when it arrives. Start backend work immediately instead of
+    // turning the asset import and WebSocket request into a serial waterfall.
+    sectionPromise = Promise.resolve(originalLoadSection.call(panel, silent));
+  } catch (err) {
+    sectionPromise = Promise.reject(err);
+  }
+
+  return Promise.allSettled([assetPromise, sectionPromise]).then(([assetResult, sectionResult]) => {
+    if (panel._eocRouteAssetToken !== token || panel._viewKey() !== view) return undefined;
+    const failure = assetResult.status === "rejected"
+      ? assetResult.reason
+      : sectionResult.status === "rejected"
+        ? sectionResult.reason
+        : null;
+    if (!failure) return undefined;
+    panel._busy = false;
+    panel._error = `Unable to load this frontend section: ${failure?.message || String(failure)}`;
+    panel._render();
+    return undefined;
+  });
+}
+
 function install(Panel) {
   const prototype = Panel?.prototype;
   if (!prototype || prototype[PATCHED]) return false;
@@ -98,23 +124,14 @@ function install(Panel) {
     this._eocRouteAssetToken = token;
     const assetPromise = routeAssetPromise(view);
     if (!assetPromise) return originalLoadSection.call(this, silent);
-
-    if (!silent) {
-      this._busy = true;
-      this._render();
-    }
-    return assetPromise
-      .then(() => {
-        if (this._eocRouteAssetToken !== token || this._viewKey() !== view) return undefined;
-        return originalLoadSection.call(this, silent);
-      })
-      .catch((err) => {
-        if (this._eocRouteAssetToken !== token || this._viewKey() !== view) return undefined;
-        this._busy = false;
-        this._error = `Unable to load this frontend section: ${err.message || String(err)}`;
-        this._render();
-        return undefined;
-      });
+    return loadSectionAlongsideAsset(
+      this,
+      silent,
+      originalLoadSection,
+      view,
+      assetPromise,
+      token,
+    );
   };
 
   const originalRender = prototype._render;

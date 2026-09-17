@@ -25,7 +25,7 @@ assert.match(loading, /_call\("configuration", "save"/);
 assert.doesNotMatch(loading, /_loadAgents\(panel\._agentId\)/);
 assert.match(loading, /SCOPE_CACHE_TTL_MS = 30_000/);
 assert.match(loading, /event\.stopImmediatePropagation\(\)/);
-assert.match(loading, /panel\._viewKey\(\) === view && panel\._loadToken === loadToken/);
+assert.match(loading, /panel\._viewKey\(\) === view && panel\._eocViewAssetToken === assetToken/);
 assert.match(loading, /Document changed\. Validate & preview again before importing\./);
 assert.match(loading, /validatedImportMatches\(panel\._importDocument, current\)/);
 assert.match(loading, /section === "guest_mode" && action === "update"/);
@@ -66,7 +66,7 @@ assert.equal(typeof overviewModule.renderOverview, "function");
 assert.equal(typeof overviewModule.bindOverview, "function");
 assert.equal(typeof guideModule.renderGuide, "function");
 assert.equal(typeof guideModule.bindGuide, "function");
-assert.equal(typeof loadingModule.loadSectionAfterAsset, "function");
+assert.equal(typeof loadingModule.loadSectionAlongsideAsset, "function");
 assert.equal(loadingModule.fieldErrorKey("title"), "__title");
 assert.equal(loadingModule.fieldErrorKey("chat_model"), "chat_model");
 
@@ -162,71 +162,77 @@ assert.equal(failedControl.disabled, false);
 assert.deepEqual(mutationToasts.at(-1), ["Unable to save settings: network down", true]);
 
 let currentView = "guide";
-let continuedLoads = 0;
+let sectionLoads = 0;
 let renders = 0;
 let resolveAsset;
+let resolveSection;
 const panel = {
   _busy: true,
   _error: null,
-  _loadToken: 1,
+  _eocViewAssetToken: 1,
   _viewKey: () => currentView,
   _render: () => { renders += 1; },
 };
 const deferredAsset = new Promise((resolve) => { resolveAsset = resolve; });
-const pendingLoad = loadingModule.loadSectionAfterAsset(
+const deferredSection = new Promise((resolve) => { resolveSection = resolve; });
+const pendingLoad = loadingModule.loadSectionAlongsideAsset(
   panel,
   false,
-  () => { continuedLoads += 1; },
+  () => {
+    sectionLoads += 1;
+    return deferredSection;
+  },
   currentView,
   deferredAsset,
-  panel._loadToken,
+  panel._eocViewAssetToken,
 );
+assert.equal(sectionLoads, 1);
 currentView = "assistant/basics";
-panel._loadToken += 1;
+panel._eocViewAssetToken += 1;
 resolveAsset();
-await pendingLoad;
-assert.equal(continuedLoads, 0);
+resolveSection("loaded");
+assert.equal(await pendingLoad, undefined);
 assert.equal(renders, 0);
 assert.equal(panel._busy, true);
 assert.equal(panel._error, null);
 
 currentView = "guide";
-panel._loadToken += 1;
-let resolveSupersededAsset;
-const supersededToken = panel._loadToken;
-const supersededAsset = new Promise((resolve) => { resolveSupersededAsset = resolve; });
-const supersededLoad = loadingModule.loadSectionAfterAsset(
+panel._eocViewAssetToken += 1;
+const supersededToken = panel._eocViewAssetToken;
+let rejectSupersededAsset;
+const supersededAsset = new Promise((_resolve, reject) => { rejectSupersededAsset = reject; });
+const supersededLoad = loadingModule.loadSectionAlongsideAsset(
   panel,
   false,
-  () => { continuedLoads += 1; },
+  () => {
+    sectionLoads += 1;
+    return Promise.resolve("loaded");
+  },
   currentView,
   supersededAsset,
   supersededToken,
 );
-panel._loadToken += 1;
-resolveSupersededAsset();
-await supersededLoad;
-assert.equal(continuedLoads, 0);
+panel._eocViewAssetToken += 1;
+rejectSupersededAsset(new Error("superseded lazy import failed"));
+assert.equal(await supersededLoad, undefined);
 assert.equal(renders, 0);
+assert.equal(panel._error, null);
 
 currentView = "usage-maintenance/request-debug";
-panel._loadToken += 1;
-let rejectAsset;
-const rejectedToken = panel._loadToken;
-const rejectedAsset = new Promise((_resolve, reject) => { rejectAsset = reject; });
-const pendingFailure = loadingModule.loadSectionAfterAsset(
+panel._eocViewAssetToken += 1;
+const currentToken = panel._eocViewAssetToken;
+const failedLoad = loadingModule.loadSectionAlongsideAsset(
   panel,
   false,
-  () => { continuedLoads += 1; },
+  () => {
+    sectionLoads += 1;
+    return Promise.resolve("loaded");
+  },
   currentView,
-  rejectedAsset,
-  rejectedToken,
+  Promise.reject(new Error("lazy import failed")),
+  currentToken,
 );
-currentView = "assistant/basics";
-panel._loadToken += 1;
-rejectAsset(new Error("lazy import failed"));
-await pendingFailure;
-assert.equal(continuedLoads, 0);
-assert.equal(renders, 0);
-assert.equal(panel._busy, true);
-assert.equal(panel._error, null);
+assert.equal(await failedLoad, undefined);
+assert.equal(panel._busy, false);
+assert.match(panel._error, /Unable to load this frontend section: lazy import failed/);
+assert.equal(renders, 1);

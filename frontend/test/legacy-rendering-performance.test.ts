@@ -110,4 +110,17 @@ describe("legacy management rendering optimizations", () => {
     expect(editorSource).toContain('includes("data-function-groups-decorated")');
     expect(editorSource.indexOf('includes("data-function-groups-decorated")')).toBeLessThan(editorSource.indexOf('const template = document.createElement("template")', editorSource.indexOf("function decorateFunctionGroups")));
   });
+
+  it("starts lazy view data loads alongside their frontend assets", async () => {
+    const loadingSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-loading-performance.js", import.meta.url), "utf8");
+    const routeSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-route-performance.js", import.meta.url), "utf8");
+    expect(loadingSource).toContain("sectionPromise = Promise.resolve(");
+    expect(loadingSource).toContain("Promise.allSettled([assetPromise, sectionPromise])");
+    expect(loadingSource).toContain('view === "overview"');
+    expect(loadingSource).toContain("loadOverview(panel, silent)");
+    expect(loadingSource).toContain("originalLoadSection.call(panel, silent)");
+    expect(loadingSource).toContain("_eocViewAssetToken");
+    expect(routeSource).toContain("sectionPromise = Promise.resolve(originalLoadSection.call(panel, silent));");
+    expect(routeSource).toContain("Promise.allSettled([assetPromise, sectionPromise])");
+  });
 });
