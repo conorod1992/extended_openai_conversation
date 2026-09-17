@@ -12,6 +12,11 @@ const health = await readFile(frontend("management-overview-health-clarity.js"),
 assert.match(source, /panel\?\._data !== null/);
 assert.match(source, /main\.dataset\.eocInitialLoading/);
 assert.match(source, /panel\._loading\?\.\(\)/);
+assert.match(source, /Promise\.allSettled\(\[/);
+assert.match(source, /section: "overview"/);
+assert.match(source, /action: "summary"/);
+assert.match(source, /type: WS_TYPE, action: "agents"/);
+assert.match(source, /extended-openai-agent-entry/);
 assert.match(health, /import "\.\/management-initial-bootstrap\.js"/);
 
 const module = await import(frontend("management-initial-bootstrap.js"));
@@ -44,3 +49,49 @@ const emptyPanel = {
 };
 assert.equal(module.showInitialLoading(emptyPanel), false);
 assert.match(emptyMain.innerHTML, /No conversation agents configured/);
+
+const storage = new Map([
+  [module.AGENT_KEY, "agent-a"],
+  [module.ENTRY_KEY, "entry-a"],
+]);
+globalThis.localStorage = {
+  getItem(key) { return storage.get(key) || null; },
+  setItem(key, value) { storage.set(key, value); },
+};
+
+let resolveAgents;
+let resolveOverview;
+const calls = [];
+const agentsPromise = new Promise((resolve) => { resolveAgents = resolve; });
+const overviewPromise = new Promise((resolve) => { resolveOverview = resolve; });
+const selectedAgent = {entry_id: "entry-a", subentry_id: "agent-a", title: "A"};
+const panel = {
+  _hass: {
+    callWS(payload) {
+      calls.push(payload);
+      return payload.action === "agents" ? agentsPromise : overviewPromise;
+    },
+  },
+  _viewKey: () => "overview",
+  _agentId: null,
+  _scopeCatalogCache: new Map(),
+  _scopeCatalogKey: () => null,
+  _applyScopes() {},
+  _selectedAgent() { return this._data?.agents?.find((item) => item.subentry_id === this._agentId); },
+  _render() { this.rendered = true; },
+  async _loadSection() { this.fallbackLoads = (this.fallbackLoads || 0) + 1; },
+};
+
+const load = module.loadAgentsWithOverviewPrefetch(panel);
+await Promise.resolve();
+assert.equal(calls.length, 2);
+assert.equal(calls.some((item) => item.action === "agents"), true);
+assert.equal(calls.some((item) => item.section === "overview" && item.action === "summary"), true);
+
+resolveOverview({agent: {...selectedAgent, model: "gpt-test"}, usage: {today: {total_tokens: 12}}, conversations: {}, load_errors: []});
+resolveAgents({agents: [selectedAgent], is_admin: true});
+await load;
+assert.equal(panel.fallbackLoads || 0, 0);
+assert.equal(panel._result.usage.today.total_tokens, 12);
+assert.equal(panel._selectedAgent().model, "gpt-test");
+assert.equal(storage.get(module.ENTRY_KEY), "entry-a");
