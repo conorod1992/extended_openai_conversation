@@ -1903,6 +1903,7 @@ def asdict_or_none(value: Any) -> dict[str, Any] | None:
         vol.Optional("original_name"): str,
         vol.Optional("original_id"): str,
         vol.Optional("group_id"): str,
+        vol.Optional("index"): int,
         vol.Optional("rule_id"): str,
         vol.Optional("rule"): dict,
         vol.Optional("revision"): str,
