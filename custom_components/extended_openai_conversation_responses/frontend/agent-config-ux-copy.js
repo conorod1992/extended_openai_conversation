@@ -51,6 +51,13 @@ function polishRenderedCopy(panel) {
     const match = summary?.textContent?.trim().match(/^(\d[\d,]*) source(s?) stored locally for on-demand search\.$/);
     if (match) summary.textContent = `${match[1]} source${match[2]}`;
   });
+
+  const healthFootnote = root.querySelector(".setup-health-footnote");
+  if (healthFootnote) {
+    const icon = healthFootnote.querySelector("ha-icon");
+    healthFootnote.textContent = "Connection tests only run when you start one from Diagnostics.";
+    if (icon) healthFootnote.prepend(icon, " ");
+  }
 }
 
 export function installManagementCopyPolish(registry = globalThis.customElements) {
