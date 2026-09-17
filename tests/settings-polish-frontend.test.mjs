@@ -73,11 +73,11 @@ assert.match(polish, /data-model-data="apply"/);
 assert.match(polish, /data-model-data="reset"/);
 assert.match(
   polish,
+  /\[data-model-data="check"\], \[data-model-data="update"\]/,
+  "the staged check action should be primary while retaining the legacy selector fallback",
+);
+assert.match(
+  polish,
   /Future checks will not replace it automatically/,
   "restoring bundled data should be described as a persistent rollback, not an automatic-update toggle",
-);
-assert.doesNotMatch(
-  polish,
-  /data-model-data="update"[^\]]/,
-  "the old one-step update action should not be required by the settings polish layer",
 );
