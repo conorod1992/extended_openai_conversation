@@ -263,9 +263,7 @@ class ModelCatalogManager:
                 validate_catalog_transition(self.catalog, candidate)
                 await self._save(candidate, None, self.etag, self.last_checked)
             except Exception:
-                self.last_error = (
-                    "Model data update could not be applied; the current catalogue was kept."
-                )
+                self.last_error = "Model data update could not be applied; the current catalogue was kept."
                 _LOGGER.warning(self.last_error)
                 return self.status()
             activate_catalog(candidate)
