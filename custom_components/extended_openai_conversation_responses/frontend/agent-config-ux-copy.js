@@ -28,6 +28,15 @@ function polishRenderedCopy(panel) {
     "Cached input is request content the provider has seen before and can reuse. It is included in the total token count, but cached input is usually cheaper than uncached input when the provider supports discounted caching.",
     "Cached input is input recognised as cached by the provider. It is included in total tokens and may be billed at a lower rate.",
   );
+
+  const continuityHelp = [...root.querySelectorAll("p.help")].find((node) =>
+    node.textContent?.trim() === "Continuity is recent context used for follow-ups. The archive is retained history; configure its behavior below."
+  );
+  if (continuityHelp) {
+    continuityHelp.textContent = "Recent context lets conversations continue; saved history is the archive you can review or search.";
+    const firstSection = continuityHelp.parentElement?.querySelector("section");
+    if (firstSection) continuityHelp.parentElement.insertBefore(continuityHelp, firstSection);
+  }
 }
 
 export function installManagementCopyPolish(registry = globalThis.customElements) {
