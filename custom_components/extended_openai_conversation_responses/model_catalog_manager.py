@@ -86,12 +86,14 @@ class ModelCatalogManager:
                     or "\r" in etag
                 ):
                     raise ValueError("Invalid catalogue ETag")
+                stale_candidate_discarded = False
                 if (
                     candidate is not None
                     and candidate["catalog_version"]
                     < BUNDLED_CATALOG["catalog_version"]
                 ):
                     candidate = None
+                    stale_candidate_discarded = True
                 elif candidate is not None:
                     validate_catalog_transition(None, candidate)
 
@@ -101,6 +103,8 @@ class ModelCatalogManager:
                         available = None
                     else:
                         validate_catalog_transition(candidate, available)
+                if stale_candidate_discarded and available is None:
+                    etag = None
 
                 self.catalog = candidate
                 self.available_catalog = available
@@ -259,7 +263,9 @@ class ModelCatalogManager:
                 validate_catalog_transition(self.catalog, candidate)
                 await self._save(candidate, None, self.etag, self.last_checked)
             except Exception:
-                self.last_error = "Model data update could not be applied; the current catalogue was kept."
+                self.last_error = (
+                    "Model data update could not be applied; the current catalogue was kept."
+                )
                 _LOGGER.warning(self.last_error)
                 return self.status()
             activate_catalog(candidate)
