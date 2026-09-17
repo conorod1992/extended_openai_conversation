@@ -52,6 +52,7 @@ const BOOTSTRAP_MODULES = [
   "./management-configuration-guidance.js",
   "./management-decision-guidance.js",
   "./management-conversation-default-label.js",
+  "./management-settings-polish.js",
   "./management-overview-health-clarity.js",
 ];
 
@@ -319,6 +320,8 @@ if (typeof customElements !== "undefined") {
     await import("./management-decision-guidance.js");
     // Keep default badges aligned with the labels users can actually select.
     await import("./management-conversation-default-label.js");
+    // Apply the final settings-layout cleanup after the badge-producing layers.
+    await import("./management-settings-polish.js");
     // Distinguish actionable health issues from checks whose status is unavailable.
     await import("./management-overview-health-clarity.js");
     // Register this last so it observes the fully wrapped management methods and
