@@ -156,16 +156,100 @@ def test_invalid_schema_v2_catalog_is_rejected(mutate):
         data.validate_catalog(value)
 
 
-async def test_download_updates_consumers_and_persists(manager, monkeypatch):
+async def test_check_stages_update_without_changing_active_catalog(manager, monkeypatch):
     value = candidate()
     get = transport(monkeypatch, json.dumps(value).encode())
-    result = await manager.async_update(force=True)
-    assert result["source"] == "downloaded"
+
+    result = await manager.async_check(force=True)
+
+    assert result["source"] == "bundled"
     assert result["schema_version"] == 2
+    assert result["update_available"] is True
+    assert result["available_catalog_version"] == value["catalog_version"]
     assert result["last_error"] is None
     assert get.call_args.kwargs == {"headers": {}, "allow_redirects": False}
+    assert manager.catalog is None
+    assert manager.available_catalog == value
+    assert manager.store.saved["catalog"] is None
+    assert manager.store.saved["available_catalog"] == value
+    assert data.model_metadata("gpt-6-astra")["display_name"] == "gpt-6-astra"
+
+
+async def test_apply_activates_staged_catalog_and_clears_pending_state(
+    manager, monkeypatch
+):
+    value = candidate()
+    transport(monkeypatch, json.dumps(value).encode())
+    await manager.async_check(force=True)
+
+    result = await manager.async_apply_update()
+
+    assert result["source"] == "downloaded"
+    assert result["catalog_version"] == value["catalog_version"]
+    assert result["update_available"] is False
+    assert result["available_catalog_version"] is None
+    assert result["last_error"] is None
+    assert manager.catalog == value
+    assert manager.available_catalog is None
     assert manager.store.saved["catalog"] == value
+    assert manager.store.saved["available_catalog"] is None
     assert data.model_metadata("gpt-6-astra")["display_name"] == "Astra (catalog update)"
+
+
+async def test_restoring_bundled_data_is_persistent_across_restart(manager, monkeypatch):
+    value = candidate()
+    transport(monkeypatch, json.dumps(value).encode())
+    await manager.async_check(force=True)
+    await manager.async_apply_update()
+
+    result = await manager.async_reset()
+
+    assert result["source"] == "bundled"
+    assert result["update_available"] is True
+    assert manager.catalog is None
+    assert manager.available_catalog == value
+    assert manager.store.saved["catalog"] is None
+    assert manager.store.saved["available_catalog"] == value
+    assert data.model_metadata("gpt-6-astra")["display_name"] == "gpt-6-astra"
+
+    restarted = runtime.ModelCatalogManager(manager.hass)
+    restarted.store = manager.store
+    await restarted.async_load()
+
+    assert restarted.status()["source"] == "bundled"
+    assert restarted.status()["update_available"] is True
+    assert restarted.catalog is None
+    assert restarted.available_catalog == value
+    assert data.model_metadata("gpt-6-astra")["display_name"] == "gpt-6-astra"
+
+
+async def test_restart_does_not_resurrect_stale_pending_state(manager, monkeypatch):
+    value = candidate()
+    transport(monkeypatch, json.dumps(value).encode())
+    await manager.async_check(force=True)
+    await manager.async_apply_update()
+
+    assert manager.store.saved["available_catalog"] is None
+
+    restarted = runtime.ModelCatalogManager(manager.hass)
+    restarted.store = manager.store
+    await restarted.async_load()
+
+    assert restarted.catalog == value
+    assert restarted.available_catalog is None
+    assert restarted.status()["update_available"] is False
+    assert data.model_metadata("gpt-6-astra")["display_name"] == "Astra (catalog update)"
+
+    # Be defensive about storage left by an interrupted/older write: an update at
+    # or below the active version must not be surfaced as pending after restart.
+    restarted.store.saved["available_catalog"] = deepcopy(value)
+    second_restart = runtime.ModelCatalogManager(manager.hass)
+    second_restart.store = restarted.store
+    await second_restart.async_load()
+
+    assert second_restart.catalog == value
+    assert second_restart.available_catalog is None
+    assert second_restart.status()["update_available"] is False
 
 
 async def test_stored_v1_catalog_is_migrated_to_authoritative_v2(manager):
@@ -203,16 +287,18 @@ async def test_stored_v1_catalog_is_migrated_to_authoritative_v2(manager):
 )
 async def test_malformed_and_oversized_download_rejected(manager, monkeypatch, raw):
     transport(monkeypatch, raw)
-    assert (await manager.async_update(force=True))["last_error"]
+    assert (await manager.async_check(force=True))["last_error"]
     assert manager.catalog is None
+    assert manager.available_catalog is None
     assert data.model_metadata("gpt-5.6")["status"] == "current"
 
 
 @pytest.mark.parametrize("failure", ["network", "http", "storage", "old", "same-version"])
-async def test_failed_update_never_replaces_current_data(manager, monkeypatch, failure):
+async def test_failed_check_never_replaces_current_data(manager, monkeypatch, failure):
     first = candidate()
     transport(monkeypatch, json.dumps(first).encode())
-    await manager.async_update(force=True)
+    await manager.async_check(force=True)
+    await manager.async_apply_update()
     previous = deepcopy(manager.catalog)
 
     value = deepcopy(first)
@@ -231,30 +317,30 @@ async def test_failed_update_never_replaces_current_data(manager, monkeypatch, f
         status=500 if failure == "http" else 200,
         error=TimeoutError() if failure == "network" else None,
     )
-    assert (await manager.async_update(force=True))["last_error"]
+    assert (await manager.async_check(force=True))["last_error"]
     assert manager.catalog == previous
+    assert manager.available_catalog is None
+    assert data.model_metadata("gpt-6-astra")["display_name"] == "Astra (catalog update)"
     if not manager.store.fail:
         assert manager.store.saved["catalog"] == previous
+        assert manager.store.saved["available_catalog"] is None
 
 
-async def test_daily_cadence_etag_and_manual_reset(manager, monkeypatch):
+async def test_daily_cadence_and_etag_apply_to_checks(manager, monkeypatch):
     now = 1_000_000.0
     monkeypatch.setattr(runtime.time, "time", lambda: now)
     get = transport(monkeypatch, json.dumps(candidate()).encode())
-    await manager.async_update()
+    await manager.async_check()
     now += runtime.UPDATE_INTERVAL - 1
-    await manager.async_update()
+    await manager.async_check()
     assert get.call_count == 1
 
     now += 1
     get = transport(monkeypatch, b"", status=304)
-    await manager.async_update()
+    await manager.async_check()
     assert get.call_args.kwargs["headers"] == {"If-None-Match": '"v3"'}
     assert manager.status()["last_error"] is None
-
-    assert (await manager.async_reset())["source"] == "bundled"
-    assert manager.catalog is None
-    assert manager.etag is None
+    assert manager.status()["update_available"] is True
 
 
 async def test_corrupt_storage_falls_back_to_bundled(manager):
@@ -265,7 +351,7 @@ async def test_corrupt_storage_falls_back_to_bundled(manager):
     assert manager.last_error
 
 
-async def test_reset_waits_for_inflight_update(manager, monkeypatch):
+async def test_reset_waits_for_inflight_check(manager, monkeypatch):
     transport(monkeypatch, json.dumps(candidate()).encode())
     started, release = asyncio.Event(), asyncio.Event()
     save = manager.store.async_save
@@ -276,14 +362,16 @@ async def test_reset_waits_for_inflight_update(manager, monkeypatch):
         await save(value)
 
     monkeypatch.setattr(manager.store, "async_save", paused_save)
-    update = asyncio.create_task(manager.async_update(force=True))
+    check = asyncio.create_task(manager.async_check(force=True))
     await started.wait()
     assert data.model_metadata("gpt-6-astra")["display_name"] == "gpt-6-astra"
     reset = asyncio.create_task(manager.async_reset())
     release.set()
-    await asyncio.gather(update, reset)
+    await asyncio.gather(check, reset)
     assert manager.catalog is None
+    assert manager.available_catalog == candidate()
     assert manager.store.saved["catalog"] is None
+    assert manager.store.saved["available_catalog"] == candidate()
 
 
 async def test_setup_is_shared_and_timer_is_removed_on_stop(hass, monkeypatch):
@@ -298,8 +386,8 @@ async def test_setup_is_shared_and_timer_is_removed_on_stop(hass, monkeypatch):
     await runtime.async_setup_model_catalog(hass)
     assert interval.call_count == 1
     assert interval.call_args.args[2].total_seconds() == 3600
-    manager.async_update = AsyncMock()
+    manager.async_check = AsyncMock()
     await interval.call_args.args[1](None)
-    manager.async_update.assert_awaited_once()
+    manager.async_check.assert_awaited_once()
     hass.bus.async_listen_once.call_args.args[1](None)
     cancel.assert_called_once()
