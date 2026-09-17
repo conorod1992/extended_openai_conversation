@@ -147,5 +147,24 @@ export function polishConfigurationCopy(panel, html) {
   result = replaceText(result, ">Lightweight lexical<", ">Fast local matching<");
   result = replaceText(result, ">Hybrid semantic<", ">Semantic matching<");
 
+  result = replaceText(result, "Usage detail retention", "Usage history retention");
+  result = replaceText(
+    result,
+    "Aggregate and lifetime totals remain separate from these detailed records.",
+    "Choose how long detailed usage records are kept. Overall totals are kept separately.",
+  );
+  result = replaceText(result, ">Request details<", ">Keep request details for<");
+  result = replaceText(result, ">Run details<", ">Keep run details for<");
+  result = replaceText(
+    result,
+    '<small>Controls how long detailed per-request usage records are retained.</small>',
+    "",
+  );
+  result = replaceText(
+    result,
+    '<small>Controls how long detailed conversation-run records are retained.</small>',
+    "",
+  );
+
   return result;
 }
