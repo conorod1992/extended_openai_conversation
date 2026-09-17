@@ -107,5 +107,16 @@ export function polishConfigurationCopy(panel, html) {
     "Replace words or patterns in spoken responses. Streaming speech is disabled while custom replacements are active.",
   );
 
+  result = replaceText(
+    result,
+    "Choose what happens when the conversation becomes too large for the model's context window.",
+    "Choose how older conversation history is reduced when it becomes too large.",
+  );
+  result = replaceText(
+    result,
+    "Older conversation content is reduced when the provider reports more than this many input tokens.",
+    "When history reaches this size, use the trimming method below.",
+  );
+
   return result;
 }
