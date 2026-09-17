@@ -64,7 +64,8 @@ assert.match(
 );
 
 assert.match(polish, /Model capability data/);
-assert.match(polish, /It checks for newer data daily but applies changes only when you approve them/);
+assert.match(polish, /Model capability data helps Extended OpenAI choose the right settings and features for each model/);
+assert.match(polish, /Updates are checked daily, but changes are only applied when you approve them/);
 assert.match(polish, /Check for updates/);
 assert.match(polish, /Apply available update/);
 assert.match(polish, /Restore bundled data/);
