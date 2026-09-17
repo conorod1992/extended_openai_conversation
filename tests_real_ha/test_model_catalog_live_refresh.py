@@ -125,18 +125,35 @@ async def test_catalog_refresh_publishes_live_while_existing_agent_turn_is_activ
     await asyncio.wait_for(entered.wait(), timeout=_WAIT_TIMEOUT)
     assert capabilities_seen == [initial_efforts]
 
-    # Refresh through the actual registered admin WebSocket command while the
+    # Check through the actual registered admin WebSocket command while the
     # already-loaded agent is still processing its first public Assist turn.
     await admin.send_json_auto_id(
         {
             "type": runtime.WS_CATALOG,
-            "action": "update",
+            "action": "check",
+            "model": "gpt-5.6",
+        }
+    )
+    checked = await admin.receive_json()
+    assert checked["success"] is True
+    assert checked["result"]["source"] == "bundled"
+    assert checked["result"]["update_available"] is True
+    assert checked["result"]["reasoning_effort_options"] == initial_efforts
+    assert get_reasoning_effort_options("gpt-5.6") == initial_efforts
+
+    # Explicit application publishes the staged catalogue immediately without
+    # replacing the already-loaded conversation agent.
+    await admin.send_json_auto_id(
+        {
+            "type": runtime.WS_CATALOG,
+            "action": "apply",
             "model": "gpt-5.6",
         }
     )
     updated = await admin.receive_json()
     assert updated["success"] is True
     assert updated["result"]["source"] == "downloaded"
+    assert updated["result"]["update_available"] is False
     assert updated["result"]["reasoning_effort_options"][-1] == "minimal"
     assert get_reasoning_effort_options("gpt-5.6")[-1] == "minimal"
 
@@ -173,6 +190,7 @@ async def test_catalog_refresh_publishes_live_while_existing_agent_turn_is_activ
     restarted = runtime.ModelCatalogManager(hass)
     await restarted.async_load()
     assert restarted.catalog == updated_catalog
+    assert restarted.available_catalog is None
     assert restarted.etag == '"live-catalog-refresh"'
 
     # Restore the process-global active catalogue for test isolation while leaving
