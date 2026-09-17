@@ -40,6 +40,7 @@ from .const import (
     MANAGEMENT_PANEL_TITLE,
     MANAGEMENT_PANEL_URL,
 )
+from .conversation_archive import async_get_archive
 from .frontend_version import FRONTEND_VERSION
 from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
 from .knowledge import async_get_knowledge
@@ -247,18 +248,42 @@ def _debug_ui():
 async def async_agent_catalog(
     hass: HomeAssistant, user_id: str, is_admin: bool
 ) -> dict[str, Any]:
-    """Return navigation metadata without waking every per-agent data manager."""
-    management_ui = _management_ui()
+    """Return startup navigation metadata without loading memory/archive scopes."""
+    del user_id
     agents = [
         _agent_snapshot(hass, entry, subentry)
         for entry in hass.config_entries.async_entries(DOMAIN)
         for subentry in entry.subentries.values()
         if subentry.subentry_type == "conversation"
     ]
+    return {"agents": agents, "is_admin": is_admin}
+
+
+async def async_scope_catalog(
+    hass: HomeAssistant,
+    user_id: str,
+    is_admin: bool,
+    message: dict[str, Any],
+) -> dict[str, Any]:
+    """Load memory and archive scope metadata concurrently when first needed."""
+    management_ui = _management_ui()
+    entry_id = message.get("entry_id")
+    subentry_id = message.get("subentry_id")
+    if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
+        raise HomeAssistantError("entry_id and subentry_id are required")
+    management_ui.entry_and_agent(hass, entry_id, subentry_id)
+    memory, archive = await asyncio.gather(
+        async_get_memory(hass, entry_id, subentry_id),
+        async_get_archive(hass, entry_id, subentry_id),
+    )
     return {
-        "agents": agents,
-        "scopes": await management_ui._scope_catalog(hass, user_id, is_admin),
-        "is_admin": is_admin,
+        "scopes": await management_ui._scope_catalog(
+            hass,
+            user_id,
+            is_admin,
+            memory.scope_counts(),
+            archive.scope_counts(),
+        )
     }
 
 
@@ -441,6 +466,8 @@ async def optimized_management_command(
 
     if message.get("action") == "agents":
         return await async_agent_catalog(hass, user_id, is_admin)
+    if message.get("section") == "scopes" and message.get("action") == "catalog":
+        return await async_scope_catalog(hass, user_id, is_admin, message)
     if message.get("section") == "overview" and message.get("action") == "summary":
         return await async_overview_summary(hass, user_id, is_admin, message)
     if message.get("section") == "configuration" and message.get("action") == "save":
