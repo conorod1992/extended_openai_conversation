@@ -341,12 +341,20 @@ class ModelCatalogManager:
 
             available = self.available_catalog
             if (
+                available is None
+                and self.catalog is not None
+                and self.catalog["catalog_version"]
+                > BUNDLED_CATALOG["catalog_version"]
+            ):
+                available = self.catalog
+            if (
                 available is not None
                 and available["catalog_version"] <= BUNDLED_CATALOG["catalog_version"]
             ):
                 available = None
+            etag = self.etag if available is not None else None
             try:
-                await self._save(None, available, self.etag, self.last_checked)
+                await self._save(None, available, etag, self.last_checked)
             except Exception:
                 self.last_error = (
                     "Model data reset failed; the current catalogue was kept."
@@ -355,6 +363,7 @@ class ModelCatalogManager:
             activate_catalog(None)
             self.catalog = None
             self.available_catalog = available
+            self.etag = etag
             self.last_error = None
             return self.status()
 
