@@ -110,7 +110,7 @@ function enhanceModelDataPanel(panel) {
   const title = document.createElement("h3");
   title.textContent = "Model capability data";
   const intro = document.createElement("p");
-  intro.textContent = "Extended OpenAI uses shared capability data to decide which parameters and API features each model supports. It checks for newer data daily but applies changes only when you approve them.";
+  intro.textContent = "Model capability data helps Extended OpenAI choose the right settings and features for each model. Updates are checked daily, but changes are only applied when you approve them.";
   heading.append(title, intro);
 
   const actions = document.createElement("div");
