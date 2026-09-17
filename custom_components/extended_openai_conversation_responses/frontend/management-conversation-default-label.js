@@ -1,5 +1,3 @@
-import "./management-settings-polish.js";
-
 const PATCHED = Symbol.for("extended-openai.management-conversation-default-label");
 
 const HOME_ASSISTANT_SESSION_DEFAULT = "Default: Use Home Assistant sessions";
