@@ -6,15 +6,26 @@ const frontendRoot = new URL(
   import.meta.url,
 );
 const polish = await readFile(new URL("management-settings-polish.js", frontendRoot), "utf8");
+const bootstrap = await readFile(new URL("management-bootstrap.js", frontendRoot), "utf8");
 const conversationLabel = await readFile(
   new URL("management-conversation-default-label.js", frontendRoot),
   "utf8",
 );
 
 assert.match(
+  bootstrap,
+  /"\.\/management-settings-polish\.js"/,
+  "the settings polish layer must be preloaded through the management bootstrap",
+);
+assert.match(
+  bootstrap,
+  /await import\("\.\/management-settings-polish\.js"\);/,
+  "the settings polish layer must be evaluated through the controlled bootstrap sequence",
+);
+assert.doesNotMatch(
   conversationLabel,
-  /import "\.\/management-settings-polish\.js";/,
-  "the settings polish layer must be loaded with the existing management enhancements",
+  /management-settings-polish\.js/,
+  "management enhancements should not introduce nested module imports outside the bootstrap loader",
 );
 
 assert.match(
