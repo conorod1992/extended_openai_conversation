@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import {
   base64ToBytes,
+  bindBackupTransfer,
   bytesToBase64,
   decorateBackupMarkup,
   decorateRestoreDialog,
@@ -144,4 +145,109 @@ assert.deepEqual([...base64ToBytes(bytesToBase64(new Uint8Array([0, 1, 127, 128,
   assert.match(dialog, /restore-transfer-cancel/);
   assert.match(dialog, /restore-transfer-apply/);
   assert.doesNotMatch(dialog, /id="restore-apply"/);
+}
+
+
+class FakeTransferElement {
+  constructor(properties = {}) {
+    Object.assign(this, properties);
+    this.listeners = {};
+    this.disabled ??= false;
+    this.hidden ??= false;
+    this.className ??= "";
+    this.textContent ??= "";
+  }
+
+  addEventListener(type, handler) {
+    this.listeners[type] = handler;
+  }
+}
+
+function makeTransferRoot() {
+  const elements = {
+    "#transfer-export-mode": new FakeTransferElement({value: "setup"}),
+    "#transfer-custom-options": new FakeTransferElement(),
+    "#transfer-export-status": new FakeTransferElement(),
+    "#create-backup-transfer": new FakeTransferElement(),
+    "#restore-backup-transfer": new FakeTransferElement(),
+    "#backup-file-transfer": new FakeTransferElement(),
+    "#restore-transfer-cancel": new FakeTransferElement(),
+    "#restore-transfer-apply": new FakeTransferElement(),
+  };
+  return {
+    elements,
+    querySelector(selector) {
+      return elements[selector] ?? null;
+    },
+    querySelectorAll(selector) {
+      if (selector === ".transfer-custom-section") return [];
+      return [];
+    },
+  };
+}
+
+{
+  const previousDocument = globalThis.document;
+  globalThis.document = {
+    createElement() {
+      return {click() {}};
+    },
+  };
+  try {
+    const root = makeTransferRoot();
+    const toasts = [];
+    const panel = {
+      ...makePanel(async (message) => {
+        assert.equal(message.action, "setup_export");
+        return {
+          json: "{}",
+          filename: "setup.json",
+          warnings: [{message: "1 invalid Function Tool was omitted from this export."}],
+        };
+      }),
+      shadowRoot: root,
+      _configDirty: false,
+      _setSaving() {},
+      _toast(message, error = false) {
+        toasts.push({message, error});
+      },
+    };
+
+    bindBackupTransfer(panel);
+    await root.elements["#create-backup-transfer"].listeners.click();
+
+    const status = root.elements["#transfer-export-status"];
+    assert.equal(status.className, "validation success");
+    assert.match(status.textContent, /Shareable setup exported/);
+    assert.match(status.textContent, /invalid Function Tool was omitted/);
+    assert.deepEqual(toasts, [{message: "Shareable setup exported", error: false}]);
+  } finally {
+    globalThis.document = previousDocument;
+  }
+}
+
+{
+  const root = makeTransferRoot();
+  const toasts = [];
+  const panel = {
+    ...makePanel(async () => {
+      throw new Error("backend failed");
+    }),
+    shadowRoot: root,
+    _configDirty: false,
+    _setSaving() {},
+    _toast(message, error = false) {
+      toasts.push({message, error});
+    },
+  };
+
+  bindBackupTransfer(panel);
+  await root.elements["#create-backup-transfer"].listeners.click();
+
+  const status = root.elements["#transfer-export-status"];
+  assert.equal(status.className, "validation error");
+  assert.equal(status.textContent, "Unable to create export: backend failed");
+  assert.deepEqual(toasts, [
+    {message: "Unable to create export: backend failed", error: true},
+  ]);
 }
