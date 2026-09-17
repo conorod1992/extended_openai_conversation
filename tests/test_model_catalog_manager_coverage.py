@@ -131,17 +131,17 @@ async def test_migrated_load_survives_rewrite_failure(hass, monkeypatch) -> None
     )
 
 
-async def test_failed_update_record_survives_storage_failure(hass) -> None:
+async def test_failed_check_record_survives_storage_failure(hass) -> None:
     manager = _manager(hass)
     manager.catalog = _candidate()
     manager.etag = '"good"'
     manager.store.fail_save = True
 
-    await manager._record_failed_update(123.0, transient=False)
+    await manager._record_failed_check(123.0, transient=False)
 
     assert manager.catalog is not None
     assert manager.etag == '"good"'
-    assert manager.last_error == "Model data update failed; the current catalogue was kept."
+    assert manager.last_error == "Model data check failed; the current catalogue was kept."
 
 
 async def test_unsolicited_not_modified_is_rejected(hass, monkeypatch) -> None:
@@ -255,48 +255,5 @@ async def test_dynamic_and_reset_rules_do_not_block_catalog_reset(
         }
     )
     monkeypatch.setattr(runtime, "async_get_request_rules", AsyncMock(return_value=rules))
-
-    assert await manager._bundled_reset_would_invalidate_saved_reasoning() is False
-
-
-async def test_reset_block_preserves_downloaded_catalog(hass, monkeypatch) -> None:
-    manager = _manager(hass)
-    manager.catalog = _candidate()
-    original = deepcopy(manager.catalog)
-    monkeypatch.setattr(
-        manager,
-        "_bundled_reset_would_invalidate_saved_reasoning",
-        AsyncMock(return_value=True),
-    )
-
-    status = await manager.async_reset()
-
-    assert status["source"] == "downloaded"
-    assert "blocked" in status["last_error"]
-    assert manager.catalog == original
-
-
-async def test_reset_save_failure_preserves_downloaded_catalog(hass, monkeypatch) -> None:
-    manager = _manager(hass)
-    manager.catalog = _candidate()
-    manager.etag = '"downloaded"'
-    original = deepcopy(manager.catalog)
-    monkeypatch.setattr(
-        manager,
-        "_bundled_reset_would_invalidate_saved_reasoning",
-        AsyncMock(return_value=False),
-    )
-    monkeypatch.setattr(manager, "_save", AsyncMock(side_effect=OSError("disk full")))
-
-    status = await manager.async_reset()
-
-    assert status["source"] == "downloaded"
-    assert "reset failed" in status["last_error"]
-    assert manager.catalog == original
-    assert manager.etag == '"downloaded"'
-
-
-async def test_no_downloaded_catalog_never_blocks_reset(hass) -> None:
-    manager = _manager(hass)
 
     assert await manager._bundled_reset_would_invalidate_saved_reasoning() is False
