@@ -238,7 +238,7 @@ class ModelCatalogManager:
                 self.etag = etag
                 self.last_checked = now
                 self.last_error = None
-            except (ClientError, TimeoutError, _TransientCatalogUpdateError):
+            except ClientError, TimeoutError, _TransientCatalogUpdateError:
                 await self._record_failed_check(now, transient=True)
             except Exception:
                 await self._record_failed_check(now, transient=False)
@@ -259,9 +259,7 @@ class ModelCatalogManager:
                 validate_catalog_transition(self.catalog, candidate)
                 await self._save(candidate, None, self.etag, self.last_checked)
             except Exception:
-                self.last_error = (
-                    "Model data update could not be applied; the current catalogue was kept."
-                )
+                self.last_error = "Model data update could not be applied; the current catalogue was kept."
                 _LOGGER.warning(self.last_error)
                 return self.status()
             activate_catalog(candidate)
@@ -343,8 +341,7 @@ class ModelCatalogManager:
             if (
                 available is None
                 and self.catalog is not None
-                and self.catalog["catalog_version"]
-                > BUNDLED_CATALOG["catalog_version"]
+                and self.catalog["catalog_version"] > BUNDLED_CATALOG["catalog_version"]
             ):
                 available = self.catalog
             if (
