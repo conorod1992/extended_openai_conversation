@@ -37,6 +37,11 @@ function polishRenderedCopy(panel) {
     const firstSection = continuityHelp.parentElement?.querySelector("section");
     if (firstSection) continuityHelp.parentElement.insertBefore(continuityHelp, firstSection);
   }
+
+  root.querySelectorAll("section.notice").forEach((section) => {
+    const heading = section.querySelector("strong")?.textContent?.trim() || "";
+    if (heading === "Conversation archive enabled" || heading === "Conversation archive disabled") section.remove();
+  });
 }
 
 export function installManagementCopyPolish(registry = globalThis.customElements) {
