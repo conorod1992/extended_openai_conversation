@@ -39,7 +39,7 @@ const controls = modelDataControls();
 assert.match(controls, /Check for updates/);
 assert.match(controls, /Apply update/);
 assert.match(controls, /Restore bundled data/);
-assert.match(modelDataStatusText(result), /Background checks run daily but do not apply updates automatically/);
+assert.equal(modelDataStatusText(result), "Up to date — model data v2");
 
 let refreshes = 0;
 bindModelDataControls(panel, () => { refreshes++; });
@@ -80,7 +80,7 @@ assert.equal(calls[1].action, "apply");
 assert.equal(refreshes, 2);
 assert.equal(applyButton.hidden, true);
 assert.equal(applyButton.disabled, true);
-assert.match(status.textContent, /Model data is current \(v3\)/);
+assert.equal(status.textContent, "Up to date — model data v3");
 
 // Restoring bundled data remains a distinct explicit action.
 result = {
