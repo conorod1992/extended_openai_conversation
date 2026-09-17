@@ -27,7 +27,10 @@ def _register_settings_polish_frontend() -> None:
     """Expose the settings-polish module before the management panel is registered."""
     modules = tuple(
         dict.fromkeys(
-            (*management_ui.MANAGEMENT_FRONTEND_MODULES, "management-settings-polish.js")
+            (
+                *management_ui.MANAGEMENT_FRONTEND_MODULES,
+                "management-settings-polish.js",
+            )
         )
     )
     setattr(management_ui, "MANAGEMENT_FRONTEND_MODULES", modules)  # noqa: B010
