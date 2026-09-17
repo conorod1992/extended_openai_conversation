@@ -32,5 +32,21 @@ export function polishConfigurationCopy(panel, html) {
     "Customize how date, time and device information is added to the prompt. Leave a field blank to use the default.",
   );
 
+  result = replaceText(
+    result,
+    '<small>Lets the assistant search the web for current information.</small>',
+    "",
+  );
+  result = replaceText(
+    result,
+    "Choose how much supporting material the provider returns with each web search.",
+    "Choose how much information is returned with search results.",
+  );
+  result = replaceText(
+    result,
+    "Lets the assistant search reference material you maintain locally; it is separate from memories and conversation history.",
+    "Allow the assistant to search your Knowledge Library when useful.",
+  );
+
   return result;
 }
