@@ -29,7 +29,7 @@ assert.match(
 );
 
 for (const redundant of ["Advanced", "Adds context", "Stores data", "Stores shared data", "Stores temporary data"]) {
-  assert.match(polish, new RegExp(`\\"${redundant}\\"`));
+  assert.match(polish, new RegExp(`"${redundant}"`));
 }
 assert.match(
   polish,
@@ -41,6 +41,6 @@ assert.match(polish, /Model data & defaults/);
 assert.match(polish, /Reset this assistant's parameters/);
 assert.match(polish, /Check for model data updates/);
 assert.match(polish, /Use bundled model data/);
-assert.match(polish, /data-model-data=\\"update\\"/);
-assert.match(polish, /data-model-data=\\"reset\\"/);
+assert.match(polish, /data-model-data="update"/);
+assert.match(polish, /data-model-data="reset"/);
 assert.match(polish, /Automatic update checks run daily/);
