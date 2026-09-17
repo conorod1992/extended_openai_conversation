@@ -131,17 +131,17 @@ async def test_migrated_load_survives_rewrite_failure(hass, monkeypatch) -> None
     )
 
 
-async def test_failed_update_record_survives_storage_failure(hass) -> None:
+async def test_failed_check_record_survives_storage_failure(hass) -> None:
     manager = _manager(hass)
     manager.catalog = _candidate()
     manager.etag = '"good"'
     manager.store.fail_save = True
 
-    await manager._record_failed_update(123.0, transient=False)
+    await manager._record_failed_check(123.0, transient=False)
 
     assert manager.catalog is not None
     assert manager.etag == '"good"'
-    assert manager.last_error == "Model data update failed; the current catalogue was kept."
+    assert manager.last_error == "Model data check failed; the current catalogue was kept."
 
 
 async def test_unsolicited_not_modified_is_rejected(hass, monkeypatch) -> None:

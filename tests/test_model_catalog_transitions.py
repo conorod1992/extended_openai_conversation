@@ -112,7 +112,12 @@ async def test_manager_rejects_narrowing_and_keeps_last_good_catalog(
     manager.store = MemoryStore()
     current = _expanded_candidate()
     _transport(monkeypatch, json.dumps(current).encode(), etag='"v2"')
-    assert (await manager.async_update(force=True))["last_error"] is None
+    checked = await manager.async_update(force=True)
+    assert checked["last_error"] is None
+    assert checked["update_available"] is True
+    applied = await manager.async_apply_update()
+    assert applied["last_error"] is None
+    assert applied["source"] == "downloaded"
 
     candidate = deepcopy(current)
     candidate["catalog_version"] += 1

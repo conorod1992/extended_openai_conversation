@@ -122,3 +122,37 @@ const source = await readFile(
 );
 assert.match(source, /_pendingSettingFocus = button\.dataset\.target/);
 assert.doesNotMatch(source, /diagnostics.*test_agent/s);
+
+const claritySource = await readFile(
+  new URL(
+    "../custom_components/extended_openai_conversation_responses/frontend/management-overview-health-clarity.js",
+    import.meta.url,
+  ),
+  "utf8",
+);
+assert.match(
+  claritySource,
+  /<h2>Model Data<\/h2>/,
+  "Overview should surface model catalogue health as its own card",
+);
+assert.match(claritySource, /status: "Update available"/);
+assert.match(claritySource, /The newer catalogue is waiting for approval/);
+assert.match(claritySource, /action: Number\.isInteger\(available\) \? `Apply v\$\{available\}` : "Apply update"/);
+assert.match(
+  claritySource,
+  /lookupModelData\(panel, model, "apply"\)/,
+  "the Overview apply action must explicitly activate the staged catalogue",
+);
+assert.match(claritySource, /status: "Using bundled data"/);
+assert.match(claritySource, /status: "Current"/);
+assert.match(claritySource, /status: "Check failed"/);
+assert.match(
+  claritySource,
+  /panel\?\._data\?\.is_admin === false/,
+  "the Model Data card should respect the existing admin-only management boundary",
+);
+assert.match(
+  claritySource,
+  /panel\._modelCatalogData\?\.requested_model === model/,
+  "Overview should reuse model data already loaded for the selected model",
+);

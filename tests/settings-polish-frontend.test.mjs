@@ -30,8 +30,23 @@ assert.doesNotMatch(
 
 assert.match(
   polish,
+  /\[data-eoc-guide-layout\]\{grid-template-columns:minmax\(0,1fr\)!important\}/,
+  "Guide content should stay within the available page width",
+);
+assert.match(
+  polish,
+  /\[data-eoc-guide-layout\]>\*\{min-width:0;max-width:100%\}/,
+  "Guide children should be allowed to shrink instead of forcing horizontal overflow",
+);
+assert.match(
+  polish,
   /grid-template-columns:repeat\(auto-fit,minmax\(min\(260px,100%\),1fr\)\)!important/,
   "Guide quick actions should adapt their column count instead of overflowing the page",
+);
+assert.match(
+  polish,
+  /\.comparison-table\{min-width:0;max-width:100%;overflow-x:auto\}/,
+  "wide comparison tables should scroll locally rather than widening the whole Guide",
 );
 assert.match(
   polish,
@@ -48,10 +63,21 @@ assert.match(
   "Provider API format should collapse duplicate default/recommended guidance into one badge",
 );
 
-assert.match(polish, /Model data & defaults/);
-assert.match(polish, /Reset this assistant's parameters/);
-assert.match(polish, /Check for model data updates/);
-assert.match(polish, /Use bundled model data/);
-assert.match(polish, /data-model-data="update"/);
+assert.match(polish, /Model capability data/);
+assert.match(polish, /It checks for newer data daily but applies changes only when you approve them/);
+assert.match(polish, /Check for updates/);
+assert.match(polish, /Apply available update/);
+assert.match(polish, /Restore bundled data/);
+assert.match(polish, /data-model-data="check"/);
+assert.match(polish, /data-model-data="apply"/);
 assert.match(polish, /data-model-data="reset"/);
-assert.match(polish, /Automatic update checks run daily/);
+assert.match(
+  polish,
+  /\[data-model-data="check"\], \[data-model-data="update"\]/,
+  "the staged check action should be primary while retaining the legacy selector fallback",
+);
+assert.match(
+  polish,
+  /Future checks will not replace it automatically/,
+  "restoring bundled data should be described as a persistent rollback, not an automatic-update toggle",
+);

@@ -30,6 +30,7 @@ from .model_catalog import (
     compatibility_capabilities,
     model_metadata,
     parse_catalog,
+    validate_catalog,
     validate_catalog_transition,
     validate_or_migrate_catalog,
 )
@@ -50,12 +51,13 @@ class _TransientCatalogUpdateError(Exception):
 
 
 class ModelCatalogManager:
-    """Serialize update/reset, persist before publication, and retain last good data."""
+    """Serialize catalogue checks/apply/reset and retain last good data."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
         self.store: Store[dict[str, Any]] = Store(hass, 1, f"{DOMAIN}.model_catalog")
         self.catalog: dict[str, Any] | None = None
+        self.available_catalog: dict[str, Any] | None = None
         self.etag: str | None = None
         self.last_checked = 0.0
         self.last_error: str | None = None
@@ -70,6 +72,9 @@ class ModelCatalogManager:
                 candidate = saved.get("catalog")
                 if candidate is not None:
                     candidate, migrated = validate_or_migrate_catalog(candidate)
+                available = saved.get("available_catalog")
+                if available is not None:
+                    available = validate_catalog(available)
                 checked = saved.get("last_checked", 0)
                 etag = saved.get("etag")
                 if type(checked) not in (float, int) or not 0 <= checked <= time.time():
@@ -81,25 +86,44 @@ class ModelCatalogManager:
                     or "\r" in etag
                 ):
                     raise ValueError("Invalid catalogue ETag")
+                stale_candidate_discarded = False
                 if (
                     candidate is not None
                     and candidate["catalog_version"]
                     < BUNDLED_CATALOG["catalog_version"]
                 ):
-                    candidate, etag = None, None
+                    candidate = None
+                    stale_candidate_discarded = True
                 elif candidate is not None:
                     validate_catalog_transition(None, candidate)
-                self.catalog, self.etag, self.last_checked = candidate, etag, checked
+
+                active = candidate or BUNDLED_CATALOG
+                if available is not None:
+                    if available["catalog_version"] <= active["catalog_version"]:
+                        available = None
+                    else:
+                        validate_catalog_transition(candidate, available)
+                if stale_candidate_discarded and available is None:
+                    etag = None
+
+                self.catalog = candidate
+                self.available_catalog = available
+                self.etag = etag
+                self.last_checked = checked
                 if migrated:
                     _LOGGER.debug(
                         "Migrated stored model capability catalogue v1 to schema v2; "
                         "v2 bundled model data is authoritative"
                     )
                     try:
-                        await self._save(candidate, etag, checked)
+                        await self._save(candidate, available, etag, checked)
                     except Exception:
                         _LOGGER.warning("Unable to persist migrated model catalogue v2")
         except Exception:
+            self.catalog = None
+            self.available_catalog = None
+            self.etag = None
+            self.last_checked = 0.0
             self.last_error = (
                 "Stored model data could not be loaded; using bundled data."
             )
@@ -107,40 +131,62 @@ class ModelCatalogManager:
         activate_catalog(self.catalog)
 
     def status(self) -> dict[str, Any]:
+        """Return active and remotely available catalogue state."""
+        active = self.catalog or BUNDLED_CATALOG
         return {
             "source": "downloaded" if self.catalog is not None else "bundled",
-            "catalog_version": (self.catalog or BUNDLED_CATALOG)["catalog_version"],
+            "catalog_version": active["catalog_version"],
             "schema_version": 2,
+            "update_available": self.available_catalog is not None,
+            "available_catalog_version": (
+                self.available_catalog["catalog_version"]
+                if self.available_catalog is not None
+                else None
+            ),
             "last_checked": self.last_checked,
             "last_error": self.last_error,
         }
 
     async def _save(
-        self, catalog: dict[str, Any] | None, etag: str | None, checked: float
+        self,
+        catalog: dict[str, Any] | None,
+        available_catalog: dict[str, Any] | None,
+        etag: str | None,
+        checked: float,
     ) -> None:
         await self.store.async_save(
-            {"catalog": catalog, "etag": etag, "last_checked": checked}
+            {
+                "catalog": catalog,
+                "available_catalog": available_catalog,
+                "etag": etag,
+                "last_checked": checked,
+            }
         )
 
-    async def _record_failed_update(self, checked: float, *, transient: bool) -> None:
-        """Retain current data while remembering when the failed check occurred."""
-        self.last_error = "Model data update failed; the current catalogue was kept."
+    async def _record_failed_check(self, checked: float, *, transient: bool) -> None:
+        """Retain active/pending data while remembering when a check failed."""
+        self.last_checked = checked
+        self.last_error = "Model data check failed; the current catalogue was kept."
         if transient:
             _LOGGER.debug(self.last_error)
         else:
             _LOGGER.warning(self.last_error)
         try:
-            await self._save(self.catalog, self.etag, checked)
+            await self._save(
+                self.catalog,
+                self.available_catalog,
+                self.etag,
+                checked,
+            )
         except Exception:
             _LOGGER.warning("Unable to persist model catalogue check time")
 
-    async def async_update(self, *, force: bool = False) -> dict[str, Any]:
-        """Fetch only trusted v2 data; failures preserve the current catalogue."""
+    async def async_check(self, *, force: bool = False) -> dict[str, Any]:
+        """Check trusted v2 data without changing the active catalogue."""
         async with self._lock:
             now = time.time()
             if not force and now - self.last_checked < UPDATE_INTERVAL:
                 return self.status()
-            self.last_checked = now
             try:
                 headers = {"If-None-Match": self.etag} if self.etag else {}
                 async with asyncio.timeout(15):
@@ -152,7 +198,13 @@ class ModelCatalogManager:
                         if response.status == 304:
                             if not self.etag:
                                 raise ValueError("Unsolicited not-modified response")
-                            await self._save(self.catalog, self.etag, now)
+                            await self._save(
+                                self.catalog,
+                                self.available_catalog,
+                                self.etag,
+                                now,
+                            )
+                            self.last_checked = now
                             self.last_error = None
                             return self.status()
                         if response.status == 429 or response.status >= 500:
@@ -160,7 +212,7 @@ class ModelCatalogManager:
                                 "Catalogue service temporarily unavailable"
                             )
                         if response.status != 200:
-                            raise ValueError("Catalogue HTTP update failed")
+                            raise ValueError("Catalogue HTTP check failed")
                         raw = bytearray()
                         async for chunk in response.content.iter_chunked(16384):
                             raw.extend(chunk)
@@ -170,21 +222,54 @@ class ModelCatalogManager:
                         etag = response.headers.get("ETag")
                         if etag and (len(etag) > 256 or "\n" in etag or "\r" in etag):
                             raise ValueError("Invalid catalogue ETag")
-                current_version = (self.catalog or BUNDLED_CATALOG)["catalog_version"]
+
+                active = self.catalog or BUNDLED_CATALOG
+                current_version = active["catalog_version"]
                 if candidate["catalog_version"] < current_version:
                     raise ValueError("Catalogue version is older than current data")
-                if candidate["catalog_version"] == current_version and candidate != (
-                    self.catalog or BUNDLED_CATALOG
-                ):
-                    raise ValueError("Changed catalogue must increment catalog_version")
-                validate_catalog_transition(self.catalog, candidate)
-                await self._save(candidate, etag, now)
-                activate_catalog(candidate)
-                self.catalog, self.etag, self.last_error = candidate, etag, None
+                if candidate["catalog_version"] == current_version:
+                    if candidate != active:
+                        raise ValueError(
+                            "Changed catalogue must increment catalog_version"
+                        )
+                    available = None
+                else:
+                    validate_catalog_transition(self.catalog, candidate)
+                    available = candidate
+
+                await self._save(self.catalog, available, etag, now)
+                self.available_catalog = available
+                self.etag = etag
+                self.last_checked = now
+                self.last_error = None
             except ClientError, TimeoutError, _TransientCatalogUpdateError:
-                await self._record_failed_update(now, transient=True)
+                await self._record_failed_check(now, transient=True)
             except Exception:
-                await self._record_failed_update(now, transient=False)
+                await self._record_failed_check(now, transient=False)
+            return self.status()
+
+    async def async_update(self, *, force: bool = False) -> dict[str, Any]:
+        """Compatibility alias for the former update action; now check-only."""
+        return await self.async_check(force=force)
+
+    async def async_apply_update(self) -> dict[str, Any]:
+        """Activate the most recently checked newer catalogue."""
+        async with self._lock:
+            candidate = self.available_catalog
+            if candidate is None:
+                self.last_error = "No model data update is available."
+                return self.status()
+            try:
+                validate_catalog_transition(self.catalog, candidate)
+                await self._save(candidate, None, self.etag, self.last_checked)
+            except Exception:
+                self.last_error = "Model data update could not be applied; the current catalogue was kept."
+                _LOGGER.warning(self.last_error)
+                return self.status()
+            activate_catalog(candidate)
+            self.catalog = candidate
+            self.available_catalog = None
+            self.last_error = None
             return self.status()
 
     async def _bundled_reset_would_invalidate_saved_reasoning(self) -> bool:
@@ -247,36 +332,49 @@ class ModelCatalogManager:
         return False
 
     async def async_reset(self) -> dict[str, Any]:
-        """Return to bundled data without invalidating durable choices."""
+        """Return to bundled data until a checked update is explicitly applied."""
         async with self._lock:
-            now = time.time()
             if await self._bundled_reset_would_invalidate_saved_reasoning():
                 self.last_error = (
                     "Model data reset was blocked because saved configuration or "
                     "Request Rules use reasoning choices unavailable in bundled data."
                 )
                 return self.status()
+
+            available = self.available_catalog
+            if (
+                available is None
+                and self.catalog is not None
+                and self.catalog["catalog_version"] > BUNDLED_CATALOG["catalog_version"]
+            ):
+                available = self.catalog
+            if (
+                available is not None
+                and available["catalog_version"] <= BUNDLED_CATALOG["catalog_version"]
+            ):
+                available = None
+            etag = self.etag if available is not None else None
             try:
-                await self._save(None, None, now)
+                await self._save(None, available, etag, self.last_checked)
             except Exception:
                 self.last_error = (
                     "Model data reset failed; the current catalogue was kept."
                 )
                 return self.status()
             activate_catalog(None)
-            self.catalog, self.etag, self.last_checked, self.last_error = (
-                None,
-                None,
-                now,
-                None,
-            )
+            self.catalog = None
+            self.available_catalog = available
+            self.etag = etag
+            self.last_error = None
             return self.status()
 
 
 @websocket_api.websocket_command(
     {
         vol.Required("type"): WS_CATALOG,
-        vol.Optional("action", default="lookup"): vol.In(("lookup", "update", "reset")),
+        vol.Optional("action", default="lookup"): vol.In(
+            ("lookup", "check", "update", "apply", "reset")
+        ),
         vol.Optional("model", default=""): vol.All(str, vol.Length(max=128)),
     }
 )
@@ -287,15 +385,27 @@ async def websocket_catalog(
 ) -> None:
     """Expose the same v2 capability data used by request validation."""
     manager: ModelCatalogManager = hass.data[DATA_MANAGER]
-    if msg["action"] == "update":
-        status = await manager.async_update(force=True)
+    if msg["action"] in {"check", "update"}:
+        status = await manager.async_check(force=True)
         if status["last_error"]:
             connection.send_error(
-                msg["id"], "model_catalog_update_failed", status["last_error"]
+                msg["id"], "model_catalog_check_failed", status["last_error"]
+            )
+            return
+    elif msg["action"] == "apply":
+        status = await manager.async_apply_update()
+        if status["last_error"]:
+            connection.send_error(
+                msg["id"], "model_catalog_apply_failed", status["last_error"]
             )
             return
     elif msg["action"] == "reset":
-        await manager.async_reset()
+        status = await manager.async_reset()
+        if status["last_error"]:
+            connection.send_error(
+                msg["id"], "model_catalog_reset_failed", status["last_error"]
+            )
+            return
 
     metadata = model_metadata(msg["model"])
     capabilities = compatibility_capabilities(msg["model"])
@@ -323,7 +433,7 @@ async def async_setup_model_catalog(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_catalog)
 
     async def check(_now: Any) -> None:
-        await manager.async_update()
+        await manager.async_check()
 
     cancel = async_track_time_interval(hass, check, timedelta(hours=1))
 

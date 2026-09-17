@@ -98,13 +98,14 @@ async def test_update_rejects_invalid_response_etag(hass, monkeypatch, etag: str
 
     result = await manager.async_update(force=True)
 
-    assert result["last_error"] == "Model data update failed; the current catalogue was kept."
+    assert result["last_error"] == "Model data check failed; the current catalogue was kept."
     assert manager.catalog is None
     assert manager.etag is None
     activate.assert_not_called()
     assert save.await_count == 1
-    saved_catalog, saved_etag, _checked = save.await_args.args
+    saved_catalog, saved_available, saved_etag, _checked = save.await_args.args
     assert saved_catalog is None
+    assert saved_available is None
     assert saved_etag is None
 
 
@@ -122,13 +123,14 @@ async def test_update_rejects_catalogue_version_rollback(hass, monkeypatch) -> N
 
     result = await manager.async_update(force=True)
 
-    assert result["last_error"] == "Model data update failed; the current catalogue was kept."
+    assert result["last_error"] == "Model data check failed; the current catalogue was kept."
     assert manager.catalog == current
     assert manager.etag == '"current"'
     activate.assert_not_called()
     assert save.await_count == 1
-    saved_catalog, saved_etag, _checked = save.await_args.args
+    saved_catalog, saved_available, saved_etag, _checked = save.await_args.args
     assert saved_catalog == current
+    assert saved_available is None
     assert saved_etag == '"current"'
 
 
@@ -170,13 +172,15 @@ async def test_websocket_actions_return_complete_catalog_payload(
         "source": "downloaded",
         "catalog_version": 7,
         "schema_version": 2,
+        "update_available": False,
+        "available_catalog_version": None,
         "last_checked": 123.0,
         "last_error": None,
     }
     manager = SimpleNamespace(
         catalog={"catalog_version": 7},
         status=Mock(return_value=status),
-        async_update=AsyncMock(return_value=status),
+        async_check=AsyncMock(return_value=status),
         async_reset=AsyncMock(return_value=status),
     )
     hass.data[runtime.DATA_MANAGER] = manager
@@ -208,13 +212,13 @@ async def test_websocket_actions_return_complete_catalog_payload(
         },
     )
     if action == "lookup":
-        manager.async_update.assert_not_awaited()
+        manager.async_check.assert_not_awaited()
         manager.async_reset.assert_not_awaited()
     elif action == "reset":
         manager.async_reset.assert_awaited_once_with()
-        manager.async_update.assert_not_awaited()
+        manager.async_check.assert_not_awaited()
     else:
-        manager.async_update.assert_awaited_once_with(force=True)
+        manager.async_check.assert_awaited_once_with(force=True)
         manager.async_reset.assert_not_awaited()
 
 
@@ -226,13 +230,15 @@ async def test_websocket_update_failure_sends_error_without_metadata_work(
         "source": "bundled",
         "catalog_version": 2,
         "schema_version": 2,
+        "update_available": False,
+        "available_catalog_version": None,
         "last_checked": 123.0,
         "last_error": "refresh failed",
     }
     manager = SimpleNamespace(
         catalog=None,
         status=Mock(),
-        async_update=AsyncMock(return_value=failed_status),
+        async_check=AsyncMock(return_value=failed_status),
         async_reset=AsyncMock(),
     )
     hass.data[runtime.DATA_MANAGER] = manager
@@ -259,9 +265,9 @@ async def test_websocket_update_failure_sends_error_without_metadata_work(
         {"id": 99, "action": "update", "model": "gpt-test"},
     )
 
-    manager.async_update.assert_awaited_once_with(force=True)
+    manager.async_check.assert_awaited_once_with(force=True)
     connection.send_error.assert_called_once_with(
-        99, "model_catalog_update_failed", "refresh failed"
+        99, "model_catalog_check_failed", "refresh failed"
     )
     connection.send_result.assert_not_called()
     manager.status.assert_not_called()
