@@ -118,5 +118,26 @@ export function polishConfigurationCopy(panel, html) {
     "When history reaches this size, use the trimming method below.",
   );
 
+  result = replaceText(
+    result,
+    "Maximum tool calls per conversation",
+    "Tool-call limit per conversation",
+  );
+  result = replaceText(
+    result,
+    "Stops the assistant after this many tool calls in one conversation to prevent runaway actions.",
+    "Stops additional tool calls when this limit is reached.",
+  );
+  result = replaceText(
+    result,
+    "Recover from correctable tool errors",
+    "Correct safe tool-call errors automatically",
+  );
+  result = replaceText(
+    result,
+    "Lets the model correct a tool call only when Extended OpenAI can prove the failure happened before any action could start. It does not retry arbitrary failed actions.",
+    "Lets the assistant correct and retry mistakes only when no action could already have started. Other failed actions are never retried automatically.",
+  );
+
   return result;
 }
