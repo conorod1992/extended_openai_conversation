@@ -138,9 +138,23 @@ export function polishSettingsLayout(panel) {
 }
 
 function schedulePolish(panel) {
+  if (panel._eocSettingsPolishScheduled) return;
+  panel._eocSettingsPolishScheduled = true;
   // Other management decorators also finish in microtasks. Queue one extra turn
   // so cleanup and structural polish run after them regardless of import order.
-  queueMicrotask(() => queueMicrotask(() => polishSettingsLayout(panel)));
+  queueMicrotask(() => queueMicrotask(() => {
+    panel._eocSettingsPolishScheduled = false;
+    polishSettingsLayout(panel);
+  }));
+}
+
+function bindInteractionPolish(panel) {
+  const root = panel?.shadowRoot;
+  if (!root || root.__eocSettingsPolishBound) return;
+  root.__eocSettingsPolishBound = true;
+  root.addEventListener("input", () => schedulePolish(panel));
+  root.addEventListener("change", () => schedulePolish(panel));
+  root.addEventListener("value-changed", () => schedulePolish(panel));
 }
 
 export function installManagementSettingsPolish(registry = globalThis.customElements) {
@@ -153,6 +167,7 @@ export function installManagementSettingsPolish(registry = globalThis.customElem
     const originalRender = prototype._render;
     prototype._render = function(...args) {
       const result = originalRender.apply(this, args);
+      bindInteractionPolish(this);
       schedulePolish(this);
       return result;
     };
