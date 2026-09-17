@@ -15,11 +15,38 @@ const NEW_TOOL_STARTER_CONFIG = Object.freeze({
   function: Object.freeze({type: "native", name: ""}),
 });
 const NATIVE_STYLE = `
+  #tool-dialog.tool-dialog {
+    width: min(1100px, calc(100vw - 32px));
+    max-height: calc(100dvh - 32px);
+    overflow: hidden;
+  }
+  #tool-dialog.tool-dialog[open] {
+    display: flex;
+    flex-direction: column;
+  }
+  #tool-dialog .tool-dialog-body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  #tool-dialog #tool-editor-label {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
   #${NATIVE_EDITOR_ID} {
     display: block;
+    flex: 1 1 auto;
     width: 100%;
-    min-height: 360px;
-    height: min(58vh, 620px);
+    min-height: 240px;
+    height: 100%;
+    cursor: text;
+  }
+  #tool-dialog .dialog-actions {
+    flex: 0 0 auto;
   }
   #${NATIVE_EDITOR_ID}[hidden] { display: none; }
   #tool-yaml[hidden] { display: none !important; }
@@ -70,12 +97,17 @@ const FUNCTION_GROUP_ASSIGNMENT_STYLE = `
     cursor: pointer;
   }
   .function-group-assignment:disabled { cursor: progress; }
-  .function-group-card[data-group-id] {
+  .function-group-card[data-group-id],
+  .function-group-card.always-card {
     background: var(--secondary-background-color, var(--card-background-color));
     background: color-mix(in srgb, var(--primary-color) 5%, var(--card-background-color));
     box-shadow: inset 3px 0 0 color-mix(in srgb, var(--primary-color) 28%, transparent);
   }
-  .function-group-card[data-group-id] > details .tool-card {
+  .function-group-card.function-repair-attention {
+    background: color-mix(in srgb, var(--warning-color, #ff9800) 8%, var(--card-background-color));
+    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--warning-color, #ff9800) 45%, transparent);
+  }
+  .function-group-card > details .tool-card {
     background: var(--card-background-color);
   }
   .function-group-card[data-group-id] + .function-group-card[data-group-id] {
@@ -199,8 +231,16 @@ function decorateFunctionGroupCards(panel, root, groups) {
     }
     const editButton = card.querySelector(".edit-group");
     if (editButton) {
+      editButton.textContent = "Edit";
       editButton.disabled = !enabled;
-      editButton.title = enabled ? "" : "Enable this Function Group before editing it";
+      editButton.setAttribute("aria-label", `Edit Function Group ${group.name}`);
+      editButton.title = enabled ? `Edit Function Group ${group.name}` : "Enable this Function Group before editing it";
+    }
+    const deleteButton = card.querySelector(".delete-group");
+    if (deleteButton) {
+      deleteButton.textContent = "Delete";
+      deleteButton.setAttribute("aria-label", `Delete Function Group ${group.name}`);
+      deleteButton.title = `Delete Function Group ${group.name}`;
     }
     const actions = card.querySelector(".function-group-heading .actions");
     if (actions && !actions.querySelector(".group-enabled")) {
