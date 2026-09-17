@@ -1,3 +1,5 @@
+import "./management-initial-bootstrap.js";
+
 const PATCHED = Symbol.for("extended-openai.management-overview-health-clarity");
 
 const count = (root, state) => root?.querySelectorAll?.(`.setup-health-check-${state}`)?.length || 0;
