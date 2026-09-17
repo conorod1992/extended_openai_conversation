@@ -7,6 +7,7 @@ const CANCEL_ID = "restore-transfer-cancel";
 const APPLY_ID = "restore-transfer-apply";
 const EXPORT_MODE_ID = "transfer-export-mode";
 const CUSTOM_OPTIONS_ID = "transfer-custom-options";
+const EXPORT_STATUS_ID = "transfer-export-status";
 const RESTORE_SECTIONS_ID = "restore-transfer-sections";
 const RESTORE_STATUS_ID = "restore-transfer-status";
 
@@ -205,6 +206,7 @@ function unifiedTransferPanel(disabled = false) {
     <div id="${CUSTOM_OPTIONS_ID}" class="setting-group" hidden><div class="subheading"><h3>Custom backup sections</h3><p>Selected sections are self-contained replacement sections when imported later.</p></div><div class="group-function-choices">${TRANSFER_SECTIONS.map(([key, label]) => `<label class="group-function-choice"><input type="checkbox" class="transfer-custom-section" value="${key}" checked><span><strong>${label}</strong></span></label>`).join("")}</div></div>
     <p class="privacy-warning"><strong>Privacy:</strong> Full and custom backups can contain private memories, Knowledge content, archived conversations and usage metadata. Secret-looking values in configuration and Request Rules are replaced by placeholders; review files before sharing them.</p>
     <div class="backup-actions"><button type="button" id="${CREATE_ID}" ${disabled ? "disabled" : ""}>Create export</button></div>
+    <div id="${EXPORT_STATUS_ID}" class="validation" role="status" aria-live="polite"></div>
     ${disabled ? "<small>Save or revert configuration changes before exporting so the file matches the saved agent.</small>" : ""}
     <hr>
     <div class="subheading"><h3>Import / Restore</h3><p>Select any current or legacy Extended OpenAI setup export, custom backup or full backup. The file is validated before anything changes.</p></div>
@@ -268,6 +270,19 @@ function transferSummaryLines(result, summaryFormatter) {
   const configured = summaryFormatter(summary).filter(Boolean);
   for (const line of configured) if (!lines.includes(line)) lines.push(line);
   return lines;
+}
+
+function exportWarningMessages(result) {
+  return (Array.isArray(result?.warnings) ? result.warnings : [])
+    .map((warning) => typeof warning === "string" ? warning : warning?.message)
+    .filter(Boolean);
+}
+
+function setExportStatus(root, message = "", state = "") {
+  const status = root.querySelector(`#${EXPORT_STATUS_ID}`);
+  if (!status) return;
+  status.className = `validation${state ? ` ${state}` : ""}`;
+  status.textContent = message;
 }
 
 function updateSensitiveStatus(panel, preview) {
@@ -337,6 +352,7 @@ export function bindBackupTransfer(panel, summaryFormatter = () => []) {
   const customOptions = root.querySelector(`#${CUSTOM_OPTIONS_ID}`);
   const syncExportMode = () => {
     if (customOptions) customOptions.hidden = exportMode?.value !== "custom";
+    setExportStatus(root);
   };
   exportMode?.addEventListener("change", syncExportMode);
   syncExportMode();
@@ -347,17 +363,26 @@ export function bindBackupTransfer(panel, summaryFormatter = () => []) {
     const mode = exportMode?.value || "setup";
     const sections = selectedValues(root, ".transfer-custom-section");
     if (mode === "custom" && !sections.length) {
-      panel._toast("Select at least one section for the custom backup", true);
+      const message = "Select at least one section for the custom backup";
+      setExportStatus(root, message, "error");
+      panel._toast(message, true);
       return;
     }
     panel._setSaving(button, true);
+    setExportStatus(root, "Creating export…");
     try {
-      if (mode === "setup") await downloadSetupExport(panel);
-      else if (mode === "custom") await downloadCustomBackup(panel, sections);
-      else await downloadFullBackup(panel);
-      panel._toast(mode === "setup" ? "Shareable setup exported" : mode === "custom" ? "Custom backup created" : "Full backup created");
+      let result;
+      if (mode === "setup") result = await downloadSetupExport(panel);
+      else if (mode === "custom") result = await downloadCustomBackup(panel, sections);
+      else result = await downloadFullBackup(panel);
+      const warnings = exportWarningMessages(result);
+      const success = mode === "setup" ? "Shareable setup exported" : mode === "custom" ? "Custom backup created" : "Full backup created";
+      setExportStatus(root, warnings.length ? `${success}. ${warnings.join(" ")}` : success, "success");
+      panel._toast(success);
     } catch (err) {
-      panel._toast(`Unable to create export: ${err.message || String(err)}`, true);
+      const message = `Unable to create export: ${err.message || String(err)}`;
+      setExportStatus(root, message, "error");
+      panel._toast(message, true);
     } finally {
       panel._setSaving(button, false);
     }
