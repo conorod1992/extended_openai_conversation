@@ -23,6 +23,11 @@ function polishRenderedCopy(panel) {
     "Daily, monthly, and lifetime totals are never removed by detail pruning.",
     "Overall daily, monthly and lifetime totals are not cleared.",
   );
+  replaceRenderedText(
+    root,
+    "Cached input is request content the provider has seen before and can reuse. It is included in the total token count, but cached input is usually cheaper than uncached input when the provider supports discounted caching.",
+    "Cached input is input recognised as cached by the provider. It is included in total tokens and may be billed at a lower rate.",
+  );
 }
 
 export function installManagementCopyPolish(registry = globalThis.customElements) {
