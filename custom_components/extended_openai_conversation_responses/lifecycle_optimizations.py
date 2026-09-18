@@ -14,40 +14,14 @@ _INSTALLED = False
 
 
 def install_lifecycle_optimizations() -> None:
-    """Install archive, memory, and debug lifecycle optimizations."""
+    """Install memory prefetch and debug summary optimizations."""
     global _INSTALLED
     if _INSTALLED:
         return
 
-    _install_archive_fast_path()
     _install_memory_prefetch()
     _install_debug_summary_fields()
     _INSTALLED = True
-
-
-def _install_archive_fast_path() -> None:
-    """Avoid archive I/O when neither retention nor archive search needs storage."""
-    from .conversation_archive import ConversationArchive
-
-    archive_type: Any = ConversationArchive
-    original_begin_session = archive_type.async_begin_session
-
-    async def async_begin_session(
-        archive: Any,
-        *args: Any,
-        archive_enabled: bool,
-        **kwargs: Any,
-    ) -> Any:
-        if not archive_enabled:
-            return None
-        return await original_begin_session(
-            archive,
-            *args,
-            archive_enabled=archive_enabled,
-            **kwargs,
-        )
-
-    archive_type.async_begin_session = async_begin_session
 
 
 def _install_memory_prefetch() -> None:

@@ -100,7 +100,6 @@ from .ha_permissions import async_setup_ha_permissions
 from .helpers import get_authenticated_client, supports_openai_hosted_tools
 from .input_footprint import install_input_footprint
 from .intercom_services import async_setup_intercom_services
-from .management_loading_performance import install_management_loading_optimizations
 from .management_permissions import install_management_permissions
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
@@ -118,7 +117,6 @@ from .quiet_hours import async_get_quiet_hours
 from .regex_execution import install_configurable_regex_isolation
 from .request_rule_match_preview import install_request_rule_match_preview
 from .restore_recovery import async_recover_pending_restores, install_restore_recovery
-from .safety_hardening import install_safety_hardening
 from .services import async_setup_services
 from .skill_runtime_availability import install_skill_runtime_availability
 from .template import async_setup_templates, async_unload_templates
@@ -189,15 +187,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_deferred_context_summary()
     install_debug_instrumentation()
     install_request_rule_match_preview()
-    install_management_loading_optimizations()
-    # Install after prompt/management performance wrappers so selected attributes
-    # enrich the actual effective request and optimized management dispatcher.
+    # Guest setup installs the management optimizer; selected attributes enrich
+    # that dispatcher and the effective prompt before permission checks wrap it.
     _exposed_attributes.install_exposed_attribute_runtime()
     install_input_footprint()
     install_management_permissions()
     # Wrap the effective management dispatcher after permission/performance layers.
     install_function_dependency_integrity()
-    install_safety_hardening()
     install_configurable_regex_isolation()
     install_model_search_hardening()
     # Install last so the gate wraps the effective post-optimization entry points.
