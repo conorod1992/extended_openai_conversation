@@ -24,7 +24,7 @@ const projection = await readFile(
 
 assert.match(navigation, /id: "request-debug", label: "Request debugging"/);
 assert.doesNotMatch(navigation, /import\("\.\/debug-management\.js"\)/);
-assert.match(bootstrap, /await import\("\.\/debug-management\.js"\)/);
+assert.match(bootstrap, /installManagementSection\(Panel\)/);
 assert.match(integration, /usage-maintenance\/request-debug/);
 assert.match(integration, /const originalLoadSection = prototype\._loadSection/);
 assert.match(integration, /return ensureDebugPanel\(\)/);

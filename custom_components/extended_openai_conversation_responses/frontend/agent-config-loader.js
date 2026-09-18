@@ -75,26 +75,29 @@ function polishRenderedCopy(panel) {
   }
 }
 
-export function installManagementCopyPolish(registry = globalThis.customElements) {
-  if (!registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[MANAGEMENT_COPY_PATCHED]) return false;
-    const originalRender = prototype._render;
-    prototype._render = function(...args) {
-      const shellRevision = this._eocShellRevision;
-      const result = originalRender.apply(this, args);
-      // Preserve the existing shell-only decoration boundary. The native renderer
-      // no longer bypasses early wrappers on routine route updates.
-      if (shellRevision === undefined || shellRevision !== this._eocShellRevision) {
-        queueMicrotask(() => polishRenderedCopy(this));
-      }
-      return result;
-    };
-    prototype[MANAGEMENT_COPY_PATCHED] = true;
-    return true;
-  });
+export function installManagementCopyPolish(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementCopyPolish(registry.get("extended-openai-management-panel")));
+  }
+  const constructor = Panel;
+  const prototype = constructor?.prototype;
+  if (!prototype || prototype[MANAGEMENT_COPY_PATCHED]) return false;
+  const originalRender = prototype._render;
+  prototype._render = function(...args) {
+    const shellRevision = this._eocShellRevision;
+    const result = originalRender.apply(this, args);
+    // Preserve the existing shell-only decoration boundary. The native renderer
+    // no longer bypasses early wrappers on routine route updates.
+    if (shellRevision === undefined || shellRevision !== this._eocShellRevision) {
+      queueMicrotask(() => polishRenderedCopy(this));
+    }
+    return result;
+  };
+  prototype[MANAGEMENT_COPY_PATCHED] = true;
+  return true;
 }
 
 export function polishConfigurationCopy(panel, html) {
@@ -242,6 +245,3 @@ export async function ensureAgentConfigModule() {
   return loadPromise;
 }
 
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  installManagementCopyPolish();
-}

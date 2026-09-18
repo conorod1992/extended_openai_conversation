@@ -306,10 +306,3 @@ export function installManagementBrowser(Panel) {
   return true;
 }
 
-const registry = globalThis.customElements;
-if (registry?.whenDefined) {
-  registry.whenDefined(PANEL_TAG).then(() => {
-    const Panel = registry.get(PANEL_TAG);
-    if (Panel) installManagementBrowser(Panel);
-  });
-}

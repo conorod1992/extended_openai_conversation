@@ -37,16 +37,20 @@ export function routeAssetKind(view) {
 const featureModules = new Map();
 const featurePromises = new Map();
 const featureLoaders = {
-  "usage-maintenance/diagnostics": () => import("./management-provider-credentials.js"),
+  "usage-maintenance/diagnostics": async (panel) => {
+    const module = await import("./management-provider-credentials.js");
+    module.installManagementProviderCredentials(panel.constructor);
+    return module;
+  },
   "assistant/voice": () => import("./voice-identity-ui.js"),
   "data-memory/memory-settings": () => import("./memory-settings-ui.js"),
 };
 export function getRouteFeature(view) { return featureModules.get(view); }
 
-function featureAssetPromise(view) {
+function featureAssetPromise(view, panel) {
   if (!featureLoaders[view] || featureModules.has(view)) return null;
   if (!featurePromises.has(view)) {
-    featurePromises.set(view, featureLoaders[view]().then((module) => {
+    featurePromises.set(view, featureLoaders[view](panel).then((module) => {
       featureModules.set(view, module);
       return module;
     }).finally(() => featurePromises.delete(view)));
@@ -54,8 +58,8 @@ function featureAssetPromise(view) {
   return featurePromises.get(view);
 }
 
-export function routeAssetPromise(view) {
-  const feature = featureAssetPromise(view);
+export function routeAssetPromise(view, panel) {
+  const feature = featureAssetPromise(view, panel);
   const core = coreAssetPromise(view);
   return feature ? Promise.all([feature, core]) : core;
 }
@@ -65,7 +69,7 @@ function coreAssetPromise(view) {
   if (view === "guide") return ensureGuideModule();
   if (view === "usage-maintenance/request-debug") return import("./debug-panel.js");
   const kind = routeAssetKind(view);
-  if (kind === "agent-config") return ensureConfigurationEditor();
+  if (kind === "agent-config" && !configurationEditor) return ensureConfigurationEditor();
   if (kind === "request-rules" && !getRequestRulesModule()) return ensureRequestRulesModule();
   return null;
 }
@@ -176,7 +180,7 @@ export function loadRoute(panel, silent = false) {
   const view = panel._viewKey();
   const token = (panel._eocViewAssetToken || 0) + 1;
   panel._eocViewAssetToken = token;
-  const asset = routeAssetPromise(view);
+  const asset = routeAssetPromise(view, panel);
   if (!asset) return panel._loadSectionData(silent);
   return loadSectionAlongsideAsset(panel, silent, panel._loadSectionData, view, asset, token);
 }

@@ -13,9 +13,10 @@ const [source, bootstrap] = await Promise.all([
 const stateSafety = await import(frontend("management-state-safety.js"));
 const bootstrapModule = await import(frontend("management-bootstrap.js"));
 
-assert.match(bootstrap, /await import\("\.\/management-state-safety\.js"\)/);
-assert.match(bootstrap, /await import\("\.\/debug-management\.js"\)/);
-assert.match(bootstrap, /installPreDefinitionPropertyReplay\(constructor\)/);
+assert.match(bootstrap, /from "\.\/management-state-safety\.js"/);
+assert.match(bootstrap, /from "\.\/debug-management\.js"/);
+assert.match(bootstrap, /installPreDefinitionPropertyReplay\(Panel\)/);
+assert.doesNotMatch(bootstrap, /registry\.(define|get|whenDefined)\s*=/);
 assert.equal(stateSafety.SECTION_CACHE_TTL_MS, 30_000);
 assert.match(source, /Discard unsaved Guest policy changes\?/);
 assert.match(source, /Switching agents will discard your unsaved Guest Mode policy changes/);

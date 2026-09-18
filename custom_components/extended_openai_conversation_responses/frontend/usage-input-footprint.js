@@ -75,43 +75,43 @@ function bindRetry(panel) {
   });
 }
 
-export function installUsageInputFootprint(registry = globalThis.customElements) {
-  if (!registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
+export function installUsageInputFootprint(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installUsageInputFootprint(registry.get("extended-openai-management-panel")));
+  }
+  const constructor = Panel;
+  const prototype = constructor?.prototype;
+  if (!prototype || prototype[PATCHED]) return false;
 
-    const originalLoadSection = prototype._loadSection;
-    prototype._loadSection = async function(...args) {
-      const result = await originalLoadSection.apply(this, args);
-      if (this._viewKey() === "usage-maintenance/usage") {
-        if (this._inputFootprintAgentId !== this._agentId) {
-          this._inputFootprint = null;
-          this._inputFootprintError = null;
-        }
-        await loadInputFootprint(this);
+  const originalLoadSection = prototype._loadSection;
+  prototype._loadSection = async function(...args) {
+    const result = await originalLoadSection.apply(this, args);
+    if (this._viewKey() === "usage-maintenance/usage") {
+      if (this._inputFootprintAgentId !== this._agentId) {
+        this._inputFootprint = null;
+        this._inputFootprintError = null;
       }
-      return result;
-    };
+      await loadInputFootprint(this);
+    }
+    return result;
+  };
 
-    const originalUsage = prototype._usage;
-    prototype._usage = function(...args) {
-      return `${footprintMarkup(this)}${originalUsage.apply(this, args)}`;
-    };
+  const originalUsage = prototype._usage;
+  prototype._usage = function(...args) {
+    return `${footprintMarkup(this)}${originalUsage.apply(this, args)}`;
+  };
 
-    const originalBindActions = prototype._bindActions;
-    prototype._bindActions = function(...args) {
-      const result = originalBindActions.apply(this, args);
-      if (this._viewKey() === "usage-maintenance/usage") bindRetry(this);
-      return result;
-    };
+  const originalBindActions = prototype._bindActions;
+  prototype._bindActions = function(...args) {
+    const result = originalBindActions.apply(this, args);
+    if (this._viewKey() === "usage-maintenance/usage") bindRetry(this);
+    return result;
+  };
 
-    prototype[PATCHED] = true;
-    return true;
-  });
+  prototype[PATCHED] = true;
+  return true;
 }
 
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  installUsageInputFootprint();
-}

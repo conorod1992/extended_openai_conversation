@@ -155,8 +155,7 @@ function appendTurnPager(panel, body, sessionId, data) {
   body.append(pager);
 }
 
-function install() {
-  const Panel = customElements.get(MANAGEMENT_TAG);
+export function installHistoryPagination(Panel) {
   if (!Panel || Panel.prototype[PATCHED]) return;
   const prototype = Panel.prototype;
   prototype[PATCHED] = true;
@@ -220,9 +219,6 @@ function install() {
   };
 }
 
-if (typeof customElements !== "undefined") {
-  customElements.whenDefined(MANAGEMENT_TAG).then(install);
-}
 
 export {
   LIST_PAGE_LIMIT,

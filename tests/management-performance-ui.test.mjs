@@ -32,6 +32,10 @@ const [{ExtendedOpenAIManagementPanel}, {bindRequestRules}] = await Promise.all(
   import("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js"),
 ]);
 
+// These cases isolate cached data behavior after route assets are ready.
+const {routeAssetPromise} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-route.js");
+await routeAssetPromise("assistant/basics");
+
 const agents = [
   {entry_id:"entry-a", subentry_id:"agent-a", title:"A"},
   {entry_id:"entry-b", subentry_id:"agent-b", title:"B"},

@@ -147,34 +147,34 @@ function ensureOverviewModelData(panel) {
     });
 }
 
-export function installManagementOverviewHealthClarity(registry = globalThis.customElements) {
-  if (!registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined(PANEL_TAG).then(() => {
-    const constructor = registry.get(PANEL_TAG);
-    const prototype = constructor?.prototype;
-    if (!prototype) return false;
+export function installManagementOverviewHealthClarity(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined(PANEL_TAG).then(() => installManagementOverviewHealthClarity(registry.get(PANEL_TAG)));
+  }
+  const constructor = Panel;
+  const prototype = constructor?.prototype;
+  if (!prototype) return false;
 
-    if (prototype[PATCHED]) return false;
+  if (prototype[PATCHED]) return false;
 
-    const originalRender = prototype._render;
-    prototype._render = function(...args) {
-      const result = originalRender.apply(this, args);
-      if (this._page === "overview") {
-        queueMicrotask(() => {
-          clarifySetupHealthSummary(this);
-          renderOverviewModelDataCard(this);
-          ensureOverviewModelData(this);
-        });
-      }
-      return result;
-    };
+  const originalRender = prototype._render;
+  prototype._render = function(...args) {
+    const result = originalRender.apply(this, args);
+    if (this._page === "overview") {
+      queueMicrotask(() => {
+        clarifySetupHealthSummary(this);
+        renderOverviewModelDataCard(this);
+        ensureOverviewModelData(this);
+      });
+    }
+    return result;
+  };
 
-    prototype[PATCHED] = true;
-    return true;
-  });
+  prototype[PATCHED] = true;
+  return true;
 }
 
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  installManagementOverviewHealthClarity();
-}
 

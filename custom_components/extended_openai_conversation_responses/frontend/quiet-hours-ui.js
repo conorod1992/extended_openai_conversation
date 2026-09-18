@@ -149,54 +149,57 @@ export function bindQuietHours(panel) {
   });
 }
 
-export function installQuietHoursUI(registry = globalThis.customElements) {
-  installNavigation();
-  if (!registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
+installNavigation();
 
-    const originalLoadSection = prototype._loadSection;
-    prototype._loadSection = async function(silent = false) {
-      if (this._viewKey() !== VIEW) return originalLoadSection.call(this, silent);
-      const token = ++this._loadToken;
-      if (!silent) { this._busy = true; this._render(); }
-      try {
-        const result = await this._call("quiet_hours", "get");
-        if (token !== this._loadToken) return;
-        this._result = result;
-        this._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
-        this._error = null;
-      } catch (err) {
-        if (token === this._loadToken) this._error = err.message || String(err);
-      } finally {
-        if (token === this._loadToken) { this._busy = false; this._render(); }
-      }
-    };
+export function installQuietHoursUI(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installQuietHoursUI(registry.get("extended-openai-management-panel")));
+  }
+  const constructor = Panel;
+  const prototype = constructor?.prototype;
+  if (!prototype || prototype[PATCHED]) return false;
 
-    const originalContent = prototype._content;
-    prototype._content = function(agent) {
-      if (this._viewKey() === VIEW) return renderQuietHours(this);
-      return originalContent.call(this, agent);
-    };
+  const originalLoadSection = prototype._loadSection;
+  prototype._loadSection = async function(silent = false) {
+    if (this._viewKey() !== VIEW) return originalLoadSection.call(this, silent);
+    const token = ++this._loadToken;
+    if (!silent) { this._busy = true; this._render(); }
+    try {
+      const result = await this._call("quiet_hours", "get");
+      if (token !== this._loadToken) return;
+      this._result = result;
+      this._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
+      this._error = null;
+    } catch (err) {
+      if (token === this._loadToken) this._error = err.message || String(err);
+    } finally {
+      if (token === this._loadToken) { this._busy = false; this._render(); }
+    }
+  };
 
-    const originalBindActions = prototype._bindActions;
-    prototype._bindActions = function(...args) {
-      const result = originalBindActions.apply(this, args);
-      if (this._viewKey() === VIEW) bindQuietHours(this);
-      return result;
-    };
+  const originalContent = prototype._content;
+  prototype._content = function(agent) {
+    if (this._viewKey() === VIEW) return renderQuietHours(this);
+    return originalContent.call(this, agent);
+  };
 
-    const originalStyles = prototype._styles;
-    prototype._styles = function(...args) {
-      return `${originalStyles.apply(this, args)}
-        .qh-status,.qh-satellite-heading{display:flex;justify-content:space-between;gap:16px;align-items:center}.qh-status{padding-bottom:18px;border-bottom:1px solid var(--divider-color);margin-bottom:8px}.qh-status div,.qh-satellite-heading div{display:flex;flex-direction:column;gap:3px}.qh-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.qh-grid label{display:flex;flex-direction:column;gap:7px}.qh-grid label>span{font-weight:600}.qh-grid small,.qh-entity-note small,.qh-satellite small{color:var(--secondary-text-color);line-height:1.45}.qh-policy{margin-top:20px}.qh-volume{display:flex;align-items:center;gap:12px}.qh-volume input{flex:1}.qh-volume output{min-width:44px;text-align:right;font-variant-numeric:tabular-nums}.qh-entity-note{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:20px;padding:14px;border-radius:10px;background:var(--secondary-background-color)}.qh-entity-note small{flex-basis:100%}.qh-satellites{display:grid;gap:14px}.qh-satellite{border:1px solid var(--divider-color);border-radius:12px;padding:16px}.qh-satellite-heading{margin-bottom:14px}.config-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}@media(max-width:760px){.qh-grid{grid-template-columns:1fr}.qh-status,.qh-satellite-heading{align-items:flex-start}}`;
-    };
+  const originalBindActions = prototype._bindActions;
+  prototype._bindActions = function(...args) {
+    const result = originalBindActions.apply(this, args);
+    if (this._viewKey() === VIEW) bindQuietHours(this);
+    return result;
+  };
 
-    prototype[PATCHED] = true;
-    return true;
-  });
+  const originalStyles = prototype._styles;
+  prototype._styles = function(...args) {
+    return `${originalStyles.apply(this, args)}
+      .qh-status,.qh-satellite-heading{display:flex;justify-content:space-between;gap:16px;align-items:center}.qh-status{padding-bottom:18px;border-bottom:1px solid var(--divider-color);margin-bottom:8px}.qh-status div,.qh-satellite-heading div{display:flex;flex-direction:column;gap:3px}.qh-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.qh-grid label{display:flex;flex-direction:column;gap:7px}.qh-grid label>span{font-weight:600}.qh-grid small,.qh-entity-note small,.qh-satellite small{color:var(--secondary-text-color);line-height:1.45}.qh-policy{margin-top:20px}.qh-volume{display:flex;align-items:center;gap:12px}.qh-volume input{flex:1}.qh-volume output{min-width:44px;text-align:right;font-variant-numeric:tabular-nums}.qh-entity-note{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:20px;padding:14px;border-radius:10px;background:var(--secondary-background-color)}.qh-entity-note small{flex-basis:100%}.qh-satellites{display:grid;gap:14px}.qh-satellite{border:1px solid var(--divider-color);border-radius:12px;padding:16px}.qh-satellite-heading{margin-bottom:14px}.config-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}@media(max-width:760px){.qh-grid{grid-template-columns:1fr}.qh-status,.qh-satellite-heading{align-items:flex-start}}`;
+  };
+
+  prototype[PATCHED] = true;
+  return true;
 }
 
-if (typeof document !== "undefined" && typeof customElements !== "undefined") installQuietHoursUI();

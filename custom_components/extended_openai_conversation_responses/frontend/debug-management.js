@@ -221,8 +221,7 @@ function installDebugPresentation() {
   };
 }
 
-function installManagementSection() {
-  const ManagementPanel = customElements.get(MANAGEMENT_TAG);
+function installManagementSection(ManagementPanel = customElements.get(MANAGEMENT_TAG)) {
   if (!ManagementPanel || ManagementPanel.name !== "ExtendedOpenAIManagementPanel"
     || ManagementPanel.prototype.__requestDebugSectionInstalled) return;
   const prototype = ManagementPanel.prototype;
@@ -298,8 +297,7 @@ function installManagementSection() {
   };
 }
 
-customElements.whenDefined(DEBUG_TAG).then(installDebugPresentation);
-customElements.whenDefined(MANAGEMENT_TAG).then(installManagementSection);
+if (typeof customElements !== "undefined") customElements.whenDefined(DEBUG_TAG).then(installDebugPresentation);
 
 export {
   DEBUG_PROVIDER_PAGE_LIMIT,

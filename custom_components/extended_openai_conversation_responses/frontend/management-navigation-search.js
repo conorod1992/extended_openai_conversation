@@ -258,37 +258,37 @@ function enhancePanel(panel) {
   if (panel._settingsSearchQuery) void ensureSearchConfiguration(panel);
 }
 
-export function installManagementNavigationSearch(registry = globalThis.customElements) {
-  if (!registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
+export function installManagementNavigationSearch(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementNavigationSearch(registry.get("extended-openai-management-panel")));
+  }
+  const constructor = Panel;
+  const prototype = constructor?.prototype;
+  if (!prototype || prototype[PATCHED]) return false;
 
-    const originalRender = prototype._render;
-    prototype._render = function(...args) {
-      const result = originalRender.apply(this, args);
-      enhancePanel(this);
-      return result;
-    };
+  const originalRender = prototype._render;
+  prototype._render = function(...args) {
+    const result = originalRender.apply(this, args);
+    enhancePanel(this);
+    return result;
+  };
 
-    const originalClearConfigDraft = prototype._clearConfigDraft;
-    prototype._clearConfigDraft = function(...args) {
-      const result = originalClearConfigDraft.apply(this, args);
-      this._settingsSearchConfig = null;
-      this._settingsSearchConfigAgentId = null;
-      this._settingsSearchConfigError = null;
-      this._settingsSearchConfigErrorAgentId = null;
-      return result;
-    };
+  const originalClearConfigDraft = prototype._clearConfigDraft;
+  prototype._clearConfigDraft = function(...args) {
+    const result = originalClearConfigDraft.apply(this, args);
+    this._settingsSearchConfig = null;
+    this._settingsSearchConfigAgentId = null;
+    this._settingsSearchConfigError = null;
+    this._settingsSearchConfigErrorAgentId = null;
+    return result;
+  };
 
-    prototype[PATCHED] = true;
-    return true;
-  });
+  prototype[PATCHED] = true;
+  return true;
 }
 
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  installManagementNavigationSearch();
-}
 
 export {ensureSearchConfiguration, searchMarkup};

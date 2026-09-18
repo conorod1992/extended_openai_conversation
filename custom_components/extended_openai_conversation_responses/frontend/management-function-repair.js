@@ -224,8 +224,7 @@ function bindFallbackRepair(panel) {
   });
 }
 
-function install() {
-  const Panel = customElements.get(PANEL_TAG);
+export function installFunctionRepair(Panel) {
   if (!Panel || Panel.prototype[PATCHED]) return false;
   const prototype = Panel.prototype;
   prototype[PATCHED] = true;
@@ -267,9 +266,6 @@ function install() {
   return true;
 }
 
-if (typeof customElements !== "undefined") {
-  customElements.whenDefined(PANEL_TAG).then(install);
-}
 
 export {
   bindFallbackRepair,

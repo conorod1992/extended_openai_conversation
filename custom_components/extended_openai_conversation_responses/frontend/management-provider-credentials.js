@@ -262,32 +262,32 @@ function enhanceDiagnostics(panel) {
   watchDiagnosticsResult(panel);
 }
 
-export function installManagementProviderCredentials(registry = globalThis.customElements) {
-  if (typeof document === "undefined" || !registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
+export function installManagementProviderCredentials(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementProviderCredentials(registry.get("extended-openai-management-panel")));
+  }
+  const constructor = Panel;
+  const prototype = constructor?.prototype;
+  if (!prototype || prototype[PATCHED]) return false;
 
-    const originalRender = prototype._render;
-    prototype._render = function(...args) {
-      stopDiagnosticsWatch(this);
-      const result = originalRender.apply(this, args);
-      enhanceDiagnostics(this);
-      return result;
-    };
+  const originalRender = prototype._render;
+  prototype._render = function(...args) {
+    stopDiagnosticsWatch(this);
+    const result = originalRender.apply(this, args);
+    enhanceDiagnostics(this);
+    return result;
+  };
 
-    const originalDisconnected = prototype.disconnectedCallback;
-    prototype.disconnectedCallback = function(...args) {
-      stopDiagnosticsWatch(this);
-      return originalDisconnected?.apply(this, args);
-    };
+  const originalDisconnected = prototype.disconnectedCallback;
+  prototype.disconnectedCallback = function(...args) {
+    stopDiagnosticsWatch(this);
+    return originalDisconnected?.apply(this, args);
+  };
 
-    prototype[PATCHED] = true;
-    return true;
-  });
+  prototype[PATCHED] = true;
+  return true;
 }
 
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  void installManagementProviderCredentials();
-}

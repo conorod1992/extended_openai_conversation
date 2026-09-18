@@ -1,4 +1,4 @@
-import "./management-bootstrap.js";
+import {initializeManagementPanel} from "./management-bootstrap.js";
 import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs} from "./management-dialogs.js";
 import {renderManagement} from "./management-renderer.js";
@@ -1114,4 +1114,5 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   `; }
 }
 
+initializeManagementPanel(ExtendedOpenAIManagementPanel);
 customElements.define("extended-openai-management-panel", ExtendedOpenAIManagementPanel);

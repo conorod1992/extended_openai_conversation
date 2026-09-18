@@ -432,64 +432,58 @@ function renderUsagePage(panel, result = {}) {
     ${panel._data?.is_admin ? `<section class="content-card"><h2>Usage detail maintenance</h2><p>Retention is available in the local Retention & maintenance subsection.</p><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Daily, monthly, selected-period, and lifetime aggregates are never removed by detail pruning.</small></section>` : ""}`;
 }
 
-function installUsageDiagnostics() {
-  if (typeof customElements === "undefined") return;
-  customElements.whenDefined("extended-openai-management-panel").then(() => {
-    const Panel = customElements.get("extended-openai-management-panel");
-    const prototype = Panel?.prototype;
-    if (!prototype || prototype.__usageDiagnosticsInstalled) return;
-    prototype.__usageDiagnosticsInstalled = true;
+export function installUsageDiagnostics(Panel) {
+  const prototype = Panel?.prototype;
+  if (!prototype || prototype.__usageDiagnosticsInstalled) return;
+  prototype.__usageDiagnosticsInstalled = true;
 
-    const originalCall = prototype._call;
-    prototype._call = function(section, action, extra = {}) {
-      if (section === "usage" && action === "daily" && !extra.start_date && !extra.end_date) {
-        const agent = this._selectedAgent?.();
-        const identity = agent ? {entry_id: agent.entry_id, subentry_id: agent.subentry_id} : {};
-        return loadAllUsageDays((startDate, endDate) => originalCall.call(this, section, action, {
-          ...extra,
-          ...identity,
-          start_date: startDate,
-          end_date: endDate,
-        }));
-      }
-      return originalCall.call(this, section, action, extra);
-    };
-
-    prototype._usage = function() {
-      return renderUsagePage(this, this._result || {});
-    };
-
-    const originalDialogs = prototype._dialogs;
-    prototype._dialogs = function() {
-      return `${originalDialogs.call(this)}${requestDetailsDialog()}`;
-    };
-
-    const originalBindActions = prototype._bindActions;
-    prototype._bindActions = function() {
-      originalBindActions.call(this);
-      const root = this.shadowRoot;
-      root.querySelector("#usage-window")?.addEventListener("change", (event) => {
-        this._usageHistoryWindow = normalizeUsageWindow(event.target.value);
-        this._render();
-      });
-      root.querySelectorAll(".close-usage-requests").forEach((button) => button.addEventListener("click", () => root.querySelector("#usage-request-dialog")?.close()));
-      root.querySelector("#usage-request-dialog")?.addEventListener("cancel", (event) => { event.preventDefault(); root.querySelector("#usage-request-dialog")?.close(); });
-      root.querySelectorAll(".usage-run-details").forEach((button) => button.addEventListener("click", async () => {
-        const dialog = root.querySelector("#usage-request-dialog");
-        const body = root.querySelector("#usage-request-body");
-        if (!dialog || !body) return;
-        body.innerHTML = this._loading();
-        dialog.showModal();
-        try {
-          const response = await this._call("usage", "requests", {run_id: button.dataset.usageRunId, limit: 100});
-          if (!dialog.open) return;
-          body.innerHTML = renderRequestDetails(this, response?.requests || []);
-        } catch (err) {
-          if (dialog.open) body.innerHTML = `<div class="error" role="alert">${this._e(err.message || String(err))}</div>`;
-        }
+  const originalCall = prototype._call;
+  prototype._call = function(section, action, extra = {}) {
+    if (section === "usage" && action === "daily" && !extra.start_date && !extra.end_date) {
+      const agent = this._selectedAgent?.();
+      const identity = agent ? {entry_id: agent.entry_id, subentry_id: agent.subentry_id} : {};
+      return loadAllUsageDays((startDate, endDate) => originalCall.call(this, section, action, {
+        ...extra,
+        ...identity,
+        start_date: startDate,
+        end_date: endDate,
       }));
-    };
-  });
-}
+    }
+    return originalCall.call(this, section, action, extra);
+  };
 
-installUsageDiagnostics();
+  prototype._usage = function() {
+    return renderUsagePage(this, this._result || {});
+  };
+
+  const originalDialogs = prototype._dialogs;
+  prototype._dialogs = function() {
+    return `${originalDialogs.call(this)}${requestDetailsDialog()}`;
+  };
+
+  const originalBindActions = prototype._bindActions;
+  prototype._bindActions = function() {
+    originalBindActions.call(this);
+    const root = this.shadowRoot;
+    root.querySelector("#usage-window")?.addEventListener("change", (event) => {
+      this._usageHistoryWindow = normalizeUsageWindow(event.target.value);
+      this._render();
+    });
+    root.querySelectorAll(".close-usage-requests").forEach((button) => button.addEventListener("click", () => root.querySelector("#usage-request-dialog")?.close()));
+    root.querySelector("#usage-request-dialog")?.addEventListener("cancel", (event) => { event.preventDefault(); root.querySelector("#usage-request-dialog")?.close(); });
+    root.querySelectorAll(".usage-run-details").forEach((button) => button.addEventListener("click", async () => {
+      const dialog = root.querySelector("#usage-request-dialog");
+      const body = root.querySelector("#usage-request-body");
+      if (!dialog || !body) return;
+      body.innerHTML = this._loading();
+      dialog.showModal();
+      try {
+        const response = await this._call("usage", "requests", {run_id: button.dataset.usageRunId, limit: 100});
+        if (!dialog.open) return;
+        body.innerHTML = renderRequestDetails(this, response?.requests || []);
+      } catch (err) {
+        if (dialog.open) body.innerHTML = `<div class="error" role="alert">${this._e(err.message || String(err))}</div>`;
+      }
+    }));
+  };
+}

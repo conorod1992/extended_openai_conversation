@@ -1,3 +1,28 @@
+import {installQuietHoursUI} from "./quiet-hours-ui.js";
+import {installManagementCopyPolish} from "./agent-config-loader.js";
+import {installManagementBrowser} from "./guest-mode-ui.js";
+import {installUsageDiagnostics} from "./usage-chart.js";
+import {installManagementStateSafety} from "./management-state-safety.js";
+import {installManagementActionSafety} from "./management-action-safety.js";
+import {installFunctionDependencyIntegrity} from "./management-function-dependencies.js";
+import {installManagementFeatureStatus} from "./management-feature-status.js";
+import {installManagementTemporaryMemory} from "./management-temporary-memory.js";
+import {installManagementMemorySettings} from "./management-memory-settings.js";
+import {installManagementCapabilitiesIA} from "./management-capabilities-ia.js";
+import {installManagementVoiceIdentity} from "./management-voice-identity.js";
+import {installManagementPermissionBoundaries} from "./management-permission-boundaries.js";
+import {installFunctionRepair} from "./management-function-repair.js";
+import {installManagementNavigationSearch} from "./management-navigation-search.js";
+import {installManagementToolbarLayout} from "./management-toolbar-layout.js";
+import {installHistoryPagination} from "./management-history-pagination.js";
+import {installUsageInputFootprint} from "./usage-input-footprint.js";
+import {installManagementSection} from "./debug-management.js";
+import {installManagementConfigurationClarity} from "./management-configuration-clarity.js";
+import {installManagementConfigurationGuidance} from "./management-configuration-guidance.js";
+import {installManagementDecisionGuidance} from "./management-decision-guidance.js";
+import {installManagementConversationDefaultLabel} from "./management-conversation-default-label.js";
+import {installManagementSettingsPolish} from "./management-settings-polish.js";
+import {installManagementOverviewHealthClarity} from "./management-overview-health-clarity.js";
 const PANEL_TAG = "extended-openai-management-panel";
 const PROPERTY_REPLAY_PATCHED = Symbol.for("extended-openai.management-property-replay");
 const HOT_PATH_PATCHED = Symbol.for("extended-openai.management-hot-path-performance");
@@ -29,42 +54,6 @@ const BUSY_STYLE = `
     to { transform: scaleX(1); opacity: .9; }
   }
 `;
-const BOOTSTRAP_MODULES = [
-  "./management-state-safety.js",
-  "./management-action-safety.js",
-  "./management-function-dependencies.js",
-  "./management-feature-status.js",
-  "./management-memory-settings.js",
-  "./management-capabilities-ia.js",
-  "./management-voice-identity.js",
-  "./management-permission-boundaries.js",
-  "./management-function-repair.js",
-  "./management-navigation-search.js",
-  "./management-toolbar-layout.js",
-  "./management-history-pagination.js",
-  "./usage-input-footprint.js",
-  "./debug-management.js",
-  "./management-configuration-clarity.js",
-  "./management-configuration-guidance.js",
-  "./management-decision-guidance.js",
-  "./management-conversation-default-label.js",
-  "./management-settings-polish.js",
-  "./management-overview-health-clarity.js",
-];
-
-function preloadBootstrapModules(documentRef = globalThis.document) {
-  const head = documentRef?.head;
-  if (!head?.append) return;
-  for (const specifier of BOOTSTRAP_MODULES) {
-    const href = new URL(specifier, import.meta.url).href;
-    if (documentRef.querySelector?.(`link[rel="modulepreload"][href="${href}"]`)) continue;
-    const link = documentRef.createElement("link");
-    link.rel = "modulepreload";
-    link.href = href;
-    head.append(link);
-  }
-}
-
 function installPreDefinitionPropertyReplay(constructor) {
   const prototype = constructor?.prototype;
   if (!prototype || prototype[PROPERTY_REPLAY_PATCHED]) return false;
@@ -84,63 +73,6 @@ function installPreDefinitionPropertyReplay(constructor) {
     return originalConnected?.apply(this, args);
   };
   return true;
-}
-
-function capturePreRegistrationInstallers(registry) {
-  if (!registry || registry.get?.(PANEL_TAG)) return () => {};
-  const hadOwnDefine = Object.prototype.hasOwnProperty.call(registry, "define");
-  const hadOwnGet = Object.prototype.hasOwnProperty.call(registry, "get");
-  const hadOwnWhenDefined = Object.prototype.hasOwnProperty.call(registry, "whenDefined");
-  const previousDefine = registry.define;
-  const previousGet = registry.get;
-  const previousWhenDefined = registry.whenDefined;
-  const nativeDefine = previousDefine.bind(registry);
-  const nativeGet = previousGet.bind(registry);
-  const nativeWhenDefined = previousWhenDefined.bind(registry);
-  const pending = [];
-  let restored = false;
-
-  const restoreProperty = (name, value, hadOwn) => {
-    if (hadOwn) registry[name] = value;
-    else delete registry[name];
-  };
-  const restore = () => {
-    if (restored) return;
-    restored = true;
-    restoreProperty("define", previousDefine, hadOwnDefine);
-    restoreProperty("get", previousGet, hadOwnGet);
-    restoreProperty("whenDefined", previousWhenDefined, hadOwnWhenDefined);
-  };
-
-  registry.whenDefined = function(name) {
-    if (name !== PANEL_TAG) return nativeWhenDefined(name);
-    return {
-      then(onFulfilled) {
-        if (typeof onFulfilled === "function") pending.push(onFulfilled);
-        return Promise.resolve(false);
-      },
-    };
-  };
-
-  registry.define = function(name, constructor, options) {
-    if (name !== PANEL_TAG) return nativeDefine(name, constructor, options);
-
-    restoreProperty("whenDefined", previousWhenDefined, hadOwnWhenDefined);
-    restoreProperty("define", previousDefine, hadOwnDefine);
-    registry.get = function(candidate) {
-      return candidate === PANEL_TAG ? constructor : nativeGet(candidate);
-    };
-    try {
-      installPreDefinitionPropertyReplay(constructor);
-      for (const install of pending.splice(0)) install();
-    } finally {
-      restoreProperty("get", previousGet, hadOwnGet);
-      restored = true;
-    }
-    return nativeDefine(name, constructor, options);
-  };
-
-  return restore;
 }
 
 function nowId(panel, kind) {
@@ -279,54 +211,36 @@ function installManagementHotPathPerformance(Panel) {
   return true;
 }
 
-if (typeof customElements !== "undefined") {
-  const restore = capturePreRegistrationInstallers(customElements);
-  try {
-    // Fetch the independent patch modules concurrently, while preserving their
-    // deterministic evaluation/installation order below.
-    preloadBootstrapModules();
-    await import("./management-state-safety.js");
-    await import("./management-action-safety.js");
-    await import("./management-function-dependencies.js");
-    await import("./management-feature-status.js");
-    await import("./management-memory-settings.js");
-    await import("./management-capabilities-ia.js");
-    await import("./management-voice-identity.js");
-    await import("./management-permission-boundaries.js");
-    await import("./management-function-repair.js");
-    await import("./management-navigation-search.js");
-    await import("./management-toolbar-layout.js");
-    // Retained Conversation data has explicit result pages independent of the
-    // general management renderer, so install its navigation before registration.
-    await import("./management-history-pagination.js");
-    await import("./usage-input-footprint.js");
-    // Request debugging extends the management panel too. Install that extension
-    // before registration so the route cannot depend on a later microtask race.
-    await import("./debug-management.js");
-    // Configuration clarity decorates the final persistent shell/navigation; the
-    // guidance layers build on those labels and badges without duplicating them.
-    await import("./management-configuration-clarity.js");
-    await import("./management-configuration-guidance.js");
-    await import("./management-decision-guidance.js");
-    // Keep default badges aligned with the labels users can actually select.
-    await import("./management-conversation-default-label.js");
-    // Apply the final settings-layout cleanup after the badge-producing layers.
-    await import("./management-settings-polish.js");
-    // Distinguish actionable health issues from checks whose status is unavailable.
-    await import("./management-overview-health-clarity.js");
-    // Register this last so it observes the fully wrapped management methods and
-    // retains loaded content outside the existing rendering optimization.
-    customElements.whenDefined(PANEL_TAG).then(() => installManagementHotPathPerformance(customElements.get(PANEL_TAG)));
-  } catch (err) {
-    restore();
-    throw err;
-  }
+// Run the remaining shared extensions before define() upgrades any existing host.
+// No methods on the browser's CustomElementRegistry are replaced.
+export function initializeManagementPanel(Panel) {
+  installQuietHoursUI(Panel);
+  installManagementCopyPolish(Panel);
+  installManagementBrowser(Panel);
+  installUsageDiagnostics(Panel);
+  installManagementStateSafety(Panel);
+  installManagementActionSafety(Panel);
+  installFunctionDependencyIntegrity(Panel);
+  installManagementFeatureStatus(Panel);
+  installManagementTemporaryMemory(Panel);
+  installManagementMemorySettings(Panel);
+  installManagementCapabilitiesIA(Panel);
+  installManagementVoiceIdentity(Panel);
+  installManagementPermissionBoundaries(Panel);
+  installFunctionRepair(Panel);
+  installManagementNavigationSearch(Panel);
+  installManagementToolbarLayout(Panel);
+  installHistoryPagination(Panel);
+  installUsageInputFootprint(Panel);
+  installManagementSection(Panel);
+  installManagementConfigurationClarity(Panel);
+  installManagementConfigurationGuidance(Panel);
+  installManagementDecisionGuidance(Panel);
+  installManagementConversationDefaultLabel(Panel);
+  installManagementSettingsPolish(Panel);
+  installManagementOverviewHealthClarity(Panel);
+  installPreDefinitionPropertyReplay(Panel);
+  installManagementHotPathPerformance(Panel);
 }
 
-export {
-  BOOTSTRAP_MODULES,
-  capturePreRegistrationInstallers,
-  installManagementHotPathPerformance,
-  installPreDefinitionPropertyReplay,
-  preloadBootstrapModules,
-};
+export {installManagementHotPathPerformance, installPreDefinitionPropertyReplay};

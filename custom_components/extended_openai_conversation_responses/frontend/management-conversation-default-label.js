@@ -12,27 +12,27 @@ export function normalizeConversationContinuityDefault(panel) {
   return true;
 }
 
-export function installManagementConversationDefaultLabel(registry = globalThis.customElements) {
-  if (!registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
+export function installManagementConversationDefaultLabel(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementConversationDefaultLabel(registry.get("extended-openai-management-panel")));
+  }
+  const constructor = Panel;
+  const prototype = constructor?.prototype;
+  if (!prototype || prototype[PATCHED]) return false;
 
-    const originalRender = prototype._render;
-    prototype._render = function(...args) {
-      const result = originalRender.apply(this, args);
-      queueMicrotask(() => normalizeConversationContinuityDefault(this));
-      return result;
-    };
+  const originalRender = prototype._render;
+  prototype._render = function(...args) {
+    const result = originalRender.apply(this, args);
+    queueMicrotask(() => normalizeConversationContinuityDefault(this));
+    return result;
+  };
 
-    prototype[PATCHED] = true;
-    return true;
-  });
+  prototype[PATCHED] = true;
+  return true;
 }
 
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  installManagementConversationDefaultLabel();
-}
 
 export {HOME_ASSISTANT_SESSION_DEFAULT};

@@ -115,27 +115,27 @@ export function applyManagementToolbarLayout(panel) {
   return true;
 }
 
-export function installManagementToolbarLayout(registry = globalThis.customElements) {
-  if (!registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
+export function installManagementToolbarLayout(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementToolbarLayout(registry.get("extended-openai-management-panel")));
+  }
+  const constructor = Panel;
+  const prototype = constructor?.prototype;
+  if (!prototype || prototype[PATCHED]) return false;
 
-    const originalRender = prototype._render;
-    prototype._render = function(...args) {
-      const result = originalRender.apply(this, args);
-      applyManagementToolbarLayout(this);
-      return result;
-    };
+  const originalRender = prototype._render;
+  prototype._render = function(...args) {
+    const result = originalRender.apply(this, args);
+    applyManagementToolbarLayout(this);
+    return result;
+  };
 
-    prototype[PATCHED] = true;
-    return true;
-  });
+  prototype[PATCHED] = true;
+  return true;
 }
 
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  installManagementToolbarLayout();
-}
 
 export {TOOLBAR_STYLE};
