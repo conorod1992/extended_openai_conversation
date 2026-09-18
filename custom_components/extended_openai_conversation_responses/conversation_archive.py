@@ -943,6 +943,131 @@ class ConversationArchive:
         return self._partition_payload_for_state(partition, dict(self._turns))
 
 
+    async def _async_save_all_partitions_locked(self) -> None:
+        for partition in sorted(self._partitions):
+            await self._storage.async_save_partition(
+                partition, self._partition_payload_locked(partition)
+            )
+
+    def _ensure_initialized(self) -> None:
+        if not self._initialized:
+            raise RuntimeError("conversation archive has not been initialized")
+
+
+async def async_get_archive(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> ConversationArchive:
+    """Return one shared archive manager per conversation agent."""
+    managers: dict[tuple[str, str], ConversationArchive] = hass.data.setdefault(
+        _ARCHIVE_MANAGERS, {}
+    )
+    key = (entry_id, subentry_id)
+    if key not in managers:
+        managers[key] = ConversationArchive(
+            HomeAssistantArchiveStorage(hass, entry_id, subentry_id), subentry_id
+        )
+    await managers[key].async_initialize()
+    return managers[key]
+
+
+def archive_tools() -> list[dict[str, Any]]:
+    """Return bounded model-facing archive and deterministic privacy tools."""
+    return [
+        _tool(
+            "conversation_search",
+            "Search prior retained discussions only when the user refers to them.",
+            {
+                "query": {"type": "string"},
+                "start_date": {"type": "string"},
+                "end_date": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+            },
+            ["query"],
+            "search",
+        ),
+        _tool(
+            "conversation_get",
+            "Read a bounded page from one search result.",
+            {
+                "session_id": {"type": "string"},
+                "start_turn": {"type": "integer", "minimum": 0},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+            },
+            ["session_id"],
+            "get",
+        ),
+        _tool(
+            "conversation_private",
+            "Make the exact active conversation private and delete its retained turns.",
+            {},
+            [],
+            "private",
+        ),
+        _tool(
+            "conversation_resume_saving",
+            "Start a new retained session after private mode.",
+            {},
+            [],
+            "resume",
+        ),
+        _tool(
+            "conversation_delete_current",
+            "Delete the exact active retained conversation.",
+            {},
+            [],
+            "delete_current",
+        ),
+        _tool(
+            "conversation_delete_selected",
+            "Delete only explicitly selected retained sessions after user confirmation.",
+            {
+                "session_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 50,
+                },
+                "confirm": {"type": "boolean"},
+            },
+            ["session_ids", "confirm"],
+            "delete_selected",
+        ),
+        _tool(
+            "conversation_delete_date_range",
+            "Bulk-delete retained sessions in an exact date range after user confirmation.",
+            {
+                "start_date": {"type": "string"},
+                "end_date": {"type": "string"},
+                "confirm": {"type": "boolean"},
+            },
+            ["start_date", "end_date", "confirm"],
+            "delete_range",
+        ),
+    ]
+
+
+def _tool(
+    name: str,
+    description: str,
+    properties: dict[str, Any],
+    required: list[str],
+    operation: str,
+) -> dict[str, Any]:
+    return {
+        "spec": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+                "additionalProperties": False,
+            },
+        },
+        "function": {"type": "archive", "operation": operation},
+    }
+
+
 def _search_archive_snapshot(
     snapshot: tuple[tuple[ArchiveSession, tuple[ArchiveTurn, ...]], ...],
     query: str,
