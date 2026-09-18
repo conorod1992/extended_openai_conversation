@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from datetime import timedelta
 import time
 from types import SimpleNamespace
 
@@ -12,17 +11,11 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.extended_openai_conversation_responses import (
     debug,
-    lifecycle_optimizations,
     local_intents,
     request_rules,
 )
 from custom_components.extended_openai_conversation_responses.hot_path_cleanup import (
-    _USAGE_PRUNE_TASK,
     install_hot_path_cleanup,
-)
-from custom_components.extended_openai_conversation_responses.lifecycle_optimizations import (
-    _LAST_USAGE_PRUNE_DATE,
-    install_lifecycle_optimizations,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
     RequestRules,
@@ -35,31 +28,6 @@ from custom_components.extended_openai_conversation_responses.temporary_memory_p
     _PRUNE_SAVE_TASK,
     install_temporary_memory_read_fast_path,
 )
-from custom_components.extended_openai_conversation_responses.usage import (
-    RequestUsage,
-    UsageManager,
-    UsageRequest,
-)
-
-
-class DelayedStorage:
-    """In-memory Store stand-in exposing Home Assistant delayed-save behavior."""
-
-    def __init__(self) -> None:
-        self.data = None
-        self.immediate_saves = 0
-        self.delayed: list[tuple[object, float]] = []
-
-    async def async_load(self):
-        return deepcopy(self.data)
-
-    async def async_save(self, data):
-        self.immediate_saves += 1
-        self.data = deepcopy(data)
-
-    def async_delay_save(self, data_func, delay: float = 0) -> None:
-        self.delayed.append((data_func, delay))
-
 
 class BlockingStorage:
     """Store stand-in proving expiry persistence happens after the read returns."""
