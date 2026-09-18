@@ -367,7 +367,7 @@ def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(monkeypatch
         continuity,
         function_groups,
         request_rules,
-        runtime_failure_hardening,
+        usage,
     )
 
     key = ("entry-1", "agent-new")
@@ -392,7 +392,7 @@ def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(monkeypatch
             continuity._MANAGERS: {key: continuity_manager},
             request_rules._RUNTIMES: {key: rule_runtime},
             function_groups._RUNTIMES: {key: group_runtime},
-            runtime_failure_hardening._VOLATILE_USAGE_MANAGERS: {key: fallback_usage},
+            usage._VOLATILE_USAGE_MANAGERS: {key: fallback_usage},
         }
     )
     managers = (object(), object(), object(), object(), durable_usage, object(), object())
@@ -410,7 +410,7 @@ def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(monkeypatch
     assert hass.data[function_groups._RUNTIMES][key] is group_runtime
     assert group_runtime._sessions == {}
     assert group_runtime._last_request == {}
-    assert key not in hass.data[runtime_failure_hardening._VOLATILE_USAGE_MANAGERS]
+    assert key not in hass.data[usage._VOLATILE_USAGE_MANAGERS]
     assert agent._usage is durable_usage
 
 

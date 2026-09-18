@@ -169,15 +169,15 @@ async def _durable_managers(
     from .knowledge import async_get_knowledge
     from .memory import async_get_memory
     from .request_rules import async_get_request_rules
-    from .runtime_failure_hardening import _ORIGINAL_ASYNC_GET_USAGE
     from .temporary_memory import async_get_temporary_memory
+    from .usage import async_get_durable_usage
 
     return (
         await async_get_memory(hass, entry_id, subentry_id),
         await async_get_temporary_memory(hass, entry_id, subentry_id),
         await async_get_knowledge(hass, entry_id, subentry_id),
         await async_get_archive(hass, entry_id, subentry_id),
-        await _ORIGINAL_ASYNC_GET_USAGE(hass, entry_id, subentry_id),
+        await async_get_durable_usage(hass, entry_id, subentry_id),
         await async_get_guest_mode(hass, entry_id, subentry_id),
         await async_get_request_rules(hass, entry_id, subentry_id),
     )
@@ -261,7 +261,7 @@ def reset_restored_runtime(
     managers: tuple[Any, ...] | None = None,
 ) -> None:
     """Reset transient state without splitting live agents from manager registries."""
-    from . import continuity, function_groups, request_rules, runtime_failure_hardening
+    from . import continuity, function_groups, request_rules, usage
 
     key = (entry_id, subentry_id)
     agent = _active_agent(hass, entry_id, subentry_id)
@@ -309,9 +309,7 @@ def reset_restored_runtime(
     # A previous Store startup failure may have left the active entity using a
     # volatile Usage manager. Replace that exact stale pointer with the restored
     # durable manager rather than merely deleting the fallback registry entry.
-    fallback = hass.data.get(
-        runtime_failure_hardening._VOLATILE_USAGE_MANAGERS, {}
-    ).pop(key, None)
+    fallback = hass.data.get(usage._VOLATILE_USAGE_MANAGERS, {}).pop(key, None)
     if (
         fallback is not None
         and managers is not None

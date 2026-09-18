@@ -6,18 +6,14 @@ from collections.abc import AsyncGenerator, Mapping
 from dataclasses import replace
 from functools import wraps
 import logging
-import sys
 from typing import Any, cast
 
 from openai import OpenAIError
 
 from homeassistant.components.conversation import ConversationResult
-from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import intent
 
-from . import usage as usage_module
-from .const import DOMAIN
 from .debug import record_current_provider_failure
 from .guest_mode import GUEST_MODE_UNAVAILABLE
 from .provider_errors import (
@@ -25,82 +21,9 @@ from .provider_errors import (
     provider_user_message,
     request_reauthentication,
 )
-from .usage import UsageManager
 
 _LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
-_VOLATILE_USAGE_MANAGERS = f"{DOMAIN}.volatile_usage_managers"
-_ORIGINAL_ASYNC_GET_USAGE = usage_module.async_get_usage
-
-
-class _VolatileUsageStorage:
-    """No-op Usage storage used only when persistent telemetry cannot initialize."""
-
-    async def async_load(self) -> dict[str, Any] | None:
-        return None
-
-    async def async_save(self, data: dict[str, Any]) -> None:
-        del data
-
-
-async def async_get_usage_safely(
-    hass: HomeAssistant, entry_id: str, subentry_id: str
-) -> UsageManager:
-    """Return persistent Usage when possible, otherwise one shared volatile manager."""
-    key = (entry_id, subentry_id)
-    fallbacks: dict[tuple[str, str], UsageManager] = hass.data.setdefault(
-        _VOLATILE_USAGE_MANAGERS, {}
-    )
-    if key in fallbacks:
-        return fallbacks[key]
-
-    try:
-        return await _ORIGINAL_ASYNC_GET_USAGE(hass, entry_id, subentry_id)
-    except Exception:
-        # The persistent getter publishes its manager before initialization. The
-        # outer runtime getter guard serializes this effective path, so discard the
-        # failed published instance before installing the one shared fallback.
-        persistent_managers = hass.data.get(usage_module._USAGE_MANAGERS)
-        if isinstance(persistent_managers, dict):
-            persistent_managers.pop(key, None)
-
-        # Usage is diagnostic telemetry. A damaged/unavailable Store must not make
-        # the conversation agent itself unavailable. Keep accounting in memory for
-        # this HA runtime and retry persistent storage after the next restart.
-        _LOGGER.exception(
-            "Unable to initialize Usage storage; continuing with volatile accounting"
-        )
-        manager = UsageManager(
-            _VolatileUsageStorage(),
-            _VolatileUsageStorage(),
-            _VolatileUsageStorage(),
-            agent_subentry_id=subentry_id,
-        )
-        await manager.async_initialize()
-        fallbacks[key] = manager
-        return manager
-
-
-def _install_usage_startup_fallback() -> None:
-    """Replace Usage getter aliases with the non-fatal startup wrapper."""
-    current = usage_module.async_get_usage
-    if getattr(current, "_extended_openai_failure_fallback", False):
-        return
-
-    async_get_usage_safely._extended_openai_failure_fallback = True  # type: ignore[attr-defined]
-    usage_module.async_get_usage = async_get_usage_safely
-
-    # Several modules bind async_get_usage at import time. Configuration lifecycle
-    # hardening imports conversation before async_setup, so replace every live alias
-    # that still points at the getter this wrapper supersedes.
-    package_prefix = f"{__package__}."
-    for module_name, module in tuple(sys.modules.items()):
-        if (
-            module is not None
-            and module_name.startswith(package_prefix)
-            and module.__dict__.get("async_get_usage") is current
-        ):
-            module.__dict__["async_get_usage"] = async_get_usage_safely
 
 
 def _conversation_error_result(
@@ -287,7 +210,6 @@ def install_runtime_failure_hardening() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
-    _install_usage_startup_fallback()
     _install_request_preparation_boundary()
     _install_archive_failure_label()
     _install_late_chat_tool_call_id_repair()

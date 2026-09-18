@@ -14,24 +14,7 @@ from custom_components.extended_openai_conversation_responses import (
     delayed_tools,
     runtime_hardening,
     skills,
-    usage,
 )
-
-
-def test_usage_hardening_leaves_already_guarded_getter_unchanged(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Repeated installation must not stack another per-agent Usage lock wrapper."""
-
-    async def guarded(*_args: Any) -> object:
-        return object()
-
-    guarded._extended_openai_getter_guard = True  # type: ignore[attr-defined]
-    monkeypatch.setattr(usage, "async_get_usage", guarded)
-
-    runtime_hardening._install_usage_hardening()
-
-    assert usage.async_get_usage is guarded
 
 
 class _Parser:

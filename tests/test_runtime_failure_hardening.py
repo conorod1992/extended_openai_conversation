@@ -19,11 +19,6 @@ from custom_components.extended_openai_conversation_responses.entity import (
 from homeassistant.exceptions import HomeAssistantError
 
 
-class FakeHass:
-    def __init__(self) -> None:
-        self.data: dict = {}
-
-
 class FakeUsage:
     def __init__(self) -> None:
         self.failed: list[str] = []
@@ -55,29 +50,6 @@ class FakeArchiveEntity:
 
     def _tool_result(self, _tool_input, result):
         return result
-
-
-@pytest.mark.asyncio
-async def test_usage_initialization_failure_falls_back_to_shared_volatile_manager(
-    monkeypatch,
-) -> None:
-    hass = FakeHass()
-    calls = 0
-
-    async def failing_getter(_hass, _entry_id: str, _subentry_id: str):
-        nonlocal calls
-        calls += 1
-        raise OSError("usage store unavailable")
-
-    monkeypatch.setattr(hardening, "_ORIGINAL_ASYNC_GET_USAGE", failing_getter)
-
-    manager = await hardening.async_get_usage_safely(hass, "entry", "agent")
-    same_manager = await hardening.async_get_usage_safely(hass, "entry", "agent")
-
-    assert manager is same_manager
-    assert calls == 1
-    await manager.async_record_conversation()
-    assert manager.totals.conversation_count == 1
 
 
 @pytest.mark.asyncio

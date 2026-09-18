@@ -63,8 +63,8 @@ async def test_durable_managers_bypasses_volatile_usage_fallback(monkeypatch) ->
         knowledge,
         memory,
         request_rules,
-        runtime_failure_hardening,
         temporary_memory,
+        usage,
     )
 
     expected = [object() for _ in range(7)]
@@ -73,7 +73,7 @@ async def test_durable_managers_bypasses_volatile_usage_fallback(monkeypatch) ->
         (temporary_memory, "async_get_temporary_memory"),
         (knowledge, "async_get_knowledge"),
         (conversation_archive, "async_get_archive"),
-        (runtime_failure_hardening, "_ORIGINAL_ASYNC_GET_USAGE"),
+        (usage, "async_get_durable_usage"),
         (guest_mode, "async_get_guest_mode"),
         (request_rules, "async_get_request_rules"),
     ]
@@ -119,7 +119,7 @@ def test_runtime_reset_reconciles_distinct_registry_and_agent_objects(monkeypatc
         continuity,
         function_groups,
         request_rules,
-        runtime_failure_hardening,
+        usage,
     )
 
     key = ("entry-1", "agent-1")
@@ -143,7 +143,7 @@ def test_runtime_reset_reconciles_distinct_registry_and_agent_objects(monkeypatc
             continuity._MANAGERS: {key: registry_continuity},
             request_rules._RUNTIMES: {key: registry_rules},
             function_groups._RUNTIMES: {key: registry_groups},
-            runtime_failure_hardening._VOLATILE_USAGE_MANAGERS: {
+            usage._VOLATILE_USAGE_MANAGERS: {
                 key: fallback_usage
             },
             restore_recovery.SUBSYSTEM_STATUS_KEY: {key: {"status": "degraded"}},
@@ -176,7 +176,7 @@ def test_runtime_reset_reconciles_distinct_registry_and_agent_objects(monkeypatc
     assert hass.data[continuity._MANAGERS][key] is agent_continuity
     assert hass.data[request_rules._RUNTIMES][key] is agent_rules
     assert hass.data[function_groups._RUNTIMES][key] is agent_groups
-    assert key not in hass.data[runtime_failure_hardening._VOLATILE_USAGE_MANAGERS]
+    assert key not in hass.data[usage._VOLATILE_USAGE_MANAGERS]
     # Only the exact volatile fallback pointer may be replaced.
     assert agent._usage is unrelated_usage
     assert key not in hass.data[restore_recovery.SUBSYSTEM_STATUS_KEY]
