@@ -49,7 +49,6 @@ management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(  # type: ignore[assignment]
     dict.fromkeys(
         (
             *management_ui.MANAGEMENT_FRONTEND_MODULES,
-            "management-conversation-default-label.js",
             "management-overview-health-clarity.js",
         )
     )
