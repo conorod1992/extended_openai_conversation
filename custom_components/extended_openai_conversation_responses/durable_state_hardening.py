@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime, timedelta
@@ -10,17 +9,11 @@ import logging
 from typing import Any
 
 from homeassistant.helpers.event import async_track_time_interval
-from homeassistant.util import dt as dt_util
-
 from .const import CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
 
 _LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
 _ARCHIVE_RETENTION_INTERVAL = timedelta(days=1)
-_USAGE_PRUNE_TASK = "_extended_openai_usage_prune_task"
-_USAGE_PRUNE_ATTEMPT_DATE = "_extended_openai_usage_prune_attempt_date"
-_USAGE_PRUNE_ATTEMPT_COUNT = "_extended_openai_usage_prune_attempt_count"
-_USAGE_PRUNE_MAX_ATTEMPTS_PER_DAY = 2
 
 
 def _archive_metadata_payload(
@@ -414,144 +407,6 @@ def _install_archive_transactions() -> None:
     archive_type.async_replace_backup = async_replace_backup
 
 
-def _usage_pruned_state(manager: Any) -> tuple[list[Any], list[Any], dict[str, int]]:
-    from .usage import _parse_time
-
-    now = dt_util.utcnow()
-    request_cutoff = now - timedelta(days=max(0, manager.request_retention_days))
-    run_cutoff = now - timedelta(days=max(0, manager.run_retention_days))
-    requests = [
-        request
-        for request in manager.requests
-        if manager.request_retention_days > 0
-        and _parse_time(request.timestamp) >= request_cutoff
-    ]
-    runs = [
-        run
-        for run in manager.runs
-        if manager.run_retention_days > 0 and _parse_time(run.started_at) >= run_cutoff
-    ]
-    return (
-        requests,
-        runs,
-        {
-            "deleted_requests": len(manager.requests) - len(requests),
-            "deleted_runs": len(manager.runs) - len(runs),
-        },
-    )
-
-
-async def _async_persist_usage_details(
-    manager: Any, requests: list[Any], runs: list[Any]
-) -> None:
-    if manager._detail_storage is None:
-        return
-    await manager._detail_storage.async_save(
-        {
-            "requests": [asdict(request) for request in requests],
-            "runs": [asdict(run) for run in runs],
-        }
-    )
-
-
-def _install_usage_transactions() -> None:
-    """Persist candidate Usage detail state before changing the live lists."""
-    from . import lifecycle_optimizations as lifecycle
-    from .usage import UsageManager
-
-    manager_type: Any = UsageManager
-    if getattr(
-        manager_type.async_prune_details, "_extended_openai_persist_first", False
-    ):
-        return
-
-    async def async_prune_details(manager: Any, *, save: bool = True) -> dict[str, int]:
-        async with manager._lock:
-            requests, runs, result = _usage_pruned_state(manager)
-            if save:
-                await _async_persist_usage_details(manager, requests, runs)
-            manager.requests = requests
-            manager.runs = runs
-            setattr(
-                manager,
-                lifecycle._LAST_USAGE_PRUNE_DATE,
-                dt_util.utcnow().date().isoformat(),
-            )
-            setattr(manager, lifecycle._NEXT_USAGE_PRUNE_RETRY, 0.0)
-            return result
-
-    async def async_clear_details(manager: Any, *, confirm: bool) -> dict[str, int]:
-        if not confirm:
-            raise ValueError("Explicit confirmation is required")
-        async with manager._lock:
-            result = {
-                "deleted_requests": len(manager.requests),
-                "deleted_runs": len(manager.runs),
-            }
-            await _async_persist_usage_details(manager, [], [])
-            manager.requests = []
-            manager.runs = []
-            return result
-
-    async def async_prune_usage_if_due(manager: Any) -> None:
-        """Run transactional Usage retention off-path with one bounded same-day retry."""
-        today = dt_util.utcnow().date().isoformat()
-        if getattr(manager, lifecycle._LAST_USAGE_PRUNE_DATE, None) == today:
-            return
-
-        attempt_date = getattr(manager, _USAGE_PRUNE_ATTEMPT_DATE, None)
-        same_day_attempt = attempt_date == today
-        if same_day_attempt and lifecycle.time.monotonic() < float(
-            getattr(manager, lifecycle._NEXT_USAGE_PRUNE_RETRY, 0.0) or 0.0
-        ):
-            return
-
-        attempts = (
-            int(getattr(manager, _USAGE_PRUNE_ATTEMPT_COUNT, 0) or 0)
-            if same_day_attempt
-            else 0
-        )
-        if attempts >= _USAGE_PRUNE_MAX_ATTEMPTS_PER_DAY:
-            return
-
-        current = getattr(manager, _USAGE_PRUNE_TASK, None)
-        if isinstance(current, asyncio.Task) and not current.done():
-            return
-
-        setattr(manager, _USAGE_PRUNE_ATTEMPT_DATE, today)
-        setattr(manager, _USAGE_PRUNE_ATTEMPT_COUNT, attempts + 1)
-
-        async def run() -> None:
-            try:
-                await manager.async_prune_details(save=True)
-            except Exception:
-                setattr(
-                    manager,
-                    lifecycle._NEXT_USAGE_PRUNE_RETRY,
-                    lifecycle.time.monotonic() + lifecycle._USAGE_PRUNE_RETRY_SECONDS,
-                )
-                _LOGGER.exception("Background usage retention maintenance failed")
-
-        task = asyncio.create_task(
-            run(), name="extended_openai_usage_retention_maintenance"
-        )
-        setattr(manager, _USAGE_PRUNE_TASK, task)
-
-        def done(completed: asyncio.Task[Any]) -> None:
-            if getattr(manager, _USAGE_PRUNE_TASK, None) is completed:
-                setattr(manager, _USAGE_PRUNE_TASK, None)
-
-        task.add_done_callback(done)
-
-    async_prune_details._extended_openai_persist_first = True  # type: ignore[attr-defined]
-    manager_type.async_prune_details = async_prune_details
-    manager_type.async_clear_details = async_clear_details
-    # Lifecycle finalization resolves this module global at runtime. Installing this
-    # after the hot-path wrapper keeps pruning off-path while replacing its unsafe
-    # mutate-then-schedule implementation.
-    lifecycle._async_prune_usage_if_due = async_prune_usage_if_due
-
-
 async def async_prune_archive_retention(
     agent: Any, _now: datetime | None = None
 ) -> None:
@@ -607,6 +462,5 @@ def install_durable_state_hardening() -> None:
     if _INSTALLED:
         return
     _install_archive_transactions()
-    _install_usage_transactions()
     _install_archive_retention_schedule()
     _INSTALLED = True
