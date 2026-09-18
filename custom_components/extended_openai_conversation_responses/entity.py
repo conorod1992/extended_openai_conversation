@@ -80,6 +80,7 @@ from .function_tool_recovery import (
 )
 from .functions import get_function
 from .ha_llm_tools import async_discover, current_snapshot, is_ha_tool, reference_key
+from .ha_tool_result_compat import make_tool_result_content
 from .helpers import get_api_mode, get_model_config
 from .provider_errors import provider_stream_error, provider_transport_error
 from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
@@ -108,23 +109,6 @@ _LOGGER = logging.getLogger(__name__)
 # Function Tool executions are constrained separately by FunctionCallBudget.
 MAX_TOOL_ITERATIONS = MAX_PROVIDER_REQUESTS
 _SCHEMA_COMPOSITION_KEYS = ("anyOf", "oneOf", "allOf")
-
-
-def _make_tool_result_content(
-    *, agent_id: str, tool_call_id: str, tool_name: str, tool_result: dict[str, Any]
-) -> conversation.ToolResultContent:
-    """Build a tool result across Home Assistant's old and new LLM APIs."""
-    kwargs: dict[str, Any] = {
-        "agent_id": agent_id,
-        "tool_call_id": tool_call_id,
-        "tool_name": tool_name,
-    }
-    tool_result_type = getattr(llm, "ToolResult", None)
-    if tool_result_type is None:
-        kwargs["tool_result"] = tool_result
-    else:
-        kwargs["result"] = tool_result_type(data=tool_result)
-    return conversation.ToolResultContent(**kwargs)
 
 
 def _shorten_tool_call_id(tool_call_id: str) -> str:
@@ -1482,7 +1466,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             _LOGGER.warning("Function Tool `%s` failed: %s", tool_input.tool_name, err)
             result = {"status": "error", "error": str(err)}
 
-        return _make_tool_result_content(
+        return make_tool_result_content(
             agent_id=self.entity_id,
             tool_call_id=tool_input.id,
             tool_name=tool_input.tool_name,
