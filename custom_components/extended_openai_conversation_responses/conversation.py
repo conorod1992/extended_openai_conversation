@@ -118,6 +118,7 @@ from .functions.security import (
     classify_tool,
     contains_indirect_service_call,
 )
+from .ha_tool_result_compat import make_tool_result_content
 from .guest_mode import (
     EXECUTION_FAILED,
     GUEST_MODE_UNAVAILABLE,
@@ -1536,7 +1537,7 @@ class ExtendedOpenAIAgentEntity(
                     "error": "Knowledge Library is temporarily unavailable",
                 }
 
-        return conversation.ToolResultContent(
+        return make_tool_result_content(
             agent_id=self.entity_id,
             tool_call_id=tool_input.id,
             tool_name=tool_input.tool_name,
@@ -1546,7 +1547,7 @@ class ExtendedOpenAIAgentEntity(
     def _tool_result(
         self, tool_input: llm.ToolInput, result: dict[str, Any]
     ) -> conversation.ToolResultContent:
-        return conversation.ToolResultContent(
+        return make_tool_result_content(
             agent_id=self.entity_id,
             tool_call_id=tool_input.id,
             tool_name=tool_input.tool_name,
