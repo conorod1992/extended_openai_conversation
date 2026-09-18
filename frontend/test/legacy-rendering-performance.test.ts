@@ -118,7 +118,7 @@ describe("native management rendering", () => {
     expect(loadingSource).toContain("Promise.allSettled([assetPromise, sectionPromise])");
     expect(loadingSource).toContain('view === "overview"');
     expect(loadingSource).not.toContain("prototype.");
-    expect(loadingSource).toContain("originalLoadSection.call(panel, silent)");
+    expect(loadingSource).toContain("loadSectionData.call(panel, silent)");
     expect(loadingSource).toContain("_eocViewAssetToken");
     expect(routeSource).toContain("return loadSectionAlongsideAsset(panel, silent, panel._loadSectionData, view, asset, token);");
     expect(routeSource).toContain("Promise.allSettled([assetPromise, sectionPromise])");

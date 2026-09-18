@@ -121,7 +121,7 @@ function isCurrentLazyLoad(panel, view, assetToken) {
 export function loadSectionAlongsideAsset(
   panel,
   silent,
-  originalLoadSection,
+  loadSectionData,
   view,
   assetPromise,
   assetToken,
@@ -129,7 +129,7 @@ export function loadSectionAlongsideAsset(
   let sectionPromise;
   try {
     sectionPromise = Promise.resolve(
-      originalLoadSection.call(panel, silent),
+      loadSectionData.call(panel, silent),
     );
   } catch (err) {
     sectionPromise = Promise.reject(err);
