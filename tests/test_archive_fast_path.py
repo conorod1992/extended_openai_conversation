@@ -3,15 +3,11 @@
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
 )
-from custom_components.extended_openai_conversation_responses.lifecycle_optimizations import (
-    install_lifecycle_optimizations,
-)
 from custom_components.extended_openai_conversation_responses.scope import user_scope
 
 
 async def test_archive_disabled_does_not_create_or_persist_session() -> None:
     """A disabled archive returns before touching archive state or storage."""
-    install_lifecycle_optimizations()
     archive = ConversationArchive.__new__(ConversationArchive)
 
     result = await archive.async_begin_session(

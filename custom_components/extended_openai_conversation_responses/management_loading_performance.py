@@ -560,9 +560,8 @@ def install_management_loading_optimizations() -> None:
     _ORIGINAL_MANAGEMENT_COMMAND = management_ui.async_management_command
     management_ui.async_management_command = optimized_management_command  # type: ignore[assignment]
 
-    # Performance optimization installs a strict cached loader first. Keep strict
-    # validation at configuration boundaries, but make live conversations resilient to
-    # persisted invalid siblings by quarantining only those tools at request assembly.
+    # agent_config owns strict cached validation. Keep configuration boundaries
+    # strict while quarantining persisted invalid siblings at request assembly.
     conversation.configured_function_tools_from_data = (
         _runtime_configured_function_tools  # type: ignore[assignment]
     )
