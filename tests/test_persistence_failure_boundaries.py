@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import (
-    durable_state_hardening,
-    persistence_hardening,
+from custom_components.extended_openai_conversation_responses import persistence_hardening
+from custom_components.extended_openai_conversation_responses.conversation_archive import (
+    ConversationArchive,
 )
 
 
@@ -51,9 +51,10 @@ class _ArchiveStorage:
             raise RuntimeError("partition write failed")
 
 
-class _Archive:
+class _Archive(ConversationArchive):
     def __init__(self, storage: _ArchiveStorage) -> None:
-        self._storage = storage
+        super().__init__(storage, "agent")
+        self._initialized = True
         self._sessions = {"old": _ArchiveSession("old")}
         self._turns = defaultdict(
             list,
@@ -127,12 +128,10 @@ async def test_archive_journal_failure_does_not_publish_candidate_state() -> Non
     turns = {"new": [_ArchiveTurn("new", "2026-09-01T00:00:00+00:00")]}
 
     with pytest.raises(RuntimeError, match="metadata write failed"):
-        await durable_state_hardening._async_commit_archive_state(
-            archive,
+        await archive._async_commit_state_locked(
             sessions=sessions,
             turns=turns,
             active={"scope": "new"},
-            partitions={"2026-09"},
             changed_partitions={"2026-09"},
         )
 
@@ -154,12 +153,10 @@ async def test_archive_partition_failure_keeps_published_state_marked_pending() 
     active = {"scope": "new"}
 
     with pytest.raises(RuntimeError, match="partition write failed"):
-        await durable_state_hardening._async_commit_archive_state(
-            archive,
+        await archive._async_commit_state_locked(
             sessions=sessions,
             turns=turns,
             active=active,
-            partitions={"2026-09"},
             changed_partitions={"2026-09"},
         )
 
