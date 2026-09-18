@@ -8,10 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses.conversation import ExtendedOpenAIAgentEntity
-
-from custom_components.extended_openai_conversation_responses import (
-    durable_state_hardening as hardening,
+from custom_components.extended_openai_conversation_responses.conversation import (
+    ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_RETENTION_DAYS,
@@ -53,7 +51,6 @@ class FakeArchiveStorage:
 
 
 async def _archive() -> tuple[ConversationArchive, FakeArchiveStorage]:
-    hardening._install_archive_transactions()
     storage = FakeArchiveStorage()
     archive = ConversationArchive(storage, "agent")
     await archive.async_initialize()

@@ -9,11 +9,9 @@ from typing import Any
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses.conversation import ExtendedOpenAIAgentEntity
-
-from custom_components.extended_openai_conversation_responses import (
-    conversation_archive,
-    durable_state_hardening as hardening,
+from custom_components.extended_openai_conversation_responses import conversation_archive
+from custom_components.extended_openai_conversation_responses.conversation import (
+    ExtendedOpenAIAgentEntity,
 )
 
 
@@ -130,35 +128,13 @@ def _archive(
     return archive
 
 
-@pytest.fixture
-def archive_transactions(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Install fresh wrappers while restoring the class exactly after each test."""
-    archive_type = conversation_archive.ConversationArchive
-    method_names = (
-        "async_record_turn",
-        "async_make_private",
-        "async_delete_session",
-        "async_clear_scope",
-        "async_delete_selected",
-        "async_prune",
-        "async_replace_backup",
-    )
-    for name in method_names:
-        monkeypatch.setattr(archive_type, name, getattr(archive_type, name))
-
-    marker_owner = archive_type.async_record_turn
-    monkeypatch.setattr(
-        marker_owner, "_extended_openai_journal_first", False, raising=False
-    )
-    hardening._install_archive_transactions()
-
-
 @pytest.mark.asyncio
 async def test_remove_archive_partition_uses_legacy_store_fallback() -> None:
     store = FallbackPartitionStore()
     storage = LegacyArchiveStorage(store)
 
-    await hardening._async_remove_archive_partition(storage, "2026-01")
+    archive = _archive(storage, [], {})
+    await archive._async_remove_partition_locked("2026-01")
 
     assert storage.requested == ["2026-01"]
     assert store.removed is True
@@ -166,10 +142,12 @@ async def test_remove_archive_partition_uses_legacy_store_fallback() -> None:
 
 @pytest.mark.asyncio
 async def test_remove_archive_partition_tolerates_missing_legacy_hooks() -> None:
-    await hardening._async_remove_archive_partition(NoRemovalArchiveStorage(), "2026-01")
+    archive = _archive(NoRemovalArchiveStorage(), [], {})
+    await archive._async_remove_partition_locked("2026-01")
 
     storage = LegacyArchiveStorage(SimpleNamespace())
-    await hardening._async_remove_archive_partition(storage, "2026-02")
+    archive = _archive(storage, [], {})
+    await archive._async_remove_partition_locked("2026-02")
     assert storage.requested == ["2026-02"]
 
 
@@ -182,12 +160,10 @@ async def test_archive_commit_does_not_publish_ram_before_journal_write() -> Non
     candidate = _session("candidate", scope_id="scope-b")
 
     with pytest.raises(RuntimeError, match="metadata write failed"):
-        await hardening._async_commit_archive_state(
-            archive,
+        await archive._async_commit_state_locked(
             sessions={"candidate": candidate},
             turns={"candidate": [_turn("candidate", month="2026-02")]},
             active={"candidate-key": "candidate"},
-            partitions={"2026-02"},
             changed_partitions={"2026-02"},
         )
 
@@ -205,12 +181,10 @@ async def test_archive_commit_removal_failure_is_housekeeping_only(caplog) -> No
     archive = _archive(storage, [old], {"old": [_turn("old", month="2026-01")]})
     storage.fail_remove = True
 
-    await hardening._async_commit_archive_state(
-        archive,
+    await archive._async_commit_state_locked(
         sessions={},
         turns={},
         active={},
-        partitions=set(),
         changed_partitions={"2026-01"},
     )
 
@@ -225,7 +199,6 @@ async def test_archive_commit_removal_failure_is_housekeeping_only(caplog) -> No
 
 @pytest.mark.asyncio
 async def test_clear_scope_requires_confirmation_and_handles_empty_scope(
-    archive_transactions: None,
 ) -> None:
     storage = RecordingArchiveStorage()
     archive = _archive(storage, [_session("a")], {"a": [_turn("a")]})
@@ -241,7 +214,6 @@ async def test_clear_scope_requires_confirmation_and_handles_empty_scope(
 
 @pytest.mark.asyncio
 async def test_clear_scope_removes_all_owned_sessions_and_active_references(
-    archive_transactions: None,
 ) -> None:
     storage = RecordingArchiveStorage()
     a = _session("a", scope_id="scope-a")
@@ -270,7 +242,6 @@ async def test_clear_scope_removes_all_owned_sessions_and_active_references(
 
 @pytest.mark.asyncio
 async def test_delete_selected_validates_request_then_commits_all_targets(
-    archive_transactions: None,
 ) -> None:
     storage = RecordingArchiveStorage()
     a = _session("a")
@@ -303,7 +274,6 @@ async def test_delete_selected_validates_request_then_commits_all_targets(
 
 @pytest.mark.asyncio
 async def test_delete_selected_checks_scope_ownership_before_mutating(
-    archive_transactions: None,
 ) -> None:
     storage = RecordingArchiveStorage()
     archive = _archive(
@@ -321,7 +291,6 @@ async def test_delete_selected_checks_scope_ownership_before_mutating(
 
 @pytest.mark.asyncio
 async def test_replace_backup_rebuilds_partitions_and_clears_active_state(
-    archive_transactions: None,
 ) -> None:
     storage = RecordingArchiveStorage()
     old = _session("old")
@@ -342,7 +311,9 @@ async def test_replace_backup_rebuilds_partitions_and_clears_active_state(
 
 @pytest.mark.asyncio
 async def test_archive_retention_no_archive_and_failure_are_safe(caplog) -> None:
-    await ExtendedOpenAIAgentEntity._async_prune_archive_retention(SimpleNamespace(_archive=None))
+    await ExtendedOpenAIAgentEntity._async_prune_archive_retention(
+        SimpleNamespace(_archive=None)
+    )
 
     class FailingArchive:
         async def async_prune(self, retention_days: int) -> None:

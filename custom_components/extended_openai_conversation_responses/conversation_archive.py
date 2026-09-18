@@ -137,6 +137,10 @@ class HomeAssistantArchiveStorage:
     async def async_save_partition(self, partition: str, data: dict[str, Any]) -> None:
         await self._partition_store(partition).async_save(data)
 
+    async def async_remove_partition(self, partition: str) -> None:
+        """Remove an obsolete monthly transcript store."""
+        await self._partition_store(partition).async_remove()
+
 
 class ConversationArchive:
     """Concurrency-safe scoped archive with deterministic session privacy."""
@@ -274,7 +278,7 @@ class ConversationArchive:
         assistant_text: str,
         successful: bool,
     ) -> ArchiveTurn | None:
-        """Retain only user text and the final assistant text for a retained session."""
+        """Retain one turn using the Archive journal before publishing live state."""
         user_text = _clean_text(user_text)
         assistant_text = _clean_text(assistant_text)
         async with self._lock:
@@ -291,8 +295,8 @@ class ConversationArchive:
                 assistant_text=assistant_text,
                 successful=successful,
             )
-            self._turns[session_id].append(turn)
-            self._sessions[session_id] = ArchiveSession(
+            sessions = dict(self._sessions)
+            sessions[session_id] = ArchiveSession(
                 **{
                     **asdict(session),
                     "last_message_at": timestamp,
@@ -300,24 +304,36 @@ class ConversationArchive:
                     "turn_count": session.turn_count + 1,
                 }
             )
-            partition = timestamp[:7]
-            self._partitions.add(partition)
-            await self._async_commit_partitions_locked({partition})
+            turns = dict(self._turns)
+            turns[session_id] = [*self._turns.get(session_id, ()), turn]
+            await self._async_commit_state_locked(
+                sessions=sessions,
+                turns=turns,
+                active=dict(self._active),
+                changed_partitions={timestamp[:7]},
+            )
             return turn
 
     async def async_make_private(self, session_id: str) -> dict[str, Any]:
-        """Delete this session's retained turns and prevent future retention."""
+        """Delete retained turns and journal the privacy boundary before publishing."""
         async with self._lock:
             session = self._require_session(session_id)
-            deleted = len(self._turns.pop(session_id, []))
-            self._sessions[session_id] = ArchiveSession(
+            turns = dict(self._turns)
+            removed = list(turns.pop(session_id, ()))
+            sessions = dict(self._sessions)
+            sessions[session_id] = ArchiveSession(
                 **{**asdict(session), "turn_count": 0, "retention_state": "private"}
             )
-            await self._async_commit_partitions_locked(set(self._partitions))
+            await self._async_commit_state_locked(
+                sessions=sessions,
+                turns=turns,
+                active=dict(self._active),
+                changed_partitions=self._changed_partitions(removed),
+            )
             return {
                 "private_mode_enabled": True,
                 "session_id": session_id,
-                "deleted_turns": deleted,
+                "deleted_turns": len(removed),
                 "future_turns_retained": False,
             }
 
@@ -426,66 +442,100 @@ class ConversationArchive:
     async def async_delete_session(
         self, scope_id: str, session_id: str
     ) -> dict[str, int]:
-        """Delete one exact owned transcript without touching usage."""
+        """Delete one exact owned transcript using the restart-safe journal."""
         async with self._lock:
             self._require_owned_session(scope_id, session_id)
-            deleted_turns = len(self._turns.pop(session_id, []))
-            del self._sessions[session_id]
-            self._active = {
+            sessions = dict(self._sessions)
+            del sessions[session_id]
+            turns = dict(self._turns)
+            removed = list(turns.pop(session_id, ()))
+            active = {
                 key: value for key, value in self._active.items() if value != session_id
             }
-            await self._async_commit_partitions_locked(set(self._partitions))
-            return {"deleted_sessions": 1, "deleted_turns": deleted_turns}
+            await self._async_commit_state_locked(
+                sessions=sessions,
+                turns=turns,
+                active=active,
+                changed_partitions=self._changed_partitions(removed),
+            )
+            return {"deleted_sessions": 1, "deleted_turns": len(removed)}
 
     async def async_clear_scope(
         self, scope_id: str, *, confirm: bool
     ) -> dict[str, int]:
-        """Clear an exact selected scope only after explicit confirmation."""
+        """Clear one scope transactionally after explicit confirmation."""
         if not confirm:
             raise ValueError("Explicit confirmation is required")
         async with self._lock:
-            targets = [
-                s.session_id for s in self._sessions.values() if s.scope_id == scope_id
-            ]
-            deleted_turns = sum(
-                len(self._turns.pop(session_id, [])) for session_id in targets
-            )
-            for session_id in targets:
-                del self._sessions[session_id]
-            target_set = set(targets)
-            self._active = {
-                key: value
-                for key, value in self._active.items()
-                if value not in target_set
+            targets = {
+                session.session_id
+                for session in self._sessions.values()
+                if session.scope_id == scope_id
             }
-            await self._async_commit_partitions_locked(set(self._partitions))
-            return {"deleted_sessions": len(targets), "deleted_turns": deleted_turns}
-
-    async def async_delete_selected(
-        self, scope_id: str, session_ids: list[str], *, confirm: bool
-    ) -> dict[str, int]:
-        """Delete explicitly selected owned sessions after confirmation."""
-        if not confirm:
-            raise ValueError("Explicit confirmation is required")
-        if not session_ids or len(session_ids) > MAX_SEARCH_LIMIT:
-            raise ValueError(f"session_ids must contain 1 to {MAX_SEARCH_LIMIT} IDs")
-        # Validate every supplied ID before deleting anything.
-        for session_id in set(session_ids):
-            self._require_owned_session(scope_id, session_id)
-        async with self._lock:
-            targets = set(session_ids)
-            deleted_turns = sum(
-                len(self._turns.pop(session_id, [])) for session_id in targets
-            )
-            for session_id in targets:
-                del self._sessions[session_id]
-            self._active = {
+            if not targets:
+                return {"deleted_sessions": 0, "deleted_turns": 0}
+            sessions = {
+                session_id: session
+                for session_id, session in self._sessions.items()
+                if session_id not in targets
+            }
+            turns = dict(self._turns)
+            removed = [
+                turn for session_id in targets for turn in turns.pop(session_id, ())
+            ]
+            active = {
                 key: value
                 for key, value in self._active.items()
                 if value not in targets
             }
-            await self._async_commit_partitions_locked(set(self._partitions))
-            return {"deleted_sessions": len(targets), "deleted_turns": deleted_turns}
+            await self._async_commit_state_locked(
+                sessions=sessions,
+                turns=turns,
+                active=active,
+                changed_partitions=self._changed_partitions(removed),
+            )
+            return {
+                "deleted_sessions": len(targets),
+                "deleted_turns": len(removed),
+            }
+
+    async def async_delete_selected(
+        self, scope_id: str, session_ids: list[str], *, confirm: bool
+    ) -> dict[str, int]:
+        """Delete selected owned sessions transactionally after confirmation."""
+        if not confirm:
+            raise ValueError("Explicit confirmation is required")
+        if not session_ids or len(session_ids) > MAX_SEARCH_LIMIT:
+            raise ValueError(f"session_ids must contain 1 to {MAX_SEARCH_LIMIT} IDs")
+        async with self._lock:
+            targets = set(session_ids)
+            # Validate every supplied ID while holding the same lock used for commit.
+            for session_id in targets:
+                self._require_owned_session(scope_id, session_id)
+            sessions = {
+                session_id: session
+                for session_id, session in self._sessions.items()
+                if session_id not in targets
+            }
+            turns = dict(self._turns)
+            removed = [
+                turn for session_id in targets for turn in turns.pop(session_id, ())
+            ]
+            active = {
+                key: value
+                for key, value in self._active.items()
+                if value not in targets
+            }
+            await self._async_commit_state_locked(
+                sessions=sessions,
+                turns=turns,
+                active=active,
+                changed_partitions=self._changed_partitions(removed),
+            )
+            return {
+                "deleted_sessions": len(targets),
+                "deleted_turns": len(removed),
+            }
 
     async def async_delete_date_range(
         self,
@@ -516,21 +566,40 @@ class ConversationArchive:
         return await self.async_delete_selected(scope_id, targets, confirm=True)
 
     async def async_prune(self, retention_days: int) -> dict[str, int]:
-        """Delete expired transcript sessions while preserving unrelated usage."""
+        """Delete expired transcript sessions using the restart-safe journal."""
         cutoff = dt_util.utcnow() - timedelta(days=max(1, retention_days))
         async with self._lock:
-            targets = [
-                s.session_id
-                for s in self._sessions.values()
-                if _parse_time(s.last_message_at) < cutoff
+            targets = {
+                session.session_id
+                for session in self._sessions.values()
+                if _parse_time(session.last_message_at) < cutoff
+            }
+            if not targets:
+                return {"deleted_sessions": 0, "deleted_turns": 0}
+            sessions = {
+                session_id: session
+                for session_id, session in self._sessions.items()
+                if session_id not in targets
+            }
+            turns = dict(self._turns)
+            removed = [
+                turn for session_id in targets for turn in turns.pop(session_id, ())
             ]
-            deleted_turns = sum(
-                len(self._turns.pop(session_id, [])) for session_id in targets
+            active = {
+                key: value
+                for key, value in self._active.items()
+                if value not in targets
+            }
+            await self._async_commit_state_locked(
+                sessions=sessions,
+                turns=turns,
+                active=active,
+                changed_partitions=self._changed_partitions(removed),
             )
-            for session_id in targets:
-                del self._sessions[session_id]
-            await self._async_commit_partitions_locked(set(self._partitions))
-            return {"deleted_sessions": len(targets), "deleted_turns": deleted_turns}
+            return {
+                "deleted_sessions": len(targets),
+                "deleted_turns": len(removed),
+            }
 
     def active_session(self, session_key: str) -> ArchiveSession | None:
         return self._sessions.get(self._active.get(session_key, ""))
@@ -677,18 +746,19 @@ class ConversationArchive:
     async def async_replace_backup(
         self, sessions: list[ArchiveSession], turns: list[ArchiveTurn]
     ) -> None:
-        """Replace durable archive data while leaving active sessions empty."""
+        """Replace durable archive data through the same restart-safe journal."""
         async with self._lock:
             self._ensure_initialized()
-            old_partitions = set(self._partitions)
-            self._sessions = {session.session_id: session for session in sessions}
-            self._turns = defaultdict(list)
+            session_map = {session.session_id: session for session in sessions}
+            turn_map: dict[str, list[ArchiveTurn]] = defaultdict(list)
             for turn in turns:
-                self._turns[turn.session_id].append(turn)
-            self._active.clear()
-            self._partitions = {turn.timestamp[:7] for turn in turns}
-            await self._async_commit_partitions_locked(
-                old_partitions | self._partitions
+                turn_map[turn.session_id].append(turn)
+            new_partitions = {turn.timestamp[:7] for turn in turns}
+            await self._async_commit_state_locked(
+                sessions=session_map,
+                turns=dict(turn_map),
+                active={},
+                changed_partitions=set(self._partitions) | new_partitions,
             )
 
     def _require_session(self, session_id: str) -> ArchiveSession:
@@ -731,8 +801,129 @@ class ConversationArchive:
         self._sessions[session.session_id] = session
         self._active[session_key] = session.session_id
 
-    async def _async_save_metadata_locked(self) -> None:
-        await self._storage.async_save_metadata(self._metadata_payload_locked())
+    @staticmethod
+    def _metadata_payload_for_state(
+        sessions: dict[str, ArchiveSession],
+        active: dict[str, str],
+        partitions: set[str],
+        pending_partitions: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Serialize one candidate Archive metadata state."""
+        persisted_sessions = {
+            session.session_id: session
+            for session in sessions.values()
+            if session.retention_state != "unretained"
+        }
+        payload: dict[str, Any] = {
+            "sessions": [asdict(session) for session in persisted_sessions.values()],
+            "active": {
+                key: value
+                for key, value in active.items()
+                if value in persisted_sessions
+            },
+            "partitions": sorted(partitions),
+        }
+        if pending_partitions is not None:
+            payload["pending_partitions"] = pending_partitions
+        return payload
+
+    @staticmethod
+    def _partition_payload_for_state(
+        partition: str, turns: dict[str, list[ArchiveTurn]]
+    ) -> dict[str, Any]:
+        return {
+            "turns": [
+                asdict(turn)
+                for session_turns in turns.values()
+                for turn in session_turns
+                if turn.timestamp.startswith(partition)
+            ]
+        }
+
+    @staticmethod
+    def _partitions_for_turns(turns: dict[str, list[ArchiveTurn]]) -> set[str]:
+        return {
+            turn.timestamp[:7]
+            for session_turns in turns.values()
+            for turn in session_turns
+        }
+
+    @staticmethod
+    def _changed_partitions(turns: list[ArchiveTurn]) -> set[str]:
+        return {turn.timestamp[:7] for turn in turns}
+
+    async def _async_remove_partition_locked(self, partition: str) -> None:
+        """Remove one obsolete monthly store when the storage boundary supports it."""
+        remover = getattr(self._storage, "async_remove_partition", None)
+        if callable(remover):
+            await remover(partition)
+            return
+
+        # Compatibility for custom/test storage boundaries that predate the explicit
+        # removal method. Archive callers do not need to know about Store internals.
+        store_factory = getattr(self._storage, "_partition_store", None)
+        if not callable(store_factory):
+            return
+        store = store_factory(partition)
+        remove = getattr(store, "async_remove", None)
+        if callable(remove):
+            await remove()
+
+    async def _async_commit_state_locked(
+        self,
+        *,
+        sessions: dict[str, ArchiveSession],
+        turns: dict[str, list[ArchiveTurn]],
+        active: dict[str, str],
+        changed_partitions: set[str],
+    ) -> None:
+        """Journal candidate Archive state before publishing it in memory.
+
+        The first metadata write is the durable commit point. If it fails, live
+        state remains unchanged. Once it succeeds, restart recovery can complete
+        every pending partition write, so RAM is moved to the target state even if
+        a later partition or final-metadata write fails.
+        """
+        partitions = self._partitions_for_turns(turns)
+        removed_partitions = set(self._partitions) - partitions
+        pending_names = (
+            set(changed_partitions) | set(self._pending_partitions) | removed_partitions
+        )
+        pending = {
+            partition: self._partition_payload_for_state(partition, turns)
+            for partition in sorted(pending_names)
+        }
+
+        await self._storage.async_save_metadata(
+            self._metadata_payload_for_state(sessions, active, partitions, pending)
+        )
+
+        # Durable intent exists now; publish exactly what restart recovery will finish.
+        self._sessions = sessions
+        self._turns = defaultdict(list, turns)
+        self._active = active
+        self._partitions = partitions
+        self._pending_partitions = set(pending_names)
+
+        for partition, payload in pending.items():
+            await self._storage.async_save_partition(partition, payload)
+
+        # Empty months are already durably overwritten above. Physical deletion is
+        # housekeeping only; metadata remains the authoritative partition index.
+        for partition in sorted(pending_names - partitions):
+            try:
+                await self._async_remove_partition_locked(partition)
+            except Exception:
+                _LOGGER.warning(
+                    "Unable to remove obsolete conversation archive partition %s",
+                    partition,
+                    exc_info=True,
+                )
+
+        await self._storage.async_save_metadata(
+            self._metadata_payload_for_state(sessions, active, partitions)
+        )
+        self._pending_partitions.clear()
 
     def _metadata_payload_locked(
         self,
@@ -741,57 +932,21 @@ class ConversationArchive:
         sessions: dict[str, ArchiveSession] | None = None,
         active: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        source_sessions = self._sessions if sessions is None else sessions
-        source_active = self._active if active is None else active
-        persisted_sessions = {
-            session.session_id: session
-            for session in source_sessions.values()
-            if session.retention_state != "unretained"
-        }
-        payload: dict[str, Any] = {
-            "sessions": [asdict(session) for session in persisted_sessions.values()],
-            "active": {
-                key: value
-                for key, value in source_active.items()
-                if value in persisted_sessions
-            },
-            "partitions": sorted(self._partitions),
-        }
-        if pending_partitions is not None:
-            payload["pending_partitions"] = pending_partitions
-        return payload
-
-    async def _async_save_partition_locked(self, partition: str) -> None:
-        await self._storage.async_save_partition(
-            partition, self._partition_payload_locked(partition)
+        return self._metadata_payload_for_state(
+            self._sessions if sessions is None else sessions,
+            self._active if active is None else active,
+            set(self._partitions),
+            pending_partitions,
         )
 
     def _partition_payload_locked(self, partition: str) -> dict[str, Any]:
-        turns = [
-            asdict(turn)
-            for session_turns in self._turns.values()
-            for turn in session_turns
-            if turn.timestamp.startswith(partition)
-        ]
-        return {"turns": turns}
-
-    async def _async_commit_partitions_locked(self, partitions: set[str]) -> None:
-        """Commit metadata and partition changes with a restart-safe journal."""
-        partitions |= self._pending_partitions
-        pending = {
-            partition: self._partition_payload_locked(partition)
-            for partition in sorted(partitions)
-        }
-        await self._storage.async_save_metadata(self._metadata_payload_locked(pending))
-        self._pending_partitions = set(partitions)
-        for partition, payload in pending.items():
-            await self._storage.async_save_partition(partition, payload)
-        await self._async_save_metadata_locked()
-        self._pending_partitions.clear()
+        return self._partition_payload_for_state(partition, dict(self._turns))
 
     async def _async_save_all_partitions_locked(self) -> None:
         for partition in sorted(self._partitions):
-            await self._async_save_partition_locked(partition)
+            await self._storage.async_save_partition(
+                partition, self._partition_payload_locked(partition)
+            )
 
     def _ensure_initialized(self) -> None:
         if not self._initialized:
