@@ -6,18 +6,12 @@ from datetime import timedelta
 import pytest
 from homeassistant.util import dt as dt_util
 
-from custom_components.extended_openai_conversation_responses.durable_state_hardening import (
-    _install_usage_transactions,
-)
 from custom_components.extended_openai_conversation_responses.usage import (
     UsageManager,
     UsageRequest,
     UsageRun,
 )
 
-
-# Exercise the effective Usage lifecycle contract installed at integration startup.
-_install_usage_transactions()
 
 
 class DetailStorage:
