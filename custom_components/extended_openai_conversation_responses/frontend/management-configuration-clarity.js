@@ -1,7 +1,5 @@
 import {SETTINGS_INDEX} from "./frontend-navigation.js";
 
-const PATCHED = Symbol.for("extended-openai.management-configuration-clarity");
-
 const EXTRA_CONFIG_OWNERS = Object.freeze({
   functions: ["capabilities", "functions"],
   function_groups: ["capabilities", "functions"],
@@ -105,7 +103,7 @@ export function dirtyConfigurationKeys(panel) {
   return changed;
 }
 
-function configurationDestinations(panel) {
+export function configurationDestinations(panel) {
   const destinations = new Set();
   const unknown = [];
   for (const key of dirtyConfigurationKeys(panel)) {
@@ -205,7 +203,7 @@ function enhanceDirtyNavigation(panel, destinations) {
   });
 }
 
-function enhancePanel(panel) {
+export function enhanceConfigurationClarity(panel) {
   if (!panel.shadowRoot) return;
   ensureStyles(panel);
   const destinations = dirtyConfigurationDestinations(panel);
@@ -213,41 +211,16 @@ function enhancePanel(panel) {
   enhanceDirtyNavigation(panel, destinations);
 }
 
-function bindInteractionRefresh(panel) {
+export function bindConfigurationClarity(panel) {
   const root = panel.shadowRoot;
   if (!root || root.__eocClarityInteractionBound) return;
   root.__eocClarityInteractionBound = true;
   // State safety dispatches this after updating authoritative dirty state.
-  root.addEventListener("eoc-config-dirty-changed", () => enhancePanel(panel));
+  root.addEventListener("eoc-config-dirty-changed", () => enhanceConfigurationClarity(panel));
   for (const type of ["input", "change", "value-changed"]) {
     root.addEventListener(type, (event) => {
       refreshSettingEffects(panel, event.target);
-      enhancePanel(panel);
+      enhanceConfigurationClarity(panel);
     });
   }
-}
-
-export function installManagementConfigurationClarity(Panel) {
-  // A constructor is the production API; registry callers remain supported.
-  if (typeof Panel !== "function") {
-    const registry = Panel || globalThis.customElements;
-    if (!registry?.whenDefined) return Promise.resolve(false);
-    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementConfigurationClarity(registry.get("extended-openai-management-panel")));
-  }
-  const constructor = Panel;
-  const prototype = constructor?.prototype;
-  if (!prototype || prototype[PATCHED]) return false;
-
-  prototype._configurationDirtyDestinations = function() { return configurationDestinations(this); };
-
-  const originalRender = prototype._renderContent;
-  prototype._renderContent = function(...args) {
-    const result = originalRender.apply(this, args);
-    bindInteractionRefresh(this);
-    enhancePanel(this);
-    return result;
-  };
-
-  prototype[PATCHED] = true;
-  return true;
 }
