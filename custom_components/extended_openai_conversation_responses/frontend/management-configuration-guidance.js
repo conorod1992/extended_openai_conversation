@@ -369,7 +369,7 @@ function bindGuidanceRoutes(panel) {
   });
 }
 
-function storeRuntimeGuidance(panel, result, agentId = panel._agentId) {
+export function storeRuntimeGuidance(panel, result, agentId = panel._agentId) {
   if (!result?.configuration_guidance || panel._agentId !== agentId) return;
   panel._configurationGuidance = result.configuration_guidance;
   panel._configurationGuidanceAgentId = agentId;
