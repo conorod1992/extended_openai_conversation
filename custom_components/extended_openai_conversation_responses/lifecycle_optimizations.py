@@ -14,7 +14,7 @@ _INSTALLED = False
 
 
 def install_lifecycle_optimizations() -> None:
-    """Install bounded persistence, archive, memory, and debug optimizations."""
+    """Install archive, memory, and debug lifecycle optimizations."""
     global _INSTALLED
     if _INSTALLED:
         return
