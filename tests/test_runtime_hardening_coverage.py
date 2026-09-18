@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
@@ -16,64 +15,22 @@ from custom_components.extended_openai_conversation_responses import (
     guest_mode,
     runtime_hardening,
     skills,
-    usage,
 )
 from custom_components.extended_openai_conversation_responses import conversation
 
 
 def test_install_runtime_hardening_is_one_shot(monkeypatch: pytest.MonkeyPatch) -> None:
-    installers = [Mock() for _ in range(4)]
+    installers = [Mock() for _ in range(3)]
     monkeypatch.setattr(runtime_hardening, "_INSTALLED", False)
-    monkeypatch.setattr(runtime_hardening, "_install_usage_hardening", installers[0])
-    monkeypatch.setattr(runtime_hardening, "_install_skill_hardening", installers[1])
-    monkeypatch.setattr(runtime_hardening, "_install_guest_mode_hardening", installers[2])
-    monkeypatch.setattr(runtime_hardening, "_install_tool_result_hardening", installers[3])
+    monkeypatch.setattr(runtime_hardening, "_install_skill_hardening", installers[0])
+    monkeypatch.setattr(runtime_hardening, "_install_guest_mode_hardening", installers[1])
+    monkeypatch.setattr(runtime_hardening, "_install_tool_result_hardening", installers[2])
 
     runtime_hardening.install_runtime_hardening()
     runtime_hardening.install_runtime_hardening()
 
     for installer in installers:
         installer.assert_called_once_with()
-
-
-@pytest.mark.asyncio
-async def test_usage_guard_serializes_same_agent_and_rebinds_alias(
-    hass: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    active = 0
-    max_active = 0
-    release = asyncio.Event()
-    entered = asyncio.Event()
-
-    async def original(_hass: Any, _entry: str, _subentry: str) -> str:
-        nonlocal active, max_active
-        active += 1
-        max_active = max(max_active, active)
-        if active == 1:
-            entered.set()
-            await release.wait()
-        active -= 1
-        return "usage"
-
-    monkeypatch.setattr(usage, "async_get_usage", original)
-    alias = ModuleType(
-        "custom_components.extended_openai_conversation_responses.coverage_alias"
-    )
-    alias.async_get_usage = original  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, alias.__name__, alias)
-
-    runtime_hardening._install_usage_hardening()
-    guarded = usage.async_get_usage
-    assert alias.async_get_usage is guarded  # type: ignore[attr-defined]
-
-    first = asyncio.create_task(guarded(hass, "entry", "agent"))
-    await entered.wait()
-    second = asyncio.create_task(guarded(hass, "entry", "agent"))
-    await asyncio.sleep(0)
-    assert max_active == 1
-    release.set()
-    assert await asyncio.gather(first, second) == ["usage", "usage"]
-    assert max_active == 1
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,6 @@ _LOGGER = logging.getLogger(__name__)
 
 MAX_MODEL_TOOL_RESULT_CHARACTERS = 32_000
 _TOOL_RESULT_TRUNCATION_LABEL = "...[tool result truncated]"
-_USAGE_GETTER_LOCKS = f"{DOMAIN}.usage_getter_locks"
 _SKILL_MANAGER_INIT_LOCK = f"{DOMAIN}.skill_manager_init_lock"
 _INSTALLED = False
 
@@ -36,7 +35,6 @@ def install_runtime_hardening() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
-    _install_usage_hardening()
     _install_skill_hardening()
     _install_guest_mode_hardening()
     _install_tool_result_hardening()
@@ -49,41 +47,6 @@ def _manager_lock(manager: Any, attribute: str) -> asyncio.Lock:
         lock = asyncio.Lock()
         manager.__dict__[attribute] = lock
     return lock
-
-
-def _install_usage_hardening() -> None:
-    """Serialize effective Usage getter selection across persistent/fallback state."""
-    from . import usage as usage_module
-
-    current_getter = usage_module.async_get_usage
-    if not getattr(current_getter, "_extended_openai_getter_guard", False):
-        original_getter = current_getter
-
-        async def async_get_usage(
-            hass: HomeAssistant, entry_id: str, subentry_id: str
-        ) -> Any:
-            locks: dict[tuple[str, str], asyncio.Lock] = hass.data.setdefault(
-                _USAGE_GETTER_LOCKS, {}
-            )
-            key = (entry_id, subentry_id)
-            lock = locks.setdefault(key, asyncio.Lock())
-            async with lock:
-                return await original_getter(hass, entry_id, subentry_id)
-
-        async_get_usage._extended_openai_getter_guard = True  # type: ignore[attr-defined]
-        usage_module.async_get_usage = async_get_usage
-
-        # ``management_ui`` and ``backup`` are imported before async_setup runs.
-        # Replace any already-bound aliases; future imports naturally see the
-        # guarded function in the usage module.
-        package_prefix = f"{__package__}."
-        for module_name, module in tuple(sys.modules.items()):
-            if (
-                module is not None
-                and module_name.startswith(package_prefix)
-                and module.__dict__.get("async_get_usage") is original_getter
-            ):
-                module.__dict__["async_get_usage"] = async_get_usage
 
 
 def _install_skill_hardening() -> None:

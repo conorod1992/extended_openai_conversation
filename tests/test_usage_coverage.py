@@ -533,7 +533,7 @@ def test_time_day_and_merge_helpers_cover_edge_cases() -> None:
     assert target["average_requests_per_completed_run"] == 0
 
 
-async def test_async_get_usage_publishes_single_manager_before_initialization(monkeypatch) -> None:
+async def test_async_get_durable_usage_publishes_single_manager_before_initialization(monkeypatch) -> None:
     created = []
 
     class FakeStore(MemoryStorage):
@@ -557,9 +557,9 @@ async def test_async_get_usage_publishes_single_manager_before_initialization(mo
     monkeypatch.setattr(usage.UsageManager, "async_initialize", blocked_initialize)
     hass = SimpleNamespace(data={})
 
-    first_task = asyncio.create_task(usage.async_get_usage(hass, "entry", "agent"))
+    first_task = asyncio.create_task(usage.async_get_durable_usage(hass, "entry", "agent"))
     await entered.wait()
-    second_task = asyncio.create_task(usage.async_get_usage(hass, "entry", "agent"))
+    second_task = asyncio.create_task(usage.async_get_durable_usage(hass, "entry", "agent"))
     await asyncio.sleep(0)
     release.set()
     first, second = await asyncio.gather(first_task, second_task)
@@ -569,4 +569,4 @@ async def test_async_get_usage_publishes_single_manager_before_initialization(mo
     assert len(created) == 3
     assert created[2][2]["private"] is True
     assert created[2][2]["serialize_in_event_loop"] is False
-    assert await usage.async_get_usage(hass, "entry", "agent") is first
+    assert await usage.async_get_durable_usage(hass, "entry", "agent") is first

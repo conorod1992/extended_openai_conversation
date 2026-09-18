@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 from openai import OpenAIError
@@ -13,18 +12,12 @@ from homeassistant.exceptions import HomeAssistantError
 from custom_components.extended_openai_conversation_responses import (
     runtime_failure_hardening as hardening,
 )
-from custom_components.extended_openai_conversation_responses import usage as usage_module
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
 )
-
-
-class _Hass:
-    def __init__(self) -> None:
-        self.data: dict = {}
 
 
 class _Usage:
@@ -67,66 +60,6 @@ class _ArchiveEntity:
 
     def _tool_result(self, _tool_input, result):
         return result
-
-
-async def test_usage_fallback_discards_poisoned_persistent_manager(monkeypatch) -> None:
-    hass = _Hass()
-    key = ("entry", "agent")
-    other_key = ("entry", "other")
-    poisoned = object()
-    other = object()
-    hass.data[usage_module._USAGE_MANAGERS] = {key: poisoned, other_key: other}
-
-    async def fail_getter(_hass, _entry_id: str, _subentry_id: str):
-        raise OSError("corrupt usage store")
-
-    monkeypatch.setattr(hardening, "_ORIGINAL_ASYNC_GET_USAGE", fail_getter)
-
-    fallback = await hardening.async_get_usage_safely(hass, *key)
-
-    assert key not in hass.data[usage_module._USAGE_MANAGERS]
-    assert hass.data[usage_module._USAGE_MANAGERS][other_key] is other
-    assert hass.data[hardening._VOLATILE_USAGE_MANAGERS][key] is fallback
-    assert fallback._initialized is True
-
-
-async def test_usage_fallback_does_not_require_persistent_manager_registry(monkeypatch) -> None:
-    hass = _Hass()
-
-    async def fail_getter(_hass, _entry_id: str, _subentry_id: str):
-        raise OSError("store unavailable")
-
-    monkeypatch.setattr(hardening, "_ORIGINAL_ASYNC_GET_USAGE", fail_getter)
-
-    manager = await hardening.async_get_usage_safely(hass, "entry", "agent")
-
-    assert manager is hass.data[hardening._VOLATILE_USAGE_MANAGERS][("entry", "agent")]
-
-
-def test_usage_startup_installer_replaces_live_import_aliases_once(monkeypatch) -> None:
-    async def current_getter(_hass, _entry_id: str, _subentry_id: str):
-        return None
-
-    alias_module = ModuleType(
-        "custom_components.extended_openai_conversation_responses._coverage_usage_alias"
-    )
-    alias_module.async_get_usage = current_getter
-    unrelated = ModuleType(
-        "custom_components.extended_openai_conversation_responses._coverage_unrelated"
-    )
-    unrelated.async_get_usage = object()
-    monkeypatch.setitem(sys.modules, alias_module.__name__, alias_module)
-    monkeypatch.setitem(sys.modules, unrelated.__name__, unrelated)
-    monkeypatch.setattr(usage_module, "async_get_usage", current_getter)
-
-    hardening._install_usage_startup_fallback()
-    first = usage_module.async_get_usage
-    hardening._install_usage_startup_fallback()
-
-    assert first is hardening.async_get_usage_safely
-    assert usage_module.async_get_usage is first
-    assert alias_module.async_get_usage is first
-    assert unrelated.async_get_usage is not first
 
 
 def test_openai_conversation_error_uses_provider_failure_path(monkeypatch) -> None:
@@ -314,9 +247,6 @@ def test_top_level_install_is_idempotent(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(hardening, "_INSTALLED", False)
     monkeypatch.setattr(
-        hardening, "_install_usage_startup_fallback", lambda: calls.append("usage")
-    )
-    monkeypatch.setattr(
         hardening, "_install_request_preparation_boundary", lambda: calls.append("request")
     )
     monkeypatch.setattr(
@@ -331,4 +261,4 @@ def test_top_level_install_is_idempotent(monkeypatch) -> None:
     hardening.install_runtime_failure_hardening()
     hardening.install_runtime_failure_hardening()
 
-    assert calls == ["usage", "request", "archive", "tool-id"]
+    assert calls == ["request", "archive", "tool-id"]
