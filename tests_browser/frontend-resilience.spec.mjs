@@ -196,13 +196,13 @@ test("server-rejected general configuration save remains dirty and retries witho
   const title = panel.locator('[data-config="__title"]');
   await title.fill("Retry-safe agent title");
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
-  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
 
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
   await expect(title).toHaveValue("Retry-safe agent title");
   expect(await page.evaluate(() => window.browserHarness.getState().configuration.title)).toBe("Jarvis");
 
-  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
   expect(await page.evaluate(() => window.browserHarness.getState().configuration.title)).toBe("Retry-safe agent title");
 
@@ -227,7 +227,7 @@ test("malformed backup import leaves persisted state untouched and a valid retry
   await page.goto(fixtureUrl("assistant/basics"));
   panel = page.locator("extended-openai-management-panel");
   await panel.locator('[data-config="__title"]').fill("Changed before malformed restore");
-  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
   expect(await page.evaluate(() => window.browserHarness.getState().configuration.title)).toBe("Changed before malformed restore");
 
   await page.goto(fixtureUrl("usage-maintenance/backup-restore"));

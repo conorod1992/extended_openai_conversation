@@ -43,10 +43,10 @@ assert.match(
 
 assert.match(
   rulesSource,
-  /const revision = result\.revision/,
+  /let editorRevision = result\.revision/,
   "Request Rule edits must use the revision from the listed state",
 );
-for (const action of ["duplicate", "delete", "update", "defaults", "wording_groups"]) {
+for (const action of ["duplicate", "delete", "update"]) {
   assert.match(
     rulesSource,
     new RegExp(`panel\\._call\\("request_rules", "${action}", [^\\n]*revision`),

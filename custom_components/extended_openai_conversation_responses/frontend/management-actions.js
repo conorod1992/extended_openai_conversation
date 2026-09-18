@@ -53,12 +53,14 @@ async function runFrontendMutation(panel, control, label, operation) {
 }
 
 async function saveConfiguration(panel, button) {
-  if (!panel._draft || !panel._selectedAgent?.()) return;
+  if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
+  panel._configurationSaving = true;
   panel._setSaving(button, true);
   try {
     const result = await panel._call("configuration", "save", {
       config: clone(panel._draft),
       title: panel._draftTitle,
+      revision: panel._configData?.revision,
     });
     showErrors(panel, result.errors || {});
     if (!result.valid) {
@@ -74,11 +76,12 @@ async function saveConfiguration(panel, button) {
     panel._draftAgentId = panel._agentId;
     if (agent) Object.assign(panel._selectedAgent(), agent);
     panel._setConfigDirty(false);
-    panel._toast("Configuration saved");
+    panel._toast("Changes saved");
     panel._render();
   } catch (err) {
     panel._toast(`Unable to save configuration: ${err.message || String(err)}`, true);
   } finally {
+    panel._configurationSaving = false;
     panel._setSaving(button, false);
   }
 }
@@ -139,26 +142,12 @@ export function bindFrontendCorrectness(panel) {
       return;
     }
 
-    if (button.id === "guest-policy-save") {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      void (async () => {
-        const saved = await runFrontendMutation(panel, button, "save Guest policy", async () => {
-          await panel._call("guest_mode", "save_policy", {config: clone(panel._guestDraft || {})});
-        });
-        if (!saved) return;
-        await panel._loadSection(true);
-        panel._toast("Guest policy saved");
-      })();
-      return;
-    }
-
     if (button.classList.contains("rule-duplicate")) {
       event.preventDefault();
       event.stopImmediatePropagation();
       void (async () => {
         const saved = await runFrontendMutation(panel, button, "duplicate Request Rule", () =>
-          panel._call("request_rules", "duplicate", {rule_id: button.dataset.id})
+          panel._call("request_rules", "duplicate", {rule_id: button.dataset.id, revision: panel._result?.revision})
         );
         if (saved) await panel._loadSection();
       })();
@@ -171,49 +160,14 @@ export function bindFrontendCorrectness(panel) {
       void (async () => {
         if (!await panel._confirm("Delete Request Rule?", "This cannot be undone.", "Delete")) return;
         const saved = await runFrontendMutation(panel, button, "delete Request Rule", () =>
-          panel._call("request_rules", "delete", {rule_id: button.dataset.id, confirm: true})
+          panel._call("request_rules", "delete", {rule_id: button.dataset.id, confirm: true, revision: panel._result?.revision})
         );
         if (saved) await panel._loadSection();
       })();
       return;
     }
 
-    if (button.id === "rules-default-save") {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      void (async () => {
-        const saved = await runFrontendMutation(panel, button, "save Request Rule defaults", () =>
-          panel._call("request_rules", "defaults", {
-            defaults: {
-              word_forms: root.querySelector("#rules-default-word-forms").checked,
-              wording_alternatives: root.querySelector("#rules-default-wording").checked,
-              fuzzy: root.querySelector("#rules-default-fuzzy").checked,
-              fuzzy_threshold: ruleSensitivityValue(root.querySelector("#rules-default-threshold").value),
-            },
-          })
-        );
-        if (saved) await panel._loadSection();
-      })();
-      return;
-    }
 
-    if (button.id === "wording-save") {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      void (async () => {
-        const wordingGroups = [...root.querySelectorAll(".wording-group")].map((row) => ({
-          canonical: row.querySelector(".wording-canonical").value.trim(),
-          alternatives: row.querySelector(".wording-alternatives").value
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean),
-        }));
-        const saved = await runFrontendMutation(panel, button, "save wording alternatives", () =>
-          panel._call("request_rules", "wording_groups", {wording_groups: wordingGroups})
-        );
-        if (saved) await panel._loadSection();
-      })();
-    }
   }, true);
 
   root.addEventListener("change", (event) => {
@@ -230,6 +184,7 @@ export function bindFrontendCorrectness(panel) {
       const saved = await runFrontendMutation(panel, input, "update Request Rule", () =>
         panel._call("request_rules", "update", {
           rule_id: rule.id,
+          revision: panel._result?.revision,
           rule: {...rule, enabled: input.checked, sensitive_matching_warning: undefined},
         })
       );

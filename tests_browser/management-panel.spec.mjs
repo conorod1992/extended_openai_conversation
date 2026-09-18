@@ -93,7 +93,7 @@ test("general configuration survives a fresh panel load and a rejected save can 
 
   await title.fill("Kitchen Jarvis");
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
-  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
 
   await expect.poll(async () => page.evaluate(() => window.browserHarness.calls.filter(
     (call) => call.section === "configuration" && call.action === "save",
@@ -102,7 +102,7 @@ test("general configuration survives a fresh panel load and a rejected save can 
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
   expect(await page.evaluate(() => window.browserHarness.getState().configuration.title)).toBe("Jarvis");
 
-  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
   expect(await page.evaluate(() => window.browserHarness.getState().configuration.title)).toBe("Kitchen Jarvis");
 

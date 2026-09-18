@@ -29,6 +29,8 @@ function freshState() {
       defaults: {}, model_capabilities: {}, local_handling: {supported: true, intents: [], pipeline_conflicts: []},
     },
     memories: [{memory_id: "memory-1", scope_id: "user:test-user", content: "Baseline browser fixture memory", category: "general", source: "manual", created_at: "2026-09-01T12:00:00Z", updated_at: "2026-09-01T12:00:00Z"}],
+    guest: {config: {guest_mode_enabled: false, guest_web_search: false}, revision: "guest-1", legacy_policy: false},
+    quiet: {config: {enabled: false, start: "22:00", end: "07:00", max_volume: 0.2, wake_sound: "off", overrides: {}}, active: false, satellites: []},
     requestRules: {
       revision: 3, defaults: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, wording_groups: [], diagnostics: {},
       rules: [{id: "rule-1", name: "Baseline rule", enabled: true, phrases: ["baseline route"], match_type: "contains", action_type: "model_routing", action: {model: "gpt-5-mini", reasoning_effort: "", scope: "request", reset: false, success_response: "Updated"}, matching_behavior: "defaults", matching: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, order: 0}],
@@ -85,7 +87,14 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     if (key === "conversations/settings") return {archive_enabled: true, archive_retention_days: 30, archive_model_search_enabled: false};
     if (key === "knowledge/list") { if (partialOverview) throw new Error("Knowledge fixture unavailable"); return {sources: []}; }
     if (key === "scopes/catalog") return {scopes: clone(state.scopes)};
-    if (key === "guest_mode/get") return {config: {}, state: "inactive", legacy_policy: false};
+    if (key === "guest_mode/get") return clone(state.guest);
+    if (key === "guest_mode/save_policy") {
+      if (message.revision !== state.guest.revision) throw new Error("Saved data changed; reload before saving.");
+      state.guest.config = clone(message.config); state.guest.revision += "x"; save(); return clone(state.guest);
+    }
+    if (key === "guest_mode/update" || key === "guest_mode/disable") return {status: {state: key.endsWith("disable") ? "inactive" : "active"}};
+    if (key === "quiet_hours/get") return clone(state.quiet);
+    if (key === "quiet_hours/update") { state.quiet.config = clone(message.config); save(); return clone(state.quiet); }
     if (key === "service_catalog/get") return {services: {}};
 
     if (key === "configuration/get") return clone(state.configuration);
@@ -113,8 +122,8 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     if (key === "request_rules/update") { const i = state.requestRules.rules.findIndex((r) => r.id === message.rule_id); if (i < 0) throw new Error("Request Rule not found"); state.requestRules.rules[i] = {...clone(message.rule), id: message.rule_id}; normalizeRules(); state.requestRules.revision++; save(); return {revision: state.requestRules.revision}; }
     if (key === "request_rules/delete") { state.requestRules.rules = state.requestRules.rules.filter((r) => r.id !== message.rule_id); normalizeRules(); state.requestRules.revision++; save(); return {revision: state.requestRules.revision}; }
     if (key === "request_rules/move") { const i = state.requestRules.rules.findIndex((r) => r.id === message.rule_id), j = message.direction === "up" ? i - 1 : i + 1; if (i >= 0 && j >= 0 && j < state.requestRules.rules.length) [state.requestRules.rules[i], state.requestRules.rules[j]] = [state.requestRules.rules[j], state.requestRules.rules[i]]; normalizeRules(); state.requestRules.revision++; save(); return {revision: state.requestRules.revision}; }
-    if (key === "request_rules/defaults") { state.requestRules.defaults = clone(message.defaults); state.requestRules.revision++; save(); return {revision: state.requestRules.revision}; }
-    if (key === "request_rules/wording_groups") { state.requestRules.wording_groups = clone(message.wording_groups); state.requestRules.revision++; save(); return {revision: state.requestRules.revision}; }
+    if (key === "request_rules/defaults") { if (message.revision !== state.requestRules.revision) throw new Error("Saved data changed; reload before saving."); state.requestRules.defaults = clone(message.defaults); state.requestRules.revision++; save(); return {defaults: clone(state.requestRules.defaults), revision: state.requestRules.revision}; }
+    if (key === "request_rules/wording_groups") { if (message.revision !== state.requestRules.revision) throw new Error("Saved data changed; reload before saving."); state.requestRules.wording_groups = clone(message.wording_groups); state.requestRules.revision++; save(); return {wording_groups: clone(state.requestRules.wording_groups), revision: state.requestRules.revision}; }
 
     if (key === "tools/starter") return {yaml: "spec:\n  name: browser_tool\n  description: Browser Function Tool\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: script\n  sequence: []\n"};
     if (key === "tools/built_in_catalog") return {functions: []};

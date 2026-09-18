@@ -105,11 +105,11 @@ assert.match(editorSource, /insertAdjacentHTML\("beforebegin", saveBar\(panel\)\
 assert.match(editorSource, /#revert-config[\s\S]*?_setConfigDirty\(false\); panel\._render\(\)/, "reverting should clear dirty state and remove the bar");
 assert.match(editorSource, /_toast\("Configuration saved"\)/, "saving should use a transient success toast");
 assert.doesNotMatch(editorSource, /Save tools and groups|Keep in draft|unsaved tool draft/i);
-assert.match(editorSource, />Save function<\/button>/);
-assert.match(editorSource, />Save group<\/button>/);
+assert.match(editorSource, /id="tool-save">Save<\/button>/);
+assert.match(editorSource, /id="group-save">Save<\/button>/);
 assert.match(editorSource, /class=\"group-enabled\"/, "groups should expose an independent enabled switch");
 assert.match(editorSource, /editButton\.disabled = !enabled/, "disabled groups should not silently re-enable through the legacy editor");
 assert.match(editorSource, /member Function Tool settings were kept/, "group state changes should explain that member states are retained");
 for (const action of ["save","set_enabled","delete","save_group","delete_group"]) {
-  assert.match(editorSource,new RegExp(`panel\\._call\\(\"tools\",\"${action}\"`));
+  assert.match(editorSource,new RegExp(`panel\\._call\\(\"tools\",\\s*\"${action}\"`));
 }

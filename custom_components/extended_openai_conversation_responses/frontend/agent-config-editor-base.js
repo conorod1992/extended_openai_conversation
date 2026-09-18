@@ -1,3 +1,4 @@
+import {saveBarMarkup} from "./unsaved-state.js";
 import {lookupModelData, modelDataControls, bindModelDataControls} from "./model-catalog.js";
 import { bindHALlmTools, haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools.js";
 import { bindHelp, helpButton, helpPopover, helpSearchTerms } from "./agent-config-help.js";
@@ -179,7 +180,7 @@ function renderLocalHandling(panel, config) {
 
 export function saveBar(panel) {
   if (!panel._configDirty) return "";
-  return `<div class="save-bar"><strong id="dirty-state" class="dirty-state">Unsaved changes</strong><div class="actions"><button type="button" class="secondary" id="revert-config">Revert</button><button type="button" id="save-config">Save configuration</button></div></div>`;
+  return saveBarMarkup({configuration: true});
 }
 
 export function renderConfiguration(panel) {
@@ -485,6 +486,8 @@ async function openTool(panel,index=null,initialTool=null) {
   root.querySelector("#tool-error").textContent="Loading editor...";
   const picker=root.querySelector("#built-in-picker");
   picker.hidden=index!==null||Boolean(initialTool);
+  panel._toolRevision = panel._configData?.revision;
+  panel._toolInitialYaml = null;
   dialog.showModal();
   try {
     let response;
@@ -544,12 +547,16 @@ function openFunctionGroup(panel, groupId = null) {
   root.querySelector("#group-function-search").value="";
   root.querySelector("#group-error").textContent="";
   renderGroupFunctionChoices(panel,group?.functions||[]);
+  panel._groupRevision = panel._configData?.revision;
   root.querySelector("#group-dialog").showModal();
+  panel._captureDialogBaseline?.(root.querySelector("#group-dialog"));
   root.querySelector("#group-name").focus();
 }
 
 async function saveFunctionGroup(panel) {
   const root=panel.shadowRoot;
+  const button = root.querySelector("#group-save");
+  if (button.disabled) return;
   const name=root.querySelector("#group-name").value.trim();
   const id=root.querySelector("#group-id").value.trim();
   const description=root.querySelector("#group-description").value.trim();
@@ -561,13 +568,15 @@ async function saveFunctionGroup(panel) {
   if(!/^[a-z][a-z0-9_-]{0,63}$/.test(id)){error.textContent="Group ID must start with a lowercase letter and use only lowercase letters, numbers, underscores, or hyphens.";return;}
   if(!description){error.textContent="Add a concise description so the model knows when this group is relevant.";return;}
   error.textContent="Saving...";
+  panel._setSaving(button, true);
   try {
-    const result=await panel._call("tools","save_group",{group:{id,name,description,loading_mode,functions,guest_allowed},...(panel._groupOriginalId?{original_id:panel._groupOriginalId}:{})});
+    const result=await panel._call("tools","save_group",{revision:panel._groupRevision,group:{id,name,description,loading_mode,functions,guest_allowed},...(panel._groupOriginalId?{original_id:panel._groupOriginalId}:{})});
     synchronizePersistedFunctions(panel,result);
     root.querySelector("#group-dialog").close();
     panel._toast("Function group saved");
     panel._render();
   } catch(err) { error.textContent=err.message||String(err); }
+  finally { panel._setSaving(button, false); }
 }
 
 export function bindTools(panel) {
@@ -589,7 +598,23 @@ export function bindTools(panel) {
   root.querySelector("#tool-cancel")?.addEventListener("click",()=>root.querySelector("#tool-dialog").close());
   root.querySelector("#tool-dialog")?.addEventListener("cancel",()=>{panel._toolIndex=null;});
   root.querySelector("#tool-validate")?.addEventListener("click",()=>validateDialogTool(panel));
-  root.querySelector("#tool-save")?.addEventListener("click",async()=>{const tool=await validateDialogTool(panel);if(!tool)return;const button=root.querySelector("#tool-save");button.disabled=true;try{const result=await panel._call("tools","save",{tool,...(panel._toolOriginalName?{original_name:panel._toolOriginalName}:{})});const created=!panel._toolOriginalName;synchronizePersistedFunctions(panel,result);root.querySelector("#tool-dialog").close();panel._toast(created?"Function created":"Function saved");panel._render();}catch(err){root.querySelector("#tool-error").className="validation invalid";root.querySelector("#tool-error").textContent=err.message||String(err);button.disabled=false;}});
+  root.querySelector("#tool-save")?.addEventListener("click", async () => {
+    const button = root.querySelector("#tool-save");
+    if (button.disabled) return;
+    panel._setSaving(button, true);
+    try {
+      const tool = await validateDialogTool(panel);
+      if (!tool) return;
+      const result = await panel._call("tools", "save", {tool, revision: panel._toolRevision, ...(panel._toolOriginalName ? {original_name: panel._toolOriginalName} : {})});
+      synchronizePersistedFunctions(panel, result);
+      root.querySelector("#tool-dialog").close();
+      panel._toast("Changes saved");
+      panel._render();
+    } catch (err) {
+      root.querySelector("#tool-error").className = "validation invalid";
+      root.querySelector("#tool-error").textContent = err.message || String(err);
+    } finally { panel._setSaving(button, false); }
+  });
   root.querySelector("#group-name")?.addEventListener("input",(event)=>{if(!panel._groupIdEdited)root.querySelector("#group-id").value=functionGroupIdFromName(event.target.value);});
   root.querySelector("#group-id")?.addEventListener("input",()=>{panel._groupIdEdited=true;});
   root.querySelector("#group-function-search")?.addEventListener("input",(event)=>{const query=event.target.value;root.querySelectorAll(".group-function-choice").forEach((choice)=>{choice.hidden=!matchesFunctionSearch(query,choice.dataset.choiceSearch);});});
@@ -606,8 +631,8 @@ export function configurationDialogs(panel) {
   return [
     (!view || view === "assistant/prompt-context") ? `<dialog id="prompt-preview-dialog" class="editor-dialog wide prompt-preview-dialog" aria-labelledby="prompt-preview-title"><div class="dialog-header"><div><h2 id="prompt-preview-title">Preview effective request</h2><p class="dialog-meta">Locally assembled fresh-request content</p></div></div><div class="dialog-body prompt-preview-body"><div class="notice"><strong>Current request preview</strong><p>Shows locally assembled content that would accompany a brand-new message now. Current templates and Home Assistant context are resolved. User input and conversation history are excluded.</p><p>This may contain private entity state, memory data, Knowledge context, user instructions, and Function Tool schemas. Provider-internal framing and hidden server-side content cannot be inspected.</p></div><div class="request-preview-metrics"><strong id="request-footprint">Calculating...</strong><span id="function-group-savings"></span></div><div id="request-preview-sections" class="request-preview-sections"></div><ul id="prompt-preview-notes" class="prompt-preview-notes"></ul><div id="prompt-preview-status" class="validation" role="status" aria-live="polite"></div></div><div class="dialog-actions"><button type="button" class="secondary" id="prompt-preview-close">Close</button><button type="button" id="copy-prompt-preview" disabled>Copy all</button></div></dialog>` : "",
     `<dialog id="import-dialog" class="editor-dialog wide" aria-labelledby="import-dialog-title"><div class="dialog-header"><h2 id="import-dialog-title">Import agent configuration</h2></div><div class="dialog-body">${panel._configDirty ? `<div class="notice"><strong>Unsaved shared draft</strong><p>Creating a new agent preserves this draft. Overwriting the current agent discards it after confirmation.</p></div>` : ""}<label>Exported JSON or YAML<textarea id="import-document" class="yaml-editor" spellcheck="false"></textarea></label><div class="mode-row"><label><input type="radio" name="import-mode" value="new" checked> Create a new agent</label><label><input type="radio" name="import-mode" value="current"> Overwrite current agent</label></div><div id="import-summary" class="validation" aria-live="polite">Validate the document to preview it.</div></div><div class="dialog-actions"><button type="button" class="secondary" id="import-cancel">Cancel</button><button type="button" class="secondary" id="import-preview">Validate & preview</button><button type="button" id="import-apply" disabled>Import</button></div></dialog>`,
-    (!view || view === "capabilities/functions") ? `<dialog id="tool-dialog" class="editor-dialog tool-dialog" aria-labelledby="tool-dialog-title"><div class="dialog-header"><div><span class="setting-label-row"><h2 id="tool-dialog-title">Function Tool</h2>${helpButton(panel,"function_tools")}</span><p id="tool-dialog-meta" class="dialog-meta">YAML</p></div></div><div class="dialog-body tool-dialog-body"><div id="built-in-picker" class="built-in-picker"><label for="built-in-function">Insert Built-in Function</label><select id="built-in-function"><option value="">Insert Built-in Function…</option></select><small>Built-in functions are implemented directly by Extended OpenAI Conversation. Selecting one inserts an editable Function Tool that exposes the capability to the model.</small></div><label class="tool-editor-label"><span class="sr-only">Function Tool YAML</span><textarea id="tool-yaml" class="yaml-editor tool-yaml-editor" spellcheck="false" wrap="off" aria-describedby="tool-error"></textarea></label><div id="tool-error" class="validation" role="status" aria-live="polite"></div></div><div class="dialog-actions"><button type="button" class="secondary" id="tool-cancel">Cancel</button><button type="button" class="secondary" id="tool-validate">Validate</button><button type="button" id="tool-save">Save function</button></div></dialog>` : "",
-    (!view || view === "capabilities/functions") ? `<dialog id="group-dialog" class="editor-dialog group-dialog" aria-labelledby="group-dialog-title"><div class="dialog-header"><div><h2 id="group-dialog-title">Function group</h2><p>Create a compact capability the model can load only when needed.</p></div></div><div class="dialog-body group-dialog-body"><div class="form-grid"><label>Group name<input id="group-name" maxlength="100" autocomplete="off" placeholder="Reminders"></label><label>Group ID<input id="group-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="reminders"><small>Stable lowercase ID used by the model. Advanced users may edit it.</small></label></div><label>Description<textarea id="group-description" class="short-textarea" maxlength="500" placeholder="Create and manage scheduled, recurring, and triggered reminders."></textarea><small>Keep this concise; it is included in the compact catalogue sent with normal requests.</small></label><label>Availability<select id="group-loading-mode"><option value="on_demand">Load when needed</option><option value="always">Always available</option></select><small>On-demand groups add one model round-trip the first time they are needed in an active conversation.</small></label><fieldset class="group-functions-fieldset"><legend>Functions</legend><input id="group-function-search" type="search" placeholder="Search functions..." aria-label="Search functions to assign"><small>Selecting a function moves it from any other group. Guest availability is managed centrally on the Guest page.</small><div id="group-functions" class="group-function-choices"></div></fieldset><div id="group-error" class="validation invalid" role="alert"></div></div><div class="dialog-actions"><button type="button" class="secondary" id="group-cancel">Cancel</button><button type="button" id="group-save">Save group</button></div></dialog>` : "",
+    (!view || view === "capabilities/functions") ? `<dialog id="tool-dialog" class="editor-dialog tool-dialog" aria-labelledby="tool-dialog-title"><div class="dialog-header"><div><span class="setting-label-row"><h2 id="tool-dialog-title">Function Tool</h2>${helpButton(panel,"function_tools")}</span><p id="tool-dialog-meta" class="dialog-meta">YAML</p></div></div><div class="dialog-body tool-dialog-body"><div id="built-in-picker" class="built-in-picker"><label for="built-in-function">Insert Built-in Function</label><select id="built-in-function"><option value="">Insert Built-in Function…</option></select><small>Built-in functions are implemented directly by Extended OpenAI Conversation. Selecting one inserts an editable Function Tool that exposes the capability to the model.</small></div><label class="tool-editor-label"><span class="sr-only">Function Tool YAML</span><textarea id="tool-yaml" class="yaml-editor tool-yaml-editor" spellcheck="false" wrap="off" aria-describedby="tool-error"></textarea></label><div id="tool-error" class="validation" role="status" aria-live="polite"></div></div><div class="dialog-actions"><button type="button" class="secondary" id="tool-cancel">Cancel</button><button type="button" class="secondary" id="tool-validate">Validate</button><button type="button" id="tool-save">Save</button></div></dialog>` : "",
+    (!view || view === "capabilities/functions") ? `<dialog id="group-dialog" class="editor-dialog group-dialog" aria-labelledby="group-dialog-title"><div class="dialog-header"><div><h2 id="group-dialog-title">Function group</h2><p>Create a compact capability the model can load only when needed.</p></div></div><div class="dialog-body group-dialog-body"><div class="form-grid"><label>Group name<input id="group-name" maxlength="100" autocomplete="off" placeholder="Reminders"></label><label>Group ID<input id="group-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="reminders"><small>Stable lowercase ID used by the model. Advanced users may edit it.</small></label></div><label>Description<textarea id="group-description" class="short-textarea" maxlength="500" placeholder="Create and manage scheduled, recurring, and triggered reminders."></textarea><small>Keep this concise; it is included in the compact catalogue sent with normal requests.</small></label><label>Availability<select id="group-loading-mode"><option value="on_demand">Load when needed</option><option value="always">Always available</option></select><small>On-demand groups add one model round-trip the first time they are needed in an active conversation.</small></label><fieldset class="group-functions-fieldset"><legend>Functions</legend><input id="group-function-search" type="search" placeholder="Search functions..." aria-label="Search functions to assign"><small>Selecting a function moves it from any other group. Guest availability is managed centrally on the Guest page.</small><div id="group-functions" class="group-function-choices"></div></fieldset><div id="group-error" class="validation invalid" role="alert"></div></div><div class="dialog-actions"><button type="button" class="secondary" id="group-cancel">Cancel</button><button type="button" id="group-save">Save</button></div></dialog>` : "",
     helpPopover(),
   ].join("");
 }

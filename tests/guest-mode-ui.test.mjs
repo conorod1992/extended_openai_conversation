@@ -29,7 +29,7 @@ assert.match(panel, /guest_knowledge_source_ids/);
 assert.match(panel, /guest_allowed_function_names/);
 assert.match(panel, /guest_shared_memory_policy/);
 assert.match(panel, /ha-selector/);
-assert.match(panel, /save_policy/);
+assert.match(panel, /savePageChanges\(this\)/);
 assert.match(panel, /"Labels"/);
 assert.match(panel, /"Areas"/);
 assert.match(panel, /"Domains"/);

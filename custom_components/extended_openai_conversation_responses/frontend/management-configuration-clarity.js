@@ -116,7 +116,7 @@ export function dirtyConfigurationDestinations(panel) {
     if (owner) destinations.add(`${owner[0]}/${owner[1]}`);
     else unknown.push(key);
   }
-  if (panel?._guestDirty) destinations.add("capabilities/guest-mode");
+  for (const destination of panel?._unsavedState?.destinations() || []) destinations.add(destination);
   if (unknown.length && panel?._configDirty && panel?._page && panel?._subsection) {
     destinations.add(`${panel._page}/${panel._subsection}`);
   }

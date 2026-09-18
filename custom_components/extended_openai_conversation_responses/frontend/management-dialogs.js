@@ -21,7 +21,10 @@ export function bindPanelDialogs(panel) {
       "reassign-save": () => panel._saveReassign(),
     };
     if (actions[button.id]) actions[button.id]();
-    else if (button.classList.contains("close-editor")) panel._requestEditorClose();
+    else if (button.classList.contains("close-editor")) {
+      if (button.classList.contains("icon")) panel._requestEditorClose();
+      else dialog.close();
+    }
     else if (button.classList.contains("close-session")) dialog.close();
   });
   root.addEventListener("submit", (event) => {

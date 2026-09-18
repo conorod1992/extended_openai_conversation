@@ -97,7 +97,7 @@ test("shipped management panel loads and persists one configuration change insid
   const title = panel.locator('[data-config="__title"]');
   await title.fill("Real HA shell saved");
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
-  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
 
   // Re-enter through HA's registered panel root instead of relying on a deep-route

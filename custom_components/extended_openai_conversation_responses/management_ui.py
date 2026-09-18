@@ -1016,7 +1016,8 @@ async def async_management_command(
             )
             if not is_admin:
                 return {
-                    "status": guest_manager.status(),
+                    "revision": _agent_config_revision(subentry.data, subentry.title),
+                "status": guest_manager.status(),
                     "policy": policy.as_diagnostics(),
                 }
             library = await async_get_knowledge(hass, entry_id, subentry_id)
@@ -1024,6 +1025,7 @@ async def async_management_command(
                 subentry.data.get(CONF_FUNCTION_GROUPS, []), configured_tools
             )
             return {
+                "revision": _agent_config_revision(subentry.data, subentry.title),
                 "status": guest_manager.status(),
                 "policy": policy.as_diagnostics(),
                 "config": guest_policy_editor_snapshot(
@@ -1069,6 +1071,7 @@ async def async_management_command(
             }
         _require_admin(is_admin)
         if action == "save_policy":
+            _require_agent_config_revision(subentry, message.get("revision"))
             updates = message.get("config")
             if not isinstance(updates, dict):
                 raise HomeAssistantError("config must be an object")
@@ -1080,6 +1083,7 @@ async def async_management_command(
             hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
             configured_tools = configured_function_tools_from_data(normalized)
             return {
+                "revision": _agent_config_revision(normalized, subentry.title),
                 "config": guest_policy_editor_snapshot(
                     hass, normalized, configured_tools
                 )

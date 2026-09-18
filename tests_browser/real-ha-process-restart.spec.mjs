@@ -73,7 +73,7 @@ test("open Home Assistant page survives a real backend process death and restart
 
   const title = panel.locator('[data-config="__title"]');
   await title.fill("Before real HA restart");
-  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
 
   const sentinel = await page.evaluate(() => {
@@ -130,7 +130,7 @@ test("open Home Assistant page survives a real backend process death and restart
 
   await title.fill("After real HA restart");
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
-  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0, {timeout: 30_000});
 
   // A read after the post-restart write proves the recovered panel is not merely

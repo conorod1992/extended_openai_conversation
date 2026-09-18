@@ -30,7 +30,7 @@ assert.match(routes, /panel\._viewKey\(\) === view && panel\._eocViewAssetToken 
 assert.match(loading, /Document changed\. Validate & preview again before importing\./);
 assert.match(loading, /validatedImportMatches\(panel\._importDocument, current\)/);
 assert.match(panelSource, /section === "guest_mode" && action === "update"/);
-assert.match(loading, /button\.id === "guest-policy-save"/);
+assert.doesNotMatch(loading, /button\.id === "guest-policy-save"/);
 assert.match(loading, /button\.classList\.contains\("rule-duplicate"\)/);
 assert.match(loading, /button\.classList\.contains\("rule-delete"\)/);
 assert.match(loading, /input\?\.classList\?\.contains\("rule-enabled"\)/);
