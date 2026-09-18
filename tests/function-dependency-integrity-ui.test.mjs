@@ -1,51 +1,50 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
 
-const frontend = (name) => new URL(
-  `../custom_components/extended_openai_conversation_responses/frontend/${name}`,
-  import.meta.url,
-);
-
-const bootstrapSource = await readFile(frontend("management-bootstrap.js"), "utf8");
-assert.match(bootstrapSource, /management-function-dependencies\.js/);
-
-const dependencyModule = await import(frontend("management-function-dependencies.js"));
-
-const calls = [];
-class FakePanel {
-  constructor() {
-    this._configData = {revision: "revision-1", config: {functions: []}};
-    this._sectionCache = new Map([
-      ["agent-1|capabilities/request-rules", {function_catalog: ["stale"]}],
-    ]);
-    this._eocSectionCacheTimes = new Map([
-      ["agent-1|capabilities/request-rules", Date.now()],
-    ]);
+globalThis.window = {
+  location: {pathname: "/extended-openai/capabilities/functions"},
+  addEventListener() {},
+  removeEventListener() {},
+};
+globalThis.history = {pushState() {}};
+globalThis.localStorage = {getItem() { return null; }, setItem() {}};
+globalThis.HTMLElement = class {
+  attachShadow() {
+    this.shadowRoot = {
+      hasChildNodes: () => false,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+    };
   }
-
-  async _call(section, action, extra = {}) {
-    calls.push({section, action, extra});
-    return action === "validate_current"
-      ? {valid: true}
-      : {revision: `revision-${calls.length + 1}`};
-  }
-
-  _invalidateAfterMutation() {}
-}
-
-const registry = {
-  get(name) {
-    return name === "extended-openai-management-panel" ? FakePanel : undefined;
-  },
-  whenDefined() {
-    return Promise.resolve();
-  },
+};
+let definedPanel;
+globalThis.customElements = {
+  define(_name, constructor) { definedPanel = constructor; },
+  get() { return definedPanel; },
+  whenDefined() { return Promise.resolve(); },
 };
 
-assert.equal(dependencyModule.installFunctionDependencyIntegrity(registry), true);
-assert.equal(dependencyModule.installFunctionDependencyIntegrity(registry), false);
+const {ExtendedOpenAIManagementPanel} = await import(
+  "../custom_components/extended_openai_conversation_responses/frontend/management-panel.js"
+);
 
-const panel = new FakePanel();
+const calls = [];
+const panel = new ExtendedOpenAIManagementPanel();
+panel._agentId = "agent-1";
+panel._data = {agents: [{subentry_id: "agent-1"}], is_admin: true};
+panel._configData = {revision: "revision-1", config: {functions: []}};
+panel._sectionCache = new Map([
+  ["agent-1|capabilities/request-rules", {function_catalog: ["stale"]}],
+]);
+panel._eocSectionCacheTimes = new Map([
+  ["agent-1|capabilities/request-rules", Date.now()],
+]);
+panel._request = async (section, action, extra = {}) => {
+  calls.push({section, action, extra});
+  return action === "validate_current"
+    ? {valid: true}
+    : {revision: `revision-${calls.length + 1}`};
+};
+
 const first = await panel._call("tools", "save", {tool: {spec: {name: "one"}}});
 assert.equal(calls[0].extra.revision, "revision-1");
 assert.equal(first.revision, "revision-2");
