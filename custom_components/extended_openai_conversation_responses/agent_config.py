@@ -778,6 +778,7 @@ def _require_type(
 def _coerce_legacy_numbers(config: dict[str, Any]) -> None:
     """Normalize numeric values stored as strings by older selector flows."""
     integer_keys = (
+        CONF_CONVERSATION_TIMEOUT_MINUTES,
         CONF_MAX_TOKENS,
         CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
         CONF_CONTEXT_THRESHOLD,
@@ -904,7 +905,6 @@ def normalize_agent_config(
         CONF_API_MODE: [item["key"] for item in API_MODE_OPTIONS],
         CONF_CONTINUE_CONVERSATION: CONTINUE_CONVERSATION_OPTIONS,
         CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_OPTIONS,
-        CONF_CONVERSATION_TIMEOUT_MINUTES: CONVERSATION_TIMEOUT_OPTIONS,
         CONF_WEB_SEARCH_CONTEXT: WEB_SEARCH_CONTEXT_OPTIONS,
         CONF_MEMORY_MODE: MEMORY_MODES,
         CONF_MEMORY_RETRIEVAL_MODE: MEMORY_RETRIEVAL_MODES,
@@ -925,6 +925,13 @@ def normalize_agent_config(
         CONF_GUEST_SHARED_MEMORY_POLICY: GUEST_SHARED_MEMORY_POLICIES,
         CONF_GUEST_POLICY_VERSION: [GUEST_POLICY_VERSION],
     }
+    timeout = result.get(CONF_CONVERSATION_TIMEOUT_MINUTES)
+    if CONF_CONVERSATION_TIMEOUT_MINUTES in result and (
+        not isinstance(timeout, int)
+        or isinstance(timeout, bool)
+        or not 1 <= timeout <= 1440
+    ):
+        raise AgentConfigError(CONF_CONVERSATION_TIMEOUT_MINUTES, "unsupported value")
     for key, options in choices.items():
         if key in result and result[key] not in options:
             message = (

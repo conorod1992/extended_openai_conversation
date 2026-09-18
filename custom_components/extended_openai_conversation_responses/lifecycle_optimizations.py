@@ -27,30 +27,10 @@ def install_lifecycle_optimizations() -> None:
 
 def _install_archive_fast_path() -> None:
     """Avoid archive I/O when neither retention nor archive search needs storage."""
-    from .const import (
-        CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
-        DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
-    )
-    from .conversation import ExtendedOpenAIAgentEntity
     from .conversation_archive import ConversationArchive
 
-    agent_type: Any = ExtendedOpenAIAgentEntity
     archive_type: Any = ConversationArchive
-    original_initialize_archive = agent_type._async_initialize_archive
     original_begin_session = archive_type.async_begin_session
-
-    async def async_initialize_archive(agent: Any, configured: bool) -> None:
-        search_enabled = bool(
-            agent.subentry.data.get(
-                CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
-                DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
-            )
-        )
-        if not configured and not search_enabled:
-            agent._archive = None
-            agent._set_subsystem_status("archive", False)
-            return
-        await original_initialize_archive(agent, configured)
 
     async def async_begin_session(
         archive: Any,
@@ -67,7 +47,6 @@ def _install_archive_fast_path() -> None:
             **kwargs,
         )
 
-    agent_type._async_initialize_archive = async_initialize_archive
     archive_type.async_begin_session = async_begin_session
 
 
