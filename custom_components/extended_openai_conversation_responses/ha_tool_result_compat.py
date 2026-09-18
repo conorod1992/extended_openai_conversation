@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from inspect import signature
 from typing import Any
 
 from homeassistant.components import conversation
@@ -17,11 +18,11 @@ def make_tool_result_content(
         "tool_call_id": tool_call_id,
         "tool_name": tool_name,
     }
-    tool_result_type = getattr(llm, "ToolResult", None)
-    if tool_result_type is None:
-        kwargs["tool_result"] = tool_result
+    parameters = signature(conversation.ToolResultContent).parameters
+    if "result" in parameters:
+        kwargs["result"] = llm.ToolResult(data=tool_result)
     else:
-        kwargs["result"] = tool_result_type(data=tool_result)
+        kwargs["tool_result"] = tool_result
     return conversation.ToolResultContent(**kwargs)
 
 
