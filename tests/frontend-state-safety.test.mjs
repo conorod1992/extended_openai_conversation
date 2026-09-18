@@ -13,7 +13,9 @@ const [source, bootstrap, panelSource] = await Promise.all([
 ]);
 const stateSafety = await import(frontend("management-state-safety.js"));
 
-assert.match(bootstrap, /from "\.\/management-state-safety\.js"/);
+assert.doesNotMatch(bootstrap, /management-state-safety\.js/);
+assert.doesNotMatch(source, /installManagementStateSafety/);
+assert.doesNotMatch(source, /prototype\./);
 assert.doesNotMatch(bootstrap, /debug-management\.js/);
 assert.doesNotMatch(bootstrap, /installPreDefinitionPropertyReplay/);
 assert.match(panelSource, /connectedCallback\(\)/);
@@ -25,13 +27,20 @@ assert.match(source, /pageCoordinator\(panel\)\.leaving\(destination\)/);
 assert.match(source, /Explicit Cancel remains an intentional discard/);
 assert.match(source, /window\.addEventListener\("beforeunload"/);
 assert.match(source, /window\.addEventListener\("focus"/);
-assert.match(source, /refreshPageSaveBar/);
-assert.match(source, /initializePageDraft/);
+assert.match(panelSource, /initializePageDraft\(this\)/);
+assert.match(panelSource, /bindStateSafety\(this\)/);
+assert.match(panelSource, /bindPageDrafts\(this\)/);
+assert.match(panelSource, /refreshPageSaveBar\(this\)/);
+assert.match(panelSource, /confirmStateSafeNavigation\(this, destination\)/);
+assert.match(panelSource, /cleanupStateSafety\(this\)/);
 
+const windowListeners = new Map();
 globalThis.window = {
   location: {pathname: "/extended-openai/overview"},
-  addEventListener() {},
-  removeEventListener() {},
+  addEventListener(type, listener) { windowListeners.set(type, listener); },
+  removeEventListener(type, listener) {
+    if (windowListeners.get(type) === listener) windowListeners.delete(type);
+  },
 };
 globalThis.history = {pushState() {}};
 globalThis.localStorage = {getItem() { return null; }, setItem() {}};
@@ -41,6 +50,8 @@ globalThis.HTMLElement = class {
       hasChildNodes: () => false,
       querySelector: () => null,
       querySelectorAll: () => [],
+      addEventListener() {},
+      dispatchEvent() {},
     };
   }
 };
@@ -76,6 +87,11 @@ assert.equal(hassReplays, 1);
 assert.equal(routeRenders, 1);
 assert.deepEqual(upgradedPanel._hass, {connected: true});
 assert.deepEqual(upgradedPanel._route, {path: "/extended-openai/overview"});
+assert.equal(windowListeners.has("beforeunload"), true);
+assert.equal(windowListeners.has("focus"), true);
+upgradedPanel.disconnectedCallback();
+assert.equal(windowListeners.has("beforeunload"), false);
+assert.equal(windowListeners.has("focus"), false);
 
 const guestPanel = {
   _agentId: "agent-a",
