@@ -74,9 +74,6 @@ def install_persistence_transactions() -> None:
     install_temporary_memory_read_fast_path()
     install_model_tool_result_compaction()
     install_context_usage_hardening()
-    # This must remain after lifecycle/hot-path installers because those layers
-    # replace Usage pruning. The final wrapper restores persist-before-publish
-    # semantics without moving daily retention back onto the response path.
     install_durable_state_hardening()
 
 
