@@ -13,11 +13,11 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import (
     agent_config_defaults,
+    configured_function_tools_from_data,
     validate_function_groups,
     validate_function_tools,
 )
 from .const import CONF_FUNCTION_GROUPS, CONF_FUNCTION_TOOLS, DEFAULT_FUNCTION_GROUPS
-from .performance import cached_configured_function_tools_from_data
 
 _STALE_CONFIGURATION_ERROR = (
     "Agent configuration changed in another tab; reload before saving"
@@ -88,7 +88,7 @@ def function_tools_issue(
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Return usable tools while isolating a persisted validation/parsing failure."""
     try:
-        return cached_configured_function_tools_from_data(options), None
+        return configured_function_tools_from_data(options), None
     except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
         valid, _invalid, isolated_issue = isolated_function_tools(options)
         return valid, isolated_issue or str(err) or type(err).__name__

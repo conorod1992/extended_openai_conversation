@@ -7,7 +7,12 @@ from typing import Any
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import performance
+from custom_components.extended_openai_conversation_responses import (
+    agent_config,
+    memory,
+    prompt,
+    prompt_cache as performance,
+)
 from custom_components.extended_openai_conversation_responses.const import CONF_PROMPT
 from custom_components.extended_openai_conversation_responses.prompt import (
     EffectivePrompt,
@@ -31,24 +36,24 @@ def test_function_group_cache_falls_back_when_key_serialization_fails(
     calls: list[tuple[Any, list[dict[str, Any]]]] = []
     tools = [{"spec": {"name": "tool_a"}}]
 
-    def _validate(value: Any, function_tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _validate(
+        value: Any, function_tools: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         calls.append((value, function_tools))
         return [{"validated": True}]
 
-    monkeypatch.setattr(performance, "_validate_function_groups", _validate)
+    monkeypatch.setattr(agent_config, "_validate_function_groups", _validate)
     value = object()
 
-    assert performance.cached_validate_function_groups(value, tools) == [
-        {"validated": True}
-    ]
+    assert agent_config.validate_function_groups(value, tools) == [{"validated": True}]
     assert calls == [(value, tools)]
 
 
 def test_cached_bm25_scores_matching_terms_and_zero_match() -> None:
     """The cached scorer preserves useful BM25 matching and empty-match semantics."""
-    performance._cached_memory_term_frequencies.cache_clear()
+    memory._cached_memory_term_frequencies.cache_clear()
 
-    score = performance.cached_memory_bm25_score(
+    score = memory._bm25_score(
         ["kitchen", "kitchen", "light"],
         ["kitchen", "light", "kitchen"],
         {"kitchen": 2, "light": 1},
@@ -58,7 +63,7 @@ def test_cached_bm25_scores_matching_terms_and_zero_match() -> None:
     assert 0 < score <= 1
 
     assert (
-        performance.cached_memory_bm25_score(
+        memory._bm25_score(
             [],
             ["kitchen"],
             {"kitchen": 1},
@@ -79,8 +84,8 @@ def test_default_exposed_entities_renderer_handles_aliases_and_missing_fields(
         resolved.append(entity_id)
         return "Kitchen"
 
-    monkeypatch.setattr(performance, "resolve_area_id", _resolve)
-    rendered = performance._render_default_exposed_entities(
+    monkeypatch.setattr(prompt, "resolve_area_id", _resolve)
+    rendered = prompt._render_default_exposed_entities(
         object(),
         [
             {
@@ -120,10 +125,10 @@ def test_template_cache_evicts_oldest_entry_and_reuses_compiled_template(
             return f"{self.raw}:{variables['ha_name']}:{variables['user_input']}"
 
     hass = SimpleNamespace(config=SimpleNamespace(location_name="Home"))
-    monkeypatch.setattr(performance.template, "Template", _Template)
-    monkeypatch.setattr(performance, "_TEMPLATE_CACHE_LIMIT", 1)
-    performance._TEMPLATE_CACHE.clear()
-    performance._TEMPLATE_CACHE[(123, "old")] = object()  # type: ignore[assignment]
+    monkeypatch.setattr(prompt.template, "Template", _Template)
+    monkeypatch.setattr(prompt, "_TEMPLATE_CACHE_LIMIT", 1)
+    prompt._TEMPLATE_CACHE.clear()
+    prompt._TEMPLATE_CACHE[(123, "old")] = object()  # type: ignore[assignment]
 
     kwargs = {
         "exposed_entities": [],
@@ -132,13 +137,13 @@ def test_template_cache_evicts_oldest_entry_and_reuses_compiled_template(
         "skills": [],
     }
     raw = "{{ user_input }}"
-    first = performance.optimized_render_template(hass, raw, **kwargs)
-    second = performance.optimized_render_template(hass, raw, **kwargs)
+    first = prompt._render_template(hass, raw, **kwargs)
+    second = prompt._render_template(hass, raw, **kwargs)
 
     assert first == second == "{{ user_input }}:Home:hello"
     assert created == [(raw, hass)]
-    assert list(performance._TEMPLATE_CACHE) == [(id(hass), raw)]
-    performance._TEMPLATE_CACHE.clear()
+    assert list(prompt._TEMPLATE_CACHE) == [(id(hass), raw)]
+    prompt._TEMPLATE_CACHE.clear()
 
 
 def test_prompt_cache_context_rejects_unusable_prefixes() -> None:
@@ -239,9 +244,7 @@ def test_explicit_cache_uses_contextvar_and_preserves_existing_cache_options(
     try:
         kwargs = {
             "model": "supported",
-            "input": [
-                {"type": "message", "role": "system", "content": "prefix"}
-            ],
+            "input": [{"type": "message", "role": "system", "content": "prefix"}],
             "prompt_cache_key": "caller-key",
             "prompt_cache_options": {"mode": "caller"},
         }
@@ -292,109 +295,67 @@ async def test_openai_client_proxy_delegates_responses_and_other_attributes(
     proxy = performance.PerformanceOpenAIClientProxy(delegate, direct_openai=True)
 
     assert await proxy.responses.create("arg", value=1) == "created"
-    assert calls == [(('arg',), {"value": 1, "optimized": True})]
+    assert calls == [(("arg",), {"value": 1, "optimized": True})]
     assert proxy.responses.marker == "responses-marker"
     assert proxy.chat is delegate.chat
     assert proxy.embeddings is delegate.embeddings
     assert proxy.extra == "delegate-extra"
 
 
-async def test_install_hooks_capture_options_and_reset_turn_cache_context(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Installed wrappers populate prompt cache metadata and isolate it per turn."""
-    from custom_components.extended_openai_conversation_responses import (
-        agent_config,
-        conversation,
-        memory,
-        prompt,
+@pytest.mark.parametrize(
+    "failure", [RuntimeError, __import__("asyncio").CancelledError]
+)
+async def test_turn_cache_context_restored_on_early_failure(failure) -> None:
+    """Even failures before guest/continuity setup restore the caller's context."""
+    from inspect import unwrap
+
+    from custom_components.extended_openai_conversation_responses.conversation import (
+        ExtendedOpenAIAgentEntity,
     )
 
-    attrs = {
-        (agent_config, "configured_function_tools_from_data"): agent_config.configured_function_tools_from_data,
-        (agent_config, "validate_function_groups"): agent_config.validate_function_groups,
-        (conversation, "configured_function_tools_from_data"): conversation.configured_function_tools_from_data,
-        (conversation, "validate_function_groups"): conversation.validate_function_groups,
-        (conversation, "render_effective_prompt"): conversation.render_effective_prompt,
-        (conversation.ExtendedOpenAIAgentEntity, "_async_process"): conversation.ExtendedOpenAIAgentEntity._async_process,
-        (memory, "_record_token_list"): memory._record_token_list,
-        (memory, "_tokens"): memory._tokens,
-        (memory, "_normalize"): memory._normalize,
-        (memory, "_bm25_score"): memory._bm25_score,
-        (prompt, "_render_template"): prompt._render_template,
-    }
-    previous_installed = performance._INSTALLED
-    previous_context = performance._PROMPT_CACHE_CONTEXT.get()
-    observed_options: list[Any] = []
-    observed_process_contexts: list[Any] = []
-    effective = EffectivePrompt("effective", (_section("system", "effective"),))
+    observed = []
 
-    def _render(*_args: Any, **_kwargs: Any) -> EffectivePrompt:
-        return effective
+    class Input:
+        def as_llm_context(self, _domain):
+            observed.append(performance._PROMPT_CACHE_CONTEXT.get())
+            raise failure()
 
-    async def _process(_self: Any, _user_input: Any) -> None:
-        observed_process_contexts.append(performance._PROMPT_CACHE_CONTEXT.get())
-        raise RuntimeError("process failed")
-
-    conversation.render_effective_prompt = _render
-    conversation.ExtendedOpenAIAgentEntity._async_process = _process
-    monkeypatch.setattr(
-        performance,
-        "prompt_cache_context",
-        lambda _effective, options: (
-            observed_options.append(options)
-            or performance.PromptCacheContext(prefix="prefix", key="key")
-        ),
-    )
-    performance._INSTALLED = False
-
+    outer = performance.PromptCacheContext("outer", "outer-key")
+    token = performance._PROMPT_CACHE_CONTEXT.set(outer)
     try:
-        performance.install_performance_optimizations()
-        performance.install_performance_optimizations()
-
-        positional_options = {"source": "positional"}
-        assert conversation.render_effective_prompt("hass", positional_options) is effective
-        assert performance._PROMPT_CACHE_CONTEXT.get() == performance.PromptCacheContext(
-            prefix="prefix", key="key"
-        )
-
-        keyword_options = {"source": "keyword"}
-        assert conversation.render_effective_prompt("hass", options=keyword_options) is effective
-        assert observed_options == [positional_options, keyword_options]
-
-        outer = performance.PromptCacheContext(prefix="outer", key="outer-key")
-        token = performance._PROMPT_CACHE_CONTEXT.set(outer)
-        try:
-            with pytest.raises(RuntimeError, match="process failed"):
-                await conversation.ExtendedOpenAIAgentEntity._async_process(
-                    SimpleNamespace(), "hello"
-                )
-            assert observed_process_contexts == [None]
-            assert performance._PROMPT_CACHE_CONTEXT.get() == outer
-        finally:
-            performance._PROMPT_CACHE_CONTEXT.reset(token)
+        with pytest.raises(failure):
+            await unwrap(ExtendedOpenAIAgentEntity._async_process)(
+                SimpleNamespace(), Input()
+            )
+        assert observed == [None]
+        assert performance._PROMPT_CACHE_CONTEXT.get() is outer
     finally:
-        for (target, name), value in attrs.items():
-            setattr(target, name, value)
-        performance._INSTALLED = previous_installed
-        performance._PROMPT_CACHE_CONTEXT.set(previous_context)
+        performance._PROMPT_CACHE_CONTEXT.reset(token)
 
 
-def test_performance_cache_info_reports_all_public_counters() -> None:
-    """Diagnostics expose cache hits/misses and compiled-template size."""
-    performance._cached_configured_tools.cache_clear()
-    performance._cached_function_groups.cache_clear()
-    performance._TEMPLATE_CACHE.clear()
+def test_system_prompt_sets_context_from_final_render(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import conversation
 
-    performance._cached_configured_tools(None)
-    performance._cached_configured_tools(None)
-    performance._TEMPLATE_CACHE[(1, "template")] = object()  # type: ignore[assignment]
-
-    info = performance.performance_cache_info()
-
-    assert info["configured_tool_cache_hits"] == 1
-    assert info["configured_tool_cache_misses"] == 1
-    assert info["function_group_cache_hits"] == 0
-    assert info["function_group_cache_misses"] == 0
-    assert info["compiled_template_count"] == 1
-    performance._TEMPLATE_CACHE.clear()
+    text = "A" * 5000
+    effective = EffectivePrompt(text, (_section("system", text),))
+    monkeypatch.setattr(
+        conversation, "render_effective_prompt", lambda *args, **kwargs: effective
+    )
+    agent = SimpleNamespace(
+        hass=object(),
+        subentry=SimpleNamespace(data={}),
+        _effective_guest_policy=lambda: SimpleNamespace(guest_active=False),
+        _get_enabled_skills=lambda: [],
+        _knowledge_available=False,
+    )
+    token = performance._PROMPT_CACHE_CONTEXT.set(None)
+    try:
+        assert (
+            conversation.ExtendedOpenAIAgentEntity._build_system_prompt(
+                agent, [], SimpleNamespace(device_id=None), None
+            )
+            == text
+        )
+        assert performance._PROMPT_CACHE_CONTEXT.get().prefix == text
+    finally:
+        performance._PROMPT_CACHE_CONTEXT.reset(token)

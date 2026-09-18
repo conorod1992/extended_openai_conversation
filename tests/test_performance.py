@@ -1,16 +1,18 @@
 """Tests for conversation hot-path optimizations."""
 
-from custom_components.extended_openai_conversation_responses.const import CONF_PROMPT
-from custom_components.extended_openai_conversation_responses.performance import (
+from custom_components.extended_openai_conversation_responses.agent_config import (
     _cached_configured_tools,
-    cached_configured_function_tools_from_data,
-    optimize_responses_kwargs,
-    optimized_render_template,
-    prompt_cache_context,
+    configured_function_tools_from_data as cached_configured_function_tools_from_data,
 )
+from custom_components.extended_openai_conversation_responses.const import CONF_PROMPT
 from custom_components.extended_openai_conversation_responses.prompt import (
     EffectivePrompt,
     PromptSection,
+    _render_template as optimized_render_template,
+)
+from custom_components.extended_openai_conversation_responses.prompt_cache import (
+    optimize_responses_kwargs,
+    prompt_cache_context,
 )
 
 
@@ -47,7 +49,7 @@ def test_static_template_fast_path_preserves_text() -> None:
     )
 
 
-def test_configured_tool_validation_is_cached_by_revision() -> None:
+def test_configured_tool_validation_is_cached_by_revision(hass) -> None:
     _cached_configured_tools.cache_clear()
 
     first = cached_configured_function_tools_from_data({})

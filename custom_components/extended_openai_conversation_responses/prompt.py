@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from homeassistant.helpers import template
+from homeassistant.helpers.template.helpers import resolve_area_id
 from homeassistant.util import slugify
 
 from .capabilities import (
@@ -27,6 +28,7 @@ from .const import (
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_CURRENT_DATETIME_TEMPLATE,
+    DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE,
     DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
     DEFAULT_PROMPT,
     DEFAULT_TEMPORARY_MEMORY,
@@ -85,9 +87,21 @@ def _render_template(
     user_input: Any,
     skills: list[Any],
 ) -> str:
-    """Render one user or integration-managed context template consistently."""
+    """Render a prompt template without reparsing stable/static templates."""
+    if not _template_requires_render(raw):
+        return raw
+    if raw == DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE:
+        return _render_default_exposed_entities(hass, exposed_entities)
+
+    key = (id(hass), raw)
+    rendered_template = _TEMPLATE_CACHE.get(key)
+    if rendered_template is None:
+        if len(_TEMPLATE_CACHE) >= _TEMPLATE_CACHE_LIMIT:
+            _TEMPLATE_CACHE.pop(next(iter(_TEMPLATE_CACHE)))
+        rendered_template = template.Template(raw, hass)
+        _TEMPLATE_CACHE[key] = rendered_template
     return str(
-        template.Template(raw, hass).async_render(
+        rendered_template.async_render(
             {
                 "ha_name": hass.config.location_name,
                 "exposed_entities": exposed_entities,
@@ -463,3 +477,34 @@ def render_effective_prompt(
     for section in sections[1:]:
         assembled = _append_section(assembled, section)
     return EffectivePrompt(assembled, tuple(sections))
+
+
+_TEMPLATE_MARKERS = ("{{", "{%", "{#")
+_TEMPLATE_CACHE_LIMIT = 64
+_TEMPLATE_CACHE: dict[tuple[int, str], template.Template] = {}
+
+
+def _template_requires_render(raw: str) -> bool:
+    """Return whether a string contains Home Assistant/Jinja template syntax."""
+    return any(marker in raw for marker in _TEMPLATE_MARKERS)
+
+
+def _render_default_exposed_entities(
+    hass: Any,
+    exposed_entities: list[dict[str, Any]],
+) -> str:
+    """Render the built-in entity CSV directly instead of through a Jinja loop."""
+    lines = [
+        "## Available Devices",
+        "```csv",
+        "entity_id,name,state,area_id,aliases",
+    ]
+    for entity in exposed_entities:
+        entity_id = str(entity.get("entity_id", ""))
+        aliases = entity.get("aliases") or []
+        lines.append(
+            f"{entity_id},{entity.get('name', '')},{entity.get('state', '')},"
+            f"{resolve_area_id(hass, entity_id)},{'/'.join(str(item) for item in aliases)}"
+        )
+    lines.append("```")
+    return "\n".join(lines) + "\n"

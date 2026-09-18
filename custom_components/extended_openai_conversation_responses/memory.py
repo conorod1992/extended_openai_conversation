@@ -6,11 +6,13 @@ import asyncio
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 import hashlib
 import json
 import logging
 import math
 import re
+from types import MappingProxyType
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -1527,7 +1529,8 @@ def _token_list(value: str) -> list[str]:
 
 
 def _tokens(value: str) -> set[str]:
-    return set(_token_list(value))
+    """Return fresh mutable tokens from the immutable lexical cache."""
+    return set(_cached_memory_tokens(value))
 
 
 def _stem(token: str) -> str:
@@ -1549,9 +1552,19 @@ def _stem(token: str) -> str:
 
 
 def _record_token_list(memory: MemoryRecord) -> list[str]:
-    return _token_list(
-        " ".join(
-            filter(None, (memory.content, memory.category, memory.subject, memory.key))
+    """Return a fresh list for each caller of the immutable record cache."""
+    return list(_cached_memory_record_terms(memory))
+
+
+@lru_cache(maxsize=20_000)
+def _cached_memory_record_terms(memory: MemoryRecord) -> tuple[str, ...]:
+    return tuple(
+        _token_list(
+            " ".join(
+                filter(
+                    None, (memory.content, memory.category, memory.subject, memory.key)
+                )
+            )
         )
     )
 
@@ -1567,9 +1580,8 @@ def _bm25_score(
     document_count: int,
     average_length: float,
 ) -> float:
-    frequencies: dict[str, int] = defaultdict(int)
-    for term in document_terms:
-        frequencies[term] += 1
+    """Calculate the existing BM25 score without rebuilding term frequencies."""
+    frequencies = _cached_memory_term_frequencies(tuple(document_terms))
     k1, b = 1.2, 0.75
     score = 0.0
     max_score = 0.0
@@ -1734,6 +1746,7 @@ def _migrate_raw_record(raw: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+@lru_cache(maxsize=20_000)
 def _normalize(value: str) -> str:
     return " ".join(_TOKEN_PATTERN.findall(value.casefold()))
 
@@ -1872,3 +1885,19 @@ def _is_valid_iban(value: str) -> bool:
         for character in rearranged
     )
     return int(numeric) % 97 == 1
+
+
+@lru_cache(maxsize=20_000)
+def _cached_memory_tokens(value: str) -> frozenset[str]:
+    return frozenset(_token_list(value))
+
+
+@lru_cache(maxsize=20_000)
+def _cached_memory_term_frequencies(
+    document_terms: tuple[str, ...],
+) -> Mapping[str, int]:
+    """Build one immutable frequency map per distinct tokenized memory document."""
+    frequencies: dict[str, int] = {}
+    for term in document_terms:
+        frequencies[term] = frequencies.get(term, 0) + 1
+    return MappingProxyType(frequencies)

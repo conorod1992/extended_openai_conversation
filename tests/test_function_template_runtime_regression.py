@@ -6,16 +6,17 @@ from typing import Any
 import pytest
 import yaml
 
-from homeassistant.helpers.template import Template
-
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    _cached_configured_tools,
+    configured_function_tools_from_data as cached_configured_function_tools_from_data,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
 )
-from custom_components.extended_openai_conversation_responses.functions import get_function
-from custom_components.extended_openai_conversation_responses.performance import (
-    _cached_configured_tools,
-    cached_configured_function_tools_from_data,
+from custom_components.extended_openai_conversation_responses.functions import (
+    get_function,
 )
+from homeassistant.helpers.template import Template
 from tests.helpers import load_function_tool_yaml
 
 

@@ -92,10 +92,10 @@ def _guest_has_ha_exclusions(options: dict[str, Any]) -> bool:
 
 def _runtime_configured_function_tools(data: Any) -> list[dict[str, Any]]:
     """Return valid runtime tools while quarantining persisted invalid siblings."""
-    from .performance import cached_configured_function_tools_from_data
+    from .agent_config import configured_function_tools_from_data
 
     try:
-        tools = cached_configured_function_tools_from_data(data)
+        tools = configured_function_tools_from_data(data)
     except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
         valid, invalid, issue = _isolated_function_tools(dict(data))
         if issue is None:
@@ -112,7 +112,7 @@ def _runtime_configured_function_tools(data: Any) -> list[dict[str, Any]]:
         safe[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
             valid, sort_keys=False, allow_unicode=True
         )
-        tools = cached_configured_function_tools_from_data(safe)
+        tools = configured_function_tools_from_data(safe)
         detail = issue or str(err) or type(err).__name__
         if quarantine_all:
             _LOGGER.warning(
@@ -137,12 +137,12 @@ def _runtime_validate_function_groups(
     value: Any, function_tools: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Ignore only group references to Function Tools quarantined for this request."""
-    from .performance import cached_validate_function_groups
+    from .agent_config import validate_function_groups
 
     quarantined_names = _RUNTIME_QUARANTINED_FUNCTION_NAMES.get()
     quarantine_all = _RUNTIME_QUARANTINE_ALL_FUNCTIONS.get()
     if not quarantine_all and not quarantined_names:
-        return cached_validate_function_groups(value, function_tools)
+        return validate_function_groups(value, function_tools)
 
     safe = deepcopy(value)
     if isinstance(safe, list):
@@ -162,7 +162,7 @@ def _runtime_validate_function_groups(
                     for name in functions
                     if not isinstance(name, str) or name not in quarantined_names
                 ]
-    return cached_validate_function_groups(safe, function_tools)
+    return validate_function_groups(safe, function_tools)
 
 
 def _agent_snapshot(

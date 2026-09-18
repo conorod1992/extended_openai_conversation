@@ -111,8 +111,8 @@ from .native_function_schema_migration import (
     migrate_legacy_stock_native_function_tools_yaml,
 )
 from .openai_compat import apply_openai_compatibility
-from .performance import PerformanceOpenAIClientProxy, install_performance_optimizations
 from .persistence_hardening import install_persistence_transactions
+from .prompt_cache import PerformanceOpenAIClientProxy
 from .provider_credentials import setup_provider_credentials_websocket
 from .quiet_hours import async_get_quiet_hours
 from .regex_execution import install_configurable_regex_isolation
@@ -183,7 +183,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     apply_openai_compatibility()
     install_persistence_transactions()
     install_restore_recovery()
-    install_performance_optimizations()
     install_skill_runtime_availability()
     install_voice_identity_runtime()
     install_guest_policy_fast_path()
