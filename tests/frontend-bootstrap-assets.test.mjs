@@ -41,7 +41,7 @@ test("every direct management-panel dependency is registered as a served fronten
   const panel = read(
     "custom_components/extended_openai_conversation_responses/frontend/management-panel.js",
   );
-  const panelModules = [...panel.matchAll(/from "\\.\\/([^"']+\\.js)"/g)].map(
+  const panelModules = [...panel.matchAll(/from "\.\/([^"']+\.js)"/g)].map(
     (match) => match[1],
   );
   assert.ok(panelModules.length > 0, "management panel dependency list is empty");
