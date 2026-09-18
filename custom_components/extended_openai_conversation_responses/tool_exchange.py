@@ -21,6 +21,7 @@ from .function_tool_recovery import (
 )
 from .function_tool_resolution import latest_function_tool_for_execution
 from .ha_llm_tools import is_ha_tool
+from .ha_tool_result_compat import make_tool_result_content
 from .parallel_tool_execution import (
     async_execute_parallel_safe_batch_outcomes,
     resolve_parallel_safe_batch,
@@ -118,7 +119,7 @@ def append_unresolved_tool_results(
                 ),
             }
         chat_log.async_add_assistant_content_without_tools(
-            conversation.ToolResultContent(
+            make_tool_result_content(
                 agent_id=agent_id,
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.tool_name,

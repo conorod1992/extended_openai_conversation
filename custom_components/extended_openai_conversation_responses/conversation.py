@@ -137,6 +137,7 @@ from .ha_llm_tools import (
     is_ha_tool,
     tool_snapshot_scope,
 )
+from .ha_tool_result_compat import make_tool_result_content
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
@@ -1536,7 +1537,7 @@ class ExtendedOpenAIAgentEntity(
                     "error": "Knowledge Library is temporarily unavailable",
                 }
 
-        return conversation.ToolResultContent(
+        return make_tool_result_content(
             agent_id=self.entity_id,
             tool_call_id=tool_input.id,
             tool_name=tool_input.tool_name,
@@ -1546,7 +1547,7 @@ class ExtendedOpenAIAgentEntity(
     def _tool_result(
         self, tool_input: llm.ToolInput, result: dict[str, Any]
     ) -> conversation.ToolResultContent:
-        return conversation.ToolResultContent(
+        return make_tool_result_content(
             agent_id=self.entity_id,
             tool_call_id=tool_input.id,
             tool_name=tool_input.tool_name,
