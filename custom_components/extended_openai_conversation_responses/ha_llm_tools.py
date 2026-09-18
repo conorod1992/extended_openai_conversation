@@ -25,6 +25,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
+from .ha_tool_result_compat import unwrap_tool_result
+
 _LOGGER = logging.getLogger(__name__)
 TOOL_TYPE = "ha_llm"
 _REFERENCE_FIELDS = frozenset(
@@ -168,9 +170,10 @@ class LiveTool:
         if len(matches) != 1 or matches[0] is not self.tool:
             raise HomeAssistantError("HA tool changed before dispatch")
         args = self.tool.parameters(deepcopy(tool_input.tool_args))
-        return await self.instance.async_call_tool(
+        result = await self.instance.async_call_tool(
             llm.ToolInput(tool_name=self.tool.name, tool_args=args, id=tool_input.id)
         )
+        return unwrap_tool_result(result)
 
 
 @dataclass(slots=True)

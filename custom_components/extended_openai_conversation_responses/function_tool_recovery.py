@@ -12,6 +12,7 @@ from homeassistant.components import conversation
 from homeassistant.helpers import llm
 
 from .exceptions import FunctionValidationInfrastructureError, ParseArgumentsFailed
+from .ha_tool_result_compat import make_tool_result_content
 
 _MAX_RECOVERIES_PER_CONVERSATION = 2
 _MAX_MODEL_ERROR_TEXT = 320
@@ -125,7 +126,7 @@ def recovery_tool_result(
     failure: CorrectableToolFailure,
 ) -> conversation.ToolResultContent:
     """Return one bounded, structured, model-visible pre-dispatch error."""
-    return conversation.ToolResultContent(
+    return make_tool_result_content(
         agent_id=agent_id,
         tool_call_id=tool_input.id,
         tool_name=tool_input.tool_name,
