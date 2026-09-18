@@ -1,4 +1,4 @@
-"""Keep durable Archive and Usage state consistent across persistence failures."""
+"""Keep durable Archive state consistent across persistence failures."""
 
 from __future__ import annotations
 
