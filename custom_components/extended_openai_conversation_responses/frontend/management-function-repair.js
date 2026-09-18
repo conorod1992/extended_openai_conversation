@@ -224,25 +224,10 @@ function bindFallbackRepair(panel) {
   });
 }
 
-function install() {
-  const Panel = customElements.get(PANEL_TAG);
+export function installFunctionRepair(Panel) {
   if (!Panel || Panel.prototype[PATCHED]) return false;
   const prototype = Panel.prototype;
   prototype[PATCHED] = true;
-
-  const originalCall = prototype._call;
-  prototype._call = function(section, action, data = {}) {
-    if (repairIssue(this) && section === "configuration") {
-      const repairAction = {
-        get: "configuration_get",
-        validate: "configuration_validate",
-        save: "configuration_save",
-        update: "configuration_save",
-      }[action];
-      if (repairAction) return originalCall.call(this, "function_repair", repairAction, data);
-    }
-    return originalCall.call(this, section, action, data);
-  };
 
   const originalContent = prototype._content;
   prototype._content = function(agent) {
@@ -267,9 +252,6 @@ function install() {
   return true;
 }
 
-if (typeof customElements !== "undefined") {
-  customElements.whenDefined(PANEL_TAG).then(install);
-}
 
 export {
   bindFallbackRepair,

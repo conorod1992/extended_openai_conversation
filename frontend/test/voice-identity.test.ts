@@ -88,9 +88,8 @@ describe("Voice & identity management UX", () => {
     expect(searchSettings("unmapped-device fallback")[0]?.configKey).toBe("voice_unmapped_policy");
   });
 
-  it("loads as a bootstrap extension before persistent rendering", async () => {
-    const bootstrap = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js",import.meta.url),"utf8");
-    expect(bootstrap).toContain('"./management-voice-identity.js"');
-    expect(bootstrap.indexOf("management-voice-identity.js")).toBeLessThan(bootstrap.indexOf("management-rendering-performance.js"));
+  it("loads route-owned Voice Identity UI lazily", async () => {
+    const route = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-route.js",import.meta.url),"utf8");
+    expect(route).toContain('"assistant/voice": () => import("./voice-identity-ui.js")');
   });
 });

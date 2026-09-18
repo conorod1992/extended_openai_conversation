@@ -1,9 +1,15 @@
-import { bindConfiguration, bindTools, configurationDialogs, renderConfiguration, renderTools, restoreDialog } from "./agent-config-editor.js";
+import {initializeManagementPanel} from "./management-bootstrap.js";
+import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS} from "./management-cache.js";
+import {bindPanelDialogs} from "./management-dialogs.js";
+import {renderManagement} from "./management-renderer.js";
+import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending} from "./management-actions.js";
+import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch} from "./management-route.js";
+import {getConfigurationEditor, routeAssetKind} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, searchSettings, shouldShowGlobalSettingsSearch} from "./frontend-navigation.js";
 import {freshGuestPolicyDraft} from "./guest-mode-ui.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview} from "./overview-page.js";
-import {formatUsageNumber, formatUsageTimestamp, tokenBreakdown} from "./usage-chart.js";
+import {formatUsageNumber, formatUsageTimestamp, tokenBreakdown} from "./usage-format.js";
 import {bindRequestRules, renderRequestRules, requestRulesDialog} from "./request-rules-ui.js";
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
@@ -42,12 +48,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._draftTitle = null;
     this._draftAgentId = null;
     this._sectionCache = new Map();
+    this._eocSectionCacheTimes = new Map();
     this._scopeCatalogCache = new Map();
     this._scopeCatalogVisitKey = null;
     this._baseScopes = [];
     this._serviceCatalog = null;
     this._serviceCatalogPromise = null;
     this._loadToken = 0;
+    this._cacheGeneration = 0;
+    this._eocScopeCatalogTimes = new Map();
+    this._eocInPlaceRequestRuleSearch = true;
     this._configSearchQuery = "";
     this._settingsSearchQuery = "";
     this._guideQuery = "";
@@ -146,6 +156,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _canAccessView(page, subsection = null) {
+    if (page === "usage-maintenance" && subsection === "request-debug") return this._data?.is_admin === true;
+    if (page === "usage-maintenance" && subsection === "request-debug") return this._data?.is_admin === true;
     if (this._data?.is_admin !== false) return true;
     if (page === "assistant") return false;
     if (page === "capabilities" && subsection && subsection !== "guest-mode") return false;
@@ -157,7 +169,36 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return pageMetadata(page).sections.filter((item) => this._canAccessView(page, item.id));
   }
 
-  async _call(section, action, extra = {}) {
+  _call(section, action, extra = {}) {
+    // Configuration remains editable even when persisted Function Tools need repair.
+    const issue = this._selectedAgent()?.configuration_issue;
+    if (section === "configuration" && issue?.field === "functions" && issue.repairable === true) {
+      const repairAction = {get:"configuration_get", validate:"configuration_validate", save:"configuration_save", update:"configuration_save"}[action];
+      if (repairAction) return this._request("function_repair", repairAction, extra);
+    }
+    let payload = extra;
+    if (section === "guest_mode" && action === "update") {
+      payload = {...extra};
+      for (const key of ["active_from", "active_until"]) {
+        if (payload[key]) payload[key] = normalizeGuestModeTimestamp(payload[key]);
+      }
+    }
+    const ruleSave = section === "request_rules" && ["create", "update"].includes(action)
+      && this.shadowRoot?.querySelector?.("#rule-dialog")?.open;
+    if (!ruleSave) return this._request(section, action, payload);
+    if (this._eocRuleSavePromise) return this._eocRuleSavePromise;
+    const button = this.shadowRoot.querySelector("#rule-save");
+    setControlPending(this, button, true);
+    const request = Promise.resolve().then(() => this._request(section, action, payload));
+    const tracked = request.finally(() => {
+      setControlPending(this, button, false);
+      if (this._eocRuleSavePromise === tracked) this._eocRuleSavePromise = null;
+    });
+    this._eocRuleSavePromise = tracked;
+    return tracked;
+  }
+
+  async _request(section, action, extra = {}) {
     if (!this._hass) return null;
     const agent = this._selectedAgent();
     const result = await this._hass.callWS({
@@ -168,11 +209,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       ...extra,
     });
     this._invalidateAfterMutation(agent?.subentry_id, section, action);
+    pruneCacheTimes(this);
     return result;
   }
 
   _invalidateAfterMutation(agentId, section, action) {
     if (agentId && section === "backup" && action === "restore") {
+      this._cacheGeneration += 1;
       const prefix = `${agentId}|`;
       for (const key of this._sectionCache.keys()) if (key.startsWith(prefix)) this._sectionCache.delete(key);
       for (const key of this._scopeCatalogCache.keys()) if (key.startsWith(prefix)) this._scopeCatalogCache.delete(key);
@@ -186,6 +229,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       conversations: new Set(["delete"]),
     };
     if (!agentId || !mutations[section]?.has(action)) return;
+    this._cacheGeneration += 1;
     const prefix = `${agentId}|`;
     const view = {request_rules:"capabilities/request-rules", knowledge:"data-memory/knowledge"}[section];
     if (view) this._sectionCache.delete(`${prefix}${view}`);
@@ -206,15 +250,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _scopeCatalogKey(view = this._viewKey(), agentId = this._agentId) {
     if (!agentId || !["data-memory/memories", "data-memory/conversations"].includes(view)) return null;
-    return `${agentId}|${view}`;
+    return `${agentId}|scopes`;
   }
 
   _prepareScopeCatalogVisit(view) {
     const key = this._scopeCatalogKey(view);
-    if (key !== this._scopeCatalogVisitKey) {
-      this._scopeCatalogCache.clear();
-      this._scopeCatalogVisitKey = key;
-    }
+    this._scopeCatalogVisitKey = key;
     return key;
   }
 
@@ -241,17 +282,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _loadAgents(selectedId = null) {
     try {
-      const previousAgentId = this._agentId;
-      this._data = await this._hass.callWS({ type: WS_TYPE, action: "agents" });
-      this._baseScopes = this._data.scopes || [];
-      const saved = localStorage.getItem("extended-openai-agent");
-      const agents = this._data.agents || [];
-      const preferred = selectedId || saved;
-      this._agentId = agents.some((item) => item.subentry_id === preferred) ? preferred : agents[0]?.subentry_id;
-      if (this._agentId) localStorage.setItem("extended-openai-agent", this._agentId);
-      if (previousAgentId !== this._agentId) this._scopeId = null;
-      this._applyScopes(this._scopeCatalogCache.get(this._scopeCatalogKey()) || this._baseScopes);
-      await this._loadSection();
+      await loadAgentsWithOverviewPrefetch(this, selectedId);
     } catch (err) {
       this._error = err.message || String(err);
       this._render();
@@ -261,14 +292,23 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _loadScopes(scopeCatalogKey) {
     if (!this._selectedAgent() || !scopeCatalogKey) return;
     const agentId = this._agentId;
+    const loadedAt = this._eocScopeCatalogTimes.get(scopeCatalogKey);
+    if (!loadedAt || Date.now() - loadedAt > SCOPE_CACHE_TTL_MS) {
+      this._scopeCatalogCache.delete(scopeCatalogKey);
+      this._eocScopeCatalogTimes.delete(scopeCatalogKey);
+    }
     if (this._scopeCatalogCache.has(scopeCatalogKey)) {
       this._applyScopes(this._scopeCatalogCache.get(scopeCatalogKey));
       return;
     }
+    const generation = this._cacheGeneration;
+    const loadToken = this._loadToken;
     const response = await this._call("scopes", "catalog");
     const scopes = response.scopes || [];
-    if (scopeCatalogKey !== this._scopeCatalogVisitKey || agentId !== this._agentId) return;
+    if (scopeCatalogKey !== this._scopeCatalogVisitKey || agentId !== this._agentId
+        || generation !== this._cacheGeneration || loadToken !== this._loadToken) return;
     this._scopeCatalogCache.set(scopeCatalogKey, scopes);
+    this._eocScopeCatalogTimes.set(scopeCatalogKey, Date.now());
     this._applyScopes(scopes);
   }
 
@@ -276,10 +316,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return this._data?.agents?.find((item) => item.subentry_id === this._agentId);
   }
 
-  async _loadSection(silent = false) {
+  _loadSection(silent = false) {
+    return loadRoute(this, silent);
+  }
+
+  async _loadSectionData(silent = false) {
     if (!this._selectedAgent()) return this._render();
     const view = this._viewKey();
     const loadToken = ++this._loadToken;
+    const cacheGeneration = this._cacheGeneration;
     const scopeCatalogKey = this._prepareScopeCatalogVisit(view);
     const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules"].includes(view);
     if (configOnly && this._configData && this._draftAgentId === this._agentId) {
@@ -291,36 +336,40 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       return;
     }
     const needsScopes = ["data-memory/memories", "data-memory/conversations"].includes(view);
-    let cacheKey = this._sectionCacheKey(view);
-    if ((!needsScopes || this._scopeCatalogCache.has(scopeCatalogKey)) && cacheKey && this._sectionCache.has(cacheKey)) {
+    const cache = readSectionCache(this, view);
+    const cacheKey = cache.key;
+    const showCached = cache.result !== undefined && (cache.fresh || view === "data-memory/knowledge");
+    if (showCached) {
       this._contentData = null;
-      this._result = this._sectionCache.get(cacheKey);
+      this._result = cache.result;
       this._error = null;
       this._busy = false;
       this._render();
-      return;
+      if (cache.fresh) return;
+      // Knowledge records are fetched again when opened for editing. Show the
+      // expired read-only list immediately while refreshing its current revision.
+      silent = true;
     }
     if (!silent) {
       this._busy = true;
       this._render();
     }
     try {
-      if (needsScopes) await this._loadScopes(scopeCatalogKey);
+      const configPromise = view === "data-memory/conversations" && this._data?.is_admin
+        ? this._loadConfigDraft() : Promise.resolve();
+      const scopePromise = needsScopes ? this._loadScopes(scopeCatalogKey) : Promise.resolve();
+      // Attach rejection handlers immediately, even when scope loading fails first.
+      const prerequisites = Promise.allSettled([scopePromise, configPromise]);
+      if (needsScopes) await scopePromise;
       if (loadToken !== this._loadToken) return;
-      cacheKey = this._sectionCacheKey(view);
       let result;
       let contentData = null;
-      if (cacheKey && this._sectionCache.has(cacheKey)) {
-        result = this._sectionCache.get(cacheKey);
-      } else if (view === "overview") {
-        const entries = [["usage", "Usage"], ["conversations", "Conversation settings"], ["memories", "Memory"], ["knowledge", "Knowledge"]];
-        const settled = await Promise.allSettled([
-          this._call("usage", "summary"),
-          this._call("conversations", "settings", { scope_id: this._scopeId }),
-          this._call("memories", "list", { scope_id: this._scopeId, limit: 5 }),
-          this._call("knowledge", "list"),
-        ]);
-        result = settledSectionResult(entries, settled);
+      if (view === "overview") {
+        const summary = await this._call("overview", "summary");
+        if (loadToken !== this._loadToken) return;
+        const {agent, ...overview} = summary;
+        if (agent) Object.assign(this._selectedAgent(), agent);
+        result = overview;
       } else if (view === "usage-maintenance/usage") {
         const entries = [["summary", "Usage summary"], ["days", "Daily usage"], ["runs", "Recent runs"], ["retention", "Usage retention"]];
         const settled = await Promise.allSettled([
@@ -333,9 +382,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           this._call("conversations", "list", { scope_id: this._scopeId, limit: 50 }),
           this._call("conversations", "settings", { scope_id: this._scopeId }),
           this._data?.is_admin ? this._call("conversations", "active") : Promise.resolve({active: []}),
+          prerequisites.then((results) => {
+            if (results[1].status === "rejected") throw results[1].reason;
+          }),
         ]);
         contentData = { sessions, settings, active };
-        if (this._data?.is_admin) await this._loadConfigDraft();
+        if (this._data?.is_admin) result = this._configData;
         else result = contentData;
       } else if (view === "data-memory/memories") {
         result = await this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: this._scopeId, limit: 100 });
@@ -357,9 +409,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         result = null;
       }
       if (loadToken !== this._loadToken) return;
+      if (cacheGeneration !== this._cacheGeneration) return;
       this._contentData = contentData;
-      if (!(this._isDraftView() && view === "data-memory/conversations" && this._data?.is_admin)) this._result = result;
-      if (cacheKey && result !== undefined) this._sectionCache.set(cacheKey, result);
+      if (showCached && JSON.stringify(result) === JSON.stringify(cache.result)) result = cache.result;
+      this._result = result;
+      writeSectionCache(this, cacheKey, result);
       this._error = null;
     } catch (err) {
       if (loadToken === this._loadToken) this._error = err.message || String(err);
@@ -374,8 +428,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _loadConfigDraft() {
     if (!this._configData || this._draftAgentId !== this._agentId) {
       const agentId = this._agentId;
+      const loadToken = this._loadToken;
       const configData = await this._call("configuration", "get");
-      if (agentId !== this._agentId) return;
+      if (agentId !== this._agentId || loadToken !== this._loadToken) return;
       this._configData = configData;
       this._draft = JSON.parse(JSON.stringify(configData.config));
       this._draftTitle = configData.title;
@@ -404,6 +459,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _render() {
+    renderManagement(this);
+    bindPanelDialogs(this);
+    bindSingleRequestSave(this);
+    bindFrontendCorrectness(this);
+    bindRequestRuleSearch(this);
+    applyRequestRuleSearch(this);
+  }
+
+  _renderShell() {
+    this._eocShellRevision = (this._eocShellRevision || 0) + 1;
     const agent = this._selectedAgent();
     const navigation = NAVIGATION.filter((item) => this._canAccessView(item.id));
     const local = this._visibleSubsections();
@@ -436,7 +501,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const root = this.shadowRoot;
     root.querySelectorAll(".top-nav button").forEach((button) => button.addEventListener("click", () => this._navigate(button.dataset.page)));
     root.querySelector("#top-section-mobile")?.addEventListener("change", (event) => this._navigate(event.target.value));
-    root.querySelector("#local-section")?.addEventListener("change", (event) => this._navigate(this._page, event.target.value));
     root.querySelector("#settings-search")?.addEventListener("input", (event) => { this._settingsSearchQuery = event.target.value; this._render(); requestAnimationFrame(() => { const input = this.shadowRoot.querySelector("#settings-search"); input?.focus(); input?.setSelectionRange(input.value.length, input.value.length); }); });
     root.querySelectorAll(".settings-result").forEach((button) => button.addEventListener("click", async () => { this._pendingSettingFocus = button.dataset.target; this._settingsSearchQuery = ""; await this._navigate(button.dataset.page, button.dataset.subsection); }));
     root.querySelectorAll(".inline-route").forEach((button) => button.addEventListener("click", () => this._navigate(button.dataset.page, button.dataset.subsection)));
@@ -454,11 +518,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._applyScopes(this._scopeCatalogCache.get(this._scopeCatalogKey()) || this._baseScopes);
       await this._loadSection();
     });
-    root.querySelector("#scope")?.addEventListener("change", (event) => { this._scopeId = event.target.value; this._loadSection(); });
-    root.querySelector("#show-empty-scopes")?.addEventListener("change", (event) => { this._showEmptyScopes = event.target.checked; this._render(); });
-    root.querySelector("#confirm-cancel")?.addEventListener("click", () => this._resolveConfirm(false));
-    root.querySelector("#confirm-accept")?.addEventListener("click", () => this._resolveConfirm(true));
-    root.querySelector("#confirm-dialog")?.addEventListener("cancel", (event) => { event.preventDefault(); this._resolveConfirm(false); });
   }
 
   _content(agent) {
@@ -466,17 +525,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!this._canAccessView(this._page, this._subsection)) return this._empty("Administrator permission is required for this section.");
     if (view === "overview") return renderOverview(this, agent);
     if (view === "guide") return renderGuide(this);
-    if (this._page === "assistant") { this._configSections = this._configSectionsForView(); return renderConfiguration(this); }
+    if (this._page === "assistant") { this._configSections = this._configSectionsForView(); return (getConfigurationEditor()?.renderConfiguration(this) || this._loading()); }
     if (view === "capabilities/home-assistant") return this._homeAssistant(agent);
     if (view === "capabilities/request-rules") return renderRequestRules(this);
-    if (view === "capabilities/functions") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${renderTools(this)}`;
+    if (view === "capabilities/functions") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${(getConfigurationEditor()?.renderTools(this) || this._loading())}`;
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
     if (view === "data-memory/knowledge") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
-    if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? renderConfiguration(this) : ""}`; }
+    if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? (getConfigurationEditor()?.renderConfiguration(this) || this._loading()) : ""}`; }
     if (view === "usage-maintenance/usage") return this._usage();
     if (view === "usage-maintenance/diagnostics") return this._diagnostics(agent);
-    if (["usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) { this._configSections = this._configSectionsForView(); return renderConfiguration(this); }
+    if (["usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) { this._configSections = this._configSectionsForView(); return (getConfigurationEditor()?.renderConfiguration(this) || this._loading()); }
     return this._empty("This section is not available.");
   }
 
@@ -659,7 +718,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       <dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>
       <dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope">${this._scopeOptions("memories", true, true)}</select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>
       <dialog id="confirm-dialog" class="editor-dialog confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-header"><h2 id="confirm-title">Confirm</h2></div><div class="dialog-body"><p id="confirm-message"></p></div><div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">Cancel</button><button type="button" class="danger" id="confirm-accept">Confirm</button></div></dialog>
-      ${requestRulesDialog(this)}${configurationDialogs(this)}${restoreDialog(this)}`;
+      ${this._viewKey() === "capabilities/request-rules" ? requestRulesDialog(this) : ""}${routeAssetKind(this._viewKey()) === "agent-config" ? getConfigurationEditor()?.configurationDialogs(this) || "" : ""}${this._viewKey() === "usage-maintenance/backup-restore" ? getConfigurationEditor()?.restoreDialog(this) || "" : ""}`;
   }
 
   _bindActions() {
@@ -678,17 +737,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     root.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => { if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return; await this._call("conversations", "end_active", { continuity_key: button.dataset.key }); await this._loadSection(); }));
     root.querySelectorAll(".delete-session").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSession(button.dataset.id); }));
     root.querySelectorAll(".reassign-memory").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._openReassign(button.dataset.id); }));
-    root.querySelectorAll(".close-editor").forEach((button) => button.addEventListener("click", () => this._requestEditorClose()));
-    root.querySelectorAll(".close-session").forEach((button) => button.addEventListener("click", () => q("#session-dialog").close()));
-    q("#knowledge-form")?.addEventListener("submit", (event) => { event.preventDefault(); this._saveKnowledge(); });
-    q("#memory-form")?.addEventListener("submit", (event) => { event.preventDefault(); this._saveMemory(); });
-    q("#knowledge-content")?.addEventListener("input", () => this._updateKnowledgeCounter());
-    q("#knowledge-delete")?.addEventListener("click", () => this._deleteSource(this._editingSource?.source_id, true));
-    q("#memory-delete")?.addEventListener("click", () => this._deleteMemory(this._editingMemory?.memory_id, true));
-    [q("#knowledge-dialog"), q("#memory-dialog")].forEach((dialog) => dialog?.addEventListener("cancel", (event) => { event.preventDefault(); this._requestEditorClose(); }));
-    q("#session-dialog")?.addEventListener("cancel", (event) => { event.preventDefault(); q("#session-dialog").close(); });
-    q("#reassign-cancel")?.addEventListener("click", () => q("#reassign-dialog").close());
-    q("#reassign-save")?.addEventListener("click", () => this._saveReassign());
     q("#clear-details")?.addEventListener("click", () => this._clearUsageDetails());
     q("#archive-search")?.addEventListener("click", () => this._searchArchive());
     q("#archive-query")?.addEventListener("keydown", (event) => { if (event.key === "Enter") this._searchArchive(); });
@@ -704,8 +752,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     q("#guest-controls-enabled")?.addEventListener("change", (event) => { this._guestDraft.guest_mode_enabled = event.target.checked; });
     root.querySelectorAll("[data-guest-mode]").forEach((element) => element.addEventListener("change", () => { this._guestDraft[element.dataset.guestMode] = element.value; this._render(); }));
     if (this._viewKey() === "capabilities/guest-mode") this._setupGuestSelectors();
-    if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(this._viewKey())) bindConfiguration(this);
-    if (this._viewKey() === "capabilities/functions") bindTools(this);
+    if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(this._viewKey())) getConfigurationEditor()?.bindConfiguration(this);
+    if (this._viewKey() === "capabilities/functions") getConfigurationEditor()?.bindTools(this);
     if (this._viewKey() === "capabilities/request-rules") bindRequestRules(this);
     if (this._viewKey() === "overview") bindOverview(this);
     if (this._viewKey() === "guide") bindGuide(this);
@@ -1073,4 +1121,5 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   `; }
 }
 
+initializeManagementPanel(ExtendedOpenAIManagementPanel);
 customElements.define("extended-openai-management-panel", ExtendedOpenAIManagementPanel);

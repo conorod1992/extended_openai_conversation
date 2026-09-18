@@ -172,26 +172,25 @@ function bindInteractionPolish(panel) {
   root.addEventListener("value-changed", () => schedulePolish(panel));
 }
 
-export function installManagementSettingsPolish(registry = globalThis.customElements) {
-  if (!registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
+export function installManagementSettingsPolish(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementSettingsPolish(registry.get("extended-openai-management-panel")));
+  }
+  const constructor = Panel;
+  const prototype = constructor?.prototype;
+  if (!prototype || prototype[PATCHED]) return false;
 
-    const originalRender = prototype._render;
-    prototype._render = function(...args) {
-      const result = originalRender.apply(this, args);
-      bindInteractionPolish(this);
-      schedulePolish(this);
-      return result;
-    };
+  const originalRender = prototype._render;
+  prototype._render = function(...args) {
+    const result = originalRender.apply(this, args);
+    bindInteractionPolish(this);
+    schedulePolish(this);
+    return result;
+  };
 
-    prototype[PATCHED] = true;
-    return true;
-  });
-}
-
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  installManagementSettingsPolish();
+  prototype[PATCHED] = true;
+  return true;
 }

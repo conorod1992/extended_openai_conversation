@@ -1,6 +1,6 @@
+import {updateDialogs} from "./management-dialogs.js";
 import {NAVIGATION, pageMetadata, searchSettings, shouldShowGlobalSettingsSearch} from "./frontend-navigation.js";
 
-const PATCHED = Symbol.for("extended-openai.management-rendering-performance");
 const SEARCH_DEBOUNCE_MS = 80;
 
 function navigationFor(panel) {
@@ -146,6 +146,7 @@ function preparePersistentShell(panel) {
   }
 
   panel._eocPersistentReady = true;
+  bindDynamicBase(panel);
   bindIncrementalDraftUpdates(panel);
   bindSettingsSearch(panel, true);
   return true;
@@ -261,27 +262,38 @@ function updateSettingsHost(panel) {
 
 function bindDynamicBase(panel) {
   const root = panel.shadowRoot;
-  root.querySelector("#local-section")?.addEventListener("change", (event) => panel._navigate(panel._page, event.target.value));
-  root.querySelector("#scope")?.addEventListener("change", (event) => {
-    panel._scopeId = event.target.value;
-    panel._loadSection();
-  });
-  root.querySelector("#show-empty-scopes")?.addEventListener("change", (event) => {
-    panel._showEmptyScopes = event.target.checked;
-    panel._render();
-  });
+  if (!root.__eocRouteControlsBound) {
+    root.__eocRouteControlsBound = true;
+    root.addEventListener("change", (event) => {
+      const control = event.target;
+      if (control?.id === "local-section") void panel._navigate(panel._page, control.value);
+      if (control?.id === "scope") {
+        panel._scopeId = control.value;
+        void panel._loadSection();
+      }
+      if (control?.id === "show-empty-scopes") {
+        panel._showEmptyScopes = control.checked;
+        panel._render();
+      }
+    });
+  }
+  bindSettingsResultButtons(panel);
+}
+
+const regionMarkup = new WeakMap();
+function updateRegion(host, markup) {
+  if (!host || regionMarkup.get(host) === markup) return;
+  host.innerHTML = markup;
+  regionMarkup.set(host, markup);
+}
+
+function bindDynamicMain(panel) {
+  const root = panel.shadowRoot;
   root.querySelectorAll("main .inline-route").forEach((button) => button.addEventListener("click", () => panel._navigate(button.dataset.page, button.dataset.subsection)));
   root.querySelectorAll("main .guide-topic-link").forEach((button) => button.addEventListener("click", () => {
     panel._guideTopic = button.dataset.guideTopic;
     panel._navigate("guide");
   }));
-  root.querySelector("#confirm-cancel")?.addEventListener("click", () => panel._resolveConfirm(false));
-  root.querySelector("#confirm-accept")?.addEventListener("click", () => panel._resolveConfirm(true));
-  root.querySelector("#confirm-dialog")?.addEventListener("cancel", (event) => {
-    event.preventDefault();
-    panel._resolveConfirm(false);
-  });
-  bindSettingsResultButtons(panel);
 }
 
 function renderDynamicRegions(panel) {
@@ -295,60 +307,58 @@ function renderDynamicRegions(panel) {
   updateSettingsHost(panel);
 
   const scopeHost = root.querySelector("#eoc-scope-host");
-  if (scopeHost) scopeHost.innerHTML = ["data-memory/conversations", "data-memory/memories"].includes(panel._viewKey()) ? panel._scopePicker() : "";
+  updateRegion(scopeHost, ["data-memory/conversations", "data-memory/memories"].includes(panel._viewKey()) ? panel._scopePicker() : "");
 
   const sectionHost = root.querySelector("#eoc-section-host");
   if (sectionHost) {
-    sectionHost.innerHTML = local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section">${local.map((item) => `<option value="${item.id}" ${item.id === panel._subsection ? "selected" : ""}>${item.label}</option>`).join("")}</select></label><p>${panel._e(currentSection?.description || "")}</p></div>` : "";
+    updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section">${local.map((item) => `<option value="${item.id}" ${item.id === panel._subsection ? "selected" : ""}>${item.label}</option>`).join("")}</select></label><p>${panel._e(currentSection?.description || "")}</p></div>` : "");
   }
 
   const main = root.querySelector("[data-eoc-main]") || root.querySelector("main");
-  if (main) {
-    main.innerHTML = !agent
-      ? panel._empty("No conversation agents configured.")
-      : panel._busy
-        ? panel._loading()
-        : panel._error
-          ? `<div class="error" role="alert">${panel._e(panel._error)}</div>`
-          : panel._content(agent);
+  const markup = !agent
+    ? panel._empty("No conversation agents configured.")
+    : panel._busy ? panel._loading()
+      : panel._error ? `<div class="error" role="alert">${panel._e(panel._error)}</div>`
+        : panel._content(agent);
+  const dialogs = panel._dialogs();
+  const route = `${panel._agentId}|${panel._viewKey()}`;
+  const changed = route !== panel._eocRenderedRoute || markup !== panel._eocMainMarkup
+    || dialogs !== panel._eocDialogMarkup;
+  if (main && changed) {
+    main.innerHTML = markup;
+    panel._eocMainMarkup = markup;
+    panel._eocDialogMarkup = dialogs;
+    panel._eocRenderedRoute = route;
+    updateDialogs(panel, dialogs);
+    panel._bindActions();
+    bindDynamicMain(panel);
   }
 
-  const dialogHost = root.querySelector("#eoc-dialog-host");
-  if (dialogHost) dialogHost.innerHTML = panel._dialogs();
-
-  panel._bindActions();
   bindDynamicBase(panel);
   bindIncrementalDraftUpdates(panel);
 }
 
-export function installManagementRenderingOptimization(registry = globalThis.customElements) {
-  if (typeof document === "undefined" || !registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
-
-    const originalRender = prototype._render;
-    prototype._render = function optimizedRender() {
-      const navigation = navigationFor(this);
-      if (!this._eocPersistentReady || !this.shadowRoot.querySelector("[data-eoc-persistent-shell]")) {
-        originalRender.call(this);
-        preparePersistentShell(this);
-        return;
-      }
-      if (!navigationMatches(this, navigation)) {
-        this._eocPersistentReady = false;
-        originalRender.call(this);
-        preparePersistentShell(this);
-        return;
-      }
-      renderDynamicRegions(this);
-    };
-    prototype[PATCHED] = true;
-    return true;
-  });
+// The host calls this directly; feature decorators cannot own shell lifetime.
+export function renderManagement(panel) {
+  const navigation = navigationFor(panel);
+  if (!panel._eocPersistentReady || !panel.shadowRoot.querySelector("[data-eoc-persistent-shell]")
+      || !navigationMatches(panel, navigation)) {
+    panel._renderShell();
+    preparePersistentShell(panel);
+    showInitialLoading(panel);
+    return;
+  }
+  renderDynamicRegions(panel);
+  showInitialLoading(panel);
 }
 
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  installManagementRenderingOptimization();
+export function showInitialLoading(panel) {
+  if (panel?._data !== null) return false;
+  const main = panel.shadowRoot?.querySelector?.("main");
+  if (!main) return false;
+  main.innerHTML = panel._loading?.() || '<div class="loading" role="status">Loading…</div>';
+  main.setAttribute("aria-busy", "true");
+  main.dataset.eocInitialLoading = "";
+  return true;
 }
+

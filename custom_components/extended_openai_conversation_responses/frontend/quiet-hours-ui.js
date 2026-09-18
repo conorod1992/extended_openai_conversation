@@ -1,33 +1,23 @@
-import {NAVIGATION, SETTINGS_INDEX} from "./frontend-navigation.js";
+export async function loadQuietHours(panel, silent = false) {
+  const token = ++panel._loadToken;
+  if (!silent) { panel._busy = true; panel._render(); }
+  try {
+    const result = await panel._call("quiet_hours", "get");
+    if (token !== panel._loadToken) return;
+    panel._result = result;
+    panel._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
+    panel._error = null;
+  } catch (err) {
+    if (token === panel._loadToken) panel._error = err.message || String(err);
+  } finally {
+    if (token === panel._loadToken) { panel._busy = false; panel._render(); }
+  }
+}
 
 const PATCHED = Symbol.for("extended-openai.quiet-hours-ui");
 const VIEW = "capabilities/quiet-hours";
-
-function installNavigation() {
-  const capabilities = NAVIGATION.find((item) => item.id === "capabilities");
-  if (capabilities && !capabilities.sections.some((item) => item.id === "quiet-hours")) {
-    const guestIndex = capabilities.sections.findIndex((item) => item.id === "guest-mode");
-    const item = {
-      id: "quiet-hours",
-      label: "Quiet Hours",
-      description: "Make Assist satellites quieter at set times each day and expose that period to Home Assistant automations.",
-    };
-    if (guestIndex >= 0) capabilities.sections.splice(guestIndex, 0, item);
-    else capabilities.sections.push(item);
-  }
-  if (!SETTINGS_INDEX.some((item) => item.section === "quiet-hours")) {
-    SETTINGS_INDEX.push({
-      label: "Quiet Hours",
-      description: "Set quieter speaker volume and wake-word sound behaviour for a daily time window.",
-      terms: "quiet hours night mode satellite speaker volume wake word sound chime",
-      page: "capabilities",
-      section: "quiet-hours",
-      configKey: null,
-      target: null,
-      source: "quiet-hours",
-    });
-  }
-}
+const QUIET_HOURS_STYLES = `
+      .qh-status,.qh-satellite-heading{display:flex;justify-content:space-between;gap:16px;align-items:center}.qh-status{padding-bottom:18px;border-bottom:1px solid var(--divider-color);margin-bottom:8px}.qh-status div,.qh-satellite-heading div{display:flex;flex-direction:column;gap:3px}.qh-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.qh-grid label{display:flex;flex-direction:column;gap:7px}.qh-grid label>span{font-weight:600}.qh-grid small,.qh-entity-note small,.qh-satellite small{color:var(--secondary-text-color);line-height:1.45}.qh-policy{margin-top:20px}.qh-volume{display:flex;align-items:center;gap:12px}.qh-volume input{flex:1}.qh-volume output{min-width:44px;text-align:right;font-variant-numeric:tabular-nums}.qh-entity-note{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:20px;padding:14px;border-radius:10px;background:var(--secondary-background-color)}.qh-entity-note small{flex-basis:100%}.qh-satellites{display:grid;gap:14px}.qh-satellite{border:1px solid var(--divider-color);border-radius:12px;padding:16px}.qh-satellite-heading{margin-bottom:14px}.config-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}@media(max-width:760px){.qh-grid{grid-template-columns:1fr}.qh-status,.qh-satellite-heading{align-items:flex-start}}`;
 
 function entityLabel(hass, entityId) {
   const state = hass?.states?.[entityId];
@@ -88,7 +78,7 @@ export function renderQuietHours(panel) {
   const maxPercent = Math.round(Number(config.max_volume ?? 0.2) * 100);
   const statusTitle = result.active ? "Quiet Hours active now" : savedConfig.enabled ? "Outside Quiet Hours" : "Quiet Hours schedule disabled";
   const statusDetail = savedConfig.enabled ? `${panel._e(savedConfig.start || "22:00")}–${panel._e(savedConfig.end || "07:00")} every day` : "The saved schedule is currently turned off.";
-  return `<section class="page-intro"><h1>Quiet Hours</h1><p>Make your Assist satellites quieter at set times each day. Quiet Hours can lower speaker volume and, where supported, change the sound played when the wake word is heard. For LEDs or other device-specific settings, use the Quiet Hours entity in a normal Home Assistant automation.</p></section>
+  return `<style>${QUIET_HOURS_STYLES}</style><section class="page-intro"><h1>Quiet Hours</h1><p>Make your Assist satellites quieter at set times each day. Quiet Hours can lower speaker volume and, where supported, change the sound played when the wake word is heard. For LEDs or other device-specific settings, use the Quiet Hours entity in a normal Home Assistant automation.</p></section>
     <section class="content-card">
       <div class="qh-status"><div><strong>${statusTitle}</strong><small>${statusDetail}</small></div><span class="${result.active ? "availability-badge" : "disabled-badge"}">${result.active ? "Active" : "Inactive"}</span></div>
       <div class="config-toggle setting"><span class="setting-copy"><span class="setting-label-row"><label for="qh-enabled"><strong>Enable daily schedule</strong></label></span><small>When enabled, Quiet Hours starts and ends automatically at the times below. If you save while the current time is inside that period, it starts immediately.</small></span><label class="switch-control" for="qh-enabled"><input id="qh-enabled" type="checkbox" role="switch" ${config.enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>
@@ -149,54 +139,31 @@ export function bindQuietHours(panel) {
   });
 }
 
-export function installQuietHoursUI(registry = globalThis.customElements) {
-  installNavigation();
-  if (!registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
+export function installQuietHoursUI(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installQuietHoursUI(registry.get("extended-openai-management-panel")));
+  }
+  const constructor = Panel;
+  const prototype = constructor?.prototype;
+  if (!prototype || prototype[PATCHED]) return false;
 
-    const originalLoadSection = prototype._loadSection;
-    prototype._loadSection = async function(silent = false) {
-      if (this._viewKey() !== VIEW) return originalLoadSection.call(this, silent);
-      const token = ++this._loadToken;
-      if (!silent) { this._busy = true; this._render(); }
-      try {
-        const result = await this._call("quiet_hours", "get");
-        if (token !== this._loadToken) return;
-        this._result = result;
-        this._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
-        this._error = null;
-      } catch (err) {
-        if (token === this._loadToken) this._error = err.message || String(err);
-      } finally {
-        if (token === this._loadToken) { this._busy = false; this._render(); }
-      }
-    };
 
-    const originalContent = prototype._content;
-    prototype._content = function(agent) {
-      if (this._viewKey() === VIEW) return renderQuietHours(this);
-      return originalContent.call(this, agent);
-    };
+  const originalContent = prototype._content;
+  prototype._content = function(agent) {
+    if (this._viewKey() === VIEW) return renderQuietHours(this);
+    return originalContent.call(this, agent);
+  };
 
-    const originalBindActions = prototype._bindActions;
-    prototype._bindActions = function(...args) {
-      const result = originalBindActions.apply(this, args);
-      if (this._viewKey() === VIEW) bindQuietHours(this);
-      return result;
-    };
+  const originalBindActions = prototype._bindActions;
+  prototype._bindActions = function(...args) {
+    const result = originalBindActions.apply(this, args);
+    if (this._viewKey() === VIEW) bindQuietHours(this);
+    return result;
+  };
 
-    const originalStyles = prototype._styles;
-    prototype._styles = function(...args) {
-      return `${originalStyles.apply(this, args)}
-        .qh-status,.qh-satellite-heading{display:flex;justify-content:space-between;gap:16px;align-items:center}.qh-status{padding-bottom:18px;border-bottom:1px solid var(--divider-color);margin-bottom:8px}.qh-status div,.qh-satellite-heading div{display:flex;flex-direction:column;gap:3px}.qh-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.qh-grid label{display:flex;flex-direction:column;gap:7px}.qh-grid label>span{font-weight:600}.qh-grid small,.qh-entity-note small,.qh-satellite small{color:var(--secondary-text-color);line-height:1.45}.qh-policy{margin-top:20px}.qh-volume{display:flex;align-items:center;gap:12px}.qh-volume input{flex:1}.qh-volume output{min-width:44px;text-align:right;font-variant-numeric:tabular-nums}.qh-entity-note{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:20px;padding:14px;border-radius:10px;background:var(--secondary-background-color)}.qh-entity-note small{flex-basis:100%}.qh-satellites{display:grid;gap:14px}.qh-satellite{border:1px solid var(--divider-color);border-radius:12px;padding:16px}.qh-satellite-heading{margin-bottom:14px}.config-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}@media(max-width:760px){.qh-grid{grid-template-columns:1fr}.qh-status,.qh-satellite-heading{align-items:flex-start}}`;
-    };
-
-    prototype[PATCHED] = true;
-    return true;
-  });
+  prototype[PATCHED] = true;
+  return true;
 }
-
-if (typeof document !== "undefined" && typeof customElements !== "undefined") installQuietHoursUI();

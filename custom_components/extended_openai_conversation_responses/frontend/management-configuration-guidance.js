@@ -427,42 +427,42 @@ function bindHostEvents(panel) {
   }, true);
 }
 
-export function installManagementConfigurationGuidance(registry = globalThis.customElements) {
-  if (!registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
+export function installManagementConfigurationGuidance(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementConfigurationGuidance(registry.get("extended-openai-management-panel")));
+  }
+  const constructor = Panel;
+  const prototype = constructor?.prototype;
+  if (!prototype || prototype[PATCHED]) return false;
 
-    const originalCall = prototype._call;
-    prototype._call = async function(...args) {
-      const guidanceCall = args[0] === "configuration" && ["get", "validate", "update", "save"].includes(args[1]);
-      const agentId = this._agentId;
-      const revision = guidanceCall
-        ? (this._eocGuidanceCallRevision = (this._eocGuidanceCallRevision || 0) + 1)
-        : null;
-      const result = await originalCall.apply(this, args);
-      if (guidanceCall && revision === this._eocGuidanceCallRevision && this._agentId === agentId) {
-        storeRuntimeGuidance(this, result, agentId);
-      }
-      return result;
-    };
+  const originalCall = prototype._call;
+  prototype._call = async function(...args) {
+    const guidanceCall = args[0] === "configuration" && ["get", "validate", "update", "save"].includes(args[1]);
+    const agentId = this._agentId;
+    const revision = guidanceCall
+      ? (this._eocGuidanceCallRevision = (this._eocGuidanceCallRevision || 0) + 1)
+      : null;
+    const result = await originalCall.apply(this, args);
+    if (guidanceCall && revision === this._eocGuidanceCallRevision && this._agentId === agentId) {
+      storeRuntimeGuidance(this, result, agentId);
+    }
+    return result;
+  };
 
-    const originalRender = prototype._render;
-    prototype._render = function(...args) {
-      const result = originalRender.apply(this, args);
-      bindHostEvents(this);
-      enhancePanel(this);
-      return result;
-    };
+  const originalRender = prototype._render;
+  prototype._render = function(...args) {
+    const result = originalRender.apply(this, args);
+    bindHostEvents(this);
+    enhancePanel(this);
+    return result;
+  };
 
-    prototype[PATCHED] = true;
-    return true;
-  });
+  prototype[PATCHED] = true;
+  return true;
 }
 
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  installManagementConfigurationGuidance();
-}
 
 export {MODEL_PARAMETERS};

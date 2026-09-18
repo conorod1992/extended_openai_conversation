@@ -19,7 +19,7 @@ assert.deepEqual(NAVIGATION.find((item) => item.id === "assistant").sections.map
   "Basics", "Model & responses", "Conversation", "Prompt & context", "Voice & identity", "Speech",
 ]);
 assert.deepEqual(NAVIGATION.find((item) => item.id === "capabilities").sections.map((item) => item.label), [
-  "Home Assistant & local handling", "Web search & Skills", "Request Rules", "Functions", "Guest Mode",
+  "Home Assistant & local handling", "Web search & Skills", "Request Rules", "Functions", "Quiet Hours", "Guest Mode",
 ]);
 assert.deepEqual(routeFromPath("/extended-openai/assistant/advanced"), {page:"capabilities", section:"web-skills", legacy:true});
 assert.deepEqual(routeFromPath("/extended-openai/capabilities/web-skills"), {page:"capabilities", section:"web-skills", legacy:false});

@@ -19,7 +19,7 @@ assert.match(
 );
 assert.match(
   bootstrap,
-  /await import\("\.\/management-settings-polish\.js"\);/,
+  /installManagementSettingsPolish\(Panel\);/,
   "the settings polish layer must be evaluated through the controlled bootstrap sequence",
 );
 assert.doesNotMatch(

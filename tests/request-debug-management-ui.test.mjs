@@ -10,7 +10,7 @@ const integration = await readFile(
   "utf8",
 );
 const bootstrap = await readFile(
-  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url),
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url),
   "utf8",
 );
 const backend = await readFile(
@@ -24,11 +24,12 @@ const projection = await readFile(
 
 assert.match(navigation, /id: "request-debug", label: "Request debugging"/);
 assert.doesNotMatch(navigation, /import\("\.\/debug-management\.js"\)/);
-assert.match(bootstrap, /await import\("\.\/debug-management\.js"\)/);
+assert.match(bootstrap, /installManagementSection\(panel.constructor\)/);
 assert.match(integration, /usage-maintenance\/request-debug/);
-assert.match(integration, /const originalLoadSection = prototype\._loadSection/);
+assert.match(integration, /export function loadRequestDebug\(panel/);
+assert.doesNotMatch(integration, /prototype\._loadSection/);
 assert.match(integration, /return ensureDebugPanel\(\)/);
-assert.match(integration, /this\._eocDebugLoadToken !== token/);
+assert.match(integration, /panel\._eocDebugLoadToken !== token/);
 assert.match(integration, /HA session/);
 assert.match(integration, /Prompt-cache hits can be shared across separate sessions and do not imply shared conversation history/);
 assert.match(integration, /this\._data\?\.is_admin === true/);

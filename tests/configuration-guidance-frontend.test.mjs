@@ -99,8 +99,8 @@ const bootstrap = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url),
   "utf8",
 );
-const clarityIndex = bootstrap.lastIndexOf('await import("./management-configuration-clarity.js")');
-const guidanceIndex = bootstrap.lastIndexOf('await import("./management-configuration-guidance.js")');
+const clarityIndex = bootstrap.lastIndexOf('installManagementConfigurationClarity(Panel)');
+const guidanceIndex = bootstrap.lastIndexOf('installManagementConfigurationGuidance(Panel)');
 assert.ok(clarityIndex >= 0 && guidanceIndex > clarityIndex, "guidance must install after clarity");
 
 const source = await readFile(

@@ -32,6 +32,10 @@ const [{ExtendedOpenAIManagementPanel}, {bindRequestRules}] = await Promise.all(
   import("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js"),
 ]);
 
+// These cases isolate cached data behavior after route assets are ready.
+const {routeAssetPromise} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-route.js");
+await routeAssetPromise("assistant/basics");
+
 const agents = [
   {entry_id:"entry-a", subentry_id:"agent-a", title:"A"},
   {entry_id:"entry-b", subentry_id:"agent-b", title:"B"},
@@ -236,3 +240,21 @@ assert.doesNotMatch(requestRules, /root\.addEventListener\("click"/);
 assert.match(requestRules, /id="rule-action-sequence-host"/);
 assert.doesNotMatch(requestRules, /<ha-selector id="rule-action-sequence"/);
 assert.match(requestRules, /selector = \{action:\{\}\}/);
+
+// Exercise cache ownership through the actual host, with no performance installer.
+{
+  const panel = panelFor("capabilities", "request-rules");
+  const key = panel._sectionCacheKey();
+  panel._sectionCache.set(key, {rules:["stale"]});
+  let loads = 0;
+  panel._hass = {callWS: async () => ({rules:[++loads]})};
+  await panel._loadSection();
+  assert.equal(loads, 1, "cache without timestamp refreshes");
+  const fetchedAt = panel._eocSectionCacheTimes.get(key);
+  await panel._loadSection();
+  assert.equal(loads, 1);
+  assert.equal(panel._eocSectionCacheTimes.get(key), fetchedAt, "hits do not slide TTL");
+  panel._eocSectionCacheTimes.set(key, Date.now() - 31_000);
+  await panel._loadSection();
+  assert.equal(loads, 2);
+}

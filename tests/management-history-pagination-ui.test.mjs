@@ -38,7 +38,7 @@ assert.deepEqual(
 
 const [source, bootstrap, runtime, permissions] = await Promise.all([
   readFile(frontend("management-history-pagination.js"), "utf8"),
-  readFile(frontend("management-bootstrap.js"), "utf8"),
+  readFile(frontend("management-route.js"), "utf8"),
   readFile(new URL("../custom_components/extended_openai_conversation_responses/management_history_runtime.py", import.meta.url), "utf8"),
   readFile(new URL("../custom_components/extended_openai_conversation_responses/management_permissions.py", import.meta.url), "utf8"),
 ]);
@@ -49,7 +49,7 @@ assert.match(source, /Next turns/);
 assert.match(source, /start_turn:/);
 assert.match(source, /limit: TURN_PAGE_LIMIT/);
 assert.match(source, /Clear search/);
-assert.match(bootstrap, /await import\("\.\/management-history-pagination\.js"\)/);
+assert.match(bootstrap, /installHistoryPagination\(panel.constructor\)/);
 assert.match(runtime, /_FRONTEND_MODULE = "management-history-pagination\.js"/);
 assert.match(runtime, /section not in \{"overview", "usage", "conversations"\}/);
 assert.match(runtime, /result = \{\*\*result, "usage": usage_summary\(usage\)\}/);

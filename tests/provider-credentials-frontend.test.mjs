@@ -85,7 +85,7 @@ assert.doesNotMatch(source, /root\.append\(dialog\)/);
 assert.doesNotMatch(source, /slice\([^)]*apiKey|substring\([^)]*apiKey/);
 
 const bootstrap = await readFile(
-  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url),
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url),
   "utf8",
 );
 assert.match(bootstrap, /management-provider-credentials\.js/);

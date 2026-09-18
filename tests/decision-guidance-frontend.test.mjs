@@ -94,7 +94,7 @@ const bootstrap = await readFile(
 );
 assert.match(bootstrap, /management-decision-guidance\.js/);
 assert.ok(
-  bootstrap.indexOf('await import("./management-configuration-guidance.js")')
-    < bootstrap.indexOf('await import("./management-decision-guidance.js")'),
+  bootstrap.indexOf('installManagementConfigurationGuidance(Panel)')
+    < bootstrap.indexOf('installManagementDecisionGuidance(Panel)'),
   "decision guidance should install after configuration clarity/conflict guidance",
 );

@@ -40,59 +40,57 @@ async function runMutation(panel, originalCall, section, action, extra) {
   }
 }
 
-export function installManagementActionSafety(registry = globalThis.customElements) {
-  if (typeof window === "undefined" || !registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const Panel = registry.get("extended-openai-management-panel");
-    const prototype = Panel?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
-    prototype[PATCHED] = true;
+export function installManagementActionSafety(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementActionSafety(registry.get("extended-openai-management-panel")));
+  }
+  const prototype = Panel?.prototype;
+  if (!prototype || prototype[PATCHED]) return false;
+  prototype[PATCHED] = true;
 
-    const originalSaveGuestPolicy = prototype._saveGuestPolicy;
-    prototype._saveGuestPolicy = function(...args) {
-      if (this._eocGuestPolicySavePromise) return this._eocGuestPolicySavePromise;
+  const originalSaveGuestPolicy = prototype._saveGuestPolicy;
+  prototype._saveGuestPolicy = function(...args) {
+    if (this._eocGuestPolicySavePromise) return this._eocGuestPolicySavePromise;
 
-      const button = this.shadowRoot?.querySelector?.("#guest-policy-save");
-      if (button?.disabled) return Promise.resolve();
-      this._setSaving?.(button, true);
+    const button = this.shadowRoot?.querySelector?.("#guest-policy-save");
+    if (button?.disabled) return Promise.resolve();
+    this._setSaving?.(button, true);
 
-      const pending = Promise.resolve().then(() => originalSaveGuestPolicy.apply(this, args));
-      this._eocGuestPolicySavePromise = pending;
-      return pending.finally(() => {
-        if (this._eocGuestPolicySavePromise === pending) this._eocGuestPolicySavePromise = null;
-        this._setSaving?.(button, false);
-      });
-    };
+    const pending = Promise.resolve().then(() => originalSaveGuestPolicy.apply(this, args));
+    this._eocGuestPolicySavePromise = pending;
+    return pending.finally(() => {
+      if (this._eocGuestPolicySavePromise === pending) this._eocGuestPolicySavePromise = null;
+      this._setSaving?.(button, false);
+    });
+  };
 
-    const originalCall = prototype._call;
-    prototype._call = function(section, action, extra = {}) {
-      if (!isAgentMutation(section, action)) {
-        return originalCall.call(this, section, action, extra);
-      }
-      if (section !== "tools") {
-        return runMutation(this, originalCall, section, action, extra);
-      }
+  const originalCall = prototype._call;
+  prototype._call = function(section, action, extra = {}) {
+    if (!isAgentMutation(section, action)) {
+      return originalCall.call(this, section, action, extra);
+    }
+    if (section !== "tools") {
+      return runMutation(this, originalCall, section, action, extra);
+    }
 
-      const previous = this._eocFunctionMutationTail || Promise.resolve();
-      const pending = previous.catch(() => {}).then(() =>
-        runMutation(this, originalCall, section, action, extra));
-      this._eocFunctionMutationTail = pending;
-      return pending.finally(() => {
-        if (this._eocFunctionMutationTail === pending) this._eocFunctionMutationTail = null;
-      });
-    };
+    const previous = this._eocFunctionMutationTail || Promise.resolve();
+    const pending = previous.catch(() => {}).then(() =>
+      runMutation(this, originalCall, section, action, extra));
+    this._eocFunctionMutationTail = pending;
+    return pending.finally(() => {
+      if (this._eocFunctionMutationTail === pending) this._eocFunctionMutationTail = null;
+    });
+  };
 
-    const originalRender = prototype._render;
-    prototype._render = function(...args) {
-      const result = originalRender.apply(this, args);
-      syncAgentPicker(this);
-      return result;
-    };
+  const originalRender = prototype._render;
+  prototype._render = function(...args) {
+    const result = originalRender.apply(this, args);
+    syncAgentPicker(this);
+    return result;
+  };
 
-    return true;
-  });
-}
-
-if (typeof customElements !== "undefined") {
-  void installManagementActionSafety();
+  return true;
 }

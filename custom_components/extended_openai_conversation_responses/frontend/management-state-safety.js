@@ -1,7 +1,8 @@
 import {routePath} from "./frontend-navigation.js";
 
 const PATCHED = Symbol.for("extended-openai.management-state-safety");
-export const SECTION_CACHE_TTL_MS = 30_000;
+import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
+export {SECTION_CACHE_TTL_MS};
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
@@ -225,28 +226,6 @@ async function confirmDialogClose(panel, dialog) {
   return true;
 }
 
-function prepareSectionCache(panel, view) {
-  const key = panel._sectionCacheKey?.(view);
-  if (!key) return {key: null, reused: false};
-  panel._eocSectionCacheTimes ||= new Map();
-  const loadedAt = panel._eocSectionCacheTimes.get(key);
-  const cached = panel._sectionCache?.has(key);
-  if (cached && loadedAt && Date.now() - loadedAt <= SECTION_CACHE_TTL_MS) {
-    return {key, reused: true};
-  }
-  if (cached) panel._sectionCache.delete(key);
-  panel._eocSectionCacheTimes.delete(key);
-  return {key, reused: false};
-}
-
-function markSectionCache(panel, key, reused) {
-  // Do not slide the TTL when a cached value is merely revisited. It should
-  // still become eligible for a real refresh after 30 seconds.
-  if (!key || reused || !panel._sectionCache?.has(key)) return;
-  panel._eocSectionCacheTimes ||= new Map();
-  panel._eocSectionCacheTimes.set(key, Date.now());
-}
-
 function ensureWindowGuards(panel) {
   if (!panel._eocStateBeforeUnload) {
     panel._eocStateBeforeUnload = (event) => {
@@ -368,147 +347,138 @@ async function confirmStateSafeNavigation(panel, destination) {
   return true;
 }
 
-export function installManagementStateSafety(registry = globalThis.customElements) {
-  if (typeof window === "undefined" || !registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const Panel = registry.get("extended-openai-management-panel");
-    const prototype = Panel?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
-    prototype[PATCHED] = true;
+export function installManagementStateSafety(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementStateSafety(registry.get("extended-openai-management-panel")));
+  }
+  const prototype = Panel?.prototype;
+  if (!prototype || prototype[PATCHED]) return false;
+  prototype[PATCHED] = true;
 
-    const originalSetConfigDirty = prototype._setConfigDirty;
-    prototype._setConfigDirty = function(value) {
-      if (!value) {
-        this._eocDirtyConfigKeys = new Set();
-        return originalSetConfigDirty.call(this, false);
-      }
-      const result = originalSetConfigDirty.call(this, true);
-      if (this._eocDirtyConfigKeys instanceof Set) {
-        queueMicrotask(() => {
-          if (!(this._eocDirtyConfigKeys instanceof Set) || this._eocDirtyConfigKeys.size) return;
-          const changed = rebuildConfigDirtyKeys(this);
-          const dirty = changed.size > 0;
-          const wasDirty = Boolean(this._configDirty);
-          originalSetConfigDirty.call(this, dirty);
-          if (wasDirty && !dirty) this._render?.();
-        });
-      }
-      return result;
-    };
-
-    prototype._syncConfigDirty = function() {
-      const changed = rebuildConfigDirtyKeys(this);
-      return originalSetConfigDirty.call(this, changed.size > 0);
-    };
-
-    prototype._syncConfigControlDirty = function(control) {
-      const key = configKeyForControl(control);
-      if (key) applyTargetedConfigDirty(this, [key], control);
-    };
-
-    const originalNavigate = prototype._navigate;
-    prototype._navigate = async function(page, subsection = null) {
-      const targetSubsection = subsection || this._visibleSubsections(page)[0]?.id || null;
-      const destination = targetSubsection ? `${page}/${targetSubsection}` : page;
-      if (!await confirmStateSafeNavigation(this, destination)) return;
-      return originalNavigate.call(this, page, subsection);
-    };
-
-    const originalHandleRouteChange = prototype._handleRouteChange;
-    prototype._handleRouteChange = async function(route) {
-      const destination = route.section ? `${route.page}/${route.section}` : route.page;
-      if (!await confirmStateSafeNavigation(this, destination)) {
-        history.pushState({}, "", routePath(this._page, this._subsection));
-        return;
-      }
-      return originalHandleRouteChange.call(this, route);
-    };
-
-    const originalStartFreshGuestPolicy = prototype._startFreshGuestPolicy;
-    prototype._startFreshGuestPolicy = async function(...args) {
-      const result = await originalStartFreshGuestPolicy.apply(this, args);
-      syncGuestDirty(this);
-      return result;
-    };
-
-    const originalSetupGuestSelectors = prototype._setupGuestSelectors;
-    prototype._setupGuestSelectors = function(...args) {
-      const result = originalSetupGuestSelectors.apply(this, args);
-      this.shadowRoot.querySelectorAll("ha-selector[data-guest-key]").forEach((selector) => {
-        if (selector.__eocGuestDirtyBound) return;
-        selector.__eocGuestDirtyBound = true;
-        selector.addEventListener("value-changed", () => queueMicrotask(() => syncGuestDirty(this)));
+  const originalSetConfigDirty = prototype._setConfigDirty;
+  prototype._setConfigDirty = function(value) {
+    if (!value) {
+      this._eocDirtyConfigKeys = new Set();
+      return originalSetConfigDirty.call(this, false);
+    }
+    const result = originalSetConfigDirty.call(this, true);
+    if (this._eocDirtyConfigKeys instanceof Set) {
+      queueMicrotask(() => {
+        if (!(this._eocDirtyConfigKeys instanceof Set) || this._eocDirtyConfigKeys.size) return;
+        const changed = rebuildConfigDirtyKeys(this);
+        const dirty = changed.size > 0;
+        const wasDirty = Boolean(this._configDirty);
+        originalSetConfigDirty.call(this, dirty);
+        if (wasDirty && !dirty) this._render?.();
       });
-      return result;
-    };
+    }
+    return result;
+  };
 
-    const originalLoadAgents = prototype._loadAgents;
-    prototype._loadAgents = async function(selectedId = null) {
-      const preserveGuestDraft = this._viewKey() === "capabilities/guest-mode"
-        && (!selectedId || selectedId === this._agentId)
-        && syncGuestDirty(this);
-      const guestDraft = preserveGuestDraft ? clone(this._guestDraft) : null;
-      const guestBaseline = preserveGuestDraft ? clone(this._eocGuestBaseline) : null;
-      const guestAgent = preserveGuestDraft ? this._agentId : null;
-      const result = await originalLoadAgents.call(this, selectedId);
-      if (preserveGuestDraft && this._agentId === guestAgent) {
-        this._guestDraft = guestDraft;
-        this._eocGuestBaseline = guestBaseline;
-        this._eocGuestBaselineAgent = guestAgent;
-        this._guestDirty = true;
-        this._render();
-      }
-      return result;
-    };
+  prototype._syncConfigDirty = function() {
+    const changed = rebuildConfigDirtyKeys(this);
+    return originalSetConfigDirty.call(this, changed.size > 0);
+  };
 
-    const originalLoadSection = prototype._loadSection;
-    prototype._loadSection = function(silent = false) {
-      const view = this._viewKey();
-      const cache = prepareSectionCache(this, view);
-      const result = originalLoadSection.call(this, silent);
-      return Promise.resolve(result).then((value) => {
-        markSectionCache(this, cache.key, cache.reused);
-        if (view === "capabilities/guest-mode" && this._guestDraft && !this._guestDirty) setGuestBaseline(this);
-        return value;
-      });
-    };
+  prototype._syncConfigControlDirty = function(control) {
+    const key = configKeyForControl(control);
+    if (key) applyTargetedConfigDirty(this, [key], control);
+  };
 
-    const originalInvalidate = prototype._invalidateAfterMutation;
-    prototype._invalidateAfterMutation = function(...args) {
-      const result = originalInvalidate.apply(this, args);
-      if (this._eocSectionCacheTimes) {
-        for (const key of this._eocSectionCacheTimes.keys()) {
-          if (!this._sectionCache.has(key)) this._eocSectionCacheTimes.delete(key);
-        }
-      }
-      if (args[1] === "guest_mode" && args[2] === "save_policy") setGuestBaseline(this);
-      return result;
-    };
+  const originalNavigate = prototype._navigate;
+  prototype._navigate = async function(page, subsection = null) {
+    const targetSubsection = subsection || this._visibleSubsections(page)[0]?.id || null;
+    const destination = targetSubsection ? `${page}/${targetSubsection}` : page;
+    if (!await confirmStateSafeNavigation(this, destination)) return;
+    return originalNavigate.call(this, page, subsection);
+  };
 
-    const originalRender = prototype._render;
-    prototype._render = function(...args) {
-      const result = originalRender.apply(this, args);
-      bindStateSafety(this);
-      return result;
-    };
+  const originalHandleRouteChange = prototype._handleRouteChange;
+  prototype._handleRouteChange = async function(route) {
+    const destination = route.section ? `${route.page}/${route.section}` : route.page;
+    if (!await confirmStateSafeNavigation(this, destination)) {
+      history.pushState({}, "", routePath(this._page, this._subsection));
+      return;
+    }
+    return originalHandleRouteChange.call(this, route);
+  };
 
-    const originalDisconnected = prototype.disconnectedCallback;
-    prototype.disconnectedCallback = function(...args) {
-      if (this._eocStateBeforeUnload) {
-        window.removeEventListener("beforeunload", this._eocStateBeforeUnload);
-        this._eocStateBeforeUnload = null;
-      }
-      if (this._eocStateFocus) {
-        window.removeEventListener("focus", this._eocStateFocus);
-        this._eocStateFocus = null;
-      }
-      return originalDisconnected?.apply(this, args);
-    };
+  const originalStartFreshGuestPolicy = prototype._startFreshGuestPolicy;
+  prototype._startFreshGuestPolicy = async function(...args) {
+    const result = await originalStartFreshGuestPolicy.apply(this, args);
+    syncGuestDirty(this);
+    return result;
+  };
 
-    return true;
-  });
-}
+  const originalSetupGuestSelectors = prototype._setupGuestSelectors;
+  prototype._setupGuestSelectors = function(...args) {
+    const result = originalSetupGuestSelectors.apply(this, args);
+    this.shadowRoot.querySelectorAll("ha-selector[data-guest-key]").forEach((selector) => {
+      if (selector.__eocGuestDirtyBound) return;
+      selector.__eocGuestDirtyBound = true;
+      selector.addEventListener("value-changed", () => queueMicrotask(() => syncGuestDirty(this)));
+    });
+    return result;
+  };
 
-if (typeof customElements !== "undefined") {
-  void installManagementStateSafety();
+  const originalLoadAgents = prototype._loadAgents;
+  prototype._loadAgents = async function(selectedId = null) {
+    const preserveGuestDraft = this._viewKey() === "capabilities/guest-mode"
+      && (!selectedId || selectedId === this._agentId)
+      && syncGuestDirty(this);
+    const guestDraft = preserveGuestDraft ? clone(this._guestDraft) : null;
+    const guestBaseline = preserveGuestDraft ? clone(this._eocGuestBaseline) : null;
+    const guestAgent = preserveGuestDraft ? this._agentId : null;
+    const result = await originalLoadAgents.call(this, selectedId);
+    if (preserveGuestDraft && this._agentId === guestAgent) {
+      this._guestDraft = guestDraft;
+      this._eocGuestBaseline = guestBaseline;
+      this._eocGuestBaselineAgent = guestAgent;
+      this._guestDirty = true;
+      this._render();
+    }
+    return result;
+  };
+
+  const originalLoadSection = prototype._loadSection;
+  prototype._loadSection = function(silent = false) {
+    const view = this._viewKey();
+    const result = originalLoadSection.call(this, silent);
+    return Promise.resolve(result).then((value) => {
+      if (view === "capabilities/guest-mode" && this._guestDraft && !this._guestDirty) setGuestBaseline(this);
+      return value;
+    });
+  };
+
+  const originalInvalidate = prototype._invalidateAfterMutation;
+  prototype._invalidateAfterMutation = function(...args) {
+    const result = originalInvalidate.apply(this, args);
+    if (args[1] === "guest_mode" && args[2] === "save_policy") setGuestBaseline(this);
+    return result;
+  };
+
+  const originalRender = prototype._render;
+  prototype._render = function(...args) {
+    const result = originalRender.apply(this, args);
+    bindStateSafety(this);
+    return result;
+  };
+
+  const originalDisconnected = prototype.disconnectedCallback;
+  prototype.disconnectedCallback = function(...args) {
+    if (this._eocStateBeforeUnload) {
+      window.removeEventListener("beforeunload", this._eocStateBeforeUnload);
+      this._eocStateBeforeUnload = null;
+    }
+    if (this._eocStateFocus) {
+      window.removeEventListener("focus", this._eocStateFocus);
+      this._eocStateFocus = null;
+    }
+    return originalDisconnected?.apply(this, args);
+  };
+
+  return true;
 }

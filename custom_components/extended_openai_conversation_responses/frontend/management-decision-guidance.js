@@ -323,35 +323,34 @@ function enhancePanel(panel) {
   enhanceRequestRules(panel);
 }
 
-export function installManagementDecisionGuidance(registry = globalThis.customElements) {
-  if (typeof document === "undefined" || !registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
+export function installManagementDecisionGuidance(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementDecisionGuidance(registry.get("extended-openai-management-panel")));
+  }
+  const constructor = Panel;
+  const prototype = constructor?.prototype;
+  if (!prototype || prototype[PATCHED]) return false;
 
-    const originalRender = prototype._render;
-    prototype._render = function(...args) {
-      const result = originalRender.apply(this, args);
-      enhancePanel(this);
-      queueMicrotask(() => enhancePanel(this));
-      return result;
-    };
+  const originalRender = prototype._render;
+  prototype._render = function(...args) {
+    const result = originalRender.apply(this, args);
+    enhancePanel(this);
+    queueMicrotask(() => enhancePanel(this));
+    return result;
+  };
 
-    const originalConfirm = prototype._confirm;
-    prototype._confirm = function(...args) {
-      const subject = this._eocDecisionConfirmSubject || "";
-      this._eocDecisionConfirmSubject = "";
-      const result = originalConfirm.apply(this, args);
-      enhanceConfirmationScope(this, subject);
-      return result;
-    };
+  const originalConfirm = prototype._confirm;
+  prototype._confirm = function(...args) {
+    const subject = this._eocDecisionConfirmSubject || "";
+    this._eocDecisionConfirmSubject = "";
+    const result = originalConfirm.apply(this, args);
+    enhanceConfirmationScope(this, subject);
+    return result;
+  };
 
-    prototype[PATCHED] = true;
-    return true;
-  });
-}
-
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  void installManagementDecisionGuidance();
+  prototype[PATCHED] = true;
+  return true;
 }

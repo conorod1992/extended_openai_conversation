@@ -7,7 +7,7 @@ const frontend = (name) => new URL(
 );
 
 const [loading, overview, guide, debug, agentEditor, agentLoader, agentNativeYaml, requestRules, requestRulesLoader, bootstrap, routes] = await Promise.all([
-  readFile(frontend("management-loading-performance.js"), "utf8"),
+  readFile(frontend("management-actions.js"), "utf8"),
   readFile(frontend("overview-page.js"), "utf8"),
   readFile(frontend("guide-page.js"), "utf8"),
   readFile(frontend("debug-management.js"), "utf8"),
@@ -17,23 +17,24 @@ const [loading, overview, guide, debug, agentEditor, agentLoader, agentNativeYam
   readFile(frontend("request-rules-ui.js"), "utf8"),
   readFile(frontend("request-rules-loader.js"), "utf8"),
   readFile(frontend("management-bootstrap.js"), "utf8"),
-  readFile(frontend("management-route-performance.js"), "utf8"),
+  readFile(frontend("management-route.js"), "utf8"),
 ]);
 
-assert.match(loading, /_call\("overview", "summary"\)/);
+const panelSource = await readFile(frontend("management-panel.js"), "utf8");
+assert.match(panelSource, /_call\("overview", "summary"\)/);
 assert.match(loading, /_call\("configuration", "save"/);
 assert.doesNotMatch(loading, /_loadAgents\(panel\._agentId\)/);
-assert.match(loading, /SCOPE_CACHE_TTL_MS = 30_000/);
+assert.match(panelSource, /Date.now\(\) - loadedAt > SCOPE_CACHE_TTL_MS/);
 assert.match(loading, /event\.stopImmediatePropagation\(\)/);
-assert.match(loading, /panel\._viewKey\(\) === view && panel\._eocViewAssetToken === assetToken/);
+assert.match(routes, /panel\._viewKey\(\) === view && panel\._eocViewAssetToken === assetToken/);
 assert.match(loading, /Document changed\. Validate & preview again before importing\./);
 assert.match(loading, /validatedImportMatches\(panel\._importDocument, current\)/);
-assert.match(loading, /section === "guest_mode" && action === "update"/);
+assert.match(panelSource, /section === "guest_mode" && action === "update"/);
 assert.match(loading, /button\.id === "guest-policy-save"/);
 assert.match(loading, /button\.classList\.contains\("rule-duplicate"\)/);
 assert.match(loading, /button\.classList\.contains\("rule-delete"\)/);
 assert.match(loading, /input\?\.classList\?\.contains\("rule-enabled"\)/);
-assert.match(loading, /this\._eocRuleSavePromise/);
+assert.match(panelSource, /this\._eocRuleSavePromise/);
 
 assert.match(overview, /import\("\.\/overview-page-impl\.js"\)/);
 assert.doesNotMatch(overview, /from "\.\/overview-page-impl\.js"/);
@@ -43,7 +44,9 @@ assert.doesNotMatch(guide, /from "\.\/guide-page-base\.js"/);
 assert.match(debug, /import\("\.\/debug-panel\.js"\)/);
 assert.doesNotMatch(debug, /^import "\.\/debug-panel\.js"/m);
 
-assert.match(agentEditor, /import "\.\/management-bootstrap\.js"/);
+assert.doesNotMatch(agentEditor, /management-bootstrap\.js/);
+assert.match(routes, /import\("\.\/agent-config-editor\.js"\)/);
+assert.doesNotMatch(panelSource, /from "\.\/agent-config-editor\.js"/);
 assert.doesNotMatch(agentEditor, /from "\.\/agent-config-editor-base\.js"/);
 assert.doesNotMatch(agentEditor, /export \* from "\.\/agent-config-editor-base\.js"/);
 assert.match(agentLoader, /import\("\.\/agent-config-native-yaml\.js"\)/);
@@ -52,21 +55,18 @@ assert.match(agentNativeYaml, /import \* as base from "\.\/agent-config-editor-m
 assert.match(agentNativeYaml, /export \* from "\.\/agent-config-editor-model-v2\.js"/);
 assert.doesNotMatch(requestRules, /from "\.\/request-rules-ui-impl\.js"/);
 assert.match(requestRulesLoader, /import\("\.\/request-rules-ui-impl\.js"\)/);
-assert.match(bootstrap, /await import\("\.\/management-rendering-performance\.js"\)/);
-assert.match(bootstrap, /await import\("\.\/management-loading-performance\.js"\)/);
-assert.match(bootstrap, /await import\("\.\/management-route-performance\.js"\)/);
 assert.match(routes, /event\.stopImmediatePropagation\(\)/);
 assert.doesNotMatch(routes, /panel\._render\(\);\s*\/\/.*rule-search/);
 
 const overviewModule = await import(frontend("overview-page.js"));
 const guideModule = await import(frontend("guide-page.js"));
-const loadingModule = await import(frontend("management-loading-performance.js"));
-const routeModule = await import(frontend("management-route-performance.js"));
+const loadingModule = await import(frontend("management-actions.js"));
+const routeModule = await import(frontend("management-route.js"));
 assert.equal(typeof overviewModule.renderOverview, "function");
 assert.equal(typeof overviewModule.bindOverview, "function");
 assert.equal(typeof guideModule.renderGuide, "function");
 assert.equal(typeof guideModule.bindGuide, "function");
-assert.equal(typeof loadingModule.loadSectionAlongsideAsset, "function");
+assert.equal(typeof routeModule.loadSectionAlongsideAsset, "function");
 assert.equal(loadingModule.fieldErrorKey("title"), "__title");
 assert.equal(loadingModule.fieldErrorKey("chat_model"), "chat_model");
 
@@ -175,7 +175,7 @@ const panel = {
 };
 const deferredAsset = new Promise((resolve) => { resolveAsset = resolve; });
 const deferredSection = new Promise((resolve) => { resolveSection = resolve; });
-const pendingLoad = loadingModule.loadSectionAlongsideAsset(
+const pendingLoad = routeModule.loadSectionAlongsideAsset(
   panel,
   false,
   () => {
@@ -201,7 +201,7 @@ panel._eocViewAssetToken += 1;
 const supersededToken = panel._eocViewAssetToken;
 let rejectSupersededAsset;
 const supersededAsset = new Promise((_resolve, reject) => { rejectSupersededAsset = reject; });
-const supersededLoad = loadingModule.loadSectionAlongsideAsset(
+const supersededLoad = routeModule.loadSectionAlongsideAsset(
   panel,
   false,
   () => {
@@ -221,7 +221,7 @@ assert.equal(panel._error, null);
 currentView = "usage-maintenance/request-debug";
 panel._eocViewAssetToken += 1;
 const currentToken = panel._eocViewAssetToken;
-const failedLoad = loadingModule.loadSectionAlongsideAsset(
+const failedLoad = routeModule.loadSectionAlongsideAsset(
   panel,
   false,
   () => {
@@ -236,3 +236,9 @@ assert.equal(await failedLoad, undefined);
 assert.equal(panel._busy, false);
 assert.match(panel._error, /Unable to load this frontend section: lazy import failed/);
 assert.equal(renders, 1);
+
+for (const name of ["management-actions.js", "management-route.js", "management-renderer.js"]) {
+  const source = await readFile(frontend(name), "utf8");
+  assert.doesNotMatch(source, /prototype\.|whenDefined|customElements/);
+  assert.ok(!bootstrap.includes(`await import("./${name}")`));
+}

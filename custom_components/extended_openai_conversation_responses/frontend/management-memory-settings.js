@@ -1,5 +1,5 @@
 import "./management-temporary-memory.js";
-import {bindMemorySettings, renderMemorySettings} from "./memory-settings-ui.js";
+import {getRouteFeature} from "./management-route.js";
 
 const PATCHED = Symbol.for("extended-openai.management-memory-settings");
 const MEMORY_FIELDS = [
@@ -40,52 +40,52 @@ function bindModelReset(panel) {
   });
 }
 
-export function installManagementMemorySettings(registry = globalThis.customElements) {
-  if (!registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
+export function installManagementMemorySettings(Panel) {
+  // A constructor is the production API; registry callers remain supported.
+  if (typeof Panel !== "function") {
+    const registry = Panel || globalThis.customElements;
+    if (!registry?.whenDefined) return Promise.resolve(false);
+    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementMemorySettings(registry.get("extended-openai-management-panel")));
+  }
+  const constructor = Panel;
+  const prototype = constructor?.prototype;
+  if (!prototype || prototype[PATCHED]) return false;
 
-    const originalIsDraftView = prototype._isDraftView;
-    prototype._isDraftView = function(page = this._page, subsection = this._subsection) {
-      if (page === "data-memory" && subsection === "memory-settings") return this._data?.is_admin !== false;
-      return originalIsDraftView.call(this, page, subsection);
-    };
+  const originalIsDraftView = prototype._isDraftView;
+  prototype._isDraftView = function(page = this._page, subsection = this._subsection) {
+    if (page === "data-memory" && subsection === "memory-settings") return this._data?.is_admin !== false;
+    return originalIsDraftView.call(this, page, subsection);
+  };
 
-    const originalCanAccessView = prototype._canAccessView;
-    prototype._canAccessView = function(page, subsection = null) {
-      if (page === "data-memory" && subsection === "memory-settings" && this._data?.is_admin === false) return false;
-      return originalCanAccessView.call(this, page, subsection);
-    };
+  const originalCanAccessView = prototype._canAccessView;
+  prototype._canAccessView = function(page, subsection = null) {
+    if (page === "data-memory" && subsection === "memory-settings" && this._data?.is_admin === false) return false;
+    return originalCanAccessView.call(this, page, subsection);
+  };
 
-    const originalContent = prototype._content;
-    prototype._content = function(agent) {
-      const view = this._viewKey();
-      if (view === "data-memory/memory-settings") return renderMemorySettings(this);
-      const content = originalContent.call(this, agent);
-      if (["assistant/model-responses", "assistant/voice"].includes(view)) {
-        return stripMovedMemoryControls(content, view);
-      }
-      return content;
-    };
+  const originalContent = prototype._content;
+  prototype._content = function(agent) {
+    const view = this._viewKey();
+    if (view === "data-memory/memory-settings") return getRouteFeature(view)?.renderMemorySettings(this) || this._loading();
+    const content = originalContent.call(this, agent);
+    if (["assistant/model-responses", "assistant/voice"].includes(view)) {
+      return stripMovedMemoryControls(content, view);
+    }
+    return content;
+  };
 
-    const originalBindActions = prototype._bindActions;
-    prototype._bindActions = function(...args) {
-      const result = originalBindActions.apply(this, args);
-      const view = this._viewKey();
-      if (view === "data-memory/memory-settings") bindMemorySettings(this);
-      if (view === "assistant/model-responses") bindModelReset(this);
-      return result;
-    };
+  const originalBindActions = prototype._bindActions;
+  prototype._bindActions = function(...args) {
+    const result = originalBindActions.apply(this, args);
+    const view = this._viewKey();
+    if (view === "data-memory/memory-settings") getRouteFeature(view)?.bindMemorySettings(this);
+    if (view === "assistant/model-responses") bindModelReset(this);
+    return result;
+  };
 
-    prototype[PATCHED] = true;
-    return true;
-  });
+  prototype[PATCHED] = true;
+  return true;
 }
 
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  installManagementMemorySettings();
-}
 
 export {MODEL_RESET_FIELDS, stripMovedMemoryControls};

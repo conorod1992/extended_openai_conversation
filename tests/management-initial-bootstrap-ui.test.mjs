@@ -6,7 +6,7 @@ const frontend = (name) => new URL(
   import.meta.url,
 );
 
-const source = await readFile(frontend("management-overview-health-clarity.js"), "utf8");
+const source = await readFile(frontend("management-route.js"), "utf8") + await readFile(frontend("management-renderer.js"), "utf8");
 assert.match(source, /panel\?\._data !== null/);
 assert.match(source, /main\.dataset\.eocInitialLoading/);
 assert.match(source, /panel\._loading\?\.\(\)/);
@@ -16,7 +16,7 @@ assert.match(source, /action: "summary"/);
 assert.match(source, /type: WS_TYPE, action: "agents"/);
 assert.match(source, /extended-openai-agent-entry/);
 
-const module = await import(frontend("management-overview-health-clarity.js"));
+const module = {...await import(frontend("management-route.js")), ...await import(frontend("management-renderer.js"))};
 
 const loadingMain = {
   innerHTML: "<div class=\"empty\">No conversation agents configured.</div>",
