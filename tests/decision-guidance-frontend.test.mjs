@@ -7,6 +7,8 @@ import {
   displayDefaultValue,
   formatLiveRequestResult,
   requestRuleSummary,
+  renderLiveRequestTester,
+  restoreScopeMarkup,
 } from "../custom_components/extended_openai_conversation_responses/frontend/management-decision-guidance.js";
 
 assert.equal(
@@ -23,8 +25,7 @@ assert.equal(displayDefaultValue("memory_retrieval_mode", "lexical"), "Keyword m
 assert.deepEqual(
   configurationDecisionBadges("api_mode", {api_mode:"auto"}),
   [
-    {kind:"default", text:"Default: Automatic (Auto)"},
-    {kind:"recommended", text:"Recommended: Automatic (Auto)"},
+    {kind:"recommended", text:"Recommended default: Automatic (Auto)"},
   ],
 );
 assert.deepEqual(
@@ -79,8 +80,8 @@ const source = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/management-decision-guidance.js", import.meta.url),
   "utf8",
 );
-assert.match(source, /Preview rule match \(safe\)/);
-assert.match(source, /Safe preview — nothing executes/);
+assert.match(renderLiveRequestTester(), /Run full request \(live\)/);
+assert.match(restoreScopeMarkup({_selectedAgent:()=>({title:"Kitchen"}),_e:String}), /This backup will replace:.*Kitchen/);
 assert.match(source, /eoc-rule-live-test/);
 assert.match(source, /Run full request\?/);
 assert.match(source, /panel\._call\("request_rules", "test", \{text\}\)/);

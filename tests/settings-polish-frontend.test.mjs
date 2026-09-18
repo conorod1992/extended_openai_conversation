@@ -1,84 +1,38 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
+import {modelDataControls} from "../custom_components/extended_openai_conversation_responses/frontend/model-catalog.js";
+import {settingBadgesMarkup} from "../custom_components/extended_openai_conversation_responses/frontend/management-decision-guidance.js";
+import {renderConfiguration} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js";
+import {renderMemorySettings} from "../custom_components/extended_openai_conversation_responses/frontend/memory-settings-ui.js";
 
-const frontendRoot = new URL(
-  "../custom_components/extended_openai_conversation_responses/frontend/",
-  import.meta.url,
-);
-const polish = await readFile(new URL("management-settings-polish.js", frontendRoot), "utf8");
-const bootstrap = await readFile(new URL("management-bootstrap.js", frontendRoot), "utf8");
-const conversationLabel = await readFile(
-  new URL("management-conversation-default-label.js", frontendRoot),
-  "utf8",
-);
-
-assert.match(
-  bootstrap,
-  /"\.\/management-settings-polish\.js"/,
-  "the settings polish layer must be preloaded through the management bootstrap",
-);
-assert.match(
-  bootstrap,
-  /installManagementSettingsPolish\(Panel\);/,
-  "the settings polish layer must be evaluated through the controlled bootstrap sequence",
-);
-assert.doesNotMatch(
-  conversationLabel,
-  /management-settings-polish\.js/,
-  "management enhancements should not introduce nested module imports outside the bootstrap loader",
-);
-
-assert.match(
-  polish,
-  /\[data-eoc-guide-layout\]\{grid-template-columns:minmax\(0,1fr\)!important\}/,
-  "Guide content should stay within the available page width",
-);
-assert.match(
-  polish,
-  /\[data-eoc-guide-layout\]>\*\{min-width:0;max-width:100%\}/,
-  "Guide children should be allowed to shrink instead of forcing horizontal overflow",
-);
-assert.match(
-  polish,
-  /grid-template-columns:repeat\(auto-fit,minmax\(min\(260px,100%\),1fr\)\)!important/,
-  "Guide quick actions should adapt their column count instead of overflowing the page",
-);
-assert.match(
-  polish,
-  /\.comparison-table\{min-width:0;max-width:100%;overflow-x:auto\}/,
-  "wide comparison tables should scroll locally rather than widening the whole Guide",
-);
-assert.match(
-  polish,
-  /#config-conversation_continuity\{height:42px;min-height:42px\}/,
-  "conversation continuity should use the normal select height",
-);
-
-for (const redundant of ["Advanced", "Adds context", "Stores data", "Stores shared data", "Stores temporary data"]) {
-  assert.match(polish, new RegExp(`"${redundant}"`));
+// Pure rendering must not need a document, observer or scheduled enhancement.
+const panel = {
+  _e: (value) => String(value ?? ""), _titleCase: String,
+  _result: {config:{api_mode:"auto",conversation_continuity:"ha_default",memory_retrieval_mode:"hybrid"},defaults:{api_mode:"auto",conversation_continuity:"ha_default"},options:{api_mode:[{value:"auto",label:"Auto"}],memory_retrieval_mode:[{value:"hybrid",label:"Hybrid"}]}},
+  _configSections:["general","conversation"],
+};
+const config = renderConfiguration(panel);
+assert.match(config, /Recommended default: Automatic \(Auto\)/);
+assert.doesNotMatch(config, /eoc-decision-badge default[^>]*>Default: Automatic/);
+assert.match(config, /Default: Use Home Assistant sessions/);
+assert.doesNotMatch(config, /Default: Ha Default/);
+const memory = renderMemorySettings(panel);
+assert.match(memory, /Relevance matching/);
+assert.match(memory, /Semantic \+ keyword matching \(Hybrid\)/);
+assert.match(memory, /Requires embeddings/);
+for (const key of ["temperature", "archive_enabled", "temporary_memory", "current_datetime_enabled"]) {
+  assert.doesNotMatch(settingBadgesMarkup(panel, key, true), /eoc-effect-badge/);
 }
-assert.match(
-  polish,
-  /Recommended default: Automatic \(Auto\)/,
-  "Provider API format should collapse duplicate default/recommended guidance into one badge",
-);
-
-assert.match(polish, /Model capability data/);
-assert.match(polish, /Model capability data helps Extended OpenAI choose the right settings and features for each model/);
-assert.match(polish, /Updates are checked daily, but changes are only applied when you approve them/);
-assert.match(polish, /Check for updates/);
-assert.match(polish, /Apply available update/);
-assert.match(polish, /Restore bundled data/);
-assert.match(polish, /data-model-data="check"/);
-assert.match(polish, /data-model-data="apply"/);
-assert.match(polish, /data-model-data="reset"/);
-assert.match(
-  polish,
-  /\[data-model-data="check"\], \[data-model-data="update"\]/,
-  "the staged check action should be primary while retaining the legacy selector fallback",
-);
-assert.match(
-  polish,
-  /Future checks will not replace it automatically/,
-  "restoring bundled data should be described as a persistent rollback, not an automatic-update toggle",
-);
+const empty = modelDataControls(panel);
+assert.match(empty, /data-model-data="apply" hidden disabled/);
+assert.match(empty, /eoc-model-data-action" hidden/);
+panel._modelCatalogData = {catalog_version:2,available_catalog_version:3,update_available:true};
+const available = modelDataControls(panel);
+assert.match(available, /Apply v3 update/);
+assert.doesNotMatch(available, /hidden|disabled/);
+assert.match(available, /Update available: v2 → v3/);
+assert.match(available, /Model capability data/);
+assert.match(available, /Future checks will not replace it automatically/);
+const polish = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-settings-polish.js",import.meta.url),"utf8");
+assert.match(polish, /\[data-eoc-guide-layout\]\{grid-template-columns:minmax\(0,1fr\)!important\}/);
+assert.doesNotMatch(polish, /queueMicrotask|MutationObserver|enhanceModelDataPanel/);

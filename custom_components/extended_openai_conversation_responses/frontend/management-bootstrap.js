@@ -4,7 +4,6 @@ import {installManagementToolbarLayout} from "./management-toolbar-layout.js";
 import {installManagementConfigurationClarity} from "./management-configuration-clarity.js";
 import {installManagementConfigurationGuidance} from "./management-configuration-guidance.js";
 import {installManagementDecisionGuidance} from "./management-decision-guidance.js";
-import {installManagementConversationDefaultLabel} from "./management-conversation-default-label.js";
 import {installManagementSettingsPolish} from "./management-settings-polish.js";
 import {installManagementOverviewHealthClarity} from "./management-overview-health-clarity.js";
 
@@ -17,7 +16,6 @@ export function initializeManagementPanel(Panel) {
   installManagementConfigurationClarity(Panel);
   installManagementConfigurationGuidance(Panel);
   installManagementDecisionGuidance(Panel);
-  installManagementConversationDefaultLabel(Panel);
   installManagementSettingsPolish(Panel);
   installManagementOverviewHealthClarity(Panel);
 }

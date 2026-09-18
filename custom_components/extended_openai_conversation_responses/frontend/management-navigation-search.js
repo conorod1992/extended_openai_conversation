@@ -1,3 +1,4 @@
+import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-configuration-clarity.js";
 import {SETTINGS_INDEX, pageMetadata} from "./frontend-navigation.js";
 
 export function buildSettingsSearchProjection(settings = SETTINGS_INDEX) {
@@ -10,7 +11,7 @@ export function buildSettingsSearchProjection(settings = SETTINGS_INDEX) {
       item,
       index,
       label: label.toLowerCase(),
-      haystack: `${label} ${description} ${terms} ${configKey}`.toLowerCase(),
+      haystack: `${label} ${description} ${terms} ${configKey} ${settingSearchAliases(configKey)}`.toLowerCase(),
     };
   });
 }
@@ -99,7 +100,7 @@ export function settingCurrentState(item, panel, explicitData = null) {
   const value = item.configKey === "__title" ? active.title : active.config?.[item.configKey];
   if (value === undefined) return null;
   let display;
-  const choice = optionLabel(active.data, item.configKey, value);
+  const choice = friendlySettingValue(item.configKey, value) || optionLabel(active.data, item.configKey, value);
   if (choice) display = choice;
   else if (item.format === "boolean") display = value ? "On" : "Off";
   else if (item.format === "template") display = String(value || "").trim() ? "Custom" : "Default";
@@ -146,7 +147,7 @@ function searchMarkup(panel) {
     const current = state
       ? `<span class="settings-current">${panel._e(state.label)}: ${panel._e(state.value)}</span>`
       : item.configKey && configLoading ? '<span class="settings-current settings-loading">Current value loading…</span>' : "";
-    return `<button type="button" class="settings-result" role="option" data-page="${panel._e(item.page)}" data-subsection="${panel._e(item.section)}" data-target="${panel._e(item.target || "")}"><strong>${panel._e(item.label)}</strong><span class="setting-path">${panel._e(pathLabel(item))}</span><small>${panel._e(item.description)}</small>${current}</button>`;
+    return `<button type="button" class="settings-result" role="option" data-page="${panel._e(item.page)}" data-subsection="${panel._e(item.section)}" data-target="${panel._e(item.target || "")}"><strong>${panel._e(friendlySettingLabel(item.configKey) || item.label)}</strong><span class="setting-path">${panel._e(pathLabel(item))}</span><small>${panel._e(item.description)}</small>${current}</button>`;
   }).join("") || '<p class="empty">No settings match.</p>'}</div>` : ""}</div>`;
 }
 

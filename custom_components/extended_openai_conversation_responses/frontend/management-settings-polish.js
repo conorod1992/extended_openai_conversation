@@ -1,13 +1,5 @@
 const PATCHED = Symbol.for("extended-openai.management-settings-polish");
 
-const REDUNDANT_EFFECT_BADGES = new Set([
-  "Advanced",
-  "Adds context",
-  "Stores data",
-  "Stores shared data",
-  "Stores temporary data",
-]);
-
 function ensureStyles(panel) {
   const root = panel?.shadowRoot;
   if (!root || root.querySelector("style[data-eoc-settings-polish]")) return;
@@ -58,118 +50,9 @@ function applyGuideLayout(panel) {
   else delete main.dataset.eocGuideLayout;
 }
 
-function pruneRedundantBadges(panel) {
-  const root = panel?.shadowRoot;
-  if (!root) return;
-
-  root.querySelectorAll(".eoc-effect-badge").forEach((badge) => {
-    if (REDUNDANT_EFFECT_BADGES.has(badge.textContent?.trim())) badge.remove();
-  });
-
-  const apiField = root.querySelector('[data-field="api_mode"]');
-  const defaultBadge = apiField?.querySelector(".eoc-decision-badge.default");
-  const recommendedBadge = apiField?.querySelector(".eoc-decision-badge.recommended");
-  if (defaultBadge && recommendedBadge) {
-    recommendedBadge.textContent = "Recommended default: Automatic (Auto)";
-    defaultBadge.remove();
-  }
-}
-
-function modelActionCard(button, title, text) {
-  if (!button) return null;
-  const card = document.createElement("div");
-  card.className = "eoc-model-data-action";
-  card.hidden = button.hidden;
-  const heading = document.createElement("strong");
-  heading.textContent = title;
-  const copy = document.createElement("p");
-  copy.textContent = text;
-  button.classList.remove("compact-button", "section-reset");
-  card.append(heading, copy, button);
-  return card;
-}
-
-function enhanceModelDataPanel(panel) {
-  const root = panel?.shadowRoot;
-  const section = root?.querySelector("#config-model");
-  if (!section || section.querySelector("[data-eoc-model-data-panel]")) return;
-
-  const checkData = section.querySelector('[data-model-data="check"], [data-model-data="update"]');
-  const applyData = section.querySelector('[data-model-data="apply"]');
-  const useBundled = section.querySelector('[data-model-data="reset"]');
-  const status = section.querySelector("[data-model-data-status]");
-  if (!checkData || !useBundled || !status) return;
-
-  const oldActions = checkData.closest(".section-actions");
-  const panelNode = document.createElement("div");
-  panelNode.className = "eoc-model-data-panel";
-  panelNode.dataset.eocModelDataPanel = "";
-
-  const heading = document.createElement("div");
-  heading.className = "eoc-model-data-heading";
-  const title = document.createElement("h3");
-  title.textContent = "Model capability data";
-  const intro = document.createElement("p");
-  intro.textContent = "Model capability data helps Extended OpenAI choose the right settings and features for each model. Updates are checked daily, but changes are only applied when you approve them.";
-  heading.append(title, intro);
-
-  const actions = document.createElement("div");
-  actions.className = "eoc-model-data-actions";
-  const cards = [
-    modelActionCard(
-      checkData,
-      "Check for updates",
-      "Check the remote model catalogue now instead of waiting for the next daily background check.",
-    ),
-    modelActionCard(
-      applyData,
-      "Apply available update",
-      "Activate the newer catalogue found by the most recent check. This changes the shared capability data used by all agents.",
-    ),
-    modelActionCard(
-      useBundled,
-      "Restore bundled data",
-      "Return to the known-good model capability data shipped with this installed integration. Future checks will not replace it automatically.",
-    ),
-  ].filter(Boolean);
-  actions.append(...cards);
-
-  const statusBox = document.createElement("div");
-  statusBox.className = "eoc-model-data-status";
-  const statusTitle = document.createElement("strong");
-  statusTitle.textContent = "Model data status";
-  statusBox.append(statusTitle, status);
-
-  oldActions?.remove();
-  panelNode.append(heading, actions, statusBox);
-  section.append(panelNode);
-}
-
 export function polishSettingsLayout(panel) {
   ensureStyles(panel);
   applyGuideLayout(panel);
-  pruneRedundantBadges(panel);
-  enhanceModelDataPanel(panel);
-}
-
-function schedulePolish(panel) {
-  if (panel._eocSettingsPolishScheduled) return;
-  panel._eocSettingsPolishScheduled = true;
-  // Other management decorators also finish in microtasks. Queue one extra turn
-  // so cleanup and structural polish run after them regardless of import order.
-  queueMicrotask(() => queueMicrotask(() => {
-    panel._eocSettingsPolishScheduled = false;
-    polishSettingsLayout(panel);
-  }));
-}
-
-function bindInteractionPolish(panel) {
-  const root = panel?.shadowRoot;
-  if (!root || root.__eocSettingsPolishBound) return;
-  root.__eocSettingsPolishBound = true;
-  root.addEventListener("input", () => schedulePolish(panel));
-  root.addEventListener("change", () => schedulePolish(panel));
-  root.addEventListener("value-changed", () => schedulePolish(panel));
 }
 
 export function installManagementSettingsPolish(Panel) {
@@ -186,8 +69,7 @@ export function installManagementSettingsPolish(Panel) {
   const originalRender = prototype._renderContent;
   prototype._renderContent = function(...args) {
     const result = originalRender.apply(this, args);
-    bindInteractionPolish(this);
-    schedulePolish(this);
+    polishSettingsLayout(this);
     return result;
   };
 

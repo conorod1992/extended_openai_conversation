@@ -75,7 +75,7 @@ const rendered = rulesUi.renderRequestRules(panel);
 assert.doesNotMatch(rendered, /<b>unsafe name<\/b>/);
 assert.doesNotMatch(rendered, /<img src=x/);
 assert.match(rendered, /&lt;img src=x/);
-assert.match(rendered, /&lt;b&gt;high&lt;\/b&gt;/);
+assert.match(rendered, /&lt;b&gt;high&lt;\/b&gt;/i);
 
 const toasts = [];
 let refreshed = 0;

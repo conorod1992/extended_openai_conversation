@@ -40,16 +40,9 @@ export function formatRequestRuleMatchResult(panel, response) {
 }
 
 export function renderRequestRuleMatchTester() {
-  return `<section class="content-card" id="rule-match-tester"><h2>Test matching</h2><p>Check which enabled Request Rule would win for some text using the same bounded matcher as real requests.</p><div class="notice on"><strong>Safe preview only</strong><p>This checks matching only. It does not run Home Assistant actions, change conversation routing, or call the AI provider.</p></div><div class="search-row"><input id="rule-match-test-text" type="text" maxlength="${REQUEST_RULE_MATCH_MAX_CHARS}" placeholder="Turn off the kitchen light" aria-label="Request text to test against Request Rules"><button type="button" id="rule-match-test">Test match</button></div><p class="help">Preview and live Request Rule matching inspect at most ${REQUEST_RULE_MATCH_MAX_CHARS} characters (and 256 words).</p><div id="rule-match-test-result" aria-live="polite"></div></section>`;
+  return `<section class="content-card" id="rule-match-tester"><h2>Preview rule match (safe)</h2><p>Checks which enabled Request Rule would win using the real matcher, without running the resulting action.</p><div class="notice on"><strong>Safe preview — nothing executes</strong><p>No Home Assistant action runs, conversation routing is not changed, and the AI provider is not called.</p></div><div class="search-row"><input id="rule-match-test-text" type="text" maxlength="${REQUEST_RULE_MATCH_MAX_CHARS}" placeholder="Turn off the kitchen light" aria-label="Request text to test against Request Rules"><button type="button" id="rule-match-test">Preview match</button></div><p class="help">Preview and live Request Rule matching inspect at most ${REQUEST_RULE_MATCH_MAX_CHARS} characters (and 256 words).</p><div id="rule-match-test-result" aria-live="polite"></div></section>`;
 }
 
-export function transformRequestRulesMatchTester(html) {
-  const replacement = renderRequestRuleMatchTester();
-  return html.replace(
-    /<section class="content-card"><h2>Test a request<\/h2>[\s\S]*?<\/section>\s*$/,
-    replacement,
-  );
-}
 
 export function bindRequestRuleMatchTester(panel) {
   const root = panel.shadowRoot;

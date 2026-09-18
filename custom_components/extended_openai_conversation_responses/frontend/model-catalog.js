@@ -59,8 +59,14 @@ export function modelDataStatusText(result = {}) {
   return `Up to date — model data ${activeLabel}`;
 }
 
-export function modelDataControls() {
-  return `<div class="section-actions"><button type="button" class="secondary" data-model-data="check">Check for updates</button><button type="button" class="secondary" data-model-data="apply" hidden disabled>Apply update</button><button type="button" class="secondary" data-model-data="reset">Restore bundled data</button></div><p class="help" data-model-data-status role="status">Model data is shared by all agents. Background checks run daily; updates are applied only when you choose to apply them.</p>`;
+export function modelDataControls(panel) {
+  const data = panel?._modelCatalogData || {};
+  const available = Boolean(data.update_available);
+  const applyLabel = available && Number.isInteger(Number(data.available_catalog_version)) ? `Apply v${Number(data.available_catalog_version)} update` : "Apply update";
+  const card = (action, title, copy, label, hidden = false) => `<div class="eoc-model-data-action" ${hidden ? "hidden" : ""}><strong>${title}</strong><p>${copy}</p><button type="button" class="secondary" data-model-data="${action}" ${hidden ? "hidden disabled" : ""}>${label}</button></div>`;
+  const status = data.catalog_version !== undefined ? modelDataStatusText(data) : "Model data is shared by all agents. Background checks run daily; updates are applied only when you choose to apply them.";
+  const escape = panel?._e || ((value) => String(value).replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char]));
+  return `<div class="eoc-model-data-panel" data-eoc-model-data-panel><div class="eoc-model-data-heading"><h3>Model capability data</h3><p>Model capability data helps Extended OpenAI choose the right settings and features for each model. Updates are checked daily, but changes are only applied when you approve them.</p></div><div class="eoc-model-data-actions">${card("check", "Check for updates", "Check the remote model catalogue now instead of waiting for the next daily background check.", "Check for updates")}${card("apply", "Apply available update", "Activate the newer catalogue found by the most recent check. This changes the shared capability data used by all agents.", applyLabel, !available)}${card("reset", "Restore bundled data", "Return to the known-good model capability data shipped with this installed integration. Future checks will not replace it automatically.", "Restore bundled data")}</div><div class="eoc-model-data-status"><strong>Model data status</strong><p class="help" data-model-data-status role="status">${escape(status)}</p></div></div>`;
 }
 
 function syncModelDataControls(panel, result = panel?._modelCatalogData || {}) {
@@ -69,6 +75,8 @@ function syncModelDataControls(panel, result = panel?._modelCatalogData || {}) {
   const apply = root.querySelector('[data-model-data="apply"]');
   if (apply) {
     apply.hidden = !result.update_available;
+    const card = apply.closest?.(".eoc-model-data-action");
+    if (card) card.hidden = !result.update_available;
     apply.disabled = !result.update_available;
     if (result.update_available && Number.isInteger(Number(result.available_catalog_version))) {
       apply.textContent = `Apply v${Number(result.available_catalog_version)} update`;
@@ -82,7 +90,6 @@ function syncModelDataControls(panel, result = panel?._modelCatalogData || {}) {
 
 export function bindModelDataControls(panel, onUpdated = () => {}) {
   const root = panel.shadowRoot;
-  syncModelDataControls(panel);
   const buttons = root.querySelectorAll("[data-model-data]");
   buttons.forEach((button) => button.addEventListener("click", async () => {
     buttons.forEach((item) => { item.disabled = true; });
