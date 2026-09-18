@@ -309,9 +309,7 @@ def reset_restored_runtime(
     # A previous Store startup failure may have left the active entity using a
     # volatile Usage manager. Replace that exact stale pointer with the restored
     # durable manager rather than merely deleting the fallback registry entry.
-    fallback = hass.data.get(
-        usage._VOLATILE_USAGE_MANAGERS, {}
-    ).pop(key, None)
+    fallback = hass.data.get(usage._VOLATILE_USAGE_MANAGERS, {}).pop(key, None)
     if (
         fallback is not None
         and managers is not None
