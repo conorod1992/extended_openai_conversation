@@ -1,7 +1,5 @@
 import {friendlySettingLabel, settingEffectBadges} from "./management-configuration-clarity.js";
 
-const PATCHED = Symbol.for("extended-openai.management-configuration-guidance");
-
 const MODEL_PARAMETERS = Object.freeze([
   Object.freeze({
     key: "temperature",
@@ -378,7 +376,7 @@ export function storeRuntimeGuidance(panel, result, agentId = panel._agentId) {
   }
 }
 
-function enhancePanel(panel) {
+export function enhanceConfigurationGuidance(panel) {
   if (!panel.shadowRoot) return;
   ensureStyles(panel);
   clearGeneratedGuidance(panel);
@@ -395,7 +393,7 @@ function queueEnhance(panel) {
   panel._eocGuidanceEnhanceQueued = true;
   queueMicrotask(() => {
     panel._eocGuidanceEnhanceQueued = false;
-    enhancePanel(panel);
+    enhanceConfigurationGuidance(panel);
   });
 }
 
@@ -414,7 +412,7 @@ function refreshRuntimeGuidance(panel) {
     });
 }
 
-function bindHostEvents(panel) {
+export function bindConfigurationGuidance(panel) {
   if (panel._eocGuidanceHostBound) return;
   panel._eocGuidanceHostBound = true;
   panel.addEventListener("input", () => queueEnhance(panel), true);
@@ -426,29 +424,5 @@ function bindHostEvents(panel) {
     }
   }, true);
 }
-
-export function installManagementConfigurationGuidance(Panel) {
-  // A constructor is the production API; registry callers remain supported.
-  if (typeof Panel !== "function") {
-    const registry = Panel || globalThis.customElements;
-    if (!registry?.whenDefined) return Promise.resolve(false);
-    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementConfigurationGuidance(registry.get("extended-openai-management-panel")));
-  }
-  const constructor = Panel;
-  const prototype = constructor?.prototype;
-  if (!prototype || prototype[PATCHED]) return false;
-
-  const originalRender = prototype._renderContent;
-  prototype._renderContent = function(...args) {
-    const result = originalRender.apply(this, args);
-    bindHostEvents(this);
-    enhancePanel(this);
-    return result;
-  };
-
-  prototype[PATCHED] = true;
-  return true;
-}
-
 
 export {MODEL_PARAMETERS};
