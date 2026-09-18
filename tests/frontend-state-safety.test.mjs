@@ -6,16 +6,18 @@ const frontend = (name) => new URL(
   import.meta.url,
 );
 
-const [source, bootstrap] = await Promise.all([
+const [source, bootstrap, panelSource] = await Promise.all([
   readFile(frontend("management-state-safety.js"), "utf8"),
   readFile(frontend("management-bootstrap.js"), "utf8"),
+  readFile(frontend("management-panel.js"), "utf8"),
 ]);
 const stateSafety = await import(frontend("management-state-safety.js"));
-const bootstrapModule = await import(frontend("management-bootstrap.js"));
 
 assert.match(bootstrap, /from "\.\/management-state-safety\.js"/);
 assert.doesNotMatch(bootstrap, /debug-management\.js/);
-assert.match(bootstrap, /installPreDefinitionPropertyReplay\(Panel\)/);
+assert.doesNotMatch(bootstrap, /installPreDefinitionPropertyReplay/);
+assert.match(panelSource, /connectedCallback\(\)/);
+assert.match(panelSource, /Object\.prototype\.hasOwnProperty\.call\(this, name\)/);
 assert.doesNotMatch(bootstrap, /registry\.(define|get|whenDefined)\s*=/);
 assert.equal(stateSafety.SECTION_CACHE_TTL_MS, 30_000);
 assert.match(source, /Discard unsaved changes\?/);
@@ -26,22 +28,35 @@ assert.match(source, /window\.addEventListener\("focus"/);
 assert.match(source, /refreshPageSaveBar/);
 assert.match(source, /initializePageDraft/);
 
-class UpgradePanel {
-  constructor() {
-    this.hassCalls = 0;
-    this.routeCalls = 0;
+globalThis.window = {
+  location: {pathname: "/extended-openai/overview"},
+  addEventListener() {},
+  removeEventListener() {},
+};
+globalThis.history = {pushState() {}};
+globalThis.localStorage = {getItem() { return null; }, setItem() {}};
+globalThis.HTMLElement = class {
+  attachShadow() {
+    this.shadowRoot = {
+      hasChildNodes: () => false,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+    };
   }
-  set hass(value) {
-    this.hassCalls += 1;
-    this._hass = value;
-  }
-  set route(value) {
-    this.routeCalls += 1;
-    this._route = value;
-  }
-}
-assert.equal(bootstrapModule.installPreDefinitionPropertyReplay(UpgradePanel), true);
-const upgradedPanel = new UpgradePanel();
+};
+let definedPanel;
+globalThis.customElements = {
+  define(_name, constructor) { definedPanel = constructor; },
+  get() { return definedPanel; },
+  whenDefined() { return Promise.resolve(); },
+};
+
+const {ExtendedOpenAIManagementPanel} = await import(frontend("management-panel.js"));
+const upgradedPanel = new ExtendedOpenAIManagementPanel();
+let hassReplays = 0;
+let routeRenders = 0;
+upgradedPanel._loadAgents = () => { hassReplays += 1; };
+upgradedPanel._render = () => { routeRenders += 1; };
 Object.defineProperty(upgradedPanel, "hass", {
   configurable: true,
   enumerable: true,
@@ -57,15 +72,10 @@ Object.defineProperty(upgradedPanel, "route", {
 upgradedPanel.connectedCallback();
 assert.equal(Object.hasOwn(upgradedPanel, "hass"), false);
 assert.equal(Object.hasOwn(upgradedPanel, "route"), false);
-assert.equal(upgradedPanel.hassCalls, 1);
-assert.equal(upgradedPanel.routeCalls, 1);
+assert.equal(hassReplays, 1);
+assert.equal(routeRenders, 1);
 assert.deepEqual(upgradedPanel._hass, {connected: true});
 assert.deepEqual(upgradedPanel._route, {path: "/extended-openai/overview"});
-assert.equal(
-  bootstrapModule.installPreDefinitionPropertyReplay(UpgradePanel),
-  false,
-  "property replay patch must be idempotent",
-);
 
 const guestPanel = {
   _agentId: "agent-a",
