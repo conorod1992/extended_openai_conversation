@@ -1,5 +1,3 @@
-const PATCHED = Symbol.for("extended-openai.management-toolbar-layout");
-
 const TOOLBAR_STYLE = `
   header .global-search.eoc-global-search{
     width:min(380px,100%);
@@ -170,28 +168,5 @@ export function applyManagementToolbarLayout(panel) {
   if (subsectionNav) topNav.after(subsectionNav);
   return true;
 }
-
-export function installManagementToolbarLayout(Panel) {
-  // A constructor is the production API; registry callers remain supported.
-  if (typeof Panel !== "function") {
-    const registry = Panel || globalThis.customElements;
-    if (!registry?.whenDefined) return Promise.resolve(false);
-    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementToolbarLayout(registry.get("extended-openai-management-panel")));
-  }
-  const constructor = Panel;
-  const prototype = constructor?.prototype;
-  if (!prototype || prototype[PATCHED]) return false;
-
-  const originalRender = prototype._renderContent;
-  prototype._renderContent = function(...args) {
-    const result = originalRender.apply(this, args);
-    applyManagementToolbarLayout(this);
-    return result;
-  };
-
-  prototype[PATCHED] = true;
-  return true;
-}
-
 
 export {TOOLBAR_STYLE};
