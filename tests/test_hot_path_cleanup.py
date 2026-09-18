@@ -12,17 +12,11 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.extended_openai_conversation_responses import (
     debug,
-    lifecycle_optimizations,
     local_intents,
     request_rules,
 )
 from custom_components.extended_openai_conversation_responses.hot_path_cleanup import (
-    _USAGE_PRUNE_TASK,
     install_hot_path_cleanup,
-)
-from custom_components.extended_openai_conversation_responses.lifecycle_optimizations import (
-    _LAST_USAGE_PRUNE_DATE,
-    install_lifecycle_optimizations,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
     RequestRules,
@@ -35,30 +29,6 @@ from custom_components.extended_openai_conversation_responses.temporary_memory_p
     _PRUNE_SAVE_TASK,
     install_temporary_memory_read_fast_path,
 )
-from custom_components.extended_openai_conversation_responses.usage import (
-    RequestUsage,
-    UsageManager,
-    UsageRequest,
-)
-
-
-class DelayedStorage:
-    """In-memory Store stand-in exposing Home Assistant delayed-save behavior."""
-
-    def __init__(self) -> None:
-        self.data = None
-        self.immediate_saves = 0
-        self.delayed: list[tuple[object, float]] = []
-
-    async def async_load(self):
-        return deepcopy(self.data)
-
-    async def async_save(self, data):
-        self.immediate_saves += 1
-        self.data = deepcopy(data)
-
-    def async_delay_save(self, data_func, delay: float = 0) -> None:
-        self.delayed.append((data_func, delay))
 
 
 class BlockingStorage:
@@ -76,75 +46,6 @@ class BlockingStorage:
         self.started.set()
         await self.release.wait()
         self.data = deepcopy(data)
-
-
-async def _usage_manager():
-    totals = DelayedStorage()
-    daily = DelayedStorage()
-    details = DelayedStorage()
-    manager = UsageManager(totals, daily, details, agent_subentry_id="agent")
-    await manager.async_initialize()
-    return manager, totals, daily, details
-
-
-async def test_usage_delayed_save_builds_snapshot_only_when_store_requests_it() -> None:
-    """Delayed accounting must not serialize retained history on the request path."""
-    install_lifecycle_optimizations()
-    install_hot_path_cleanup()
-    manager, _totals, _daily, details = await _usage_manager()
-
-    async with manager.async_run(home_assistant_conversation_id="conversation-a"):
-        await manager.async_record_request(
-            successful=True,
-            usage=RequestUsage(input_tokens=5, output_tokens=2, total_tokens=7),
-            provider="openai",
-            model="gpt-5.6",
-            api_mode="responses",
-        )
-
-    assert details.immediate_saves == 0
-    assert details.delayed
-    data_func, _delay = details.delayed[-1]
-
-    # If the callback had captured an eagerly-built snapshot this later in-memory
-    # change would not be reflected. The delayed Store callback should instead read
-    # the latest coherent manager state when persistence is actually due.
-    manager.requests.clear()
-    payload = data_func()
-    assert payload["requests"] == []
-    assert len(payload["runs"]) == 1
-
-
-async def test_daily_usage_prune_is_scheduled_not_awaited_by_finalizer() -> None:
-    """The first retention pass of a new UTC day should run after the user turn."""
-    install_lifecycle_optimizations()
-    install_hot_path_cleanup()
-    manager, _totals, _daily, _details = await _usage_manager()
-    old = (dt_util.utcnow() - timedelta(days=120)).isoformat()
-    manager.request_retention_days = 30
-    manager.requests = [
-        UsageRequest(
-            request_id="old-request",
-            run_id="old-run",
-            timestamp=old,
-            agent_subentry_id="agent",
-            provider="openai",
-            model="gpt-5.6",
-            api_mode="responses",
-            successful=True,
-            duration_ms=1,
-        )
-    ]
-    setattr(manager, _LAST_USAGE_PRUNE_DATE, "1900-01-01")
-
-    await lifecycle_optimizations._async_prune_usage_if_due(manager)
-
-    # Scheduling itself is non-blocking, so the scan has not run in this coroutine.
-    assert len(manager.requests) == 1
-    task = getattr(manager, _USAGE_PRUNE_TASK)
-    assert task is not None
-    await task
-    assert manager.requests == []
 
 
 async def test_temporary_memory_expiry_save_runs_after_active_read_returns() -> None:

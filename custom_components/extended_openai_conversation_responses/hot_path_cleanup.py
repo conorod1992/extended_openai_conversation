@@ -6,17 +6,11 @@ provider input, tool availability, or the selected deterministic Request Rule.
 
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
 import time
 from typing import Any
 
-from homeassistant.util import dt as dt_util
-
-_LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
-_USAGE_PRUNE_TASK = "_extended_openai_usage_prune_task"
 
 
 def install_hot_path_cleanup() -> None:
@@ -24,98 +18,9 @@ def install_hot_path_cleanup() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
-    _install_usage_lazy_snapshots_and_background_prune()
     _install_debug_single_conversion()
     _install_broadcast_cold_path_guard()
     _INSTALLED = True
-
-
-def _install_usage_lazy_snapshots_and_background_prune() -> None:
-    """Defer usage serialization and daily retention work beyond the user turn."""
-    from . import lifecycle_optimizations as lifecycle
-    from .usage import UsageManager
-
-    manager_type: Any = UsageManager
-    previous_save_safely = manager_type._async_save_safely
-    previous_prune_if_due = lifecycle._async_prune_usage_if_due
-    transactional_prune = bool(
-        getattr(
-            manager_type.async_prune_details,
-            "_extended_openai_persist_first",
-            False,
-        )
-    )
-
-    async def async_save_safely(manager: Any, label: str, save: Any) -> None:
-        category = {
-            "request totals": "totals",
-            "run totals": "totals",
-            "daily run totals": "daily",
-            "request details": "details",
-            "run details": "details",
-        }.get(label)
-        store = None
-        if category is not None:
-            store = {
-                "totals": manager._storage,
-                "daily": manager._daily_storage,
-                "details": manager._detail_storage,
-            }.get(category)
-        delay_save = getattr(store, "async_delay_save", None)
-        if category is not None and callable(delay_save):
-            try:
-                # Home Assistant evaluates this callback when the coalesced save is
-                # actually due. Manager mutations are event-loop serialized, and the
-                # snapshot helper does not await, so it observes one coherent latest
-                # in-memory state without making the provider/tool loop serialize the
-                # retained history first.
-                delay_save(
-                    lambda manager=manager, category=category: (
-                        lifecycle._usage_snapshot(manager, category)
-                    ),
-                    lifecycle._USAGE_SAVE_DELAY_SECONDS,
-                )
-                return
-            except Exception:
-                _LOGGER.exception(
-                    "Unable to schedule lazy usage %s; falling back to existing persistence",
-                    label,
-                )
-        await previous_save_safely(manager, label, save)
-
-    async def prune_if_due_off_path(manager: Any) -> None:
-        today = dt_util.utcnow().date().isoformat()
-        if getattr(manager, lifecycle._LAST_USAGE_PRUNE_DATE, None) == today:
-            return
-        current = getattr(manager, _USAGE_PRUNE_TASK, None)
-        if isinstance(current, asyncio.Task) and not current.done():
-            return
-
-        async def run() -> None:
-            try:
-                await previous_prune_if_due(manager)
-            except Exception:
-                _LOGGER.exception("Background usage retention maintenance failed")
-
-        task = asyncio.create_task(
-            run(), name="extended_openai_usage_retention_maintenance"
-        )
-        setattr(manager, _USAGE_PRUNE_TASK, task)
-
-        def done(completed: asyncio.Task[Any]) -> None:
-            if getattr(manager, _USAGE_PRUNE_TASK, None) is completed:
-                setattr(manager, _USAGE_PRUNE_TASK, None)
-
-        task.add_done_callback(done)
-
-    manager_type._async_save_safely = async_save_safely
-    # The lifecycle finalizer resolves this module global at runtime. Replacing the
-    # helper keeps its established call site while making the daily O(N) scan a
-    # background maintenance task rather than part of response completion. If a
-    # later hardening layer already made pruning persist-first and backgrounded it,
-    # preserve that single task instead of scheduling an outer task around it.
-    if not transactional_prune:
-        lifecycle._async_prune_usage_if_due = prune_if_due_off_path
 
 
 def _debug_event_has_text(data: Any) -> bool:

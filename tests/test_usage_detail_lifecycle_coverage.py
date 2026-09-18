@@ -1,23 +1,21 @@
 """Focused coverage for Usage detail retention and destructive lifecycle paths."""
 
+import asyncio
 from copy import deepcopy
 from datetime import timedelta
+import logging
 
 import pytest
 from homeassistant.util import dt as dt_util
 
-from custom_components.extended_openai_conversation_responses.durable_state_hardening import (
-    _install_usage_transactions,
-)
+from custom_components.extended_openai_conversation_responses import usage as usage_module
 from custom_components.extended_openai_conversation_responses.usage import (
+    RequestUsage,
     UsageManager,
     UsageRequest,
     UsageRun,
 )
 
-
-# Exercise the effective Usage lifecycle contract installed at integration startup.
-_install_usage_transactions()
 
 
 class DetailStorage:
@@ -190,3 +188,167 @@ async def test_clear_save_failure_preserves_live_state_and_can_converge() -> Non
     assert manager.requests == []
     assert manager.runs == []
     assert details.data == {"requests": [], "runs": []}
+
+
+
+class DelayedStorage:
+    """Store stand-in exposing Home Assistant coalesced-save behavior."""
+
+    def __init__(self) -> None:
+        self.data = None
+        self.immediate_saves = 0
+        self.delayed: list[tuple[object, float]] = []
+
+    async def async_load(self):
+        return deepcopy(self.data)
+
+    async def async_save(self, data) -> None:
+        self.immediate_saves += 1
+        self.data = deepcopy(data)
+
+    def async_delay_save(self, data_func, delay: float = 0) -> None:
+        self.delayed.append((data_func, delay))
+
+
+async def test_routine_usage_persistence_is_owned_and_coalesced_by_manager() -> None:
+    """Routine accounting remains off-path without lifecycle patch installation."""
+    totals = DelayedStorage()
+    daily = DelayedStorage()
+    details = DelayedStorage()
+    manager = UsageManager(totals, daily, details, agent_subentry_id="agent")
+    await manager.async_initialize()
+
+    async with manager.async_run(home_assistant_conversation_id="conversation"):
+        await manager.async_record_request(
+            successful=True,
+            usage=RequestUsage(input_tokens=4, output_tokens=2, total_tokens=6),
+            provider="openai",
+            model="gpt-test",
+            api_mode="responses",
+        )
+
+    assert totals.immediate_saves == 0
+    assert daily.immediate_saves == 0
+    assert details.immediate_saves == 0
+    assert totals.delayed and daily.delayed and details.delayed
+
+    # Aggregate callbacks retain the point-in-time snapshot they were scheduled for.
+    assert totals.delayed[-1][0]()["total_tokens"] == 6
+
+    # Detail serialization remains lazy: the delayed callback reads the latest
+    # coherent retained state rather than serializing history on the request path.
+    manager.requests.clear()
+    detail_payload = details.delayed[-1][0]()
+    assert detail_payload["requests"] == []
+    assert len(detail_payload["runs"]) == 1
+
+
+async def test_usage_schedule_failure_falls_back_to_immediate_save(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A broken delayed-save boundary falls back to the supplied save coroutine."""
+
+    class FailingDelayedStorage(DetailStorage):
+        def async_delay_save(self, _data_func, _delay: float = 0) -> None:
+            raise RuntimeError("scheduler unavailable")
+
+    details = FailingDelayedStorage()
+    manager = UsageManager(TotalsStorage(), detail_storage=details)
+    calls = 0
+
+    async def save() -> None:
+        nonlocal calls
+        calls += 1
+
+    with caplog.at_level(logging.ERROR):
+        await manager._async_save_safely("request details", save)
+
+    assert calls == 1
+    assert "falling back to immediate persistence" in caplog.text
+
+
+def test_usage_snapshot_rejects_unknown_category() -> None:
+    manager = _manager(None)
+    with pytest.raises(ValueError, match="Unknown usage persistence category"):
+        manager._usage_snapshot("unknown")
+
+
+async def test_usage_retention_scheduler_is_off_path_and_deduplicated() -> None:
+    """Daily retention starts one named background task and avoids duplicate work."""
+    manager = _manager(None)
+    calls: list[bool] = []
+    release = asyncio.Event()
+
+    async def prune(*, save: bool = True):
+        calls.append(save)
+        await release.wait()
+        manager._last_prune_date = dt_util.utcnow().date().isoformat()
+
+    manager.async_prune_details = prune  # type: ignore[method-assign]
+
+    await manager._async_prune_usage_if_due()
+    task = manager._prune_task
+    assert isinstance(task, asyncio.Task)
+    assert task.get_name() == "extended_openai_usage_retention_maintenance"
+
+    await manager._async_prune_usage_if_due()
+    assert manager._prune_task is task
+    assert calls == []
+
+    await asyncio.sleep(0)
+    assert calls == [True]
+    release.set()
+    await task
+    await asyncio.sleep(0)
+    assert manager._prune_task is None
+
+    await manager._async_prune_usage_if_due()
+    assert manager._prune_task is None
+    assert calls == [True]
+
+
+async def test_usage_retention_scheduler_bounds_same_day_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed background prune retries only after cooldown and at most twice."""
+    manager = _manager(None)
+    now = 200.0
+    monkeypatch.setattr(usage_module.time, "monotonic", lambda: now)
+    monkeypatch.setattr(usage_module, "_USAGE_PRUNE_RETRY_SECONDS", 30.0)
+    attempts = 0
+
+    async def fail(*, save: bool = True):
+        nonlocal attempts
+        assert save is True
+        attempts += 1
+        raise OSError("detail storage unavailable")
+
+    manager.async_prune_details = fail  # type: ignore[method-assign]
+
+    with caplog.at_level(logging.ERROR):
+        await manager._async_prune_usage_if_due()
+        first = manager._prune_task
+        assert first is not None
+        await first
+        await asyncio.sleep(0)
+
+    assert attempts == 1
+    assert manager._next_prune_retry == 230.0
+    assert "Background usage retention maintenance failed" in caplog.text
+
+    await manager._async_prune_usage_if_due()
+    assert attempts == 1
+
+    now = 231.0
+    await manager._async_prune_usage_if_due()
+    second = manager._prune_task
+    assert second is not None
+    await second
+    await asyncio.sleep(0)
+    assert attempts == 2
+
+    now = 1000.0
+    await manager._async_prune_usage_if_due()
+    assert manager._prune_task is None
+    assert attempts == 2

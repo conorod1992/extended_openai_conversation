@@ -5,21 +5,8 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from contextvars import ContextVar
-from copy import deepcopy
-from dataclasses import asdict
-from datetime import timedelta
-import logging
-import time
 from typing import Any, cast
 
-from homeassistant.util import dt as dt_util
-
-_LOGGER = logging.getLogger(__name__)
-_USAGE_SAVE_DELAY_SECONDS = 5.0
-_USAGE_PRUNE_RETRY_SECONDS = 300.0
-_LAST_USAGE_PRUNE_DATE = "_extended_openai_last_usage_prune_date"
-_NEXT_USAGE_PRUNE_RETRY = "_extended_openai_next_usage_prune_retry"
-_USAGE_PRUNE_SAVE_PENDING = "_extended_openai_usage_prune_save_pending"
 _TEMPORARY_MEMORY_PREFETCH: ContextVar[asyncio.Task[Any] | None] = ContextVar(
     "extended_openai_temporary_memory_prefetch", default=None
 )
@@ -27,222 +14,15 @@ _INSTALLED = False
 
 
 def install_lifecycle_optimizations() -> None:
-    """Install bounded persistence, archive, memory, and debug optimizations."""
+    """Install archive, memory, and debug lifecycle optimizations."""
     global _INSTALLED
     if _INSTALLED:
         return
 
-    _install_usage_persistence()
     _install_archive_fast_path()
     _install_memory_prefetch()
     _install_debug_summary_fields()
     _INSTALLED = True
-
-
-def _usage_snapshot(manager: Any, category: str) -> dict[str, Any]:
-    """Capture immutable usage state while the manager lock is held."""
-    if category == "totals":
-        return cast(dict[str, Any], manager.as_dict())
-    if category == "daily":
-        return {
-            "totals": deepcopy(cast(dict[str, Any], manager.as_dict())),
-            "days": deepcopy(manager.daily),
-        }
-    if category == "details":
-        return {
-            "requests": [asdict(request) for request in manager.requests],
-            "runs": [asdict(run) for run in manager.runs],
-        }
-    raise ValueError(f"Unknown usage persistence category: {category}")
-
-
-def _schedule_store_snapshot(store: Any, snapshot: dict[str, Any]) -> bool:
-    """Schedule a coalesced Store write when the persistence boundary supports it."""
-    delay_save = getattr(store, "async_delay_save", None)
-    if not callable(delay_save):
-        return False
-    delay_save(lambda snapshot=snapshot: snapshot, _USAGE_SAVE_DELAY_SECONDS)
-    return True
-
-
-def _schedule_usage_aggregate_snapshots(manager: Any) -> bool:
-    """Coalesce the authoritative aggregate snapshot and compatibility mirror."""
-    totals_store = manager._storage
-    daily_store = manager._daily_storage
-    if daily_store is None:
-        return _schedule_store_snapshot(
-            totals_store, _usage_snapshot(manager, "totals")
-        )
-
-    totals_delay_save = getattr(totals_store, "async_delay_save", None)
-    daily_delay_save = getattr(daily_store, "async_delay_save", None)
-    if not callable(totals_delay_save) or not callable(daily_delay_save):
-        return False
-
-    # Schedule the compatibility mirror first. If scheduling the authoritative
-    # daily snapshot then fails, the immediate fallback below will still leave
-    # the authoritative store current; a later stale mirror is ignored when
-    # that authoritative snapshot is present.
-    _schedule_store_snapshot(totals_store, _usage_snapshot(manager, "totals"))
-    _schedule_store_snapshot(daily_store, _usage_snapshot(manager, "daily"))
-    return True
-
-
-def _prune_usage_locked(manager: Any) -> dict[str, int]:
-    """Apply request/run retention while the UsageManager lock is held."""
-    from .usage import _parse_time
-
-    now = dt_util.utcnow()
-    request_cutoff = now - timedelta(days=max(0, manager.request_retention_days))
-    run_cutoff = now - timedelta(days=max(0, manager.run_retention_days))
-    old_request_count = len(manager.requests)
-    old_run_count = len(manager.runs)
-    manager.requests = [
-        request
-        for request in manager.requests
-        if manager.request_retention_days > 0
-        and _parse_time(request.timestamp) >= request_cutoff
-    ]
-    manager.runs = [
-        run
-        for run in manager.runs
-        if manager.run_retention_days > 0 and _parse_time(run.started_at) >= run_cutoff
-    ]
-    return {
-        "deleted_requests": old_request_count - len(manager.requests),
-        "deleted_runs": old_run_count - len(manager.runs),
-    }
-
-
-async def _async_prune_usage_if_due(manager: Any) -> None:
-    """Enforce detail retention daily, retrying failed work with a cooldown."""
-    today = dt_util.utcnow().date().isoformat()
-    if getattr(manager, _LAST_USAGE_PRUNE_DATE, None) == today:
-        return
-    if time.monotonic() < float(getattr(manager, _NEXT_USAGE_PRUNE_RETRY, 0.0) or 0.0):
-        return
-    async with manager._lock:
-        if getattr(manager, _LAST_USAGE_PRUNE_DATE, None) == today:
-            return
-        if time.monotonic() < float(
-            getattr(manager, _NEXT_USAGE_PRUNE_RETRY, 0.0) or 0.0
-        ):
-            return
-        save_pending = bool(getattr(manager, _USAGE_PRUNE_SAVE_PENDING, False))
-        try:
-            result = _prune_usage_locked(manager)
-            save_pending = save_pending or bool(
-                result["deleted_requests"] or result["deleted_runs"]
-            )
-            if manager._detail_storage is not None and save_pending:
-                snapshot = _usage_snapshot(manager, "details")
-                if not _schedule_store_snapshot(manager._detail_storage, snapshot):
-                    await manager._async_save_details()
-        except Exception:
-            if manager._detail_storage is not None:
-                setattr(manager, _USAGE_PRUNE_SAVE_PENDING, True)
-            setattr(
-                manager,
-                _NEXT_USAGE_PRUNE_RETRY,
-                time.monotonic() + _USAGE_PRUNE_RETRY_SECONDS,
-            )
-            raise
-        setattr(manager, _LAST_USAGE_PRUNE_DATE, today)
-        setattr(manager, _NEXT_USAGE_PRUNE_RETRY, 0.0)
-        setattr(manager, _USAGE_PRUNE_SAVE_PENDING, False)
-
-
-def _install_usage_persistence() -> None:
-    """Keep routine accounting in memory and coalesce Store writes off the hot path."""
-    from .usage import UsageManager
-
-    manager_type: Any = UsageManager
-    preserve_transactional_details = bool(
-        getattr(
-            manager_type.async_prune_details,
-            "_extended_openai_persist_first",
-            False,
-        )
-    )
-    original_save_safely = manager_type._async_save_safely
-    original_finalize_run = manager_type._async_finalize_run
-
-    async def async_save_safely(manager: Any, label: str, save: Any) -> None:
-        if label in {"request aggregates", "run aggregates"}:
-            try:
-                if _schedule_usage_aggregate_snapshots(manager):
-                    return
-            except Exception:
-                _LOGGER.exception(
-                    "Unable to schedule usage %s; falling back to immediate persistence",
-                    label,
-                )
-            await original_save_safely(manager, label, save)
-            return
-
-        category = {
-            "request totals": "totals",
-            "run totals": "totals",
-            "daily run totals": "daily",
-            "request details": "details",
-            "run details": "details",
-        }.get(label)
-        store = None
-        if category is not None:
-            store = {
-                "totals": manager._storage,
-                "daily": manager._daily_storage,
-                "details": manager._detail_storage,
-            }.get(category)
-        if category is not None and store is not None:
-            try:
-                if _schedule_store_snapshot(store, _usage_snapshot(manager, category)):
-                    return
-            except Exception:
-                _LOGGER.exception(
-                    "Unable to schedule usage %s; falling back to immediate persistence",
-                    label,
-                )
-        await original_save_safely(manager, label, save)
-
-    async def async_finalize_run(manager: Any, run: Any) -> None:
-        await original_finalize_run(manager, run)
-        await _async_prune_usage_if_due(manager)
-
-    async def async_prune_details(manager: Any, *, save: bool = True) -> dict[str, int]:
-        async with manager._lock:
-            result = _prune_usage_locked(manager)
-            if save and manager._detail_storage is not None:
-                setattr(manager, _USAGE_PRUNE_SAVE_PENDING, True)
-                await manager._async_save_details()
-            setattr(
-                manager,
-                _LAST_USAGE_PRUNE_DATE,
-                dt_util.utcnow().date().isoformat(),
-            )
-            setattr(manager, _NEXT_USAGE_PRUNE_RETRY, 0.0)
-            setattr(manager, _USAGE_PRUNE_SAVE_PENDING, False)
-            return result
-
-    async def async_clear_details(manager: Any, *, confirm: bool) -> dict[str, int]:
-        if not confirm:
-            raise ValueError("Explicit confirmation is required")
-        async with manager._lock:
-            result = {
-                "deleted_requests": len(manager.requests),
-                "deleted_runs": len(manager.runs),
-            }
-            manager.requests.clear()
-            manager.runs.clear()
-            if manager._detail_storage is not None:
-                await manager._async_save_details()
-            return result
-
-    manager_type._async_save_safely = async_save_safely
-    manager_type._async_finalize_run = async_finalize_run
-    if not preserve_transactional_details:
-        manager_type.async_prune_details = async_prune_details
-        manager_type.async_clear_details = async_clear_details
 
 
 def _install_archive_fast_path() -> None:

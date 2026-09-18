@@ -10,9 +10,6 @@ from homeassistant.util import dt as dt_util
 from custom_components.extended_openai_conversation_responses import (
     durable_state_hardening as hardening,
 )
-from custom_components.extended_openai_conversation_responses import (
-    lifecycle_optimizations as lifecycle,
-)
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
 )
@@ -124,7 +121,6 @@ def _usage_run(timestamp: str) -> UsageRun:
 
 
 async def _usage_manager() -> tuple[UsageManager, FakeUsageStorage]:
-    hardening._install_usage_transactions()
     detail = FakeUsageStorage()
     manager = UsageManager(
         FakeUsageStorage(),
@@ -138,21 +134,12 @@ async def _usage_manager() -> tuple[UsageManager, FakeUsageStorage]:
     old = "2000-01-01T00:00:00+00:00"
     manager.requests = [_usage_request(old)]
     manager.runs = [_usage_run(old)]
-    for attribute in (
-        lifecycle._LAST_USAGE_PRUNE_DATE,
-        lifecycle._NEXT_USAGE_PRUNE_RETRY,
-        hardening._USAGE_PRUNE_ATTEMPT_DATE,
-        hardening._USAGE_PRUNE_ATTEMPT_COUNT,
-        hardening._USAGE_PRUNE_TASK,
-    ):
-        if hasattr(manager, attribute):
-            delattr(manager, attribute)
     return manager, detail
 
 
 async def _run_due_prune(manager: UsageManager) -> None:
-    await lifecycle._async_prune_usage_if_due(manager)
-    task = getattr(manager, hardening._USAGE_PRUNE_TASK, None)
+    await manager._async_prune_usage_if_due()
+    task = manager._prune_task
     if isinstance(task, asyncio.Task):
         await task
         await asyncio.sleep(0)
@@ -167,25 +154,25 @@ async def test_usage_retention_retries_once_same_day_after_transient_failure() -
     today = dt_util.utcnow().date().isoformat()
     assert manager.requests
     assert manager.runs
-    assert getattr(manager, hardening._USAGE_PRUNE_ATTEMPT_DATE) == today
-    assert getattr(manager, hardening._USAGE_PRUNE_ATTEMPT_COUNT) == 1
-    assert getattr(manager, lifecycle._LAST_USAGE_PRUNE_DATE, None) != today
-    assert getattr(manager, lifecycle._NEXT_USAGE_PRUNE_RETRY) > 0
+    assert manager._prune_attempt_date == today
+    assert manager._prune_attempt_count == 1
+    assert manager._last_prune_date != today
+    assert manager._next_prune_retry > 0
 
     # The cooldown prevents request traffic from immediately hammering storage.
-    await lifecycle._async_prune_usage_if_due(manager)
-    assert getattr(manager, hardening._USAGE_PRUNE_ATTEMPT_COUNT) == 1
+    await manager._async_prune_usage_if_due()
+    assert manager._prune_attempt_count == 1
 
     # Simulate the five-minute cooldown elapsing without crossing the UTC day.
-    setattr(manager, lifecycle._NEXT_USAGE_PRUNE_RETRY, 0.0)
+    manager._next_prune_retry = 0.0
     detail.fail = False
     await _run_due_prune(manager)
 
     assert manager.requests == []
     assert manager.runs == []
-    assert getattr(manager, hardening._USAGE_PRUNE_ATTEMPT_COUNT) == 2
-    assert getattr(manager, lifecycle._LAST_USAGE_PRUNE_DATE) == today
-    assert getattr(manager, lifecycle._NEXT_USAGE_PRUNE_RETRY) == 0.0
+    assert manager._prune_attempt_count == 2
+    assert manager._last_prune_date == today
+    assert manager._next_prune_retry == 0.0
 
 
 async def test_usage_retention_same_day_retry_is_bounded_after_repeated_failures() -> None:
@@ -193,18 +180,18 @@ async def test_usage_retention_same_day_retry_is_bounded_after_repeated_failures
     detail.fail = True
 
     await _run_due_prune(manager)
-    setattr(manager, lifecycle._NEXT_USAGE_PRUNE_RETRY, 0.0)
+    manager._next_prune_retry = 0.0
     await _run_due_prune(manager)
 
-    assert getattr(manager, hardening._USAGE_PRUNE_ATTEMPT_COUNT) == 2
+    assert manager._prune_attempt_count == 2
     assert manager.requests
     assert manager.runs
 
     # Even if the cooldown is considered elapsed again, two failed attempts are the
     # daily cap. A new UTC day resets the counter naturally through ATTEMPT_DATE.
-    setattr(manager, lifecycle._NEXT_USAGE_PRUNE_RETRY, 0.0)
-    await lifecycle._async_prune_usage_if_due(manager)
+    manager._next_prune_retry = 0.0
+    await manager._async_prune_usage_if_due()
     await asyncio.sleep(0)
 
-    assert getattr(manager, hardening._USAGE_PRUNE_ATTEMPT_COUNT) == 2
-    assert getattr(manager, hardening._USAGE_PRUNE_TASK, None) is None
+    assert manager._prune_attempt_count == 2
+    assert manager._prune_task is None

@@ -1,4 +1,4 @@
-"""Regression tests for journal-first Archive and Usage state mutations."""
+"""Regression tests for journal-first Archive state mutations."""
 
 from __future__ import annotations
 
@@ -11,9 +11,6 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     durable_state_hardening as hardening,
 )
-from custom_components.extended_openai_conversation_responses import (
-    lifecycle_optimizations as lifecycle,
-)
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_RETENTION_DAYS,
 )
@@ -21,12 +18,6 @@ from custom_components.extended_openai_conversation_responses.conversation_archi
     ConversationArchive,
 )
 from custom_components.extended_openai_conversation_responses.scope import user_scope
-from custom_components.extended_openai_conversation_responses.usage import (
-    UsageManager,
-    UsageRequest,
-    UsageRun,
-)
-from homeassistant.util import dt as dt_util
 
 
 class FakeArchiveStorage:
@@ -57,22 +48,6 @@ class FakeArchiveStorage:
         if self.partition_save_count == self.fail_partition_on:
             raise OSError("partition write failed")
         self.partitions[partition] = deepcopy(data)
-
-
-class FakeUsageStorage:
-    """In-memory Usage Store whose writes can be failed on demand."""
-
-    def __init__(self) -> None:
-        self.data = None
-        self.fail = False
-
-    async def async_load(self):
-        return deepcopy(self.data)
-
-    async def async_save(self, data):
-        if self.fail:
-            raise OSError("usage detail write failed")
-        self.data = deepcopy(data)
 
 
 async def _archive() -> tuple[ConversationArchive, FakeArchiveStorage]:
@@ -185,107 +160,6 @@ async def test_archive_prune_clears_active_mapping_and_noop_is_write_free() -> N
     }
     assert storage.metadata_save_count == metadata_writes
     assert storage.partition_save_count == partition_writes
-
-
-def _usage_request(timestamp: str) -> UsageRequest:
-    return UsageRequest(
-        request_id="request",
-        run_id="run",
-        timestamp=timestamp,
-        agent_subentry_id="agent",
-        provider="openai",
-        model="model",
-        api_mode="responses",
-        successful=True,
-        duration_ms=1,
-    )
-
-
-def _usage_run(timestamp: str) -> UsageRun:
-    return UsageRun(
-        run_id="run",
-        started_at=timestamp,
-        completed_at=timestamp,
-        duration_ms=1,
-        agent_subentry_id="agent",
-        home_assistant_conversation_id=None,
-        source_device_id=None,
-    )
-
-
-async def _usage_manager() -> tuple[UsageManager, FakeUsageStorage]:
-    hardening._install_usage_transactions()
-    detail = FakeUsageStorage()
-    manager = UsageManager(
-        FakeUsageStorage(),
-        FakeUsageStorage(),
-        detail,
-        agent_subentry_id="agent",
-        request_retention_days=1,
-        run_retention_days=1,
-    )
-    await manager.async_initialize()
-    return manager, detail
-
-
-async def test_usage_prune_failure_preserves_live_detail_lists() -> None:
-    manager, detail = await _usage_manager()
-    old = "2000-01-01T00:00:00+00:00"
-    manager.requests = [_usage_request(old)]
-    manager.runs = [_usage_run(old)]
-    detail.fail = True
-
-    with pytest.raises(OSError, match="usage detail write failed"):
-        await manager.async_prune_details()
-
-    assert [item.request_id for item in manager.requests] == ["request"]
-    assert [item.run_id for item in manager.runs] == ["run"]
-
-
-async def test_usage_clear_failure_preserves_live_detail_lists() -> None:
-    manager, detail = await _usage_manager()
-    now = dt_util.utcnow().isoformat()
-    manager.requests = [_usage_request(now)]
-    manager.runs = [_usage_run(now)]
-    detail.fail = True
-
-    with pytest.raises(OSError, match="usage detail write failed"):
-        await manager.async_clear_details(confirm=True)
-
-    assert [item.request_id for item in manager.requests] == ["request"]
-    assert [item.run_id for item in manager.runs] == ["run"]
-
-
-async def test_background_usage_prune_is_transactional_and_remains_off_path() -> None:
-    manager, detail = await _usage_manager()
-    old = "2000-01-01T00:00:00+00:00"
-    manager.requests = [_usage_request(old)]
-    manager.runs = [_usage_run(old)]
-    if hasattr(manager, lifecycle._LAST_USAGE_PRUNE_DATE):
-        delattr(manager, lifecycle._LAST_USAGE_PRUNE_DATE)
-    if hasattr(manager, hardening._USAGE_PRUNE_ATTEMPT_DATE):
-        delattr(manager, hardening._USAGE_PRUNE_ATTEMPT_DATE)
-    detail.fail = True
-
-    await lifecycle._async_prune_usage_if_due(manager)
-    task = getattr(manager, hardening._USAGE_PRUNE_TASK)
-    assert task is not None
-    await task
-
-    assert len(manager.requests) == 1
-    assert len(manager.runs) == 1
-    assert getattr(manager, hardening._USAGE_PRUNE_ATTEMPT_DATE) == (
-        dt_util.utcnow().date().isoformat()
-    )
-
-    # Allow the next simulated daily attempt and prove the successful Store write is
-    # what makes the candidate retention state visible.
-    delattr(manager, hardening._USAGE_PRUNE_ATTEMPT_DATE)
-    detail.fail = False
-    await lifecycle._async_prune_usage_if_due(manager)
-    await getattr(manager, hardening._USAGE_PRUNE_TASK)
-    assert manager.requests == []
-    assert manager.runs == []
 
 
 async def test_archive_retention_maintenance_reads_current_live_setting() -> None:

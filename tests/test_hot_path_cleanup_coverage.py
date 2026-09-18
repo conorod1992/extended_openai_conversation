@@ -18,11 +18,6 @@ def test_install_hot_path_cleanup_is_idempotent(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(hot_path_cleanup, "_INSTALLED", False)
     monkeypatch.setattr(
         hot_path_cleanup,
-        "_install_usage_lazy_snapshots_and_background_prune",
-        lambda: calls.append("usage"),
-    )
-    monkeypatch.setattr(
-        hot_path_cleanup,
         "_install_debug_single_conversion",
         lambda: calls.append("debug"),
     )
@@ -35,7 +30,7 @@ def test_install_hot_path_cleanup_is_idempotent(monkeypatch: pytest.MonkeyPatch)
     hot_path_cleanup.install_hot_path_cleanup()
     hot_path_cleanup.install_hot_path_cleanup()
 
-    assert calls == ["usage", "debug", "broadcast"]
+    assert calls == ["debug", "broadcast"]
     assert hot_path_cleanup._INSTALLED is True
 
 

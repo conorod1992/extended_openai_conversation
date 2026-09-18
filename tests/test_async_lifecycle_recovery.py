@@ -13,10 +13,8 @@ import pytest
 from homeassistant.helpers.template import Template
 from homeassistant.util import dt as dt_util
 
-from custom_components.extended_openai_conversation_responses import (
-    intercom,
-    lifecycle_optimizations,
-)
+from custom_components.extended_openai_conversation_responses import intercom
+from custom_components.extended_openai_conversation_responses import usage as usage_module
 from custom_components.extended_openai_conversation_responses.functions import bash
 from custom_components.extended_openai_conversation_responses.functions.bash import (
     BashFunction,
@@ -26,13 +24,10 @@ from custom_components.extended_openai_conversation_responses.intercom import (
     Delivery,
     IntercomManager,
 )
-from custom_components.extended_openai_conversation_responses.lifecycle_optimizations import (
-    _LAST_USAGE_PRUNE_DATE,
-    _NEXT_USAGE_PRUNE_RETRY,
-    _USAGE_PRUNE_SAVE_PENDING,
-    _async_prune_usage_if_due,
+from custom_components.extended_openai_conversation_responses.usage import (
+    UsageManager,
+    UsageRequest,
 )
-from custom_components.extended_openai_conversation_responses.usage import UsageRequest
 
 
 class _FakeProcess:
@@ -203,62 +198,77 @@ async def test_broadcast_idle_transition_during_active_drain_is_rescheduled(
 
 
 async def test_failed_usage_prune_retries_after_cooldown_same_day(monkeypatch) -> None:
-    """A transient prune-save failure is neither day-suppressed nor hot-looped."""
+    """A transient detail-store failure is retried once after the same-day cooldown."""
+
+    class Storage:
+        def __init__(self, *, fail: bool = False) -> None:
+            self.fail = fail
+            self.saves = 0
+            self.data = None
+
+        async def async_load(self):
+            return None
+
+        async def async_save(self, data) -> None:
+            self.saves += 1
+            if self.fail:
+                raise OSError("temporary store failure")
+            self.data = data
+
     old = (dt_util.utcnow() - timedelta(days=120)).isoformat()
-    manager = SimpleNamespace(
-        _lock=asyncio.Lock(),
+    detail = Storage(fail=True)
+    manager = UsageManager(
+        Storage(),
+        detail_storage=detail,
+        agent_subentry_id="agent",
         request_retention_days=30,
         run_retention_days=90,
-        requests=[
-            UsageRequest(
-                request_id="old-request",
-                run_id="old-run",
-                timestamp=old,
-                agent_subentry_id="agent",
-                provider="openai",
-                model="gpt-5.6",
-                api_mode="responses",
-                successful=True,
-                duration_ms=1,
-            )
-        ],
-        runs=[],
-        _detail_storage=object(),
-        _async_save_details=AsyncMock(),
     )
+    manager.requests = [
+        UsageRequest(
+            request_id="old-request",
+            run_id="old-run",
+            timestamp=old,
+            agent_subentry_id="agent",
+            provider="openai",
+            model="gpt-5.6",
+            api_mode="responses",
+            successful=True,
+            duration_ms=1,
+        )
+    ]
+
     monotonic = [100.0]
-    monkeypatch.setattr(lifecycle_optimizations.time, "monotonic", lambda: monotonic[0])
-    schedule_calls = 0
+    monkeypatch.setattr(usage_module.time, "monotonic", lambda: monotonic[0])
 
-    def schedule_snapshot(_store, _snapshot) -> bool:
-        nonlocal schedule_calls
-        schedule_calls += 1
-        if schedule_calls == 1:
-            raise OSError("temporary store failure")
-        return True
-
-    monkeypatch.setattr(
-        lifecycle_optimizations,
-        "_schedule_store_snapshot",
-        schedule_snapshot,
-    )
-
-    with pytest.raises(OSError, match="temporary store failure"):
-        await _async_prune_usage_if_due(manager)
+    await manager._async_prune_usage_if_due()
+    first = manager._prune_task
+    assert first is not None
+    await first
+    await asyncio.sleep(0)
 
     today = dt_util.utcnow().date().isoformat()
-    assert manager.requests == []
-    assert getattr(manager, _LAST_USAGE_PRUNE_DATE, None) != today
-    assert getattr(manager, _USAGE_PRUNE_SAVE_PENDING) is True
-    assert getattr(manager, _NEXT_USAGE_PRUNE_RETRY) == 400.0
+    assert [item.request_id for item in manager.requests] == ["old-request"]
+    assert manager._last_prune_date != today
+    assert manager._next_prune_retry == 400.0
+    assert manager._prune_attempt_count == 1
+    assert detail.saves == 1
 
-    await _async_prune_usage_if_due(manager)
-    assert schedule_calls == 1
+    await manager._async_prune_usage_if_due()
+    assert manager._prune_task is None
+    assert detail.saves == 1
 
+    detail.fail = False
     monotonic[0] = 401.0
-    await _async_prune_usage_if_due(manager)
+    await manager._async_prune_usage_if_due()
+    second = manager._prune_task
+    assert second is not None
+    await second
+    await asyncio.sleep(0)
 
-    assert schedule_calls == 2
-    assert getattr(manager, _LAST_USAGE_PRUNE_DATE) == today
-    assert getattr(manager, _USAGE_PRUNE_SAVE_PENDING) is False
-    assert getattr(manager, _NEXT_USAGE_PRUNE_RETRY) == 0.0
+    assert detail.saves == 2
+    assert manager.requests == []
+    assert manager._last_prune_date == today
+    assert manager._next_prune_retry == 0.0
+    assert manager._prune_attempt_count == 2
+
