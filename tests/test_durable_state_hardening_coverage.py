@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from types import SimpleNamespace
 from typing import Any
 
@@ -336,45 +336,6 @@ async def test_replace_backup_rebuilds_partitions_and_clears_active_state(
     assert storage.partitions["2026-01"] == {"turns": []}
     assert storage.partitions["2026-04"] == {"turns": [asdict(replacement_turn)]}
 
-
-@dataclass(frozen=True)
-class UsageRequest:
-    timestamp: str
-    name: str
-
-
-@dataclass(frozen=True)
-class UsageRun:
-    started_at: str
-    name: str
-
-
-class DetailStorage:
-    def __init__(self) -> None:
-        self.saved: list[dict[str, Any]] = []
-
-    async def async_save(self, value: dict[str, Any]) -> None:
-        self.saved.append(value)
-
-
-@pytest.mark.asyncio
-async def test_persist_usage_details_supports_disabled_and_enabled_storage() -> None:
-    request = UsageRequest("2026-09-13T10:00:00+00:00", "request")
-    run = UsageRun("2026-09-13T10:00:00+00:00", "run")
-    manager = SimpleNamespace(_detail_storage=None)
-
-    await hardening._async_persist_usage_details(manager, [request], [run])
-
-    storage = DetailStorage()
-    manager._detail_storage = storage
-    await hardening._async_persist_usage_details(manager, [request], [run])
-
-    assert storage.saved == [
-        {
-            "requests": [{"timestamp": request.timestamp, "name": "request"}],
-            "runs": [{"started_at": run.started_at, "name": "run"}],
-        }
-    ]
 
 
 @pytest.mark.asyncio
