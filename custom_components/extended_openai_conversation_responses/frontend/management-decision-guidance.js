@@ -13,8 +13,6 @@ export const DECISION_GUIDANCE_STYLES = `
 
 import {friendlySettingValue, settingEffectMarkup} from "./management-configuration-clarity.js";
 
-const PATCHED = Symbol.for("extended-openai.management-decision-guidance");
-
 const DEFAULT_GUIDANCE_KEYS = new Set([
   "api_mode",
   "conversation_continuity",
@@ -165,7 +163,7 @@ function addScopeNode(container, className, agentLabel, subject = "") {
 }
 
 
-function enhanceConfirmationScope(panel, subject = "") {
+export function enhanceConfirmationScope(panel, subject = "") {
   const dialog = panel.shadowRoot?.querySelector("#confirm-dialog");
   const body = dialog?.querySelector(".dialog-body");
   addScopeNode(body, "eoc-confirm-scope", assistantScopeLabel(panel._selectedAgent?.()), subject);
@@ -235,28 +233,4 @@ export function restoreScopeMarkup(panel) {
 export function bindDecisionRequestRules(panel) {
   bindRequestRuleDeleteContext(panel);
   bindLiveRequest(panel, panel.shadowRoot.querySelector("#eoc-rule-live-test"));
-}
-
-export function installManagementDecisionGuidance(Panel) {
-  // A constructor is the production API; registry callers remain supported.
-  if (typeof Panel !== "function") {
-    const registry = Panel || globalThis.customElements;
-    if (!registry?.whenDefined) return Promise.resolve(false);
-    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementDecisionGuidance(registry.get("extended-openai-management-panel")));
-  }
-  const constructor = Panel;
-  const prototype = constructor?.prototype;
-  if (!prototype || prototype[PATCHED]) return false;
-
-  const originalConfirm = prototype._confirm;
-  prototype._confirm = function(...args) {
-    const subject = this._eocDecisionConfirmSubject || "";
-    this._eocDecisionConfirmSubject = "";
-    const result = originalConfirm.apply(this, args);
-    enhanceConfirmationScope(this, subject);
-    return result;
-  };
-
-  prototype[PATCHED] = true;
-  return true;
 }
