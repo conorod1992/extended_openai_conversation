@@ -27,7 +27,7 @@ def _phone_tool(*, min_length):
 
 def test_runtime_quarantine_does_not_leak_into_next_request(monkeypatch) -> None:
     """A later clean request must not inherit an earlier quarantined tool name."""
-    from custom_components.extended_openai_conversation_responses import performance
+    from custom_components.extended_openai_conversation_responses import agent_config
 
     broken = _phone_tool(min_length="legacy")
     first_tools = loading._runtime_configured_function_tools(
@@ -58,7 +58,7 @@ def test_runtime_quarantine_does_not_leak_into_next_request(monkeypatch) -> None
         captured["function_tools"] = function_tools
         return groups
 
-    monkeypatch.setattr(performance, "cached_validate_function_groups", validate)
+    monkeypatch.setattr(agent_config, "validate_function_groups", validate)
     groups = [
         {
             "id": "phone_tools",

@@ -127,7 +127,7 @@ def test_runtime_function_quarantine_keeps_valid_siblings() -> None:
 
 
 def test_runtime_group_quarantine_drops_only_quarantined_references(monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses import performance
+    from custom_components.extended_openai_conversation_responses import agent_config
 
     captured = {}
 
@@ -136,7 +136,7 @@ def test_runtime_group_quarantine_drops_only_quarantined_references(monkeypatch)
         captured["function_tools"] = function_tools
         return groups
 
-    monkeypatch.setattr(performance, "cached_validate_function_groups", validate)
+    monkeypatch.setattr(agent_config, "validate_function_groups", validate)
     loading._RUNTIME_QUARANTINED_FUNCTION_NAMES.set(frozenset({"broken_tool"}))
     loading._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
     tools = [{"spec": {"name": "good_tool"}}]
