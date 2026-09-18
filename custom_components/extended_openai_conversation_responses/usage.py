@@ -823,7 +823,7 @@ class UsageManager:
         totals_snapshot = self._usage_snapshot("totals")
         if self._daily_storage is None:
             return self._schedule_store_snapshot(
-                self._storage, lambda snapshot=totals_snapshot: snapshot
+                self._storage, lambda: totals_snapshot
             )
 
         totals_delay_save = getattr(self._storage, "async_delay_save", None)
@@ -834,12 +834,8 @@ class UsageManager:
         daily_snapshot = self._usage_snapshot("daily")
         # Schedule the compatibility mirror first. If the authoritative daily
         # schedule then fails, immediate persistence below leaves daily state current.
-        self._schedule_store_snapshot(
-            self._storage, lambda snapshot=totals_snapshot: snapshot
-        )
-        self._schedule_store_snapshot(
-            self._daily_storage, lambda snapshot=daily_snapshot: snapshot
-        )
+        self._schedule_store_snapshot(self._storage, lambda: totals_snapshot)
+        self._schedule_store_snapshot(self._daily_storage, lambda: daily_snapshot)
         return True
 
     async def _async_save_safely(self, label: str, save: Callable[[], Any]) -> None:
@@ -856,22 +852,21 @@ class UsageManager:
                     "request details": "details",
                     "run details": "details",
                 }.get(label)
-                store = {
-                    "totals": self._storage,
-                    "daily": self._daily_storage,
-                    "details": self._detail_storage,
-                }.get(category)
-                if (
-                    category is not None
-                    and store is not None
-                    and self._schedule_store_snapshot(
-                        store,
-                        lambda category=category: self._usage_snapshot(category),
-                    )
-                ):
-                    # Details are intentionally serialized only when the delayed
-                    # save is due, avoiding O(N) history serialization on the turn.
-                    return
+                if category is not None:
+                    store = {
+                        "totals": self._storage,
+                        "daily": self._daily_storage,
+                        "details": self._detail_storage,
+                    }[category]
+                    if (
+                        store is not None
+                        and self._schedule_store_snapshot(
+                            store, lambda: self._usage_snapshot(category)
+                        )
+                    ):
+                        # Details are intentionally serialized only when the delayed
+                        # save is due, avoiding O(N) history serialization on the turn.
+                        return
         except Exception:
             _LOGGER.exception(
                 "Unable to schedule usage %s; falling back to immediate persistence",
