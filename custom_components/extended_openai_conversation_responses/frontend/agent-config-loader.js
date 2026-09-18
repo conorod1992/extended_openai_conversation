@@ -1,5 +1,3 @@
-const MANAGEMENT_COPY_PATCHED = Symbol.for("extended-openai.management-copy-polish");
-
 let implementation = null;
 let loadPromise = null;
 
@@ -13,7 +11,7 @@ function replaceRenderedText(root, from, to) {
   });
 }
 
-function polishRenderedCopy(panel) {
+export function polishRenderedCopy(panel) {
   const root = panel?.shadowRoot;
   if (!root) return;
 
@@ -71,31 +69,6 @@ function polishRenderedCopy(panel) {
     if (broadcastState.textContent?.trim().startsWith("Broadcast is available to")) broadcastState.remove();
     else if (broadcastState.textContent?.trim().startsWith("Broadcast is off.")) broadcastState.textContent = "Broadcast is currently off.";
   }
-}
-
-export function installManagementCopyPolish(Panel) {
-  // A constructor is the production API; registry callers remain supported.
-  if (typeof Panel !== "function") {
-    const registry = Panel || globalThis.customElements;
-    if (!registry?.whenDefined) return Promise.resolve(false);
-    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementCopyPolish(registry.get("extended-openai-management-panel")));
-  }
-  const constructor = Panel;
-  const prototype = constructor?.prototype;
-  if (!prototype || prototype[MANAGEMENT_COPY_PATCHED]) return false;
-  const originalRender = prototype._renderContent;
-  prototype._renderContent = function(...args) {
-    const shellRevision = this._eocShellRevision;
-    const result = originalRender.apply(this, args);
-    // Preserve the existing shell-only decoration boundary. The native renderer
-    // no longer bypasses early wrappers on routine route updates.
-    if (shellRevision === undefined || shellRevision !== this._eocShellRevision) {
-      queueMicrotask(() => polishRenderedCopy(this));
-    }
-    return result;
-  };
-  prototype[MANAGEMENT_COPY_PATCHED] = true;
-  return true;
 }
 
 export function polishConfigurationCopy(panel, html) {
