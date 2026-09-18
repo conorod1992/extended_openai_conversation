@@ -493,8 +493,7 @@ class UsageManager:
         runs = [
             run
             for run in self.runs
-            if self.run_retention_days > 0
-            and _parse_time(run.started_at) >= run_cutoff
+            if self.run_retention_days > 0 and _parse_time(run.started_at) >= run_cutoff
         ]
         return (
             requests,
