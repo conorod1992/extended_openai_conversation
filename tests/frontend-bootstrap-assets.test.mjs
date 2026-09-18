@@ -37,18 +37,26 @@ function frontendRegistrationSources() {
     );
 }
 
-test("every management bootstrap module is registered as a served frontend asset", () => {
-  const bootstrap = read(
-    "custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js",
+test("every direct management-panel dependency is registered as a served frontend asset", () => {
+  const panel = read(
+    "custom_components/extended_openai_conversation_responses/frontend/management-panel.js",
   );
-  const bootstrapModules = [...bootstrap.matchAll(/from "\.\/([^"']+\.js)"/g)].map(
+  const panelModules = [...panel.matchAll(/from "\\.\\/([^"']+\\.js)"/g)].map(
     (match) => match[1],
   );
-  assert.ok(bootstrapModules.length > 0, "management bootstrap module list is empty");
+  assert.ok(panelModules.length > 0, "management panel dependency list is empty");
+  assert.equal(
+    fs.existsSync(path.join(
+      ROOT,
+      "custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js",
+    )),
+    false,
+    "obsolete management bootstrap should stay deleted",
+  );
 
-  // Several runtime hardening installers extend MANAGEMENT_FRONTEND_MODULES before
-  // management_ui registers static paths. Discover those registration sources by
-  // the variable they mutate rather than maintaining a second filename allowlist.
+  // Runtime hardening modules can extend MANAGEMENT_FRONTEND_MODULES before
+  // management_ui registers static paths. Discover those registration sources
+  // by the variable they mutate rather than maintaining a second allowlist.
   const registrationSources = frontendRegistrationSources();
   assert.ok(registrationSources.length > 0, "frontend registration sources were not found");
 
@@ -56,10 +64,10 @@ test("every management bootstrap module is registered as a served frontend asset
     registrationSources.flatMap(({source}) => [...quotedJsFiles(source)]),
   );
 
-  const missing = bootstrapModules.filter((moduleName) => !servedModules.has(moduleName));
+  const missing = panelModules.filter((moduleName) => !servedModules.has(moduleName));
   assert.deepEqual(
     missing,
     [],
-    `bootstrap modules are not registered with Home Assistant: ${missing.join(", ")}`,
+    `management-panel dependencies are not registered with Home Assistant: ${missing.join(", ")}`,
   );
 });
