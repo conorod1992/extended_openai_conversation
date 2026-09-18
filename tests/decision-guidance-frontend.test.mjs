@@ -89,13 +89,10 @@ assert.match(source, /eoc-confirm-scope/);
 assert.match(source, /This backup will replace:/);
 assert.match(source, /Request Rule “\$\{rule\.name\}”/);
 
-const bootstrap = await readFile(
-  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url),
+const panelSource = await readFile(
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url),
   "utf8",
 );
-assert.match(bootstrap, /management-decision-guidance\.js/);
-assert.ok(
-  bootstrap.indexOf('installManagementConfigurationGuidance(Panel)')
-    < bootstrap.indexOf('installManagementDecisionGuidance(Panel)'),
-  "decision guidance should install after configuration clarity/conflict guidance",
-);
+assert.match(panelSource, /from "\.\/management-decision-guidance\.js"/);
+assert.match(panelSource, /enhanceConfirmationScope\(this, subject\)/);
+assert.doesNotMatch(source, /prototype\._confirm|installManagementDecisionGuidance/);
