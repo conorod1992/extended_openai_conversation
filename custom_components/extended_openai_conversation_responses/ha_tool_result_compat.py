@@ -1,0 +1,33 @@
+"""Compatibility helpers for Home Assistant LLM tool results."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from homeassistant.components import conversation
+from homeassistant.helpers import llm
+
+
+def make_tool_result_content(
+    *, agent_id: str, tool_call_id: str, tool_name: str, tool_result: dict[str, Any]
+) -> conversation.ToolResultContent:
+    """Build ToolResultContent across old and new Home Assistant APIs."""
+    kwargs: dict[str, Any] = {
+        "agent_id": agent_id,
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+    }
+    tool_result_type = getattr(llm, "ToolResult", None)
+    if tool_result_type is None:
+        kwargs["tool_result"] = tool_result
+    else:
+        kwargs["result"] = tool_result_type(data=tool_result)
+    return conversation.ToolResultContent(**kwargs)
+
+
+def unwrap_tool_result(value: Any) -> Any:
+    """Return legacy raw tool-result data when HA wraps it in llm.ToolResult."""
+    tool_result_type = getattr(llm, "ToolResult", None)
+    if tool_result_type is not None and isinstance(value, tool_result_type):
+        return value.data
+    return value
