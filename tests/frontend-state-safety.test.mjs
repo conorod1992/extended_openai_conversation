@@ -6,21 +6,18 @@ const frontend = (name) => new URL(
   import.meta.url,
 );
 
-const [source, bootstrap, panelSource] = await Promise.all([
+const [source, panelSource] = await Promise.all([
   readFile(frontend("management-state-safety.js"), "utf8"),
-  readFile(frontend("management-bootstrap.js"), "utf8"),
   readFile(frontend("management-panel.js"), "utf8"),
 ]);
 const stateSafety = await import(frontend("management-state-safety.js"));
 
-assert.doesNotMatch(bootstrap, /management-state-safety\.js/);
 assert.doesNotMatch(source, /installManagementStateSafety/);
 assert.doesNotMatch(source, /prototype\./);
-assert.doesNotMatch(bootstrap, /debug-management\.js/);
-assert.doesNotMatch(bootstrap, /installPreDefinitionPropertyReplay/);
+assert.match(panelSource, /from "\.\/management-state-safety\.js"/);
+assert.doesNotMatch(panelSource, /management-bootstrap\.js|initializeManagementPanel/);
 assert.match(panelSource, /connectedCallback\(\)/);
 assert.match(panelSource, /Object\.prototype\.hasOwnProperty\.call\(this, name\)/);
-assert.doesNotMatch(bootstrap, /registry\.(define|get|whenDefined)\s*=/);
 assert.equal(stateSafety.SECTION_CACHE_TTL_MS, 30_000);
 assert.match(source, /Discard unsaved changes\?/);
 assert.match(source, /pageCoordinator\(panel\)\.leaving\(destination\)/);
