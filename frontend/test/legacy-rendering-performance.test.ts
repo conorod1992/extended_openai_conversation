@@ -120,7 +120,9 @@ describe("native management rendering", () => {
     expect(loadingSource).not.toContain("prototype.");
     expect(loadingSource).toContain("loadSectionData.call(panel, silent)");
     expect(loadingSource).toContain("_eocViewAssetToken");
-    expect(routeSource).toContain("return loadSectionAlongsideAsset(panel, silent, panel._loadSectionData, view, asset, token);");
+    expect(routeSource).toContain("let loadData = () => loadRouteData(panel, silent, view, token);");
+    expect(routeSource).toContain("if (feature && DATA_FEATURES.has(view))");
+    expect(routeSource).toContain("return loadSectionAlongsideAsset(panel, silent, loadData, view, Promise.all([feature, asset]), token);");
     expect(routeSource).toContain("Promise.allSettled([assetPromise, sectionPromise])");
   });
 });
