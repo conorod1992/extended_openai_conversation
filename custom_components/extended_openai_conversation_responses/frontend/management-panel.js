@@ -9,7 +9,7 @@ import {NAVIGATION, pageMetadata, routeFromPath, routePath, searchSettings, shou
 import {freshGuestPolicyDraft} from "./guest-mode-ui.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview} from "./overview-page.js";
-import {formatUsageNumber, formatUsageTimestamp, tokenBreakdown} from "./usage-chart.js";
+import {formatUsageNumber, formatUsageTimestamp, tokenBreakdown} from "./usage-format.js";
 import {bindRequestRules, renderRequestRules, requestRulesDialog} from "./request-rules-ui.js";
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
@@ -157,6 +157,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _canAccessView(page, subsection = null) {
     if (page === "usage-maintenance" && subsection === "request-debug") return this._data?.is_admin === true;
+    if (page === "usage-maintenance" && subsection === "request-debug") return this._data?.is_admin === true;
     if (this._data?.is_admin !== false) return true;
     if (page === "assistant") return false;
     if (page === "capabilities" && subsection && subsection !== "guest-mode") return false;
@@ -169,6 +170,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _call(section, action, extra = {}) {
+    // Configuration remains editable even when persisted Function Tools need repair.
+    const issue = this._selectedAgent()?.configuration_issue;
+    if (section === "configuration" && issue?.field === "functions" && issue.repairable === true) {
+      const repairAction = {get:"configuration_get", validate:"configuration_validate", save:"configuration_save", update:"configuration_save"}[action];
+      if (repairAction) return this._request("function_repair", repairAction, extra);
+    }
     let payload = extra;
     if (section === "guest_mode" && action === "update") {
       payload = {...extra};

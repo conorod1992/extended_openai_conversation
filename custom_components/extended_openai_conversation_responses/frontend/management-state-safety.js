@@ -482,4 +482,3 @@ export function installManagementStateSafety(Panel) {
 
   return true;
 }
-

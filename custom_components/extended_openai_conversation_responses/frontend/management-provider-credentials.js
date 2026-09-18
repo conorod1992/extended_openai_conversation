@@ -290,4 +290,3 @@ export function installManagementProviderCredentials(Panel) {
   prototype[PATCHED] = true;
   return true;
 }
-

@@ -94,4 +94,3 @@ export function installManagementActionSafety(Panel) {
 
   return true;
 }
-

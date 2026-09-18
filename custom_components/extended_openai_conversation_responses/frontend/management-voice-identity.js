@@ -30,4 +30,3 @@ export function installManagementVoiceIdentity(Panel) {
   prototype[PATCHED] = true;
   return true;
 }
-

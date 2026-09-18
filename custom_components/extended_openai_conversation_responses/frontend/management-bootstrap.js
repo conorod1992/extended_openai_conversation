@@ -1,7 +1,5 @@
-import {installQuietHoursUI} from "./quiet-hours-ui.js";
 import {installManagementCopyPolish} from "./agent-config-loader.js";
 import {installManagementBrowser} from "./guest-mode-ui.js";
-import {installUsageDiagnostics} from "./usage-chart.js";
 import {installManagementStateSafety} from "./management-state-safety.js";
 import {installManagementActionSafety} from "./management-action-safety.js";
 import {installFunctionDependencyIntegrity} from "./management-function-dependencies.js";
@@ -11,12 +9,8 @@ import {installManagementMemorySettings} from "./management-memory-settings.js";
 import {installManagementCapabilitiesIA} from "./management-capabilities-ia.js";
 import {installManagementVoiceIdentity} from "./management-voice-identity.js";
 import {installManagementPermissionBoundaries} from "./management-permission-boundaries.js";
-import {installFunctionRepair} from "./management-function-repair.js";
 import {installManagementNavigationSearch} from "./management-navigation-search.js";
 import {installManagementToolbarLayout} from "./management-toolbar-layout.js";
-import {installHistoryPagination} from "./management-history-pagination.js";
-import {installUsageInputFootprint} from "./usage-input-footprint.js";
-import {installManagementSection} from "./debug-management.js";
 import {installManagementConfigurationClarity} from "./management-configuration-clarity.js";
 import {installManagementConfigurationGuidance} from "./management-configuration-guidance.js";
 import {installManagementDecisionGuidance} from "./management-decision-guidance.js";
@@ -214,10 +208,8 @@ function installManagementHotPathPerformance(Panel) {
 // Run the remaining shared extensions before define() upgrades any existing host.
 // No methods on the browser's CustomElementRegistry are replaced.
 export function initializeManagementPanel(Panel) {
-  installQuietHoursUI(Panel);
   installManagementCopyPolish(Panel);
   installManagementBrowser(Panel);
-  installUsageDiagnostics(Panel);
   installManagementStateSafety(Panel);
   installManagementActionSafety(Panel);
   installFunctionDependencyIntegrity(Panel);
@@ -227,12 +219,8 @@ export function initializeManagementPanel(Panel) {
   installManagementCapabilitiesIA(Panel);
   installManagementVoiceIdentity(Panel);
   installManagementPermissionBoundaries(Panel);
-  installFunctionRepair(Panel);
   installManagementNavigationSearch(Panel);
   installManagementToolbarLayout(Panel);
-  installHistoryPagination(Panel);
-  installUsageInputFootprint(Panel);
-  installManagementSection(Panel);
   installManagementConfigurationClarity(Panel);
   installManagementConfigurationGuidance(Panel);
   installManagementDecisionGuidance(Panel);

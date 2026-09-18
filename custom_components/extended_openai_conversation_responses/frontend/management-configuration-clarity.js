@@ -356,4 +356,3 @@ export function installManagementConfigurationClarity(Panel) {
   prototype[PATCHED] = true;
   return true;
 }
-

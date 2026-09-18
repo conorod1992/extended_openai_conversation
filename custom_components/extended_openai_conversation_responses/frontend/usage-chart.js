@@ -1,7 +1,5 @@
-const tokenCount = (value) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
-};
+import {tokenCount, tokenBreakdown, formatUsageNumber, formatUsageTimestamp} from "./usage-format.js";
+export {tokenBreakdown, formatUsageNumber, formatUsageTimestamp} from "./usage-format.js";
 
 const USAGE_WINDOW_OPTIONS = [
   {id: "7", label: "7 days"},
@@ -70,37 +68,6 @@ export function usageWindowBounds(window, today) {
   if (id === "year") return {id, label, startDate: `${validToday.slice(0, 4)}-01-01`, endDate: validToday};
   const days = Number(id);
   return {id, label, startDate: addUsageCalendarDays(validToday, -(days - 1)), endDate: validToday};
-}
-
-export function tokenBreakdown(totalTokens, cachedInputTokens) {
-  const total = tokenCount(totalTokens);
-  const cached = Math.min(total, tokenCount(cachedInputTokens));
-  return { total, cached, uncached: total - cached };
-}
-
-export function formatUsageNumber(value, locales = undefined) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return String(value ?? "");
-  return Math.trunc(parsed).toLocaleString(locales);
-}
-
-export function formatUsageTimestamp(value, locales = undefined, timeZone = undefined) {
-  const exact = typeof value === "string" ? value : "";
-  const date = new Date(exact);
-  if (!exact || Number.isNaN(date.getTime())) {
-    return {display: exact || "Unknown", datetime: exact};
-  }
-  try {
-    return {
-      display: new Intl.DateTimeFormat(locales, {
-        year: "numeric", month: "short", day: "numeric",
-        hour: "2-digit", minute: "2-digit", timeZone,
-      }).format(date),
-      datetime: exact,
-    };
-  } catch (_) {
-    return {display: date.toLocaleString(), datetime: exact};
-  }
 }
 
 function formatUsageDate(value, locales = undefined, monthOnly = false) {
@@ -458,7 +425,7 @@ export function installUsageDiagnostics(Panel) {
 
   const originalDialogs = prototype._dialogs;
   prototype._dialogs = function() {
-    return `${originalDialogs.call(this)}${requestDetailsDialog()}`;
+    return `${originalDialogs.call(this)}${this._viewKey() === "usage-maintenance/usage" ? requestDetailsDialog() : ""}`;
   };
 
   const originalBindActions = prototype._bindActions;

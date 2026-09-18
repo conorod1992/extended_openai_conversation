@@ -20,7 +20,7 @@ const bootstrap = await readFile(
 );
 assert.match(bootstrap, /management-configuration-clarity\.js/);
 assert.ok(
-  bootstrap.indexOf('installManagementSection(Panel)')
+  bootstrap.indexOf('installManagementToolbarLayout(Panel)')
     < bootstrap.indexOf('installManagementConfigurationClarity(Panel)'),
   "configuration clarity should install after the other management extensions",
 );

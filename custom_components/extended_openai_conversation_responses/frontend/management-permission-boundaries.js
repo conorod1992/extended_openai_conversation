@@ -53,4 +53,3 @@ export function installManagementPermissionBoundaries(Panel) {
   prototype[PATCHED] = true;
   return true;
 }
-

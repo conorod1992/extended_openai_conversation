@@ -354,4 +354,3 @@ export function installManagementDecisionGuidance(Panel) {
   prototype[PATCHED] = true;
   return true;
 }
-

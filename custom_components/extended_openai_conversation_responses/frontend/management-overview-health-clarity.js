@@ -176,5 +176,3 @@ export function installManagementOverviewHealthClarity(Panel) {
   prototype[PATCHED] = true;
   return true;
 }
-
-

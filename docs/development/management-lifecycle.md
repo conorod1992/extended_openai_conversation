@@ -2,7 +2,35 @@
 
 Baseline: live origin/develop `890d18629794f177cb3d61ac54578b43a60b56a7` (2026-09-18).
 
-## Before: installer inventory
+## Cold-start follow-up (PR #565)
+
+This follow-up starts from `d944450` on the still-open lifecycle branch. The inventory and timing results below describe the earlier migration; they are not measurements of this follow-up. No new benchmark or reporting machinery was added.
+
+Startup now uses a normal static core module graph and an explicit `initializeManagementPanel(Panel)` call immediately before native custom-element registration. It does not override `customElements.define`, `get`, or `whenDefined`, collect registration callbacks, or evaluate a sequential dynamic-import list. Pre-definition HA property replay and the existing timing/busy presentation remain intact. Remaining installers receive the constructor directly; legacy registry-call entry points remain for isolated consumers/tests.
+
+Overview no longer evaluates these previously eager modules:
+
+| First consumer | Deferred modules |
+| --- | --- |
+| Configuration routes | `agent-config-editor`, `backup-transfer-ui`, `exposed-attributes-ui` |
+| Function Tools | `management-function-repair` |
+| Conversation history | `management-history-pagination` |
+| Usage | `usage-chart`, `usage-input-footprint` |
+| Quiet Hours | `quiet-hours-ui` |
+| Request debugging | `debug-management` (the debug panel itself remains lazy) |
+| Diagnostics | `management-provider-credentials` |
+
+The small `usage-format` module supplies shared formatting without importing the Usage page. Quiet Hours navigation/search metadata lives in `frontend-navigation`; configuration repair request routing and Request Debug access control belong to the native host, so those safety boundaries do not depend on visiting an editor first.
+
+`management-route` explicitly prepares each feature once and dispatches its data lifecycle. Quiet Hours loading, embedded debugging, history search reset, and input-footprint loading no longer wrap `_loadSection` or `_loadSectionData`. Independent editor assets and backend data still load concurrently. Features that must initialize before data work await only their own code; obsolete pending imports cannot start data work after a newer navigation. Feature imports are shared, with pending entries cleared on failure.
+
+Configuration dialogs are limited to configuration routes, Tool/Group editors to Function Tools, prompt preview to Prompt & context, restore to Backup & restore, rule dialogs to Request Rules, and usage details to Usage. The existing persistent core dialogs and renderer remain unchanged.
+
+The regression suite checks that Overview never requests these unrelated assets, works with read-only native registry methods and a pre-created HA host, initializes deferred routes/actions on first use, retains the shared data-loader identity, and rejects stale first-import completions. Existing browser coverage checks saves, dirty drafts, mutations, tools, restore, navigation, reconnect and editor lifecycle. Perceived latency still needs assessment in Home Assistant; there is no new millisecond claim here.
+
+Remaining startup work includes shared safety/access wrappers, navigation/search/toolbar behavior, configuration/decision guidance, memory/capability integration and Overview decoration. Several have cross-route responsibilities (including settings search and dirty-state presentation), so deferring them wholesale would change behavior. Follow-up work should split those responsibilities into route-owned render hooks before making them lazy. Some feature render/action wrappers still install once on first use, but their loading lifecycle is explicit and outside the cold-start path. The large native host and shared presentation code remain the main candidates for further reduction.
+
+## Historical baseline: installer inventory
 
 The numbered modules are evaluated sequentially by management-bootstrap. Other installers arrive through static dependencies, lazy editor dependencies or feature entry points. "Delegates/conditional" calls a captured implementation on at least one path; replacement/addition does not. Dynamic instrumentation wrappers in bootstrap also wrap `_navigate`, `_loadSection`, and `_render`.
 
@@ -70,7 +98,7 @@ All existing standalone tests/*.test.mjs passed. Browser measurements use the sh
 - `management-cache.js` owns route TTL reads/writes. Knowledge and Request Rules remain isolated per agent. Knowledge can display an expired list while revalidating; an unchanged refresh retains its object and DOM. Rules keep their bounded fresh-cache policy. Scope catalogues are shared between memory/history routes per agent, with a non-sliding 30-second TTL. Memory/history mutations and full restore invalidate the catalogue; stale in-flight generations cannot repopulate it.
 - `management-renderer.js` owns the persistent shell, main host and independently updated regions. Equal route markup is not replaced or rebound. `management-dialogs.js` owns the five persistent core dialogs (Knowledge, Memory, session, reassignment, confirmation) with delegated actions; feature editor dialogs still use their existing replace/bind lifecycle.
 - Initial agent loading and remembered-overview prefetch now live in the native route lifecycle. The health decorator no longer replaces `_loadAgents` or intercepts `_call` to recover fields discarded by another patch; the overview summary is preserved intact.
-- Voice and memory-settings UI implementations are lazy route assets. Three sequential performance installers were removed (24 -> 21 entries). The customElements bridge remains for the other feature installers; those still require deterministic installation before upgrade.
+- Voice and memory-settings UI implementations are lazy route assets. Three sequential performance installers were removed (24 -> 21 entries). At this earlier milestone the customElements bridge remained; the cold-start follow-up above removes it.
 
 ## Request dependencies and cache boundaries
 

@@ -123,4 +123,3 @@ export function installManagementFeatureStatus(Panel) {
   prototype[PATCHED] = true;
   return true;
 }
-

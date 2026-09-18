@@ -1,5 +1,3 @@
-import "./quiet-hours-ui.js";
-
 const MANAGEMENT_COPY_PATCHED = Symbol.for("extended-openai.management-copy-polish");
 
 let implementation = null;
@@ -244,4 +242,3 @@ export async function ensureAgentConfigModule() {
   }
   return loadPromise;
 }
-

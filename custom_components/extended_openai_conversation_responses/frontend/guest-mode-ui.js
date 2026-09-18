@@ -305,4 +305,3 @@ export function installManagementBrowser(Panel) {
   Object.defineProperty(proto, PATCHED, {value: true});
   return true;
 }
-

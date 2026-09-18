@@ -14,6 +14,7 @@ export const NAVIGATION = [
     {id: "web-skills", label: "Web search & Skills", description: "Configure current-information search and installed instruction sets."},
     {id: "request-rules", label: "Request Rules", description: "Create fast local commands and route AI requests by phrase."},
     {id: "functions", label: "Functions", description: "Manage custom Function Tools and on-demand groups."},
+    {id: "quiet-hours", label: "Quiet Hours", description: "Make Assist satellites quieter at set times each day and expose that period to Home Assistant automations."},
     {id: "guest-mode", label: "Guest Mode", description: "Limit what visitors can see, use, and remember."},
   ]},
   {id: "data-memory", label: "Data & Memory", path: "/extended-openai/data-memory/memory-settings", sections: [
@@ -112,6 +113,7 @@ export const SETTINGS_INDEX = [
   setting("Request debugging", "Capture and inspect complete recent provider requests.", "debug request prompt cache timing logs diagnostics", "usage-maintenance", "request-debug"),
   setting("Backup & Restore", "Create or restore a full private agent backup.", "backup export import disaster recovery", "usage-maintenance", "backup-restore"),
   setting("Diagnostics", "Test the provider and inspect the selected agent.", "diagnostics provider connection test", "usage-maintenance", "diagnostics"),
+  setting("Quiet Hours", "Set quieter speaker volume and wake-word sound behaviour for a daily time window.", "quiet hours night mode satellite speaker volume wake word sound chime", "capabilities", "quiet-hours", null, null, {source:"quiet-hours"}),
 ];
 
 export function routeFromPath(pathname) {

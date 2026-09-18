@@ -14,7 +14,7 @@ const stateSafety = await import(frontend("management-state-safety.js"));
 const bootstrapModule = await import(frontend("management-bootstrap.js"));
 
 assert.match(bootstrap, /from "\.\/management-state-safety\.js"/);
-assert.match(bootstrap, /from "\.\/debug-management\.js"/);
+assert.doesNotMatch(bootstrap, /debug-management\.js/);
 assert.match(bootstrap, /installPreDefinitionPropertyReplay\(Panel\)/);
 assert.doesNotMatch(bootstrap, /registry\.(define|get|whenDefined)\s*=/);
 assert.equal(stateSafety.SECTION_CACHE_TTL_MS, 30_000);

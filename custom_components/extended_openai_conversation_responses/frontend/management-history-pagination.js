@@ -160,15 +160,6 @@ export function installHistoryPagination(Panel) {
   const prototype = Panel.prototype;
   prototype[PATCHED] = true;
 
-  const originalLoadSection = prototype._loadSection;
-  prototype._loadSection = async function(...args) {
-    if (this._viewKey?.() === CONVERSATIONS_VIEW) {
-      this._eocHistoryMode = "list";
-      this._eocHistoryQuery = "";
-    }
-    return await originalLoadSection.apply(this, args);
-  };
-
   prototype._searchArchive = async function(offset = 0) {
     const input = this.shadowRoot.querySelector("#archive-query");
     const query = (offset ? this._eocHistoryQuery : input?.value || "").trim();

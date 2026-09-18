@@ -194,4 +194,3 @@ export function installManagementSettingsPolish(Panel) {
   prototype[PATCHED] = true;
   return true;
 }
-

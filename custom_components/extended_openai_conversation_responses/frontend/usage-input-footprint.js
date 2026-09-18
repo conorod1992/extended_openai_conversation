@@ -45,7 +45,7 @@ export function footprintMarkup(panel) {
   </section>`;
 }
 
-async function loadInputFootprint(panel) {
+export async function loadInputFootprint(panel) {
   const agentId = panel._agentId;
   if (!agentId || panel._viewKey() !== "usage-maintenance/usage") return;
   panel._inputFootprintLoading = true;
@@ -86,19 +86,6 @@ export function installUsageInputFootprint(Panel) {
   const prototype = constructor?.prototype;
   if (!prototype || prototype[PATCHED]) return false;
 
-  const originalLoadSection = prototype._loadSection;
-  prototype._loadSection = async function(...args) {
-    const result = await originalLoadSection.apply(this, args);
-    if (this._viewKey() === "usage-maintenance/usage") {
-      if (this._inputFootprintAgentId !== this._agentId) {
-        this._inputFootprint = null;
-        this._inputFootprintError = null;
-      }
-      await loadInputFootprint(this);
-    }
-    return result;
-  };
-
   const originalUsage = prototype._usage;
   prototype._usage = function(...args) {
     return `${footprintMarkup(this)}${originalUsage.apply(this, args)}`;
@@ -114,4 +101,3 @@ export function installUsageInputFootprint(Panel) {
   prototype[PATCHED] = true;
   return true;
 }
-

@@ -184,6 +184,7 @@ MANAGEMENT_FRONTEND_MODULES = (
     "guide-page.js",
     "overview-page.js",
     "usage-chart.js",
+    "usage-format.js",
     "request-rules-ui.js",
     "management-bootstrap.js",
     "backup-transfer-ui.js",

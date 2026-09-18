@@ -36,7 +36,41 @@ export function routeAssetKind(view) {
 
 const featureModules = new Map();
 const featurePromises = new Map();
+// These extensions must be installed before their first data request. Editor/UI
+// assets below still load in parallel with backend work where independent.
+const DATA_FEATURES = new Set([
+  "capabilities/quiet-hours", "capabilities/functions", "data-memory/conversations",
+  "usage-maintenance/usage", "usage-maintenance/request-debug",
+]);
 const featureLoaders = {
+  "capabilities/quiet-hours": async (panel) => {
+    const module = await import("./quiet-hours-ui.js");
+    module.installQuietHoursUI(panel.constructor);
+    return module;
+  },
+  "capabilities/functions": async (panel) => {
+    const module = await import("./management-function-repair.js");
+    module.installFunctionRepair(panel.constructor);
+    return module;
+  },
+  "data-memory/conversations": async (panel) => {
+    const module = await import("./management-history-pagination.js");
+    module.installHistoryPagination(panel.constructor);
+    return module;
+  },
+  "usage-maintenance/usage": async (panel) => {
+    const [usage, footprint] = await Promise.all([
+      import("./usage-chart.js"), import("./usage-input-footprint.js"),
+    ]);
+    usage.installUsageDiagnostics(panel.constructor);
+    footprint.installUsageInputFootprint(panel.constructor);
+    return {...usage, loadInputFootprint: footprint.loadInputFootprint};
+  },
+  "usage-maintenance/request-debug": async (panel) => {
+    const module = await import("./debug-management.js");
+    module.installManagementSection(panel.constructor);
+    return module;
+  },
   "usage-maintenance/diagnostics": async (panel) => {
     const module = await import("./management-provider-credentials.js");
     module.installManagementProviderCredentials(panel.constructor);
@@ -67,7 +101,6 @@ export function routeAssetPromise(view, panel) {
 function coreAssetPromise(view) {
   if (view === "overview") return ensureOverviewModule();
   if (view === "guide") return ensureGuideModule();
-  if (view === "usage-maintenance/request-debug") return import("./debug-panel.js");
   const kind = routeAssetKind(view);
   if (kind === "agent-config" && !configurationEditor) return ensureConfigurationEditor();
   if (kind === "request-rules" && !getRequestRulesModule()) return ensureRequestRulesModule();
@@ -175,14 +208,45 @@ export function loadSectionAlongsideAsset(
   });
 }
 
+async function loadRouteData(panel, silent, view, token) {
+  const feature = getRouteFeature(view);
+  if (view === "capabilities/quiet-hours") return feature.loadQuietHours(panel, silent);
+  if (view === "usage-maintenance/request-debug") return feature.loadRequestDebug(panel, silent);
+  if (view === "data-memory/conversations") {
+    panel._eocHistoryMode = "list";
+    panel._eocHistoryQuery = "";
+  }
+  const result = await panel._loadSectionData(silent);
+  if (view === "usage-maintenance/usage" && isCurrentLazyLoad(panel, view, token)) {
+    if (panel._inputFootprintAgentId !== panel._agentId) {
+      panel._inputFootprint = null;
+      panel._inputFootprintError = null;
+    }
+    await feature.loadInputFootprint(panel);
+  }
+  return result;
+}
+
 // One native route entry point owns lazy assets and stale completion handling.
 export function loadRoute(panel, silent = false) {
   const view = panel._viewKey();
   const token = (panel._eocViewAssetToken || 0) + 1;
   panel._eocViewAssetToken = token;
-  const asset = routeAssetPromise(view, panel);
-  if (!asset) return panel._loadSectionData(silent);
-  return loadSectionAlongsideAsset(panel, silent, panel._loadSectionData, view, asset, token);
+  const feature = featureAssetPromise(view, panel);
+  const asset = coreAssetPromise(view);
+  if (!feature && !asset) return loadRouteData(panel, silent, view, token);
+  let loadData = () => loadRouteData(panel, silent, view, token);
+  if (feature && DATA_FEATURES.has(view)) {
+    // Invalidate prior data work immediately, before awaiting route code.
+    ++panel._loadToken;
+    if (!silent) { panel._busy = true; panel._render(); }
+    loadData = async function() {
+      await feature;
+      if (!isCurrentLazyLoad(panel, view, token)) return;
+      return loadRouteData(panel, silent, view, token);
+    };
+  }
+  return loadSectionAlongsideAsset(panel, silent, loadData, view, Promise.all([feature, asset]), token);
 }
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
@@ -260,4 +324,3 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
 
   await panel._loadSection();
 }
-
