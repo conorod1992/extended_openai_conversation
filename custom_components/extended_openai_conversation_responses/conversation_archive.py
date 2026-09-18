@@ -945,6 +945,59 @@ class ConversationArchive:
         return self._partition_payload_for_state(partition, dict(self._turns))
 
 
+def _search_archive_snapshot(
+    snapshot: tuple[tuple[ArchiveSession, tuple[ArchiveTurn, ...]], ...],
+    query: str,
+    start_date: str | None,
+    end_date: str | None,
+    limit: int,
+    offset: int,
+) -> dict[str, Any]:
+    """Rank one immutable Archive snapshot outside the event loop."""
+    query_tokens = _tokens(query)
+    normalized_query = _normalize(query)
+    ranked: list[tuple[float, str, ArchiveSession, ArchiveTurn]] = []
+    for session, turns in snapshot:
+        for turn in turns:
+            date = turn.timestamp[:10]
+            if start_date and date < start_date:
+                continue
+            if end_date and date > end_date:
+                continue
+            combined = f"{turn.user_text} {turn.assistant_text}"
+            normalized_combined = _normalize(combined)
+            tokens = _tokens(combined)
+            overlap = len(query_tokens & tokens)
+            if (
+                query_tokens
+                and not overlap
+                and normalized_query not in normalized_combined
+            ):
+                continue
+            score = overlap / max(1, len(query_tokens))
+            if normalized_query and normalized_query in normalized_combined:
+                score += 2
+            ranked.append((score, turn.timestamp, session, turn))
+    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    page = ranked[offset : offset + limit]
+    return {
+        "results": [
+            {
+                "session_id": session.session_id,
+                "turn_id": turn.turn_id,
+                "date": turn.timestamp[:10],
+                "timestamp": turn.timestamp,
+                "title": session.title,
+                "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
+            }
+            for _, _, session, turn in page
+        ],
+        "offset": offset,
+        "limit": limit,
+        "has_more": len(ranked) > offset + limit,
+    }
+
+
 def _clean_text(value: str) -> str:
     if not isinstance(value, str):
         raise ValueError("archive text must be a string")
