@@ -1,3 +1,7 @@
+import {bindMemorySettings, stripMovedMemoryControls} from "./management-memory-settings.js";
+import {bindCapabilities, renderConfiguration, stripWebSkillsConfiguration, stripLocalHandlingConfiguration, knowledgeAvailabilityMarkup, decorateKnowledgeSources, addKnowledgeSourceAvailabilityControl} from "./management-capabilities-ia.js";
+import {featureStatusMarkup, selectedFeatureStatus, diagnosticsMarkup, testAgent, FEATURE_STATUS_STYLES} from "./management-feature-status.js";
+import {ensureTemporaryScope, renderTemporaryMemories, renderTemporaryScopePicker, temporaryDialog, openTemporaryMemory, temporaryMemoryDirty, closeTemporaryMemory, saveTemporaryMemory, deleteTemporaryMemory, bindTemporaryMemory} from "./management-temporary-memory.js";
 import {
   bindPageDrafts,
   initializePageDraft,
@@ -10,9 +14,9 @@ import {bindPanelDialogs} from "./management-dialogs.js";
 import {renderManagement} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending} from "./management-actions.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch} from "./management-route.js";
-import {getConfigurationEditor, routeAssetKind} from "./management-route.js";
+import {getConfigurationEditor, getRouteFeature, routeAssetKind} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, searchSettings, shouldShowGlobalSettingsSearch} from "./frontend-navigation.js";
-import {freshGuestPolicyDraft} from "./guest-mode-ui.js";
+import {prepareMemoryBrowser, finishMemoryBrowserLoad, renderPersistentMemories, decorateConversations, decorateGuestPolicy, filterPersistentMemories, bindMemoryBrowser, formatManagementTimestamp, freshGuestPolicyDraft} from "./guest-mode-ui.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview} from "./overview-page.js";
 import {formatUsageNumber, formatUsageTimestamp, tokenBreakdown} from "./usage-format.js";
@@ -277,6 +281,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _isDraftView(page = this._page, subsection = this._subsection) {
+    if ((page === "data-memory" && subsection === "memory-settings") || (page === "capabilities" && subsection === "web-skills")) return this._data?.is_admin !== false;
     if (this._data && !this._data.is_admin) return false;
     return page === "assistant" ||
       (page === "capabilities" && ["home-assistant", "request-rules", "functions"].includes(subsection)) ||
@@ -286,6 +291,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _configSectionsForView() {
     return {
+      "capabilities/home-assistant": ["local"],
+      "capabilities/web-skills": ["capabilities"],
       "assistant/basics": ["general"],
       "assistant/model-responses": ["model"],
       "assistant/conversation": ["conversation", "context"],
@@ -300,6 +307,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _canAccessView(page, subsection = null) {
+    if (page === "data-memory" && subsection === "memory-settings" && this._data?.is_admin === false) return false;
     if (this._data?.is_admin === false && isRestrictedManagementView(page, subsection)) return false;
     if (page === "usage-maintenance" && subsection === "request-debug") return this._data?.is_admin === true;
     if (this._data?.is_admin !== false) return true;
@@ -557,8 +565,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return this._data?.agents?.find((item) => item.subentry_id === this._agentId);
   }
 
-  _loadSection(silent = false) {
-    return trackAsync(this, LOAD_MARK_PREFIX, () => loadRoute(this, silent));
+  async _loadSection(silent = false) {
+    if (this._viewKey() === "data-memory/memories" && this._memoryKind === "temporary") ensureTemporaryScope(this);
+    prepareMemoryBrowser(this);
+    const value = await trackAsync(this, LOAD_MARK_PREFIX, () => loadRoute(this, silent));
+    await finishMemoryBrowserLoad(this);
+    return value;
   }
 
   async _loadSectionData(silent = false) {
@@ -727,7 +739,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         main.classList.add("eoc-loading-in-background");
         return undefined;
       }
-      return this._renderContent(...args);
+      const result = this._renderContent(...args);
+      getRouteFeature("data-memory/conversations")?.decorateConversationPager(this);
+      return result;
     } finally {
       const main = this.shadowRoot?.querySelector?.("[data-eoc-main]")
         || this.shadowRoot?.querySelector?.("main");
@@ -810,16 +824,31 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _content(agent) {
     const view = this._viewKey();
+    if (view === "data-memory/memory-settings") return getRouteFeature(view)?.renderMemorySettings(this) || this._loading();
+    if (view === "capabilities/home-assistant") {
+      this._configSections = ["local"];
+      return `${this._homeAssistant(agent)}${renderConfiguration(this)}`;
+    }
+    if (view === "capabilities/web-skills") {
+      this._configSections = ["capabilities"];
+      return stripWebSkillsConfiguration(renderConfiguration(this));
+    }
     if (!this._canAccessView(this._page, this._subsection)) return this._empty("Administrator permission is required for this section.");
     if (view === "overview") return renderOverview(this, agent);
     if (view === "guide") return renderGuide(this);
-    if (this._page === "assistant") { this._configSections = this._configSectionsForView(); return (getConfigurationEditor()?.renderConfiguration(this) || this._loading()); }
-    if (view === "capabilities/home-assistant") return this._homeAssistant(agent);
+    if (this._page === "assistant") {
+      this._configSections = this._configSectionsForView();
+      let content = getConfigurationEditor()?.renderConfiguration(this) || this._loading();
+      if (["assistant/model-responses", "assistant/voice"].includes(view)) content = stripMovedMemoryControls(content, view);
+      if (view === "assistant/conversation") content = stripLocalHandlingConfiguration(content);
+      if (view === "assistant/voice") return getRouteFeature(view)?.transformVoiceIdentity(this, content) || this._loading();
+      return content;
+    }
     if (view === "capabilities/request-rules") return renderRequestRules(this);
     if (view === "capabilities/functions") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${(getConfigurationEditor()?.renderTools(this) || this._loading())}`;
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
-    if (view === "data-memory/knowledge") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
+    if (view === "data-memory/knowledge") return `${knowledgeAvailabilityMarkup(this)}<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
     if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? (getConfigurationEditor()?.renderConfiguration(this) || this._loading()) : ""}`; }
     if (view === "usage-maintenance/usage") return this._usage();
     if (view === "usage-maintenance/diagnostics") return this._diagnostics(agent);
@@ -890,21 +919,38 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const result = this._contentData || this._result || {};
     const settings = result.settings || {};
     const active = result.active?.active || [];
-    return `${this._data?.is_admin && active.length ? `<section class="content-card"><div class="section-heading"><div><h2>Active conversations</h2><p>Recent conversations that can continue when the same user or voice device speaks again.</p></div></div><div class="list">${active.map((item) => `<article class="list-card"><div class="card-main"><h3>${this._e(item.label)}</h3><p class="meta">Last active ${this._e(this._formatDate(item.last_active))} · Expires ${this._e(this._formatDate(item.expires_at))}</p></div><div class="actions"><button type="button" class="danger end-active" data-key="${this._e(item.key)}">Start fresh next time</button></div></article>`).join("")}</div></section>` : ""}<section class="notice ${settings.archive_enabled ? "on" : ""}"><div><strong>Conversation archive ${settings.archive_enabled ? "enabled" : "disabled"}</strong><p>Saved conversations are kept for ${settings.archive_retention_days || 30} days · Assistant search is ${settings.archive_model_search_enabled ? "on" : "off"}</p></div></section>
+    const content = `${this._data?.is_admin && active.length ? `<section class="content-card"><div class="section-heading"><div><h2>Active conversations</h2><p>Recent conversations that can continue when the same user or voice device speaks again.</p></div></div><div class="list">${active.map((item) => `<article class="list-card"><div class="card-main"><h3>${this._e(item.label)}</h3><p class="meta">Last active ${this._e(this._formatDate(item.last_active))} · Expires ${this._e(this._formatDate(item.expires_at))}</p></div><div class="actions"><button type="button" class="danger end-active" data-key="${this._e(item.key)}">Start fresh next time</button></div></article>`).join("")}</div></section>` : ""}<section class="notice ${settings.archive_enabled ? "on" : ""}"><div><strong>Conversation archive ${settings.archive_enabled ? "enabled" : "disabled"}</strong><p>Saved conversations are kept for ${settings.archive_retention_days || 30} days · Assistant search is ${settings.archive_model_search_enabled ? "on" : "off"}</p></div></section>
       <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-id="${this._e(item.session_id)}"><h3>${this._e(item.title || "Untitled conversation")}</h3><p class="meta">${this._e(this._formatDate(item.last_message_at))} · ${this._e(String(item.turn_count))} turns · ${this._e(item.scope_source)}</p></div><div class="actions"><button type="button" class="secondary view-session" data-id="${this._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${this._e(item.session_id)}">Delete</button></div></article>`).join("") || this._empty("No retained conversations in this scope.")}</div></section>
       ${this._data?.is_admin ? `<p class="help">Continuity is recent context used for follow-ups. The archive is retained history; configure its behavior below.</p>` : ""}`;
+    return decorateConversations(this, content);
+  }
+
+  _openTemporaryMemory(memoryId) {
+    return openTemporaryMemory(this, memoryId);
+  }
+
+  _temporaryMemoryDirty() {
+    return temporaryMemoryDirty(this);
+  }
+
+  _closeTemporaryMemory(force = false) {
+    return closeTemporaryMemory(this, force);
+  }
+
+  _saveTemporaryMemory() {
+    return saveTemporaryMemory(this);
   }
 
   _memories() {
-    const items = this._filtered(this._result?.memories || [], (item) => `${item.content} ${item.category} ${item.source}`);
-    const temporary = this._memoryKind === "temporary";
-    return `<section class="content-card"><div class="section-heading"><div><h2>Memories</h2><p>${temporary ? "Short-term details that are removed automatically at their expiry time." : "Long-term facts the assistant can reuse in future conversations."}</p></div>${temporary ? "" : `<button type="button" id="add-memory">+ Add memory</button>`}</div><div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent" ${temporary ? "" : "disabled"}>Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary" ${temporary ? "disabled" : ""}>Short-term</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map((memory) => temporary ? `<article class="list-card"><div class="card-main"><p class="primary-copy">${this._e(memory.content)}</p><p class="meta">${this._e(memory.category)} · Used for ${this._e(this._temporaryOwner(memory.scope_id))} · Expires ${this._e(this._formatDate(memory.expires_at))}</p></div><div class="actions"><button type="button" class="danger delete-temporary" data-id="${this._e(memory.memory_id)}" data-scope="${this._e(memory.scope_id || this._scopeId)}">Delete</button></div></article>` : `<article class="list-card"><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${this._e(memory.memory_id)}"><p class="primary-copy">${this._e(memory.content)}</p><p class="meta">${this._e(memory.category)} · ${this._e(memory.source)} · Updated ${this._e(this._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${this._e(memory.memory_id)}">Edit</button>${this._data?.is_admin && this._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${this._e(memory.memory_id)}">Assign to user</button>` : ""}<button type="button" class="danger delete-memory" data-id="${this._e(memory.memory_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No memories match this filter." : `No ${temporary ? "short-term" : "long-term"} memories yet.`)}</div></section>`;
+    if (this._memoryKind === "temporary") return renderTemporaryMemories(this);
+    return `${featureStatusMarkup(this, "Persistent memory", selectedFeatureStatus(this, "memory"), {page: "data-memory", subsection: "memory-settings", label: "Configure memory"})}${renderPersistentMemories(this)}`;
   }
 
   _knowledge() {
     const sources = this._result?.sources || [];
     const items = this._filtered(sources, (source) => `${source.title} ${source.description}`);
-    return `<section class="content-card"><div class="section-heading"><div><h2>Knowledge Library</h2><p>${formatUsageNumber(sources.length)} source${sources.length === 1 ? "" : "s"} stored locally for on-demand search.</p></div><button type="button" id="add-source">+ Add source</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${items.map((source) => `<article class="list-card"><div class="card-main clickable edit-source" tabindex="0" role="button" data-id="${this._e(source.source_id)}"><h3>${this._e(source.title)}</h3><p class="description">${this._e(source.description || "No description")}</p><p class="meta">${formatUsageNumber(source.character_count || 0)} characters · Updated ${this._e(this._formatDate(source.updated_at))}</p></div><div class="actions"><button type="button" class="secondary source-edit-button" data-id="${this._e(source.source_id)}">Edit</button><button type="button" class="danger delete-source" data-id="${this._e(source.source_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No sources match this filter." : "No Knowledge sources yet. Add one to make reference information available on demand.")}</div></section>`;
+    const content = `<section class="content-card"><div class="section-heading"><div><h2>Knowledge Library</h2><p>${formatUsageNumber(sources.length)} source${sources.length === 1 ? "" : "s"} stored locally for on-demand search.</p></div><button type="button" id="add-source">+ Add source</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${items.map((source) => `<article class="list-card"><div class="card-main clickable edit-source" tabindex="0" role="button" data-id="${this._e(source.source_id)}"><h3>${this._e(source.title)}</h3><p class="description">${this._e(source.description || "No description")}</p><p class="meta">${formatUsageNumber(source.character_count || 0)} characters · Updated ${this._e(this._formatDate(source.updated_at))}</p></div><div class="actions"><button type="button" class="secondary source-edit-button" data-id="${this._e(source.source_id)}">Edit</button><button type="button" class="danger delete-source" data-id="${this._e(source.source_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No sources match this filter." : "No Knowledge sources yet. Add one to make reference information available on demand.")}</div></section>`;
+    return decorateKnowledgeSources(this, `${featureStatusMarkup(this, "Knowledge Library", selectedFeatureStatus(this, "knowledge"))}${content}`);
   }
 
   _guestMode() {
@@ -928,7 +974,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const futureFunctions = "";
     const legacyNotice = this._result?.legacy_policy && !this._guestMigrationReview ? `<section class="notice legacy-migration"><strong>Previous Guest Mode settings found</strong><p>Your old Guest Mode rules used an allow-list. We have kept an equivalent restrictive draft so the upgrade does not accidentally give guests more access. The old policy remains enforced until you save.</p><div class="section-actions"><button type="button" id="guest-review-converted">Review converted settings</button><button type="button" class="secondary" id="guest-start-fresh">Start fresh with new defaults</button></div></section>` : "";
     const editor = this._data?.is_admin && (!this._result?.legacy_policy || this._guestMigrationReview) ? `<section class="content-card"><div class="section-heading"><div><h2>Home Assistant exclusions</h2><p>Guests can use entities normally available to this assistant, except those excluded here.</p></div></div><p class="help"><strong>Tip:</strong> Labels are usually the easiest way to manage Guest access. For example, create a <code>Guest restricted</code> label in Home Assistant and apply it to anything private or sensitive.</p><div class="guest-managers">${baseSelectors}</div><details class="guest-advanced"><summary>Advanced</summary><label class="toggle"><span>Make some visible entities read-only</span><input id="guest-separate-control" type="checkbox" ${config.guest_separate_control_restrictions ? "checked" : ""}></label><p class="help">Normally, anything a guest can see can also be controlled if the assistant is allowed to control it. Turn this on if you want guests to see some entities but not change them.</p>${config.guest_separate_control_restrictions ? `<div class="guest-managers">${controlSelectors}</div>` : ""}</details></section><section class="content-card"><div class="section-heading"><div><h2>Knowledge, functions & memory</h2><p>Personal memory and owner conversation archives are always unavailable.</p></div></div><div class="form-grid">${mode("guest_knowledge_policy","Allow Knowledge Library reads",[["off","Off"],["on","On"],["custom","Custom"]])}${mode("guest_function_policy","Allow custom functions",[["off","Off"],["on","On"],["custom","Custom"]])}${mode("guest_shared_memory_policy","Shared household memory",[["off","Off"],["read_only","Read only"],["read_write","Read & write"]])}</div>${futureKnowledge}${futureFunctions}${config.guest_knowledge_policy === "on" ? `<p class="help">All current Knowledge sources are available to guests. New sources added later will also be included. Choose Custom if you want a fixed list.</p>` : ""}${config.guest_function_policy === "on" ? `<p class="help">All eligible enabled functions are available to guests. New eligible functions added later will also be included. Choose Custom if you want a fixed list.</p>` : ""}${config.guest_knowledge_policy === "custom" ? selector("guest_knowledge_source_ids","knowledge","Allowed Knowledge sources") : ""}${config.guest_function_policy === "custom" ? `${selector("guest_allowed_function_names","function","Allowed functions")}${selector("guest_allowed_group_ids","group","Allowed Function Groups")}` : ""}</section><section class="content-card"><div class="section-heading"><div><h2>Assistant permission</h2><p>This permission is separate from the Guest Mode activation state.</p></div></div><details class="guest-advanced"><summary>Advanced</summary><label class="toggle"><span>Allow the assistant to activate Guest Mode</span><input id="guest-controls-enabled" type="checkbox" ${config.guest_mode_enabled ? "checked" : ""}></label><p class="help">Lets the assistant activate Guest Mode, start it earlier, or extend it. The assistant can never shorten or disable Guest Mode. Turning this off never ends or weakens an active restriction.</p></details></section>` : "";
-    return `${activation}<section class="metric-grid compact">${this._metric("Guest-visible entities", policy.readable_entity_count ?? "—")}${this._metric("Guest-controllable entities", policy.controllable_entity_count ?? "—")}${this._metric("Guest functions", policy.configured_tool_count ?? "—")}${this._metric("Guest archive retention", "Disabled")}</section>${legacyNotice}${editor}<section class="notice"><strong>Voice and model safety</strong><p>Model-visible context is fully rebuilt on the next user turn; execution restrictions tighten immediately, but context already sent to a provider cannot be removed retroactively.</p></section><details class="content-card"><summary><strong>Capability safety</strong></summary><p>Guest permissions are enforced by Extended OpenAI. Custom, composite, or script capabilities are unavailable when their side effects cannot be safely limited to guest-approved entities. This is intentional.</p></details>`;
+    const content = `${activation}<section class="metric-grid compact">${this._metric("Guest-visible entities", policy.readable_entity_count ?? "—")}${this._metric("Guest-controllable entities", policy.controllable_entity_count ?? "—")}${this._metric("Guest functions", policy.configured_tool_count ?? "—")}${this._metric("Guest archive retention", "Disabled")}</section>${legacyNotice}${editor}<section class="notice"><strong>Voice and model safety</strong><p>Model-visible context is fully rebuilt on the next user turn; execution restrictions tighten immediately, but context already sent to a provider cannot be removed retroactively.</p></section><details class="content-card"><summary><strong>Capability safety</strong></summary><p>Guest permissions are enforced by Extended OpenAI. Custom, composite, or script capabilities are unavailable when their side effects cannot be safely limited to guest-approved entities. This is intentional.</p></details>`;
+    return decorateGuestPolicy(this, content);
   }
 
   _setupGuestSelectors() {
@@ -1015,16 +1062,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _diagnostics(agent) {
-    return `<section class="metric-grid">${this._metric("Agent", agent.title)}${this._metric("Provider", agent.provider)}${this._metric("Model", agent.model)}${this._metric("Conversation archive", agent.archive_enabled ? "Enabled" : "Disabled")}${this._metric("Guest Mode", this._titleCase(String(agent.guest_mode?.state || "inactive").replaceAll("_", " ")))}</section><section class="content-card"><h2>Test provider connection</h2><p>Sends one minimal request to check the selected provider and model. It does not run Home Assistant actions.</p><button type="button" id="test-agent">Run connection test</button><pre id="test-result" aria-live="polite"></pre><small>If the test fails, verify the provider credentials, API format, model name, and network access.</small></section>`;
+    return diagnosticsMarkup(this, agent);
   }
 
   _dialogs() {
-    return `<dialog id="knowledge-dialog" class="editor-dialog wide" aria-labelledby="knowledge-dialog-title"><form id="knowledge-form"><div class="dialog-header"><h2 id="knowledge-dialog-title">Add Knowledge source</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Title<input id="knowledge-title" maxlength="${KNOWLEDGE_TITLE_LIMIT}" required></label><label>Description<textarea id="knowledge-description" class="short-textarea" maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}" spellcheck="true"></textarea></label><label>Content<textarea id="knowledge-content" class="knowledge-editor" maxlength="${KNOWLEDGE_LIMIT}" required spellcheck="true"></textarea></label><div id="knowledge-counter" class="counter">0 / ${KNOWLEDGE_LIMIT.toLocaleString()} characters</div><div id="knowledge-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="knowledge-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="knowledge-save">Save</button></div></form></dialog>
+    const content = `<dialog id="knowledge-dialog" class="editor-dialog wide" aria-labelledby="knowledge-dialog-title"><form id="knowledge-form"><div class="dialog-header"><h2 id="knowledge-dialog-title">Add Knowledge source</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Title<input id="knowledge-title" maxlength="${KNOWLEDGE_TITLE_LIMIT}" required></label><label>Description<textarea id="knowledge-description" class="short-textarea" maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}" spellcheck="true"></textarea></label><label>Content<textarea id="knowledge-content" class="knowledge-editor" maxlength="${KNOWLEDGE_LIMIT}" required spellcheck="true"></textarea></label><div id="knowledge-counter" class="counter">0 / ${KNOWLEDGE_LIMIT.toLocaleString()} characters</div><div id="knowledge-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="knowledge-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="knowledge-save">Save</button></div></form></dialog>
       <dialog id="memory-dialog" class="editor-dialog" aria-labelledby="memory-dialog-title"><form id="memory-form"><div class="dialog-header"><h2 id="memory-dialog-title">Add memory</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Memory<textarea id="memory-content" required spellcheck="true" placeholder="What should the agent remember?"></textarea></label><label>Category<input id="memory-category" value="general" required></label><p id="memory-meta" class="meta"></p><div id="memory-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="memory-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="memory-save">Save</button></div></form></dialog>
       <dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>
       <dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope">${this._scopeOptions("memories", true, true)}</select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>
       <dialog id="confirm-dialog" class="editor-dialog confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-header"><h2 id="confirm-title">Confirm</h2></div><div class="dialog-body"><p id="confirm-message"></p></div><div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">Cancel</button><button type="button" class="danger" id="confirm-accept">Confirm</button></div></dialog>
       ${this._viewKey() === "capabilities/request-rules" ? requestRulesDialog(this) : ""}${routeAssetKind(this._viewKey()) === "agent-config" ? getConfigurationEditor()?.configurationDialogs(this) || "" : ""}${this._viewKey() === "usage-maintenance/backup-restore" ? getConfigurationEditor()?.restoreDialog(this) || "" : ""}`;
+    return addKnowledgeSourceAvailabilityControl(`${content}${temporaryDialog(this)}`);
   }
 
   _bindActions() {
@@ -1067,6 +1115,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._pendingSettingFocus = null;
       requestAnimationFrame(() => { const element = this.shadowRoot.querySelector(`#${target}`); element?.scrollIntoView({behavior:"smooth", block:"start"}); (element?.querySelector("input,select,textarea,button") || element)?.focus?.(); });
     }
+    bindMemoryBrowser(this);
+    bindTemporaryMemory(this);
+    bindMemorySettings(this);
+    bindCapabilities(this);
+    if (this._viewKey() === "assistant/voice") getRouteFeature("assistant/voice")?.bindVoiceIdentity(this);
   }
 
   _activate(element, callback) {
@@ -1075,6 +1128,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _updateVisibleList() {
+    if (this._viewKey() === "data-memory/memories" && this._memoryKind === "persistent") return filterPersistentMemories(this);
     const query = this._query.trim().toLocaleLowerCase();
     this.shadowRoot.querySelectorAll(".list-card").forEach((card) => {
       card.hidden = query && !card.textContent.toLocaleLowerCase().includes(query);
@@ -1082,6 +1136,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _openKnowledge(sourceId = null) {
+    const availability = this.shadowRoot?.querySelector("#knowledge-source-enabled");
+    if (availability) availability.checked = true;
     const root = this.shadowRoot;
     const dialog = root.querySelector("#knowledge-dialog");
     const loadToken = (this._knowledgeLoadToken || 0) + 1;
@@ -1103,6 +1159,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         const response = await this._call("knowledge", "get", { source_id: sourceId });
         if (this._knowledgeLoadToken !== loadToken || !dialog.open) return;
         this._editingSource = response.source;
+        if (availability) availability.checked = response.source.enabled !== false;
         this._knowledgeMode = "edit";
         root.querySelector("#knowledge-title").value = response.source.title || "";
         root.querySelector("#knowledge-description").value = response.source.description || "";
@@ -1145,6 +1202,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _setKnowledgeEditorDisabled(disabled) {
+    const availability = this.shadowRoot?.querySelector("#knowledge-source-enabled");
+    if (availability) availability.disabled = disabled;
     const root = this.shadowRoot;
     ["#knowledge-title", "#knowledge-description", "#knowledge-content", "#knowledge-save"].forEach((selector) => {
       root.querySelector(selector).disabled = disabled;
@@ -1153,7 +1212,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _knowledgeValues() {
     const root = this.shadowRoot;
-    return { title: root.querySelector("#knowledge-title").value, description: root.querySelector("#knowledge-description").value, content: root.querySelector("#knowledge-content").value };
+    return { enabled: root.querySelector("#knowledge-source-enabled")?.checked ?? true, title: root.querySelector("#knowledge-title").value, description: root.querySelector("#knowledge-description").value, content: root.querySelector("#knowledge-content").value };
   }
 
   _memoryValues() {
@@ -1212,26 +1271,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     } catch (err) { this._toast(`Unable to delete memory: ${err.message || String(err)}`, true); }
   }
 
-  async _deleteTemporaryMemory(memoryId, scopeId) {
-    if (!memoryId || !await this._confirm("Delete temporary memory?", "This short-lived fact will no longer be included in later requests.", "Delete")) return;
-    try {
-      await this._call("memories", "temporary_delete", { scope_id: this._scopeId, temporary_scope_id: scopeId, memory_id: memoryId });
-      await this._refreshAfterMutation();
-      this._toast("Temporary memory deleted");
-    } catch (err) { this._toast(`Unable to delete temporary memory: ${err.message || String(err)}`, true); }
+  _deleteTemporaryMemory(memoryId) {
+    return deleteTemporaryMemory(this, memoryId);
   }
 
-  async _openSession(sessionId) {
-    const root = this.shadowRoot;
-    const dialog = root.querySelector("#session-dialog");
-    root.querySelector("#session-title").textContent = "Loading conversation…";
-    root.querySelector("#session-body").innerHTML = this._loading();
-    dialog.showModal();
-    try {
-      const data = await this._call("conversations", "get", { scope_id: this._scopeId, session_id: sessionId, limit: 100 });
-      root.querySelector("#session-title").textContent = data.session.title || "Untitled conversation";
-      root.querySelector("#session-body").innerHTML = data.turns.map((turn) => `<article class="turn"><div class="message user"><strong>You</strong><p>${this._e(turn.user_text)}</p></div><div class="message assistant"><strong>Assistant</strong><p>${this._e(turn.assistant_text)}</p></div><small>${this._e(this._formatDate(turn.timestamp))}</small></article>`).join("") || this._empty("No turns retained.");
-    } catch (err) { root.querySelector("#session-body").innerHTML = `<div class="error" role="alert">${this._e(err.message || String(err))}</div>`; }
+  _openSession(sessionId, startTurn = 0) {
+    return getRouteFeature("data-memory/conversations")?.openSession(this, sessionId, startTurn);
   }
 
   async _deleteSession(sessionId) {
@@ -1262,25 +1307,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     catch (err) { this._toast(`Unable to clear details: ${err.message || String(err)}`, true); }
   }
 
-  async _searchArchive() {
-    const input = this.shadowRoot.querySelector("#archive-query");
-    const button = this.shadowRoot.querySelector("#archive-search");
-    if (button.disabled) return;
-    this._setSaving(button, true, "Searching…");
-    try {
-      const found = await this._call("conversations", "search", { scope_id: this._scopeId, query: input.value, limit: 20 });
-      const target = this._contentData || this._result;
-      target.sessions = { sessions: found.results.map((item) => ({ ...item, last_message_at: item.timestamp, turn_count: "matching" })) };
-      this._render();
-    } catch (err) { this._toast(`Unable to search: ${err.message || String(err)}`, true); }
-    finally { this._setSaving(button, false); }
+  _searchArchive(offset = 0) {
+    return getRouteFeature("data-memory/conversations")?.searchArchive(this, offset);
   }
 
-  async _testAgent() {
-    const output = this.shadowRoot.querySelector("#test-result");
-    output.textContent = "Testing…";
-    try { output.textContent = JSON.stringify(await this._call("diagnostics", "test_agent"), null, 2); }
-    catch (err) { output.textContent = err.message || String(err); }
+  _testAgent() {
+    return testAgent(this);
   }
 
   async _refreshAfterMutation() {
@@ -1331,6 +1363,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _scopePicker() {
+    if (this._viewKey() === "data-memory/memories" && this._memoryKind === "temporary") return renderTemporaryScopePicker(this);
     const memories = this._viewKey() === "data-memory/memories";
     const hasEmpty = (this._data?.scopes || []).some((scope) => (memories ? scope.memory_count : scope.conversation_count) === 0 && scope.scope_type === "user" && !scope.is_current_user);
     return `<section class="scope-bar"><label><span>${memories ? "Show memories available to" : "Show conversations belonging to"}</span><select id="scope">${this._scopeOptions(memories ? "memories" : "conversations")}</select></label>${hasEmpty ? `<label class="show-empty"><input id="show-empty-scopes" type="checkbox" ${this._showEmptyScopes ? "checked" : ""}> Show users with no ${memories ? "memories" : "conversations"}</label>` : ""}${this._data?.is_admin ? `<small>You can view data for all users because you are an administrator.</small>` : ""}</section>`;
@@ -1372,11 +1405,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _formatDate(value) {
-    if (!value) return "Unknown date";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return String(value);
-    try { return date.toLocaleString(undefined, { timeZone: this._hass?.config?.time_zone }); }
-    catch (_) { return date.toLocaleString(); }
+    return formatManagementTimestamp(value, this._hass?.config?.time_zone);
   }
   _e(value) { return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]); }
 
@@ -1414,7 +1443,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     .chart-column:hover:after,.chart-column:focus-visible:after{font-size:12px}
     .chart-axis{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:7px;color:var(--secondary-text-color);font-size:13px}
     .chart-axis span:nth-child(2){text-align:center}.chart-axis span:last-child{text-align:right}
-  `; }
+  ${FEATURE_STATUS_STYLES}`; }
 }
 
 initializeManagementPanel(ExtendedOpenAIManagementPanel);

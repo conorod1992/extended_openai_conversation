@@ -14,14 +14,4 @@ const source = await readFile(
 assert.match(source, /id=\"knowledge-source-enabled\" type=\"checkbox\" role=\"switch\" checked/);
 assert.match(source, /Available to the assistant/);
 assert.match(source, /keep the source stored locally without including it in Knowledge retrieval/);
-assert.match(source, /prototype\._knowledge = function/);
-assert.match(source, /decorateKnowledgeSources\(this, originalKnowledge\.apply\(this, args\)\)/);
-assert.match(source, /prototype\._dialogs = function/);
-assert.match(source, /addKnowledgeSourceAvailabilityControl\(originalDialogs\.apply\(this, args\)\)/);
-assert.match(source, /prototype\._knowledgeValues = function/);
-assert.match(source, /enabled: input\?\.checked \?\? true/);
-assert.match(source, /prototype\._setKnowledgeEditorDisabled = function/);
-assert.match(source, /prototype\._openKnowledge = async function/);
-assert.match(source, /this\._editingSource\?\.enabled !== false/);
-assert.match(source, /this\._editorInitial = this\._knowledgeValues\(\)/);
 assert.doesNotMatch(source, /id=\"knowledge-enabled-toggle\"[^\n]*knowledge-source-enabled/);

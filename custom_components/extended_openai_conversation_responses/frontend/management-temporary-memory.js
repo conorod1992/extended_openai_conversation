@@ -1,4 +1,3 @@
-const PATCHED = Symbol.for("extended-openai.management-temporary-memory");
 const CONTENT_LIMIT = 500;
 const CATEGORY_LIMIT = 64;
 
@@ -71,161 +70,119 @@ function temporaryDialog(panel) {
   </dialog>`;
 }
 
-export function installManagementTemporaryMemory(Panel) {
-  // A constructor is the production API; registry callers remain supported.
-  if (typeof Panel !== "function") {
-    const registry = Panel || globalThis.customElements;
-    if (!registry?.whenDefined) return Promise.resolve(false);
-    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementTemporaryMemory(registry.get("extended-openai-management-panel")));
-  }
-  const constructor = Panel;
-  const prototype = constructor?.prototype;
-  if (!prototype || prototype[PATCHED]) return false;
-
-  const originalLoadSection = prototype._loadSection;
-  prototype._loadSection = async function(...args) {
-    if (this._viewKey?.() === "data-memory/memories" && this._memoryKind === "temporary") {
-      ensureTemporaryScope(this);
-    }
-    return originalLoadSection.apply(this, args);
+export function openTemporaryMemory(panel, memoryId) {
+  const memory = (panel._result?.memories || []).find((item) => item.memory_id === memoryId);
+  if (!memory) return;
+  panel._temporaryMemoryDraft = {
+    memory_id: memory.memory_id,
+    content: memory.content || "",
+    category: memory.category || "general",
+    expires_at: memory.expires_at || "",
+    owner_scope_id: memory.owner_scope_id || panel._scopeId,
   };
+  const dialog = panel.shadowRoot.querySelector("#temporary-memory-dialog");
+  panel.shadowRoot.querySelector("#temporary-memory-content").value = panel._temporaryMemoryDraft.content;
+  panel.shadowRoot.querySelector("#temporary-memory-category").value = panel._temporaryMemoryDraft.category;
+  panel.shadowRoot.querySelector("#temporary-memory-expiry").value = panel._temporaryMemoryDraft.expires_at;
+  panel.shadowRoot.querySelector("#temporary-memory-meta").textContent = `Owner: ${ownerLabel(panel, panel._temporaryMemoryDraft.owner_scope_id)}`;
+  panel.shadowRoot.querySelector("#temporary-memory-error").textContent = "";
+  dialog?.showModal();
+}
 
-  const originalScopePicker = prototype._scopePicker;
-  prototype._scopePicker = function(...args) {
-    if (this._viewKey?.() !== "data-memory/memories" || this._memoryKind !== "temporary") {
-      return originalScopePicker.apply(this, args);
-    }
-    ensureTemporaryScope(this);
-    return `<section class="scope-bar"><label><span>Show short-term memories belonging to</span><select id="scope">${temporaryScopeOptions(this)}</select></label>${this._data?.is_admin ? `<small>Temporary Memory ownership is limited to Personal and Shared scopes.</small>` : ""}</section>`;
-  };
+export function temporaryMemoryDirty(panel) {
+  const draft = panel._temporaryMemoryDraft;
+  if (!draft) return false;
+  return panel.shadowRoot.querySelector("#temporary-memory-content")?.value !== draft.content
+    || panel.shadowRoot.querySelector("#temporary-memory-category")?.value !== draft.category
+    || panel.shadowRoot.querySelector("#temporary-memory-expiry")?.value !== draft.expires_at;
+}
 
-  const originalMemories = prototype._memories;
-  prototype._memories = function(...args) {
-    return this._memoryKind === "temporary"
-      ? renderTemporaryMemories(this)
-      : originalMemories.apply(this, args);
-  };
-
-  const originalDialogs = prototype._dialogs;
-  prototype._dialogs = function(...args) {
-    return `${originalDialogs.apply(this, args)}${temporaryDialog(this)}`;
-  };
-
-  prototype._openTemporaryMemory = function(memoryId) {
-    const memory = (this._result?.memories || []).find((item) => item.memory_id === memoryId);
-    if (!memory) return;
-    this._temporaryMemoryDraft = {
-      memory_id: memory.memory_id,
-      content: memory.content || "",
-      category: memory.category || "general",
-      expires_at: memory.expires_at || "",
-      owner_scope_id: memory.owner_scope_id || this._scopeId,
-    };
-    const dialog = this.shadowRoot.querySelector("#temporary-memory-dialog");
-    this.shadowRoot.querySelector("#temporary-memory-content").value = this._temporaryMemoryDraft.content;
-    this.shadowRoot.querySelector("#temporary-memory-category").value = this._temporaryMemoryDraft.category;
-    this.shadowRoot.querySelector("#temporary-memory-expiry").value = this._temporaryMemoryDraft.expires_at;
-    this.shadowRoot.querySelector("#temporary-memory-meta").textContent = `Owner: ${ownerLabel(this, this._temporaryMemoryDraft.owner_scope_id)}`;
-    this.shadowRoot.querySelector("#temporary-memory-error").textContent = "";
-    dialog?.showModal();
-  };
-
-  prototype._temporaryMemoryDirty = function() {
-    const draft = this._temporaryMemoryDraft;
-    if (!draft) return false;
-    return this.shadowRoot.querySelector("#temporary-memory-content")?.value !== draft.content
-      || this.shadowRoot.querySelector("#temporary-memory-category")?.value !== draft.category
-      || this.shadowRoot.querySelector("#temporary-memory-expiry")?.value !== draft.expires_at;
-  };
-
-  prototype._closeTemporaryMemory = async function(force = false) {
-    const dialog = this.shadowRoot.querySelector("#temporary-memory-dialog");
-    if (force) dialog?.close();
-    else if (!await this._confirmEditorClose(dialog)) return false;
-    this._temporaryMemoryDraft = null;
-    return true;
-  };
-
-  prototype._saveTemporaryMemory = async function() {
-    const draft = this._temporaryMemoryDraft;
-    if (!draft || this._temporaryMemorySaving) return;
-    const content = this.shadowRoot.querySelector("#temporary-memory-content")?.value ?? "";
-    const category = this.shadowRoot.querySelector("#temporary-memory-category")?.value ?? "";
-    const expiresAt = this.shadowRoot.querySelector("#temporary-memory-expiry")?.value ?? "";
-    const error = this.shadowRoot.querySelector("#temporary-memory-error");
-    if (!content.trim() || !category.trim() || !expiresAt.trim()) {
-      error.textContent = "Memory, category, and expiry are required.";
-      return;
-    }
-    this._temporaryMemorySaving = true;
-    const save = this.shadowRoot.querySelector("#temporary-memory-save");
-    this._setSaving(save, true);
-    try {
-      await this._call("memories", "temporary_update", {
-        scope_id: this._scopeId,
-        memory_id: draft.memory_id,
-        content,
-        category,
-        expires_at: expiresAt,
-      });
-      await this._closeTemporaryMemory(true);
-      await this._refreshAfterMutation();
-      this._toast("Short-term memory updated");
-    } catch (err) {
-      error.textContent = err.message || String(err);
-    } finally { this._temporaryMemorySaving = false; this._setSaving(save, false); }
-  };
-
-  prototype._deleteTemporaryMemory = async function(memoryId) {
-    if (!memoryId || !await this._confirm(
-      "Delete temporary memory?",
-      "This short-lived fact will no longer be included in later requests.",
-      "Delete",
-    )) return false;
-    try {
-      await this._call("memories", "temporary_delete", {
-        scope_id: this._scopeId,
-        memory_id: memoryId,
-      });
-      if (this._temporaryMemoryDraft?.memory_id === memoryId) {
-        await this._closeTemporaryMemory(true);
-      }
-      await this._refreshAfterMutation();
-      this._toast("Temporary memory deleted");
-      return true;
-    } catch (err) {
-      this._toast(`Unable to delete temporary memory: ${err.message || String(err)}`, true);
-      return false;
-    }
-  };
-
-  const originalBindActions = prototype._bindActions;
-  prototype._bindActions = function(...args) {
-    const result = originalBindActions.apply(this, args);
-    if (this._viewKey?.() !== "data-memory/memories" || this._memoryKind !== "temporary") return result;
-    this.shadowRoot.querySelectorAll(".edit-temporary-memory").forEach((element) => {
-      this._activate(element, () => this._openTemporaryMemory(element.dataset.id));
-    });
-    this.shadowRoot.querySelector("#temporary-memory-form")?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      this._saveTemporaryMemory();
-    });
-    this.shadowRoot.querySelectorAll(".close-temporary-editor").forEach((button) => {
-      button.addEventListener("click", () => this._closeTemporaryMemory(!button.classList.contains("icon")));
-    });
-    this.shadowRoot.querySelector("#temporary-memory-delete")?.addEventListener("click", () => {
-      const id = this._temporaryMemoryDraft?.memory_id;
-      if (id) this._deleteTemporaryMemory(id);
-    });
-    return result;
-  };
-
-  prototype[PATCHED] = true;
+export async function closeTemporaryMemory(panel, force = false) {
+  const dialog = panel.shadowRoot.querySelector("#temporary-memory-dialog");
+  if (force) dialog?.close();
+  else if (!await panel._confirmEditorClose(dialog)) return false;
+  panel._temporaryMemoryDraft = null;
   return true;
 }
 
+export async function saveTemporaryMemory(panel) {
+  const draft = panel._temporaryMemoryDraft;
+  if (!draft || panel._temporaryMemorySaving) return;
+  const content = panel.shadowRoot.querySelector("#temporary-memory-content")?.value ?? "";
+  const category = panel.shadowRoot.querySelector("#temporary-memory-category")?.value ?? "";
+  const expiresAt = panel.shadowRoot.querySelector("#temporary-memory-expiry")?.value ?? "";
+  const error = panel.shadowRoot.querySelector("#temporary-memory-error");
+  if (!content.trim() || !category.trim() || !expiresAt.trim()) {
+    error.textContent = "Memory, category, and expiry are required.";
+    return;
+  }
+  panel._temporaryMemorySaving = true;
+  const save = panel.shadowRoot.querySelector("#temporary-memory-save");
+  panel._setSaving(save, true);
+  try {
+    await panel._call("memories", "temporary_update", {
+      scope_id: panel._scopeId,
+      memory_id: draft.memory_id,
+      content,
+      category,
+      expires_at: expiresAt,
+    });
+    await panel._closeTemporaryMemory(true);
+    await panel._refreshAfterMutation();
+    panel._toast("Short-term memory updated");
+  } catch (err) {
+    error.textContent = err.message || String(err);
+  } finally { panel._temporaryMemorySaving = false; panel._setSaving(save, false); }
+}
+
+export async function deleteTemporaryMemory(panel, memoryId) {
+  if (!memoryId || !await panel._confirm(
+    "Delete temporary memory?",
+    "This short-lived fact will no longer be included in later requests.",
+    "Delete",
+  )) return false;
+  try {
+    await panel._call("memories", "temporary_delete", {
+      scope_id: panel._scopeId,
+      memory_id: memoryId,
+    });
+    if (panel._temporaryMemoryDraft?.memory_id === memoryId) {
+      await panel._closeTemporaryMemory(true);
+    }
+    await panel._refreshAfterMutation();
+    panel._toast("Temporary memory deleted");
+    return true;
+  } catch (err) {
+    panel._toast(`Unable to delete temporary memory: ${err.message || String(err)}`, true);
+    return false;
+  }
+}
+
+export function bindTemporaryMemory(panel) {
+  if (panel._viewKey?.() !== "data-memory/memories" || panel._memoryKind !== "temporary") return;
+  panel.shadowRoot.querySelectorAll(".edit-temporary-memory").forEach((element) => {
+    panel._activate(element, () => panel._openTemporaryMemory(element.dataset.id));
+  });
+  panel.shadowRoot.querySelector("#temporary-memory-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    panel._saveTemporaryMemory();
+  });
+  panel.shadowRoot.querySelectorAll(".close-temporary-editor").forEach((button) => {
+    button.addEventListener("click", () => panel._closeTemporaryMemory(!button.classList.contains("icon")));
+  });
+  panel.shadowRoot.querySelector("#temporary-memory-delete")?.addEventListener("click", () => {
+    const id = panel._temporaryMemoryDraft?.memory_id;
+    if (id) panel._deleteTemporaryMemory(id);
+  });
+}
+
+export function renderTemporaryScopePicker(panel) {
+  ensureTemporaryScope(panel);
+  return `<section class="scope-bar"><label><span>Show short-term memories belonging to</span><select id="scope">${temporaryScopeOptions(panel)}</select></label>${panel._data?.is_admin ? `<small>Temporary Memory ownership is limited to Personal and Shared scopes.</small>` : ""}</section>`;
+}
 
 export {
+  temporaryDialog,
   CATEGORY_LIMIT,
   CONTENT_LIMIT,
   ensureTemporaryScope,

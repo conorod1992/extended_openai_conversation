@@ -53,11 +53,7 @@ const featureLoaders = {
     module.installFunctionRepair(panel.constructor);
     return module;
   },
-  "data-memory/conversations": async (panel) => {
-    const module = await import("./management-history-pagination.js");
-    module.installHistoryPagination(panel.constructor);
-    return module;
-  },
+  "data-memory/conversations": () => import("./management-history-pagination.js"),
   "usage-maintenance/usage": async (panel) => {
     const [usage, footprint] = await Promise.all([
       import("./usage-chart.js"), import("./usage-input-footprint.js"),

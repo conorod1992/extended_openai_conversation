@@ -49,7 +49,7 @@ assert.match(source, /Next turns/);
 assert.match(source, /start_turn:/);
 assert.match(source, /limit: TURN_PAGE_LIMIT/);
 assert.match(source, /Clear search/);
-assert.match(bootstrap, /installHistoryPagination\(panel.constructor\)/);
+assert.match(bootstrap, /"data-memory\/conversations": \(\) => import\(".\/management-history-pagination\.js"\)/);
 assert.match(runtime, /_FRONTEND_MODULE = "management-history-pagination\.js"/);
 assert.match(runtime, /section not in \{"overview", "usage", "conversations"\}/);
 assert.match(runtime, /result = \{\*\*result, "usage": usage_summary\(usage\)\}/);
