@@ -1,9 +1,10 @@
+import "./management-bootstrap.js";
 import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs} from "./management-dialogs.js";
 import {renderManagement} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending} from "./management-actions.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch} from "./management-route.js";
-import { bindConfiguration, bindTools, configurationDialogs, renderConfiguration, renderTools, restoreDialog } from "./agent-config-editor.js";
+import {getConfigurationEditor, routeAssetKind} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, searchSettings, shouldShowGlobalSettingsSearch} from "./frontend-navigation.js";
 import {freshGuestPolicyDraft} from "./guest-mode-ui.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
@@ -517,17 +518,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!this._canAccessView(this._page, this._subsection)) return this._empty("Administrator permission is required for this section.");
     if (view === "overview") return renderOverview(this, agent);
     if (view === "guide") return renderGuide(this);
-    if (this._page === "assistant") { this._configSections = this._configSectionsForView(); return renderConfiguration(this); }
+    if (this._page === "assistant") { this._configSections = this._configSectionsForView(); return (getConfigurationEditor()?.renderConfiguration(this) || this._loading()); }
     if (view === "capabilities/home-assistant") return this._homeAssistant(agent);
     if (view === "capabilities/request-rules") return renderRequestRules(this);
-    if (view === "capabilities/functions") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${renderTools(this)}`;
+    if (view === "capabilities/functions") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${(getConfigurationEditor()?.renderTools(this) || this._loading())}`;
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
     if (view === "data-memory/knowledge") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
-    if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? renderConfiguration(this) : ""}`; }
+    if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? (getConfigurationEditor()?.renderConfiguration(this) || this._loading()) : ""}`; }
     if (view === "usage-maintenance/usage") return this._usage();
     if (view === "usage-maintenance/diagnostics") return this._diagnostics(agent);
-    if (["usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) { this._configSections = this._configSectionsForView(); return renderConfiguration(this); }
+    if (["usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) { this._configSections = this._configSectionsForView(); return (getConfigurationEditor()?.renderConfiguration(this) || this._loading()); }
     return this._empty("This section is not available.");
   }
 
@@ -710,7 +711,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       <dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>
       <dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope">${this._scopeOptions("memories", true, true)}</select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>
       <dialog id="confirm-dialog" class="editor-dialog confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-header"><h2 id="confirm-title">Confirm</h2></div><div class="dialog-body"><p id="confirm-message"></p></div><div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">Cancel</button><button type="button" class="danger" id="confirm-accept">Confirm</button></div></dialog>
-      ${requestRulesDialog(this)}${configurationDialogs(this)}${restoreDialog(this)}`;
+      ${this._viewKey() === "capabilities/request-rules" ? requestRulesDialog(this) : ""}${routeAssetKind(this._viewKey()) === "agent-config" ? getConfigurationEditor()?.configurationDialogs(this) || "" : ""}${this._viewKey() === "usage-maintenance/backup-restore" ? getConfigurationEditor()?.restoreDialog(this) || "" : ""}`;
   }
 
   _bindActions() {
@@ -744,8 +745,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     q("#guest-controls-enabled")?.addEventListener("change", (event) => { this._guestDraft.guest_mode_enabled = event.target.checked; });
     root.querySelectorAll("[data-guest-mode]").forEach((element) => element.addEventListener("change", () => { this._guestDraft[element.dataset.guestMode] = element.value; this._render(); }));
     if (this._viewKey() === "capabilities/guest-mode") this._setupGuestSelectors();
-    if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(this._viewKey())) bindConfiguration(this);
-    if (this._viewKey() === "capabilities/functions") bindTools(this);
+    if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(this._viewKey())) getConfigurationEditor()?.bindConfiguration(this);
+    if (this._viewKey() === "capabilities/functions") getConfigurationEditor()?.bindTools(this);
     if (this._viewKey() === "capabilities/request-rules") bindRequestRules(this);
     if (this._viewKey() === "overview") bindOverview(this);
     if (this._viewKey() === "guide") bindGuide(this);

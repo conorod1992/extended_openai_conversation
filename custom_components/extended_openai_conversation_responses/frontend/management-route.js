@@ -1,4 +1,4 @@
-import {ensureAgentConfigModule, getAgentConfigModule} from "./agent-config-loader.js";
+import {ensureAgentConfigModule} from "./agent-config-loader.js";
 import {ensureRequestRulesModule, getRequestRulesModule} from "./request-rules-loader.js";
 
 import {ensureGuideModule} from "./guide-page.js";
@@ -13,6 +13,21 @@ const CONFIG_VIEWS = new Set([
   "usage-maintenance/retention",
 ]);
 
+let configurationEditor = null;
+let configurationEditorPromise = null;
+export function getConfigurationEditor() { return configurationEditor; }
+function ensureConfigurationEditor() {
+  if (!configurationEditorPromise) {
+    configurationEditorPromise = Promise.all([
+      import("./agent-config-editor.js"), ensureAgentConfigModule(),
+    ]).then(([editor]) => (configurationEditor = editor)).catch((error) => {
+      configurationEditorPromise = null;
+      throw error;
+    });
+  }
+  return configurationEditorPromise;
+}
+
 export function routeAssetKind(view) {
   if (String(view || "").startsWith("assistant/") || CONFIG_VIEWS.has(view)) return "agent-config";
   if (view === REQUEST_RULES_VIEW) return "request-rules";
@@ -22,6 +37,7 @@ export function routeAssetKind(view) {
 const featureModules = new Map();
 const featurePromises = new Map();
 const featureLoaders = {
+  "usage-maintenance/diagnostics": () => import("./management-provider-credentials.js"),
   "assistant/voice": () => import("./voice-identity-ui.js"),
   "data-memory/memory-settings": () => import("./memory-settings-ui.js"),
 };
@@ -49,7 +65,7 @@ function coreAssetPromise(view) {
   if (view === "guide") return ensureGuideModule();
   if (view === "usage-maintenance/request-debug") return import("./debug-panel.js");
   const kind = routeAssetKind(view);
-  if (kind === "agent-config" && !getAgentConfigModule()) return ensureAgentConfigModule();
+  if (kind === "agent-config") return ensureConfigurationEditor();
   if (kind === "request-rules" && !getRequestRulesModule()) return ensureRequestRulesModule();
   return null;
 }

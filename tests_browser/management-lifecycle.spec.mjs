@@ -147,3 +147,24 @@ test("expired Knowledge list renders immediately and unchanged refresh preserves
   });
   expect(result).toEqual({immediate:true, preserved:true, refreshed:true});
 });
+
+test("overview defers configuration editors and diagnostics until their routes are visited", async ({page}) => {
+  const errors = trackPageErrors(page);
+  const modules = new Set();
+  page.on("request", request => modules.add(new URL(request.url()).pathname.split("/").pop()));
+  await page.goto(fixtureUrl("overview") + "&predefine=1");
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  for (const name of ["agent-config-editor.js", "backup-transfer-ui.js", "exposed-attributes-ui.js", "management-provider-credentials.js"]) {
+    expect(modules.has(name), name).toBe(false);
+  }
+  await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
+  await expect(panel.locator("#prompt-preview-dialog")).toHaveCount(1);
+  expect(modules.has("agent-config-editor.js")).toBe(true);
+  await panel.evaluate(host => host._navigate("usage-maintenance", "diagnostics"));
+  expect(modules.has("management-provider-credentials.js")).toBe(true);
+  await expect(panel.locator("#test-agent")).toBeVisible();
+  await panel.evaluate(host => host._navigate("overview"));
+  await expect(panel.locator("#prompt-preview-dialog, #tool-dialog, #restore-dialog, #rule-dialog")).toHaveCount(0);
+  await expectHarnessClean(page, errors);
+});

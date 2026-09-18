@@ -44,7 +44,9 @@ assert.doesNotMatch(guide, /from "\.\/guide-page-base\.js"/);
 assert.match(debug, /import\("\.\/debug-panel\.js"\)/);
 assert.doesNotMatch(debug, /^import "\.\/debug-panel\.js"/m);
 
-assert.match(agentEditor, /import "\.\/management-bootstrap\.js"/);
+assert.doesNotMatch(agentEditor, /management-bootstrap\.js/);
+assert.match(routes, /import\("\.\/agent-config-editor\.js"\)/);
+assert.doesNotMatch(panelSource, /from "\.\/agent-config-editor\.js"/);
 assert.doesNotMatch(agentEditor, /from "\.\/agent-config-editor-base\.js"/);
 assert.doesNotMatch(agentEditor, /export \* from "\.\/agent-config-editor-base\.js"/);
 assert.match(agentLoader, /import\("\.\/agent-config-native-yaml\.js"\)/);

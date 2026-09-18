@@ -1,4 +1,3 @@
-import "./management-bootstrap.js";
 import { bindBackupTransfer, decorateBackupMarkup, decorateRestoreDialog } from "./backup-transfer-ui.js";
 import { bindExposedAttributeSettings, renderExposedAttributeSettings } from "./exposed-attributes-ui.js";
 const {ensureAgentConfigModule, getAgentConfigModule} = await import("./agent-config-loader.js");
