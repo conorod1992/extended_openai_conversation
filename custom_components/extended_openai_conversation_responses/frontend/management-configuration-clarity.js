@@ -1,5 +1,4 @@
 import {SETTINGS_INDEX} from "./frontend-navigation.js";
-import {SETTINGS_SEARCH_PROJECTION} from "./management-navigation-search.js";
 
 const PATCHED = Symbol.for("extended-openai.management-configuration-clarity");
 
@@ -43,23 +42,11 @@ const FRIENDLY_VALUE_LABELS = Object.freeze({
   }),
 });
 
-const ADVANCED_KEYS = new Set([
-  "temperature",
-  "top_p",
-  "reasoning_effort",
-  "service_tier",
-  "shorten_tool_call_id",
-]);
-
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 
 const SETTING_BY_KEY = new Map();
 for (const item of SETTINGS_INDEX) {
   if (item.configKey && !SETTING_BY_KEY.has(item.configKey)) SETTING_BY_KEY.set(item.configKey, item);
-}
-for (const entry of SETTINGS_SEARCH_PROJECTION) {
-  const alias = TECHNICAL_SEARCH_ALIASES[entry.item?.configKey];
-  if (alias && !entry.haystack.includes(alias)) entry.haystack += ` ${alias}`;
 }
 
 function ownerForKey(key) {
@@ -77,20 +64,30 @@ export function friendlySettingValue(key, value) {
 }
 
 export function settingEffectBadges(key, value, {disabled = false} = {}) {
-  if (ADVANCED_KEYS.has(key)) return ["Advanced"];
   if (disabled) return [];
   if (key === "memory_retrieval_mode") {
     if (value === "hybrid") return ["Requires embeddings"];
     if (value === "lexical") return ["No embedding request"];
   }
   if (key === "local_intents_enabled" && value === true) return ["No AI call when matched"];
-  if (key === "archive_enabled" && value === true) return ["Stores data"];
-  if (key === "shared_archive_enabled" && value === true) return ["Stores shared data"];
-  if (key === "memory_mode" && !["off", "disabled", ""].includes(String(value))) return ["Stores data"];
-  if (key === "temporary_memory" && !["off", "disabled", ""].includes(String(value))) return ["Stores temporary data"];
-  if (key === "shared_memory_mode" && !["off", "disabled", ""].includes(String(value))) return ["Stores shared data"];
-  if (["current_datetime_enabled", "exposed_entities_enabled"].includes(key) && value === true) return ["Adds context"];
   return [];
+}
+
+export function settingSearchAliases(key) {
+  const item = SETTING_BY_KEY.get(key);
+  return item ? `${item.label || ""} ${item.description || ""} ${item.terms || ""} ${item.configKey || ""} ${TECHNICAL_SEARCH_ALIASES[key] || ""}`.toLowerCase() : "";
+}
+
+export function settingEffectMarkup(panel, key, value, disabled = false) {
+  return settingEffectBadges(key, value, {disabled}).map((text) => `<span class="eoc-effect-badge">${panel._e(text)}</span>`).join("");
+}
+
+// Input changes update only the affected effect region, without scanning the page.
+export function refreshSettingEffects(panel, control) {
+  const key = control?.dataset?.config || control?.dataset?.memoryConfig;
+  if (!["memory_retrieval_mode", "local_intents_enabled"].includes(key)) return;
+  const region = control.closest?.("[data-field]")?.querySelector("[data-setting-effects]");
+  if (region) region.innerHTML = settingEffectMarkup(panel, key, controlValue(control), Boolean(control.disabled));
 }
 
 export function dirtyConfigurationKeys(panel) {
@@ -132,16 +129,6 @@ function controlValue(control) {
   return control.value;
 }
 
-function currentConfigurationValue(panel, key) {
-  if (key === "__title") {
-    if (panel._draft && panel._draftAgentId === panel._agentId) return panel._draftTitle;
-    return panel._configData?.title ?? panel._settingsSearchConfig?.title;
-  }
-  if (panel._draft && panel._draftAgentId === panel._agentId) return panel._draft[key];
-  if (panel._configData?.config) return panel._configData.config[key];
-  if (panel._settingsSearchConfigAgentId === panel._agentId) return panel._settingsSearchConfig?.config?.[key];
-  return undefined;
-}
 
 function ensureStyles(panel) {
   const root = panel.shadowRoot;
@@ -218,114 +205,25 @@ function enhanceDirtyNavigation(panel, destinations) {
   });
 }
 
-function replaceLabelText(label, text) {
-  if (!label || !text) return;
-  const strong = label.querySelector(":scope > strong");
-  if (strong) strong.textContent = text;
-  else label.textContent = text;
-}
-
-function addEffectBadges(field, badges) {
-  const row = field.querySelector(".setting-label-row");
-  if (!row) return;
-  row.querySelectorAll(".eoc-effect-badge").forEach((badge) => badge.remove());
-  for (const text of badges) {
-    const badge = document.createElement("span");
-    badge.className = "eoc-effect-badge";
-    badge.textContent = text;
-    row.append(badge);
-  }
-}
-
-function enhanceSettingField(panel, field) {
-  const key = field.dataset.field;
-  if (!key) return;
-  const item = SETTING_BY_KEY.get(key);
-  const labelText = friendlySettingLabel(key);
-  const label = field.querySelector(".setting-label-row label");
-  if (label && labelText) replaceLabelText(label, labelText);
-
-  if (item) {
-    const aliases = `${item.label || ""} ${item.description || ""} ${item.terms || ""} ${item.configKey || ""} ${TECHNICAL_SEARCH_ALIASES[key] || ""}`.toLowerCase();
-    if (!String(field.dataset.search || "").includes(aliases)) field.dataset.search = `${field.dataset.search || ""} ${aliases}`.trim();
-  }
-
-  const control = field.querySelector(`[data-config="${CSS.escape(key)}"],[data-memory-config="${CSS.escape(key)}"]`);
-  const value = controlValue(control);
-  if (control?.tagName === "SELECT" && FRIENDLY_VALUE_LABELS[key]) {
-    [...control.options].forEach((choice) => {
-      const friendly = friendlySettingValue(key, choice.value);
-      if (friendly) choice.textContent = friendly;
-    });
-  }
-  addEffectBadges(field, settingEffectBadges(key, value, {disabled: Boolean(control?.disabled)}));
-}
-
-function enhanceSettingsSearch(panel) {
-  const root = panel.shadowRoot;
-  if (!root) return;
-  root.querySelectorAll(".settings-result").forEach((button) => {
-    const item = SETTINGS_INDEX.find((candidate) =>
-      candidate.page === button.dataset.page
-      && candidate.section === button.dataset.subsection
-      && String(candidate.target || "") === String(button.dataset.target || "")
-    );
-    if (!item?.configKey) return;
-    const friendlyLabel = friendlySettingLabel(item.configKey);
-    const title = button.querySelector("strong");
-    if (friendlyLabel && title?.textContent !== friendlyLabel) title.textContent = friendlyLabel;
-    const friendlyValue = friendlySettingValue(item.configKey, currentConfigurationValue(panel, item.configKey));
-    const current = button.querySelector(".settings-current");
-    if (friendlyValue && current) {
-      const prefix = current.textContent.includes(":") ? current.textContent.split(":", 1)[0] : "Current";
-      const next = `${prefix}: ${friendlyValue}`;
-      if (current.textContent !== next) current.textContent = next;
-    }
-  });
-}
-
-function enhanceSettingPresentation(panel) {
-  const root = panel.shadowRoot;
-  root?.querySelectorAll("[data-setting][data-field]").forEach((field) => enhanceSettingField(panel, field));
-  enhanceSettingsSearch(panel);
-}
-
 function enhancePanel(panel) {
   if (!panel.shadowRoot) return;
   ensureStyles(panel);
   const destinations = dirtyConfigurationDestinations(panel);
   enhanceAgentContext(panel, destinations);
   enhanceDirtyNavigation(panel, destinations);
-  enhanceSettingPresentation(panel);
-}
-
-function scheduleEnhance(panel) {
-  if (panel._eocClarityScheduled) return;
-  panel._eocClarityScheduled = true;
-  queueMicrotask(() => {
-    panel._eocClarityScheduled = false;
-    enhancePanel(panel);
-  });
 }
 
 function bindInteractionRefresh(panel) {
   const root = panel.shadowRoot;
-  if (root && !root.__eocClarityInteractionBound) {
-    root.__eocClarityInteractionBound = true;
-    // State-safety registers its shadow-root listeners before this layer. Run
-    // clarity refreshes in the same bubble phase so the authoritative dirty-key
-    // set has already been updated when navigation markers are projected.
-    root.addEventListener("input", () => scheduleEnhance(panel));
-    root.addEventListener("change", () => scheduleEnhance(panel));
-    root.addEventListener("value-changed", () => scheduleEnhance(panel));
-    root.addEventListener("eoc-config-dirty-changed", () => scheduleEnhance(panel));
-  }
-  const searchTarget = root?.querySelector("#eoc-settings-host") || root;
-  if (searchTarget && panel._eocClarityObservedTarget !== searchTarget) {
-    panel._eocClarityObserver?.disconnect?.();
-    panel._eocClarityObserver = new MutationObserver(() => scheduleEnhance(panel));
-    panel._eocClarityObserver.observe(searchTarget, {childList: true, subtree: true});
-    panel._eocClarityObservedTarget = searchTarget;
+  if (!root || root.__eocClarityInteractionBound) return;
+  root.__eocClarityInteractionBound = true;
+  // State safety dispatches this after updating authoritative dirty state.
+  root.addEventListener("eoc-config-dirty-changed", () => enhancePanel(panel));
+  for (const type of ["input", "change", "value-changed"]) {
+    root.addEventListener(type, (event) => {
+      refreshSettingEffects(panel, event.target);
+      enhancePanel(panel);
+    });
   }
 }
 
@@ -348,14 +246,6 @@ export function installManagementConfigurationClarity(Panel) {
     bindInteractionRefresh(this);
     enhancePanel(this);
     return result;
-  };
-
-  const originalDisconnected = prototype.disconnectedCallback;
-  prototype.disconnectedCallback = function(...args) {
-    this._eocClarityObserver?.disconnect?.();
-    this._eocClarityObserver = null;
-    this._eocClarityObservedTarget = null;
-    return originalDisconnected?.apply(this, args);
   };
 
   prototype[PATCHED] = true;

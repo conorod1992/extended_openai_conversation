@@ -1,24 +1,26 @@
+import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-configuration-clarity.js";
+import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {saveBarMarkup} from "./unsaved-state.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));
-const settingSearch = (label, description, key) => `${label} ${description} ${key}`.toLowerCase();
+const settingSearch = (label, description, key) => `${label} ${description} ${key} ${settingSearchAliases(key)}`.toLowerCase();
 
-function option(panel, item, selected) {
+function option(panel, item, selected, key) {
   const value = typeof item === "string" ? item : item.value;
   const label = typeof item === "string" ? String(item).replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase()) : item.label;
-  return `<option value="${panel._e(value)}" ${value === selected ? "selected" : ""}>${panel._e(label)}</option>`;
+  return `<option value="${panel._e(value)}" ${value === selected ? "selected" : ""}>${panel._e(friendlySettingValue(key, value) || label)}</option>`;
 }
 
 function select(panel, key, label, value, description) {
   const choices = panel._result?.options?.[key] || [];
-  return `<div class="setting" data-setting data-field="${key}" data-search="${panel._e(settingSearch(label, description, key))}"><span class="setting-label-row"><label for="config-${key}">${panel._e(label)}</label></span><select id="config-${key}" data-memory-config="${key}">${choices.map((item) => option(panel, item, value)).join("")}</select><small>${panel._e(description)}</small><span class="field-error" data-error="${key}"></span></div>`;
+  return `<div class="setting" data-setting data-field="${key}" data-search="${panel._e(settingSearch(label, description, key))}"><span class="setting-label-row"><label for="config-${key}">${panel._e(friendlySettingLabel(key) || label)}</label>${settingBadgesMarkup(panel, key, value)}</span><select id="config-${key}" data-memory-config="${key}">${choices.map((item) => option(panel, item, value, key)).join("")}</select><small>${panel._e(description)}</small><span class="field-error" data-error="${key}"></span></div>`;
 }
 
 function numberField(panel, key, label, value, description, min = null, max = null) {
-  return `<div class="setting" data-setting data-field="${key}" data-search="${panel._e(settingSearch(label, description, key))}"><span class="setting-label-row"><label for="config-${key}">${panel._e(label)}</label></span><input id="config-${key}" data-memory-config="${key}" data-type="number" type="number" value="${panel._e(value)}" ${min === null ? "" : `min="${min}"`} ${max === null ? "" : `max="${max}"`}><small>${panel._e(description)}</small><span class="field-error" data-error="${key}"></span></div>`;
+  return `<div class="setting" data-setting data-field="${key}" data-search="${panel._e(settingSearch(label, description, key))}"><span class="setting-label-row"><label for="config-${key}">${panel._e(friendlySettingLabel(key) || label)}</label>${settingBadgesMarkup(panel, key, value)}</span><input id="config-${key}" data-memory-config="${key}" data-type="number" type="number" value="${panel._e(value)}" ${min === null ? "" : `min="${min}"`} ${max === null ? "" : `max="${max}"`}><small>${panel._e(description)}</small><span class="field-error" data-error="${key}"></span></div>`;
 }
 
 function textField(panel, key, label, value, description, disabled = false) {
-  return `<div class="setting" data-setting data-field="${key}" data-search="${panel._e(settingSearch(label, description, key))}"><span class="setting-label-row"><label for="config-${key}">${panel._e(label)}</label></span><input id="config-${key}" data-memory-config="${key}" type="text" value="${panel._e(value || "")}" ${disabled ? "disabled" : ""}><small>${panel._e(description)}</small><span class="field-error" data-error="${key}"></span></div>`;
+  return `<div class="setting" data-setting data-field="${key}" data-search="${panel._e(settingSearch(label, description, key))}"><span class="setting-label-row"><label for="config-${key}">${panel._e(friendlySettingLabel(key) || label)}</label>${settingBadgesMarkup(panel, key, value)}</span><input id="config-${key}" data-memory-config="${key}" type="text" value="${panel._e(value || "")}" ${disabled ? "disabled" : ""}><small>${panel._e(description)}</small><span class="field-error" data-error="${key}"></span></div>`;
 }
 
 function saveBar(panel) {

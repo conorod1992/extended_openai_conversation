@@ -212,7 +212,6 @@ MANAGEMENT_FRONTEND_MODULES = (
     "management-configuration-clarity.js",
     "management-configuration-guidance.js",
     "management-decision-guidance.js",
-    "management-conversation-default-label.js",
     "management-settings-polish.js",
     "management-overview-health-clarity.js",
 )

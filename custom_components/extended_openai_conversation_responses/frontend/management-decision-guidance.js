@@ -1,4 +1,4 @@
-import {friendlySettingValue} from "./management-configuration-clarity.js";
+import {friendlySettingValue, settingEffectMarkup} from "./management-configuration-clarity.js";
 
 const PATCHED = Symbol.for("extended-openai.management-decision-guidance");
 
@@ -41,6 +41,7 @@ export function assistantScopeLabel(agent) {
 }
 
 export function displayDefaultValue(key, value) {
+  if (key === "conversation_continuity" && value === "ha_default") return "Use Home Assistant sessions";
   const friendly = friendlySettingValue(key, value);
   if (friendly) return friendly;
   if (typeof value === "boolean") return value ? "On" : "Off";
@@ -52,9 +53,8 @@ export function configurationDecisionBadges(key, defaults = {}) {
   if (!DEFAULT_GUIDANCE_KEYS.has(key) || !Object.prototype.hasOwnProperty.call(defaults, key)) return [];
   const value = defaults[key];
   const display = displayDefaultValue(key, value);
-  const badges = [{kind:"default", text:`Default: ${display}`}];
-  if (RECOMMENDED_CHOICES[key]?.has(String(value))) badges.push({kind:"recommended", text:`Recommended: ${display}`});
-  return badges;
+  if (RECOMMENDED_CHOICES[key]?.has(String(value))) return [{kind:"recommended", text:`Recommended default: ${display}`}];
+  return [{kind:"default", text:`Default: ${display}`}];
 }
 
 function matchingSettings(rule, defaults) {
@@ -124,6 +124,12 @@ function configurationDefaults(panel) {
   return {};
 }
 
+export function settingBadgesMarkup(panel, key, value, disabled = false) {
+  const effects = ["memory_retrieval_mode", "local_intents_enabled"].includes(key)
+    ? `<span data-setting-effects>${settingEffectMarkup(panel, key, value, disabled)}</span>` : "";
+  return effects + configurationDecisionBadges(key, configurationDefaults(panel)).map((badge) => `<span class="eoc-decision-badge ${badge.kind}">${panel._e(badge.text)}</span>`).join("");
+}
+
 function ensureStyles(panel) {
   const root = panel.shadowRoot;
   if (!root || root.querySelector("style[data-eoc-decision-guidance]")) return;
@@ -144,22 +150,6 @@ function ensureStyles(panel) {
   root.append(style);
 }
 
-function enhanceDefaultGuidance(panel) {
-  const root = panel.shadowRoot;
-  if (!root) return;
-  const defaults = configurationDefaults(panel);
-  root.querySelectorAll("[data-setting][data-field]").forEach((field) => {
-    const row = field.querySelector(".setting-label-row");
-    if (!row) return;
-    row.querySelectorAll(".eoc-decision-badge").forEach((badge) => badge.remove());
-    for (const badge of configurationDecisionBadges(field.dataset.field, defaults)) {
-      const node = document.createElement("span");
-      node.className = `eoc-decision-badge ${badge.kind}`;
-      node.textContent = badge.text;
-      row.append(node);
-    }
-  });
-}
 
 function addScopeNode(container, className, agentLabel, subject = "") {
   if (!container) return;
@@ -318,7 +308,6 @@ function enhanceRequestRules(panel) {
 function enhancePanel(panel) {
   if (!panel.shadowRoot) return;
   ensureStyles(panel);
-  enhanceDefaultGuidance(panel);
   enhanceRestoreScope(panel);
   enhanceRequestRules(panel);
 }

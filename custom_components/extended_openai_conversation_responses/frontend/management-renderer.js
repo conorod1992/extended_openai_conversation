@@ -1,3 +1,4 @@
+import {refreshSettingEffects} from "./management-configuration-clarity.js";
 import {updateDialogs} from "./management-dialogs.js";
 import {NAVIGATION, pageMetadata, searchSettings, shouldShowGlobalSettingsSearch} from "./frontend-navigation.js";
 
@@ -103,6 +104,7 @@ function bindIncrementalDraftUpdates(panel) {
     // The optimized handler stops the original event before bubble listeners,
     // so reconcile this control explicitly after updating the shared draft.
     panel._syncConfigControlDirty?.(control);
+    refreshSettingEffects(panel, control);
   }, true);
 }
 

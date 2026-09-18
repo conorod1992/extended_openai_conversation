@@ -99,7 +99,7 @@ assert.deepEqual(settingCurrentState(searchSettings("conversation timeout")[0], 
 assert.deepEqual(settingCurrentState(searchSettings("voice device assignments")[0], currentPanel), {label:"Current",value:"2 assignments"});
 assert.deepEqual(settingCurrentState(searchSettings("custom speech replacements")[0], currentPanel), {label:"Current",value:"1 rule"});
 assert.deepEqual(settingCurrentState(searchSettings("skills")[0], currentPanel), {label:"Current",value:"2 skills"});
-assert.deepEqual(settingCurrentState(searchSettings("long-term memory")[0], currentPanel), {label:"Current",value:"Manual"});
+assert.deepEqual(settingCurrentState(searchSettings("long-term memory")[0], currentPanel), {label:"Current",value:"Only when I ask (Manual)"});
 assert.deepEqual(settingCurrentState(searchSettings("current date/time format")[0], currentPanel), {label:"Current",value:"Default"});
 assert.deepEqual(settingCurrentState(searchSettings("system prompt")[0], currentPanel), {label:"Current",value:"16 characters"});
 assert.deepEqual(settingCurrentState(searchSettings("response creativity")[0], currentPanel), {label:"Current",value:"Not supported by current model"});

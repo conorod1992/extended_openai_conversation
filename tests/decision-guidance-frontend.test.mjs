@@ -23,8 +23,7 @@ assert.equal(displayDefaultValue("memory_retrieval_mode", "lexical"), "Keyword m
 assert.deepEqual(
   configurationDecisionBadges("api_mode", {api_mode:"auto"}),
   [
-    {kind:"default", text:"Default: Automatic (Auto)"},
-    {kind:"recommended", text:"Recommended: Automatic (Auto)"},
+    {kind:"recommended", text:"Recommended default: Automatic (Auto)"},
   ],
 );
 assert.deepEqual(

@@ -33,8 +33,8 @@ assert.equal(friendlySettingValue("api_mode", "responses"), "Responses API");
 assert.deepEqual(settingEffectBadges("memory_retrieval_mode", "hybrid"), ["Requires embeddings"]);
 assert.deepEqual(settingEffectBadges("memory_retrieval_mode", "lexical"), ["No embedding request"]);
 assert.deepEqual(settingEffectBadges("local_intents_enabled", true), ["No AI call when matched"]);
-assert.deepEqual(settingEffectBadges("archive_enabled", true), ["Stores data"]);
-assert.deepEqual(settingEffectBadges("temperature", 0.8), ["Advanced"]);
+assert.deepEqual(settingEffectBadges("archive_enabled", true), []);
+assert.deepEqual(settingEffectBadges("temperature", 0.8), []);
 assert.deepEqual(settingEffectBadges("local_intents_enabled", true, {disabled:true}), []);
 
 const projection = buildSettingsSearchProjection(SETTINGS_INDEX);

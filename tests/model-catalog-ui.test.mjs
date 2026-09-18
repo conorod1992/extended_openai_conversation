@@ -14,8 +14,8 @@ let result = {
 let failure = null;
 const buttons = ["check","apply","reset"].map((action) => ({
   dataset:{modelData:action},
-  disabled:false,
-  hidden:false,
+  disabled:action === "apply",
+  hidden:action === "apply",
   textContent:action,
   addEventListener(_event, handler) { this.click = handler; },
 }));
