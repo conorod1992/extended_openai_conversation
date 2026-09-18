@@ -96,6 +96,6 @@ def test_native_management_lifecycle_assets_are_registered() -> None:
         "management-renderer.js",
         "management-route.js",
     }
-    assert required <= set(_EXTRA_FRONTEND_MODULES)
+    assert required <= set(management_ui.MANAGEMENT_FRONTEND_MODULES)
     frontend = Path(management_ui.__file__).parent / "frontend"
-    assert all((frontend / name).is_file() for name in _EXTRA_FRONTEND_MODULES)
+    assert all((frontend / name).is_file() for name in (*_EXTRA_FRONTEND_MODULES, *required))

@@ -113,3 +113,9 @@ The total evaluated module count is unchanged: two direct ownership modules offs
 - Remaining feature render decorators still scan the DOM and mutate it after rendering. Feature editor dialogs still rebuild when main content changes. Converting those owners to lifecycle hooks/components is the next high-value step.
 - State-safety retains dirty-navigation/Guest baseline hooks; history pagination, temporary memory, quiet hours, usage footprint and debug retain feature loading wrappers. Bootstrap instrumentation still wraps navigation/loading/render, and registry interception remains until all pre-definition installers can be explicitly composed.
 - Larger route bodies still render strings. A future route component migration should retain controls within changed pages, rather than caching entire private history DOM or adding more wrapper layers.
+
+### CI follow-up
+
+Linux CI exposed an import-registration gap: native modules were still listed in the optional loading optimizer's asset extension. Their registration (including direct loader dependencies) now lives in the base `MANAGEMENT_FRONTEND_MODULES` registry. The actual `test_management_frontend_routes_cover_module_imports` regression plus focused backend tests pass locally (15 tests).
+
+The initial Linux stable job had 4,107 passing tests and only that registration failure. HA-dev also reports existing tool-result API compatibility failures (`ToolResultContent(..., tool_result=...)` against the changed HA API). Comparison against develop run 35305758839 at unchanged base `890d186` found the registration test was the only newly failing test name. This task does not change conversation/provider compatibility code. Genuine-HA Chromium, browser smoke, packaged-install smoke, lint, type checks and frontend build passed before the registration-only correction.

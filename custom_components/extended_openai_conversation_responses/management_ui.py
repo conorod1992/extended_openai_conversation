@@ -169,6 +169,13 @@ def _reset_request_rule_runtime(
 
 MANAGEMENT_FRONTEND_MODULES = (
     "management-panel.js",
+    "management-actions.js",
+    "management-cache.js",
+    "management-dialogs.js",
+    "management-renderer.js",
+    "management-route.js",
+    "agent-config-loader.js",
+    "request-rules-loader.js",
     "agent-config-editor.js",
     "agent-config-help.js",
     "frontend-navigation.js",
