@@ -33,7 +33,6 @@ export function searchProjectedSettings(query, projection = SETTINGS_SEARCH_PROJ
     .map(({item}) => item);
 }
 
-const PATCHED = Symbol.for("extended-openai.management-navigation-search");
 const SEARCH_STYLE = `
   .global-search.eoc-global-search{margin:0 0 22px;position:relative}
   .eoc-global-search>label{display:grid;grid-template-columns:auto minmax(220px,520px);gap:12px;align-items:center}
@@ -234,7 +233,7 @@ function bindSubsectionNavigation(panel) {
   }));
 }
 
-function enhancePanel(panel) {
+export function enhanceNavigationSearch(panel) {
   const root = panel.shadowRoot;
   if (!root) return;
   root.querySelector("style[data-eoc-navigation-search]")?.remove();
@@ -258,38 +257,5 @@ function enhancePanel(panel) {
   bindSubsectionNavigation(panel);
   if (panel._settingsSearchQuery) void ensureSearchConfiguration(panel);
 }
-
-export function installManagementNavigationSearch(Panel) {
-  // A constructor is the production API; registry callers remain supported.
-  if (typeof Panel !== "function") {
-    const registry = Panel || globalThis.customElements;
-    if (!registry?.whenDefined) return Promise.resolve(false);
-    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementNavigationSearch(registry.get("extended-openai-management-panel")));
-  }
-  const constructor = Panel;
-  const prototype = constructor?.prototype;
-  if (!prototype || prototype[PATCHED]) return false;
-
-  const originalRender = prototype._renderContent;
-  prototype._renderContent = function(...args) {
-    const result = originalRender.apply(this, args);
-    enhancePanel(this);
-    return result;
-  };
-
-  const originalClearConfigDraft = prototype._clearConfigDraft;
-  prototype._clearConfigDraft = function(...args) {
-    const result = originalClearConfigDraft.apply(this, args);
-    this._settingsSearchConfig = null;
-    this._settingsSearchConfigAgentId = null;
-    this._settingsSearchConfigError = null;
-    this._settingsSearchConfigErrorAgentId = null;
-    return result;
-  };
-
-  prototype[PATCHED] = true;
-  return true;
-}
-
 
 export {ensureSearchConfiguration, searchMarkup};
