@@ -151,7 +151,6 @@ def _register_split_frontend_modules() -> None:
         "management-memory-settings.js",
         "memory-settings-ui.js",
         "management-capabilities-ia.js",
-        "management-voice-identity.js",
         "voice-identity-ui.js",
         "management-navigation-search.js",
         "management-toolbar-layout.js",

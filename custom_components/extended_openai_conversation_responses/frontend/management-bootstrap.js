@@ -1,9 +1,5 @@
 import {installManagementCopyPolish} from "./agent-config-loader.js";
 import {installManagementStateSafety} from "./management-state-safety.js";
-import {installManagementFeatureStatus} from "./management-feature-status.js";
-import {installManagementMemorySettings} from "./management-memory-settings.js";
-import {installManagementCapabilitiesIA} from "./management-capabilities-ia.js";
-import {installManagementVoiceIdentity} from "./management-voice-identity.js";
 import {installManagementNavigationSearch} from "./management-navigation-search.js";
 import {installManagementToolbarLayout} from "./management-toolbar-layout.js";
 import {installManagementConfigurationClarity} from "./management-configuration-clarity.js";
@@ -13,15 +9,11 @@ import {installManagementConversationDefaultLabel} from "./management-conversati
 import {installManagementSettingsPolish} from "./management-settings-polish.js";
 import {installManagementOverviewHealthClarity} from "./management-overview-health-clarity.js";
 
-// Remaining feature decorators are intentionally temporary. Core lifecycle,
-// request/mutation safety, permissions and performance now belong to the panel.
+// Remaining visual and state-safety decorators are intentionally temporary.
+// Core lifecycle and Data/Memory/Capabilities features are explicitly composed.
 export function initializeManagementPanel(Panel) {
   installManagementCopyPolish(Panel);
   installManagementStateSafety(Panel);
-  installManagementFeatureStatus(Panel);
-  installManagementMemorySettings(Panel);
-  installManagementCapabilitiesIA(Panel);
-  installManagementVoiceIdentity(Panel);
   installManagementNavigationSearch(Panel);
   installManagementToolbarLayout(Panel);
   installManagementConfigurationClarity(Panel);

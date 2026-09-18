@@ -202,7 +202,6 @@ MANAGEMENT_FRONTEND_MODULES = (
     "management-temporary-memory.js",
     "management-memory-settings.js",
     "management-capabilities-ia.js",
-    "management-voice-identity.js",
     "management-permission-boundaries.js",
     "management-function-repair.js",
     "management-navigation-search.js",

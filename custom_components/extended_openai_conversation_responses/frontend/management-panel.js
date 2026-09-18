@@ -1,3 +1,6 @@
+import {bindMemorySettings, stripMovedMemoryControls} from "./management-memory-settings.js";
+import {bindCapabilities, renderConfiguration, stripWebSkillsConfiguration, stripLocalHandlingConfiguration, knowledgeAvailabilityMarkup, decorateKnowledgeSources, addKnowledgeSourceAvailabilityControl} from "./management-capabilities-ia.js";
+import {featureStatusMarkup, selectedFeatureStatus, diagnosticsMarkup, testAgent, FEATURE_STATUS_STYLES} from "./management-feature-status.js";
 import {ensureTemporaryScope, renderTemporaryMemories, renderTemporaryScopePicker, temporaryDialog, openTemporaryMemory, temporaryMemoryDirty, closeTemporaryMemory, saveTemporaryMemory, deleteTemporaryMemory, bindTemporaryMemory} from "./management-temporary-memory.js";
 import {savePageChanges} from "./management-page-drafts.js";
 import {initializeManagementPanel} from "./management-bootstrap.js";
@@ -223,6 +226,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _isDraftView(page = this._page, subsection = this._subsection) {
+    if ((page === "data-memory" && subsection === "memory-settings") || (page === "capabilities" && subsection === "web-skills")) return this._data?.is_admin !== false;
     if (this._data && !this._data.is_admin) return false;
     return page === "assistant" ||
       (page === "capabilities" && ["home-assistant", "request-rules", "functions"].includes(subsection)) ||
@@ -232,6 +236,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _configSectionsForView() {
     return {
+      "capabilities/home-assistant": ["local"],
+      "capabilities/web-skills": ["capabilities"],
       "assistant/basics": ["general"],
       "assistant/model-responses": ["model"],
       "assistant/conversation": ["conversation", "context"],
@@ -246,6 +252,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _canAccessView(page, subsection = null) {
+    if (page === "data-memory" && subsection === "memory-settings" && this._data?.is_admin === false) return false;
     if (this._data?.is_admin === false && isRestrictedManagementView(page, subsection)) return false;
     if (page === "usage-maintenance" && subsection === "request-debug") return this._data?.is_admin === true;
     if (this._data?.is_admin !== false) return true;
@@ -749,16 +756,31 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _content(agent) {
     const view = this._viewKey();
+    if (view === "data-memory/memory-settings") return getRouteFeature(view)?.renderMemorySettings(this) || this._loading();
+    if (view === "capabilities/home-assistant") {
+      this._configSections = ["local"];
+      return `${this._homeAssistant(agent)}${renderConfiguration(this)}`;
+    }
+    if (view === "capabilities/web-skills") {
+      this._configSections = ["capabilities"];
+      return stripWebSkillsConfiguration(renderConfiguration(this));
+    }
     if (!this._canAccessView(this._page, this._subsection)) return this._empty("Administrator permission is required for this section.");
     if (view === "overview") return renderOverview(this, agent);
     if (view === "guide") return renderGuide(this);
-    if (this._page === "assistant") { this._configSections = this._configSectionsForView(); return (getConfigurationEditor()?.renderConfiguration(this) || this._loading()); }
-    if (view === "capabilities/home-assistant") return this._homeAssistant(agent);
+    if (this._page === "assistant") {
+      this._configSections = this._configSectionsForView();
+      let content = getConfigurationEditor()?.renderConfiguration(this) || this._loading();
+      if (["assistant/model-responses", "assistant/voice"].includes(view)) content = stripMovedMemoryControls(content, view);
+      if (view === "assistant/conversation") content = stripLocalHandlingConfiguration(content);
+      if (view === "assistant/voice") return getRouteFeature(view)?.transformVoiceIdentity(this, content) || this._loading();
+      return content;
+    }
     if (view === "capabilities/request-rules") return renderRequestRules(this);
     if (view === "capabilities/functions") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${(getConfigurationEditor()?.renderTools(this) || this._loading())}`;
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
-    if (view === "data-memory/knowledge") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
+    if (view === "data-memory/knowledge") return `${knowledgeAvailabilityMarkup(this)}<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
     if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? (getConfigurationEditor()?.renderConfiguration(this) || this._loading()) : ""}`; }
     if (view === "usage-maintenance/usage") return this._usage();
     if (view === "usage-maintenance/diagnostics") return this._diagnostics(agent);
@@ -853,13 +875,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _memories() {
     if (this._memoryKind === "temporary") return renderTemporaryMemories(this);
-    return renderPersistentMemories(this);
+    return `${featureStatusMarkup(this, "Persistent memory", selectedFeatureStatus(this, "memory"), {page: "data-memory", subsection: "memory-settings", label: "Configure memory"})}${renderPersistentMemories(this)}`;
   }
 
   _knowledge() {
     const sources = this._result?.sources || [];
     const items = this._filtered(sources, (source) => `${source.title} ${source.description}`);
-    return `<section class="content-card"><div class="section-heading"><div><h2>Knowledge Library</h2><p>${formatUsageNumber(sources.length)} source${sources.length === 1 ? "" : "s"} stored locally for on-demand search.</p></div><button type="button" id="add-source">+ Add source</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${items.map((source) => `<article class="list-card"><div class="card-main clickable edit-source" tabindex="0" role="button" data-id="${this._e(source.source_id)}"><h3>${this._e(source.title)}</h3><p class="description">${this._e(source.description || "No description")}</p><p class="meta">${formatUsageNumber(source.character_count || 0)} characters · Updated ${this._e(this._formatDate(source.updated_at))}</p></div><div class="actions"><button type="button" class="secondary source-edit-button" data-id="${this._e(source.source_id)}">Edit</button><button type="button" class="danger delete-source" data-id="${this._e(source.source_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No sources match this filter." : "No Knowledge sources yet. Add one to make reference information available on demand.")}</div></section>`;
+    const content = `<section class="content-card"><div class="section-heading"><div><h2>Knowledge Library</h2><p>${formatUsageNumber(sources.length)} source${sources.length === 1 ? "" : "s"} stored locally for on-demand search.</p></div><button type="button" id="add-source">+ Add source</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${items.map((source) => `<article class="list-card"><div class="card-main clickable edit-source" tabindex="0" role="button" data-id="${this._e(source.source_id)}"><h3>${this._e(source.title)}</h3><p class="description">${this._e(source.description || "No description")}</p><p class="meta">${formatUsageNumber(source.character_count || 0)} characters · Updated ${this._e(this._formatDate(source.updated_at))}</p></div><div class="actions"><button type="button" class="secondary source-edit-button" data-id="${this._e(source.source_id)}">Edit</button><button type="button" class="danger delete-source" data-id="${this._e(source.source_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No sources match this filter." : "No Knowledge sources yet. Add one to make reference information available on demand.")}</div></section>`;
+    return decorateKnowledgeSources(this, `${featureStatusMarkup(this, "Knowledge Library", selectedFeatureStatus(this, "knowledge"))}${content}`);
   }
 
   _guestMode() {
@@ -968,7 +991,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _diagnostics(agent) {
-    return `<section class="metric-grid">${this._metric("Agent", agent.title)}${this._metric("Provider", agent.provider)}${this._metric("Model", agent.model)}${this._metric("Conversation archive", agent.archive_enabled ? "Enabled" : "Disabled")}${this._metric("Guest Mode", this._titleCase(String(agent.guest_mode?.state || "inactive").replaceAll("_", " ")))}</section><section class="content-card"><h2>Test provider connection</h2><p>Sends one minimal request to check the selected provider and model. It does not run Home Assistant actions.</p><button type="button" id="test-agent">Run connection test</button><pre id="test-result" aria-live="polite"></pre><small>If the test fails, verify the provider credentials, API format, model name, and network access.</small></section>`;
+    return diagnosticsMarkup(this, agent);
   }
 
   _dialogs() {
@@ -978,7 +1001,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       <dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope">${this._scopeOptions("memories", true, true)}</select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>
       <dialog id="confirm-dialog" class="editor-dialog confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-header"><h2 id="confirm-title">Confirm</h2></div><div class="dialog-body"><p id="confirm-message"></p></div><div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">Cancel</button><button type="button" class="danger" id="confirm-accept">Confirm</button></div></dialog>
       ${this._viewKey() === "capabilities/request-rules" ? requestRulesDialog(this) : ""}${routeAssetKind(this._viewKey()) === "agent-config" ? getConfigurationEditor()?.configurationDialogs(this) || "" : ""}${this._viewKey() === "usage-maintenance/backup-restore" ? getConfigurationEditor()?.restoreDialog(this) || "" : ""}`;
-    return `${content}${temporaryDialog(this)}`;
+    return addKnowledgeSourceAvailabilityControl(`${content}${temporaryDialog(this)}`);
   }
 
   _bindActions() {
@@ -1023,6 +1046,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     bindMemoryBrowser(this);
     bindTemporaryMemory(this);
+    bindMemorySettings(this);
+    bindCapabilities(this);
+    if (this._viewKey() === "assistant/voice") getRouteFeature("assistant/voice")?.bindVoiceIdentity(this);
   }
 
   _activate(element, callback) {
@@ -1039,6 +1065,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _openKnowledge(sourceId = null) {
+    const availability = this.shadowRoot?.querySelector("#knowledge-source-enabled");
+    if (availability) availability.checked = true;
     const root = this.shadowRoot;
     const dialog = root.querySelector("#knowledge-dialog");
     const loadToken = (this._knowledgeLoadToken || 0) + 1;
@@ -1060,6 +1088,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         const response = await this._call("knowledge", "get", { source_id: sourceId });
         if (this._knowledgeLoadToken !== loadToken || !dialog.open) return;
         this._editingSource = response.source;
+        if (availability) availability.checked = response.source.enabled !== false;
         this._knowledgeMode = "edit";
         root.querySelector("#knowledge-title").value = response.source.title || "";
         root.querySelector("#knowledge-description").value = response.source.description || "";
@@ -1102,6 +1131,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _setKnowledgeEditorDisabled(disabled) {
+    const availability = this.shadowRoot?.querySelector("#knowledge-source-enabled");
+    if (availability) availability.disabled = disabled;
     const root = this.shadowRoot;
     ["#knowledge-title", "#knowledge-description", "#knowledge-content", "#knowledge-save"].forEach((selector) => {
       root.querySelector(selector).disabled = disabled;
@@ -1110,7 +1141,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _knowledgeValues() {
     const root = this.shadowRoot;
-    return { title: root.querySelector("#knowledge-title").value, description: root.querySelector("#knowledge-description").value, content: root.querySelector("#knowledge-content").value };
+    return { enabled: root.querySelector("#knowledge-source-enabled")?.checked ?? true, title: root.querySelector("#knowledge-title").value, description: root.querySelector("#knowledge-description").value, content: root.querySelector("#knowledge-content").value };
   }
 
   _memoryValues() {
@@ -1209,11 +1240,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return getRouteFeature("data-memory/conversations")?.searchArchive(this, offset);
   }
 
-  async _testAgent() {
-    const output = this.shadowRoot.querySelector("#test-result");
-    output.textContent = "Testing…";
-    try { output.textContent = JSON.stringify(await this._call("diagnostics", "test_agent"), null, 2); }
-    catch (err) { output.textContent = err.message || String(err); }
+  _testAgent() {
+    return testAgent(this);
   }
 
   async _refreshAfterMutation() {
@@ -1344,7 +1372,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     .chart-column:hover:after,.chart-column:focus-visible:after{font-size:12px}
     .chart-axis{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:7px;color:var(--secondary-text-color);font-size:13px}
     .chart-axis span:nth-child(2){text-align:center}.chart-axis span:last-child{text-align:right}
-  `; }
+  ${FEATURE_STATUS_STYLES}`; }
 }
 
 initializeManagementPanel(ExtendedOpenAIManagementPanel);

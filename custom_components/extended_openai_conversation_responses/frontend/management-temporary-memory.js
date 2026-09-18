@@ -174,7 +174,6 @@ export function bindTemporaryMemory(panel) {
     const id = panel._temporaryMemoryDraft?.memory_id;
     if (id) panel._deleteTemporaryMemory(id);
   });
-  return;
 }
 
 export function renderTemporaryScopePicker(panel) {
