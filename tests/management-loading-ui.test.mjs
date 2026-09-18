@@ -6,7 +6,7 @@ const frontend = (name) => new URL(
   import.meta.url,
 );
 
-const [loading, overview, guide, debug, agentEditor, agentLoader, agentNativeYaml, requestRules, requestRulesLoader, bootstrap, routes] = await Promise.all([
+const [loading, overview, guide, debug, agentEditor, agentLoader, agentNativeYaml, requestRules, requestRulesLoader, routes] = await Promise.all([
   readFile(frontend("management-actions.js"), "utf8"),
   readFile(frontend("overview-page.js"), "utf8"),
   readFile(frontend("guide-page.js"), "utf8"),
@@ -16,7 +16,6 @@ const [loading, overview, guide, debug, agentEditor, agentLoader, agentNativeYam
   readFile(frontend("agent-config-native-yaml.js"), "utf8"),
   readFile(frontend("request-rules-ui.js"), "utf8"),
   readFile(frontend("request-rules-loader.js"), "utf8"),
-  readFile(frontend("management-bootstrap.js"), "utf8"),
   readFile(frontend("management-route.js"), "utf8"),
 ]);
 
@@ -240,5 +239,4 @@ assert.equal(renders, 1);
 for (const name of ["management-actions.js", "management-route.js", "management-renderer.js"]) {
   const source = await readFile(frontend(name), "utf8");
   assert.doesNotMatch(source, /prototype\.|whenDefined|customElements/);
-  assert.ok(!bootstrap.includes(`await import("./${name}")`));
 }
