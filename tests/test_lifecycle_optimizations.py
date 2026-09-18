@@ -20,8 +20,6 @@ from custom_components.extended_openai_conversation_responses.debug import (
     DebugTrace,
 )
 from custom_components.extended_openai_conversation_responses.lifecycle_optimizations import (
-    _LAST_USAGE_PRUNE_DATE,
-    _async_prune_usage_if_due,
     install_lifecycle_optimizations,
 )
 from custom_components.extended_openai_conversation_responses.request import (
@@ -74,7 +72,6 @@ async def _usage_manager():
 
 async def test_routine_usage_writes_are_delayed_but_explicit_clear_is_durable() -> None:
     """Ordinary turns leave the response path while explicit maintenance still saves."""
-    install_lifecycle_optimizations()
     manager, totals, daily, details = await _usage_manager()
 
     async with manager.async_run(home_assistant_conversation_id="conversation-a"):
@@ -103,7 +100,6 @@ async def test_routine_usage_writes_are_delayed_but_explicit_clear_is_durable() 
 
 async def test_usage_retention_is_reapplied_lazily_during_long_uptime() -> None:
     """A new UTC day prunes stale detail rows without requiring a restart."""
-    install_lifecycle_optimizations()
     manager, _totals, _daily, details = await _usage_manager()
     old = (dt_util.utcnow() - timedelta(days=120)).isoformat()
     manager.requests = [
@@ -132,14 +128,17 @@ async def test_usage_retention_is_reapplied_lazily_during_long_uptime() -> None:
     ]
     manager.request_retention_days = 30
     manager.run_retention_days = 90
-    setattr(manager, _LAST_USAGE_PRUNE_DATE, "1900-01-01")
+    manager._last_prune_date = "1900-01-01"
 
-    await _async_prune_usage_if_due(manager)
+    await manager._async_prune_usage_if_due()
+    task = manager._prune_task
+    assert task is not None
+    await task
 
     assert manager.requests == []
     assert manager.runs == []
-    assert details.delayed
-    assert details.latest_delayed_data() == {"requests": [], "runs": []}
+    assert details.immediate_saves == 1
+    assert details.data == {"requests": [], "runs": []}
 
 
 async def test_ha_default_never_restores_history_between_distinct_ids() -> None:
