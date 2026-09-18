@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from custom_components.extended_openai_conversation_responses import entity
+from custom_components.extended_openai_conversation_responses import ha_tool_result_compat
 
 
 def _capture_constructor(monkeypatch: Any) -> tuple[dict[str, Any], object]:
@@ -17,7 +17,7 @@ def _capture_constructor(monkeypatch: Any) -> tuple[dict[str, Any], object]:
         return sentinel
 
     monkeypatch.setattr(
-        entity.conversation, "ToolResultContent", fake_tool_result_content
+        ha_tool_result_compat.conversation, "ToolResultContent", fake_tool_result_content
     )
     return captured, sentinel
 
@@ -25,10 +25,10 @@ def _capture_constructor(monkeypatch: Any) -> tuple[dict[str, Any], object]:
 def test_make_tool_result_content_uses_legacy_api(monkeypatch: Any) -> None:
     """Use tool_result= on Home Assistant versions without llm.ToolResult."""
     captured, sentinel = _capture_constructor(monkeypatch)
-    monkeypatch.delattr(entity.llm, "ToolResult", raising=False)
+    monkeypatch.delattr(ha_tool_result_compat.llm, "ToolResult", raising=False)
     payload = {"result": "ok"}
 
-    result = entity._make_tool_result_content(
+    result = ha_tool_result_compat.make_tool_result_content(
         agent_id="conversation.test",
         tool_call_id="call-1",
         tool_name="get_state",
@@ -53,10 +53,10 @@ def test_make_tool_result_content_uses_new_api(monkeypatch: Any) -> None:
         error: bool = False
 
     captured, sentinel = _capture_constructor(monkeypatch)
-    monkeypatch.setattr(entity.llm, "ToolResult", FakeToolResult, raising=False)
+    monkeypatch.setattr(ha_tool_result_compat.llm, "ToolResult", FakeToolResult, raising=False)
     payload = {"result": "ok"}
 
-    result = entity._make_tool_result_content(
+    result = ha_tool_result_compat.make_tool_result_content(
         agent_id="conversation.test",
         tool_call_id="call-2",
         tool_name="get_state",
