@@ -7,9 +7,6 @@ from copy import deepcopy
 
 from homeassistant.util import dt as dt_util
 
-from custom_components.extended_openai_conversation_responses import (
-    durable_state_hardening as hardening,
-)
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
 )
@@ -63,7 +60,6 @@ class FakeUsageStorage:
 
 
 async def test_destructive_archive_operation_drops_empty_month_partition() -> None:
-    hardening._install_archive_transactions()
     storage = FakeArchiveStorage()
     archive = ConversationArchive(storage, "agent")
     await archive.async_initialize()
