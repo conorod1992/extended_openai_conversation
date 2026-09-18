@@ -377,7 +377,13 @@ export function installManagementStateSafety(Panel) {
   prototype._navigate = async function(page, subsection = null) {
     const targetSubsection = subsection || this._visibleSubsections(page)[0]?.id || null;
     const destination = targetSubsection ? `${page}/${targetSubsection}` : page;
-    if (!await confirmStateSafeNavigation(this, destination)) return;
+    if (!await confirmStateSafeNavigation(this, destination)) {
+      const local = this.shadowRoot?.querySelector?.("#local-section");
+      const top = this.shadowRoot?.querySelector?.("#top-section-mobile");
+      if (local) local.value = this._subsection;
+      if (top) top.value = this._page;
+      return;
+    }
     return originalNavigate.call(this, page, subsection);
   };
 

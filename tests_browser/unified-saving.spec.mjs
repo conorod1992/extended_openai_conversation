@@ -31,6 +31,9 @@ for (const [view, field, section, action, removed] of [
     await expect(panel.locator('.top-nav button[data-page="capabilities"]')).toHaveClass(/eoc-has-unsaved/);
     await control.uncheck(); await expect(panel.locator(".save-bar")).toHaveCount(0); expect(await unload(page)).toBe(false);
     await control.check();
+    await panel.locator("#local-section").selectOption("request-rules", {force: true});
+    await panel.locator("#confirm-cancel").click();
+    await expect(panel.locator("#local-section")).toHaveValue(view.split("/")[1]);
     await panel.locator('.top-nav button[data-page="overview"]').click();
     await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
     await panel.locator("#confirm-cancel").click(); await expect(control).toBeChecked();
