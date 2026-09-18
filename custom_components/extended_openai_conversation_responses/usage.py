@@ -862,14 +862,17 @@ class UsageManager:
                     "daily": self._daily_storage,
                     "details": self._detail_storage,
                 }.get(category)
-                if category is not None and store is not None:
-                    # Details are intentionally serialized only when the delayed
-                    # save is due, avoiding O(N) history serialization on the turn.
-                    if self._schedule_store_snapshot(
+                if (
+                    category is not None
+                    and store is not None
+                    and self._schedule_store_snapshot(
                         store,
                         lambda category=category: self._usage_snapshot(category),
-                    ):
-                        return
+                    )
+                ):
+                    # Details are intentionally serialized only when the delayed
+                    # save is due, avoiding O(N) history serialization on the turn.
+                    return
         except Exception:
             _LOGGER.exception(
                 "Unable to schedule usage %s; falling back to immediate persistence",
