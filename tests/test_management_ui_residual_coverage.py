@@ -274,6 +274,8 @@ async def test_guest_policy_save_rejects_stale_revision_and_returns_new_baseline
     monkeypatch,
 ) -> None:
     entry, subentry = _entry_pair()
+    # Revisions describe content: saving the default True would be a no-op.
+    subentry.data["guest_mode_enabled"] = False
     hass = _hass(entry)
     monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
     monkeypatch.setattr(

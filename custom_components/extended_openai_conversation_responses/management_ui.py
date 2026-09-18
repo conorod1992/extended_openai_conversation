@@ -194,6 +194,8 @@ MANAGEMENT_FRONTEND_MODULES = (
     "request-rules-match-test-ui.js",
     "quiet-hours-ui.js",
     "management-state-safety.js",
+    "management-page-drafts.js",
+    "unsaved-state.js",
     "management-action-safety.js",
     "management-function-dependencies.js",
     "management-feature-status.js",
