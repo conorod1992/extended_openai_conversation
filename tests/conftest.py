@@ -1,5 +1,7 @@
 """Fixtures for extended_openai_conversation_responses tests."""
 
+from functools import wraps
+from inspect import signature
 from pathlib import Path
 import sys
 from unittest.mock import AsyncMock, MagicMock
@@ -11,8 +13,24 @@ if str(config_dir) not in sys.path:
 
 import pytest  # noqa: E402
 
-from homeassistant.helpers import config_validation as cv  # noqa: E402
+from homeassistant.components import conversation  # noqa: E402
+from homeassistant.helpers import config_validation as cv, llm  # noqa: E402
 from homeassistant.helpers.template import TemplateEnvironment  # noqa: E402
+
+
+# Home Assistant dev changed ToolResultContent(tool_result=...) to
+# ToolResultContent(result=llm.ToolResult(...)). Keep legacy unit-test fixtures
+# valid on both APIs without replacing the class or changing isinstance checks.
+if "result" in signature(conversation.ToolResultContent).parameters:
+    _tool_result_content_init = conversation.ToolResultContent.__init__
+
+    @wraps(_tool_result_content_init)
+    def _compat_tool_result_content_init(self, *args, **kwargs):
+        if "tool_result" in kwargs and "result" not in kwargs:
+            kwargs["result"] = llm.ToolResult(data=kwargs.pop("tool_result"))
+        _tool_result_content_init(self, *args, **kwargs)
+
+    conversation.ToolResultContent.__init__ = _compat_tool_result_content_init
 
 
 @pytest.fixture
