@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 from homeassistant.helpers.event import async_track_time_interval
+
 from .const import CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
 
 _LOGGER = logging.getLogger(__name__)
