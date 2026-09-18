@@ -1,5 +1,5 @@
 import "./management-temporary-memory.js";
-import {bindMemorySettings, renderMemorySettings} from "./memory-settings-ui.js";
+import {getRouteFeature} from "./management-route.js";
 
 const PATCHED = Symbol.for("extended-openai.management-memory-settings");
 const MEMORY_FIELDS = [
@@ -62,7 +62,7 @@ export function installManagementMemorySettings(registry = globalThis.customElem
     const originalContent = prototype._content;
     prototype._content = function(agent) {
       const view = this._viewKey();
-      if (view === "data-memory/memory-settings") return renderMemorySettings(this);
+      if (view === "data-memory/memory-settings") return getRouteFeature(view)?.renderMemorySettings(this) || this._loading();
       const content = originalContent.call(this, agent);
       if (["assistant/model-responses", "assistant/voice"].includes(view)) {
         return stripMovedMemoryControls(content, view);
@@ -74,7 +74,7 @@ export function installManagementMemorySettings(registry = globalThis.customElem
     prototype._bindActions = function(...args) {
       const result = originalBindActions.apply(this, args);
       const view = this._viewKey();
-      if (view === "data-memory/memory-settings") bindMemorySettings(this);
+      if (view === "data-memory/memory-settings") getRouteFeature(view)?.bindMemorySettings(this);
       if (view === "assistant/model-responses") bindModelReset(this);
       return result;
     };

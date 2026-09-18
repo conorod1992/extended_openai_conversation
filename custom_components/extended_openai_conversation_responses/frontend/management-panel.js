@@ -1,6 +1,7 @@
+import {bindPanelDialogs} from "./management-dialogs.js";
 import {renderManagement} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending} from "./management-actions.js";
-import {loadRoute, bindRequestRuleSearch, applyRequestRuleSearch} from "./management-route.js";
+import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch} from "./management-route.js";
 import { bindConfiguration, bindTools, configurationDialogs, renderConfiguration, renderTools, restoreDialog } from "./agent-config-editor.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, searchSettings, shouldShowGlobalSettingsSearch} from "./frontend-navigation.js";
 import {freshGuestPolicyDraft} from "./guest-mode-ui.js";
@@ -51,6 +52,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._serviceCatalog = null;
     this._serviceCatalogPromise = null;
     this._loadToken = 0;
+    this._cacheGeneration = 0;
     this._eocScopeCatalogTimes = new Map();
     this._eocInPlaceRequestRuleSearch = true;
     this._configSearchQuery = "";
@@ -202,6 +204,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _invalidateAfterMutation(agentId, section, action) {
     if (agentId && section === "backup" && action === "restore") {
+      this._cacheGeneration += 1;
       const prefix = `${agentId}|`;
       for (const key of this._sectionCache.keys()) if (key.startsWith(prefix)) this._sectionCache.delete(key);
       for (const key of this._scopeCatalogCache.keys()) if (key.startsWith(prefix)) this._scopeCatalogCache.delete(key);
@@ -215,6 +218,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       conversations: new Set(["delete"]),
     };
     if (!agentId || !mutations[section]?.has(action)) return;
+    this._cacheGeneration += 1;
     const prefix = `${agentId}|`;
     const view = {request_rules:"capabilities/request-rules", knowledge:"data-memory/knowledge"}[section];
     if (view) this._sectionCache.delete(`${prefix}${view}`);
@@ -235,7 +239,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _scopeCatalogKey(view = this._viewKey(), agentId = this._agentId) {
     if (!agentId || !["data-memory/memories", "data-memory/conversations"].includes(view)) return null;
-    return `${agentId}|${view}`;
+    return `${agentId}|scopes`;
   }
 
   _prepareScopeCatalogVisit(view) {
@@ -267,17 +271,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _loadAgents(selectedId = null) {
     try {
-      const previousAgentId = this._agentId;
-      this._data = await this._hass.callWS({ type: WS_TYPE, action: "agents" });
-      this._baseScopes = this._data.scopes || [];
-      const saved = localStorage.getItem("extended-openai-agent");
-      const agents = this._data.agents || [];
-      const preferred = selectedId || saved;
-      this._agentId = agents.some((item) => item.subentry_id === preferred) ? preferred : agents[0]?.subentry_id;
-      if (this._agentId) localStorage.setItem("extended-openai-agent", this._agentId);
-      if (previousAgentId !== this._agentId) this._scopeId = null;
-      this._applyScopes(this._scopeCatalogCache.get(this._scopeCatalogKey()) || this._baseScopes);
-      await this._loadSection();
+      await loadAgentsWithOverviewPrefetch(this, selectedId);
     } catch (err) {
       this._error = err.message || String(err);
       this._render();
@@ -296,9 +290,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._applyScopes(this._scopeCatalogCache.get(scopeCatalogKey));
       return;
     }
+    const generation = this._cacheGeneration;
+    const loadToken = this._loadToken;
     const response = await this._call("scopes", "catalog");
     const scopes = response.scopes || [];
-    if (scopeCatalogKey !== this._scopeCatalogVisitKey || agentId !== this._agentId) return;
+    if (scopeCatalogKey !== this._scopeCatalogVisitKey || agentId !== this._agentId
+        || generation !== this._cacheGeneration || loadToken !== this._loadToken) return;
     this._scopeCatalogCache.set(scopeCatalogKey, scopes);
     this._eocScopeCatalogTimes.set(scopeCatalogKey, Date.now());
     this._applyScopes(scopes);
@@ -341,7 +338,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._render();
     }
     try {
-      if (needsScopes) await this._loadScopes(scopeCatalogKey);
+      const configPromise = view === "data-memory/conversations" && this._data?.is_admin
+        ? this._loadConfigDraft() : Promise.resolve();
+      const scopePromise = needsScopes ? this._loadScopes(scopeCatalogKey) : Promise.resolve();
+      // Attach rejection handlers immediately, even when scope loading fails first.
+      const prerequisites = Promise.allSettled([scopePromise, configPromise]);
+      if (needsScopes) await scopePromise;
       if (loadToken !== this._loadToken) return;
       cacheKey = this._sectionCacheKey(view);
       let result;
@@ -366,9 +368,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           this._call("conversations", "list", { scope_id: this._scopeId, limit: 50 }),
           this._call("conversations", "settings", { scope_id: this._scopeId }),
           this._data?.is_admin ? this._call("conversations", "active") : Promise.resolve({active: []}),
+          prerequisites.then((results) => {
+            if (results[1].status === "rejected") throw results[1].reason;
+          }),
         ]);
         contentData = { sessions, settings, active };
-        if (this._data?.is_admin) await this._loadConfigDraft();
+        if (this._data?.is_admin) result = this._configData;
         else result = contentData;
       } else if (view === "data-memory/memories") {
         result = await this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: this._scopeId, limit: 100 });
@@ -391,7 +396,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
       if (loadToken !== this._loadToken) return;
       this._contentData = contentData;
-      if (!(this._isDraftView() && view === "data-memory/conversations" && this._data?.is_admin)) this._result = result;
+      this._result = result;
       if (cacheKey && result !== undefined) this._sectionCache.set(cacheKey, result);
       this._error = null;
     } catch (err) {
@@ -407,8 +412,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _loadConfigDraft() {
     if (!this._configData || this._draftAgentId !== this._agentId) {
       const agentId = this._agentId;
+      const loadToken = this._loadToken;
       const configData = await this._call("configuration", "get");
-      if (agentId !== this._agentId) return;
+      if (agentId !== this._agentId || loadToken !== this._loadToken) return;
       this._configData = configData;
       this._draft = JSON.parse(JSON.stringify(configData.config));
       this._draftTitle = configData.title;
@@ -438,6 +444,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _render() {
     renderManagement(this);
+    bindPanelDialogs(this);
     bindSingleRequestSave(this);
     bindFrontendCorrectness(this);
     bindRequestRuleSearch(this);
@@ -478,7 +485,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const root = this.shadowRoot;
     root.querySelectorAll(".top-nav button").forEach((button) => button.addEventListener("click", () => this._navigate(button.dataset.page)));
     root.querySelector("#top-section-mobile")?.addEventListener("change", (event) => this._navigate(event.target.value));
-    root.querySelector("#local-section")?.addEventListener("change", (event) => this._navigate(this._page, event.target.value));
     root.querySelector("#settings-search")?.addEventListener("input", (event) => { this._settingsSearchQuery = event.target.value; this._render(); requestAnimationFrame(() => { const input = this.shadowRoot.querySelector("#settings-search"); input?.focus(); input?.setSelectionRange(input.value.length, input.value.length); }); });
     root.querySelectorAll(".settings-result").forEach((button) => button.addEventListener("click", async () => { this._pendingSettingFocus = button.dataset.target; this._settingsSearchQuery = ""; await this._navigate(button.dataset.page, button.dataset.subsection); }));
     root.querySelectorAll(".inline-route").forEach((button) => button.addEventListener("click", () => this._navigate(button.dataset.page, button.dataset.subsection)));
@@ -496,11 +502,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._applyScopes(this._scopeCatalogCache.get(this._scopeCatalogKey()) || this._baseScopes);
       await this._loadSection();
     });
-    root.querySelector("#scope")?.addEventListener("change", (event) => { this._scopeId = event.target.value; this._loadSection(); });
-    root.querySelector("#show-empty-scopes")?.addEventListener("change", (event) => { this._showEmptyScopes = event.target.checked; this._render(); });
-    root.querySelector("#confirm-cancel")?.addEventListener("click", () => this._resolveConfirm(false));
-    root.querySelector("#confirm-accept")?.addEventListener("click", () => this._resolveConfirm(true));
-    root.querySelector("#confirm-dialog")?.addEventListener("cancel", (event) => { event.preventDefault(); this._resolveConfirm(false); });
   }
 
   _content(agent) {
@@ -720,17 +721,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     root.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => { if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return; await this._call("conversations", "end_active", { continuity_key: button.dataset.key }); await this._loadSection(); }));
     root.querySelectorAll(".delete-session").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSession(button.dataset.id); }));
     root.querySelectorAll(".reassign-memory").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._openReassign(button.dataset.id); }));
-    root.querySelectorAll(".close-editor").forEach((button) => button.addEventListener("click", () => this._requestEditorClose()));
-    root.querySelectorAll(".close-session").forEach((button) => button.addEventListener("click", () => q("#session-dialog").close()));
-    q("#knowledge-form")?.addEventListener("submit", (event) => { event.preventDefault(); this._saveKnowledge(); });
-    q("#memory-form")?.addEventListener("submit", (event) => { event.preventDefault(); this._saveMemory(); });
-    q("#knowledge-content")?.addEventListener("input", () => this._updateKnowledgeCounter());
-    q("#knowledge-delete")?.addEventListener("click", () => this._deleteSource(this._editingSource?.source_id, true));
-    q("#memory-delete")?.addEventListener("click", () => this._deleteMemory(this._editingMemory?.memory_id, true));
-    [q("#knowledge-dialog"), q("#memory-dialog")].forEach((dialog) => dialog?.addEventListener("cancel", (event) => { event.preventDefault(); this._requestEditorClose(); }));
-    q("#session-dialog")?.addEventListener("cancel", (event) => { event.preventDefault(); q("#session-dialog").close(); });
-    q("#reassign-cancel")?.addEventListener("click", () => q("#reassign-dialog").close());
-    q("#reassign-save")?.addEventListener("click", () => this._saveReassign());
     q("#clear-details")?.addEventListener("click", () => this._clearUsageDetails());
     q("#archive-search")?.addEventListener("click", () => this._searchArchive());
     q("#archive-query")?.addEventListener("keydown", (event) => { if (event.key === "Enter") this._searchArchive(); });

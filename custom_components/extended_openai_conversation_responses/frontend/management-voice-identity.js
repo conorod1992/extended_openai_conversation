@@ -1,4 +1,4 @@
-import {bindVoiceIdentity, transformVoiceIdentity} from "./voice-identity-ui.js";
+import {getRouteFeature} from "./management-route.js";
 
 const PATCHED = Symbol.for("extended-openai.management-voice-identity");
 
@@ -13,13 +13,13 @@ export function installManagementVoiceIdentity(registry = globalThis.customEleme
     prototype._content = function(agent) {
       const content = originalContent.call(this,agent);
       if (this._viewKey() !== "assistant/voice") return content;
-      return transformVoiceIdentity(this,content);
+      return getRouteFeature("assistant/voice")?.transformVoiceIdentity(this,content) || this._loading();
     };
 
     const originalBindActions = prototype._bindActions;
     prototype._bindActions = function(...args) {
       const result = originalBindActions.apply(this,args);
-      if (this._viewKey() === "assistant/voice") bindVoiceIdentity(this);
+      if (this._viewKey() === "assistant/voice") getRouteFeature("assistant/voice")?.bindVoiceIdentity(this);
       return result;
     };
 

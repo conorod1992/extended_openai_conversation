@@ -19,7 +19,32 @@ export function routeAssetKind(view) {
   return null;
 }
 
+const featureModules = new Map();
+const featurePromises = new Map();
+const featureLoaders = {
+  "assistant/voice": () => import("./voice-identity-ui.js"),
+  "data-memory/memory-settings": () => import("./memory-settings-ui.js"),
+};
+export function getRouteFeature(view) { return featureModules.get(view); }
+
+function featureAssetPromise(view) {
+  if (!featureLoaders[view] || featureModules.has(view)) return null;
+  if (!featurePromises.has(view)) {
+    featurePromises.set(view, featureLoaders[view]().then((module) => {
+      featureModules.set(view, module);
+      return module;
+    }).finally(() => featurePromises.delete(view)));
+  }
+  return featurePromises.get(view);
+}
+
 export function routeAssetPromise(view) {
+  const feature = featureAssetPromise(view);
+  const core = coreAssetPromise(view);
+  return feature ? Promise.all([feature, core]) : core;
+}
+
+function coreAssetPromise(view) {
   if (view === "overview") return ensureOverviewModule();
   if (view === "guide") return ensureGuideModule();
   if (view === "usage-maintenance/request-debug") return import("./debug-panel.js");
@@ -117,7 +142,12 @@ export function loadSectionAlongsideAsset(
       : sectionResult.status === "rejected"
         ? sectionResult.reason
         : null;
-    if (!failure) return sectionResult.value;
+    if (!failure) {
+      // A route-owned feature can become available after the data renderer ran.
+      // The renderer skips unchanged markup, retaining controls and listeners.
+      panel._render();
+      return sectionResult.value;
+    }
     panel._busy = false;
     panel._error = `Unable to load this frontend section: ${failure?.message || String(failure)}`;
     panel._render();
@@ -134,3 +164,80 @@ export function loadRoute(panel, silent = false) {
   if (!asset) return panel._loadSectionData(silent);
   return loadSectionAlongsideAsset(panel, silent, panel._loadSectionData, view, asset, token);
 }
+
+const WS_TYPE = "extended_openai_conversation_responses/management";
+export const AGENT_KEY = "extended-openai-agent";
+export const ENTRY_KEY = "extended-openai-agent-entry";
+
+export function applyOverviewResult(panel, result) {
+  const agent = panel._selectedAgent?.();
+  if (!agent || !result) return false;
+  if (result.agent) Object.assign(agent, result.agent);
+  const {agent: _agent, ...overview} = result;
+  panel._contentData = null;
+  panel._result = overview;
+  panel._error = null;
+  panel._busy = false;
+  panel._render();
+  return true;
+}
+
+export function startStoredOverviewPrefetch(panel, preferredSubentryId) {
+  if (panel._viewKey?.() !== "overview") return null;
+  const subentryId = preferredSubentryId || globalThis.localStorage?.getItem?.(AGENT_KEY);
+  const entryId = globalThis.localStorage?.getItem?.(ENTRY_KEY);
+  if (!subentryId || !entryId) return null;
+  return {
+    entryId,
+    subentryId,
+    promise: Promise.allSettled([
+      ensureOverviewModule(),
+      panel._hass.callWS({
+        type: WS_TYPE,
+        section: "overview",
+        action: "summary",
+        entry_id: entryId,
+        subentry_id: subentryId,
+      }),
+    ]),
+  };
+}
+
+export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
+  const initialToken = panel._loadToken;
+  const previousAgentId = panel._agentId;
+  const saved = globalThis.localStorage?.getItem?.(AGENT_KEY);
+  const preferred = selectedId || saved;
+  const prefetch = startStoredOverviewPrefetch(panel, preferred);
+
+  panel._data = await panel._hass.callWS({type: WS_TYPE, action: "agents"});
+  panel._baseScopes = panel._data.scopes || [];
+  const agents = panel._data.agents || [];
+  panel._agentId = agents.some((item) => item.subentry_id === preferred)
+    ? preferred
+    : agents[0]?.subentry_id;
+
+  const selected = panel._selectedAgent?.();
+  if (panel._agentId) globalThis.localStorage?.setItem?.(AGENT_KEY, panel._agentId);
+  if (selected?.entry_id) globalThis.localStorage?.setItem?.(ENTRY_KEY, selected.entry_id);
+  if (previousAgentId !== panel._agentId) panel._scopeId = null;
+  panel._applyScopes(panel._scopeCatalogCache.get(panel._scopeCatalogKey()) || panel._baseScopes);
+
+  if (
+    prefetch
+    && selected?.subentry_id === prefetch.subentryId
+    && selected?.entry_id === prefetch.entryId
+    && panel._viewKey?.() === "overview"
+  ) {
+    const [assetResult, overviewResult] = await prefetch.promise;
+    if (panel._viewKey?.() !== "overview" || panel._loadToken !== initialToken
+        || panel._agentId !== prefetch.subentryId) return;
+    if (assetResult.status === "fulfilled" && overviewResult.status === "fulfilled") {
+      applyOverviewResult(panel, overviewResult.value);
+      return;
+    }
+  }
+
+  await panel._loadSection();
+}
+

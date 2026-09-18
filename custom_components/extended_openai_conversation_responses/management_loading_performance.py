@@ -65,6 +65,7 @@ _RUNTIME_QUARANTINE_ALL_FUNCTIONS: ContextVar[bool] = ContextVar(
 )
 _EXTRA_FRONTEND_MODULES = (
     "management-renderer.js",
+    "management-dialogs.js",
     "management-actions.js",
     "management-function-repair.js",
     "management-state-safety.js",
