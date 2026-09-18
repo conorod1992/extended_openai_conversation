@@ -116,7 +116,7 @@ def render_maintained_entity_context(
 
 
 def install_request_static_caching() -> None:
-    """Install request-scoped caching after existing performance/security wrappers."""
+    """Install request-scoped tool caching and skill-availability guards."""
     global _INSTALLED
     if _INSTALLED:
         return

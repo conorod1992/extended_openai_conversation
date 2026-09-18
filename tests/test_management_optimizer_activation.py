@@ -53,9 +53,7 @@ async def test_debug_assets_are_registered_before_management_panel(
         "install_deferred_context_summary",
         "install_debug_instrumentation",
         "install_request_rule_match_preview",
-        "install_management_loading_optimizations",
         "install_management_permissions",
-        "install_safety_hardening",
     ):
         monkeypatch.setattr(integration, name, MagicMock())
 

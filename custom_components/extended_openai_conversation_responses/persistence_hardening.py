@@ -15,7 +15,6 @@ from homeassistant.helpers.storage import Store
 
 from .configuration_lifecycle_hardening import install_configuration_lifecycle_hardening
 from .context_usage_hardening import install_context_usage_hardening
-from .durable_state_hardening import install_durable_state_hardening
 from .hot_path_cleanup import install_hot_path_cleanup
 from .knowledge import KnowledgeLibrary
 from .lifecycle_optimizations import install_lifecycle_optimizations
@@ -74,7 +73,6 @@ def install_persistence_transactions() -> None:
     install_temporary_memory_read_fast_path()
     install_model_tool_result_compaction()
     install_context_usage_hardening()
-    install_durable_state_hardening()
 
 
 def _repair_private_store_mode(path: str) -> None:

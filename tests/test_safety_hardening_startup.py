@@ -10,6 +10,7 @@ from custom_components.extended_openai_conversation_responses import (
     feature_status,
     guest_performance,
     management_loading_performance,
+    persistence_hardening,
     request_static_cache,
 )
 
@@ -18,11 +19,9 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
     """Production setup must execute the real Guest installer chain successfully."""
     for name in (
         "apply_openai_compatibility",
-        "install_persistence_transactions",
         "install_deferred_context_summary",
         "install_debug_instrumentation",
         "install_request_rule_match_preview",
-        "install_management_loading_optimizations",
         "install_management_permissions",
     ):
         monkeypatch.setattr(integration, name, MagicMock())
@@ -32,7 +31,9 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
     # chain without globally re-wrapping unrelated runtime entry points in the test.
     monkeypatch.setattr(guest_performance, "_INSTALLED", False)
     monkeypatch.setattr(
-        request_static_cache, "install_request_static_caching", MagicMock()
+        request_static_cache,
+        "install_request_static_caching",
+        MagicMock(),
     )
     monkeypatch.setattr(
         management_loading_performance,
@@ -52,9 +53,22 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
         base_effective_guest_policy,
     )
 
+    for name in (
+        "_install_manager_guard",
+        "_install_delayed_tool_store_guard",
+        "install_configuration_lifecycle_hardening",
+        "install_runtime_failure_hardening",
+        "install_runtime_hardening",
+        "install_lifecycle_optimizations",
+        "install_hot_path_cleanup",
+        "install_temporary_memory_read_fast_path",
+        "install_model_tool_result_compaction",
+        "install_context_usage_hardening",
+    ):
+        monkeypatch.setattr(persistence_hardening, name, MagicMock())
     install_safety_hardening = MagicMock()
     monkeypatch.setattr(
-        integration, "install_safety_hardening", install_safety_hardening
+        persistence_hardening, "install_safety_hardening", install_safety_hardening
     )
 
     for name in (
@@ -82,19 +96,29 @@ async def test_management_loading_is_installed_before_permissions(
 ) -> None:
     """Keep the permission wrapper outermost around optimized management routes."""
     order: list[str] = []
+    monkeypatch.setattr(guest_performance, "_INSTALLED", False)
+    monkeypatch.setattr(
+        request_static_cache, "install_request_static_caching", MagicMock()
+    )
+    monkeypatch.setattr(
+        feature_status, "install_management_feature_status", MagicMock()
+    )
+    monkeypatch.setattr(
+        conversation.ExtendedOpenAIAgentEntity,
+        "_effective_guest_policy",
+        lambda self: None,
+    )
     for name in (
         "apply_openai_compatibility",
         "install_persistence_transactions",
-        "install_guest_policy_fast_path",
         "install_deferred_context_summary",
         "install_debug_instrumentation",
         "install_request_rule_match_preview",
-        "install_safety_hardening",
     ):
         monkeypatch.setattr(integration, name, MagicMock())
 
     monkeypatch.setattr(
-        integration,
+        management_loading_performance,
         "install_management_loading_optimizations",
         MagicMock(side_effect=lambda: order.append("loading")),
     )
