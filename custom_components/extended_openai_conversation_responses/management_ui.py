@@ -1016,8 +1016,7 @@ async def async_management_command(
             )
             if not is_admin:
                 return {
-                    "revision": _agent_config_revision(subentry.data, subentry.title),
-                "status": guest_manager.status(),
+                    "status": guest_manager.status(),
                     "policy": policy.as_diagnostics(),
                 }
             library = await async_get_knowledge(hass, entry_id, subentry_id)
@@ -1086,7 +1085,7 @@ async def async_management_command(
                 "revision": _agent_config_revision(normalized, subentry.title),
                 "config": guest_policy_editor_snapshot(
                     hass, normalized, configured_tools
-                )
+                ),
             }
         if action == "update":
             return {

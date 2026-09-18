@@ -139,15 +139,9 @@ export function installManagementTemporaryMemory(Panel) {
   };
 
   prototype._closeTemporaryMemory = async function(force = false) {
-    if (!force && this._temporaryMemoryDirty()) {
-      const discard = await this._confirm(
-        "Discard unsaved changes?",
-        "Your edits to this short-term memory have not been saved.",
-        "Discard",
-      );
-      if (!discard) return false;
-    }
-    this.shadowRoot.querySelector("#temporary-memory-dialog")?.close();
+    const dialog = this.shadowRoot.querySelector("#temporary-memory-dialog");
+    if (force) dialog?.close();
+    else if (!await this._confirmEditorClose(dialog)) return false;
     this._temporaryMemoryDraft = null;
     return true;
   };

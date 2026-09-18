@@ -23,7 +23,7 @@ function textField(panel, key, label, value, description, disabled = false) {
 
 function saveBar(panel) {
   if (!panel._configDirty) return "";
-  return saveBarMarkup({configuration: true});
+  return saveBarMarkup({configuration: true, pending: Boolean(panel._configurationSaving)});
 }
 
 export function renderMemorySettings(panel) {

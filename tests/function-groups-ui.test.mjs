@@ -103,7 +103,7 @@ const editorSource = (
 ).join("\n");
 assert.match(editorSource, /insertAdjacentHTML\("beforebegin", saveBar\(panel\)\)/, "the bar should appear as soon as a clean configuration becomes dirty");
 assert.match(editorSource, /#revert-config[\s\S]*?_setConfigDirty\(false\); panel\._render\(\)/, "reverting should clear dirty state and remove the bar");
-assert.match(editorSource, /_toast\("Configuration saved"\)/, "saving should use a transient success toast");
+assert.match(editorSource, /bindSingleRequestSave\(panel\)/, "configuration saves must use the canonical shell handler");
 assert.doesNotMatch(editorSource, /Save tools and groups|Keep in draft|unsaved tool draft/i);
 assert.match(editorSource, /id="tool-save">Save<\/button>/);
 assert.match(editorSource, /id="group-save">Save<\/button>/);

@@ -205,6 +205,13 @@ function modifiedOpenDialog(panel) {
 }
 
 async function confirmDialogClose(panel, dialog) {
+  if (panel._eocDialogClosePending) return false;
+  panel._eocDialogClosePending = true;
+  try { return await closeEditor(panel, dialog); }
+  finally { panel._eocDialogClosePending = false; }
+}
+
+async function closeEditor(panel, dialog) {
   if (!dialog?.open) return true;
   if (!dialogDirty(panel, dialog)) {
     clearDialogBaseline(panel, dialog);
@@ -258,16 +265,12 @@ function bindStateSafety(panel) {
   if (!root || root.__eocStateSafetyBound) return;
   root.__eocStateSafetyBound = true;
 
-  const syncGuestAfterEvent = () => queueMicrotask(() => syncGuestDirty(panel));
   const syncConfigAfterControlEvent = (event) => {
     const key = configKeyForControl(event.target);
     if (key) applyTargetedConfigDirty(panel, [key], event.target);
   };
-  root.addEventListener("input", syncGuestAfterEvent);
   root.addEventListener("input", syncConfigAfterControlEvent);
-  root.addEventListener("change", syncGuestAfterEvent);
   root.addEventListener("change", syncConfigAfterControlEvent);
-  root.addEventListener("value-changed", syncGuestAfterEvent);
   root.addEventListener("value-changed", syncConfigAfterControlEvent);
 
   root.addEventListener("click", (event) => {
@@ -295,11 +298,21 @@ function bindStateSafety(panel) {
     void confirmDialogClose(panel, dialog);
   }, true);
 
-  root.addEventListener("close", (event) => clearDialogBaseline(panel, event.target), true);
+  root.addEventListener("close", (event) => {
+    clearDialogBaseline(panel, event.target);
+    if (panel._eocDeferredEditorRender) queueMicrotask(() => panel._render());
+  }, true);
 
 }
 
 export async function confirmStateSafeNavigation(panel, destination) {
+  if (panel._eocUnsavedNavigationPending || panel._eocDialogClosePending) return false;
+  panel._eocUnsavedNavigationPending = true;
+  try { return await navigateWithUnsavedState(panel, destination); }
+  finally { panel._eocUnsavedNavigationPending = false; }
+}
+
+async function navigateWithUnsavedState(panel, destination) {
   const scopes = pageCoordinator(panel).leaving(destination);
   if (scopes.some((scope) => scope.pending) || panel._eocAgentMutations) return false;
   const dialog = modifiedOpenDialog(panel);
@@ -328,6 +341,7 @@ export function installManagementStateSafety(Panel) {
   prototype[PATCHED] = true;
 
   prototype._captureDialogBaseline = function(dialog) { openDialogBaseline(this, dialog); };
+  prototype._confirmEditorClose = function(dialog) { return confirmDialogClose(this, dialog); };
 
   const originalSetConfigDirty = prototype._setConfigDirty;
   prototype._setConfigDirty = function(value) {
@@ -377,20 +391,13 @@ export function installManagementStateSafety(Panel) {
     return originalHandleRouteChange.call(this, route);
   };
 
-  const originalStartFreshGuestPolicy = prototype._startFreshGuestPolicy;
-  prototype._startFreshGuestPolicy = async function(...args) {
-    const result = await originalStartFreshGuestPolicy.apply(this, args);
-    syncGuestDirty(this);
-    return result;
-  };
-
   const originalSetupGuestSelectors = prototype._setupGuestSelectors;
   prototype._setupGuestSelectors = function(...args) {
     const result = originalSetupGuestSelectors.apply(this, args);
     this.shadowRoot.querySelectorAll("ha-selector[data-guest-key]").forEach((selector) => {
       if (selector.__eocGuestDirtyBound) return;
       selector.__eocGuestDirtyBound = true;
-      selector.addEventListener("value-changed", () => queueMicrotask(() => syncGuestDirty(this)));
+      selector.addEventListener("value-changed", () => queueMicrotask(() => refreshPageSaveBar(this)));
     });
     return result;
   };

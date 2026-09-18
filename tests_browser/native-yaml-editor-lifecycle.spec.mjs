@@ -104,6 +104,8 @@ test("native Function Tool routes retain enable, config-check, and open-dialog a
   const savesBeforeSwitch = (await saveCalls(page)).length;
 
   await panel.locator("#agent").selectOption("agent-2");
+  await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
+  await panel.locator("#confirm-accept").click();
   await expect(panel.locator("#agent")).toHaveValue("agent-2");
   await expect(panel.locator("#tool-dialog")).not.toHaveJSProperty("open", true);
   expect((await saveCalls(page)).length).toBe(savesBeforeSwitch);

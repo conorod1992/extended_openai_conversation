@@ -18,6 +18,10 @@ export function isAgentMutation(section, action) {
 }
 
 function syncAgentPicker(panel) {
+  for (const id of ["guest-now", "guest-update", "guest-disable"]) {
+    const button = panel.shadowRoot?.querySelector?.(`#${id}`);
+    if (button) button.disabled = Boolean(panel._guestOperation);
+  }
   const picker = panel.shadowRoot?.querySelector?.("#agent");
   if (!picker) return;
   const pending = Number(panel._eocAgentMutations || 0);
@@ -52,27 +56,34 @@ export function installManagementActionSafety(Panel) {
   if (!prototype || prototype[PATCHED]) return false;
   prototype[PATCHED] = true;
 
+  for (const name of ["_updateGuestMode", "_disableGuestMode"]) {
+    const original = prototype[name];
+    prototype[name] = function(...args) {
+      if (this._guestOperation) return this._guestOperation;
+      const operation = Promise.resolve().then(() => original.apply(this, args));
+      this._guestOperation = operation;
+      syncAgentPicker(this);
+      return operation.finally(() => { this._guestOperation = null; syncAgentPicker(this); });
+    };
+  }
+
   const originalCall = prototype._call;
   prototype._call = function(section, action, extra = {}) {
     if (!isAgentMutation(section, action)) {
       return originalCall.call(this, section, action, extra);
     }
-    if (section !== "tools") {
-      this._pendingMutations ||= new Map();
-      const key = JSON.stringify([section, action, extra]);
-      if (this._pendingMutations.has(key)) return this._pendingMutations.get(key);
-      const pending = runMutation(this, originalCall, section, action, extra).finally(() => this._pendingMutations.delete(key));
-      this._pendingMutations.set(key, pending);
-      return pending;
-    }
-
-    const previous = this._eocFunctionMutationTail || Promise.resolve();
-    const pending = previous.catch(() => {}).then(() =>
-      runMutation(this, originalCall, section, action, extra));
-    this._eocFunctionMutationTail = pending;
-    return pending.finally(() => {
-      if (this._eocFunctionMutationTail === pending) this._eocFunctionMutationTail = null;
+    this._pendingMutations ||= new Map();
+    const key = JSON.stringify([section, action, extra]);
+    if (this._pendingMutations.has(key)) return this._pendingMutations.get(key);
+    const previous = section === "tools" ? (this._eocFunctionMutationTail || Promise.resolve()) : Promise.resolve();
+    const pending = previous.catch(() => {}).then(() => runMutation(this, originalCall, section, action, extra));
+    const tracked = pending.finally(() => {
+      this._pendingMutations.delete(key);
+      if (this._eocFunctionMutationTail === tracked) this._eocFunctionMutationTail = null;
     });
+    if (section === "tools") this._eocFunctionMutationTail = tracked;
+    this._pendingMutations.set(key, tracked);
+    return tracked;
   };
 
   const originalRender = prototype._render;

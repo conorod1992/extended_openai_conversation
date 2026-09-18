@@ -377,7 +377,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         result = await this._call("knowledge", "list");
       } else if (view === "capabilities/guest-mode") {
         result = await this._call("guest_mode", "get");
-        if (!this._unsavedState?.scopes.get("capabilities/guest-mode")?.dirty()) this._guestDraft = JSON.parse(JSON.stringify(result.config || {}));
+        if (this._unsavedState?.scopes.get("capabilities/guest-mode")?.agent !== this._agentId) this._guestDraft = JSON.parse(JSON.stringify(result.config || {}));
         if (!result.legacy_policy) {
           this._guestMigrationReview = false;
           this._guestStartingFresh = false;
@@ -484,12 +484,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     root.querySelectorAll(".inline-route").forEach((button) => button.addEventListener("click", () => this._navigate(button.dataset.page, button.dataset.subsection)));
     root.querySelectorAll(".guide-topic-link").forEach((button) => button.addEventListener("click", () => { this._guideTopic = button.dataset.guideTopic; this._navigate("guide"); }));
     root.querySelector("#agent")?.addEventListener("change", async (event) => {
-      const nextAgent = event.target.value;
-      event.target.value = this._agentId;
+      const select = event.target;
+      const nextAgent = select.value;
+      select.value = this._agentId;
       if (!await this._confirmUnsavedNavigation(null)) return;
-      event.target.value = nextAgent;
+      select.value = nextAgent;
       this._unsavedState?.scopes.clear();
-      this._agentId = event.target.value;
+      this._agentId = nextAgent;
       localStorage.setItem("extended-openai-agent", this._agentId);
       this._clearConfigDraft();
       this._scopeId = null;
@@ -809,16 +810,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _requestEditorClose() {
-    const kind = this._editorKind;
-    const dialog = this.shadowRoot.querySelector(`#${kind}-dialog`);
-    if (!dialog?.open) return;
-    const current = kind === "knowledge" ? this._knowledgeValues() : this._memoryValues();
-    if (this._editorInitial !== null && JSON.stringify(current) !== JSON.stringify(this._editorInitial)) {
-      const discard = await this._confirm("Discard unsaved changes?", "Your changes have not been saved.", "Discard");
-      if (!discard) return;
-    }
-    if (kind === "knowledge") this._knowledgeLoadToken = (this._knowledgeLoadToken || 0) + 1;
-    dialog.close();
+    return this._confirmEditorClose(this.shadowRoot.querySelector(`#${this._editorKind}-dialog`));
   }
 
   _setKnowledgeEditorDisabled(disabled) {
@@ -983,7 +975,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _setSaving(button, saving, label = "Saving…") {
     if (!button) return;
-    if (saving) button.dataset.label = button.textContent;
+    if (saving && !button.dataset.label) button.dataset.label = button.textContent;
     button.disabled = saving;
     button.textContent = saving ? label : button.dataset.label || "Save";
   }

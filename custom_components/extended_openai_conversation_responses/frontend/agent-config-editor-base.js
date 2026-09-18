@@ -1,3 +1,4 @@
+import {bindSingleRequestSave} from "./management-actions.js";
 import {saveBarMarkup} from "./unsaved-state.js";
 import {lookupModelData, modelDataControls, bindModelDataControls} from "./model-catalog.js";
 import { bindHALlmTools, haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools.js";
@@ -180,7 +181,7 @@ function renderLocalHandling(panel, config) {
 
 export function saveBar(panel) {
   if (!panel._configDirty) return "";
-  return saveBarMarkup({configuration: true});
+  return saveBarMarkup({configuration: true, pending: Boolean(panel._configurationSaving)});
 }
 
 export function renderConfiguration(panel) {
@@ -309,11 +310,8 @@ function bindRegexRules(panel) {
 function bindSaveBar(panel) {
   const root=panel.shadowRoot;
   root.querySelector("#revert-config")?.addEventListener("click", () => { panel._draft=clone(panel._configData.config); panel._draftTitle=panel._configData.title; panel._setConfigDirty(false); panel._render(); });
-  root.querySelector("#save-config")?.addEventListener("click", async () => {
-    const button=root.querySelector("#save-config"); panel._setSaving(button,true);
-    try { const config=readConfig(panel); const validation=await panel._call("configuration","validate",{config}); showErrors(panel,validation.errors); if(!validation.valid){panel._toast("Fix the highlighted configuration errors",true);return;} const saved=await panel._call("configuration","update",{config,title:panel._draftTitle,revision:panel._configData?.revision}); panel._configData={...panel._configData,...saved}; panel._result=panel._configData; panel._draft=clone(saved.config); panel._draftTitle=saved.title; panel._setConfigDirty(false); panel._toast("Configuration saved"); await panel._loadAgents(panel._agentId); }
-    catch(err){panel._toast(`Unable to save configuration: ${err.message||String(err)}`,true);} finally{panel._setSaving(button,false);}
-  });
+  bindSingleRequestSave(panel);
+
 }
 
 export function bindConfiguration(panel) {
@@ -594,7 +592,7 @@ export function bindTools(panel) {
   root.querySelectorAll(".delete-tool").forEach(button=>button.addEventListener("click",async()=>{const tool=panel._draft.functions[Number(button.dataset.index)];if(!await panel._confirm(isHALlmTool(tool)?"Remove HA LLM Tool?":"Delete function tool?",isHALlmTool(tool)?`Remove “${haToolName(tool)}” from this agent and its groups? The underlying Home Assistant capability remains unchanged. Saved dependencies must be removed first.`:`The Function Tool “${tool.spec?.name||"Unnamed"}” will be deleted and removed from any Function Group. Deletion is refused while Request Rules or Guest Mode still reference it.`,isHALlmTool(tool)?"Remove tool":"Delete function"))return;try{const result=await panel._call("tools","delete",{name:tool.spec.name,confirm:true});synchronizePersistedFunctions(panel,result);panel._toast("Function deleted");panel._render();}catch(err){panel._toast(`Unable to delete function: ${err.message||String(err)}`,true);}}));
   root.querySelector("#validate-tools")?.addEventListener("click",async()=>{const status=root.querySelector("#tool-status");try{const result=await panel._call("tools","validate_current");status.className=`validation ${result.valid?"valid":"invalid"}`;status.textContent=result.valid?"All saved tools and groups are valid":toolErrorText(result.errors);}catch(err){status.className="validation invalid";status.textContent=err.message||String(err);}});
   root.querySelector("#tool-yaml")?.addEventListener("input",()=>{root.querySelector("#tool-error").className="validation";root.querySelector("#tool-error").textContent="YAML changed; validate to refresh metadata.";});
-  root.querySelector("#built-in-function")?.addEventListener("change",async(event)=>{const preset=(panel._builtInFunctions||[]).find((item)=>item.implementation===event.target.value);if(!preset)return;const editor=root.querySelector("#tool-yaml");const replaceable=canReplaceToolYamlWithoutConfirmation(editor.value,panel._toolReplaceableYaml);if(!replaceable&&!await panel._confirm("Replace current YAML with this built-in function preset?","Your current Function Tool YAML will be replaced in the editor. Nothing is saved until you select Save function.","Replace YAML")){event.target.value="";return;}editor.value=preset.yaml;panel._toolReplaceableYaml=preset.yaml;await validateDialogTool(panel);});
+  root.querySelector("#built-in-function")?.addEventListener("change",async(event)=>{const preset=(panel._builtInFunctions||[]).find((item)=>item.implementation===event.target.value);if(!preset)return;const editor=root.querySelector("#tool-yaml");const replaceable=canReplaceToolYamlWithoutConfirmation(editor.value,panel._toolReplaceableYaml);if(!replaceable&&!await panel._confirm("Replace current YAML with this built-in function preset?","Your current Function Tool YAML will be replaced in the editor. Nothing is saved until you select Save.","Replace YAML")){event.target.value="";return;}editor.value=preset.yaml;panel._toolReplaceableYaml=preset.yaml;await validateDialogTool(panel);});
   root.querySelector("#tool-cancel")?.addEventListener("click",()=>root.querySelector("#tool-dialog").close());
   root.querySelector("#tool-dialog")?.addEventListener("cancel",()=>{panel._toolIndex=null;});
   root.querySelector("#tool-validate")?.addEventListener("click",()=>validateDialogTool(panel));

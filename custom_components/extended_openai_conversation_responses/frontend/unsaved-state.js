@@ -34,5 +34,5 @@ export function draftScope({read, write, baseline, save, owns, destinations}) {
 }
 
 export function saveBarMarkup({pending = false, configuration = false} = {}) {
-  return `<div class="save-bar"><strong id="dirty-state" class="dirty-state">Unsaved changes</strong><div class="actions"><button type="button" class="secondary" id="${configuration ? "revert-config" : "discard-page"}" ${pending ? "disabled" : ""}>Discard changes</button><button type="button" id="${configuration ? "save-config" : "save-page"}" ${pending ? "disabled" : ""}>${pending ? "Saving…" : "Save changes"}</button></div></div>`;
+  return `<div class="save-bar"><strong id="dirty-state" class="dirty-state">Unsaved changes</strong><div class="actions"><button type="button" class="secondary" id="${configuration ? "revert-config" : "discard-page"}" ${pending ? "disabled" : ""}>Discard changes</button><button type="button" id="${configuration ? "save-config" : "save-page"}" data-label="Save changes" ${pending ? "disabled" : ""}>${pending ? "Saving…" : "Save changes"}</button></div></div>`;
 }

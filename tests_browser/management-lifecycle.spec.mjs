@@ -198,10 +198,11 @@ test("Quiet Hours and request debugging initialize on first entry without global
     };
   });
   await panel.evaluate(host => host._navigate("capabilities", "quiet-hours"));
-  await expect(panel.locator("#qh-save")).toBeVisible();
+  await expect(panel.locator("#qh-enabled")).toBeVisible();
+  await expect(panel.locator(".save-bar")).toHaveCount(0);
   await expect(panel.locator(".qh-grid").first()).toHaveCSS("display", "grid");
   await panel.locator("#qh-enabled").check();
-  await panel.locator("#qh-save").click();
+  await panel.locator("#save-page").click();
   await expect.poll(() => page.evaluate(() => featureCalls.filter(c => c.section === "quiet_hours" && c.action === "update").length)).toBe(1);
   await panel.evaluate(host => host._navigate("usage-maintenance", "request-debug"));
   await expect(panel.locator("extended-openai-debug-panel[embedded]")).toBeVisible();

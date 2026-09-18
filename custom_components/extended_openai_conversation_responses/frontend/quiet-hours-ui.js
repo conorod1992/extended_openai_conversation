@@ -5,7 +5,7 @@ export async function loadQuietHours(panel, silent = false) {
     const result = await panel._call("quiet_hours", "get");
     if (token !== panel._loadToken) return;
     panel._result = result;
-    if (!panel._unsavedState?.scopes.get(VIEW)?.dirty()) panel._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
+    if (panel._unsavedState?.scopes.get(VIEW)?.agent !== panel._agentId) panel._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
     panel._error = null;
   } catch (err) {
     if (token === panel._loadToken) panel._error = err.message || String(err);
@@ -108,8 +108,8 @@ function setOverride(panel, satelliteId, kind, value) {
 export function bindQuietHours(panel) {
   const root = panel.shadowRoot;
   root.querySelector("#qh-enabled")?.addEventListener("change", (event) => { panel._quietHoursDraft.enabled = event.target.checked; });
-  root.querySelector("#qh-start")?.addEventListener("change", (event) => { panel._quietHoursDraft.start = event.target.value; });
-  root.querySelector("#qh-end")?.addEventListener("change", (event) => { panel._quietHoursDraft.end = event.target.value; });
+  root.querySelector("#qh-start")?.addEventListener("input", (event) => { panel._quietHoursDraft.start = event.target.value; });
+  root.querySelector("#qh-end")?.addEventListener("input", (event) => { panel._quietHoursDraft.end = event.target.value; });
   root.querySelector("#qh-wake")?.addEventListener("change", (event) => { panel._quietHoursDraft.wake_sound = event.target.value; });
   const volume = root.querySelector("#qh-volume");
   volume?.addEventListener("input", (event) => {

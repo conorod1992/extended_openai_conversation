@@ -23,7 +23,7 @@ assert.match(source, /pageCoordinator\(panel\)\.leaving\(destination\)/);
 assert.match(source, /Explicit Cancel remains an intentional discard/);
 assert.match(source, /window\.addEventListener\("beforeunload"/);
 assert.match(source, /window\.addEventListener\("focus"/);
-assert.match(source, /originalStartFreshGuestPolicy/);
+assert.match(source, /refreshPageSaveBar/);
 assert.match(source, /initializePageDraft/);
 
 class UpgradePanel {

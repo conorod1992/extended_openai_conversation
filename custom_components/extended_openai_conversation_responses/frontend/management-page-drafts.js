@@ -1,3 +1,4 @@
+import {saveConfiguration} from "./management-actions.js";
 import {UnsavedState, clone, same, draftScope, saveBarMarkup} from "./unsaved-state.js";
 
 const GUEST = "capabilities/guest-mode";
@@ -11,6 +12,8 @@ export function pageCoordinator(panel) {
   if (!state.scopes.has("configuration")) state.register("configuration", {
     dirty: () => Boolean(panel._configDirty),
     get pending() { return Boolean(panel._configurationSaving); },
+    save: () => saveConfiguration(panel, panel.shadowRoot?.querySelector("#save-config")),
+    destinations: () => [...(panel._configurationDirtyDestinations?.() || [])],
     owns: (destination) => Boolean(destination && panel._isDraftView?.(...destination.split("/"))),
     discard: () => {
       if (panel._configData) {
@@ -112,6 +115,21 @@ export function refreshPageSaveBar(panel) {
   root.dispatchEvent?.(new Event("eoc-config-dirty-changed"));
 }
 
+function renderSavedDraft(panel, force = false) {
+  const root = panel.shadowRoot;
+  const expanded = [...root.querySelectorAll("main details")].map((details) => details.open);
+  const focus = root.activeElement;
+  const position = {x: window.scrollX, y: window.scrollY};
+  const selection = focus && typeof focus.selectionStart === "number" ? [focus.selectionStart, focus.selectionEnd] : null;
+  if (force) panel._eocMainMarkup = null;
+  panel._render();
+  root.querySelectorAll("main details").forEach((details, index) => { details.open = expanded[index] ?? details.open; });
+  const nextFocus = focus?.id ? root.getElementById(focus.id) : null;
+  nextFocus?.focus({preventScroll: true});
+  if (nextFocus && selection) nextFocus.setSelectionRange(...selection);
+  window.scrollTo(position.x, position.y);
+}
+
 export async function savePageChanges(panel) {
   const scope = currentPageScope(panel);
   if (!scope || scope.pending || !scope.dirty()) return false;
@@ -119,6 +137,8 @@ export async function savePageChanges(panel) {
   refreshPageSaveBar(panel);
   try {
     await operation;
+    // Re-project authoritative status and normalized fields without a data reload.
+    renderSavedDraft(panel);
     panel._toast("Changes saved");
     return true;
   } catch (err) {
@@ -140,8 +160,7 @@ export function bindPageDrafts(panel) {
       const scope = currentPageScope(panel);
       if (scope?.pending) return;
       scope?.discard();
-      panel._eocMainMarkup = null;
-      panel._render();
+      renderSavedDraft(panel, true);
     }
     if (button?.matches("#wording-add,.wording-remove")) sync();
   });
