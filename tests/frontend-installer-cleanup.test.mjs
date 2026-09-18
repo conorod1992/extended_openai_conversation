@@ -25,7 +25,7 @@ for (const [name, source] of modules) {
 }
 
 assert.doesNotMatch(panel, /management-bootstrap\.js|initializeManagementPanel/u);
-assert.match(panel, /_configurationDirtyDestinations\(\)\s*{\s*return configurationDestinations\(this\);/u);
+assert.match(panel, /_configurationDirtyDestinations\(\)\s*\{\s*return configurationDestinations\(this\);/u);
 assert.match(panel, /_settingsSearchConfig = null;/u);
 assert.match(panel, /enhanceConfirmationScope\(this, subject\)/u);
 
