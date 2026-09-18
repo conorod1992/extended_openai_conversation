@@ -20,7 +20,8 @@ def make_tool_result_content(
     }
     parameters = signature(conversation.ToolResultContent).parameters
     if "result" in parameters:
-        kwargs["result"] = llm.ToolResult(data=tool_result)
+        tool_result_type = getattr(llm, "ToolResult")
+        kwargs["result"] = tool_result_type(data=tool_result)
     else:
         kwargs["tool_result"] = tool_result
     return conversation.ToolResultContent(**kwargs)
