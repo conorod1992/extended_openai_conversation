@@ -24,13 +24,13 @@ def test_agent_snapshot_uses_authoritative_cached_function_parser(monkeypatch) -
     )
     monkeypatch.setattr(
         repair,
-        "cached_configured_function_tools_from_data",
+        "configured_function_tools_from_data",
         cached_parser,
     )
     monkeypatch.setattr(
         management_ui,
         "configured_function_tools_from_data",
-        Mock(side_effect=AssertionError("uncached management alias must not be used")),
+        Mock(side_effect=AssertionError("management quarantine alias must not be used")),
     )
     hass = SimpleNamespace(data={})
     entry = SimpleNamespace(entry_id="entry-1", title="Provider", data={})
