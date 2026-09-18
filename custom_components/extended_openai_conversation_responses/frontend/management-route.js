@@ -1,7 +1,8 @@
 import {ensureAgentConfigModule, getAgentConfigModule} from "./agent-config-loader.js";
 import {ensureRequestRulesModule, getRequestRulesModule} from "./request-rules-loader.js";
 
-const PATCHED = Symbol.for("extended-openai.management-route-performance");
+import {ensureGuideModule} from "./guide-page.js";
+import {ensureOverviewModule} from "./overview-page.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_VIEWS = new Set([
   "capabilities/home-assistant",
@@ -18,7 +19,10 @@ export function routeAssetKind(view) {
   return null;
 }
 
-function routeAssetPromise(view) {
+export function routeAssetPromise(view) {
+  if (view === "overview") return ensureOverviewModule();
+  if (view === "guide") return ensureGuideModule();
+  if (view === "usage-maintenance/request-debug") return import("./debug-panel.js");
   const kind = routeAssetKind(view);
   if (kind === "agent-config" && !getAgentConfigModule()) return ensureAgentConfigModule();
   if (kind === "request-rules" && !getRequestRulesModule()) return ensureRequestRulesModule();
@@ -72,7 +76,7 @@ export function applyRequestRuleSearch(panel, root = panel?.shadowRoot) {
   return visible;
 }
 
-function bindRequestRuleSearch(panel) {
+export function bindRequestRuleSearch(panel) {
   const root = panel.shadowRoot;
   if (!root || root.__eocInPlaceRuleSearchBound) return;
   root.__eocInPlaceRuleSearchBound = true;
@@ -85,25 +89,35 @@ function bindRequestRuleSearch(panel) {
   }, true);
 }
 
-function loadSectionAlongsideAsset(panel, silent, originalLoadSection, view, assetPromise, token) {
+function isCurrentLazyLoad(panel, view, assetToken) {
+  return panel._viewKey() === view && panel._eocViewAssetToken === assetToken;
+}
+
+export function loadSectionAlongsideAsset(
+  panel,
+  silent,
+  originalLoadSection,
+  view,
+  assetPromise,
+  assetToken,
+) {
   let sectionPromise;
   try {
-    // The route renderers already tolerate a still-loading implementation module and
-    // queue a final render when it arrives. Start backend work immediately instead of
-    // turning the asset import and WebSocket request into a serial waterfall.
-    sectionPromise = Promise.resolve(originalLoadSection.call(panel, silent));
+    sectionPromise = Promise.resolve(
+      originalLoadSection.call(panel, silent),
+    );
   } catch (err) {
     sectionPromise = Promise.reject(err);
   }
 
   return Promise.allSettled([assetPromise, sectionPromise]).then(([assetResult, sectionResult]) => {
-    if (panel._eocRouteAssetToken !== token || panel._viewKey() !== view) return undefined;
+    if (!isCurrentLazyLoad(panel, view, assetToken)) return undefined;
     const failure = assetResult.status === "rejected"
       ? assetResult.reason
       : sectionResult.status === "rejected"
         ? sectionResult.reason
         : null;
-    if (!failure) return undefined;
+    if (!failure) return sectionResult.value;
     panel._busy = false;
     panel._error = `Unable to load this frontend section: ${failure?.message || String(failure)}`;
     panel._render();
@@ -111,44 +125,12 @@ function loadSectionAlongsideAsset(panel, silent, originalLoadSection, view, ass
   });
 }
 
-function install(Panel) {
-  const prototype = Panel?.prototype;
-  if (!prototype || prototype[PATCHED]) return false;
-  prototype[PATCHED] = true;
-  prototype._eocInPlaceRequestRuleSearch = true;
-
-  const originalLoadSection = prototype._loadSection;
-  prototype._loadSection = function(silent = false) {
-    const view = this._viewKey();
-    const token = (this._eocRouteAssetToken || 0) + 1;
-    this._eocRouteAssetToken = token;
-    const assetPromise = routeAssetPromise(view);
-    if (!assetPromise) return originalLoadSection.call(this, silent);
-    return loadSectionAlongsideAsset(
-      this,
-      silent,
-      originalLoadSection,
-      view,
-      assetPromise,
-      token,
-    );
-  };
-
-  const originalRender = prototype._render;
-  prototype._render = function(...args) {
-    const result = originalRender.apply(this, args);
-    bindRequestRuleSearch(this);
-    if (this._viewKey() === REQUEST_RULES_VIEW) applyRequestRuleSearch(this);
-    return result;
-  };
-  return true;
-}
-
-export function installManagementRoutePerformance(registry = globalThis.customElements) {
-  if (typeof document === "undefined" || !registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => install(registry.get("extended-openai-management-panel")));
-}
-
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  installManagementRoutePerformance();
+// One native route entry point owns lazy assets and stale completion handling.
+export function loadRoute(panel, silent = false) {
+  const view = panel._viewKey();
+  const token = (panel._eocViewAssetToken || 0) + 1;
+  panel._eocViewAssetToken = token;
+  const asset = routeAssetPromise(view);
+  if (!asset) return panel._loadSectionData(silent);
+  return loadSectionAlongsideAsset(panel, silent, panel._loadSectionData, view, asset, token);
 }

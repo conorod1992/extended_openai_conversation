@@ -1,6 +1,5 @@
 import {NAVIGATION, pageMetadata, searchSettings, shouldShowGlobalSettingsSearch} from "./frontend-navigation.js";
 
-const PATCHED = Symbol.for("extended-openai.management-rendering-performance");
 const SEARCH_DEBOUNCE_MS = 80;
 
 function navigationFor(panel) {
@@ -321,34 +320,14 @@ function renderDynamicRegions(panel) {
   bindIncrementalDraftUpdates(panel);
 }
 
-export function installManagementRenderingOptimization(registry = globalThis.customElements) {
-  if (typeof document === "undefined" || !registry?.whenDefined) return Promise.resolve(false);
-  return registry.whenDefined("extended-openai-management-panel").then(() => {
-    const constructor = registry.get("extended-openai-management-panel");
-    const prototype = constructor?.prototype;
-    if (!prototype || prototype[PATCHED]) return false;
-
-    const originalRender = prototype._render;
-    prototype._render = function optimizedRender() {
-      const navigation = navigationFor(this);
-      if (!this._eocPersistentReady || !this.shadowRoot.querySelector("[data-eoc-persistent-shell]")) {
-        originalRender.call(this);
-        preparePersistentShell(this);
-        return;
-      }
-      if (!navigationMatches(this, navigation)) {
-        this._eocPersistentReady = false;
-        originalRender.call(this);
-        preparePersistentShell(this);
-        return;
-      }
-      renderDynamicRegions(this);
-    };
-    prototype[PATCHED] = true;
-    return true;
-  });
-}
-
-if (typeof document !== "undefined" && typeof customElements !== "undefined") {
-  installManagementRenderingOptimization();
+// The host calls this directly; feature decorators cannot own shell lifetime.
+export function renderManagement(panel) {
+  const navigation = navigationFor(panel);
+  if (!panel._eocPersistentReady || !panel.shadowRoot.querySelector("[data-eoc-persistent-shell]")
+      || !navigationMatches(panel, navigation)) {
+    panel._renderShell();
+    preparePersistentShell(panel);
+    return;
+  }
+  renderDynamicRegions(panel);
 }

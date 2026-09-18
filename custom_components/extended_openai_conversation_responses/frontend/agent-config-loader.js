@@ -83,8 +83,13 @@ export function installManagementCopyPolish(registry = globalThis.customElements
     if (!prototype || prototype[MANAGEMENT_COPY_PATCHED]) return false;
     const originalRender = prototype._render;
     prototype._render = function(...args) {
+      const shellRevision = this._eocShellRevision;
       const result = originalRender.apply(this, args);
-      queueMicrotask(() => polishRenderedCopy(this));
+      // Preserve the existing shell-only decoration boundary. The native renderer
+      // no longer bypasses early wrappers on routine route updates.
+      if (shellRevision === undefined || shellRevision !== this._eocShellRevision) {
+        queueMicrotask(() => polishRenderedCopy(this));
+      }
       return result;
     };
     prototype[MANAGEMENT_COPY_PATCHED] = true;

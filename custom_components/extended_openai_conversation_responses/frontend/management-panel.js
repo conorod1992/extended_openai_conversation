@@ -1,3 +1,6 @@
+import {renderManagement} from "./management-renderer.js";
+import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending} from "./management-actions.js";
+import {loadRoute, bindRequestRuleSearch, applyRequestRuleSearch} from "./management-route.js";
 import { bindConfiguration, bindTools, configurationDialogs, renderConfiguration, renderTools, restoreDialog } from "./agent-config-editor.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, searchSettings, shouldShowGlobalSettingsSearch} from "./frontend-navigation.js";
 import {freshGuestPolicyDraft} from "./guest-mode-ui.js";
@@ -48,6 +51,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._serviceCatalog = null;
     this._serviceCatalogPromise = null;
     this._loadToken = 0;
+    this._eocScopeCatalogTimes = new Map();
+    this._eocInPlaceRequestRuleSearch = true;
     this._configSearchQuery = "";
     this._settingsSearchQuery = "";
     this._guideQuery = "";
@@ -146,6 +151,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _canAccessView(page, subsection = null) {
+    if (page === "usage-maintenance" && subsection === "request-debug") return this._data?.is_admin === true;
     if (this._data?.is_admin !== false) return true;
     if (page === "assistant") return false;
     if (page === "capabilities" && subsection && subsection !== "guest-mode") return false;
@@ -157,7 +163,30 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return pageMetadata(page).sections.filter((item) => this._canAccessView(page, item.id));
   }
 
-  async _call(section, action, extra = {}) {
+  _call(section, action, extra = {}) {
+    let payload = extra;
+    if (section === "guest_mode" && action === "update") {
+      payload = {...extra};
+      for (const key of ["active_from", "active_until"]) {
+        if (payload[key]) payload[key] = normalizeGuestModeTimestamp(payload[key]);
+      }
+    }
+    const ruleSave = section === "request_rules" && ["create", "update"].includes(action)
+      && this.shadowRoot?.querySelector?.("#rule-dialog")?.open;
+    if (!ruleSave) return this._request(section, action, payload);
+    if (this._eocRuleSavePromise) return this._eocRuleSavePromise;
+    const button = this.shadowRoot.querySelector("#rule-save");
+    setControlPending(this, button, true);
+    const request = Promise.resolve().then(() => this._request(section, action, payload));
+    const tracked = request.finally(() => {
+      setControlPending(this, button, false);
+      if (this._eocRuleSavePromise === tracked) this._eocRuleSavePromise = null;
+    });
+    this._eocRuleSavePromise = tracked;
+    return tracked;
+  }
+
+  async _request(section, action, extra = {}) {
     if (!this._hass) return null;
     const agent = this._selectedAgent();
     const result = await this._hass.callWS({
@@ -211,10 +240,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _prepareScopeCatalogVisit(view) {
     const key = this._scopeCatalogKey(view);
-    if (key !== this._scopeCatalogVisitKey) {
-      this._scopeCatalogCache.clear();
-      this._scopeCatalogVisitKey = key;
-    }
+    this._scopeCatalogVisitKey = key;
     return key;
   }
 
@@ -261,6 +287,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _loadScopes(scopeCatalogKey) {
     if (!this._selectedAgent() || !scopeCatalogKey) return;
     const agentId = this._agentId;
+    const loadedAt = this._eocScopeCatalogTimes.get(scopeCatalogKey);
+    if (!loadedAt || Date.now() - loadedAt > 30_000) {
+      this._scopeCatalogCache.delete(scopeCatalogKey);
+      this._eocScopeCatalogTimes.delete(scopeCatalogKey);
+    }
     if (this._scopeCatalogCache.has(scopeCatalogKey)) {
       this._applyScopes(this._scopeCatalogCache.get(scopeCatalogKey));
       return;
@@ -269,6 +300,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const scopes = response.scopes || [];
     if (scopeCatalogKey !== this._scopeCatalogVisitKey || agentId !== this._agentId) return;
     this._scopeCatalogCache.set(scopeCatalogKey, scopes);
+    this._eocScopeCatalogTimes.set(scopeCatalogKey, Date.now());
     this._applyScopes(scopes);
   }
 
@@ -276,7 +308,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return this._data?.agents?.find((item) => item.subentry_id === this._agentId);
   }
 
-  async _loadSection(silent = false) {
+  _loadSection(silent = false) {
+    return loadRoute(this, silent);
+  }
+
+  async _loadSectionData(silent = false) {
     if (!this._selectedAgent()) return this._render();
     const view = this._viewKey();
     const loadToken = ++this._loadToken;
@@ -313,14 +349,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (cacheKey && this._sectionCache.has(cacheKey)) {
         result = this._sectionCache.get(cacheKey);
       } else if (view === "overview") {
-        const entries = [["usage", "Usage"], ["conversations", "Conversation settings"], ["memories", "Memory"], ["knowledge", "Knowledge"]];
-        const settled = await Promise.allSettled([
-          this._call("usage", "summary"),
-          this._call("conversations", "settings", { scope_id: this._scopeId }),
-          this._call("memories", "list", { scope_id: this._scopeId, limit: 5 }),
-          this._call("knowledge", "list"),
-        ]);
-        result = settledSectionResult(entries, settled);
+        const summary = await this._call("overview", "summary");
+        if (loadToken !== this._loadToken) return;
+        const {agent, ...overview} = summary;
+        if (agent) Object.assign(this._selectedAgent(), agent);
+        result = overview;
       } else if (view === "usage-maintenance/usage") {
         const entries = [["summary", "Usage summary"], ["days", "Daily usage"], ["runs", "Recent runs"], ["retention", "Usage retention"]];
         const settled = await Promise.allSettled([
@@ -404,6 +437,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _render() {
+    renderManagement(this);
+    bindSingleRequestSave(this);
+    bindFrontendCorrectness(this);
+    bindRequestRuleSearch(this);
+    applyRequestRuleSearch(this);
+  }
+
+  _renderShell() {
+    this._eocShellRevision = (this._eocShellRevision || 0) + 1;
     const agent = this._selectedAgent();
     const navigation = NAVIGATION.filter((item) => this._canAccessView(item.id));
     const local = this._visibleSubsections();

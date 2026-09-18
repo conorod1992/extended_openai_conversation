@@ -64,12 +64,12 @@ _RUNTIME_QUARANTINE_ALL_FUNCTIONS: ContextVar[bool] = ContextVar(
     "extended_openai_runtime_quarantine_all_functions", default=False
 )
 _EXTRA_FRONTEND_MODULES = (
-    "management-rendering-performance.js",
-    "management-loading-performance.js",
+    "management-renderer.js",
+    "management-actions.js",
     "management-function-repair.js",
     "management-state-safety.js",
     "management-bootstrap.js",
-    "management-route-performance.js",
+    "management-route.js",
     "agent-config-loader.js",
     "quiet-hours-ui.js",
     "management-capabilities-ia.js",
