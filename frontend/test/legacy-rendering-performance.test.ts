@@ -42,13 +42,13 @@ describe("native management rendering", () => {
   });
 
   it("keeps loaded main content mounted only during navigation busy renders", async () => {
-    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url), "utf8");
+    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
+    const bootstrap = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url), "utf8");
     expect(source).toContain('main.setAttribute("aria-busy", "true")');
     expect(source).toContain("main.inert = true;");
     expect(source).toContain("main.inert = false;");
-    expect(source).toContain("panel._eocNavigationDepth > 0");
-    expect(source).toContain("if (navigation) this._eocNavigationDepth = (this._eocNavigationDepth || 0) + 1;");
-    expect(source).toContain("wrapAsyncMethod(prototype, \"_navigate\", NAVIGATION_MARK_PREFIX, true);");
+    expect(source).toContain("panel._eocNavigationDepth = (panel._eocNavigationDepth || 0) + 1;");
+    expect(source).toContain("trackAsync(this, NAVIGATION_MARK_PREFIX");
     expect(source).toContain("return undefined;");
     expect(source).not.toContain("document.createDocumentFragment()");
     expect(source).not.toContain("replaceChildren(fragment)");
@@ -56,7 +56,8 @@ describe("native management rendering", () => {
     expect(source).toContain("extended-openai:load-section");
     expect(source).toContain("extended-openai:render");
     expect(source).toContain("MAX_MEASURE_ENTRIES = 100");
-    expect(source).not.toContain("management-hot-path-performance.js");
+    expect(bootstrap).not.toContain("installManagementHotPathPerformance");
+    expect(bootstrap).not.toContain("installPreDefinitionPropertyReplay");
   });
 
   it("builds only configuration section bodies that pass the active filter", async () => {
