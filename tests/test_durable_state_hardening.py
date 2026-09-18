@@ -51,7 +51,6 @@ class FakeArchiveStorage:
 
 
 async def _archive() -> tuple[ConversationArchive, FakeArchiveStorage]:
-    hardening._install_archive_transactions()
     storage = FakeArchiveStorage()
     archive = ConversationArchive(storage, "agent")
     await archive.async_initialize()
