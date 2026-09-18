@@ -229,7 +229,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   const panel = {shadowRoot, _result:{rules:[]}, _serviceCatalog:null};
   bindRequestRules(panel);
   bindRequestRules(panel);
-  assert.equal(shadowRootListeners, 0);
+  assert.equal(shadowRootListeners, 1, "delete-context delegation binds only once across rerenders");
 }
 
 const management = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");

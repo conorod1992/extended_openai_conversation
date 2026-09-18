@@ -25,7 +25,7 @@ const panel = {
 const html = renderRequestRules(panel);
 assert.match(html, /Local commands skip the AI\/API call/);
 assert.match(html, /Good night/);
-assert.match(html, /Uses default settings/);
+assert.match(html, /Default matching/);
 assert.match(html, /Create rule/);
 assert.match(html, /Fuzzy matching/);
 assert.match(html, /Wording alternatives/);
@@ -40,9 +40,9 @@ assert.match(html, /Controls how close a phrase must be before fuzzy matching is
 assert.match(html, /Main phrase/);
 assert.match(html, /Other ways to say it/);
 assert.doesNotMatch(html, /Save wording alternatives|Save defaults/);
-assert.match(html, /gpt-5 · high reasoning · rest of conversation/);
+assert.match(html, /Model: gpt-5 · High reasoning · rest of conversation/);
 const resetHtml = renderRequestRules({...panel,_result:{...panel._result,rules:[{...panel._result.rules[1],action:{...panel._result.rules[1].action,reset:true}}]}});
-assert.match(resetHtml, /Return this conversation to configured defaults/);
+assert.match(resetHtml, /Returns model and reasoning to the assistant's configured defaults for the active conversation/);
 assert.doesNotMatch(resetHtml, /high reasoning/);
 assert.match(requestRulesDialog(panel), /Alternatives must use the same variable names/);
 assert.match(requestRulesDialog(panel), /Variable values let part of the request change each time/);

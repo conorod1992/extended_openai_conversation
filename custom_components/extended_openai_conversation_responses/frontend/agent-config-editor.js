@@ -239,7 +239,7 @@ export function configurationDialogs(...args) {
 }
 
 export function restoreDialog(...args) {
-  return decorateRestoreDialog(getAgentConfigModule()?.restoreDialog(...args) || "");
+  return decorateRestoreDialog(getAgentConfigModule()?.restoreDialog(...args) || "", args[0]);
 }
 
 export function configurationChoiceLabel(...args) {

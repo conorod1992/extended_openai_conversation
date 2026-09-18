@@ -1,3 +1,16 @@
+export const DECISION_GUIDANCE_STYLES = `
+    .eoc-decision-badge{display:inline-flex;align-items:center;min-height:20px;padding:2px 7px;border-radius:999px;border:1px solid var(--divider-color);background:var(--secondary-background-color);color:var(--secondary-text-color);font-size:11px;font-weight:650;line-height:1.25;white-space:nowrap}
+    .eoc-decision-badge.recommended{border-color:color-mix(in srgb,var(--primary-color) 45%,var(--divider-color));color:var(--primary-text-color)}
+    .eoc-confirm-scope,.eoc-restore-scope{margin:12px 0 0;padding:10px 12px;border-radius:8px;background:var(--secondary-background-color);color:var(--secondary-text-color);line-height:1.4}
+    .eoc-confirm-scope strong,.eoc-restore-scope strong{color:var(--primary-text-color)}
+    .eoc-more-phrases{opacity:.8}
+    .eoc-live-request-test{margin-top:16px}
+    .eoc-live-request-test>summary{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;font-weight:650}
+    .eoc-live-request-body{padding-top:14px}
+    .eoc-live-request-result{margin-top:12px;white-space:pre-wrap;line-height:1.45}
+    .eoc-live-label{display:inline-flex;align-items:center;min-height:22px;padding:2px 8px;border-radius:999px;border:1px solid var(--error-color);color:var(--error-color);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+  `;
+
 import {friendlySettingValue, settingEffectMarkup} from "./management-configuration-clarity.js";
 
 const PATCHED = Symbol.for("extended-openai.management-decision-guidance");
@@ -130,25 +143,6 @@ export function settingBadgesMarkup(panel, key, value, disabled = false) {
   return effects + configurationDecisionBadges(key, configurationDefaults(panel)).map((badge) => `<span class="eoc-decision-badge ${badge.kind}">${panel._e(badge.text)}</span>`).join("");
 }
 
-function ensureStyles(panel) {
-  const root = panel.shadowRoot;
-  if (!root || root.querySelector("style[data-eoc-decision-guidance]")) return;
-  const style = document.createElement("style");
-  style.dataset.eocDecisionGuidance = "";
-  style.textContent = `
-    .eoc-decision-badge{display:inline-flex;align-items:center;min-height:20px;padding:2px 7px;border-radius:999px;border:1px solid var(--divider-color);background:var(--secondary-background-color);color:var(--secondary-text-color);font-size:11px;font-weight:650;line-height:1.25;white-space:nowrap}
-    .eoc-decision-badge.recommended{border-color:color-mix(in srgb,var(--primary-color) 45%,var(--divider-color));color:var(--primary-text-color)}
-    .eoc-confirm-scope,.eoc-restore-scope{margin:12px 0 0;padding:10px 12px;border-radius:8px;background:var(--secondary-background-color);color:var(--secondary-text-color);line-height:1.4}
-    .eoc-confirm-scope strong,.eoc-restore-scope strong{color:var(--primary-text-color)}
-    .eoc-more-phrases{opacity:.8}
-    .eoc-live-request-test{margin-top:16px}
-    .eoc-live-request-test>summary{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;font-weight:650}
-    .eoc-live-request-body{padding-top:14px}
-    .eoc-live-request-result{margin-top:12px;white-space:pre-wrap;line-height:1.45}
-    .eoc-live-label{display:inline-flex;align-items:center;min-height:22px;padding:2px 8px;border-radius:999px;border:1px solid var(--error-color);color:var(--error-color);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
-  `;
-  root.append(style);
-}
 
 
 function addScopeNode(container, className, agentLabel, subject = "") {
@@ -170,22 +164,6 @@ function addScopeNode(container, className, agentLabel, subject = "") {
   if (subject) node.append(document.createElement("br"), document.createTextNode(`Item: ${subject}`));
 }
 
-function enhanceRestoreScope(panel) {
-  const dialog = panel.shadowRoot?.querySelector("#restore-dialog");
-  const body = dialog?.querySelector(".dialog-body");
-  const label = assistantScopeLabel(panel._selectedAgent?.());
-  if (!body || !label) return;
-  let node = body.querySelector(".eoc-restore-scope");
-  if (!node) {
-    node = document.createElement("p");
-    node.className = "eoc-restore-scope";
-    body.prepend(node);
-  }
-  node.replaceChildren();
-  const strong = document.createElement("strong");
-  strong.textContent = "This backup will replace: ";
-  node.append(strong, document.createTextNode(label));
-}
 
 function enhanceConfirmationScope(panel, subject = "") {
   const dialog = panel.shadowRoot?.querySelector("#confirm-dialog");
@@ -193,50 +171,10 @@ function enhanceConfirmationScope(panel, subject = "") {
   addScopeNode(body, "eoc-confirm-scope", assistantScopeLabel(panel._selectedAgent?.()), subject);
 }
 
-function enhanceRuleCards(panel) {
-  const root = panel.shadowRoot;
-  const rules = panel._result?.rules || [];
-  const defaults = panel._result?.defaults || {};
-  if (!root || !Array.isArray(rules)) return;
-  root.querySelectorAll(".request-rule-card").forEach((card) => {
-    const button = card.querySelector(".rule-edit[data-id],.rule-delete[data-id]");
-    const rule = rules.find((item) => item.id === button?.dataset.id);
-    if (!rule) return;
-    const summary = requestRuleSummary(rule, defaults);
-    const phrases = card.querySelector(".phrase-chips");
-    phrases?.querySelector(".eoc-more-phrases")?.remove();
-    if (phrases && summary.hiddenPhrases) {
-      const more = document.createElement("span");
-      more.className = "eoc-more-phrases";
-      more.textContent = `+${summary.hiddenPhrases} more`;
-      phrases.append(more);
-    }
-    const description = phrases?.nextElementSibling;
-    if (description?.tagName === "P") description.textContent = summary.action;
-    const meta = card.querySelector("p.meta");
-    if (meta) meta.textContent = summary.matching;
-  });
-}
 
-function enhanceSafeTest(root) {
-  const section = root.querySelector("#rule-match-tester");
-  if (!section) return null;
-  const heading = section.querySelector("h2");
-  if (heading) heading.textContent = "Preview rule match (safe)";
-  const intro = section.querySelector(":scope > p");
-  if (intro) intro.textContent = "Checks which enabled Request Rule would win using the real matcher, without running the resulting action.";
-  const notice = section.querySelector(".notice");
-  const noticeTitle = notice?.querySelector("strong");
-  const noticeCopy = notice?.querySelector("p");
-  if (noticeTitle) noticeTitle.textContent = "Safe preview — nothing executes";
-  if (noticeCopy) noticeCopy.textContent = "No Home Assistant action runs, conversation routing is not changed, and the AI provider is not called.";
-  const button = section.querySelector("#rule-match-test");
-  if (button) button.textContent = "Preview match";
-  return section;
-}
 
 function bindLiveRequest(panel, section) {
-  if (!section || section.dataset.eocBound) return;
+  if (!section || section.dataset.eocBound !== undefined) return;
   const input = section.querySelector("#eoc-rule-live-text");
   const button = section.querySelector("#eoc-rule-live-run");
   const output = section.querySelector("#eoc-rule-live-result");
@@ -270,21 +208,6 @@ function bindLiveRequest(panel, section) {
   });
 }
 
-function enhanceRequestRuleTesting(panel) {
-  const root = panel.shadowRoot;
-  if (!root) return;
-  const safe = enhanceSafeTest(root);
-  if (!safe) return;
-  let live = root.querySelector("#eoc-rule-live-test");
-  if (!live) {
-    live = document.createElement("details");
-    live.id = "eoc-rule-live-test";
-    live.className = "content-card eoc-live-request-test";
-    live.innerHTML = `<summary><span>Run full request (live)</span><span class="eoc-live-label">Live</span></summary><div class="eoc-live-request-body"><p>Runs text through the same full processing path as a real request to this assistant.</p><div class="notice"><strong>This can have real effects</strong><p>Unlike the safe preview above, this may execute Home Assistant actions, change conversation routing, or call the AI provider. A confirmation is shown before it runs.</p></div><div class="search-row"><input id="eoc-rule-live-text" type="text" placeholder="Turn off the kitchen light" aria-label="Live request text"><button type="button" id="eoc-rule-live-run">Run live request</button></div><pre id="eoc-rule-live-result" class="eoc-live-request-result" aria-live="polite"></pre></div>`;
-    safe.insertAdjacentElement("afterend", live);
-  }
-  bindLiveRequest(panel, live);
-}
 
 function bindRequestRuleDeleteContext(panel) {
   const root = panel.shadowRoot;
@@ -298,18 +221,20 @@ function bindRequestRuleDeleteContext(panel) {
   }, true);
 }
 
-function enhanceRequestRules(panel) {
-  if (panel._page !== "capabilities" || panel._subsection !== "request-rules") return;
-  bindRequestRuleDeleteContext(panel);
-  enhanceRuleCards(panel);
-  enhanceRequestRuleTesting(panel);
+
+
+export function renderLiveRequestTester() {
+  return `<details id="eoc-rule-live-test" class="content-card eoc-live-request-test"><summary><span>Run full request (live)</span><span class="eoc-live-label">Live</span></summary><div class="eoc-live-request-body"><p>Runs text through the same full processing path as a real request to this assistant.</p><div class="notice"><strong>This can have real effects</strong><p>Unlike the safe preview above, this may execute Home Assistant actions, change conversation routing, or call the AI provider. A confirmation is shown before it runs.</p></div><div class="search-row"><input id="eoc-rule-live-text" type="text" placeholder="Turn off the kitchen light" aria-label="Live request text"><button type="button" id="eoc-rule-live-run">Run live request</button></div><pre id="eoc-rule-live-result" class="eoc-live-request-result" aria-live="polite"></pre></div></details>`;
 }
 
-function enhancePanel(panel) {
-  if (!panel.shadowRoot) return;
-  ensureStyles(panel);
-  enhanceRestoreScope(panel);
-  enhanceRequestRules(panel);
+export function restoreScopeMarkup(panel) {
+  const label = assistantScopeLabel(panel?._selectedAgent?.());
+  return label ? `<p class="eoc-restore-scope"><strong>This backup will replace: </strong>${panel._e(label)}</p>` : "";
+}
+
+export function bindDecisionRequestRules(panel) {
+  bindRequestRuleDeleteContext(panel);
+  bindLiveRequest(panel, panel.shadowRoot.querySelector("#eoc-rule-live-test"));
 }
 
 export function installManagementDecisionGuidance(Panel) {
@@ -322,14 +247,6 @@ export function installManagementDecisionGuidance(Panel) {
   const constructor = Panel;
   const prototype = constructor?.prototype;
   if (!prototype || prototype[PATCHED]) return false;
-
-  const originalRender = prototype._renderContent;
-  prototype._renderContent = function(...args) {
-    const result = originalRender.apply(this, args);
-    enhancePanel(this);
-    queueMicrotask(() => enhancePanel(this));
-    return result;
-  };
 
   const originalConfirm = prototype._confirm;
   prototype._confirm = function(...args) {

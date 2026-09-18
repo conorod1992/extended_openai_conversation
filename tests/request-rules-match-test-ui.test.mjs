@@ -5,7 +5,6 @@ import {
   formatRequestRuleMatchResult,
   renderRequestRuleMatchTester,
   REQUEST_RULE_MATCH_MAX_CHARS,
-  transformRequestRulesMatchTester,
 } from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-match-test-ui.js";
 
 const panel = {
@@ -17,23 +16,16 @@ const panel = {
 
 const tester = renderRequestRuleMatchTester();
 assert.equal(REQUEST_RULE_MATCH_MAX_CHARS, 2048);
-assert.match(tester, /Test matching/);
-assert.match(tester, /Safe preview only/);
-assert.match(tester, /same bounded matcher as real requests/);
-assert.match(tester, /does not run Home Assistant actions/);
-assert.match(tester, /does not .*call the AI provider/i);
+assert.match(tester, /Preview rule match \(safe\)/);
+assert.match(tester, /Safe preview — nothing executes/);
+assert.match(tester, /using the real matcher/);
+assert.match(tester, /No Home Assistant action runs/);
+assert.match(tester, /AI provider is not called/i);
 assert.match(tester, /maxlength="2048"/);
 assert.match(tester, /256 words/);
 assert.match(tester, /id="rule-match-test"/);
-assert.match(tester, />Test match</);
+assert.match(tester, />Preview match</);
 assert.doesNotMatch(tester, /Process request/);
-
-const transformed = transformRequestRulesMatchTester(
-  '<main>Rules</main><section class="content-card"><h2>Test a request</h2><p>dangerous legacy tester</p></section>',
-);
-assert.match(transformed, /<main>Rules<\/main>/);
-assert.match(transformed, /Test matching/);
-assert.doesNotMatch(transformed, /dangerous legacy tester/);
 
 const noMatch = formatRequestRuleMatchResult(panel, {matched:false});
 assert.match(noMatch, /No Request Rule matched/);

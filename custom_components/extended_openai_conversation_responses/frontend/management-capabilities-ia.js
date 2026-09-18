@@ -56,27 +56,10 @@ function knowledgeSourceAvailabilityBadge(source) {
   return `<span class="${enabled ? "availability-badge" : "disabled-badge"} knowledge-source-availability-badge">${enabled ? "Available" : "Unavailable"}</span>`;
 }
 
-function decorateKnowledgeSources(panel, html, documentRef = globalThis.document) {
-  return transformConfiguration(html, (root) => {
-    const sources = panel._result?.sources || [];
-    root.querySelectorAll(".edit-source[data-id]").forEach((card) => {
-      const source = sources.find((item) => item.source_id === card.dataset.id);
-      const heading = card.querySelector("h3");
-      if (!source || !heading) return;
-      heading.insertAdjacentHTML("afterend", knowledgeSourceAvailabilityBadge(source));
-    });
-  }, documentRef);
-}
 
-function addKnowledgeSourceAvailabilityControl(html, documentRef = globalThis.document) {
-  return transformConfiguration(html, (root) => {
-    const content = root.querySelector("#knowledge-content")?.closest("label");
-    if (!content || root.querySelector("#knowledge-source-enabled")) return;
-    const setting = documentRef.createElement("div");
-    setting.className = "config-toggle setting knowledge-source-availability-setting";
-    setting.innerHTML = `<span class="setting-copy"><span class="setting-label-row"><label for="knowledge-source-enabled"><strong>Available to the assistant</strong></label></span><small>Turn this off to keep the source stored locally without including it in Knowledge retrieval.</small></span><label class="switch-control" for="knowledge-source-enabled"><input id="knowledge-source-enabled" type="checkbox" role="switch" checked><span class="switch-track" aria-hidden="true"></span></label>`;
-    content.before(setting);
-  }, documentRef);
+
+export function knowledgeSourceAvailabilityControl() {
+  return `<div class="config-toggle setting knowledge-source-availability-setting"><span class="setting-copy"><span class="setting-label-row"><label for="knowledge-source-enabled"><strong>Available to the assistant</strong></label></span><small>Turn this off to keep the source stored locally without including it in Knowledge retrieval.</small></span><label class="switch-control" for="knowledge-source-enabled"><input id="knowledge-source-enabled" type="checkbox" role="switch" checked><span class="switch-track" aria-hidden="true"></span></label></div>`;
 }
 
 async function saveKnowledgeAvailability(panel, input) {
@@ -109,8 +92,6 @@ export function bindCapabilities(panel) {
 
 export {
   renderConfiguration,
-  addKnowledgeSourceAvailabilityControl,
-  decorateKnowledgeSources,
   knowledgeAvailabilityMarkup,
   knowledgeSourceAvailabilityBadge,
   stripLocalHandlingConfiguration,

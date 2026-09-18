@@ -1,5 +1,6 @@
+import {bindDecisionRequestRules} from "./management-decision-guidance.js";
 import {lookupModelData} from "./model-catalog.js";
-import {bindRequestRuleMatchTester, formatRequestRuleMatchResult, transformRequestRulesMatchTester} from "./request-rules-match-test-ui.js";
+import {bindRequestRuleMatchTester, formatRequestRuleMatchResult} from "./request-rules-match-test-ui.js";
 
 const {ensureRequestRulesModule, getRequestRulesModule} = await import("./request-rules-loader.js");
 
@@ -118,13 +119,14 @@ export function renderRequestRules(panel) {
     panel,
     renderAllRulesForInPlaceSearch(panel, module),
   );
-  return transformRequestRulesMatchTester(html);
+  return html;
 }
 
 export function bindRequestRules(panel) {
   const module = getRequestRulesModule();
   if (!module) return queueRender(panel);
   const result = module.bindRequestRules(panel);
+  bindDecisionRequestRules(panel);
   const root = panel.shadowRoot;
   root?.querySelectorAll(".rule-move:not([disabled])").forEach((button) => button.addEventListener("click", async () => {
     button.disabled = true;
