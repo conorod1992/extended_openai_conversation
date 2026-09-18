@@ -118,7 +118,6 @@ from .functions.security import (
     classify_tool,
     contains_indirect_service_call,
 )
-from .ha_tool_result_compat import make_tool_result_content
 from .guest_mode import (
     EXECUTION_FAILED,
     GUEST_MODE_UNAVAILABLE,
@@ -138,6 +137,7 @@ from .ha_llm_tools import (
     is_ha_tool,
     tool_snapshot_scope,
 )
+from .ha_tool_result_compat import make_tool_result_content
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
