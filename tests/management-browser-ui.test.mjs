@@ -19,7 +19,7 @@ assert.match(ui.renderPersistentMemories(panel), /Likes tea/);
 assert.match(ui.renderPersistentMemories(panel), /load-more-memories/);
 panel._query = "coffee";
 assert.doesNotMatch(ui.renderPersistentMemories(panel), /Likes tea/);
-assert.match(ui.renderPersistentMemories(panel), /No memories match/);
+assert.match(ui.renderPersistentMemories(panel), /No memories match this search\./);
 
 const source = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/guest-mode-ui.js", import.meta.url), "utf8");
 assert.match(source, /MEMORY_SEARCH_DEBOUNCE_MS = 250/);
