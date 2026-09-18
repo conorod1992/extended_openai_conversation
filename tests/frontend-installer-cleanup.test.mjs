@@ -1,0 +1,50 @@
+import assert from "node:assert/strict";
+import {readFile} from "node:fs/promises";
+
+const frontend = (name) =>
+  new URL(`../custom_components/extended_openai_conversation_responses/frontend/${name}`, import.meta.url);
+
+const panel = await readFile(frontend("management-panel.js"), "utf8");
+const modules = await Promise.all([
+  "agent-config-loader.js",
+  "management-navigation-search.js",
+  "management-toolbar-layout.js",
+  "management-configuration-clarity.js",
+  "management-configuration-guidance.js",
+  "management-decision-guidance.js",
+  "management-settings-polish.js",
+  "management-overview-health-clarity.js",
+].map(async (name) => [name, await readFile(frontend(name), "utf8")]));
+
+for (const [name, source] of modules) {
+  assert.doesNotMatch(source, /installManagement[A-Za-z]+/u, `${name} should not export a runtime installer`);
+  assert.doesNotMatch(source, /prototype\.(?:_renderContent|_confirm|_clearConfigDraft|_configurationDirtyDestinations)/u,
+    `${name} should not replace panel methods at runtime`);
+  assert.doesNotMatch(source, /Symbol\.for\("extended-openai\.management-/u,
+    `${name} should not retain installer sentinel state`);
+}
+
+assert.doesNotMatch(panel, /management-bootstrap\.js|initializeManagementPanel/u);
+assert.match(panel, /_configurationDirtyDestinations\(\)\s*\{\s*return configurationDestinations\(this\);/u);
+assert.match(panel, /_settingsSearchConfig = null;/u);
+assert.match(panel, /enhanceConfirmationScope\(this, subject\)/u);
+
+const orderedCalls = [
+  "enhanceNavigationSearch(this)",
+  "applyManagementToolbarLayout(this)",
+  "bindConfigurationClarity(this)",
+  "enhanceConfigurationClarity(this)",
+  "bindConfigurationGuidance(this)",
+  "enhanceConfigurationGuidance(this)",
+  "polishSettingsLayout(this)",
+  "enhanceOverviewHealthClarity(this)",
+];
+let previous = -1;
+for (const call of orderedCalls) {
+  const index = panel.indexOf(call);
+  assert.ok(index > previous, `${call} should retain explicit composition order`);
+  previous = index;
+}
+
+assert.match(panel, /queueMicrotask\(\(\) => polishRenderedCopy\(this\)\)/u);
+assert.match(panel, /queueMicrotask\(\(\) => enhanceOverviewHealthClarity\(this\)\)/u);

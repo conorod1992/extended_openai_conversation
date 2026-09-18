@@ -1,4 +1,11 @@
-import {DECISION_GUIDANCE_STYLES} from "./management-decision-guidance.js";
+import {DECISION_GUIDANCE_STYLES, enhanceConfirmationScope} from "./management-decision-guidance.js";
+import {polishRenderedCopy} from "./agent-config-loader.js";
+import {enhanceNavigationSearch} from "./management-navigation-search.js";
+import {applyManagementToolbarLayout} from "./management-toolbar-layout.js";
+import {bindConfigurationClarity, configurationDestinations, enhanceConfigurationClarity} from "./management-configuration-clarity.js";
+import {bindConfigurationGuidance, enhanceConfigurationGuidance} from "./management-configuration-guidance.js";
+import {polishSettingsLayout} from "./management-settings-polish.js";
+import {enhanceOverviewHealthClarity} from "./management-overview-health-clarity.js";
 import {bindMemorySettings, stripMovedMemoryControls} from "./management-memory-settings.js";
 import {bindCapabilities, renderConfiguration, stripWebSkillsConfiguration, stripLocalHandlingConfiguration, knowledgeAvailabilityMarkup, knowledgeSourceAvailabilityBadge, knowledgeSourceAvailabilityControl} from "./management-capabilities-ia.js";
 import {featureStatusMarkup, selectedFeatureStatus, diagnosticsMarkup, testAgent, FEATURE_STATUS_STYLES} from "./management-feature-status.js";
@@ -9,7 +16,6 @@ import {
   refreshPageSaveBar,
   savePageChanges,
 } from "./management-page-drafts.js";
-import {initializeManagementPanel} from "./management-bootstrap.js";
 import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs} from "./management-dialogs.js";
 import {renderManagement} from "./management-renderer.js";
@@ -236,6 +242,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._draftTitle = null;
     this._draftAgentId = null;
     this._configSearchQuery = "";
+    this._settingsSearchConfig = null;
+    this._settingsSearchConfigAgentId = null;
+    this._settingsSearchConfigError = null;
+    this._settingsSearchConfigErrorAgentId = null;
+  }
+
+  _configurationDirtyDestinations() {
+    return configurationDestinations(this);
   }
 
   _syncConfigDirty() {
@@ -757,6 +771,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _renderContent() {
+    const shellRevision = this._eocShellRevision;
     initializePageDraft(this);
     bindStateSafety(this);
     renderManagement(this);
@@ -767,6 +782,19 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     applyRequestRuleSearch(this);
     bindPageDrafts(this);
     refreshPageSaveBar(this);
+
+    // Keep the former decorator ordering explicit without mutating class methods at runtime.
+    if (shellRevision === undefined || shellRevision !== this._eocShellRevision) {
+      queueMicrotask(() => polishRenderedCopy(this));
+    }
+    enhanceNavigationSearch(this);
+    applyManagementToolbarLayout(this);
+    bindConfigurationClarity(this);
+    enhanceConfigurationClarity(this);
+    bindConfigurationGuidance(this);
+    enhanceConfigurationGuidance(this);
+    polishSettingsLayout(this);
+    if (this._page === "overview") queueMicrotask(() => enhanceOverviewHealthClarity(this));
   }
 
   _renderShell() {
@@ -1321,11 +1349,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _confirm(title, message, confirmLabel = "Confirm") {
+    const subject = this._eocDecisionConfirmSubject || "";
+    this._eocDecisionConfirmSubject = "";
     const root = this.shadowRoot;
     root.querySelector("#confirm-title").textContent = title;
     root.querySelector("#confirm-message").textContent = message;
     root.querySelector("#confirm-accept").textContent = confirmLabel;
     root.querySelector("#confirm-dialog").showModal();
+    enhanceConfirmationScope(this, subject);
     return new Promise((resolve) => { this._confirmResolver = resolve; });
   }
 
@@ -1447,5 +1478,4 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   ${FEATURE_STATUS_STYLES}${DECISION_GUIDANCE_STYLES}`; }
 }
 
-initializeManagementPanel(ExtendedOpenAIManagementPanel);
 customElements.define("extended-openai-management-panel", ExtendedOpenAIManagementPanel);

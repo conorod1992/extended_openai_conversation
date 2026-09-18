@@ -14,15 +14,15 @@ import {
 } from "../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
 import {SETTINGS_INDEX} from "../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
 
-const bootstrap = await readFile(
-  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url),
+const panelSource = await readFile(
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url),
   "utf8",
 );
-assert.match(bootstrap, /management-configuration-clarity\.js/);
+assert.match(panelSource, /from "\.\/management-configuration-clarity\.js"/);
 assert.ok(
-  bootstrap.indexOf('installManagementToolbarLayout(Panel)')
-    < bootstrap.indexOf('installManagementConfigurationClarity(Panel)'),
-  "configuration clarity should install after the other management extensions",
+  panelSource.indexOf("applyManagementToolbarLayout(this)")
+    < panelSource.indexOf("enhanceConfigurationClarity(this)"),
+  "configuration clarity should run after toolbar layout in explicit panel composition",
 );
 
 assert.equal(friendlySettingLabel("memory_retrieval_mode"), "Relevance matching");

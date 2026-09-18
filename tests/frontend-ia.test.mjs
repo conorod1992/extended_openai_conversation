@@ -212,7 +212,6 @@ const memoryManagement = await readFile(new URL("../custom_components/extended_o
 const capabilitiesIA = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js", import.meta.url), "utf8");
 const navigationSearch = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js", import.meta.url), "utf8");
 const featureStatus = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-feature-status.js", import.meta.url), "utf8");
-const bootstrap = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url), "utf8");
 const homeAssistant = panel.slice(panel.indexOf("  _homeAssistant("), panel.indexOf("  _overview("));
 assert.match(panel, /top-section-mobile/);
 assert.match(panel, /id="local-section"/);
@@ -266,4 +265,4 @@ assert.match(navigationSearch, /Current draft/);
 assert.match(navigationSearch, /configuration", "get"/);
 assert.match(navigationSearch, /_settingsSearchConfigAgentId === panel\._agentId/);
 assert.match(panel, /management-capabilities-ia\.js/);
-assert.match(bootstrap, /management-navigation-search\.js/);
+assert.match(panel, /from "\.\/management-navigation-search\.js"/);

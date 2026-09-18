@@ -43,7 +43,6 @@ describe("native management rendering", () => {
 
   it("keeps loaded main content mounted only during navigation busy renders", async () => {
     const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
-    const bootstrap = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js", import.meta.url), "utf8");
     expect(source).toContain('main.setAttribute("aria-busy", "true")');
     expect(source).toContain("main.inert = true;");
     expect(source).toContain("main.inert = false;");
@@ -56,8 +55,7 @@ describe("native management rendering", () => {
     expect(source).toContain("extended-openai:load-section");
     expect(source).toContain("extended-openai:render");
     expect(source).toContain("MAX_MEASURE_ENTRIES = 100");
-    expect(bootstrap).not.toContain("installManagementHotPathPerformance");
-    expect(bootstrap).not.toContain("installPreDefinitionPropertyReplay");
+    expect(source).not.toContain("initializeManagementPanel");
   });
 
   it("builds only configuration section bodies that pass the active filter", async () => {
