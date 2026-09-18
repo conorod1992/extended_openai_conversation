@@ -412,8 +412,8 @@ export function installManagementStateSafety(Panel) {
     return confirmStateSafeNavigation(this, destination);
   };
 
-  const originalRender = prototype._render;
-  prototype._render = function(...args) {
+  const originalRender = prototype._renderContent;
+  prototype._renderContent = function(...args) {
     initializePageDraft(this);
     bindStateSafety(this);
     const result = originalRender.apply(this, args);

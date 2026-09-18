@@ -369,7 +369,7 @@ function bindGuidanceRoutes(panel) {
   });
 }
 
-function storeRuntimeGuidance(panel, result, agentId = panel._agentId) {
+export function storeRuntimeGuidance(panel, result, agentId = panel._agentId) {
   if (!result?.configuration_guidance || panel._agentId !== agentId) return;
   panel._configurationGuidance = result.configuration_guidance;
   panel._configurationGuidanceAgentId = agentId;
@@ -438,22 +438,8 @@ export function installManagementConfigurationGuidance(Panel) {
   const prototype = constructor?.prototype;
   if (!prototype || prototype[PATCHED]) return false;
 
-  const originalCall = prototype._call;
-  prototype._call = async function(...args) {
-    const guidanceCall = args[0] === "configuration" && ["get", "validate", "update", "save"].includes(args[1]);
-    const agentId = this._agentId;
-    const revision = guidanceCall
-      ? (this._eocGuidanceCallRevision = (this._eocGuidanceCallRevision || 0) + 1)
-      : null;
-    const result = await originalCall.apply(this, args);
-    if (guidanceCall && revision === this._eocGuidanceCallRevision && this._agentId === agentId) {
-      storeRuntimeGuidance(this, result, agentId);
-    }
-    return result;
-  };
-
-  const originalRender = prototype._render;
-  prototype._render = function(...args) {
+  const originalRender = prototype._renderContent;
+  prototype._renderContent = function(...args) {
     const result = originalRender.apply(this, args);
     bindHostEvents(this);
     enhancePanel(this);

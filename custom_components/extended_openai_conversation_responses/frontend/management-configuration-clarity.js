@@ -342,8 +342,8 @@ export function installManagementConfigurationClarity(Panel) {
 
   prototype._configurationDirtyDestinations = function() { return configurationDestinations(this); };
 
-  const originalRender = prototype._render;
-  prototype._render = function(...args) {
+  const originalRender = prototype._renderContent;
+  prototype._renderContent = function(...args) {
     const result = originalRender.apply(this, args);
     bindInteractionRefresh(this);
     enhancePanel(this);

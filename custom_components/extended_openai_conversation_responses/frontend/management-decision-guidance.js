@@ -334,8 +334,8 @@ export function installManagementDecisionGuidance(Panel) {
   const prototype = constructor?.prototype;
   if (!prototype || prototype[PATCHED]) return false;
 
-  const originalRender = prototype._render;
-  prototype._render = function(...args) {
+  const originalRender = prototype._renderContent;
+  prototype._renderContent = function(...args) {
     const result = originalRender.apply(this, args);
     enhancePanel(this);
     queueMicrotask(() => enhancePanel(this));

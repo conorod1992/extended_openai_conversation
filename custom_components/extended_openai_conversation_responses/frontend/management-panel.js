@@ -12,11 +12,107 @@ import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview} from "./overview-page.js";
 import {formatUsageNumber, formatUsageTimestamp, tokenBreakdown} from "./usage-format.js";
 import {bindRequestRules, renderRequestRules, requestRulesDialog} from "./request-rules-ui.js";
+import {isAgentMutation, syncAgentPicker} from "./management-action-safety.js";
+import {REQUEST_RULE_CACHE_KEY, TOOL_MUTATIONS} from "./management-function-dependencies.js";
+import {isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-permission-boundaries.js";
+import {storeRuntimeGuidance} from "./management-configuration-guidance.js";
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
 const KNOWLEDGE_TITLE_LIMIT = 120;
 const KNOWLEDGE_DESCRIPTION_LIMIT = 500;
 const KNOWLEDGE_LIMIT = 100000;
+const NAVIGATION_MARK_PREFIX = "extended-openai:navigation";
+const LOAD_MARK_PREFIX = "extended-openai:load-section";
+const RENDER_MARK_PREFIX = "extended-openai:render";
+const MAX_MEASURE_ENTRIES = 100;
+const BUSY_STYLE = `
+  [data-eoc-main].eoc-loading-in-background,
+  main.eoc-loading-in-background {
+    position: relative;
+  }
+  [data-eoc-main].eoc-loading-in-background::before,
+  main.eoc-loading-in-background::before {
+    content: "";
+    position: absolute;
+    z-index: 3;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--primary-color);
+    transform-origin: left center;
+    animation: eoc-background-load 900ms ease-in-out infinite alternate;
+    pointer-events: none;
+  }
+  @keyframes eoc-background-load {
+    from { transform: scaleX(.18); opacity: .55; }
+    to { transform: scaleX(1); opacity: .9; }
+  }
+`;
+
+function performanceApi() {
+  const api = globalThis.performance;
+  return api && typeof api.mark === "function" && typeof api.measure === "function" ? api : null;
+}
+
+function startMeasure(panel, prefix) {
+  const api = performanceApi();
+  if (!api) return null;
+  panel._eocPerformanceSequence = (panel._eocPerformanceSequence || 0) + 1;
+  const id = `${prefix}:${panel._eocPerformanceSequence}`;
+  const start = `${id}:start`;
+  api.mark(start);
+  return {api, id, start, panel};
+}
+
+function finishMeasure(measure, detail = null) {
+  if (!measure) return;
+  const {api, id, start, panel} = measure;
+  const end = `${id}:end`;
+  api.mark(end);
+  try {
+    api.measure(id, {start, end, detail});
+  } catch (_err) {
+    api.measure(id, start, end);
+  }
+  panel._eocPerformanceMeasureIds ||= [];
+  panel._eocPerformanceMeasureIds.push(id);
+  while (panel._eocPerformanceMeasureIds.length > MAX_MEASURE_ENTRIES) {
+    api.clearMeasures?.(panel._eocPerformanceMeasureIds.shift());
+  }
+  api.clearMarks(start);
+  api.clearMarks(end);
+}
+
+function trackAsync(panel, prefix, operation, navigation = false) {
+  const view = panel._viewKey?.() || null;
+  const measure = startMeasure(panel, prefix);
+  if (navigation) panel._eocNavigationDepth = (panel._eocNavigationDepth || 0) + 1;
+  const finish = (status) => {
+    if (navigation) panel._eocNavigationDepth = Math.max(0, (panel._eocNavigationDepth || 1) - 1);
+    finishMeasure(measure, {view, status});
+  };
+  let result;
+  try {
+    result = operation();
+  } catch (err) {
+    finish("threw");
+    throw err;
+  }
+  if (!result || typeof result.finally !== "function") {
+    finish("sync");
+    return result;
+  }
+  return result.finally(() => finish("settled"));
+}
+
+function ensureBusyStyle(root) {
+  if (!root || root.querySelector?.("style[data-eoc-hot-path-performance]")) return;
+  const style = document.createElement("style");
+  style.dataset.eocHotPathPerformance = "";
+  style.textContent = BUSY_STYLE;
+  root.append(style);
+}
 
 function settledSectionResult(entries, settled) {
   const result = {};
@@ -76,6 +172,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const route = routeFromPath(window.location.pathname);
     if (route.page !== this._page || route.section !== this._subsection) this._handleRouteChange(route);
     else if (!this.shadowRoot.hasChildNodes()) this._render();
+  }
+
+  connectedCallback() {
+    // Home Assistant can assign properties before custom-element upgrade. Replay
+    // own properties so the class setters receive the values after definition.
+    for (const name of ["hass", "route"]) {
+      if (!Object.prototype.hasOwnProperty.call(this, name)) continue;
+      const value = this[name];
+      delete this[name];
+      this[name] = value;
+    }
   }
 
   disconnectedCallback() {}
@@ -138,7 +245,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _canAccessView(page, subsection = null) {
-    if (page === "usage-maintenance" && subsection === "request-debug") return this._data?.is_admin === true;
+    if (this._data?.is_admin === false && isRestrictedManagementView(page, subsection)) return false;
     if (page === "usage-maintenance" && subsection === "request-debug") return this._data?.is_admin === true;
     if (this._data?.is_admin !== false) return true;
     if (page === "assistant") return false;
@@ -151,7 +258,93 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return pageMetadata(page).sections.filter((item) => this._canAccessView(page, item.id));
   }
 
-  _call(section, action, extra = {}) {
+  async _call(section, action, extra = {}) {
+    const guidanceCall = section === "configuration"
+      && ["get", "validate", "update", "save"].includes(action);
+    const guidanceAgentId = this._agentId;
+    const guidanceRevision = guidanceCall
+      ? (this._eocGuidanceCallRevision = (this._eocGuidanceCallRevision || 0) + 1)
+      : null;
+
+    let result;
+    if (
+      this._data?.is_admin === false
+      && this._viewKey() === "overview"
+      && section === "knowledge"
+      && action === "list"
+    ) {
+      result = nonAdminOverviewKnowledgeSnapshot(this);
+    } else {
+      let payload = extra;
+      if (
+        section === "tools"
+        && TOOL_MUTATIONS.has(action)
+        && extra.revision === undefined
+        && typeof this._configData?.revision === "string"
+      ) {
+        payload = {revision: this._configData.revision, ...extra};
+      }
+      result = await this._callWithMutationSafety(section, action, payload);
+      this._applyToolRevision(section, action, result);
+    }
+
+    if (
+      guidanceCall
+      && guidanceRevision === this._eocGuidanceCallRevision
+      && this._agentId === guidanceAgentId
+    ) {
+      storeRuntimeGuidance(this, result, guidanceAgentId);
+    }
+    return result;
+  }
+
+  _callWithMutationSafety(section, action, extra = {}) {
+    if (!isAgentMutation(section, action)) return this._callCore(section, action, extra);
+
+    this._pendingMutations ||= new Map();
+    const key = JSON.stringify([section, action, extra]);
+    if (this._pendingMutations.has(key)) return this._pendingMutations.get(key);
+
+    const previous = section === "tools"
+      ? (this._eocFunctionMutationTail || Promise.resolve())
+      : Promise.resolve();
+    const pending = previous.catch(() => {}).then(
+      () => this._runAgentMutation(section, action, extra),
+    );
+    const tracked = pending.finally(() => {
+      this._pendingMutations.delete(key);
+      if (this._eocFunctionMutationTail === tracked) this._eocFunctionMutationTail = null;
+    });
+    if (section === "tools") this._eocFunctionMutationTail = tracked;
+    this._pendingMutations.set(key, tracked);
+    return tracked;
+  }
+
+  async _runAgentMutation(section, action, extra) {
+    this._eocAgentMutations = Number(this._eocAgentMutations || 0) + 1;
+    syncAgentPicker(this);
+    try {
+      const result = await this._callCore(section, action, extra);
+      this._applyToolRevision(section, action, result);
+      return result;
+    } finally {
+      this._eocAgentMutations = Math.max(0, Number(this._eocAgentMutations || 1) - 1);
+      syncAgentPicker(this);
+    }
+  }
+
+  _applyToolRevision(section, action, result) {
+    if (
+      section === "tools"
+      && TOOL_MUTATIONS.has(action)
+      && typeof result?.revision === "string"
+      && this._configData
+    ) {
+      this._configData = {...this._configData, revision: result.revision};
+    }
+  }
+
+  _callCore(section, action, extra = {}) {
     // Configuration remains editable even when persisted Function Tools need repair.
     const issue = this._selectedAgent()?.configuration_issue;
     if (section === "configuration" && issue?.field === "functions" && issue.repairable === true) {
@@ -202,24 +395,35 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       for (const key of this._sectionCache.keys()) if (key.startsWith(prefix)) this._sectionCache.delete(key);
       for (const key of this._scopeCatalogCache.keys()) if (key.startsWith(prefix)) this._scopeCatalogCache.delete(key);
       if (this._scopeCatalogVisitKey?.startsWith(prefix)) this._scopeCatalogVisitKey = null;
-      return;
-    }
-    const mutations = {
-      request_rules: new Set(["defaults", "wording_groups", "create", "update", "delete", "duplicate"]),
-      knowledge: new Set(["create", "update", "delete"]),
-      memories: new Set(["add", "update", "delete", "temporary_delete", "reassign_legacy"]),
-      conversations: new Set(["delete"]),
-    };
-    if (!agentId || !mutations[section]?.has(action)) return;
-    this._cacheGeneration += 1;
-    const prefix = `${agentId}|`;
-    const view = {request_rules:"capabilities/request-rules", knowledge:"data-memory/knowledge"}[section];
-    if (view) this._sectionCache.delete(`${prefix}${view}`);
-    if (["memories", "conversations"].includes(section)) {
-      for (const key of this._scopeCatalogCache.keys()) {
-        if (key.startsWith(prefix)) this._scopeCatalogCache.delete(key);
+    } else {
+      const mutations = {
+        request_rules: new Set(["defaults", "wording_groups", "create", "update", "delete", "duplicate"]),
+        knowledge: new Set(["create", "update", "delete"]),
+        memories: new Set(["add", "update", "delete", "temporary_delete", "reassign_legacy"]),
+        conversations: new Set(["delete"]),
+      };
+      if (agentId && mutations[section]?.has(action)) {
+        this._cacheGeneration += 1;
+        const prefix = `${agentId}|`;
+        const view = {request_rules:"capabilities/request-rules", knowledge:"data-memory/knowledge"}[section];
+        if (view) this._sectionCache.delete(`${prefix}${view}`);
+        if (["memories", "conversations"].includes(section)) {
+          for (const key of this._scopeCatalogCache.keys()) {
+            if (key.startsWith(prefix)) this._scopeCatalogCache.delete(key);
+          }
+          if (this._scopeCatalogVisitKey?.startsWith(prefix)) this._scopeCatalogVisitKey = null;
+        }
       }
-      if (this._scopeCatalogVisitKey?.startsWith(prefix)) this._scopeCatalogVisitKey = null;
+    }
+
+    const affectsRequestRules = agentId && (
+      (section === "tools" && TOOL_MUTATIONS.has(action))
+      || (section === "request_rules" && action === "move")
+    );
+    if (affectsRequestRules) {
+      const key = `${agentId}|${REQUEST_RULE_CACHE_KEY}`;
+      this._sectionCache?.delete(key);
+      this._eocSectionCacheTimes?.delete(key);
     }
   }
 
@@ -299,7 +503,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _loadSection(silent = false) {
-    return loadRoute(this, silent);
+    return trackAsync(this, LOAD_MARK_PREFIX, () => loadRoute(this, silent));
   }
 
   async _loadSectionData(silent = false) {
@@ -422,21 +626,58 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._result = this._configData;
   }
 
-  async _navigate(page, subsection = null) {
-    const metadata = pageMetadata(page);
-    const targetSubsection = subsection || this._visibleSubsections(page)[0]?.id || metadata.sections[0]?.id || null;
-    if (this._isDraftView() && !this._isDraftView(page, targetSubsection)) {
-      this._clearConfigDraft();
-    }
-    this._page = page;
-    this._subsection = targetSubsection;
-    this._query = "";
-    history.pushState({}, "", routePath(page, targetSubsection));
-    this._result = null;
-    await this._loadSection();
+  _navigate(page, subsection = null) {
+    return trackAsync(this, NAVIGATION_MARK_PREFIX, async () => {
+      const metadata = pageMetadata(page);
+      const targetSubsection = subsection || this._visibleSubsections(page)[0]?.id || metadata.sections[0]?.id || null;
+      if (this._isDraftView() && !this._isDraftView(page, targetSubsection)) {
+        this._clearConfigDraft();
+      }
+      this._page = page;
+      this._subsection = targetSubsection;
+      this._query = "";
+      history.pushState({}, "", routePath(page, targetSubsection));
+      this._result = null;
+      await this._loadSection();
+    }, true);
   }
 
-  _render() {
+  _render(...args) {
+    const view = this._viewKey?.() || null;
+    const busy = Boolean(this._busy);
+    const measure = startMeasure(this, RENDER_MARK_PREFIX);
+    try {
+      const root = this.shadowRoot;
+      const main = root?.querySelector?.("[data-eoc-main]") || root?.querySelector?.("main");
+      const preserve = Boolean(
+        this._busy
+        && this._eocNavigationDepth > 0
+        && main
+        && main.childNodes.length
+        && !main.querySelector?.(".loading")
+      );
+      if (preserve) {
+        ensureBusyStyle(root);
+        main.setAttribute("aria-busy", "true");
+        main.inert = true;
+        main.classList.add("eoc-loading-in-background");
+        return undefined;
+      }
+      return this._renderContent(...args);
+    } finally {
+      const main = this.shadowRoot?.querySelector?.("[data-eoc-main]")
+        || this.shadowRoot?.querySelector?.("main");
+      if (main && !this._busy) {
+        main.removeAttribute("aria-busy");
+        main.inert = false;
+        main.classList.remove("eoc-loading-in-background");
+      }
+      syncAgentPicker(this);
+      finishMeasure(measure, {view, busy});
+    }
+  }
+
+  _renderContent() {
     renderManagement(this);
     bindPanelDialogs(this);
     bindSingleRequestSave(this);
@@ -658,29 +899,48 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return shifted.toISOString().slice(0, 16);
   }
 
-  async _updateGuestMode(now = false) {
-    const root = this.shadowRoot;
-    const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
-    const start = now ? new Date().toISOString() : root.querySelector("#guest-start")?.value;
-    const end = root.querySelector("#guest-end")?.value;
-    try {
-      await this._call("guest_mode", "update", {
-        ...(start ? {active_from: start} : {}),
-        ...(!indefinite && end ? {active_until: end} : {}),
-        indefinite: indefinite || !end,
-      });
-      await this._loadAgents(this._agentId);
-      this._toast("Guest Mode updated");
-    } catch (err) { this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true); }
+  _runGuestOperation(operation) {
+    if (this._guestOperation) return this._guestOperation;
+    const pending = Promise.resolve().then(operation);
+    this._guestOperation = pending;
+    syncAgentPicker(this);
+    return pending.finally(() => {
+      this._guestOperation = null;
+      syncAgentPicker(this);
+    });
   }
 
-  async _disableGuestMode() {
-    if (!await this._confirm("End Guest Mode?", "This immediately ends an active interval or cancels a future schedule.", "End Guest Mode")) return;
-    try {
-      await this._call("guest_mode", "disable");
-      await this._loadAgents(this._agentId);
-      this._toast("Guest Mode ended");
-    } catch (err) { this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true); }
+  _updateGuestMode(now = false) {
+    return this._runGuestOperation(async () => {
+      const root = this.shadowRoot;
+      const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
+      const start = now ? new Date().toISOString() : root.querySelector("#guest-start")?.value;
+      const end = root.querySelector("#guest-end")?.value;
+      try {
+        await this._call("guest_mode", "update", {
+          ...(start ? {active_from: start} : {}),
+          ...(!indefinite && end ? {active_until: end} : {}),
+          indefinite: indefinite || !end,
+        });
+        await this._loadAgents(this._agentId);
+        this._toast("Guest Mode updated");
+      } catch (err) {
+        this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
+      }
+    });
+  }
+
+  _disableGuestMode() {
+    return this._runGuestOperation(async () => {
+      if (!await this._confirm("End Guest Mode?", "This immediately ends an active interval or cancels a future schedule.", "End Guest Mode")) return;
+      try {
+        await this._call("guest_mode", "disable");
+        await this._loadAgents(this._agentId);
+        this._toast("Guest Mode ended");
+      } catch (err) {
+        this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true);
+      }
+    });
   }
 
   _diagnostics(agent) {
