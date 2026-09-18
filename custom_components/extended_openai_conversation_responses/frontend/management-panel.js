@@ -2,7 +2,12 @@ import {bindMemorySettings, stripMovedMemoryControls} from "./management-memory-
 import {bindCapabilities, renderConfiguration, stripWebSkillsConfiguration, stripLocalHandlingConfiguration, knowledgeAvailabilityMarkup, decorateKnowledgeSources, addKnowledgeSourceAvailabilityControl} from "./management-capabilities-ia.js";
 import {featureStatusMarkup, selectedFeatureStatus, diagnosticsMarkup, testAgent, FEATURE_STATUS_STYLES} from "./management-feature-status.js";
 import {ensureTemporaryScope, renderTemporaryMemories, renderTemporaryScopePicker, temporaryDialog, openTemporaryMemory, temporaryMemoryDirty, closeTemporaryMemory, saveTemporaryMemory, deleteTemporaryMemory, bindTemporaryMemory} from "./management-temporary-memory.js";
-import {savePageChanges} from "./management-page-drafts.js";
+import {
+  bindPageDrafts,
+  initializePageDraft,
+  refreshPageSaveBar,
+  savePageChanges,
+} from "./management-page-drafts.js";
 import {initializeManagementPanel} from "./management-bootstrap.js";
 import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs} from "./management-dialogs.js";
@@ -20,6 +25,16 @@ import {isAgentMutation, syncAgentPicker} from "./management-action-safety.js";
 import {REQUEST_RULE_CACHE_KEY, TOOL_MUTATIONS} from "./management-function-dependencies.js";
 import {isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-permission-boundaries.js";
 import {storeRuntimeGuidance} from "./management-configuration-guidance.js";
+import {
+  applyTargetedConfigDirty,
+  bindStateSafety,
+  cleanupStateSafety,
+  configKeyForControl,
+  confirmDialogClose,
+  confirmStateSafeNavigation,
+  openDialogBaseline,
+  rebuildConfigDirtyKeys,
+} from "./management-state-safety.js";
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
 const KNOWLEDGE_TITLE_LIMIT = 120;
@@ -187,11 +202,31 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       delete this[name];
       this[name] = value;
     }
+    bindStateSafety(this);
   }
 
-  disconnectedCallback() {}
+  disconnectedCallback() {
+    cleanupStateSafety(this);
+  }
 
-  _setConfigDirty(value) { this._configDirty = Boolean(value); }
+  _setConfigDirty(value) {
+    if (!value) {
+      this._eocDirtyConfigKeys = new Set();
+      this._configDirty = false;
+      return;
+    }
+    this._configDirty = true;
+    if (this._eocDirtyConfigKeys instanceof Set) {
+      queueMicrotask(() => {
+        if (!(this._eocDirtyConfigKeys instanceof Set) || this._eocDirtyConfigKeys.size) return;
+        const changed = rebuildConfigDirtyKeys(this);
+        const dirty = changed.size > 0;
+        const wasDirty = Boolean(this._configDirty);
+        this._configDirty = dirty;
+        if (wasDirty && !dirty) this._render();
+      });
+    }
+  }
 
   _clearConfigDraft() {
     this._setConfigDirty(false);
@@ -203,14 +238,34 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _syncConfigDirty() {
-    const baseline = this._configData;
-    this._setConfigDirty(Boolean(baseline) && (
-      this._draftTitle !== baseline.title ||
-      JSON.stringify(this._draft) !== JSON.stringify(baseline.config)
-    ));
+    const changed = rebuildConfigDirtyKeys(this);
+    this._configDirty = changed.size > 0;
+    return this._configDirty;
+  }
+
+  _syncConfigControlDirty(control) {
+    const key = configKeyForControl(control);
+    if (key) applyTargetedConfigDirty(this, [key], control);
+  }
+
+  _captureDialogBaseline(dialog) {
+    openDialogBaseline(this, dialog);
+  }
+
+  _confirmEditorClose(dialog) {
+    return confirmDialogClose(this, dialog);
+  }
+
+  _confirmUnsavedNavigation(destination) {
+    return confirmStateSafeNavigation(this, destination);
   }
 
   async _handleRouteChange(route) {
+    const destination = route.section ? `${route.page}/${route.section}` : route.page;
+    if (!await confirmStateSafeNavigation(this, destination)) {
+      history.pushState({}, "", routePath(this._page, this._subsection));
+      return;
+    }
     if (this._isDraftView() && !this._isDraftView(route.page, route.section)) {
       this._clearConfigDraft();
     }
@@ -638,17 +693,26 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._result = this._configData;
   }
 
-  _navigate(page, subsection = null) {
+  async _navigate(page, subsection = null) {
+    const targetSubsection = subsection || this._visibleSubsections(page)[0]?.id || null;
+    const destination = targetSubsection ? `${page}/${targetSubsection}` : page;
+    if (!await confirmStateSafeNavigation(this, destination)) {
+      const local = this.shadowRoot?.querySelector?.("#local-section");
+      const top = this.shadowRoot?.querySelector?.("#top-section-mobile");
+      if (local) local.value = this._subsection;
+      if (top) top.value = this._page;
+      return;
+    }
     return trackAsync(this, NAVIGATION_MARK_PREFIX, async () => {
       const metadata = pageMetadata(page);
-      const targetSubsection = subsection || this._visibleSubsections(page)[0]?.id || metadata.sections[0]?.id || null;
-      if (this._isDraftView() && !this._isDraftView(page, targetSubsection)) {
+      const resolvedSubsection = subsection || this._visibleSubsections(page)[0]?.id || metadata.sections[0]?.id || null;
+      if (this._isDraftView() && !this._isDraftView(page, resolvedSubsection)) {
         this._clearConfigDraft();
       }
       this._page = page;
-      this._subsection = targetSubsection;
+      this._subsection = resolvedSubsection;
       this._query = "";
-      history.pushState({}, "", routePath(page, targetSubsection));
+      history.pushState({}, "", routePath(page, resolvedSubsection));
       this._result = null;
       await this._loadSection();
     }, true);
@@ -692,12 +756,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _renderContent() {
+    initializePageDraft(this);
+    bindStateSafety(this);
     renderManagement(this);
     bindPanelDialogs(this);
     bindSingleRequestSave(this);
     bindFrontendCorrectness(this);
     bindRequestRuleSearch(this);
     applyRequestRuleSearch(this);
+    bindPageDrafts(this);
+    refreshPageSaveBar(this);
   }
 
   _renderShell() {
@@ -919,7 +987,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       element.hass = this.hass;
       element.value = config[element.dataset.guestKey] || [];
       element.selector = type === "entity" ? {entity: {multiple: true}} : type === "area" ? {area: {multiple: true}} : type === "label" ? {label: {multiple: true}} : type === "domain" ? select(result.domains || [], (item) => item, (item) => item) : type === "knowledge" ? select(result.knowledge_sources || [], (item) => item.source_id, (item) => `${item.title} — ${item.description || "No description"}`) : type === "group" ? select(result.function_groups || [], (item) => item.id, (item) => `${item.name} — ${item.description}`) : select((result.functions || []).filter((item) => !item.unsafe_in_guest_mode), (item) => item.name, (item) => `${item.name}${item.enabled ? "" : " (disabled)"} — ${item.description || "No description"}`);
-      element.addEventListener("value-changed", (event) => { config[element.dataset.guestKey] = event.detail.value || []; });
+      element.addEventListener("value-changed", (event) => {
+        config[element.dataset.guestKey] = event.detail.value || [];
+        queueMicrotask(() => refreshPageSaveBar(this));
+      });
     });
   }
 
