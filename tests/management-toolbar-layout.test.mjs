@@ -18,8 +18,8 @@ assert.match(
 );
 assert.match(
   source,
-  /contextRow\.append\(agentPicker\);\s*topNav\.before\(contextRow\)/,
-  "assistant picker should establish context immediately before primary navigation",
+  /contextRow\.append\(agentPicker\);[\s\S]*?contextRow\.append\(actionGroup\);[\s\S]*?topNav\.before\(contextRow\)/,
+  "assistant context row should contain the picker and assistant actions before primary navigation",
 );
 assert.doesNotMatch(
   source,
