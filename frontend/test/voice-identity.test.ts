@@ -3,7 +3,14 @@ import {describe, expect, it} from "vitest";
 import {readFile} from "node:fs/promises";
 
 import {NAVIGATION, searchSettings} from "../../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
-import {renderVoiceIdentity, voiceIdentitySummary, voiceUserLabel, voiceUsers} from "../../custom_components/extended_openai_conversation_responses/frontend/voice-identity-ui.js";
+import {
+  deviceIdForSatellite,
+  renderVoiceIdentity,
+  satelliteForDeviceId,
+  voiceIdentitySummary,
+  voiceUserLabel,
+  voiceUsers,
+} from "../../custom_components/extended_openai_conversation_responses/frontend/voice-identity-ui.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
 const panel = {
@@ -22,30 +29,46 @@ const panel = {
       voice_scope_policy:"device_mapping",
       voice_unmapped_policy:"default_user",
       voice_default_user_id:"user-1",
-      voice_device_mappings:{kitchen:"user:user-1",hall:"shared"},
+      voice_device_mappings:{"device-kitchen":"user:user-1","device-hall":"shared"},
     },
   },
 };
 
 describe("Voice & identity management UX", () => {
-  it("uses the existing Home Assistant scope catalogue for friendly user choices", () => {
+  it("retains the scope catalogue only as a compatibility label fallback", () => {
     expect(voiceUsers(panel)).toEqual([{id:"user-1",name:"Conor"},{id:"user-2",name:"Alex"}]);
     expect(voiceUserLabel(panel,"user:user-1")).toBe("Conor");
     expect(voiceUserLabel(panel,"missing-user")).toBeNull();
   });
 
-  it("renders guided identity controls instead of raw IDs and JSON editing", () => {
+  it("renders Home Assistant native user and Assist satellite pickers without exposing device IDs", () => {
     const html = renderVoiceIdentity(panel);
     expect(html).toContain("Signed-in identity wins");
     expect(html).toContain("No identity guessing");
-    expect(html).toContain('id="config-voice_default_user_id"');
-    expect(html).toContain('<option value="user-1" selected>Conor</option>');
-    expect(html).toContain('id="voice-mappings"');
-    expect(html).toContain('value="kitchen"');
-    expect(html).toContain('value="user:user-1" selected>Conor</option>');
+    expect(html).toContain('id="config-voice_default_user_picker"');
+    expect(html).toContain("<ha-user-picker");
+    expect(html).toContain("<ha-entity-picker");
+    expect(html).toContain('class="voice-native-picker voice-satellite-picker"');
+    expect(html).toContain('value="device-kitchen"');
+    expect(html).toContain('value="user:user-1"');
+    expect(html).toContain("Home Assistant user");
+    expect(html).toContain("Shared household");
+    expect(html).toContain("No retained personal data");
     expect(html).not.toContain("Voice device assignments (JSON)");
     expect(html).not.toContain("Default Home Assistant user ID");
+    expect(html).not.toContain("Device ID<input");
     expect(html).not.toContain("<textarea");
+  });
+
+  it("translates Assist satellite entity IDs to the existing stored device IDs", () => {
+    const registry = [
+      {entity_id:"assist_satellite.kitchen",device_id:"device-kitchen"},
+      {entity_id:"assist_satellite.hall",device_id:"device-hall"},
+      {entity_id:"sensor.kitchen_temperature",device_id:"device-kitchen"},
+    ];
+    expect(deviceIdForSatellite(registry,"assist_satellite.kitchen")).toBe("device-kitchen");
+    expect(satelliteForDeviceId(registry,"device-kitchen")).toBe("assist_satellite.kitchen");
+    expect(satelliteForDeviceId(registry,"missing-device")).toBe("");
   });
 
   it("explains the effective unidentified-voice path", () => {
@@ -65,10 +88,9 @@ describe("Voice & identity management UX", () => {
     expect(searchSettings("unmapped-device fallback")[0]?.configKey).toBe("voice_unmapped_policy");
   });
 
-  it("keeps route metadata available while deferring voice implementation", async () => {
+  it("loads as a bootstrap extension before persistent rendering", async () => {
     const bootstrap = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-bootstrap.js",import.meta.url),"utf8");
     expect(bootstrap).toContain('"./management-voice-identity.js"');
-    const route = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url), "utf8");
-    expect(route).toContain('"assistant/voice": () => import("./voice-identity-ui.js")');
+    expect(bootstrap.indexOf("management-voice-identity.js")).toBeLessThan(bootstrap.indexOf("management-rendering-performance.js"));
   });
 });
