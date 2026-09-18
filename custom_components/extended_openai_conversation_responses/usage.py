@@ -822,9 +822,7 @@ class UsageManager:
         """Coalesce authoritative aggregates and their compatibility mirror."""
         totals_snapshot = self._usage_snapshot("totals")
         if self._daily_storage is None:
-            return self._schedule_store_snapshot(
-                self._storage, lambda: totals_snapshot
-            )
+            return self._schedule_store_snapshot(self._storage, lambda: totals_snapshot)
 
         totals_delay_save = getattr(self._storage, "async_delay_save", None)
         daily_delay_save = getattr(self._daily_storage, "async_delay_save", None)
@@ -858,11 +856,8 @@ class UsageManager:
                         "daily": self._daily_storage,
                         "details": self._detail_storage,
                     }[category]
-                    if (
-                        store is not None
-                        and self._schedule_store_snapshot(
-                            store, lambda: self._usage_snapshot(category)
-                        )
+                    if store is not None and self._schedule_store_snapshot(
+                        store, lambda: self._usage_snapshot(category)
                     ):
                         # Details are intentionally serialized only when the delayed
                         # save is due, avoiding O(N) history serialization on the turn.
