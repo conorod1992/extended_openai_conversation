@@ -1,5 +1,3 @@
-const PATCHED = Symbol.for("extended-openai.management-settings-polish");
-
 function ensureStyles(panel) {
   const root = panel?.shadowRoot;
   if (!root || root.querySelector("style[data-eoc-settings-polish]")) return;
@@ -53,26 +51,4 @@ function applyGuideLayout(panel) {
 export function polishSettingsLayout(panel) {
   ensureStyles(panel);
   applyGuideLayout(panel);
-}
-
-export function installManagementSettingsPolish(Panel) {
-  // A constructor is the production API; registry callers remain supported.
-  if (typeof Panel !== "function") {
-    const registry = Panel || globalThis.customElements;
-    if (!registry?.whenDefined) return Promise.resolve(false);
-    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementSettingsPolish(registry.get("extended-openai-management-panel")));
-  }
-  const constructor = Panel;
-  const prototype = constructor?.prototype;
-  if (!prototype || prototype[PATCHED]) return false;
-
-  const originalRender = prototype._renderContent;
-  prototype._renderContent = function(...args) {
-    const result = originalRender.apply(this, args);
-    polishSettingsLayout(this);
-    return result;
-  };
-
-  prototype[PATCHED] = true;
-  return true;
 }
