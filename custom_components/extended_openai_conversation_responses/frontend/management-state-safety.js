@@ -1,8 +1,5 @@
-import {pageCoordinator, currentPageScope, initializePageDraft, bindPageDrafts, refreshPageSaveBar} from "./management-page-drafts.js";
+import {pageCoordinator, currentPageScope} from "./management-page-drafts.js";
 import {same, clone} from "./unsaved-state.js";
-import {routePath} from "./frontend-navigation.js";
-
-const PATCHED = Symbol.for("extended-openai.management-state-safety");
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
 export {SECTION_CACHE_TTL_MS};
 
@@ -119,7 +116,7 @@ function restoreConfigFocus(panel, control) {
   });
 }
 
-function applyTargetedConfigDirty(panel, keys, control = null) {
+export function applyTargetedConfigDirty(panel, keys, control = null) {
   if (!keys.length) return;
   const wasDirty = Boolean(panel._configDirty);
   const changed = syncConfigDirtyKeys(panel, keys);
@@ -165,7 +162,7 @@ export function syncGuestDirty(panel) {
 
 const EDITOR_IDS = ["rule-dialog", "tool-dialog", "group-dialog", "knowledge-dialog", "memory-dialog", "temporary-memory-dialog"];
 
-function openDialogBaseline(panel, dialog) {
+export function openDialogBaseline(panel, dialog) {
   if (!dialog?.id || !EDITOR_IDS.includes(dialog.id)) return;
   panel._eocDialogBaselines ||= new Map();
   if (dialog.id === "tool-dialog") {
@@ -204,7 +201,7 @@ function modifiedOpenDialog(panel) {
   return null;
 }
 
-async function confirmDialogClose(panel, dialog) {
+export async function confirmDialogClose(panel, dialog) {
   if (panel._eocDialogClosePending) return false;
   panel._eocDialogClosePending = true;
   try { return await closeEditor(panel, dialog); }
@@ -250,7 +247,7 @@ function ensureWindowGuards(panel) {
   }
 }
 
-function bindStateSafety(panel) {
+export function bindStateSafety(panel) {
   pageCoordinator(panel).register("editors", {
     dirty: () => Boolean(modifiedOpenDialog(panel)),
     discard: () => {
@@ -329,111 +326,13 @@ async function navigateWithUnsavedState(panel, destination) {
   return true;
 }
 
-export function installManagementStateSafety(Panel) {
-  // A constructor is the production API; registry callers remain supported.
-  if (typeof Panel !== "function") {
-    const registry = Panel || globalThis.customElements;
-    if (!registry?.whenDefined) return Promise.resolve(false);
-    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementStateSafety(registry.get("extended-openai-management-panel")));
+export function cleanupStateSafety(panel) {
+  if (panel._eocStateBeforeUnload) {
+    window.removeEventListener("beforeunload", panel._eocStateBeforeUnload);
+    panel._eocStateBeforeUnload = null;
   }
-  const prototype = Panel?.prototype;
-  if (!prototype || prototype[PATCHED]) return false;
-  prototype[PATCHED] = true;
-
-  prototype._captureDialogBaseline = function(dialog) { openDialogBaseline(this, dialog); };
-  prototype._confirmEditorClose = function(dialog) { return confirmDialogClose(this, dialog); };
-
-  const originalSetConfigDirty = prototype._setConfigDirty;
-  prototype._setConfigDirty = function(value) {
-    if (!value) {
-      this._eocDirtyConfigKeys = new Set();
-      return originalSetConfigDirty.call(this, false);
-    }
-    const result = originalSetConfigDirty.call(this, true);
-    if (this._eocDirtyConfigKeys instanceof Set) {
-      queueMicrotask(() => {
-        if (!(this._eocDirtyConfigKeys instanceof Set) || this._eocDirtyConfigKeys.size) return;
-        const changed = rebuildConfigDirtyKeys(this);
-        const dirty = changed.size > 0;
-        const wasDirty = Boolean(this._configDirty);
-        originalSetConfigDirty.call(this, dirty);
-        if (wasDirty && !dirty) this._render?.();
-      });
-    }
-    return result;
-  };
-
-  prototype._syncConfigDirty = function() {
-    const changed = rebuildConfigDirtyKeys(this);
-    return originalSetConfigDirty.call(this, changed.size > 0);
-  };
-
-  prototype._syncConfigControlDirty = function(control) {
-    const key = configKeyForControl(control);
-    if (key) applyTargetedConfigDirty(this, [key], control);
-  };
-
-  const originalNavigate = prototype._navigate;
-  prototype._navigate = async function(page, subsection = null) {
-    const targetSubsection = subsection || this._visibleSubsections(page)[0]?.id || null;
-    const destination = targetSubsection ? `${page}/${targetSubsection}` : page;
-    if (!await confirmStateSafeNavigation(this, destination)) {
-      const local = this.shadowRoot?.querySelector?.("#local-section");
-      const top = this.shadowRoot?.querySelector?.("#top-section-mobile");
-      if (local) local.value = this._subsection;
-      if (top) top.value = this._page;
-      return;
-    }
-    return originalNavigate.call(this, page, subsection);
-  };
-
-  const originalHandleRouteChange = prototype._handleRouteChange;
-  prototype._handleRouteChange = async function(route) {
-    const destination = route.section ? `${route.page}/${route.section}` : route.page;
-    if (!await confirmStateSafeNavigation(this, destination)) {
-      history.pushState({}, "", routePath(this._page, this._subsection));
-      return;
-    }
-    return originalHandleRouteChange.call(this, route);
-  };
-
-  const originalSetupGuestSelectors = prototype._setupGuestSelectors;
-  prototype._setupGuestSelectors = function(...args) {
-    const result = originalSetupGuestSelectors.apply(this, args);
-    this.shadowRoot.querySelectorAll("ha-selector[data-guest-key]").forEach((selector) => {
-      if (selector.__eocGuestDirtyBound) return;
-      selector.__eocGuestDirtyBound = true;
-      selector.addEventListener("value-changed", () => queueMicrotask(() => refreshPageSaveBar(this)));
-    });
-    return result;
-  };
-
-  prototype._confirmUnsavedNavigation = function(destination) {
-    return confirmStateSafeNavigation(this, destination);
-  };
-
-  const originalRender = prototype._renderContent;
-  prototype._renderContent = function(...args) {
-    initializePageDraft(this);
-    bindStateSafety(this);
-    const result = originalRender.apply(this, args);
-    bindPageDrafts(this);
-    refreshPageSaveBar(this);
-    return result;
-  };
-
-  const originalDisconnected = prototype.disconnectedCallback;
-  prototype.disconnectedCallback = function(...args) {
-    if (this._eocStateBeforeUnload) {
-      window.removeEventListener("beforeunload", this._eocStateBeforeUnload);
-      this._eocStateBeforeUnload = null;
-    }
-    if (this._eocStateFocus) {
-      window.removeEventListener("focus", this._eocStateFocus);
-      this._eocStateFocus = null;
-    }
-    return originalDisconnected?.apply(this, args);
-  };
-
-  return true;
+  if (panel._eocStateFocus) {
+    window.removeEventListener("focus", panel._eocStateFocus);
+    panel._eocStateFocus = null;
+  }
 }
