@@ -24,6 +24,8 @@ from .provider_errors import (
 
 _LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
+
+
 def _conversation_error_result(
     entity: Any, user_input: Any, chat_log: Any, err: OpenAIError | HomeAssistantError
 ) -> ConversationResult:
