@@ -49,7 +49,6 @@ async def test_debug_assets_are_registered_before_management_panel(
     for name in (
         "apply_openai_compatibility",
         "install_persistence_transactions",
-        "install_performance_optimizations",
         "install_guest_policy_fast_path",
         "install_deferred_context_summary",
         "install_debug_instrumentation",

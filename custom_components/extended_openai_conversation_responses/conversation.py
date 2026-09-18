@@ -154,6 +154,7 @@ from .memory import (
     memory_user_id,
 )
 from .prompt import render_effective_prompt
+from .prompt_cache import _PROMPT_CACHE_CONTEXT, prompt_cache_context
 from .provider_errors import (
     log_provider_failure,
     provider_user_message,
@@ -534,61 +535,67 @@ class ExtendedOpenAIAgentEntity(
 
     async def _async_process(self, user_input: ConversationInput) -> ConversationResult:
         """Shared processing pipeline for Assist and the direct process action."""
-        llm_context = user_input.as_llm_context(DOMAIN)
-        request_policy = self._resolve_live_guest_policy()
-        guest_policy_token = _ACTIVE_GUEST_POLICY.set(request_policy)
-        source_device_id = user_input.satellite_id or user_input.device_id
-        scope = resolve_data_scope(
-            SimpleNamespace(
-                context=llm_context.context,
-                device_id=source_device_id,
-            ),
-            self.subentry.data,
-        )
-        continuity_mode = self.subentry.data.get(
-            CONF_CONVERSATION_CONTINUITY, DEFAULT_CONVERSATION_CONTINUITY
-        )
-        timeout_minutes = int(
-            self.subentry.data.get(
-                CONF_CONVERSATION_TIMEOUT_MINUTES,
-                DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
-            )
-        )
-        source_device_id = source_device_id or scope.device_id
-        assert self._continuity is not None
+        cache_token = _PROMPT_CACHE_CONTEXT.set(None)
         try:
-            resolution = await self._continuity.async_resolve(
-                continuity_mode,
-                scope,
-                source_device_id,
-                user_input.conversation_id,
-                timeout_minutes,
-                namespace=(
-                    GUEST_CONTINUITY_NAMESPACE if request_policy.guest_active else None
+            llm_context = user_input.as_llm_context(DOMAIN)
+            request_policy = self._resolve_live_guest_policy()
+            guest_policy_token = _ACTIVE_GUEST_POLICY.set(request_policy)
+            source_device_id = user_input.satellite_id or user_input.device_id
+            scope = resolve_data_scope(
+                SimpleNamespace(
+                    context=llm_context.context,
+                    device_id=source_device_id,
                 ),
+                self.subentry.data,
             )
-        except BaseException:
-            _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
-            raise
-        try:
-            return await self._async_process_claimed(
-                user_input,
-                llm_context,
-                request_policy,
-                scope,
-                source_device_id,
-                timeout_minutes,
-                resolution,
+            continuity_mode = self.subentry.data.get(
+                CONF_CONVERSATION_CONTINUITY, DEFAULT_CONVERSATION_CONTINUITY
             )
-        finally:
+            timeout_minutes = int(
+                self.subentry.data.get(
+                    CONF_CONVERSATION_TIMEOUT_MINUTES,
+                    DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+                )
+            )
+            source_device_id = source_device_id or scope.device_id
+            assert self._continuity is not None
             try:
-                await asyncio.shield(
-                    self._continuity.async_release(
-                        resolution.key, resolution.claim_token
-                    )
+                resolution = await self._continuity.async_resolve(
+                    continuity_mode,
+                    scope,
+                    source_device_id,
+                    user_input.conversation_id,
+                    timeout_minutes,
+                    namespace=(
+                        GUEST_CONTINUITY_NAMESPACE
+                        if request_policy.guest_active
+                        else None
+                    ),
+                )
+            except BaseException:
+                _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
+                raise
+            try:
+                return await self._async_process_claimed(
+                    user_input,
+                    llm_context,
+                    request_policy,
+                    scope,
+                    source_device_id,
+                    timeout_minutes,
+                    resolution,
                 )
             finally:
-                _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
+                try:
+                    await asyncio.shield(
+                        self._continuity.async_release(
+                            resolution.key, resolution.claim_token
+                        )
+                    )
+                finally:
+                    _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
+        finally:
+            _PROMPT_CACHE_CONTEXT.reset(cache_token)
 
     async def _async_process_claimed(
         self,
@@ -1148,7 +1155,7 @@ class ExtendedOpenAIAgentEntity(
     ) -> str:
         """Build system prompt with exposed entities and skills."""
         policy = self._effective_guest_policy()
-        return render_effective_prompt(
+        effective = render_effective_prompt(
             self.hass,
             self.subentry.data,
             exposed_entities=exposed_entities,
@@ -1159,7 +1166,9 @@ class ExtendedOpenAIAgentEntity(
             temporary_memories=temporary_memories,
             knowledge_available=self._knowledge_available,
             guest_policy=policy,
-        ).text
+        )
+        _PROMPT_CACHE_CONTEXT.set(prompt_cache_context(effective, self.subentry.data))
+        return effective.text
 
     async def _async_retrieve_memories(
         self, llm_context: llm.LLMContext, query: str

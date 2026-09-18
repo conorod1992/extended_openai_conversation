@@ -4,30 +4,25 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict, replace
+import math
 from typing import Any
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import memory as memory_module
+from custom_components.extended_openai_conversation_responses import (
+    memory as memory_module,
+)
 from custom_components.extended_openai_conversation_responses.memory import (
     MemoryRecord,
     PersistentMemory,
-)
-from custom_components.extended_openai_conversation_responses.performance import (
+    _bm25_score as cached_memory_bm25_score,
     _cached_memory_record_terms,
     _cached_memory_term_frequencies,
     _cached_memory_tokens,
-    cached_memory_bm25_score,
-    cached_memory_normalize,
-    cached_memory_record_token_list,
-    cached_memory_tokens,
+    _normalize as cached_memory_normalize,
+    _record_token_list as cached_memory_record_token_list,
+    _tokens as cached_memory_tokens,
 )
-
-_ORIGINAL_SEARCH = PersistentMemory.async_search
-_ORIGINAL_RECORD_TOKEN_LIST = memory_module._record_token_list
-_ORIGINAL_TOKENS = memory_module._tokens
-_ORIGINAL_NORMALIZE = memory_module._normalize
-_ORIGINAL_BM25 = memory_module._bm25_score
 
 
 class _Storage:
@@ -115,7 +110,7 @@ def test_record_terms_are_cached_without_sharing_mutable_lists() -> None:
     first = cached_memory_record_token_list(record)
     second = cached_memory_record_token_list(record)
 
-    assert first == _ORIGINAL_RECORD_TOKEN_LIST(record)
+    assert "celsiu" in first
     assert second == first
     assert second is not first
     first.append("mutated")
@@ -153,9 +148,9 @@ def test_string_lexical_caches_preserve_fresh_mutable_sets() -> None:
     first.add("mutated")
     second = cached_memory_tokens(value)
 
-    assert second == _ORIGINAL_TOKENS(value)
+    assert second == {"preference", "temperature", "unit"}
     assert "mutated" not in second
-    assert cached_memory_normalize(value) == _ORIGINAL_NORMALIZE(value)
+    assert cached_memory_normalize(value) == "preferences temperature units"
     info = _cached_memory_tokens.cache_info()
     assert info.misses == 1
     assert info.hits == 1
@@ -168,9 +163,12 @@ def test_bm25_frequency_cache_preserves_exact_score() -> None:
     document_terms = ["temperature", "temperature", "unit", "celsiu"]
     document_frequency = {"temperature": 2, "unit": 1}
 
-    expected = _ORIGINAL_BM25(
-        query_terms, document_terms, document_frequency, 3, 4.5
-    )
+    # Independent reference calculation for this fixed document.
+    idfs = [math.log(1 + (3 - df + 0.5) / (df + 0.5)) for df in (2, 1)]
+    expected = sum(
+        idf * tf * 2.2 / (tf + 1.2 * (0.25 + 0.75 * 4 / 4.5))
+        for idf, tf in zip(idfs, (2, 1), strict=True)
+    ) / sum(idf * 2.2 / 1.3 for idf in idfs)
     first = cached_memory_bm25_score(
         query_terms, document_terms, document_frequency, 3, 4.5
     )
@@ -197,8 +195,7 @@ def test_bm25_frequency_cache_preserves_exact_score() -> None:
         ("alice", "completely unrelated phrase", None),
     ],
 )
-async def test_existing_search_algorithm_is_unchanged_with_cached_helpers(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_search_results_are_unchanged_after_cache_warmup(
     scope: str | tuple[str, ...],
     query: str,
     category: str | None,
@@ -206,18 +203,13 @@ async def test_existing_search_algorithm_is_unchanged_with_cached_helpers(
     """The authoritative search returns identical results with cached pure helpers."""
     original_manager = await _manager()
     cached_manager = await _manager()
-    expected = await _ORIGINAL_SEARCH(
-        original_manager, scope, query, category=category, limit=5
+    memory_module._cached_memory_record_terms.cache_clear()
+    memory_module._cached_memory_tokens.cache_clear()
+    memory_module._cached_memory_term_frequencies.cache_clear()
+    expected = await original_manager.async_search(
+        scope, query, category=category, limit=5
     )
 
-    monkeypatch.setattr(
-        memory_module, "_record_token_list", cached_memory_record_token_list
-    )
-    monkeypatch.setattr(memory_module, "_tokens", cached_memory_tokens)
-    monkeypatch.setattr(memory_module, "_normalize", cached_memory_normalize)
-    monkeypatch.setattr(memory_module, "_bm25_score", cached_memory_bm25_score)
-    actual = await _ORIGINAL_SEARCH(
-        cached_manager, scope, query, category=category, limit=5
-    )
+    actual = await cached_manager.async_search(scope, query, category=category, limit=5)
 
     assert _ids(actual) == _ids(expected)

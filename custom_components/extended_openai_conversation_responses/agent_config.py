@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
+from functools import lru_cache
 import re
 from types import MappingProxyType
 from typing import Any, cast
@@ -174,6 +176,7 @@ from .function_tool_policy import (
     RESERVED_FUNCTION_TOOL_NAMES,
 )
 from .functions import FUNCTIONS, get_function
+from .functions.base import copy_runtime_function_config
 from .ha_llm_tools import is_ha_tool, reference_key, validate_reference
 from .helpers import get_model_config, get_reasoning_effort_options
 from .local_intents import (
@@ -539,7 +542,7 @@ def function_tool_enabled(tool: dict[str, Any]) -> bool:
     return tool.get("enabled", True) is True
 
 
-def configured_function_tools_from_data(data: Any) -> list[dict[str, Any]]:
+def _configured_function_tools_from_data(data: Any) -> list[dict[str, Any]]:
     """Parse fully validated production Function Tools from agent data."""
     configured = data.get(CONF_FUNCTION_TOOLS)
     parsed = yaml.safe_load(configured) if configured else DEFAULT_CONF_FUNCTION_TOOLS
@@ -557,7 +560,7 @@ def configured_function_tools_from_data(data: Any) -> list[dict[str, Any]]:
 _FUNCTION_GROUP_ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
-def validate_function_groups(
+def _validate_function_groups(
     value: Any, function_tools: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Validate compact group metadata and references to configured functions."""
@@ -1084,3 +1087,75 @@ def model_capabilities(model: str) -> dict[str, Any]:
     capabilities: dict[str, Any] = dict(get_model_config(model))
     capabilities["reasoning_effort_options"] = get_reasoning_effort_options(model)
     return capabilities
+
+
+def _configured_tools_yaml(data: Mapping[str, Any]) -> str | None:
+    """Return a deterministic cache key preserving legacy empty/default semantics."""
+    configured = data.get(CONF_FUNCTION_TOOLS)
+    if not configured:
+        return None
+    if isinstance(configured, str):
+        return configured
+    return yaml.safe_dump(
+        configured,
+        sort_keys=True,
+        allow_unicode=True,
+    )
+
+
+@lru_cache(maxsize=64)
+def _cached_configured_tools(raw_yaml: str | None) -> tuple[dict[str, Any], ...]:
+    """Parse and validate one distinct persisted Function Tool revision once."""
+    data: dict[str, Any] = {}
+    if raw_yaml is not None:
+        data[CONF_FUNCTION_TOOLS] = raw_yaml
+    return tuple(_configured_function_tools_from_data(data))
+
+
+def configured_function_tools_from_data(
+    data: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Return isolated tools from the validated configuration-revision cache."""
+    # Callers historically received fresh mutable dictionaries. Keep that contract
+    # while moving the much more expensive YAML/schema validation behind the cache.
+    # Runtime Function configs require a container copy that keeps HA-bound Template
+    # objects hydrated; their normal deepcopy is intentionally the persistence form.
+    return cast(
+        list[dict[str, Any]],
+        copy_runtime_function_config(
+            list(_cached_configured_tools(_configured_tools_yaml(data)))
+        ),
+    )
+
+
+def _groups_cache_key(value: Any) -> str:
+    return yaml.safe_dump(value, sort_keys=True, allow_unicode=True)
+
+
+@lru_cache(maxsize=128)
+def _cached_function_groups(
+    groups_yaml: str,
+    tool_names: tuple[str, ...],
+) -> tuple[dict[str, Any], ...]:
+    groups = yaml.safe_load(groups_yaml)
+    synthetic_tools = [{"spec": {"name": name}} for name in tool_names]
+    return tuple(_validate_function_groups(groups, synthetic_tools))
+
+
+def validate_function_groups(
+    value: Any, function_tools: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Validate each distinct group/tool-name configuration only once."""
+    try:
+        tool_names = tuple(
+            str(tool["spec"]["name"])
+            for tool in function_tools
+            if isinstance(tool, dict)
+            and isinstance(tool.get("spec"), dict)
+            and isinstance(tool["spec"].get("name"), str)
+        )
+        groups_yaml = _groups_cache_key(value)
+    except Exception:
+        # Preserve the existing validation/error path for malformed unexpected data.
+        return _validate_function_groups(value, function_tools)
+    return deepcopy(list(_cached_function_groups(groups_yaml, tool_names)))

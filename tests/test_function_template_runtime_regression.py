@@ -6,16 +6,17 @@ from typing import Any
 import pytest
 import yaml
 
-from homeassistant.helpers.template import Template
-
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    _cached_configured_tools,
+    configured_function_tools_from_data,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
 )
-from custom_components.extended_openai_conversation_responses.functions import get_function
-from custom_components.extended_openai_conversation_responses.performance import (
-    _cached_configured_tools,
-    cached_configured_function_tools_from_data,
+from custom_components.extended_openai_conversation_responses.functions import (
+    get_function,
 )
+from homeassistant.helpers.template import Template
 from tests.helpers import load_function_tool_yaml
 
 
@@ -52,8 +53,8 @@ def test_cached_template_bearing_tool_fixtures_remain_hydrated(
     raw_tools = load_function_tool_yaml(fixture_name)
     data = {CONF_FUNCTION_TOOLS: yaml.safe_dump(raw_tools, sort_keys=False)}
 
-    first = cached_configured_function_tools_from_data(data)
-    second = cached_configured_function_tools_from_data(data)
+    first = configured_function_tools_from_data(data)
+    second = configured_function_tools_from_data(data)
     first_templates = _templates(first)
     second_templates = _templates(second)
 
@@ -89,8 +90,8 @@ async def test_cached_persisted_template_tool_remains_executable(hass) -> None:
     }
     data = {CONF_FUNCTION_TOOLS: yaml.safe_dump([tool], sort_keys=False)}
 
-    first = cached_configured_function_tools_from_data(data)
-    second = cached_configured_function_tools_from_data(data)
+    first = configured_function_tools_from_data(data)
+    second = configured_function_tools_from_data(data)
 
     first_config = first[0]["function"]
     second_config = second[0]["function"]

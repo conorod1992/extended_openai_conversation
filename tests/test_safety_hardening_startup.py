@@ -19,7 +19,6 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
     for name in (
         "apply_openai_compatibility",
         "install_persistence_transactions",
-        "install_performance_optimizations",
         "install_deferred_context_summary",
         "install_debug_instrumentation",
         "install_request_rule_match_preview",
@@ -86,7 +85,6 @@ async def test_management_loading_is_installed_before_permissions(
     for name in (
         "apply_openai_compatibility",
         "install_persistence_transactions",
-        "install_performance_optimizations",
         "install_guest_policy_fast_path",
         "install_deferred_context_summary",
         "install_debug_instrumentation",
