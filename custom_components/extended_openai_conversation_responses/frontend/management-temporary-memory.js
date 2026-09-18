@@ -139,22 +139,16 @@ export function installManagementTemporaryMemory(Panel) {
   };
 
   prototype._closeTemporaryMemory = async function(force = false) {
-    if (!force && this._temporaryMemoryDirty()) {
-      const discard = await this._confirm(
-        "Discard unsaved changes?",
-        "Your edits to this short-term memory have not been saved.",
-        "Discard",
-      );
-      if (!discard) return false;
-    }
-    this.shadowRoot.querySelector("#temporary-memory-dialog")?.close();
+    const dialog = this.shadowRoot.querySelector("#temporary-memory-dialog");
+    if (force) dialog?.close();
+    else if (!await this._confirmEditorClose(dialog)) return false;
     this._temporaryMemoryDraft = null;
     return true;
   };
 
   prototype._saveTemporaryMemory = async function() {
     const draft = this._temporaryMemoryDraft;
-    if (!draft) return;
+    if (!draft || this._temporaryMemorySaving) return;
     const content = this.shadowRoot.querySelector("#temporary-memory-content")?.value ?? "";
     const category = this.shadowRoot.querySelector("#temporary-memory-category")?.value ?? "";
     const expiresAt = this.shadowRoot.querySelector("#temporary-memory-expiry")?.value ?? "";
@@ -163,6 +157,9 @@ export function installManagementTemporaryMemory(Panel) {
       error.textContent = "Memory, category, and expiry are required.";
       return;
     }
+    this._temporaryMemorySaving = true;
+    const save = this.shadowRoot.querySelector("#temporary-memory-save");
+    this._setSaving(save, true);
     try {
       await this._call("memories", "temporary_update", {
         scope_id: this._scopeId,
@@ -176,7 +173,7 @@ export function installManagementTemporaryMemory(Panel) {
       this._toast("Short-term memory updated");
     } catch (err) {
       error.textContent = err.message || String(err);
-    }
+    } finally { this._temporaryMemorySaving = false; this._setSaving(save, false); }
   };
 
   prototype._deleteTemporaryMemory = async function(memoryId) {
@@ -214,7 +211,7 @@ export function installManagementTemporaryMemory(Panel) {
       this._saveTemporaryMemory();
     });
     this.shadowRoot.querySelectorAll(".close-temporary-editor").forEach((button) => {
-      button.addEventListener("click", () => this._closeTemporaryMemory());
+      button.addEventListener("click", () => this._closeTemporaryMemory(!button.classList.contains("icon")));
     });
     this.shadowRoot.querySelector("#temporary-memory-delete")?.addEventListener("click", () => {
       const id = this._temporaryMemoryDraft?.memory_id;

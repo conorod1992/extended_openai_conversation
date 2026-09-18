@@ -39,7 +39,7 @@ assert.match(html, /Allows small speech-recognition or typing mistakes when no n
 assert.match(html, /Controls how close a phrase must be before fuzzy matching is accepted\. Conservative is least likely to match the wrong rule\./);
 assert.match(html, /Main phrase/);
 assert.match(html, /Other ways to say it/);
-assert.match(html, /Save wording alternatives/);
+assert.doesNotMatch(html, /Save wording alternatives|Save defaults/);
 assert.match(html, /gpt-5 · high reasoning · rest of conversation/);
 const resetHtml = renderRequestRules({...panel,_result:{...panel._result,rules:[{...panel._result.rules[1],action:{...panel._result.rules[1].action,reset:true}}]}});
 assert.match(resetHtml, /Return this conversation to configured defaults/);

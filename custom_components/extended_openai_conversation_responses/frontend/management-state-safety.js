@@ -1,11 +1,11 @@
+import {pageCoordinator, currentPageScope, initializePageDraft, bindPageDrafts, refreshPageSaveBar} from "./management-page-drafts.js";
+import {same, clone} from "./unsaved-state.js";
 import {routePath} from "./frontend-navigation.js";
 
 const PATCHED = Symbol.for("extended-openai.management-state-safety");
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
 export {SECTION_CACHE_TTL_MS};
 
-const clone = (value) => JSON.parse(JSON.stringify(value));
-const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const RESET_PROMPT_KEYS = [
   "prompt",
   "current_datetime_enabled",
@@ -158,24 +158,15 @@ export function dialogHasUnsavedChanges(dialog, baseline, toolInitialYaml = null
   return Array.isArray(baseline) && !same(dialogState(dialog), baseline);
 }
 
-function setGuestBaseline(panel) {
-  panel._eocGuestBaseline = panel._guestDraft ? clone(panel._guestDraft) : null;
-  panel._eocGuestBaselineAgent = panel._agentId || null;
-  panel._guestDirty = false;
+export function syncGuestDirty(panel) {
+  const scope = currentPageScope(panel);
+  return Boolean(panel._viewKey?.() === "capabilities/guest-mode" && scope?.dirty());
 }
 
-export function syncGuestDirty(panel) {
-  if (panel._viewKey?.() !== "capabilities/guest-mode" || !panel._guestDraft) return false;
-  if (!panel._eocGuestBaseline || panel._eocGuestBaselineAgent !== panel._agentId) {
-    setGuestBaseline(panel);
-    return false;
-  }
-  panel._guestDirty = !same(panel._guestDraft, panel._eocGuestBaseline);
-  return panel._guestDirty;
-}
+const EDITOR_IDS = ["rule-dialog", "tool-dialog", "group-dialog", "knowledge-dialog", "memory-dialog", "temporary-memory-dialog"];
 
 function openDialogBaseline(panel, dialog) {
-  if (!dialog?.id || !["rule-dialog", "tool-dialog", "group-dialog"].includes(dialog.id)) return;
+  if (!dialog?.id || !EDITOR_IDS.includes(dialog.id)) return;
   panel._eocDialogBaselines ||= new Map();
   if (dialog.id === "tool-dialog") {
     // Function Tools already keep their authoritative initial YAML on the panel,
@@ -193,6 +184,11 @@ function clearDialogBaseline(panel, dialog) {
 
 function dialogDirty(panel, dialog) {
   if (!dialog?.open) return false;
+  if (dialog.id === "knowledge-dialog" || dialog.id === "memory-dialog") {
+    const read = dialog.id === "knowledge-dialog" ? panel._knowledgeValues : panel._memoryValues;
+    return panel._editorInitial != null && !same(read.call(panel), panel._editorInitial);
+  }
+  if (dialog.id === "temporary-memory-dialog") return panel._temporaryMemoryDirty?.() || false;
   return dialogHasUnsavedChanges(
     dialog,
     panel._eocDialogBaselines?.get(dialog.id),
@@ -201,7 +197,7 @@ function dialogDirty(panel, dialog) {
 }
 
 function modifiedOpenDialog(panel) {
-  for (const id of ["rule-dialog", "tool-dialog", "group-dialog"]) {
+  for (const id of EDITOR_IDS) {
     const dialog = panel.shadowRoot?.querySelector?.(`#${id}`);
     if (dialogDirty(panel, dialog)) return dialog;
   }
@@ -209,6 +205,13 @@ function modifiedOpenDialog(panel) {
 }
 
 async function confirmDialogClose(panel, dialog) {
+  if (panel._eocDialogClosePending) return false;
+  panel._eocDialogClosePending = true;
+  try { return await closeEditor(panel, dialog); }
+  finally { panel._eocDialogClosePending = false; }
+}
+
+async function closeEditor(panel, dialog) {
   if (!dialog?.open) return true;
   if (!dialogDirty(panel, dialog)) {
     clearDialogBaseline(panel, dialog);
@@ -229,7 +232,7 @@ async function confirmDialogClose(panel, dialog) {
 function ensureWindowGuards(panel) {
   if (!panel._eocStateBeforeUnload) {
     panel._eocStateBeforeUnload = (event) => {
-      if (!panel._guestDirty && !modifiedOpenDialog(panel)) return;
+      if (!pageCoordinator(panel).hasChanges()) return;
       event.preventDefault();
       event.returnValue = "";
     };
@@ -240,6 +243,7 @@ function ensureWindowGuards(panel) {
       const view = panel._viewKey();
       const key = panel._sectionCacheKey?.(view);
       const loadedAt = key ? panel._eocSectionCacheTimes?.get(key) : null;
+      if (pageCoordinator(panel).hasChanges() || modifiedOpenDialog(panel)) return;
       if (loadedAt && Date.now() - loadedAt > SECTION_CACHE_TTL_MS) void panel._loadSection(true);
     };
     window.addEventListener("focus", panel._eocStateFocus);
@@ -247,21 +251,26 @@ function ensureWindowGuards(panel) {
 }
 
 function bindStateSafety(panel) {
+  pageCoordinator(panel).register("editors", {
+    dirty: () => Boolean(modifiedOpenDialog(panel)),
+    discard: () => {
+      for (const id of EDITOR_IDS) {
+        const dialog = panel.shadowRoot?.querySelector?.(`#${id}`);
+        if (dialog?.open) { clearDialogBaseline(panel, dialog); dialog.close(); }
+      }
+    },
+  });
   ensureWindowGuards(panel);
   const root = panel.shadowRoot;
   if (!root || root.__eocStateSafetyBound) return;
   root.__eocStateSafetyBound = true;
 
-  const syncGuestAfterEvent = () => queueMicrotask(() => syncGuestDirty(panel));
   const syncConfigAfterControlEvent = (event) => {
     const key = configKeyForControl(event.target);
     if (key) applyTargetedConfigDirty(panel, [key], event.target);
   };
-  root.addEventListener("input", syncGuestAfterEvent);
   root.addEventListener("input", syncConfigAfterControlEvent);
-  root.addEventListener("change", syncGuestAfterEvent);
   root.addEventListener("change", syncConfigAfterControlEvent);
-  root.addEventListener("value-changed", syncGuestAfterEvent);
   root.addEventListener("value-changed", syncConfigAfterControlEvent);
 
   root.addEventListener("click", (event) => {
@@ -271,17 +280,10 @@ function bindStateSafety(panel) {
     if (configKeys.length) {
       queueMicrotask(() => applyTargetedConfigDirty(panel, configKeys, button));
     }
-    if (button.matches("#rule-add,#rule-empty-add,#add-tool,.edit-tool,.duplicate-tool,#add-group,.edit-group")) {
-      requestAnimationFrame(() => {
-        const dialog = root.querySelector("#rule-dialog[open],#tool-dialog[open],#group-dialog[open]");
-        openDialogBaseline(panel, dialog);
-      });
-      return;
-    }
 
     // Explicit Cancel remains an intentional discard. Protect close/X buttons.
     const dialog = button.closest?.("dialog");
-    if (!button.classList.contains("icon") || !["rule-dialog", "tool-dialog", "group-dialog"].includes(dialog?.id)) return;
+    if (!button.closest?.(".dialog-header") || !button.classList.contains("icon") || !EDITOR_IDS.includes(dialog?.id)) return;
     if (!dialogDirty(panel, dialog)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -290,60 +292,40 @@ function bindStateSafety(panel) {
 
   root.addEventListener("cancel", (event) => {
     const dialog = event.target;
-    if (!["rule-dialog", "tool-dialog", "group-dialog"].includes(dialog?.id)) return;
-    if (!dialogDirty(panel, dialog)) {
-      clearDialogBaseline(panel, dialog);
-      return;
-    }
+    if (!EDITOR_IDS.includes(dialog?.id)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     void confirmDialogClose(panel, dialog);
   }, true);
 
-  root.addEventListener("close", (event) => clearDialogBaseline(panel, event.target), true);
-
-  root.addEventListener("change", (event) => {
-    const select = event.target;
-    if (select?.id !== "agent" || panel._viewKey() !== "capabilities/guest-mode" || !syncGuestDirty(panel)) return;
-    const nextAgent = select.value;
-    const currentAgent = panel._agentId;
-    select.value = currentAgent;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    void (async () => {
-      const discard = await panel._confirm(
-        "Discard unsaved Guest policy changes?",
-        "Switching agents will discard your unsaved Guest Mode policy changes.",
-        "Discard",
-      );
-      if (!discard) return;
-      panel._guestDirty = false;
-      panel._agentId = nextAgent;
-      localStorage.setItem("extended-openai-agent", panel._agentId);
-      panel._clearConfigDraft();
-      panel._scopeId = null;
-      panel._applyScopes(panel._scopeCatalogCache.get(panel._scopeCatalogKey()) || panel._baseScopes);
-      panel._eocGuestBaseline = null;
-      panel._eocGuestBaselineAgent = null;
-      await panel._loadSection();
-    })();
+  root.addEventListener("close", (event) => {
+    clearDialogBaseline(panel, event.target);
+    if (panel._eocDeferredEditorRender) queueMicrotask(() => panel._render());
   }, true);
+
 }
 
-async function confirmStateSafeNavigation(panel, destination) {
-  if (panel._viewKey() === "capabilities/guest-mode" && destination !== "capabilities/guest-mode" && syncGuestDirty(panel)) {
-    const discard = await panel._confirm(
-      "Discard unsaved Guest policy changes?",
-      "Your Guest Mode policy changes have not been saved.",
-      "Discard",
-    );
-    if (!discard) return false;
-    panel._guestDirty = false;
-    panel._eocGuestBaseline = null;
-    panel._eocGuestBaselineAgent = null;
-  }
+export async function confirmStateSafeNavigation(panel, destination) {
+  if (panel._eocUnsavedNavigationPending || panel._eocDialogClosePending) return false;
+  panel._eocUnsavedNavigationPending = true;
+  try { return await navigateWithUnsavedState(panel, destination); }
+  finally { panel._eocUnsavedNavigationPending = false; }
+}
+
+async function navigateWithUnsavedState(panel, destination) {
+  const scopes = pageCoordinator(panel).leaving(destination);
+  if (scopes.some((scope) => scope.pending) || panel._eocAgentMutations) return false;
   const dialog = modifiedOpenDialog(panel);
-  if (dialog && !await confirmDialogClose(panel, dialog)) return false;
+  if (scopes.length || dialog) {
+    const discard = await panel._confirm("Discard unsaved changes?", "Your changes have not been saved.", "Discard changes");
+    if (!discard) return false;
+    for (const scope of scopes) scope.discard();
+  }
+  // Close even clean editors before switching their owning context.
+  for (const id of EDITOR_IDS) {
+    const editor = panel.shadowRoot?.querySelector?.(`#${id}`);
+    if (editor?.open) { clearDialogBaseline(panel, editor); editor.close(); }
+  }
   return true;
 }
 
@@ -357,6 +339,9 @@ export function installManagementStateSafety(Panel) {
   const prototype = Panel?.prototype;
   if (!prototype || prototype[PATCHED]) return false;
   prototype[PATCHED] = true;
+
+  prototype._captureDialogBaseline = function(dialog) { openDialogBaseline(this, dialog); };
+  prototype._confirmEditorClose = function(dialog) { return confirmDialogClose(this, dialog); };
 
   const originalSetConfigDirty = prototype._setConfigDirty;
   prototype._setConfigDirty = function(value) {
@@ -392,7 +377,13 @@ export function installManagementStateSafety(Panel) {
   prototype._navigate = async function(page, subsection = null) {
     const targetSubsection = subsection || this._visibleSubsections(page)[0]?.id || null;
     const destination = targetSubsection ? `${page}/${targetSubsection}` : page;
-    if (!await confirmStateSafeNavigation(this, destination)) return;
+    if (!await confirmStateSafeNavigation(this, destination)) {
+      const local = this.shadowRoot?.querySelector?.("#local-section");
+      const top = this.shadowRoot?.querySelector?.("#top-section-mobile");
+      if (local) local.value = this._subsection;
+      if (top) top.value = this._page;
+      return;
+    }
     return originalNavigate.call(this, page, subsection);
   };
 
@@ -406,64 +397,28 @@ export function installManagementStateSafety(Panel) {
     return originalHandleRouteChange.call(this, route);
   };
 
-  const originalStartFreshGuestPolicy = prototype._startFreshGuestPolicy;
-  prototype._startFreshGuestPolicy = async function(...args) {
-    const result = await originalStartFreshGuestPolicy.apply(this, args);
-    syncGuestDirty(this);
-    return result;
-  };
-
   const originalSetupGuestSelectors = prototype._setupGuestSelectors;
   prototype._setupGuestSelectors = function(...args) {
     const result = originalSetupGuestSelectors.apply(this, args);
     this.shadowRoot.querySelectorAll("ha-selector[data-guest-key]").forEach((selector) => {
       if (selector.__eocGuestDirtyBound) return;
       selector.__eocGuestDirtyBound = true;
-      selector.addEventListener("value-changed", () => queueMicrotask(() => syncGuestDirty(this)));
+      selector.addEventListener("value-changed", () => queueMicrotask(() => refreshPageSaveBar(this)));
     });
     return result;
   };
 
-  const originalLoadAgents = prototype._loadAgents;
-  prototype._loadAgents = async function(selectedId = null) {
-    const preserveGuestDraft = this._viewKey() === "capabilities/guest-mode"
-      && (!selectedId || selectedId === this._agentId)
-      && syncGuestDirty(this);
-    const guestDraft = preserveGuestDraft ? clone(this._guestDraft) : null;
-    const guestBaseline = preserveGuestDraft ? clone(this._eocGuestBaseline) : null;
-    const guestAgent = preserveGuestDraft ? this._agentId : null;
-    const result = await originalLoadAgents.call(this, selectedId);
-    if (preserveGuestDraft && this._agentId === guestAgent) {
-      this._guestDraft = guestDraft;
-      this._eocGuestBaseline = guestBaseline;
-      this._eocGuestBaselineAgent = guestAgent;
-      this._guestDirty = true;
-      this._render();
-    }
-    return result;
-  };
-
-  const originalLoadSection = prototype._loadSection;
-  prototype._loadSection = function(silent = false) {
-    const view = this._viewKey();
-    const result = originalLoadSection.call(this, silent);
-    return Promise.resolve(result).then((value) => {
-      if (view === "capabilities/guest-mode" && this._guestDraft && !this._guestDirty) setGuestBaseline(this);
-      return value;
-    });
-  };
-
-  const originalInvalidate = prototype._invalidateAfterMutation;
-  prototype._invalidateAfterMutation = function(...args) {
-    const result = originalInvalidate.apply(this, args);
-    if (args[1] === "guest_mode" && args[2] === "save_policy") setGuestBaseline(this);
-    return result;
+  prototype._confirmUnsavedNavigation = function(destination) {
+    return confirmStateSafeNavigation(this, destination);
   };
 
   const originalRender = prototype._render;
   prototype._render = function(...args) {
-    const result = originalRender.apply(this, args);
+    initializePageDraft(this);
     bindStateSafety(this);
+    const result = originalRender.apply(this, args);
+    bindPageDrafts(this);
+    refreshPageSaveBar(this);
     return result;
   };
 

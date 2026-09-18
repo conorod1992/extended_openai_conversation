@@ -44,14 +44,14 @@ test("Knowledge Library opens a real editor and protects an unsaved draft", asyn
   await panel.locator("#knowledge-content").fill("The browser fixture has a deliberately unsaved source.");
   await expect(panel.locator("#knowledge-counter")).toContainText("characters");
 
-  await dialog.getByRole("button", {name: "Cancel", exact: true}).click();
+  await dialog.getByRole("button", {name: "Close", exact: true}).click();
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
   await expect(panel.locator("#confirm-title")).toHaveText("Discard unsaved changes?");
   await panel.locator("#confirm-cancel").click();
   await expect(dialog).toHaveJSProperty("open", true);
   await expect(panel.locator("#knowledge-title")).toHaveValue("Browser knowledge draft");
 
-  await dialog.getByRole("button", {name: "Cancel", exact: true}).click();
+  await dialog.getByRole("button", {name: "Close", exact: true}).click();
   await acceptConfirmation(panel);
   await expect(dialog).toHaveJSProperty("open", false);
 

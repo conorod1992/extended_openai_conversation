@@ -18,13 +18,13 @@ assert.doesNotMatch(bootstrap, /debug-management\.js/);
 assert.match(bootstrap, /installPreDefinitionPropertyReplay\(Panel\)/);
 assert.doesNotMatch(bootstrap, /registry\.(define|get|whenDefined)\s*=/);
 assert.equal(stateSafety.SECTION_CACHE_TTL_MS, 30_000);
-assert.match(source, /Discard unsaved Guest policy changes\?/);
-assert.match(source, /Switching agents will discard your unsaved Guest Mode policy changes/);
+assert.match(source, /Discard unsaved changes\?/);
+assert.match(source, /pageCoordinator\(panel\)\.leaving\(destination\)/);
 assert.match(source, /Explicit Cancel remains an intentional discard/);
 assert.match(source, /window\.addEventListener\("beforeunload"/);
 assert.match(source, /window\.addEventListener\("focus"/);
-assert.match(source, /originalStartFreshGuestPolicy/);
-assert.match(source, /preserveGuestDraft/);
+assert.match(source, /refreshPageSaveBar/);
+assert.match(source, /initializePageDraft/);
 
 class UpgradePanel {
   constructor() {
@@ -71,7 +71,9 @@ const guestPanel = {
   _agentId: "agent-a",
   _guestDraft: {guest_mode_enabled: false, guest_excluded_entities: []},
   _viewKey: () => "capabilities/guest-mode",
+  _result: {config: {guest_mode_enabled: false, guest_excluded_entities: []}},
 };
+(await import(frontend("management-page-drafts.js"))).initializePageDraft(guestPanel);
 assert.equal(stateSafety.syncGuestDirty(guestPanel), false);
 guestPanel._guestDraft.guest_mode_enabled = true;
 assert.equal(stateSafety.syncGuestDirty(guestPanel), true);

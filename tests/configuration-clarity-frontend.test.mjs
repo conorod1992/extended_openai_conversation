@@ -88,10 +88,10 @@ assert.deepEqual(
   new Set(["assistant/basics", "data-memory/memory-settings", "data-memory/conversations"]),
 );
 
-panel._guestDirty = true;
+panel._unsavedState = {destinations: () => new Set(["capabilities/guest-mode"])};
 assert.equal(dirtyConfigurationDestinations(panel).has("capabilities/guest-mode"), true);
 
 panel._draft = structuredClone(baseline);
 panel._draftTitle = "Kitchen Assistant";
-panel._guestDirty = false;
+panel._unsavedState = {destinations: () => new Set()};
 assert.deepEqual([...dirtyConfigurationDestinations(panel)], []);

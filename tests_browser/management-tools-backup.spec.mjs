@@ -99,7 +99,7 @@ test("full backup and restore round-trips settings, memories, rules, tools, and 
   await page.goto(fixtureUrl("assistant/basics"));
   panel = page.locator("extended-openai-management-panel");
   await panel.locator('[data-config="__title"]').fill("Changed after backup");
-  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
 
   await page.goto(fixtureUrl("data-memory/memories"));

@@ -108,7 +108,7 @@ export function dirtyConfigurationKeys(panel) {
   return changed;
 }
 
-export function dirtyConfigurationDestinations(panel) {
+function configurationDestinations(panel) {
   const destinations = new Set();
   const unknown = [];
   for (const key of dirtyConfigurationKeys(panel)) {
@@ -116,11 +116,14 @@ export function dirtyConfigurationDestinations(panel) {
     if (owner) destinations.add(`${owner[0]}/${owner[1]}`);
     else unknown.push(key);
   }
-  if (panel?._guestDirty) destinations.add("capabilities/guest-mode");
   if (unknown.length && panel?._configDirty && panel?._page && panel?._subsection) {
     destinations.add(`${panel._page}/${panel._subsection}`);
   }
   return destinations;
+}
+
+export function dirtyConfigurationDestinations(panel) {
+  return new Set([...configurationDestinations(panel), ...(panel?._unsavedState?.destinations() || [])]);
 }
 
 function controlValue(control) {
@@ -336,6 +339,8 @@ export function installManagementConfigurationClarity(Panel) {
   const constructor = Panel;
   const prototype = constructor?.prototype;
   if (!prototype || prototype[PATCHED]) return false;
+
+  prototype._configurationDirtyDestinations = function() { return configurationDestinations(this); };
 
   const originalRender = prototype._render;
   prototype._render = function(...args) {

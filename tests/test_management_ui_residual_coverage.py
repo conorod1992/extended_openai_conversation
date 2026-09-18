@@ -270,6 +270,55 @@ async def test_command_requires_agent_identifiers() -> None:
         )
 
 
+async def test_guest_policy_save_rejects_stale_revision_and_returns_new_baseline(
+    monkeypatch,
+) -> None:
+    entry, subentry = _entry_pair()
+    # Revisions describe content: saving the default True would be a no-op.
+    subentry.data["guest_mode_enabled"] = False
+    hass = _hass(entry)
+    monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
+    monkeypatch.setattr(
+        management_ui, "async_get_guest_mode", AsyncMock(return_value=object())
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "guest_policy_editor_snapshot",
+        lambda _hass, config, _tools: config,
+    )
+    revision = management_ui._agent_config_revision(subentry.data, subentry.title)
+    with pytest.raises(HomeAssistantError, match="changed in another tab"):
+        await management_ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            _message(
+                "guest_mode",
+                "save_policy",
+                config={"guest_mode_enabled": True},
+                revision="stale",
+            ),
+        )
+    hass.config_entries.async_update_subentry.assert_not_called()
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        _message(
+            "guest_mode",
+            "save_policy",
+            config={"guest_mode_enabled": True},
+            revision=revision,
+        ),
+    )
+    saved = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
+    assert result["config"]["guest_mode_enabled"] is True
+    assert result["revision"] == management_ui._agent_config_revision(
+        saved, subentry.title
+    )
+    assert result["revision"] != revision
+
+
 async def test_guest_backup_and_service_dispatch_edges(monkeypatch) -> None:
     entry, subentry = _entry_pair()
     hass = _hass(entry)

@@ -16,7 +16,7 @@ test("real browser saves General Settings through the genuine HA backend", async
 
   await title.fill("Browser Real HA Saved");
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
-  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
 
   await page.goto(realFixtureUrl("assistant/basics"));
@@ -177,7 +177,7 @@ test("real browser full backup restores cross-feature state through genuine HA",
   await page.goto(realFixtureUrl("assistant/basics"));
   let panel = page.locator("extended-openai-management-panel");
   await panel.locator('[data-config="__title"]').fill("Real HA backup source");
-  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
 
   await page.goto(realFixtureUrl("data-memory/memories"));
@@ -213,7 +213,7 @@ test("real browser full backup restores cross-feature state through genuine HA",
   await page.goto(realFixtureUrl("assistant/basics"));
   panel = page.locator("extended-openai-management-panel");
   await panel.locator('[data-config="__title"]').fill("Real HA backup mutated");
-  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
 
   await page.goto(realFixtureUrl("data-memory/memories"));
   panel = page.locator("extended-openai-management-panel");

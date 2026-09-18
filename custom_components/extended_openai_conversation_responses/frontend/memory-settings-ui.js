@@ -1,3 +1,4 @@
+import {saveBarMarkup} from "./unsaved-state.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const settingSearch = (label, description, key) => `${label} ${description} ${key}`.toLowerCase();
 
@@ -22,7 +23,7 @@ function textField(panel, key, label, value, description, disabled = false) {
 
 function saveBar(panel) {
   if (!panel._configDirty) return "";
-  return `<div class="save-bar"><strong class="dirty-state">Unsaved changes</strong><div class="actions"><button type="button" class="secondary" id="memory-settings-revert">Revert</button><button type="button" id="memory-settings-save">Save configuration</button></div></div>`;
+  return saveBarMarkup({configuration: true, pending: Boolean(panel._configurationSaving)});
 }
 
 export function renderMemorySettings(panel) {

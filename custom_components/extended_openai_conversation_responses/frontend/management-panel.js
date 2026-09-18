@@ -1,3 +1,4 @@
+import {savePageChanges} from "./management-page-drafts.js";
 import {initializeManagementPanel} from "./management-bootstrap.js";
 import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs} from "./management-dialogs.js";
@@ -61,11 +62,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._configSearchQuery = "";
     this._settingsSearchQuery = "";
     this._guideQuery = "";
-    this._beforeUnloadHandler = (event) => {
-      if (!this._configDirty) return;
-      event.preventDefault();
-      event.returnValue = "";
-    };
+
   }
 
   set hass(value) {
@@ -81,17 +78,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     else if (!this.shadowRoot.hasChildNodes()) this._render();
   }
 
-  disconnectedCallback() {
-    window.removeEventListener("beforeunload", this._beforeUnloadHandler);
-  }
+  disconnectedCallback() {}
 
-  _setConfigDirty(value) {
-    const dirty = Boolean(value);
-    if (dirty === this._configDirty) return;
-    this._configDirty = dirty;
-    const method = dirty ? "addEventListener" : "removeEventListener";
-    window[method]("beforeunload", this._beforeUnloadHandler);
-  }
+  _setConfigDirty(value) { this._configDirty = Boolean(value); }
 
   _clearConfigDraft() {
     this._setConfigDirty(false);
@@ -112,13 +101,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _handleRouteChange(route) {
     if (this._isDraftView() && !this._isDraftView(route.page, route.section)) {
-      if (this._configDirty) {
-        const discard = await this._confirm("Discard unsaved changes?", "Your configuration changes have not been saved.", "Discard");
-        if (!discard) {
-          history.pushState({}, "", routePath(this._page, this._subsection));
-          return;
-        }
-      }
       this._clearConfigDraft();
     }
     this._page = route.page;
@@ -395,7 +377,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         result = await this._call("knowledge", "list");
       } else if (view === "capabilities/guest-mode") {
         result = await this._call("guest_mode", "get");
-        this._guestDraft = JSON.parse(JSON.stringify(result.config || {}));
+        if (this._unsavedState?.scopes.get("capabilities/guest-mode")?.agent !== this._agentId) this._guestDraft = JSON.parse(JSON.stringify(result.config || {}));
         if (!result.legacy_policy) {
           this._guestMigrationReview = false;
           this._guestStartingFresh = false;
@@ -444,10 +426,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const metadata = pageMetadata(page);
     const targetSubsection = subsection || this._visibleSubsections(page)[0]?.id || metadata.sections[0]?.id || null;
     if (this._isDraftView() && !this._isDraftView(page, targetSubsection)) {
-      if (this._configDirty) {
-        const discard = await this._confirm("Discard unsaved changes?", "Your configuration changes have not been saved.", "Discard");
-        if (!discard) return;
-      }
       this._clearConfigDraft();
     }
     this._page = page;
@@ -506,12 +484,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     root.querySelectorAll(".inline-route").forEach((button) => button.addEventListener("click", () => this._navigate(button.dataset.page, button.dataset.subsection)));
     root.querySelectorAll(".guide-topic-link").forEach((button) => button.addEventListener("click", () => { this._guideTopic = button.dataset.guideTopic; this._navigate("guide"); }));
     root.querySelector("#agent")?.addEventListener("change", async (event) => {
-      if (this._configDirty) {
-        const discard = await this._confirm("Discard unsaved changes?", "Your configuration changes have not been saved.", "Discard");
-        if (!discard) { event.target.value = this._agentId; return; }
-        this._clearConfigDraft();
-      }
-      this._agentId = event.target.value;
+      const select = event.target;
+      const nextAgent = select.value;
+      select.value = this._agentId;
+      if (!await this._confirmUnsavedNavigation(null)) return;
+      select.value = nextAgent;
+      this._unsavedState?.scopes.clear();
+      this._agentId = nextAgent;
       localStorage.setItem("extended-openai-agent", this._agentId);
       this._clearConfigDraft();
       this._scopeId = null;
@@ -639,7 +618,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const futureKnowledge = "";
     const futureFunctions = "";
     const legacyNotice = this._result?.legacy_policy && !this._guestMigrationReview ? `<section class="notice legacy-migration"><strong>Previous Guest Mode settings found</strong><p>Your old Guest Mode rules used an allow-list. We have kept an equivalent restrictive draft so the upgrade does not accidentally give guests more access. The old policy remains enforced until you save.</p><div class="section-actions"><button type="button" id="guest-review-converted">Review converted settings</button><button type="button" class="secondary" id="guest-start-fresh">Start fresh with new defaults</button></div></section>` : "";
-    const editor = this._data?.is_admin && (!this._result?.legacy_policy || this._guestMigrationReview) ? `<section class="content-card"><div class="section-heading"><div><h2>Home Assistant exclusions</h2><p>Guests can use entities normally available to this assistant, except those excluded here.</p></div></div><p class="help"><strong>Tip:</strong> Labels are usually the easiest way to manage Guest access. For example, create a <code>Guest restricted</code> label in Home Assistant and apply it to anything private or sensitive.</p><div class="guest-managers">${baseSelectors}</div><details class="guest-advanced"><summary>Advanced</summary><label class="toggle"><span>Make some visible entities read-only</span><input id="guest-separate-control" type="checkbox" ${config.guest_separate_control_restrictions ? "checked" : ""}></label><p class="help">Normally, anything a guest can see can also be controlled if the assistant is allowed to control it. Turn this on if you want guests to see some entities but not change them.</p>${config.guest_separate_control_restrictions ? `<div class="guest-managers">${controlSelectors}</div>` : ""}</details></section><section class="content-card"><div class="section-heading"><div><h2>Knowledge, functions & memory</h2><p>Personal memory and owner conversation archives are always unavailable.</p></div></div><div class="form-grid">${mode("guest_knowledge_policy","Allow Knowledge Library reads",[["off","Off"],["on","On"],["custom","Custom"]])}${mode("guest_function_policy","Allow custom functions",[["off","Off"],["on","On"],["custom","Custom"]])}${mode("guest_shared_memory_policy","Shared household memory",[["off","Off"],["read_only","Read only"],["read_write","Read & write"]])}</div>${futureKnowledge}${futureFunctions}${config.guest_knowledge_policy === "on" ? `<p class="help">All current Knowledge sources are available to guests. New sources added later will also be included. Choose Custom if you want a fixed list.</p>` : ""}${config.guest_function_policy === "on" ? `<p class="help">All eligible enabled functions are available to guests. New eligible functions added later will also be included. Choose Custom if you want a fixed list.</p>` : ""}${config.guest_knowledge_policy === "custom" ? selector("guest_knowledge_source_ids","knowledge","Allowed Knowledge sources") : ""}${config.guest_function_policy === "custom" ? `${selector("guest_allowed_function_names","function","Allowed functions")}${selector("guest_allowed_group_ids","group","Allowed Function Groups")}` : ""}</section><section class="content-card"><div class="section-heading"><div><h2>Assistant permission</h2><p>This permission is separate from the Guest Mode activation state.</p></div></div><details class="guest-advanced"><summary>Advanced</summary><label class="toggle"><span>Allow the assistant to activate Guest Mode</span><input id="guest-controls-enabled" type="checkbox" ${config.guest_mode_enabled ? "checked" : ""}></label><p class="help">Lets the assistant activate Guest Mode, start it earlier, or extend it. The assistant can never shorten or disable Guest Mode. Turning this off never ends or weakens an active restriction.</p></details><div class="section-actions"><button type="button" id="guest-policy-save">Save Guest policy</button></div></section>` : "";
+    const editor = this._data?.is_admin && (!this._result?.legacy_policy || this._guestMigrationReview) ? `<section class="content-card"><div class="section-heading"><div><h2>Home Assistant exclusions</h2><p>Guests can use entities normally available to this assistant, except those excluded here.</p></div></div><p class="help"><strong>Tip:</strong> Labels are usually the easiest way to manage Guest access. For example, create a <code>Guest restricted</code> label in Home Assistant and apply it to anything private or sensitive.</p><div class="guest-managers">${baseSelectors}</div><details class="guest-advanced"><summary>Advanced</summary><label class="toggle"><span>Make some visible entities read-only</span><input id="guest-separate-control" type="checkbox" ${config.guest_separate_control_restrictions ? "checked" : ""}></label><p class="help">Normally, anything a guest can see can also be controlled if the assistant is allowed to control it. Turn this on if you want guests to see some entities but not change them.</p>${config.guest_separate_control_restrictions ? `<div class="guest-managers">${controlSelectors}</div>` : ""}</details></section><section class="content-card"><div class="section-heading"><div><h2>Knowledge, functions & memory</h2><p>Personal memory and owner conversation archives are always unavailable.</p></div></div><div class="form-grid">${mode("guest_knowledge_policy","Allow Knowledge Library reads",[["off","Off"],["on","On"],["custom","Custom"]])}${mode("guest_function_policy","Allow custom functions",[["off","Off"],["on","On"],["custom","Custom"]])}${mode("guest_shared_memory_policy","Shared household memory",[["off","Off"],["read_only","Read only"],["read_write","Read & write"]])}</div>${futureKnowledge}${futureFunctions}${config.guest_knowledge_policy === "on" ? `<p class="help">All current Knowledge sources are available to guests. New sources added later will also be included. Choose Custom if you want a fixed list.</p>` : ""}${config.guest_function_policy === "on" ? `<p class="help">All eligible enabled functions are available to guests. New eligible functions added later will also be included. Choose Custom if you want a fixed list.</p>` : ""}${config.guest_knowledge_policy === "custom" ? selector("guest_knowledge_source_ids","knowledge","Allowed Knowledge sources") : ""}${config.guest_function_policy === "custom" ? `${selector("guest_allowed_function_names","function","Allowed functions")}${selector("guest_allowed_group_ids","group","Allowed Function Groups")}` : ""}</section><section class="content-card"><div class="section-heading"><div><h2>Assistant permission</h2><p>This permission is separate from the Guest Mode activation state.</p></div></div><details class="guest-advanced"><summary>Advanced</summary><label class="toggle"><span>Allow the assistant to activate Guest Mode</span><input id="guest-controls-enabled" type="checkbox" ${config.guest_mode_enabled ? "checked" : ""}></label><p class="help">Lets the assistant activate Guest Mode, start it earlier, or extend it. The assistant can never shorten or disable Guest Mode. Turning this off never ends or weakens an active restriction.</p></details></section>` : "";
     return `${activation}<section class="metric-grid compact">${this._metric("Guest-visible entities", policy.readable_entity_count ?? "—")}${this._metric("Guest-controllable entities", policy.controllable_entity_count ?? "—")}${this._metric("Guest functions", policy.configured_tool_count ?? "—")}${this._metric("Guest archive retention", "Disabled")}</section>${legacyNotice}${editor}<section class="notice"><strong>Voice and model safety</strong><p>Model-visible context is fully rebuilt on the next user turn; execution restrictions tighten immediately, but context already sent to a provider cannot be removed retroactively.</p></section><details class="content-card"><summary><strong>Capability safety</strong></summary><p>Guest permissions are enforced by Extended OpenAI. Custom, composite, or script capabilities are unavailable when their side effects cannot be safely limited to guest-approved entities. This is intentional.</p></details>`;
   }
 
@@ -657,11 +636,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _saveGuestPolicy() {
-    try {
-      await this._call("guest_mode", "save_policy", {config: this._guestDraft});
-      await this._loadSection(true);
-      this._toast("Guest policy saved");
-    } catch (err) { this._toast(`Unable to save Guest policy: ${err.message || String(err)}`, true); }
+    return savePageChanges(this);
   }
 
   async _startFreshGuestPolicy() {
@@ -745,7 +720,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     q("#guest-update")?.addEventListener("click", () => this._updateGuestMode(false));
     q("#guest-now")?.addEventListener("click", () => this._updateGuestMode(true));
     q("#guest-disable")?.addEventListener("click", () => this._disableGuestMode());
-    q("#guest-policy-save")?.addEventListener("click", () => this._saveGuestPolicy());
     q("#guest-review-converted")?.addEventListener("click", () => { this._guestMigrationReview = true; this._render(); });
     q("#guest-start-fresh")?.addEventListener("click", () => this._startFreshGuestPolicy());
     q("#guest-separate-control")?.addEventListener("change", (event) => { this._guestDraft.guest_separate_control_restrictions = event.target.checked; this._render(); });
@@ -836,16 +810,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _requestEditorClose() {
-    const kind = this._editorKind;
-    const dialog = this.shadowRoot.querySelector(`#${kind}-dialog`);
-    if (!dialog?.open) return;
-    const current = kind === "knowledge" ? this._knowledgeValues() : this._memoryValues();
-    if (this._editorInitial !== null && JSON.stringify(current) !== JSON.stringify(this._editorInitial)) {
-      const discard = await this._confirm("Discard unsaved changes?", "Your changes have not been saved.", "Discard");
-      if (!discard) return;
-    }
-    if (kind === "knowledge") this._knowledgeLoadToken = (this._knowledgeLoadToken || 0) + 1;
-    dialog.close();
+    return this._confirmEditorClose(this.shadowRoot.querySelector(`#${this._editorKind}-dialog`));
   }
 
   _setKnowledgeEditorDisabled(disabled) {
@@ -1010,7 +975,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _setSaving(button, saving, label = "Saving…") {
     if (!button) return;
-    if (saving) button.dataset.label = button.textContent;
+    if (saving && !button.dataset.label) button.dataset.label = button.textContent;
     button.disabled = saving;
     button.textContent = saving ? label : button.dataset.label || "Save";
   }

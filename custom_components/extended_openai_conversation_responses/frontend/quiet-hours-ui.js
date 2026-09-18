@@ -5,7 +5,7 @@ export async function loadQuietHours(panel, silent = false) {
     const result = await panel._call("quiet_hours", "get");
     if (token !== panel._loadToken) return;
     panel._result = result;
-    panel._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
+    if (panel._unsavedState?.scopes.get(VIEW)?.agent !== panel._agentId) panel._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
     panel._error = null;
   } catch (err) {
     if (token === panel._loadToken) panel._error = err.message || String(err);
@@ -91,7 +91,7 @@ export function renderQuietHours(panel) {
       <div class="qh-entity-note"><strong>Use Quiet Hours in automations</strong><code>${panel._e(result.state_entity_id || "binary_sensor.extended_openai_quiet_hours")}</code><small>This read-only entity is on for the whole Quiet Hours period, even if no speaker needs changing. You can use it to control LEDs or anything else in your own Home Assistant automations. The saved schedule can also be turned on or off with the Extended OpenAI actions <code>enable_quiet_hours</code> and <code>disable_quiet_hours</code>.</small></div>
     </section>
     <section class="content-card"><div class="section-heading"><div><h2>Assist satellites</h2><p>Quiet Hours tries to find each satellite's speaker and wake-word sound automatically. If it picks the wrong entity, or cannot find one, choose the correct entity below.</p></div></div>${satellites.length ? `<div class="qh-satellites">${satellites.map((satellite) => satelliteCard(panel, satellite, config)).join("")}</div>` : `<p class="empty">No Assist satellites were found. Quiet Hours will keep checking and will pick them up when they become available.</p>`}</section>
-    <div class="config-actions"><button id="qh-save" type="button" class="primary">Save Quiet Hours</button><button id="qh-reset" type="button">Reset unsaved changes</button></div>`;
+    `;
 }
 
 function setOverride(panel, satelliteId, kind, value) {
@@ -108,8 +108,8 @@ function setOverride(panel, satelliteId, kind, value) {
 export function bindQuietHours(panel) {
   const root = panel.shadowRoot;
   root.querySelector("#qh-enabled")?.addEventListener("change", (event) => { panel._quietHoursDraft.enabled = event.target.checked; });
-  root.querySelector("#qh-start")?.addEventListener("change", (event) => { panel._quietHoursDraft.start = event.target.value; });
-  root.querySelector("#qh-end")?.addEventListener("change", (event) => { panel._quietHoursDraft.end = event.target.value; });
+  root.querySelector("#qh-start")?.addEventListener("input", (event) => { panel._quietHoursDraft.start = event.target.value; });
+  root.querySelector("#qh-end")?.addEventListener("input", (event) => { panel._quietHoursDraft.end = event.target.value; });
   root.querySelector("#qh-wake")?.addEventListener("change", (event) => { panel._quietHoursDraft.wake_sound = event.target.value; });
   const volume = root.querySelector("#qh-volume");
   volume?.addEventListener("input", (event) => {
@@ -119,24 +119,7 @@ export function bindQuietHours(panel) {
     if (output) output.textContent = `${percent}%`;
   });
   root.querySelectorAll(".qh-override").forEach((select) => select.addEventListener("change", () => setOverride(panel, select.dataset.satellite, select.dataset.kind, select.value)));
-  root.querySelector("#qh-reset")?.addEventListener("click", () => {
-    panel._quietHoursDraft = JSON.parse(JSON.stringify(panel._result?.config || {}));
-    panel._render();
-  });
-  root.querySelector("#qh-save")?.addEventListener("click", async () => {
-    const save = root.querySelector("#qh-save");
-    if (save) save.disabled = true;
-    try {
-      const result = await panel._call("quiet_hours", "update", {config: panel._quietHoursDraft});
-      panel._result = result;
-      panel._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
-      panel._toast("Quiet Hours saved");
-      panel._render();
-    } catch (err) {
-      if (save) save.disabled = false;
-      panel._toast(`Unable to save Quiet Hours: ${err.message || String(err)}`, true);
-    }
-  });
+
 }
 
 export function installQuietHoursUI(Panel) {

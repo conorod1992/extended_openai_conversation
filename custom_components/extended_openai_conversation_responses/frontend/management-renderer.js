@@ -264,11 +264,15 @@ function bindDynamicBase(panel) {
   const root = panel.shadowRoot;
   if (!root.__eocRouteControlsBound) {
     root.__eocRouteControlsBound = true;
-    root.addEventListener("change", (event) => {
+    root.addEventListener("change", async (event) => {
       const control = event.target;
       if (control?.id === "local-section") void panel._navigate(panel._page, control.value);
       if (control?.id === "scope") {
-        panel._scopeId = control.value;
+        const nextScope = control.value;
+        control.value = panel._scopeId;
+        if (!await panel._confirmUnsavedNavigation(panel._viewKey())) return;
+        panel._scopeId = nextScope;
+        control.value = nextScope;
         void panel._loadSection();
       }
       if (control?.id === "show-empty-scopes") {
@@ -324,6 +328,11 @@ function renderDynamicRegions(panel) {
   const route = `${panel._agentId}|${panel._viewKey()}`;
   const changed = route !== panel._eocRenderedRoute || markup !== panel._eocMainMarkup
     || dialogs !== panel._eocDialogMarkup;
+  if (main && changed && route === panel._eocRenderedRoute && root.querySelector("dialog[open]")) {
+    panel._eocDeferredEditorRender = true;
+    return;
+  }
+  panel._eocDeferredEditorRender = false;
   if (main && changed) {
     main.innerHTML = markup;
     panel._eocMainMarkup = markup;

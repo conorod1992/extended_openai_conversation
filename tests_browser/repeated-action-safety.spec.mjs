@@ -6,7 +6,9 @@ test("Guest policy save ignores repeated activation while the mutation is pendin
   await page.goto(fixtureUrl("capabilities/guest-mode"));
 
   const panel = page.locator("extended-openai-management-panel");
-  const save = panel.locator("#guest-policy-save");
+  await panel.locator("#guest-controls-enabled").evaluate((input) => input.closest("details").open = true);
+  await panel.locator("#guest-controls-enabled").check();
+  const save = panel.locator("#save-page");
   await expect(save).toBeVisible();
 
   await page.evaluate(() => {
@@ -36,8 +38,7 @@ test("Guest policy save ignores repeated activation while the mutation is pendin
   await expect(save).toHaveText("Saving…");
 
   await page.evaluate(() => window.browserHarness.releaseGuestPolicySave());
-  await expect(save).toBeEnabled();
-  await expect(save).toHaveText("Save Guest policy");
+  await expect(save).toHaveCount(0);
 
   expect(await page.evaluate(() => window.browserHarness.guestPolicySaveCalls)).toBe(1);
   const persistedCalls = await page.evaluate(() => window.browserHarness.calls.filter(

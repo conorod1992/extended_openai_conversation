@@ -194,6 +194,8 @@ MANAGEMENT_FRONTEND_MODULES = (
     "request-rules-match-test-ui.js",
     "quiet-hours-ui.js",
     "management-state-safety.js",
+    "management-page-drafts.js",
+    "unsaved-state.js",
     "management-action-safety.js",
     "management-function-dependencies.js",
     "management-feature-status.js",
@@ -1024,6 +1026,7 @@ async def async_management_command(
                 subentry.data.get(CONF_FUNCTION_GROUPS, []), configured_tools
             )
             return {
+                "revision": _agent_config_revision(subentry.data, subentry.title),
                 "status": guest_manager.status(),
                 "policy": policy.as_diagnostics(),
                 "config": guest_policy_editor_snapshot(
@@ -1069,6 +1072,7 @@ async def async_management_command(
             }
         _require_admin(is_admin)
         if action == "save_policy":
+            _require_agent_config_revision(subentry, message.get("revision"))
             updates = message.get("config")
             if not isinstance(updates, dict):
                 raise HomeAssistantError("config must be an object")
@@ -1080,9 +1084,10 @@ async def async_management_command(
             hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
             configured_tools = configured_function_tools_from_data(normalized)
             return {
+                "revision": _agent_config_revision(normalized, subentry.title),
                 "config": guest_policy_editor_snapshot(
                     hass, normalized, configured_tools
-                )
+                ),
             }
         if action == "update":
             return {

@@ -26,7 +26,7 @@ test("migrated release settings render, save, and reload through the candidate U
 
   await title.fill(savedTitle);
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
-  await panel.getByRole("button", {name: "Save configuration", exact: true}).click();
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
 
   // The fixture page owns the browser-side call log. Capture the save before
