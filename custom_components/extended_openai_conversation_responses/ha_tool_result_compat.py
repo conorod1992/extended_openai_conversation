@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from inspect import signature
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.components import conversation
 from homeassistant.helpers import llm
@@ -20,7 +20,7 @@ def make_tool_result_content(
     }
     parameters = signature(conversation.ToolResultContent).parameters
     if "result" in parameters:
-        tool_result_type = getattr(llm, "ToolResult")
+        tool_result_type = cast(Any, llm).ToolResult
         kwargs["result"] = tool_result_type(data=tool_result)
     else:
         kwargs["tool_result"] = tool_result
