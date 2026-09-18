@@ -31,6 +31,7 @@ from .function_execution import (
 from .function_tool_resolution import latest_function_tool_for_execution
 from .functions import get_function
 from .ha_permissions import bind_active_ha_context
+from .ha_tool_result_compat import make_tool_result_content
 from .helpers import get_exposed_entities
 
 _LOGGER = logging.getLogger(__name__)
@@ -548,7 +549,7 @@ def _install_execution_hook() -> None:
                 llm_context,
                 exposed_entities,
             )
-            return conversation.ToolResultContent(
+            return make_tool_result_content(
                 agent_id=entity.entity_id,
                 tool_call_id=tool_input.id,
                 tool_name=tool_input.tool_name,
@@ -573,7 +574,7 @@ def _install_execution_hook() -> None:
             arguments,
             llm_context,
         )
-        return conversation.ToolResultContent(
+        return make_tool_result_content(
             agent_id=entity.entity_id,
             tool_call_id=tool_input.id,
             tool_name=tool_input.tool_name,
