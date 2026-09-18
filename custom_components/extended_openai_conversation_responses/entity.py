@@ -110,6 +110,23 @@ MAX_TOOL_ITERATIONS = MAX_PROVIDER_REQUESTS
 _SCHEMA_COMPOSITION_KEYS = ("anyOf", "oneOf", "allOf")
 
 
+def _make_tool_result_content(
+    *, agent_id: str, tool_call_id: str, tool_name: str, tool_result: dict[str, Any]
+) -> conversation.ToolResultContent:
+    """Build a tool result across Home Assistant's old and new LLM APIs."""
+    kwargs: dict[str, Any] = {
+        "agent_id": agent_id,
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+    }
+    tool_result_type = getattr(llm, "ToolResult", None)
+    if tool_result_type is None:
+        kwargs["tool_result"] = tool_result
+    else:
+        kwargs["result"] = tool_result_type(data=tool_result)
+    return conversation.ToolResultContent(**kwargs)
+
+
 def _shorten_tool_call_id(tool_call_id: str) -> str:
     """Shorten tool call ID to exactly 9 alphanumeric characters as Mistral requires."""
     import hashlib
@@ -1465,7 +1482,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             _LOGGER.warning("Function Tool `%s` failed: %s", tool_input.tool_name, err)
             result = {"status": "error", "error": str(err)}
 
-        return conversation.ToolResultContent(
+        return _make_tool_result_content(
             agent_id=self.entity_id,
             tool_call_id=tool_input.id,
             tool_name=tool_input.tool_name,
