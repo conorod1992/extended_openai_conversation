@@ -9,9 +9,9 @@ from typing import Any
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import (
-    conversation_archive,
-    durable_state_hardening as hardening,
+from custom_components.extended_openai_conversation_responses import conversation_archive
+from custom_components.extended_openai_conversation_responses.conversation import (
+    ExtendedOpenAIAgentEntity,
 )
 
 
@@ -311,7 +311,9 @@ async def test_replace_backup_rebuilds_partitions_and_clears_active_state(
 
 @pytest.mark.asyncio
 async def test_archive_retention_no_archive_and_failure_are_safe(caplog) -> None:
-    await hardening.async_prune_archive_retention(SimpleNamespace(_archive=None))
+    await ExtendedOpenAIAgentEntity._async_prune_archive_retention(
+        SimpleNamespace(_archive=None)
+    )
 
     class FailingArchive:
         async def async_prune(self, retention_days: int) -> None:
@@ -320,8 +322,8 @@ async def test_archive_retention_no_archive_and_failure_are_safe(caplog) -> None
 
     agent = SimpleNamespace(
         _archive=FailingArchive(),
-        subentry=SimpleNamespace(data={hardening.CONF_ARCHIVE_RETENTION_DAYS: 23}),
+        subentry=SimpleNamespace(data={"archive_retention_days": 23}),
     )
-    await hardening.async_prune_archive_retention(agent)
+    await ExtendedOpenAIAgentEntity._async_prune_archive_retention(agent)
 
     assert "Background conversation archive retention maintenance failed" in caplog.text

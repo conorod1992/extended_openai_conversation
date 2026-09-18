@@ -9,7 +9,8 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     agent_config,
-    configuration_lifecycle_hardening as hardening,
+    agent_configuration as hardening,
+    configuration_lifecycle_hardening as guards,
     const,
     conversation,
     conversation_archive,
@@ -55,20 +56,6 @@ def _entity(options: dict) -> SimpleNamespace:
 def test_timeout_coercion_handles_invalid_strings_and_integral_float(
     monkeypatch, raw, expected
 ) -> None:
-    monkeypatch.setattr(
-        const,
-        "CONVERSATION_TIMEOUT_OPTIONS",
-        const.CONVERSATION_TIMEOUT_OPTIONS,
-    )
-    monkeypatch.setattr(
-        agent_config,
-        "CONVERSATION_TIMEOUT_OPTIONS",
-        agent_config.CONVERSATION_TIMEOUT_OPTIONS,
-    )
-    monkeypatch.setattr(agent_config, "_coerce_legacy_numbers", lambda _config: None)
-
-    hardening._install_conversation_timeout_validation()
-
     config = {const.CONF_CONVERSATION_TIMEOUT_MINUTES: raw}
     agent_config._coerce_legacy_numbers(config)
 
@@ -117,7 +104,7 @@ async def test_temporary_memory_initialization_failure_requests_retry(
     failure = RuntimeError("temporary store unavailable")
     get_temporary = AsyncMock(side_effect=failure)
     monkeypatch.setattr(temporary_memory, "async_get_temporary_memory", get_temporary)
-    monkeypatch.setattr(hardening, "memory_enabled", lambda _options: False)
+    monkeypatch.setattr(guards, "memory_enabled", lambda _options: False)
 
     await hardening.async_reconcile_runtime_configuration(entity, force=True)
 
@@ -145,7 +132,7 @@ async def test_archive_get_failure_requests_retry_and_records_status(
     failure = RuntimeError("archive unavailable")
     get_archive = AsyncMock(side_effect=failure)
     monkeypatch.setattr(conversation_archive, "async_get_archive", get_archive)
-    monkeypatch.setattr(hardening, "memory_enabled", lambda _options: False)
+    monkeypatch.setattr(guards, "memory_enabled", lambda _options: False)
 
     await hardening.async_reconcile_runtime_configuration(entity, force=True)
 
@@ -172,7 +159,7 @@ async def test_archive_initializer_leaving_runtime_missing_requests_retry(
     entity = _entity(options)
     initializer = AsyncMock()
     entity._async_initialize_archive = initializer
-    monkeypatch.setattr(hardening, "memory_enabled", lambda _options: False)
+    monkeypatch.setattr(guards, "memory_enabled", lambda _options: False)
 
     await hardening.async_reconcile_runtime_configuration(entity, force=True)
 
@@ -229,8 +216,8 @@ async def test_disabled_tool_guards_block_original_execution(
     for name, original in originals.items():
         monkeypatch.setattr(cls, name, original)
 
-    monkeypatch.setattr(hardening, "memory_enabled", lambda _options: False)
-    hardening._install_runtime_configuration_lifecycle()
+    monkeypatch.setattr(guards, "memory_enabled", lambda _options: False)
+    guards._install_runtime_configuration_lifecycle()
 
     entity = SimpleNamespace(subentry=SimpleNamespace(data=options))
     wrapped = getattr(cls, tool_name)

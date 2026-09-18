@@ -140,6 +140,7 @@ async def test_optional_storage_startup_failure_is_isolated(
         AsyncMock(),
     )
     monkeypatch.setattr(conversation_module.conversation, "async_set_agent", Mock())
+    monkeypatch.setattr(conversation_module, "async_track_time_interval", Mock(return_value=lambda: None))
     monkeypatch.setattr(
         conversation_module.SkillManager,
         "async_get_instance",

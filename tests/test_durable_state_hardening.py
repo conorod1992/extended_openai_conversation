@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import (
-    durable_state_hardening as hardening,
+from custom_components.extended_openai_conversation_responses.conversation import (
+    ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_RETENTION_DAYS,
@@ -175,6 +175,6 @@ async def test_archive_retention_maintenance_reads_current_live_setting() -> Non
         subentry=SimpleNamespace(data={CONF_ARCHIVE_RETENTION_DAYS: 17}),
     )
 
-    await hardening.async_prune_archive_retention(agent)
+    await ExtendedOpenAIAgentEntity._async_prune_archive_retention(agent)
 
     assert archive.days == [17]

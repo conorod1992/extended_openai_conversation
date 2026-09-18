@@ -31,7 +31,6 @@ from custom_components.extended_openai_conversation_responses.diagnostics import
     async_get_config_entry_diagnostics,
 )
 
-_ORIGINAL_AGENT_ADDED_TO_HASS = ExtendedOpenAIAgentEntity.async_added_to_hass
 
 
 async def test_missing_function_config_uses_execution_default(hass) -> None:
@@ -188,6 +187,7 @@ def _patch_startup_dependencies(
         "async_get_instance",
         AsyncMock(return_value=dependencies.skill_manager),
     )
+    monkeypatch.setattr(conversation_module, "async_track_time_interval", MagicMock(return_value=lambda: None))
     for name, value in patches.items():
         monkeypatch.setattr(conversation_module, name, value)
     return dependencies
@@ -211,7 +211,7 @@ async def test_agent_startup_initializes_enabled_conversation_subsystems(
     entity = _startup_entity(hass, data)
     dependencies = _patch_startup_dependencies(monkeypatch)
 
-    await _ORIGINAL_AGENT_ADDED_TO_HASS(entity)
+    await entity.async_added_to_hass()
 
     dependencies.base_added.assert_awaited_once()
     dependencies.set_agent.assert_called_once_with(hass, entity.entry, entity)
@@ -230,7 +230,8 @@ async def test_agent_startup_initializes_enabled_conversation_subsystems(
     assert dependencies.usage.run_retention_days == 45
     dependencies.usage.async_prune_details.assert_awaited_once_with()
     dependencies.archive.async_prune.assert_awaited_once_with(21)
-    dependencies.memory.set_embedding_provider.assert_called_once_with(
+    assert dependencies.memory.set_embedding_provider.call_count == 2
+    dependencies.memory.set_embedding_provider.assert_called_with(
         entity._async_create_embeddings, "text-embedding-test"
     )
     statuses = hass.data[SUBSYSTEM_STATUS_KEY][("entry", "agent")]
@@ -264,7 +265,7 @@ async def test_agent_startup_isolates_independent_optional_store_failures(
         memory_getter=memory_getter,
     )
 
-    await _ORIGINAL_AGENT_ADDED_TO_HASS(entity)
+    await entity.async_added_to_hass()
 
     temporary_getter.assert_awaited_once()
     knowledge_getter.assert_awaited_once()
@@ -300,7 +301,7 @@ async def test_agent_startup_keeps_disabled_optional_stores_unopened(
     entity = _startup_entity(hass, {})
     dependencies = _patch_startup_dependencies(monkeypatch)
 
-    await _ORIGINAL_AGENT_ADDED_TO_HASS(entity)
+    await entity.async_added_to_hass()
 
     dependencies.temporary_getter.assert_not_awaited()
     dependencies.memory_getter.assert_not_awaited()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from contextvars import ContextVar
+from datetime import datetime, timedelta
 import json
 import logging
 from pathlib import Path
@@ -28,6 +29,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import intent, llm
 from homeassistant.helpers.chat_session import async_get_chat_session
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
 
 from . import ExtendedOpenAIConfigEntry
 from .agent_config import (
@@ -35,6 +37,7 @@ from .agent_config import (
     function_tool_enabled,
     validate_function_groups,
 )
+from .agent_configuration import sync_memory_embedding_provider
 from .const import (
     CONF_ARCHIVE_ENABLED,
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -256,6 +259,11 @@ class ExtendedOpenAIAgentEntity(
             )
 
     @property
+    def supports_streaming(self) -> bool:
+        """Expose live capability before HA attaches its progressive listener."""
+        return not has_custom_speech_replacements(self.subentry.data)
+
+    @property
     def supported_languages(self) -> list[str] | Literal["*"]:
         """Return a list of supported languages."""
         return MATCH_ALL
@@ -269,7 +277,14 @@ class ExtendedOpenAIAgentEntity(
         """When entity is added to Home Assistant."""
         await super().async_added_to_hass()
         conversation.async_set_agent(self.hass, self.entry, self)
+        await self._async_initialize_agent_state()
+        await self._async_initialize_optional_managers()
+        # Shared managers can retain a provider bound to the previous entity.
+        sync_memory_embedding_provider(self)
+        self._schedule_archive_retention()
 
+    async def _async_initialize_agent_state(self) -> None:
+        """Load required shared state and reset per-registration request state."""
         # Calculate skills directory based on working directory
         working_dir = DEFAULT_WORKING_DIRECTORY
         if Path(working_dir).is_absolute():
@@ -311,6 +326,9 @@ class ExtendedOpenAIAgentEntity(
         self._request_rule_runtime = get_request_rule_runtime(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
+
+    async def _async_initialize_optional_managers(self) -> None:
+        """Load optional capabilities, reporting ordinary failures independently."""
         temporary_configured = (
             self.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
             != TEMPORARY_MEMORY_OFF
@@ -374,8 +392,41 @@ class ExtendedOpenAIAgentEntity(
             else:
                 self._set_subsystem_status("persistent_memory", True, healthy=True)
 
+    def _schedule_archive_retention(self) -> None:
+        """Tie daily retention to this entity's HA registration lifetime."""
+        self.async_on_remove(
+            async_track_time_interval(
+                self.hass, self._async_prune_archive_retention, timedelta(days=1)
+            )
+        )
+
+    async def _async_prune_archive_retention(
+        self, _now: datetime | None = None
+    ) -> None:
+        """Apply live retention settings independently of conversation traffic."""
+        if self._archive is None:
+            return
+        try:
+            await self._archive.async_prune(
+                int(
+                    self.subentry.data.get(
+                        CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+                    )
+                )
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Background conversation archive retention maintenance failed"
+            )
+
     async def _async_initialize_archive(self, configured: bool) -> None:
         """Initialize archive storage without taking down the conversation agent."""
+        if not configured and not self.subentry.data.get(
+            CONF_ARCHIVE_MODEL_SEARCH_ENABLED, DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED
+        ):
+            self._archive = None
+            self._set_subsystem_status("archive", False)
+            return
         self._set_subsystem_status("archive", configured)
         try:
             self._archive = await async_get_archive(

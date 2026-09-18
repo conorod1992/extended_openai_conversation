@@ -360,6 +360,9 @@ class PersistentMemory:
         self, provider: EmbeddingProvider | None, model: str = "default"
     ) -> None:
         """Configure the optional provider used only by hybrid retrieval."""
+        # Unchanged live configuration must preserve diagnostics and avoid prewarming.
+        if self._embedding_provider == provider and self._embedding_model == model:
+            return
         model = str(model).strip() or "default"
         changed = self._embedding_provider != provider or self._embedding_model != model
         self._embedding_provider = provider
@@ -377,6 +380,9 @@ class PersistentMemory:
             # coroutine. It exercises lifecycle scheduling without embedding Memory
             # content; normal production construction never supplies this hook.
             self._embedding_task_scheduler(self._async_refresh_missing_embeddings(()))
+
+        if provider is None:
+            self._embedding_maintenance_requested = False
 
     def hybrid_status(self) -> dict[str, Any]:
         """Return non-sensitive hybrid-retrieval availability diagnostics."""

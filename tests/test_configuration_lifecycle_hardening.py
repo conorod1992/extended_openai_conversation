@@ -19,9 +19,8 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
     agent_config_options,
     normalize_agent_config,
 )
-from custom_components.extended_openai_conversation_responses.configuration_lifecycle_hardening import (
+from custom_components.extended_openai_conversation_responses.agent_configuration import (
     async_reconcile_runtime_configuration,
-    install_configuration_lifecycle_hardening,
     sync_memory_embedding_provider,
 )
 from custom_components.extended_openai_conversation_responses.const import (
@@ -132,8 +131,7 @@ def _disabled_runtime_config() -> dict:
     }
 
 
-def test_custom_conversation_timeout_accepts_full_ui_range() -> None:
-    install_configuration_lifecycle_hardening()
+async def test_custom_conversation_timeout_accepts_full_ui_range(hass) -> None:
 
     assert normalize_agent_config({"conversation_timeout_minutes": 1})[
         "conversation_timeout_minutes"
@@ -155,7 +153,6 @@ def test_custom_conversation_timeout_accepts_full_ui_range() -> None:
 
 
 def test_custom_timeout_keeps_only_friendly_presets_in_option_metadata() -> None:
-    install_configuration_lifecycle_hardening()
 
     assert [
         item["value"] for item in agent_config_options()["conversation_timeout_minutes"]
@@ -164,7 +161,6 @@ def test_custom_timeout_keeps_only_friendly_presets_in_option_metadata() -> None
 
 @pytest.mark.asyncio
 async def test_live_memory_settings_replace_and_clear_shared_embedding_provider() -> None:
-    install_configuration_lifecycle_hardening()
     memory = PersistentMemory(FakeStorage())
     await memory.async_initialize()
     await memory.async_add("alice", "Oscar is a Cavachon.", "pets", "explicit")
@@ -202,7 +198,6 @@ async def test_live_memory_settings_replace_and_clear_shared_embedding_provider(
 
 
 def test_embedding_provider_sync_is_idempotent_for_unchanged_live_config() -> None:
-    install_configuration_lifecycle_hardening()
     scheduled = []
 
     def scheduler(coroutine):
@@ -387,7 +382,6 @@ async def test_usage_retention_and_streaming_capability_follow_live_config() -> 
 
 
 def test_streaming_property_reads_current_configuration_before_request_start() -> None:
-    install_configuration_lifecycle_hardening()
     from custom_components.extended_openai_conversation_responses.conversation import (
         ExtendedOpenAIAgentEntity,
     )
