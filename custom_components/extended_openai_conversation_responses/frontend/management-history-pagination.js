@@ -1,9 +1,7 @@
-const MANAGEMENT_TAG = "extended-openai-management-panel";
 const CONVERSATIONS_VIEW = "data-memory/conversations";
 const LIST_PAGE_LIMIT = 50;
 const SEARCH_PAGE_LIMIT = 20;
 const TURN_PAGE_LIMIT = 20;
-const PATCHED = Symbol.for("extended-openai.management-history-pagination");
 
 function integer(value, fallback = 0) {
   const number = Number(value);
@@ -155,63 +153,50 @@ function appendTurnPager(panel, body, sessionId, data) {
   body.append(pager);
 }
 
-export function installHistoryPagination(Panel) {
-  if (!Panel || Panel.prototype[PATCHED]) return;
-  const prototype = Panel.prototype;
-  prototype[PATCHED] = true;
-
-  prototype._searchArchive = async function(offset = 0) {
-    const input = this.shadowRoot.querySelector("#archive-query");
-    const query = (offset ? this._eocHistoryQuery : input?.value || "").trim();
-    if (!query) {
-      this._eocHistoryMode = "list";
-      this._eocHistoryQuery = "";
-      await loadConversationPage(this, 0);
-      return;
-    }
-    this._eocHistoryMode = "search";
-    this._eocHistoryQuery = query;
-    await loadConversationPage(this, offset);
-  };
-
-  prototype._openSession = async function(sessionId, startTurn = 0) {
-    const root = this.shadowRoot;
-    const dialog = root.querySelector("#session-dialog");
-    const title = root.querySelector("#session-title");
-    const body = root.querySelector("#session-body");
-    const token = (this._eocSessionLoadToken || 0) + 1;
-    this._eocSessionLoadToken = token;
-    title.textContent = "Loading conversation…";
-    body.innerHTML = this._loading();
-    if (!dialog.open) dialog.showModal();
-    try {
-      const data = await this._call("conversations", "get", {
-        scope_id: this._scopeId,
-        session_id: sessionId,
-        start_turn: integer(startTurn),
-        limit: TURN_PAGE_LIMIT,
-      });
-      if (this._eocSessionLoadToken !== token || !dialog.open) return;
-      title.textContent = data.session?.title || "Untitled conversation";
-      body.innerHTML = renderTurns(this, data);
-      appendTurnPager(this, body, sessionId, data);
-    } catch (err) {
-      if (this._eocSessionLoadToken !== token || !dialog.open) return;
-      title.textContent = "Unable to load conversation";
-      body.innerHTML = `<div class="error" role="alert">${this._e(err.message || String(err))}</div>`;
-    }
-  };
-
-  const originalRender = prototype._render;
-  prototype._render = function(...args) {
-    const result = originalRender.apply(this, args);
-    decorateConversationPager(this);
-    return result;
-  };
+export async function searchArchive(panel, offset = 0) {
+  const input = panel.shadowRoot.querySelector("#archive-query");
+  const query = (offset ? panel._eocHistoryQuery : input?.value || "").trim();
+  if (!query) {
+    panel._eocHistoryMode = "list";
+    panel._eocHistoryQuery = "";
+    await loadConversationPage(panel, 0);
+    return;
+  }
+  panel._eocHistoryMode = "search";
+  panel._eocHistoryQuery = query;
+  await loadConversationPage(panel, offset);
 }
 
+export async function openSession(panel, sessionId, startTurn = 0) {
+  const root = panel.shadowRoot;
+  const dialog = root.querySelector("#session-dialog");
+  const title = root.querySelector("#session-title");
+  const body = root.querySelector("#session-body");
+  const token = (panel._eocSessionLoadToken || 0) + 1;
+  panel._eocSessionLoadToken = token;
+  title.textContent = "Loading conversation…";
+  body.innerHTML = panel._loading();
+  if (!dialog.open) dialog.showModal();
+  try {
+    const data = await panel._call("conversations", "get", {
+      scope_id: panel._scopeId,
+      session_id: sessionId,
+      start_turn: integer(startTurn),
+      limit: TURN_PAGE_LIMIT,
+    });
+    if (panel._eocSessionLoadToken !== token || !dialog.open) return;
+    title.textContent = data.session?.title || "Untitled conversation";
+    body.innerHTML = renderTurns(panel, data);
+    appendTurnPager(panel, body, sessionId, data);
+  } catch (err) {
+    if (panel._eocSessionLoadToken !== token || !dialog.open) return;
+    title.textContent = "Unable to load conversation";
+    body.innerHTML = `<div class="error" role="alert">${panel._e(err.message || String(err))}</div>`;
+  }
+}
 
 export {
+  decorateConversationPager,
   LIST_PAGE_LIMIT,
   SEARCH_PAGE_LIMIT,
   TURN_PAGE_LIMIT,

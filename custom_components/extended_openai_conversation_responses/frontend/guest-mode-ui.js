@@ -6,8 +6,6 @@ export const GUEST_EXCLUSION_KEYS = [
 const MEMORY_PAGE_SIZE = 100;
 const ARCHIVE_PAGE_SIZE = 50;
 const MEMORY_SEARCH_DEBOUNCE_MS = 250;
-const PANEL_TAG = "extended-openai-management-panel";
-const PATCHED = Symbol.for("extended-openai-management-browser");
 
 export function freshGuestPolicyDraft(config = {}) {
   const draft = JSON.parse(JSON.stringify(config));
@@ -47,7 +45,6 @@ function browserState(panel) {
       memorySearchTimer: null,
       memorySearchSequence: 0,
       projections: new Map(),
-      session: null,
     };
   }
   return panel._managementBrowserState;
@@ -152,156 +149,63 @@ async function loadMoreConversations(panel, button) {
   }
 }
 
-function renderSessionBody(panel) {
-  const state = browserState(panel).session;
-  const body = panel.shadowRoot.querySelector("#session-body");
-  if (!body || !state) return;
-  const turns = state.turns.map((turn) => `<article class="turn"><div class="message user"><strong>You</strong><p>${panel._e(turn.user_text)}</p></div><div class="message assistant"><strong>Assistant</strong><p>${panel._e(turn.assistant_text)}</p></div><small>${panel._e(panel._formatDate(turn.timestamp))}</small></article>`).join("") || panel._empty("No turns retained.");
-  body.innerHTML = `${turns}${state.hasMore ? `<div class="section-actions"><button type="button" class="secondary" id="load-more-turns">Load more turns</button></div>` : ""}`;
-  body.querySelector("#load-more-turns")?.addEventListener("click", (event) => loadMoreTurns(panel, event.currentTarget));
+export function prepareMemoryBrowser(panel) {
+  const state = browserState(panel);
+  clearTimeout(state.memorySearchTimer);
+  state.memorySearchSequence += 1;
+  const view = panel._viewKey();
+  if (view === "data-memory/memories" && panel._memoryKind === "persistent") state.memoryQuery = "";
+  if (view === "data-memory/conversations") state.archiveQuery = "";
 }
 
-async function loadMoreTurns(panel, button) {
-  const state = browserState(panel).session;
-  if (!state) return;
-  panel._setSaving(button, true, "Loading…");
-  try {
-    const data = await panel._call("conversations", "get", {
-      scope_id: state.scopeId,
-      session_id: state.sessionId,
-      start_turn: state.turns.length,
-      limit: ARCHIVE_PAGE_SIZE,
-    });
-    state.turns.push(...(data.turns || []));
-    state.hasMore = Boolean(data.has_more);
-    renderSessionBody(panel);
-  } catch (err) {
-    panel._toast(`Unable to load more turns: ${err.message || String(err)}`, true);
-  } finally {
-    panel._setSaving(button, false);
+export async function finishMemoryBrowserLoad(panel) {
+  if (panel._viewKey() === "data-memory/memories" && panel._memoryKind === "persistent") {
+    indexMemories(panel);
+    if (panel._query.trim()) await runMemorySearch(panel);
   }
 }
 
-export function installManagementBrowser(Panel) {
-  if (!Panel?.prototype || Panel.prototype[PATCHED]) return false;
-  const proto = Panel.prototype;
-  const originalLoadSection = proto._loadSection;
-  const originalMemories = proto._memories;
-  const originalConversations = proto._conversations;
-  const originalGuestPolicyView = proto._guestPolicyView;
-  const originalBindActions = proto._bindActions;
-  const originalUpdateVisibleList = proto._updateVisibleList;
+export function renderPersistentMemories(panel) {
+  const state = browserState(panel);
+  const query = panel._query.trim().toLocaleLowerCase();
+  const all = panel._result?.memories || [];
+  const items = query && query !== state.memoryQuery
+    ? all.filter((memory) => (state.projections.get(memory.memory_id) || "").includes(query))
+    : all;
+  return `<section class="content-card"><div class="section-heading"><div><h2>Memories</h2><p>Long-term facts the assistant can reuse in future conversations.</p></div><button type="button" id="add-memory">+ Add memory</button></div><div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent" disabled>Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary">Short-term</button></div><input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map((memory) => memoryCard(panel, memory)).join("") || panel._empty(query ? "No memories match panel search." : "No long-term memories yet.")}</div>${panel._result?.has_more ? `<div class="section-actions"><button type="button" class="secondary" id="load-more-memories">Load more ${state.memoryQuery ? "matches" : "memories"}</button></div>` : ""}</section>`;
+}
 
-  proto._formatDate = function(value) {
-    return formatManagementTimestamp(value, this._hass?.config?.time_zone);
-  };
+export function decorateConversations(panel, html) {
+  const state = browserState(panel);
+  const sessions = resultTarget(panel)?.sessions;
+  if (state.archiveQuery) html = html.replace('id="archive-query" type="search"', `id="archive-query" type="search" value="${panel._e(state.archiveQuery)}"`);
+  if (!sessions?.has_more) return html;
+  const marker = html.lastIndexOf("</section>");
+  if (marker < 0) return html;
+  const pagination = `<div class="section-actions"><button type="button" class="secondary" id="load-more-conversations">Load more ${state.archiveQuery ? "matches" : "conversations"}</button></div>`;
+  return `${html.slice(0, marker)}${pagination}${html.slice(marker)}`;
+}
 
-  proto._loadSection = async function(...args) {
-    const state = browserState(this);
-    clearTimeout(state.memorySearchTimer);
-    state.memorySearchSequence += 1;
-    const view = this._viewKey();
-    if (view === "data-memory/memories" && this._memoryKind === "persistent") state.memoryQuery = "";
-    if (view === "data-memory/conversations") state.archiveQuery = "";
-    const value = await originalLoadSection.apply(this, args);
-    if (this._viewKey() === "data-memory/memories" && this._memoryKind === "persistent") {
-      indexMemories(this);
-      if (this._query.trim()) await runMemorySearch(this);
-    }
-    return value;
-  };
+export function decorateGuestPolicy(panel, html) {
+  const marker = '<section class="content-card"><div class="section-heading"><div><h2>Assistant permission</h2>';
+  if (!html.includes(marker)) return html;
+  const config = panel._guestDraft || panel._result?.config || {};
+  return html.replace(marker, `${renderGuestWebSearchSetting(config)}${marker}`);
+}
 
-  proto._memories = function() {
-    if (this._memoryKind === "temporary") return originalMemories.call(this);
-    const state = browserState(this);
-    const query = this._query.trim().toLocaleLowerCase();
-    const all = this._result?.memories || [];
-    const items = query && query !== state.memoryQuery
-      ? all.filter((memory) => (state.projections.get(memory.memory_id) || "").includes(query))
-      : all;
-    return `<section class="content-card"><div class="section-heading"><div><h2>Memories</h2><p>Long-term facts the assistant can reuse in future conversations.</p></div><button type="button" id="add-memory">+ Add memory</button></div><div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent" disabled>Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary">Short-term</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map((memory) => memoryCard(this, memory)).join("") || this._empty(query ? "No memories match this search." : "No long-term memories yet.")}</div>${this._result?.has_more ? `<div class="section-actions"><button type="button" class="secondary" id="load-more-memories">Load more ${state.memoryQuery ? "matches" : "memories"}</button></div>` : ""}</section>`;
-  };
+export function filterPersistentMemories(panel) {
+  const state = browserState(panel);
+  const query = panel._query.trim().toLocaleLowerCase();
+  panel.shadowRoot.querySelectorAll(".memory-list .list-card").forEach((card) => {
+    card.hidden = Boolean(query && !(state.projections.get(card.dataset.memoryId) || "").includes(query));
+  });
+  if (query !== state.memoryQuery) scheduleMemorySearch(panel);
+}
 
-  proto._conversations = function() {
-    let html = originalConversations.call(this);
-    const state = browserState(this);
-    const sessions = resultTarget(this)?.sessions;
-    if (state.archiveQuery) html = html.replace('id="archive-query" type="search"', `id="archive-query" type="search" value="${this._e(state.archiveQuery)}"`);
-    if (!sessions?.has_more) return html;
-    const marker = html.lastIndexOf("</section>");
-    if (marker < 0) return html;
-    const pagination = `<div class="section-actions"><button type="button" class="secondary" id="load-more-conversations">Load more ${state.archiveQuery ? "matches" : "conversations"}</button></div>`;
-    return `${html.slice(0, marker)}${pagination}${html.slice(marker)}`;
-  };
-
-  proto._guestPolicyView = function(...args) {
-    const html = originalGuestPolicyView.apply(this, args);
-    const marker = '<section class="content-card"><div class="section-heading"><div><h2>Assistant permission</h2>';
-    if (!html.includes(marker)) return html;
-    const config = this._guestDraft || this._result?.config || {};
-    return html.replace(marker, `${renderGuestWebSearchSetting(config)}${marker}`);
-  };
-
-  proto._updateVisibleList = function() {
-    if (this._viewKey() !== "data-memory/memories" || this._memoryKind !== "persistent") return originalUpdateVisibleList.call(this);
-    const state = browserState(this);
-    const query = this._query.trim().toLocaleLowerCase();
-    this.shadowRoot.querySelectorAll(".memory-list .list-card").forEach((card) => {
-      card.hidden = Boolean(query && !(state.projections.get(card.dataset.memoryId) || "").includes(query));
-    });
-    if (query !== state.memoryQuery) scheduleMemorySearch(this);
-  };
-
-  proto._searchArchive = async function() {
-    const input = this.shadowRoot.querySelector("#archive-query");
-    const button = this.shadowRoot.querySelector("#archive-search");
-    if (!input || !button || button.disabled) return;
-    const query = input.value.trim();
-    const state = browserState(this);
-    this._setSaving(button, true, "Searching…");
-    try {
-      const target = resultTarget(this);
-      if (!target) return;
-      if (query) {
-        const found = await this._call("conversations", "search", {scope_id: this._scopeId, query, limit: ARCHIVE_PAGE_SIZE, offset: 0});
-        target.sessions = mappedArchiveResults(found);
-      } else {
-        target.sessions = await this._call("conversations", "list", {scope_id: this._scopeId, limit: ARCHIVE_PAGE_SIZE, offset: 0});
-      }
-      state.archiveQuery = query;
-      this._render();
-    } catch (err) {
-      this._toast(`Unable to search: ${err.message || String(err)}`, true);
-    } finally {
-      this._setSaving(button, false);
-    }
-  };
-
-  proto._openSession = async function(sessionId) {
-    const root = this.shadowRoot;
-    const dialog = root.querySelector("#session-dialog");
-    root.querySelector("#session-body").innerHTML = this._loading();
-    dialog.showModal();
-    try {
-      const data = await this._call("conversations", "get", {scope_id: this._scopeId, session_id: sessionId, start_turn: 0, limit: ARCHIVE_PAGE_SIZE});
-      root.querySelector("#session-title").textContent = data.session.title || "Untitled conversation";
-      browserState(this).session = {scopeId: this._scopeId, sessionId, turns: [...(data.turns || [])], hasMore: Boolean(data.has_more)};
-      renderSessionBody(this);
-    } catch (err) {
-      root.querySelector("#session-body").innerHTML = `<div class="error" role="alert">${this._e(err.message || String(err))}</div>`;
-    }
-  };
-
-  proto._bindActions = function(...args) {
-    const value = originalBindActions.apply(this, args);
-    this.shadowRoot.querySelector("#load-more-memories")?.addEventListener("click", (event) => loadMoreMemories(this, event.currentTarget));
-    this.shadowRoot.querySelector("#load-more-conversations")?.addEventListener("click", (event) => loadMoreConversations(this, event.currentTarget));
-    this.shadowRoot.querySelector("#guest-web-search")?.addEventListener("change", (event) => {
-      if (this._guestDraft) this._guestDraft.guest_web_search = Boolean(event.currentTarget.checked);
-    });
-    return value;
-  };
-
-  Object.defineProperty(proto, PATCHED, {value: true});
-  return true;
+export function bindMemoryBrowser(panel) {
+  panel.shadowRoot.querySelector("#load-more-memories")?.addEventListener("click", (event) => loadMoreMemories(panel, event.currentTarget));
+  panel.shadowRoot.querySelector("#load-more-conversations")?.addEventListener("click", (event) => loadMoreConversations(panel, event.currentTarget));
+  panel.shadowRoot.querySelector("#guest-web-search")?.addEventListener("change", (event) => {
+    if (panel._guestDraft) panel._guestDraft.guest_web_search = Boolean(event.currentTarget.checked);
+  });
 }
