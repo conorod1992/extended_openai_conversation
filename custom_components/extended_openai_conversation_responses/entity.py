@@ -792,7 +792,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         )
                         raise
                     chat_log.async_add_assistant_content_without_tools(
-                        conversation.ToolResultContent(
+                        make_tool_result_content(
                             agent_id=self.entity_id,
                             tool_call_id=loader_call.id,
                             tool_name=loader_call.tool_name,
@@ -1418,7 +1418,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if callable(guest_policy) and guest_policy().guest_active:
                     raise HomeAssistantError("HA tools are unavailable in Guest Mode")
                 ha_result = await live.async_call(tool_input)
-                return conversation.ToolResultContent(
+                return make_tool_result_content(
                     agent_id=self.entity_id,
                     tool_call_id=tool_input.id,
                     tool_name=tool_input.tool_name,
