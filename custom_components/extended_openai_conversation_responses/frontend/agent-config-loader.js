@@ -83,8 +83,8 @@ export function installManagementCopyPolish(Panel) {
   const constructor = Panel;
   const prototype = constructor?.prototype;
   if (!prototype || prototype[MANAGEMENT_COPY_PATCHED]) return false;
-  const originalRender = prototype._render;
-  prototype._render = function(...args) {
+  const originalRender = prototype._renderContent;
+  prototype._renderContent = function(...args) {
     const shellRevision = this._eocShellRevision;
     const result = originalRender.apply(this, args);
     // Preserve the existing shell-only decoration boundary. The native renderer
