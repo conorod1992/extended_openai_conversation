@@ -817,7 +817,9 @@ class ConversationArchive:
         payload: dict[str, Any] = {
             "sessions": [asdict(session) for session in persisted_sessions.values()],
             "active": {
-                key: value for key, value in active.items() if value in persisted_sessions
+                key: value
+                for key, value in active.items()
+                if value in persisted_sessions
             },
             "partitions": sorted(partitions),
         }
@@ -885,9 +887,7 @@ class ConversationArchive:
         partitions = self._partitions_for_turns(turns)
         removed_partitions = set(self._partitions) - partitions
         pending_names = (
-            set(changed_partitions)
-            | set(self._pending_partitions)
-            | removed_partitions
+            set(changed_partitions) | set(self._pending_partitions) | removed_partitions
         )
         pending = {
             partition: self._partition_payload_for_state(partition, turns)
@@ -895,9 +895,7 @@ class ConversationArchive:
         }
 
         await self._storage.async_save_metadata(
-            self._metadata_payload_for_state(
-                sessions, active, partitions, pending
-            )
+            self._metadata_payload_for_state(sessions, active, partitions, pending)
         )
 
         # Durable intent exists now; publish exactly what restart recovery will finish.
