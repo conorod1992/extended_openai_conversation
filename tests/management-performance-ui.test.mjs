@@ -236,3 +236,21 @@ assert.doesNotMatch(requestRules, /root\.addEventListener\("click"/);
 assert.match(requestRules, /id="rule-action-sequence-host"/);
 assert.doesNotMatch(requestRules, /<ha-selector id="rule-action-sequence"/);
 assert.match(requestRules, /selector = \{action:\{\}\}/);
+
+// Exercise cache ownership through the actual host, with no performance installer.
+{
+  const panel = panelFor("capabilities", "request-rules");
+  const key = panel._sectionCacheKey();
+  panel._sectionCache.set(key, {rules:["stale"]});
+  let loads = 0;
+  panel._hass = {callWS: async () => ({rules:[++loads]})};
+  await panel._loadSection();
+  assert.equal(loads, 1, "cache without timestamp refreshes");
+  const fetchedAt = panel._eocSectionCacheTimes.get(key);
+  await panel._loadSection();
+  assert.equal(loads, 1);
+  assert.equal(panel._eocSectionCacheTimes.get(key), fetchedAt, "hits do not slide TTL");
+  panel._eocSectionCacheTimes.set(key, Date.now() - 31_000);
+  await panel._loadSection();
+  assert.equal(loads, 2);
+}

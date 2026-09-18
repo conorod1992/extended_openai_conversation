@@ -1,7 +1,8 @@
 import {routePath} from "./frontend-navigation.js";
 
 const PATCHED = Symbol.for("extended-openai.management-state-safety");
-export const SECTION_CACHE_TTL_MS = 30_000;
+import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
+export {SECTION_CACHE_TTL_MS};
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
@@ -225,28 +226,6 @@ async function confirmDialogClose(panel, dialog) {
   return true;
 }
 
-function prepareSectionCache(panel, view) {
-  const key = panel._sectionCacheKey?.(view);
-  if (!key) return {key: null, reused: false};
-  panel._eocSectionCacheTimes ||= new Map();
-  const loadedAt = panel._eocSectionCacheTimes.get(key);
-  const cached = panel._sectionCache?.has(key);
-  if (cached && loadedAt && Date.now() - loadedAt <= SECTION_CACHE_TTL_MS) {
-    return {key, reused: true};
-  }
-  if (cached) panel._sectionCache.delete(key);
-  panel._eocSectionCacheTimes.delete(key);
-  return {key, reused: false};
-}
-
-function markSectionCache(panel, key, reused) {
-  // Do not slide the TTL when a cached value is merely revisited. It should
-  // still become eligible for a real refresh after 30 seconds.
-  if (!key || reused || !panel._sectionCache?.has(key)) return;
-  panel._eocSectionCacheTimes ||= new Map();
-  panel._eocSectionCacheTimes.set(key, Date.now());
-}
-
 function ensureWindowGuards(panel) {
   if (!panel._eocStateBeforeUnload) {
     panel._eocStateBeforeUnload = (event) => {
@@ -464,10 +443,8 @@ export function installManagementStateSafety(registry = globalThis.customElement
     const originalLoadSection = prototype._loadSection;
     prototype._loadSection = function(silent = false) {
       const view = this._viewKey();
-      const cache = prepareSectionCache(this, view);
       const result = originalLoadSection.call(this, silent);
       return Promise.resolve(result).then((value) => {
-        markSectionCache(this, cache.key, cache.reused);
         if (view === "capabilities/guest-mode" && this._guestDraft && !this._guestDirty) setGuestBaseline(this);
         return value;
       });
@@ -476,11 +453,6 @@ export function installManagementStateSafety(registry = globalThis.customElement
     const originalInvalidate = prototype._invalidateAfterMutation;
     prototype._invalidateAfterMutation = function(...args) {
       const result = originalInvalidate.apply(this, args);
-      if (this._eocSectionCacheTimes) {
-        for (const key of this._eocSectionCacheTimes.keys()) {
-          if (!this._sectionCache.has(key)) this._eocSectionCacheTimes.delete(key);
-        }
-      }
       if (args[1] === "guest_mode" && args[2] === "save_policy") setGuestBaseline(this);
       return result;
     };

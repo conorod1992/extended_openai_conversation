@@ -1,0 +1,525 @@
+{
+  "backendLatencyMs": 40,
+  "samples": [
+    {
+      "cold": {
+        "ms": 212,
+        "calls": [
+          "root/agents",
+          "overview/summary"
+        ],
+        "writes": [
+          "shell",
+          "main",
+          "dialogs"
+        ],
+        "frontendBytes": 627164,
+        "evaluatedModules": 46
+      },
+      "routes": [
+        {
+          "route": "assistant/basics",
+          "ms": 51,
+          "calls": [
+            "configuration/get"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/memories",
+          "ms": 104,
+          "calls": [
+            "scopes/catalog",
+            "memories/list"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/conversations",
+          "ms": 143,
+          "calls": [
+            "scopes/catalog",
+            "conversations/list",
+            "conversations/settings",
+            "conversations/active",
+            "configuration/get"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/knowledge",
+          "ms": 49,
+          "calls": [
+            "knowledge/list"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "overview",
+          "ms": 49,
+          "calls": [
+            "overview/summary"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/knowledge",
+          "ms": 2,
+          "calls": [],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        }
+      ],
+      "repeatedRender": [
+        "main",
+        "dialogs",
+        "main",
+        "dialogs"
+      ],
+      "expiredKnowledge": {
+        "firstUsableMs": 50,
+        "refreshMs": 50
+      },
+      "errors": []
+    },
+    {
+      "cold": {
+        "ms": 197,
+        "calls": [
+          "root/agents",
+          "overview/summary"
+        ],
+        "writes": [
+          "shell",
+          "main",
+          "dialogs"
+        ],
+        "frontendBytes": 627164,
+        "evaluatedModules": 46
+      },
+      "routes": [
+        {
+          "route": "assistant/basics",
+          "ms": 51,
+          "calls": [
+            "configuration/get"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/memories",
+          "ms": 99,
+          "calls": [
+            "scopes/catalog",
+            "memories/list"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/conversations",
+          "ms": 135,
+          "calls": [
+            "scopes/catalog",
+            "conversations/list",
+            "conversations/settings",
+            "conversations/active",
+            "configuration/get"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/knowledge",
+          "ms": 52,
+          "calls": [
+            "knowledge/list"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "overview",
+          "ms": 47,
+          "calls": [
+            "overview/summary"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/knowledge",
+          "ms": 2,
+          "calls": [],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        }
+      ],
+      "repeatedRender": [
+        "main",
+        "dialogs",
+        "main",
+        "dialogs"
+      ],
+      "expiredKnowledge": {
+        "firstUsableMs": 50,
+        "refreshMs": 50
+      },
+      "errors": []
+    },
+    {
+      "cold": {
+        "ms": 199,
+        "calls": [
+          "root/agents",
+          "overview/summary"
+        ],
+        "writes": [
+          "shell",
+          "main",
+          "dialogs"
+        ],
+        "frontendBytes": 627164,
+        "evaluatedModules": 46
+      },
+      "routes": [
+        {
+          "route": "assistant/basics",
+          "ms": 51,
+          "calls": [
+            "configuration/get"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/memories",
+          "ms": 103,
+          "calls": [
+            "scopes/catalog",
+            "memories/list"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/conversations",
+          "ms": 136,
+          "calls": [
+            "scopes/catalog",
+            "conversations/list",
+            "conversations/settings",
+            "conversations/active",
+            "configuration/get"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/knowledge",
+          "ms": 49,
+          "calls": [
+            "knowledge/list"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "overview",
+          "ms": 46,
+          "calls": [
+            "overview/summary"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/knowledge",
+          "ms": 2,
+          "calls": [],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        }
+      ],
+      "repeatedRender": [
+        "main",
+        "dialogs",
+        "main",
+        "dialogs"
+      ],
+      "expiredKnowledge": {
+        "firstUsableMs": 50,
+        "refreshMs": 51
+      },
+      "errors": []
+    },
+    {
+      "cold": {
+        "ms": 195,
+        "calls": [
+          "root/agents",
+          "overview/summary"
+        ],
+        "writes": [
+          "shell",
+          "main",
+          "dialogs"
+        ],
+        "frontendBytes": 627164,
+        "evaluatedModules": 46
+      },
+      "routes": [
+        {
+          "route": "assistant/basics",
+          "ms": 50,
+          "calls": [
+            "configuration/get"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/memories",
+          "ms": 102,
+          "calls": [
+            "scopes/catalog",
+            "memories/list"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/conversations",
+          "ms": 137,
+          "calls": [
+            "scopes/catalog",
+            "conversations/list",
+            "conversations/settings",
+            "conversations/active",
+            "configuration/get"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/knowledge",
+          "ms": 51,
+          "calls": [
+            "knowledge/list"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "overview",
+          "ms": 52,
+          "calls": [
+            "overview/summary"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/knowledge",
+          "ms": 2,
+          "calls": [],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        }
+      ],
+      "repeatedRender": [
+        "main",
+        "dialogs",
+        "main",
+        "dialogs"
+      ],
+      "expiredKnowledge": {
+        "firstUsableMs": 46,
+        "refreshMs": 46
+      },
+      "errors": []
+    },
+    {
+      "cold": {
+        "ms": 199,
+        "calls": [
+          "root/agents",
+          "overview/summary"
+        ],
+        "writes": [
+          "shell",
+          "main",
+          "dialogs"
+        ],
+        "frontendBytes": 627164,
+        "evaluatedModules": 46
+      },
+      "routes": [
+        {
+          "route": "assistant/basics",
+          "ms": 52,
+          "calls": [
+            "configuration/get"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/memories",
+          "ms": 94,
+          "calls": [
+            "scopes/catalog",
+            "memories/list"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/conversations",
+          "ms": 149,
+          "calls": [
+            "scopes/catalog",
+            "conversations/list",
+            "conversations/settings",
+            "conversations/active",
+            "configuration/get"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/knowledge",
+          "ms": 47,
+          "calls": [
+            "knowledge/list"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "overview",
+          "ms": 49,
+          "calls": [
+            "overview/summary"
+          ],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        },
+        {
+          "route": "data-memory/knowledge",
+          "ms": 2,
+          "calls": [],
+          "writes": [
+            "main",
+            "dialogs"
+          ],
+          "error": null
+        }
+      ],
+      "repeatedRender": [
+        "main",
+        "dialogs",
+        "main",
+        "dialogs"
+      ],
+      "expiredKnowledge": {
+        "firstUsableMs": 48,
+        "refreshMs": 48
+      },
+      "errors": []
+    }
+  ]
+}

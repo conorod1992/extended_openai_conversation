@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import custom_components.extended_openai_conversation_responses as integration
@@ -80,3 +81,21 @@ async def test_debug_assets_are_registered_before_management_panel(
 
     assert await integration.async_setup(hass, {}) is True
     assert order == ["debug", "management"]
+
+
+def test_native_management_lifecycle_assets_are_registered() -> None:
+    """Direct imports must be available from the versioned HA asset routes."""
+    from custom_components.extended_openai_conversation_responses.management_loading_performance import (
+        _EXTRA_FRONTEND_MODULES,
+    )
+
+    required = {
+        "management-actions.js",
+        "management-cache.js",
+        "management-dialogs.js",
+        "management-renderer.js",
+        "management-route.js",
+    }
+    assert required <= set(_EXTRA_FRONTEND_MODULES)
+    frontend = Path(management_ui.__file__).parent / "frontend"
+    assert all((frontend / name).is_file() for name in _EXTRA_FRONTEND_MODULES)

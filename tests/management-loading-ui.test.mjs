@@ -24,7 +24,7 @@ const panelSource = await readFile(frontend("management-panel.js"), "utf8");
 assert.match(panelSource, /_call\("overview", "summary"\)/);
 assert.match(loading, /_call\("configuration", "save"/);
 assert.doesNotMatch(loading, /_loadAgents\(panel\._agentId\)/);
-assert.match(panelSource, /Date.now\(\) - loadedAt > 30_000/);
+assert.match(panelSource, /Date.now\(\) - loadedAt > SCOPE_CACHE_TTL_MS/);
 assert.match(loading, /event\.stopImmediatePropagation\(\)/);
 assert.match(routes, /panel\._viewKey\(\) === view && panel\._eocViewAssetToken === assetToken/);
 assert.match(loading, /Document changed\. Validate & preview again before importing\./);

@@ -1,3 +1,4 @@
+import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs} from "./management-dialogs.js";
 import {renderManagement} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending} from "./management-actions.js";
@@ -46,6 +47,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._draftTitle = null;
     this._draftAgentId = null;
     this._sectionCache = new Map();
+    this._eocSectionCacheTimes = new Map();
     this._scopeCatalogCache = new Map();
     this._scopeCatalogVisitKey = null;
     this._baseScopes = [];
@@ -199,6 +201,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       ...extra,
     });
     this._invalidateAfterMutation(agent?.subentry_id, section, action);
+    pruneCacheTimes(this);
     return result;
   }
 
@@ -282,7 +285,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!this._selectedAgent() || !scopeCatalogKey) return;
     const agentId = this._agentId;
     const loadedAt = this._eocScopeCatalogTimes.get(scopeCatalogKey);
-    if (!loadedAt || Date.now() - loadedAt > 30_000) {
+    if (!loadedAt || Date.now() - loadedAt > SCOPE_CACHE_TTL_MS) {
       this._scopeCatalogCache.delete(scopeCatalogKey);
       this._eocScopeCatalogTimes.delete(scopeCatalogKey);
     }
@@ -313,6 +316,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!this._selectedAgent()) return this._render();
     const view = this._viewKey();
     const loadToken = ++this._loadToken;
+    const cacheGeneration = this._cacheGeneration;
     const scopeCatalogKey = this._prepareScopeCatalogVisit(view);
     const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules"].includes(view);
     if (configOnly && this._configData && this._draftAgentId === this._agentId) {
@@ -324,14 +328,19 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       return;
     }
     const needsScopes = ["data-memory/memories", "data-memory/conversations"].includes(view);
-    let cacheKey = this._sectionCacheKey(view);
-    if ((!needsScopes || this._scopeCatalogCache.has(scopeCatalogKey)) && cacheKey && this._sectionCache.has(cacheKey)) {
+    const cache = readSectionCache(this, view);
+    const cacheKey = cache.key;
+    const showCached = cache.result !== undefined && (cache.fresh || view === "data-memory/knowledge");
+    if (showCached) {
       this._contentData = null;
-      this._result = this._sectionCache.get(cacheKey);
+      this._result = cache.result;
       this._error = null;
       this._busy = false;
       this._render();
-      return;
+      if (cache.fresh) return;
+      // Knowledge records are fetched again when opened for editing. Show the
+      // expired read-only list immediately while refreshing its current revision.
+      silent = true;
     }
     if (!silent) {
       this._busy = true;
@@ -345,12 +354,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const prerequisites = Promise.allSettled([scopePromise, configPromise]);
       if (needsScopes) await scopePromise;
       if (loadToken !== this._loadToken) return;
-      cacheKey = this._sectionCacheKey(view);
       let result;
       let contentData = null;
-      if (cacheKey && this._sectionCache.has(cacheKey)) {
-        result = this._sectionCache.get(cacheKey);
-      } else if (view === "overview") {
+      if (view === "overview") {
         const summary = await this._call("overview", "summary");
         if (loadToken !== this._loadToken) return;
         const {agent, ...overview} = summary;
@@ -395,9 +401,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         result = null;
       }
       if (loadToken !== this._loadToken) return;
+      if (cacheGeneration !== this._cacheGeneration) return;
       this._contentData = contentData;
+      if (showCached && JSON.stringify(result) === JSON.stringify(cache.result)) result = cache.result;
       this._result = result;
-      if (cacheKey && result !== undefined) this._sectionCache.set(cacheKey, result);
+      writeSectionCache(this, cacheKey, result);
       this._error = null;
     } catch (err) {
       if (loadToken === this._loadToken) this._error = err.message || String(err);

@@ -121,3 +121,29 @@ test("voice and memory settings implementations load only when their routes are 
   await expect(panel.locator("[data-memory-config]").first()).toBeVisible();
   await expectHarnessClean(page, errors);
 });
+
+test("expired Knowledge list renders immediately and unchanged refresh preserves its DOM", async ({page}) => {
+  await page.goto(fixtureUrl("data-memory/knowledge"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#add-source")).toBeVisible();
+  const result = await panel.evaluate(async host => {
+    const key = host._sectionCacheKey();
+    await host._navigate("overview");
+    host._eocSectionCacheTimes.set(key, Date.now() - 31_000);
+    const original = host._hass.callWS;
+    let release;
+    host._hass.callWS = async message => {
+      if (message.section === "knowledge" && message.action === "list") await new Promise(resolve => { release = resolve; });
+      return original(message);
+    };
+    const pending = host._navigate("data-memory", "knowledge");
+    while (!release) await new Promise(resolve => setTimeout(resolve, 0));
+    const button = host.shadowRoot.querySelector("#add-source");
+    const immediate = !!button && !host._busy;
+    release();
+    await pending;
+    host._hass.callWS = original;
+    return {immediate, preserved:button === host.shadowRoot.querySelector("#add-source"), refreshed:host._eocSectionCacheTimes.get(key) > Date.now() - 1000};
+  });
+  expect(result).toEqual({immediate:true, preserved:true, refreshed:true});
+});

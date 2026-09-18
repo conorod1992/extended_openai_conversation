@@ -16,7 +16,7 @@ const bootstrapModule = await import(frontend("management-bootstrap.js"));
 assert.match(bootstrap, /await import\("\.\/management-state-safety\.js"\)/);
 assert.match(bootstrap, /await import\("\.\/debug-management\.js"\)/);
 assert.match(bootstrap, /installPreDefinitionPropertyReplay\(constructor\)/);
-assert.match(source, /SECTION_CACHE_TTL_MS = 30_000/);
+assert.equal(stateSafety.SECTION_CACHE_TTL_MS, 30_000);
 assert.match(source, /Discard unsaved Guest policy changes\?/);
 assert.match(source, /Switching agents will discard your unsaved Guest Mode policy changes/);
 assert.match(source, /Explicit Cancel remains an intentional discard/);
@@ -110,45 +110,4 @@ assert.equal(
   true,
 );
 
-const previousWindow = globalThis.window;
-globalThis.window = {addEventListener() {}, removeEventListener() {}};
-let networkLoads = 0;
-class FakePanel {
-  constructor() {
-    this._sectionCache = new Map([["agent-a|capabilities/request-rules", {rules: ["stale"]}]]);
-    this._eocSectionCacheTimes = new Map();
-  }
-  _viewKey() { return "capabilities/request-rules"; }
-  _sectionCacheKey() { return "agent-a|capabilities/request-rules"; }
-  async _loadSection() {
-    const key = this._sectionCacheKey();
-    if (!this._sectionCache.has(key)) {
-      networkLoads += 1;
-      this._sectionCache.set(key, {rules: [networkLoads]});
-    }
-  }
-  async _navigate() {}
-  async _handleRouteChange() {}
-  async _startFreshGuestPolicy() {}
-  _setupGuestSelectors() {}
-  async _loadAgents() {}
-  _invalidateAfterMutation() {}
-  _render() {}
-  disconnectedCallback() {}
-}
-const registry = {
-  async whenDefined() {},
-  get() { return FakePanel; },
-};
-assert.equal(await stateSafety.installManagementStateSafety(registry), true);
-const cachePanel = new FakePanel();
-await cachePanel._loadSection();
-assert.equal(networkLoads, 1, "cache without a freshness timestamp must refresh");
-await cachePanel._loadSection();
-assert.equal(networkLoads, 1, "fresh cache should be reused");
-const key = cachePanel._sectionCacheKey();
-cachePanel._eocSectionCacheTimes.set(key, Date.now() - stateSafety.SECTION_CACHE_TTL_MS - 1);
-await cachePanel._loadSection();
-assert.equal(networkLoads, 2, "expired cache must refresh");
-
-globalThis.window = previousWindow;
+// Native host cache expiry is exercised in management-performance-ui.test.mjs.

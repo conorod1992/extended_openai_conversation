@@ -62,3 +62,54 @@ Performance-critical: bootstrap, loading, routing, rendering, state-safety cache
 ## Baseline validation
 
 All existing standalone tests/*.test.mjs passed. Browser measurements use the shipped browser fixture (mock backend, local HTTP), not a live HA deployment; they establish structural costs rather than production latency. Windows Python initially served .mjs as text/plain; the local test server uses explicit JavaScript MIME mappings.
+
+## Implemented ownership
+
+- The host owns `_loadSection` -> `loadRoute` -> `_loadSectionData`. A single route controller starts asset/data work together and guards stale asset completion. No performance installer wraps `_loadSection` or `_call`.
+- The native request path owns timestamp normalization, rule-save deduplication and mutation invalidation. `management-actions.js` binds the existing capture-phase save/import/rule correctness actions explicitly; saves still reuse the response without reloading agents/configuration.
+- `management-cache.js` owns route TTL reads/writes. Knowledge and Request Rules remain isolated per agent. Knowledge can display an expired list while revalidating; an unchanged refresh retains its object and DOM. Rules keep their bounded fresh-cache policy. Scope catalogues are shared between memory/history routes per agent, with a non-sliding 30-second TTL. Memory/history mutations and full restore invalidate the catalogue; stale in-flight generations cannot repopulate it.
+- `management-renderer.js` owns the persistent shell, main host and independently updated regions. Equal route markup is not replaced or rebound. `management-dialogs.js` owns the five persistent core dialogs (Knowledge, Memory, session, reassignment, confirmation) with delegated actions; feature editor dialogs still use their existing replace/bind lifecycle.
+- Initial agent loading and remembered-overview prefetch now live in the native route lifecycle. The health decorator no longer replaces `_loadAgents` or intercepts `_call` to recover fields discarded by another patch; the overview summary is preserved intact.
+- Voice and memory-settings UI implementations are lazy route assets. Three sequential performance installers were removed (24 -> 21 entries). The customElements bridge remains for the other feature installers; those still require deterministic installation before upgrade.
+
+## Request dependencies and cache boundaries
+
+Configuration is independent of the scope catalogue and begins concurrently on conversations. History requests still wait for validated scope selection: `_applyScopes` may change the selected scope, so blindly requesting history in parallel would risk loading the wrong owner's records. A recent catalogue from memories removes this dependency entirely on the next conversations visit. No compound endpoint was needed.
+
+The agents list remains authoritative for selection. Existing remembered-agent overview prefetch removes its dependency when stored IDs remain valid. A first-ever visit still needs agents before the selected-agent summary; inventing a new aggregation endpoint for this case was not justified.
+
+Broader caching was assessed but deliberately does not include live memory/history, Guest Mode, configuration drafts or diagnostics. Their state can change outside management or is correctness-sensitive. The read-heavy Knowledge list now supports stale-while-revalidate; existing fresh Request Rules/Knowledge caching is retained. Usage/overview remain candidates for a separate freshness policy accounting for live conversation activity.
+
+## Measurements
+
+Reproduce with `node tests_browser/management-benchmark.mjs BASE_URL OUTPUT.json` after installing the pinned Playwright runner. The raw five-sample runs are in `measurements/management-before.json` and `measurements/management-after.json`. Before is untouched `890d186`; after is this refactor. Both use Chromium, the same shipped mock backend, an empty browser context, local HTTP and an injected 40 ms per backend request. Module counts use executed JavaScript coverage, not preload requests. Byte counts are decoded initial frontend resources. These are controlled structural comparisons, **not production HA latency measurements**; no meaningful cold-load win is claimed.
+
+| Scenario (median of 5) | Before | After |
+| --- | ---: | ---: |
+| Cold navigation until first usable overview | 199 ms | 200 ms |
+| First configuration-heavy section | 51 ms | 51 ms |
+| Memories | 102 ms | 95 ms |
+| Conversations after memories | 137 ms | 52 ms |
+| First Knowledge visit | 49 ms | 51 ms |
+| Overview revisit | 49 ms | 52 ms |
+| Fresh cached Knowledge revisit | 2 ms | 2 ms |
+| Expired Knowledge: first usable list | 50 ms | 2 ms |
+| Initial evaluated frontend modules | 46 | 46 |
+| Initial decoded frontend bytes | 627,164 | 596,777 |
+| Sequential bootstrap installers | 24 | 21 |
+| Conversations management requests after memories | 5 | 4 |
+| Conversations serial request stages after memories | 3 | 1 |
+| Core dialog-host replacements per route navigation | 1 | 0 |
+| Main/dialog replacements for two unchanged renders | 2 / 2 | 0 / 0 |
+
+The total evaluated module count is unchanged: two direct ownership modules offset two deferred feature implementations. Initial bytes fall about 4.8%; the material gains are request concurrency and avoiding DOM destruction, rather than a dramatic cold-start/module-count improvement. Ordinary destination navigation still replaces main content once, preserving the outer shell/main host. In an immediate-backend exploratory run, the first configuration route also dropped from three main replacements to two by suppressing duplicate asset-completion rendering. The fixed-latency comparison needs only one main replacement in both versions.
+
+## Validation and remaining work
+
+- All standalone JavaScript checks pass; frontend type check, 30 Vitest tests and build pass.
+- Full local Chromium suite: 48 passed, 13 environment-gated genuine-HA/upgrade tests skipped. Six new browser regressions cover node identity, single dialog submission, cache TTL/invalidation, independent requests, stale completion, feature lazy loading and stale Knowledge refresh.
+- Backend waterfall/residual/asset registration subset: 16 passed (one unrelated configuration normalization test excluded). A broader initial subset gave 23 passed / 6 failed; all six reproduce on untouched develop with this machine's HA template validation error (`Validates schema outside the event loop`). HA's default pytest plugin requires Unix `fcntl`; local backend tests use explicit pytest-asyncio loading and a workspace temporary directory. CI is the Linux/genuine-HA validation path.
+- A browser run had one pre-panel timeout; its trace showed no mounted element, and the isolated test and subsequent complete suite passed. A benchmark run similarly timed out before overview; the complete raw comparison contains successful reruns only. Treat cold timings as noisy, not evidence of a cold-start improvement.
+- Remaining feature render decorators still scan the DOM and mutate it after rendering. Feature editor dialogs still rebuild when main content changes. Converting those owners to lifecycle hooks/components is the next high-value step.
+- State-safety retains dirty-navigation/Guest baseline hooks; history pagination, temporary memory, quiet hours, usage footprint and debug retain feature loading wrappers. Bootstrap instrumentation still wraps navigation/loading/render, and registry interception remains until all pre-definition installers can be explicitly composed.
+- Larger route bodies still render strings. A future route component migration should retain controls within changed pages, rather than caching entire private history DOM or adding more wrapper layers.

@@ -2,9 +2,9 @@
 import {describe, expect, it} from "vitest";
 import {readFile} from "node:fs/promises";
 
-import {applyIncrementalDraftUpdate, settingsResultsMarkup} from "../../custom_components/extended_openai_conversation_responses/frontend/management-rendering-performance.js";
+import {applyIncrementalDraftUpdate, settingsResultsMarkup} from "../../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js";
 
-describe("legacy management rendering optimizations", () => {
+describe("native management rendering", () => {
   it("updates one draft field without scanning the whole form", () => {
     const panel = {_draft:{temperature:0.2}, _draftTitle:"Agent"};
     const control = {dataset:{config:"temperature", type:"number"}, value:"0.7"};
@@ -32,8 +32,8 @@ describe("legacy management rendering optimizations", () => {
     expect(markup).toContain("settings-result");
   });
 
-  it("keeps the shipped renderer patch targeted to dynamic regions", async () => {
-    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-rendering-performance.js", import.meta.url), "utf8");
+  it("keeps the shipped renderer targeted to dynamic regions", async () => {
+    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js", import.meta.url), "utf8");
     expect(source).toContain("data-eoc-persistent-shell");
     expect(source).toContain("main.innerHTML =");
     expect(source).not.toContain("shadowRoot.innerHTML =");
@@ -112,15 +112,15 @@ describe("legacy management rendering optimizations", () => {
   });
 
   it("starts lazy view data loads alongside their frontend assets", async () => {
-    const loadingSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-loading-performance.js", import.meta.url), "utf8");
-    const routeSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-route-performance.js", import.meta.url), "utf8");
+    const loadingSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url), "utf8");
+    const routeSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url), "utf8");
     expect(loadingSource).toContain("sectionPromise = Promise.resolve(");
     expect(loadingSource).toContain("Promise.allSettled([assetPromise, sectionPromise])");
     expect(loadingSource).toContain('view === "overview"');
-    expect(loadingSource).toContain("loadOverview(panel, silent)");
+    expect(loadingSource).not.toContain("prototype.");
     expect(loadingSource).toContain("originalLoadSection.call(panel, silent)");
     expect(loadingSource).toContain("_eocViewAssetToken");
-    expect(routeSource).toContain("sectionPromise = Promise.resolve(originalLoadSection.call(panel, silent));");
+    expect(routeSource).toContain("return loadSectionAlongsideAsset(panel, silent, panel._loadSectionData, view, asset, token);");
     expect(routeSource).toContain("Promise.allSettled([assetPromise, sectionPromise])");
   });
 });
