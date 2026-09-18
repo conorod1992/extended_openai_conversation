@@ -29,6 +29,9 @@ STORAGE_KEY_PREFIX = f"{DOMAIN}.usage"
 _USAGE_MANAGERS = f"{DOMAIN}.usage_managers"
 _VOLATILE_USAGE_MANAGERS = f"{DOMAIN}.volatile_usage_managers"
 _USAGE_GETTER_LOCKS = f"{DOMAIN}.usage_getter_locks"
+_USAGE_SAVE_DELAY_SECONDS = 5.0
+_USAGE_PRUNE_RETRY_SECONDS = 300.0
+_USAGE_PRUNE_MAX_ATTEMPTS_PER_DAY = 2
 MAX_RECENT_LIMIT = 200
 _LOGGER = logging.getLogger(__name__)
 
@@ -237,6 +240,11 @@ class UsageManager:
             f"usage_run_{id(self)}", default=None
         )
         self._run_started: dict[str, float] = {}
+        self._last_prune_date: str | None = None
+        self._next_prune_retry = 0.0
+        self._prune_attempt_date: str | None = None
+        self._prune_attempt_count = 0
+        self._prune_task: asyncio.Task[Any] | None = None
 
     async def async_initialize(self) -> None:
         """Load persisted state transactionally and make retries idempotent."""
@@ -437,58 +445,93 @@ class UsageManager:
 
     async def _async_finalize_run(self, run: UsageRun) -> None:
         async with self._lock:
-            if run.completed_at is not None:
-                return
-            completed_at = dt_util.utcnow()
-            run.completed_at = completed_at.isoformat()
-            run.duration_ms = max(
-                0,
-                int(
-                    (
-                        time.monotonic()
-                        - self._run_started.pop(run.run_id, time.monotonic())
+            if run.completed_at is None:
+                completed_at = dt_util.utcnow()
+                run.completed_at = completed_at.isoformat()
+                run.duration_ms = max(
+                    0,
+                    int(
+                        (
+                            time.monotonic()
+                            - self._run_started.pop(run.run_id, time.monotonic())
+                        )
+                        * 1000
+                    ),
+                )
+                self.totals.conversation_count += 1
+                if self.run_retention_days > 0:
+                    self.runs.append(run)
+                day_key = _local_day_key(completed_at)
+                day = self.daily.setdefault(day_key, _empty_day(day_key))
+                _add_run_to_day(day, run)
+                await self._async_save_safely(
+                    "run aggregates", self._async_save_aggregates
+                )
+                if self._detail_storage is not None:
+                    await self._async_save_safely(
+                        "run details", self._async_save_details
                     )
-                    * 1000
-                ),
-            )
-            self.totals.conversation_count += 1
-            if self.run_retention_days > 0:
-                self.runs.append(run)
-            day_key = _local_day_key(completed_at)
-            day = self.daily.setdefault(day_key, _empty_day(day_key))
-            _add_run_to_day(day, run)
-            await self._async_save_safely("run aggregates", self._async_save_aggregates)
-            if self._detail_storage is not None:
-                await self._async_save_safely("run details", self._async_save_details)
-            self._notify()
+                self._notify()
+
+        # Daily retention is deliberately scheduled after the user-turn accounting
+        # lock is released so an O(N) detail scan never extends response completion.
+        await self._async_prune_usage_if_due()
+
+    def _pruned_detail_state(
+        self,
+    ) -> tuple[list[UsageRequest], list[UsageRun], dict[str, int]]:
+        """Build the retained detail state without mutating live accounting."""
+        now = dt_util.utcnow()
+        request_cutoff = now - timedelta(days=max(0, self.request_retention_days))
+        run_cutoff = now - timedelta(days=max(0, self.run_retention_days))
+        requests = [
+            request
+            for request in self.requests
+            if self.request_retention_days > 0
+            and _parse_time(request.timestamp) >= request_cutoff
+        ]
+        runs = [
+            run
+            for run in self.runs
+            if self.run_retention_days > 0
+            and _parse_time(run.started_at) >= run_cutoff
+        ]
+        return (
+            requests,
+            runs,
+            {
+                "deleted_requests": len(self.requests) - len(requests),
+                "deleted_runs": len(self.runs) - len(runs),
+            },
+        )
+
+    async def _async_persist_detail_state(
+        self, requests: list[UsageRequest], runs: list[UsageRun]
+    ) -> None:
+        """Persist one candidate detail state before publishing it in memory."""
+        if self._detail_storage is None:
+            return
+        await self._detail_storage.async_save(
+            {
+                "requests": [asdict(request) for request in requests],
+                "runs": [asdict(run) for run in runs],
+            }
+        )
 
     async def async_prune_details(self, *, save: bool = True) -> dict[str, int]:
+        """Apply retention transactionally, persisting survivors before publication."""
         async with self._lock:
-            now = dt_util.utcnow()
-            request_cutoff = now - timedelta(days=max(0, self.request_retention_days))
-            run_cutoff = now - timedelta(days=max(0, self.run_retention_days))
-            old_request_count = len(self.requests)
-            old_run_count = len(self.runs)
-            self.requests = [
-                request
-                for request in self.requests
-                if self.request_retention_days > 0
-                and _parse_time(request.timestamp) >= request_cutoff
-            ]
-            self.runs = [
-                run
-                for run in self.runs
-                if self.run_retention_days > 0
-                and _parse_time(run.started_at) >= run_cutoff
-            ]
-            if save and self._detail_storage is not None:
-                await self._async_save_details()
-            return {
-                "deleted_requests": old_request_count - len(self.requests),
-                "deleted_runs": old_run_count - len(self.runs),
-            }
+            requests, runs, result = self._pruned_detail_state()
+            if save:
+                await self._async_persist_detail_state(requests, runs)
+            self.requests = requests
+            self.runs = runs
+            self._last_prune_date = dt_util.utcnow().date().isoformat()
+            self._next_prune_retry = 0.0
+            return result
 
     async def async_clear_details(self, *, confirm: bool) -> dict[str, int]:
+        """Clear retained request/run detail only after the durable clear succeeds."""
         if not confirm:
             raise ValueError("Explicit confirmation is required")
         async with self._lock:
@@ -496,11 +539,49 @@ class UsageManager:
                 "deleted_requests": len(self.requests),
                 "deleted_runs": len(self.runs),
             }
-            self.requests.clear()
-            self.runs.clear()
-            if self._detail_storage is not None:
-                await self._async_save_details()
+            await self._async_persist_detail_state([], [])
+            self.requests = []
+            self.runs = []
             return result
+
+    async def _async_prune_usage_if_due(self) -> None:
+        """Schedule bounded daily retention maintenance outside the response path."""
+        today = dt_util.utcnow().date().isoformat()
+        if self._last_prune_date == today:
+            return
+
+        same_day_attempt = self._prune_attempt_date == today
+        if same_day_attempt and time.monotonic() < self._next_prune_retry:
+            return
+
+        attempts = self._prune_attempt_count if same_day_attempt else 0
+        if attempts >= _USAGE_PRUNE_MAX_ATTEMPTS_PER_DAY:
+            return
+
+        current = self._prune_task
+        if isinstance(current, asyncio.Task) and not current.done():
+            return
+
+        self._prune_attempt_date = today
+        self._prune_attempt_count = attempts + 1
+
+        async def run() -> None:
+            try:
+                await self.async_prune_details(save=True)
+            except Exception:
+                self._next_prune_retry = time.monotonic() + _USAGE_PRUNE_RETRY_SECONDS
+                _LOGGER.exception("Background usage retention maintenance failed")
+
+        task = asyncio.create_task(
+            run(), name="extended_openai_usage_retention_maintenance"
+        )
+        self._prune_task = task
+
+        def done(completed: asyncio.Task[Any]) -> None:
+            if self._prune_task is completed:
+                self._prune_task = None
+
+        task.add_done_callback(done)
 
     def summary_for_date(self, date: str) -> dict[str, Any]:
         return dict(self.daily.get(date, _empty_day(date)))
@@ -711,8 +792,90 @@ class UsageManager:
                 }
             )
 
+    def _usage_snapshot(self, category: str) -> dict[str, Any]:
+        """Capture the current Usage state for one persistence category."""
+        if category == "totals":
+            return self.as_dict()
+        if category == "daily":
+            return {
+                "totals": deepcopy(self.as_dict()),
+                "days": deepcopy(self.daily),
+            }
+        if category == "details":
+            return {
+                "requests": [asdict(request) for request in self.requests],
+                "runs": [asdict(run) for run in self.runs],
+            }
+        raise ValueError(f"Unknown usage persistence category: {category}")
+
+    @staticmethod
+    def _schedule_store_snapshot(
+        store: Any, data_func: Callable[[], dict[str, Any]]
+    ) -> bool:
+        """Schedule a coalesced Home Assistant Store write when supported."""
+        delay_save = getattr(store, "async_delay_save", None)
+        if not callable(delay_save):
+            return False
+        delay_save(data_func, _USAGE_SAVE_DELAY_SECONDS)
+        return True
+
+    def _schedule_aggregate_snapshots(self) -> bool:
+        """Coalesce authoritative aggregates and their compatibility mirror."""
+        totals_snapshot = self._usage_snapshot("totals")
+        if self._daily_storage is None:
+            return self._schedule_store_snapshot(
+                self._storage, lambda snapshot=totals_snapshot: snapshot
+            )
+
+        totals_delay_save = getattr(self._storage, "async_delay_save", None)
+        daily_delay_save = getattr(self._daily_storage, "async_delay_save", None)
+        if not callable(totals_delay_save) or not callable(daily_delay_save):
+            return False
+
+        daily_snapshot = self._usage_snapshot("daily")
+        # Schedule the compatibility mirror first. If the authoritative daily
+        # schedule then fails, immediate persistence below leaves daily state current.
+        self._schedule_store_snapshot(
+            self._storage, lambda snapshot=totals_snapshot: snapshot
+        )
+        self._schedule_store_snapshot(
+            self._daily_storage, lambda snapshot=daily_snapshot: snapshot
+        )
+        return True
+
     async def _async_save_safely(self, label: str, save: Callable[[], Any]) -> None:
-        """Persist telemetry without changing the outcome of a completed request."""
+        """Coalesce routine telemetry writes without changing request outcomes."""
+        try:
+            if label in {"request aggregates", "run aggregates"}:
+                if self._schedule_aggregate_snapshots():
+                    return
+            else:
+                category = {
+                    "request totals": "totals",
+                    "run totals": "totals",
+                    "daily run totals": "daily",
+                    "request details": "details",
+                    "run details": "details",
+                }.get(label)
+                store = {
+                    "totals": self._storage,
+                    "daily": self._daily_storage,
+                    "details": self._detail_storage,
+                }.get(category)
+                if category is not None and store is not None:
+                    # Details are intentionally serialized only when the delayed
+                    # save is due, avoiding O(N) history serialization on the turn.
+                    if self._schedule_store_snapshot(
+                        store,
+                        lambda category=category: self._usage_snapshot(category),
+                    ):
+                        return
+        except Exception:
+            _LOGGER.exception(
+                "Unable to schedule usage %s; falling back to immediate persistence",
+                label,
+            )
+
         try:
             await save()
         except Exception:
