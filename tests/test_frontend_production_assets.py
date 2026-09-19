@@ -13,18 +13,27 @@ from custom_components.extended_openai_conversation_responses import frontend_as
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 
 
-def test_checked_in_production_entries_are_hashed_and_present() -> None:
+def test_checked_in_production_entry_is_hashed_and_present() -> None:
     management = frontend_assets.frontend_entry_url("management")
-    debug = frontend_assets.frontend_entry_url("debug")
 
     assert management.startswith(f"/{DOMAIN}/frontend/assets/management-")
     assert management.endswith(".js")
-    assert debug.startswith(f"/{DOMAIN}/frontend/assets/debug-")
-    assert debug.endswith(".js")
 
-    for url in (management, debug):
-        relative = url.removeprefix(f"/{DOMAIN}/frontend/")
-        assert (frontend_assets._PRODUCTION_DIR / relative).is_file()
+    relative = management.removeprefix(f"/{DOMAIN}/frontend/")
+    assert (frontend_assets._PRODUCTION_DIR / relative).is_file()
+
+    manifest = frontend_assets._manifest()
+    management_entry = next(
+        entry
+        for entry in manifest.values()
+        if entry.get("isEntry") is True and entry.get("name") == "management"
+    )
+    dynamic_files = [
+        manifest[key]["file"]
+        for key in management_entry.get("dynamicImports", [])
+        if key in manifest
+    ]
+    assert any(str(filename).startswith("assets/debug-panel-") for filename in dynamic_files)
 
 
 def test_frontend_entry_rejects_missing_manifest_asset(
