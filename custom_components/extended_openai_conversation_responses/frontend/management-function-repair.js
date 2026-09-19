@@ -1,6 +1,3 @@
-const PANEL_TAG = "extended-openai-management-panel";
-const PATCHED = Symbol.for("extended-openai.management-function-repair");
-
 function repairIssue(panel) {
   const issue = panel._selectedAgent?.()?.configuration_issue;
   return issue?.field === "functions" && issue?.repairable === true ? issue : null;
@@ -224,35 +221,6 @@ function bindFallbackRepair(panel) {
   });
 }
 
-export function installFunctionRepair(Panel) {
-  if (!Panel || Panel.prototype[PATCHED]) return false;
-  const prototype = Panel.prototype;
-  prototype[PATCHED] = true;
-
-  const originalContent = prototype._content;
-  prototype._content = function(agent) {
-    const issue = agent?.configuration_issue;
-    if (functionRepairView(this) && issue?.field === "functions" && issue?.repairable === true) {
-      const repair = repairMetadata(this);
-      if (repair && repair.isolatable === false) return renderFallbackRepair(this, issue);
-      return decorateFunctionsContent(this, originalContent.call(this, agent));
-    }
-    return originalContent.call(this, agent);
-  };
-
-  const originalRender = prototype._render;
-  prototype._render = function(...args) {
-    const result = originalRender.apply(this, args);
-    if (repairIssue(this) && functionRepairView(this)) {
-      if (repairMetadata(this)?.isolatable === false) bindFallbackRepair(this);
-      else bindIsolatedRepair(this);
-    }
-    return result;
-  };
-  return true;
-}
-
-
 export {
   bindFallbackRepair,
   bindIsolatedRepair,
@@ -264,3 +232,9 @@ export {
   repairMetadata,
   renderFallbackRepair,
 };
+
+export function bindFunctionRepair(panel) {
+  if (!repairIssue(panel) || !functionRepairView(panel)) return;
+  if (repairMetadata(panel)?.isolatable === false) bindFallbackRepair(panel);
+  else bindIsolatedRepair(panel);
+}

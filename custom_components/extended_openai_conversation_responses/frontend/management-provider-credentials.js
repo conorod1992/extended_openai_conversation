@@ -1,4 +1,3 @@
-const PATCHED = Symbol.for("extended-openai.management-provider-credentials");
 const CREDENTIAL_COMMAND = "extended_openai_conversation_responses/management/update_api_key";
 
 export function providerCredentialScope(agent = {}) {
@@ -214,7 +213,7 @@ function syncAuthenticationRecovery(panel, result) {
   panel.shadowRoot?.querySelector("#eoc-auth-recovery")?.remove();
 }
 
-function stopDiagnosticsWatch(panel) {
+export function stopDiagnosticsWatch(panel) {
   panel._eocProviderCredentialObserver?.disconnect?.();
   panel._eocProviderCredentialObserver = null;
 }
@@ -248,7 +247,7 @@ function watchDiagnosticsResult(panel) {
   inspect();
 }
 
-function enhanceDiagnostics(panel) {
+export function enhanceDiagnostics(panel) {
   if (
     panel._data?.is_admin === false
     || panel._page !== "usage-maintenance"
@@ -260,33 +259,4 @@ function enhanceDiagnostics(panel) {
   ensureApiKeyDialog(panel, agent);
   ensureProviderCard(panel, agent);
   watchDiagnosticsResult(panel);
-}
-
-export function installManagementProviderCredentials(Panel) {
-  // A constructor is the production API; registry callers remain supported.
-  if (typeof Panel !== "function") {
-    const registry = Panel || globalThis.customElements;
-    if (!registry?.whenDefined) return Promise.resolve(false);
-    return registry.whenDefined("extended-openai-management-panel").then(() => installManagementProviderCredentials(registry.get("extended-openai-management-panel")));
-  }
-  const constructor = Panel;
-  const prototype = constructor?.prototype;
-  if (!prototype || prototype[PATCHED]) return false;
-
-  const originalRender = prototype._render;
-  prototype._render = function(...args) {
-    stopDiagnosticsWatch(this);
-    const result = originalRender.apply(this, args);
-    enhanceDiagnostics(this);
-    return result;
-  };
-
-  const originalDisconnected = prototype.disconnectedCallback;
-  prototype.disconnectedCallback = function(...args) {
-    stopDiagnosticsWatch(this);
-    return originalDisconnected?.apply(this, args);
-  };
-
-  prototype[PATCHED] = true;
-  return true;
 }

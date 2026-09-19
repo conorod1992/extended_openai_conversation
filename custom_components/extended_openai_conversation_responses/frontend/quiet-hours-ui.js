@@ -14,7 +14,6 @@ export async function loadQuietHours(panel, silent = false) {
   }
 }
 
-const PATCHED = Symbol.for("extended-openai.quiet-hours-ui");
 const VIEW = "capabilities/quiet-hours";
 const QUIET_HOURS_STYLES = `
       .qh-status,.qh-satellite-heading{display:flex;justify-content:space-between;gap:16px;align-items:center}.qh-status{padding-bottom:18px;border-bottom:1px solid var(--divider-color);margin-bottom:8px}.qh-status div,.qh-satellite-heading div{display:flex;flex-direction:column;gap:3px}.qh-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.qh-grid label{display:flex;flex-direction:column;gap:7px}.qh-grid label>span{font-weight:600}.qh-grid small,.qh-entity-note small,.qh-satellite small{color:var(--secondary-text-color);line-height:1.45}.qh-policy{margin-top:20px}.qh-volume{display:flex;align-items:center;gap:12px}.qh-volume input{flex:1}.qh-volume output{min-width:44px;text-align:right;font-variant-numeric:tabular-nums}.qh-entity-note{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:20px;padding:14px;border-radius:10px;background:var(--secondary-background-color)}.qh-entity-note small{flex-basis:100%}.qh-satellites{display:grid;gap:14px}.qh-satellite{border:1px solid var(--divider-color);border-radius:12px;padding:16px}.qh-satellite-heading{margin-bottom:14px}.config-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}@media(max-width:760px){.qh-grid{grid-template-columns:1fr}.qh-status,.qh-satellite-heading{align-items:flex-start}}`;
@@ -120,33 +119,4 @@ export function bindQuietHours(panel) {
   });
   root.querySelectorAll(".qh-override").forEach((select) => select.addEventListener("change", () => setOverride(panel, select.dataset.satellite, select.dataset.kind, select.value)));
 
-}
-
-export function installQuietHoursUI(Panel) {
-  // A constructor is the production API; registry callers remain supported.
-  if (typeof Panel !== "function") {
-    const registry = Panel || globalThis.customElements;
-    if (!registry?.whenDefined) return Promise.resolve(false);
-    return registry.whenDefined("extended-openai-management-panel").then(() => installQuietHoursUI(registry.get("extended-openai-management-panel")));
-  }
-  const constructor = Panel;
-  const prototype = constructor?.prototype;
-  if (!prototype || prototype[PATCHED]) return false;
-
-
-  const originalContent = prototype._content;
-  prototype._content = function(agent) {
-    if (this._viewKey() === VIEW) return renderQuietHours(this);
-    return originalContent.call(this, agent);
-  };
-
-  const originalBindActions = prototype._bindActions;
-  prototype._bindActions = function(...args) {
-    const result = originalBindActions.apply(this, args);
-    if (this._viewKey() === VIEW) bindQuietHours(this);
-    return result;
-  };
-
-  prototype[PATCHED] = true;
-  return true;
 }

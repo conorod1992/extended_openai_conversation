@@ -325,7 +325,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
     </section>`;
 }
 
-function requestDetailsDialog() {
+export function requestDetailsDialog() {
   return `<dialog id="usage-request-dialog" class="editor-dialog wide" aria-labelledby="usage-request-title"><div class="dialog-header"><h2 id="usage-request-title">Provider requests</h2><button type="button" class="icon close-usage-requests" aria-label="Close">×</button></div><div id="usage-request-body" class="dialog-body"></div><div class="dialog-actions"><button type="button" class="secondary close-usage-requests">Close</button></div></dialog>`;
 }
 
@@ -348,7 +348,7 @@ function renderUsageBar(panel, bucket, max) {
   return `<span class="chart-column" tabindex="0" aria-label="${panel._e(details)}" data-tooltip="${panel._e(details)}" style="height:${height}%"><span class="chart-segment cached" style="height:${cachedShare}%"></span><span class="chart-segment uncached" style="height:${uncachedShare}%"></span></span>`;
 }
 
-function renderUsagePage(panel, result = {}) {
+export function renderUsagePage(panel, result = {}) {
   const today = resultToday(result, panel);
   const history = selectUsageHistory(result.days?.days || [], panel._usageHistoryWindow || DEFAULT_USAGE_WINDOW, today);
   const summary = history.summary;
@@ -399,58 +399,41 @@ function renderUsagePage(panel, result = {}) {
     ${panel._data?.is_admin ? `<section class="content-card"><h2>Usage detail maintenance</h2><p>Retention is available in the local Retention & maintenance subsection.</p><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Daily, monthly, selected-period, and lifetime aggregates are never removed by detail pruning.</small></section>` : ""}`;
 }
 
-export function installUsageDiagnostics(Panel) {
-  const prototype = Panel?.prototype;
-  if (!prototype || prototype.__usageDiagnosticsInstalled) return;
-  prototype.__usageDiagnosticsInstalled = true;
+export function loadUsageDaily(panel, extra = {}) {
+  // Pin the selected assistant for every page even if the user switches mid-load.
+  const agent = panel._selectedAgent?.();
+  const identity = agent ? {entry_id: agent.entry_id, subentry_id: agent.subentry_id} : {};
+  return loadAllUsageDays((startDate, endDate) => panel._call("usage", "daily", {
+    ...extra, ...identity, start_date: startDate, end_date: endDate,
+  }));
+}
 
-  const originalCall = prototype._call;
-  prototype._call = function(section, action, extra = {}) {
-    if (section === "usage" && action === "daily" && !extra.start_date && !extra.end_date) {
-      const agent = this._selectedAgent?.();
-      const identity = agent ? {entry_id: agent.entry_id, subentry_id: agent.subentry_id} : {};
-      return loadAllUsageDays((startDate, endDate) => originalCall.call(this, section, action, {
-        ...extra,
-        ...identity,
-        start_date: startDate,
-        end_date: endDate,
-      }));
-    }
-    return originalCall.call(this, section, action, extra);
+export function bindUsageDiagnostics(panel) {
+  const root = panel.shadowRoot;
+  const window = root.querySelector("#usage-window");
+  if (window) window.onchange = (event) => {
+    panel._usageHistoryWindow = normalizeUsageWindow(event.target.value);
+    panel._render();
   };
-
-  prototype._usage = function() {
-    return renderUsagePage(this, this._result || {});
-  };
-
-  const originalDialogs = prototype._dialogs;
-  prototype._dialogs = function() {
-    return `${originalDialogs.call(this)}${this._viewKey() === "usage-maintenance/usage" ? requestDetailsDialog() : ""}`;
-  };
-
-  const originalBindActions = prototype._bindActions;
-  prototype._bindActions = function() {
-    originalBindActions.call(this);
-    const root = this.shadowRoot;
-    root.querySelector("#usage-window")?.addEventListener("change", (event) => {
-      this._usageHistoryWindow = normalizeUsageWindow(event.target.value);
-      this._render();
-    });
-    root.querySelectorAll(".close-usage-requests").forEach((button) => button.addEventListener("click", () => root.querySelector("#usage-request-dialog")?.close()));
-    root.querySelector("#usage-request-dialog")?.addEventListener("cancel", (event) => { event.preventDefault(); root.querySelector("#usage-request-dialog")?.close(); });
-    root.querySelectorAll(".usage-run-details").forEach((button) => button.addEventListener("click", async () => {
+  root.querySelectorAll(".close-usage-requests").forEach((button) => {
+    button.onclick = () => root.querySelector("#usage-request-dialog")?.close();
+  });
+  const dialog = root.querySelector("#usage-request-dialog");
+  if (dialog) dialog.oncancel = (event) => { event.preventDefault(); dialog.close(); };
+  root.querySelectorAll(".usage-run-details").forEach((button) => {
+    button.onclick = async () => {
       const dialog = root.querySelector("#usage-request-dialog");
       const body = root.querySelector("#usage-request-body");
       if (!dialog || !body) return;
-      body.innerHTML = this._loading();
+      body.innerHTML = panel._loading();
       dialog.showModal();
       try {
-        const response = await this._call("usage", "requests", {run_id: button.dataset.usageRunId, limit: 100});
+        const response = await panel._call("usage", "requests", {run_id: button.dataset.usageRunId, limit: 100});
         if (!dialog.open) return;
-        body.innerHTML = renderRequestDetails(this, response?.requests || []);
+        body.innerHTML = renderRequestDetails(panel, response?.requests || []);
       } catch (err) {
-        if (dialog.open) body.innerHTML = `<div class="error" role="alert">${this._e(err.message || String(err))}</div>`;
+        if (dialog.open) body.innerHTML = `<div class="error" role="alert">${panel._e(err.message || String(err))}</div>`;
       }
-    }));
-  };
+    };
+  });
 }
