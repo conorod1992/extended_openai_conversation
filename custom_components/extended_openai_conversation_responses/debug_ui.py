@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
-from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .debug import get_debug_manager
+from .frontend_assets import async_register_frontend_assets
 from .debug_management_projection import debug_run_summaries, debug_trace_page
 from .management_result_limits import (
     MANAGEMENT_DEBUG_PROVIDER_PAGE_DEFAULT,
@@ -138,16 +137,6 @@ async def async_setup_debug_ui(hass: HomeAssistant) -> None:
     install_payload_latency_diagnostics()
     if hass.data.get(_DEBUG_UI_SETUP):
         return
-    hass.data[_DEBUG_UI_SETUP] = True
-    frontend_dir = Path(__file__).parent / "frontend"
-    await hass.http.async_register_static_paths(
-        [
-            StaticPathConfig(
-                f"/{DOMAIN}/{module_name}",
-                str(frontend_dir / module_name),
-                cache_headers=False,
-            )
-            for module_name in ("debug-panel.js", "debug-management.js")
-        ]
-    )
+    await async_register_frontend_assets(hass)
     websocket_api.async_register_command(hass, websocket_request_debug)
+    hass.data[_DEBUG_UI_SETUP] = True
