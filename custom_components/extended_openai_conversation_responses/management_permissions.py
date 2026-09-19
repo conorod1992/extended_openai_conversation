@@ -23,19 +23,6 @@ ManagementCommand = Callable[
 ]
 
 
-def _register_settings_polish_frontend() -> None:
-    """Expose the settings-polish module before the management panel is registered."""
-    modules = tuple(
-        dict.fromkeys(
-            (
-                *management_ui.MANAGEMENT_FRONTEND_MODULES,
-                "management-settings-polish.js",
-            )
-        )
-    )
-    setattr(management_ui, "MANAGEMENT_FRONTEND_MODULES", modules)  # noqa: B010
-
-
 def _require_admin(is_admin: bool) -> None:
     if not is_admin:
         raise HomeAssistantError("Administrator permission is required")
@@ -142,7 +129,6 @@ def _install_optimized_overview_guard() -> None:
 
 def install_management_permissions() -> bool:
     """Install management result bounds inside the authorization wrapper."""
-    _register_settings_polish_frontend()
     install_management_browser()
     _install_optimized_overview_guard()
     install_management_setup_health()

@@ -7,7 +7,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, Final, cast
 from uuid import uuid4
 
 import voluptuous as vol
@@ -167,7 +167,9 @@ def _reset_request_rule_runtime(
     )
 
 
-MANAGEMENT_FRONTEND_MODULES = (
+# Complete Management asset registry, including lazy imports. Feature installers
+# must not extend this tuple; serving a module does not eagerly load it.
+MANAGEMENT_FRONTEND_MODULES: Final[tuple[str, ...]] = (
     "management-panel.js",
     "management-actions.js",
     "management-cache.js",
@@ -213,6 +215,18 @@ MANAGEMENT_FRONTEND_MODULES = (
     "management-decision-guidance.js",
     "management-settings-polish.js",
     "management-overview-health-clarity.js",
+    "agent-config-editor-base.js",
+    "agent-config-editor-model-v2.js",
+    "agent-config-native-yaml.js",
+    "guide-page-base.js",
+    "guide-page-impl.js",
+    "ha-llm-tools.js",
+    "management-provider-credentials.js",
+    "memory-settings-ui.js",
+    "overview-health.js",
+    "overview-page-impl.js",
+    "request-rules-ui-impl.js",
+    "voice-identity-ui.js",
 )
 
 

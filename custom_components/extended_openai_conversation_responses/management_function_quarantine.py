@@ -42,18 +42,6 @@ _QUARANTINED_FUNCTION_NAMES: ContextVar[frozenset[str]] = ContextVar(
     "extended_openai_management_quarantined_function_names", default=frozenset()
 )
 
-# This module is imported before management_ui registers static paths, so keep the
-# UX helpers introduced alongside quarantine available to Home Assistant as served
-# frontend assets as well as management-bootstrap dependencies.
-management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(  # type: ignore[assignment]
-    dict.fromkeys(
-        (
-            *management_ui.MANAGEMENT_FRONTEND_MODULES,
-            "management-overview-health-clarity.js",
-        )
-    )
-)
-
 _STRICT_CONFIGURED_TOOLS = management_ui.configured_function_tools_from_data
 _STRICT_MERGE_AGENT_CONFIG = management_ui.merge_agent_config
 _STRICT_VALIDATE_FUNCTION_GROUPS = management_ui.validate_function_groups

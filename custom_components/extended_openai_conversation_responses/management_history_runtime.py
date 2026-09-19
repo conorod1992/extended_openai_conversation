@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any, cast
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -26,7 +26,6 @@ ManagementCommand = Callable[
     [HomeAssistant, str, bool, dict[str, Any]], Awaitable[dict[str, Any]]
 ]
 _PATCHED = "extended_openai_management_history_bounds"
-_FRONTEND_MODULE = "management-history-pagination.js"
 
 
 def wrap_management_history_bounds(original: ManagementCommand) -> ManagementCommand:
@@ -132,17 +131,8 @@ def wrap_management_history_bounds(original: ManagementCommand) -> ManagementCom
     return wrapped
 
 
-def _register_frontend_module() -> None:
-    """Expose the pagination extension through the existing management asset route."""
-    frontend_modules: tuple[str, ...] = tuple(
-        dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE))
-    )
-    cast(Any, management_ui).MANAGEMENT_FRONTEND_MODULES = frontend_modules
-
-
 def install_management_history_bounds() -> bool:
     """Install once around the current optimized management command."""
-    _register_frontend_module()
     if getattr(management_ui, _PATCHED, False):
         return False
     management_ui.async_management_command = wrap_management_history_bounds(  # type: ignore[assignment]

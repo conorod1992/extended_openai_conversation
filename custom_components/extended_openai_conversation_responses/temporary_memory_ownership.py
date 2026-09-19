@@ -26,7 +26,6 @@ _INSTALLED = False
 _ACTIVE_OWNER_SCOPE_ID: ContextVar[str | None] = ContextVar(
     "extended_openai_temporary_memory_owner_scope_id", default=None
 )
-_FRONTEND_MODULE = "management-temporary-memory.js"
 
 
 def _valid_owner_scope_id(value: object) -> str | None:
@@ -472,9 +471,6 @@ def _install_management_contract() -> None:
     from . import management_ui
 
     management: Any = management_ui
-    management.MANAGEMENT_FRONTEND_MODULES = tuple(
-        dict.fromkeys((*management.MANAGEMENT_FRONTEND_MODULES, _FRONTEND_MODULE))
-    )
 
     current_preview = management._async_preview_effective_request
 

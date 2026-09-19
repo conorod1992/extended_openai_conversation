@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
-const initPath = new URL(
-  "../custom_components/extended_openai_conversation_responses/__init__.py",
+const managementPath = new URL(
+  "../custom_components/extended_openai_conversation_responses/management_ui.py",
   import.meta.url,
 );
 const loaderPath = new URL(
@@ -10,8 +10,8 @@ const loaderPath = new URL(
   import.meta.url,
 );
 
-const [initSource, loaderSource] = await Promise.all([
-  readFile(initPath, "utf8"),
+const [managementSource, loaderSource] = await Promise.all([
+  readFile(managementPath, "utf8"),
   readFile(loaderPath, "utf8"),
 ]);
 
@@ -21,7 +21,7 @@ assert.match(
   "the agent configuration loader must lazy-load the native YAML wrapper",
 );
 assert.match(
-  initSource,
+  managementSource,
   /"agent-config-native-yaml\.js"/,
   "every lazily imported management frontend module must be registered as a Home Assistant static asset",
 );

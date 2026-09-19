@@ -290,7 +290,7 @@ def test_install_management_loading_optimizations_is_idempotent(monkeypatch) -> 
         async_management_command=original,
         MANAGEMENT_FRONTEND_MODULES=(
             "management-panel.js",
-            loading._EXTRA_FRONTEND_MODULES[0],
+            "agent-config-editor-base.js",
         ),
         async_setup_management_ui=object(),
     )
@@ -328,6 +328,7 @@ def test_install_management_loading_optimizations_is_idempotent(monkeypatch) -> 
         raising=False,
     )
 
+    modules = fake_management.MANAGEMENT_FRONTEND_MODULES
     loading.install_management_loading_optimizations()
 
     assert loading._INSTALLED is True
@@ -338,12 +339,9 @@ def test_install_management_loading_optimizations_is_idempotent(monkeypatch) -> 
     assert conversation.configured_function_tools_from_data is loading._runtime_configured_function_tools
     assert conversation.validate_function_groups is loading._runtime_validate_function_groups
     assert function_tool_resolution.validate_function_groups is loading._runtime_validate_function_groups
-    assert fake_management.MANAGEMENT_FRONTEND_MODULES.count(
-        loading._EXTRA_FRONTEND_MODULES[0]
-    ) == 1
+    assert fake_management.MANAGEMENT_FRONTEND_MODULES is modules
     assert package.async_setup_management_ui is loading.async_setup_cached_management_ui
     assert package.async_setup_debug_ui is loading.async_setup_cached_debug_ui
 
-    modules = fake_management.MANAGEMENT_FRONTEND_MODULES
     loading.install_management_loading_optimizations()
-    assert fake_management.MANAGEMENT_FRONTEND_MODULES == modules
+    assert fake_management.MANAGEMENT_FRONTEND_MODULES is modules

@@ -354,36 +354,20 @@ async def test_conversation_routes_to_bounded_archive_helpers(
     original.assert_not_awaited()
 
 
-def test_register_frontend_module_appends_once(monkeypatch):
-    """The pagination frontend asset is appended without duplicates."""
-    monkeypatch.setattr(runtime.management_ui, "MANAGEMENT_FRONTEND_MODULES", ("base.js",))
-
-    runtime._register_frontend_module()
-    runtime._register_frontend_module()
-
-    assert runtime.management_ui.MANAGEMENT_FRONTEND_MODULES == (
-        "base.js",
-        "management-history-pagination.js",
-    )
-
-
 def test_install_management_history_bounds_is_idempotent(monkeypatch):
-    """Installation wraps once while always exposing the pagination asset."""
+    """Installation wraps once without changing the complete asset registry."""
     original = AsyncMock()
     monkeypatch.setattr(runtime.management_ui, "async_management_command", original)
-    monkeypatch.setattr(runtime.management_ui, "MANAGEMENT_FRONTEND_MODULES", ())
+    modules = runtime.management_ui.MANAGEMENT_FRONTEND_MODULES
+    assert "management-history-pagination.js" in modules
     monkeypatch.delattr(runtime.management_ui, runtime._PATCHED, raising=False)
 
     assert runtime.install_management_history_bounds() is True
     installed = runtime.management_ui.async_management_command
     assert installed is not original
     assert getattr(runtime.management_ui, runtime._PATCHED) is True
-    assert runtime.management_ui.MANAGEMENT_FRONTEND_MODULES == (
-        "management-history-pagination.js",
-    )
+    assert runtime.management_ui.MANAGEMENT_FRONTEND_MODULES is modules
 
     assert runtime.install_management_history_bounds() is False
     assert runtime.management_ui.async_management_command is installed
-    assert runtime.management_ui.MANAGEMENT_FRONTEND_MODULES == (
-        "management-history-pagination.js",
-    )
+    assert runtime.management_ui.MANAGEMENT_FRONTEND_MODULES is modules
