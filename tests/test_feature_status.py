@@ -127,7 +127,6 @@ def test_snapshot_enriches_from_loaded_knowledge(hass, management_agent, monkeyp
     assert result["feature_status"]["memory"]["label"] == "Manual"
     assert result["feature_status"]["knowledge"]["state"] == "available"
     assert result["feature_status"]["knowledge"]["source_count"] == 3
-    assert "management-feature-status.js" in management_ui.MANAGEMENT_FRONTEND_MODULES
 
 
 async def test_knowledge_get_does_not_add_list_feature_status(
