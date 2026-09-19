@@ -128,10 +128,12 @@ async def main():
     original = {name: getattr(cls, name) for name in names}
     hass = MagicMock()
     hass.data = {}
+    hass.http.async_register_static_paths = AsyncMock()
     hass.auth.async_get_users = AsyncMock(return_value=[])
     async_names = ('async_setup_model_catalog', 'async_get_quiet_hours', 'async_setup_delayed_tools', 'async_migrate_integration', 'async_recover_pending_restores', 'async_setup_services', 'async_setup_intercom_services', 'async_setup_debug_ui', 'async_setup_management_ui')
     from contextlib import ExitStack
     with ExitStack() as stack:
+        stack.enter_context(patch("homeassistant.components.panel_custom.async_register_panel", AsyncMock()))
         for name in async_names:
             stack.enter_context(patch.object(integration, name, AsyncMock()))
         for name in ('setup_provider_credentials_websocket', 'setup_backup_transfer_websocket'):

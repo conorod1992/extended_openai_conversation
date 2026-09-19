@@ -460,8 +460,9 @@ async def test_separate_assist_calls_reinject_saved_history_into_recreated_chat_
 )
 @pytest.mark.parametrize("guest", [False, True])
 @pytest.mark.parametrize("satellite", [None, "assist.kitchen"])
+@pytest.mark.parametrize("device", [None, "kitchen"])
 async def test_assist_passes_configured_continuity_scope_timeout_and_guest_namespace(
-    monkeypatch, mode, guest, satellite
+    monkeypatch, mode, guest, satellite, device
 ):
     entity, invoke, _, _ = _assist_fixture(monkeypatch)
     entity.subentry.data.update(
@@ -470,12 +471,13 @@ async def test_assist_passes_configured_continuity_scope_timeout_and_guest_names
     entity._resolve_live_guest_policy.return_value = GuestCapabilityPolicy(guest)
     resolve = AsyncMock(wraps=entity._continuity.async_resolve)
     monkeypatch.setattr(entity._continuity, "async_resolve", resolve)
-    await invoke(satellite=satellite, incoming="incoming-ha-id")
+    await invoke(device=device, satellite=satellite, incoming="incoming-ha-id")
     args = resolve.await_args.args
     assert args[0] == mode
     assert args[1].user_id == "alice"
-    assert args[1].device_id == (satellite or "kitchen")
-    assert args[2:] == (satellite or "kitchen", "incoming-ha-id", 37)
+    expected_device = device or satellite
+    assert args[1].device_id == expected_device
+    assert args[2:] == (expected_device, "incoming-ha-id", 37)
     assert resolve.await_args.kwargs == {"namespace": "guest" if guest else None}
 
 

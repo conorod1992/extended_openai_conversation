@@ -307,8 +307,6 @@ async def test_openai_client_proxy_delegates_responses_and_other_attributes(
 )
 async def test_turn_cache_context_restored_on_early_failure(failure) -> None:
     """Even failures before guest/continuity setup restore the caller's context."""
-    from inspect import unwrap
-
     from custom_components.extended_openai_conversation_responses.conversation import (
         ExtendedOpenAIAgentEntity,
     )
@@ -324,7 +322,7 @@ async def test_turn_cache_context_restored_on_early_failure(failure) -> None:
     token = performance._PROMPT_CACHE_CONTEXT.set(outer)
     try:
         with pytest.raises(failure):
-            await unwrap(ExtendedOpenAIAgentEntity._async_process)(
+            await ExtendedOpenAIAgentEntity._async_process_with_continuity(
                 SimpleNamespace(), Input()
             )
         assert observed == [None]
