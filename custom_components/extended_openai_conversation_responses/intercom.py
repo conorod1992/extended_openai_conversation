@@ -107,15 +107,17 @@ class IntercomManager:
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._enabled = False
         self._loaded = False
+        self._state_lock = asyncio.Lock()
         self._refresh_state_listener()
 
     async def async_initialize(self) -> None:
         """Load persisted broadcast settings once."""
-        if self._loaded:
-            return
-        stored = await self._store.async_load()
-        self._enabled = bool(stored.get("enabled", False)) if stored else False
-        self._loaded = True
+        async with self._state_lock:
+            if self._loaded:
+                return
+            stored = await self._store.async_load()
+            self._enabled = bool(stored.get("enabled", False)) if stored else False
+            self._loaded = True
 
     @property
     def enabled(self) -> bool:
@@ -124,25 +126,27 @@ class IntercomManager:
 
     async def async_set_enabled(self, enabled: bool) -> None:
         """Persist the Broadcast master switch and stop pending deliveries when off."""
-        self._enabled = bool(enabled)
-        self._loaded = True
-        if not self._enabled:
-            for entity_id, queue in list(self._queues.items()):
-                retained: deque[BroadcastMessage] = deque()
-                for item in queue:
-                    delivery = item.deliveries.get(entity_id)
-                    if delivery is None:
-                        continue
-                    if delivery.status == "delivering":
-                        retained.append(item)
-                        continue
-                    if delivery.status not in {"delivered", "failed", "expired"}:
-                        delivery.set("expired", "broadcast_disabled")
-                queue.clear()
-                queue.extend(retained)
-                if not queue:
-                    self._queues.pop(entity_id, None)
-        await self._store.async_save({"enabled": self._enabled})
+        async with self._state_lock:
+            new_enabled = bool(enabled)
+            await self._store.async_save({"enabled": new_enabled})
+            self._enabled = new_enabled
+            self._loaded = True
+            if not self._enabled:
+                for entity_id, queue in list(self._queues.items()):
+                    retained: deque[BroadcastMessage] = deque()
+                    for item in queue:
+                        delivery = item.deliveries.get(entity_id)
+                        if delivery is None:
+                            continue
+                        if delivery.status == "delivering":
+                            retained.append(item)
+                            continue
+                        if delivery.status not in {"delivered", "failed", "expired"}:
+                            delivery.set("expired", "broadcast_disabled")
+                    queue.clear()
+                    queue.extend(retained)
+                    if not queue:
+                        self._queues.pop(entity_id, None)
 
     def _satellite_entity_ids(self) -> list[str]:
         return [

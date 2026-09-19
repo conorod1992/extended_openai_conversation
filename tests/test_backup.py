@@ -5,6 +5,8 @@ from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from custom_components.extended_openai_conversation_responses import restore_recovery
+
 import pytest
 import yaml
 
@@ -397,6 +399,7 @@ async def test_replace_helpers_rebuild_canonical_state() -> None:
 
 
 async def test_restore_failure_rolls_back_before_reporting(monkeypatch, hass) -> None:
+    _journal_fixture(monkeypatch)
     prepared = inspect_backup(_document(), "agent-new")
     entry = SimpleNamespace(entry_id="entry-1")
     subentry = SimpleNamespace(
@@ -405,7 +408,7 @@ async def test_restore_failure_rolls_back_before_reporting(monkeypatch, hass) ->
     managers = (object(), object(), object(), object(), object())
     apply = AsyncMock(side_effect=[RuntimeError("write failed"), None])
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.backup._managers",
+        "custom_components.extended_openai_conversation_responses.restore_recovery._durable_managers",
         AsyncMock(return_value=managers),
     )
     monkeypatch.setattr(
@@ -413,7 +416,7 @@ async def test_restore_failure_rolls_back_before_reporting(monkeypatch, hass) ->
         AsyncMock(return_value=deepcopy(prepared)),
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.backup._apply_restore",
+        "custom_components.extended_openai_conversation_responses.restore_recovery._apply_prepared",
         apply,
     )
 
@@ -429,7 +432,7 @@ async def test_unsupported_restore_does_not_access_agent_stores(
     document["version"] = BACKUP_VERSION + 1
     managers = AsyncMock()
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.backup._managers",
+        "custom_components.extended_openai_conversation_responses.restore_recovery._durable_managers",
         managers,
     )
 
@@ -443,3 +446,12 @@ async def test_unsupported_restore_does_not_access_agent_stores(
             document,
         )
     managers.assert_not_awaited()
+
+
+def _journal_fixture(monkeypatch):
+    from tests.test_restore_recovery import MemoryJournalStore
+
+    store = MemoryJournalStore()
+    monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_: store)
+    monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
+    monkeypatch.setattr(restore_recovery, "reset_restored_runtime", lambda *_: None)

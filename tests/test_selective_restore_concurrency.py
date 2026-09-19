@@ -92,25 +92,6 @@ class RestoreHarness:
         monkeypatch.setattr(backup, "_snapshot_for_restore", snapshot)
         monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", persist)
         monkeypatch.setattr(restore_recovery, "reset_restored_runtime", MagicMock())
-        # Exercise installed public wrappers too: calling one from inside the
-        # selective transaction would deadlock on the non-reentrant gate.
-        monkeypatch.setattr(
-            backup,
-            "async_restore_backup",
-            restore_recovery.async_restore_backup_recoverably,
-        )
-        monkeypatch.setattr(backup, "async_create_backup", backup.async_create_backup)
-        from custom_components.extended_openai_conversation_responses import (
-            management_ui,
-        )
-
-        monkeypatch.setattr(
-            management_ui, "async_restore_backup", management_ui.async_restore_backup
-        )
-        monkeypatch.setattr(
-            management_ui, "async_create_backup", management_ui.async_create_backup
-        )
-        agent_maintenance._install_backup_guards()
 
     async def pause(self, stage):
         if self.pause_at == stage:

@@ -85,11 +85,6 @@ async def test_async_setup_activates_delayed_tool_manager_after_entity_hardening
     )
     for name in sync_helpers:
         monkeypatch.setattr(integration, name, MagicMock())
-    monkeypatch.setattr(
-        integration,
-        "install_agent_maintenance_barrier",
-        MagicMock(side_effect=lambda: order.append("barrier")),
-    )
 
     async_setup_delayed_tools = AsyncMock(
         side_effect=lambda _hass: order.append("delayed")
@@ -109,7 +104,8 @@ async def test_async_setup_activates_delayed_tool_manager_after_entity_hardening
 
     assert await integration.async_setup(hass, {}) is True
     async_setup_delayed_tools.assert_awaited_once_with(hass)
-    assert order == ["barrier", "delayed"]
+    assert order == ["delayed"]
+    assert not hasattr(integration, "install_agent_maintenance_barrier")
 
 
 @pytest.mark.parametrize(

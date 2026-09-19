@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 from .resource_limits import MAX_NATIVE_SERVICE_ACTIONS
+from .safety_hardening import MAX_HISTORY_ENTITY_IDS
 
 _SERVICE_DATA_DESCRIPTION = (
     "Any valid Home Assistant service data accepted by the selected service. Include "
@@ -170,6 +171,8 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "Entity IDs to retrieve history for.",
+                "minItems": 1,
+                "maxItems": MAX_HISTORY_ENTITY_IDS,
             },
             "start_time": {
                 "type": "string",

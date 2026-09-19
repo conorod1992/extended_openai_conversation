@@ -56,15 +56,6 @@ def test_gate_registry_reuses_exact_agent_gate(hass) -> None:
     assert other is not first
 
 
-def test_shared_gate_proxy_passes_through_non_async_attributes() -> None:
-    target = SimpleNamespace(label="memory-manager")
-    proxy = agent_maintenance._SharedGateProxy(
-        target, agent_maintenance.AgentMaintenanceGate()
-    )
-
-    assert proxy.label == "memory-manager"
-
-
 @pytest.mark.parametrize(
     ("message", "owns_gate"),
     [
@@ -83,11 +74,14 @@ async def test_conversation_lease_bypasses_partial_entities_and_gates_real_ident
     monkeypatch,
 ) -> None:
     gate = RecordingGate()
-    monkeypatch.setattr(agent_maintenance, "get_agent_maintenance_gate", lambda *_: gate)
+    monkeypatch.setattr(
+        agent_maintenance, "get_agent_maintenance_gate", lambda *_: gate
+    )
     async with agent_maintenance.conversation_request_lease(SimpleNamespace()):
         assert gate.shared_entries == 0
     complete = SimpleNamespace(
-        hass=object(), entry=SimpleNamespace(entry_id="entry"),
+        hass=object(),
+        entry=SimpleNamespace(entry_id="entry"),
         subentry=SimpleNamespace(subentry_id="agent"),
     )
     async with agent_maintenance.conversation_request_lease(complete):
@@ -100,6 +94,7 @@ async def test_backup_guards_use_exclusive_gate_and_update_management_aliases(
     from custom_components.extended_openai_conversation_responses import (
         backup,
         management_ui,
+        restore_recovery,
     )
 
     gate = RecordingGate()
@@ -120,17 +115,13 @@ async def test_backup_guards_use_exclusive_gate_and_update_management_aliases(
         events.append("restore")
         return {"restored": value}
 
-    monkeypatch.setattr(backup, "async_create_backup", original_create)
     monkeypatch.setattr(backup, "async_collect_backup_snapshot", collect)
     monkeypatch.setattr(backup, "finalize_backup_snapshot", finalize)
-    monkeypatch.setattr(backup, "async_restore_backup", original_restore)
-    monkeypatch.setattr(management_ui, "async_create_backup", original_create)
-    monkeypatch.setattr(management_ui, "async_restore_backup", original_restore)
     monkeypatch.setattr(
-        agent_maintenance, "get_agent_maintenance_gate", lambda *_args: gate
+        restore_recovery, "async_restore_backup_recoverably", original_restore
     )
+    monkeypatch.setattr(backup, "get_agent_maintenance_gate", lambda *_args: gate)
 
-    agent_maintenance._install_backup_guards()
     entry = SimpleNamespace(entry_id="entry")
     subentry = SimpleNamespace(subentry_id="agent")
 
@@ -171,108 +162,3 @@ async def test_management_lease_bypasses_owned_paths_and_gates_agent_commands(
         },
     ):
         assert gate.shared_entries == 1
-
-
-async def test_legacy_memory_guard_bypass_and_normal_gate(monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses import memory_ui
-
-    gate = RecordingGate()
-
-    async def original(_hass, _user_id, message):
-        return {"action": message.get("action")}
-
-    monkeypatch.setattr(memory_ui, "async_manage_command", original)
-    monkeypatch.setattr(
-        agent_maintenance, "get_agent_maintenance_gate", lambda *_args: gate
-    )
-    agent_maintenance._install_legacy_memory_guard()
-    command = memory_ui.async_manage_command
-
-    await command(object(), "user", {"action": "agents"})
-    await command(object(), "user", {"action": "test_agent"})
-    await command(object(), "user", {"action": "list", "entry_id": "entry"})
-    assert gate.shared_entries == 0
-
-    await command(
-        object(),
-        "user",
-        {"action": "list", "entry_id": "entry", "subentry_id": "agent"},
-    )
-    assert gate.shared_entries == 1
-
-
-async def test_service_guards_gate_getters_proxy_methods_and_tool_state(
-    monkeypatch,
-) -> None:
-    from custom_components.extended_openai_conversation_responses import services
-
-    gate = RecordingGate()
-    mutations: list[str] = []
-
-    class Manager:
-        label = "manager"
-
-        async def async_mutate(self, value: str) -> str:
-            mutations.append(value)
-            return value
-
-    manager = Manager()
-
-    async def get_memory(_hass, _entry_id, _subentry_id):
-        return manager
-
-    async def get_guest(_hass, _entry_id, _subentry_id):
-        return manager
-
-    async def set_tools(_hass, _entry_id, _agent_reference, names, enabled):
-        mutations.append(f"{names[0]}:{enabled}")
-
-    monkeypatch.setattr(services, "async_get_memory", get_memory)
-    monkeypatch.setattr(services, "async_get_guest_mode", get_guest)
-    monkeypatch.setattr(services, "async_set_function_tools_enabled", set_tools)
-    monkeypatch.setattr(
-        services,
-        "resolve_memory_agent",
-        lambda _hass, _entry_id, _reference: (object(), "agent"),
-    )
-    monkeypatch.setattr(
-        agent_maintenance, "get_agent_maintenance_gate", lambda *_args: gate
-    )
-
-    agent_maintenance._install_service_guards()
-
-    memory_proxy = await services.async_get_memory(object(), "entry", "agent")
-    guest_proxy = await services.async_get_guest_mode(object(), "entry", "agent")
-    assert memory_proxy.label == "manager"
-    assert guest_proxy.label == "manager"
-    assert await memory_proxy.async_mutate("memory") == "memory"
-    assert await guest_proxy.async_mutate("guest") == "guest"
-    await services.async_set_function_tools_enabled(
-        object(), "entry", "reference", ["demo"], False
-    )
-
-    # Two getter leases + two proxied method leases + one tool-state lease.
-    assert gate.shared_entries == 5
-    assert mutations == ["memory", "guest", "demo:False"]
-
-
-def test_install_agent_maintenance_barrier_is_idempotent(monkeypatch) -> None:
-    calls: list[str] = []
-
-    monkeypatch.setattr(agent_maintenance, "_INSTALLED", False)
-    monkeypatch.setattr(
-        agent_maintenance, "_install_backup_guards", lambda: calls.append("backup")
-    )
-    monkeypatch.setattr(
-        agent_maintenance,
-        "_install_legacy_memory_guard",
-        lambda: calls.append("legacy"),
-    )
-    monkeypatch.setattr(
-        agent_maintenance, "_install_service_guards", lambda: calls.append("services")
-    )
-
-    agent_maintenance.install_agent_maintenance_barrier()
-    agent_maintenance.install_agent_maintenance_barrier()
-
-    assert calls == ["backup", "legacy", "services"]

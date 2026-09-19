@@ -12,6 +12,7 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
+from .agent_maintenance import get_agent_maintenance_gate
 from .agent_test import async_test_agent
 from .const import (
     CONF_SHARED_MEMORY_MODE,
@@ -126,6 +127,18 @@ async def async_manage_command(
     if action == "test_agent":
         return (await async_test_agent(hass, entry, subentry)).as_dict()
 
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared():
+        return await _async_manage_agent_command(hass, user_id, message)
+
+
+async def _async_manage_agent_command(
+    hass: HomeAssistant, user_id: str, message: dict[str, Any]
+) -> dict[str, Any]:
+    """Run a validated legacy memory operation under its public lease."""
+    action = message["action"]
+    entry_id = message["entry_id"]
+    subentry_id = message["subentry_id"]
+    _, subentry = _entry_and_agent(hass, entry_id, subentry_id)
     temporary_enabled = (
         subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
         != TEMPORARY_MEMORY_OFF

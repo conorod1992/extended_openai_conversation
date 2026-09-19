@@ -15,9 +15,6 @@ from custom_components.extended_openai_conversation_responses.model_payload impo
 from custom_components.extended_openai_conversation_responses.resource_limits import (
     MAX_NATIVE_SERVICE_ACTIONS,
 )
-from custom_components.extended_openai_conversation_responses.safety_hardening import (
-    _install_native_tool_guards,
-)
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -33,7 +30,6 @@ async def test_native_service_waits_for_home_assistant_completion(
     hass, exposed_entities, llm_context
 ) -> None:
     """Native execute_service must not report success before HA finishes the call."""
-    _install_native_tool_guards()
     function = NativeFunction()
 
     result = await function.execute(
@@ -53,7 +49,6 @@ async def test_native_service_batch_limit_rejects_before_execution(
     hass, exposed_entities, llm_context
 ) -> None:
     """One model tool call cannot hide an unbounded number of HA actions."""
-    _install_native_tool_guards()
     function = NativeFunction()
     actions = [_service_action() for _ in range(MAX_NATIVE_SERVICE_ACTIONS + 1)]
 

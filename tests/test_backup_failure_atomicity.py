@@ -7,6 +7,8 @@ import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from custom_components.extended_openai_conversation_responses import restore_recovery
+
 import pytest
 
 from custom_components.extended_openai_conversation_responses import backup
@@ -49,6 +51,7 @@ def _manager_state(prepared: backup.PreparedRestore) -> tuple[tuple[object, ...]
 async def test_partial_restore_failure_restores_all_manager_state(
     monkeypatch, hass
 ) -> None:
+    _journal_fixture(monkeypatch)
     target_document = _document()
     target_document["memories"]["memories"][0]["content"] = "Restored value"
     target = backup.inspect_backup(target_document, "agent-new")
@@ -66,7 +69,9 @@ async def test_partial_restore_failure_restores_all_manager_state(
     usage.request_retention_days = 0
     usage.run_retention_days = 0
 
-    monkeypatch.setattr(backup, "_managers", AsyncMock(return_value=managers))
+    monkeypatch.setattr(
+        restore_recovery, "_durable_managers", AsyncMock(return_value=managers)
+    )
     monkeypatch.setattr(
         backup, "_snapshot_for_restore", AsyncMock(return_value=baseline)
     )
@@ -115,3 +120,12 @@ async def test_export_serialization_failure_removes_temp_archive_and_is_normaliz
     assert len(created_paths) == 1
     assert not os.path.exists(created_paths[0])
     assert backup_transfer._exports(hass) == {}
+
+
+def _journal_fixture(monkeypatch):
+    from tests.test_restore_recovery import MemoryJournalStore
+
+    store = MemoryJournalStore()
+    monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_: store)
+    monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
+    monkeypatch.setattr(restore_recovery, "reset_restored_runtime", lambda *_: None)

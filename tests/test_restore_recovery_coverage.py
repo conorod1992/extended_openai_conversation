@@ -42,7 +42,9 @@ def _journal():
     ],
 )
 def test_load_journal_rejects_corrupt_envelope(mutate) -> None:
-    with pytest.raises(backup.BackupError, match="Pending restore transaction is corrupted"):
+    with pytest.raises(
+        backup.BackupError, match="Pending restore transaction is corrupted"
+    ):
         restore_recovery._load_journal(mutate(_journal()), "entry-1", "agent-new")
 
 
@@ -50,7 +52,9 @@ def test_load_journal_rejects_invalid_embedded_backup() -> None:
     journal = _journal()
     journal["target"] = {"not": "a valid backup"}
 
-    with pytest.raises(backup.BackupError, match="Pending restore transaction is corrupted"):
+    with pytest.raises(
+        backup.BackupError, match="Pending restore transaction is corrupted"
+    ):
         restore_recovery._load_journal(journal, "entry-1", "agent-new")
 
 
@@ -80,7 +84,9 @@ def test_active_agent_prefers_exact_registered_agent(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("exc", [KeyError("missing"), ValueError("bad")])
-def test_active_agent_scans_loaded_entities_when_core_lookup_fails(monkeypatch, exc) -> None:
+def test_active_agent_scans_loaded_entities_when_core_lookup_fails(
+    monkeypatch, exc
+) -> None:
     from homeassistant.components import conversation
 
     wrong = SimpleNamespace(
@@ -117,7 +123,9 @@ def test_active_agent_returns_none_when_no_exact_agent_exists(monkeypatch) -> No
     assert restore_recovery._active_agent(hass, "entry-1", "agent-new") is None
 
 
-def test_runtime_reset_clears_distinct_registry_and_agent_runtime_objects(monkeypatch) -> None:
+def test_runtime_reset_clears_distinct_registry_and_agent_runtime_objects(
+    monkeypatch,
+) -> None:
     from custom_components.extended_openai_conversation_responses import (
         continuity,
         function_groups,
@@ -195,33 +203,51 @@ def test_persisted_subentry_matcher_rejects_malformed_snapshots() -> None:
         ]
     }
 
-    assert restore_recovery._persisted_subentry_matches(
-        valid, "entry-1", "agent-new", prepared
-    ) is True
-    assert restore_recovery._persisted_subentry_matches(
-        None, "entry-1", "agent-new", prepared
-    ) is False
-    assert restore_recovery._persisted_subentry_matches(
-        {"entries": {}}, "entry-1", "agent-new", prepared
-    ) is False
-    assert restore_recovery._persisted_subentry_matches(
-        {"entries": [{"entry_id": "entry-1", "subentries": {}}]},
-        "entry-1",
-        "agent-new",
-        prepared,
-    ) is False
-    assert restore_recovery._persisted_subentry_matches(
-        {"entries": [{"entry_id": "other", "subentries": []}]},
-        "entry-1",
-        "agent-new",
-        prepared,
-    ) is False
+    assert (
+        restore_recovery._persisted_subentry_matches(
+            valid, "entry-1", "agent-new", prepared
+        )
+        is True
+    )
+    assert (
+        restore_recovery._persisted_subentry_matches(
+            None, "entry-1", "agent-new", prepared
+        )
+        is False
+    )
+    assert (
+        restore_recovery._persisted_subentry_matches(
+            {"entries": {}}, "entry-1", "agent-new", prepared
+        )
+        is False
+    )
+    assert (
+        restore_recovery._persisted_subentry_matches(
+            {"entries": [{"entry_id": "entry-1", "subentries": {}}]},
+            "entry-1",
+            "agent-new",
+            prepared,
+        )
+        is False
+    )
+    assert (
+        restore_recovery._persisted_subentry_matches(
+            {"entries": [{"entry_id": "other", "subentries": []}]},
+            "entry-1",
+            "agent-new",
+            prepared,
+        )
+        is False
+    )
 
     wrong_title = deepcopy(valid)
     wrong_title["entries"][0]["subentries"][0]["title"] = "Wrong"
-    assert restore_recovery._persisted_subentry_matches(
-        wrong_title, "entry-1", "agent-new", prepared
-    ) is False
+    assert (
+        restore_recovery._persisted_subentry_matches(
+            wrong_title, "entry-1", "agent-new", prepared
+        )
+        is False
+    )
 
 
 def test_persisted_subentry_matcher_stops_after_matching_entry() -> None:
@@ -242,9 +268,12 @@ def test_persisted_subentry_matcher_stops_after_matching_entry() -> None:
         ]
     }
 
-    assert restore_recovery._persisted_subentry_matches(
-        value, "entry-1", "agent-new", prepared
-    ) is False
+    assert (
+        restore_recovery._persisted_subentry_matches(
+            value, "entry-1", "agent-new", prepared
+        )
+        is False
+    )
 
 
 @pytest.mark.asyncio
@@ -297,9 +326,13 @@ async def test_persist_config_entries_wraps_store_failures(monkeypatch) -> None:
 async def test_recover_all_pending_restores_only_visits_conversation_subentries(
     monkeypatch,
 ) -> None:
-    conversation_one = SimpleNamespace(subentry_id="agent-1", subentry_type="conversation")
+    conversation_one = SimpleNamespace(
+        subentry_id="agent-1", subentry_type="conversation"
+    )
     ignored = SimpleNamespace(subentry_id="sensor-1", subentry_type="other")
-    conversation_two = SimpleNamespace(subentry_id="agent-2", subentry_type="conversation")
+    conversation_two = SimpleNamespace(
+        subentry_id="agent-2", subentry_type="conversation"
+    )
     entry_one = SimpleNamespace(
         entry_id="entry-1",
         subentries={"agent-1": conversation_one, "sensor-1": ignored},
@@ -321,72 +354,3 @@ async def test_recover_all_pending_restores_only_visits_conversation_subentries(
     assert recover.await_count == 2
     recover.assert_any_await(hass, entry_one, conversation_one)
     recover.assert_any_await(hass, entry_two, conversation_two)
-
-
-@pytest.mark.asyncio
-async def test_install_restore_recovery_wraps_once_and_delegates(monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses import management_ui
-
-    original_backup_restore = backup.async_restore_backup
-    original_management_restore = management_ui.async_restore_backup
-    original_installed = restore_recovery._INSTALLED
-    delegated = AsyncMock(return_value={"status": "restored"})
-
-    async def base_restore(*_args, **_kwargs):
-        return {"status": "base"}
-
-    try:
-        restore_recovery._INSTALLED = False
-        monkeypatch.setattr(backup, "async_restore_backup", base_restore)
-        monkeypatch.setattr(management_ui, "async_restore_backup", base_restore)
-        monkeypatch.setattr(
-            restore_recovery, "async_restore_backup_recoverably", delegated
-        )
-
-        restore_recovery.install_restore_recovery()
-        first = backup.async_restore_backup
-        assert getattr(first, "_extended_openai_restart_recovery", False) is True
-        assert management_ui.async_restore_backup is first
-        assert await first("hass", "entry", "subentry", {"backup": True}) == {
-            "status": "restored"
-        }
-        delegated.assert_awaited_once_with(
-            "hass", "entry", "subentry", {"backup": True}
-        )
-
-        restore_recovery.install_restore_recovery()
-        assert backup.async_restore_backup is first
-        assert management_ui.async_restore_backup is first
-    finally:
-        backup.async_restore_backup = original_backup_restore
-        management_ui.async_restore_backup = original_management_restore
-        restore_recovery._INSTALLED = original_installed
-
-
-def test_install_restore_recovery_does_not_double_wrap_marked_restore(monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses import management_ui
-
-    original_backup_restore = backup.async_restore_backup
-    original_management_restore = management_ui.async_restore_backup
-    original_installed = restore_recovery._INSTALLED
-
-    async def already_wrapped(*_args, **_kwargs):
-        return {"status": "existing"}
-
-    already_wrapped._extended_openai_restart_recovery = True
-
-    try:
-        restore_recovery._INSTALLED = False
-        monkeypatch.setattr(backup, "async_restore_backup", already_wrapped)
-        sentinel = AsyncMock()
-        monkeypatch.setattr(management_ui, "async_restore_backup", sentinel)
-
-        restore_recovery.install_restore_recovery()
-
-        assert backup.async_restore_backup is already_wrapped
-        assert management_ui.async_restore_backup is sentinel
-        assert restore_recovery._INSTALLED is True
-    finally:
-        backup.async_restore_backup = original_backup_restore
-        management_ui.async_restore_backup = original_management_restore
-        restore_recovery._INSTALLED = original_installed

@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from custom_components.extended_openai_conversation_responses import (
     agent_maintenance,
     backup,
-    management_ui,
 )
 
 
@@ -26,14 +25,6 @@ async def test_backup_excludes_mutations_only_while_collecting_snapshot(
     shared_entered = asyncio.Event()
     finalized = asyncio.Event()
 
-    async def original_create(*_args, **_kwargs):
-        raise AssertionError("guarded backup must use split snapshot collection")
-
-    async def already_guarded_restore(*_args, **_kwargs):
-        return {"status": "unused"}
-
-    already_guarded_restore._extended_openai_maintenance_gate = True
-
     async def collect_snapshot(*_args, **_kwargs):
         assert gate._writer_active is True
         collection_started.set()
@@ -50,14 +41,9 @@ async def test_backup_excludes_mutations_only_while_collecting_snapshot(
         finalized.set()
         return {"document": snapshot}
 
-    monkeypatch.setattr(backup, "async_create_backup", original_create)
-    monkeypatch.setattr(management_ui, "async_create_backup", original_create)
-    monkeypatch.setattr(backup, "async_restore_backup", already_guarded_restore)
-    monkeypatch.setattr(management_ui, "async_restore_backup", already_guarded_restore)
     monkeypatch.setattr(backup, "async_collect_backup_snapshot", collect_snapshot)
     monkeypatch.setattr(backup, "finalize_backup_snapshot", finalize_snapshot)
 
-    agent_maintenance._install_backup_guards()
     guarded_create = backup.async_create_backup
 
     async def ordinary_mutation() -> None:

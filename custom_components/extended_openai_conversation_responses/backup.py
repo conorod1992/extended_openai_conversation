@@ -20,6 +20,10 @@ from .agent_config import (
     preserve_legacy_guest_policy,
     validate_agent_title,
 )
+from .agent_maintenance import (
+    _async_run_exclusive_operation,
+    get_agent_maintenance_gate,
+)
 from .const import (
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
@@ -183,7 +187,9 @@ async def async_create_backup(
     hass: HomeAssistant, entry: Any, subentry: Any
 ) -> dict[str, Any]:
     """Collect a private, JSON-compatible snapshot of one agent."""
-    async with _backup_lock(hass, entry.entry_id, subentry.subentry_id):
+    async with get_agent_maintenance_gate(
+        hass, entry.entry_id, subentry.subentry_id
+    ).exclusive():
         snapshot = await async_collect_backup_snapshot(hass, entry, subentry)
     return finalize_backup_snapshot(snapshot)
 
@@ -333,30 +339,12 @@ async def async_restore_backup(
     hass: HomeAssistant, entry: Any, subentry: Any, value: Any
 ) -> dict[str, Any]:
     """Replace all durable categories, rolling back if a commit step fails."""
-    prepared = inspect_backup(value, subentry.subentry_id)
-    async with _backup_lock(hass, entry.entry_id, subentry.subentry_id):
-        managers = await _managers(hass, entry.entry_id, subentry.subentry_id)
-        rollback = await _snapshot_for_restore(managers, subentry)
-        try:
-            await _apply_restore(managers, prepared)
-            hass.config_entries.async_update_subentry(
-                entry, subentry, data=prepared.config, title=prepared.title
-            )
-        except Exception as err:
-            try:
-                await _apply_restore(managers, rollback)
-                hass.config_entries.async_update_subentry(
-                    entry, subentry, data=rollback.config, title=rollback.title
-                )
-            except Exception:
-                _LOGGER.exception("Agent backup restore rollback failed")
-                raise BackupError(
-                    "Restore failed and the previous state could not be fully recovered"
-                ) from err
-            raise BackupError(
-                "Restore failed; the previous agent state was recovered"
-            ) from err
-    return {"status": "restored", "summary": prepared.summary()}
+    from .restore_recovery import async_restore_backup_recoverably
+
+    gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
+    return await _async_run_exclusive_operation(
+        gate, lambda: async_restore_backup_recoverably(hass, entry, subentry, value)
+    )
 
 
 async def _managers(hass: HomeAssistant, entry_id: str, subentry_id: str):

@@ -8,7 +8,6 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses.agent_maintenance import (
     AgentMaintenanceGate,
-    _SharedGateProxy,
     _async_run_exclusive_operation,
     get_agent_maintenance_gate,
 )
@@ -219,7 +218,7 @@ async def test_different_agents_do_not_share_maintenance_barrier(hass) -> None:
         await reader
 
 
-async def test_service_proxy_waits_behind_exclusive_restore() -> None:
+async def test_service_lease_waits_behind_exclusive_restore() -> None:
     """Direct service manager methods participate in the same reader boundary."""
     gate = AgentMaintenanceGate()
     called = asyncio.Event()
@@ -229,9 +228,14 @@ async def test_service_proxy_waits_behind_exclusive_restore() -> None:
             called.set()
             return "done"
 
-    proxy = _SharedGateProxy(Manager(), gate)
+    manager = Manager()
+
+    async def service_operation():
+        async with gate.shared():
+            return await manager.async_mutate()
+
     async with gate.exclusive():
-        mutation = asyncio.create_task(proxy.async_mutate())
+        mutation = asyncio.create_task(service_operation())
         await asyncio.sleep(0)
         assert not called.is_set()
 

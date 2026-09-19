@@ -54,10 +54,6 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
         "install_context_usage_hardening",
     ):
         monkeypatch.setattr(integration, name, MagicMock())
-    install_safety_hardening = MagicMock()
-    monkeypatch.setattr(
-        integration, "install_safety_hardening", install_safety_hardening
-    )
 
     for name in (
         "async_migrate_integration",
@@ -70,7 +66,7 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
         monkeypatch.setattr(integration, name, AsyncMock())
 
     assert await integration.async_setup(hass, {}) is True
-    install_safety_hardening.assert_called_once_with()
+    assert not hasattr(integration, "install_safety_hardening")
     assert guest_performance._INSTALLED is True
     assert getattr(
         conversation.ExtendedOpenAIAgentEntity._effective_guest_policy,

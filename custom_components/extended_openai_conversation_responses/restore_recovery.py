@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import asdict
-from functools import wraps
 import logging
 from typing import Any
 from uuid import uuid4
@@ -25,7 +24,6 @@ RESTORE_JOURNAL_PREFIX = f"{DOMAIN}.restore_transaction"
 _PHASE_APPLYING = "applying"
 _PHASE_COMMITTED = "committed"
 _PHASES = {_PHASE_APPLYING, _PHASE_COMMITTED}
-_INSTALLED = False
 
 
 class _JournalVerificationUnavailable(Exception):
@@ -565,26 +563,3 @@ async def async_recover_pending_restores(hass: HomeAssistant) -> None:
             if subentry.subentry_type != "conversation":
                 continue
             await async_recover_pending_restore(hass, entry, subentry)
-
-
-def install_restore_recovery() -> None:
-    """Install durable restore orchestration before the maintenance gate wraps it."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    from . import management_ui
-
-    current = backup.async_restore_backup
-    if not getattr(current, "_extended_openai_restart_recovery", False):
-
-        @wraps(current)
-        async def recoverable_restore(
-            hass: HomeAssistant, entry: Any, subentry: Any, value: Any
-        ) -> dict[str, Any]:
-            return await async_restore_backup_recoverably(hass, entry, subentry, value)
-
-        recoverable_restore._extended_openai_restart_recovery = True  # type: ignore[attr-defined]
-        backup.async_restore_backup = recoverable_restore
-        management_ui.async_restore_backup = recoverable_restore
-
-    _INSTALLED = True

@@ -292,108 +292,111 @@ class DelayedToolManager:
         if record is None or record.status != _PENDING:
             return False
 
-        entry = self.hass.config_entries.async_get_entry(record.entry_id)
-        if entry is None or entry.disabled_by is not None:
-            return not await self._async_discard(call_id, "config entry is unavailable")
-        subentry = entry.subentries.get(record.subentry_id)
-        if subentry is None or subentry.subentry_type != "conversation":
-            return not await self._async_discard(
-                call_id, "conversation agent is unavailable"
-            )
-
-        try:
-            current_tools = configured_function_tools_from_data(subentry.data)
-        except Exception:
-            _LOGGER.exception(
-                "Unable to validate live Function Tools for delayed `%s`",
-                record.tool_name,
-            )
-            return not await self._async_discard(
-                call_id, "live Function Tool configuration is invalid"
-            )
-        current_tool = next(
-            (
-                tool
-                for tool in current_tools
-                if tool.get("spec", {}).get("name") == record.tool_name
-            ),
-            None,
-        )
-        if (
-            current_tool is None
-            or not function_tool_enabled(current_tool)
-            or current_tool.get("function", {}).get("type") == "ha_llm"
-        ):
-            return not await self._async_discard(
-                call_id, "Function Tool was removed or disabled"
-            )
-
-        if record.user_id is not None:
-            user = await self.hass.auth.async_get_user(record.user_id)
-            if user is None or getattr(user, "is_active", True) is not True:
+        with bind_active_ha_context(Context(user_id=record.user_id)):
+            entry = self.hass.config_entries.async_get_entry(record.entry_id)
+            if entry is None or entry.disabled_by is not None:
                 return not await self._async_discard(
-                    call_id, "originating user is no longer active"
+                    call_id, "config entry is unavailable"
+                )
+            subentry = entry.subentries.get(record.subentry_id)
+            if subentry is None or subentry.subentry_type != "conversation":
+                return not await self._async_discard(
+                    call_id, "conversation agent is unavailable"
                 )
 
-        agent = self._resolve_agent(record.entry_id, record.subentry_id)
-        if agent is None:
-            return await self._async_retry_agent(record)
-
-        try:
-            current_tool = latest_function_tool_for_execution(agent, current_tool)
-        except HomeAssistantError as err:
-            return not await self._async_discard(
-                call_id, f"Function Tool is unavailable: {err}"
-            )
-
-        # A waiter armed from an Assist request inherits that request's ContextVars.
-        # Delayed Function Tools deliberately authorize at execution time, so discard
-        # only the pinned request Guest policy before entering the normal tool seam.
-        # The live agent then resolves the Guest policy that exists when the call is
-        # actually due, matching calls recovered after a Home Assistant restart.
-        from .conversation import _ACTIVE_GUEST_POLICY
-
-        executing = replace(record, status=_EXECUTING)
-        try:
-            await self._async_replace_record(executing)
-        except Exception:
-            _LOGGER.exception(
-                "Unable to persist execution boundary for delayed Function Tool `%s`",
-                record.tool_name,
-            )
-            return True
-
-        execution_context = Context(user_id=record.user_id)
-        delayed_context = SimpleNamespace(
-            context=execution_context,
-            device_id=record.device_id,
-            **{_DELAYED_EXECUTION_MARKER: True},
-        )
-        guest_policy_token = _ACTIVE_GUEST_POLICY.set(None)
-        try:
-            with bind_active_ha_context(execution_context):
-                await agent._execute_function_tool(
-                    current_tool,
-                    llm.ToolInput(
-                        id=record.call_id,
-                        tool_name=record.tool_name,
-                        tool_args=deepcopy(record.arguments),
-                        external=True,
-                    ),
-                    delayed_context,
-                    get_exposed_entities(self.hass),
+            try:
+                current_tools = configured_function_tools_from_data(subentry.data)
+            except Exception:
+                _LOGGER.exception(
+                    "Unable to validate live Function Tools for delayed `%s`",
+                    record.tool_name,
                 )
-        except Exception:
-            _LOGGER.exception(
-                "Delayed Function Tool `%s` failed during execution",
-                record.tool_name,
+                return not await self._async_discard(
+                    call_id, "live Function Tool configuration is invalid"
+                )
+            current_tool = next(
+                (
+                    tool
+                    for tool in current_tools
+                    if tool.get("spec", {}).get("name") == record.tool_name
+                ),
+                None,
             )
-        else:
-            _LOGGER.info("Executed delayed Function Tool `%s`", record.tool_name)
-        finally:
-            _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
-            await self._async_finalize(call_id)
-        return False
+            if (
+                current_tool is None
+                or not function_tool_enabled(current_tool)
+                or current_tool.get("function", {}).get("type") == "ha_llm"
+            ):
+                return not await self._async_discard(
+                    call_id, "Function Tool was removed or disabled"
+                )
+
+            if record.user_id is not None:
+                user = await self.hass.auth.async_get_user(record.user_id)
+                if user is None or getattr(user, "is_active", True) is not True:
+                    return not await self._async_discard(
+                        call_id, "originating user is no longer active"
+                    )
+
+            agent = self._resolve_agent(record.entry_id, record.subentry_id)
+            if agent is None:
+                return await self._async_retry_agent(record)
+
+            try:
+                current_tool = latest_function_tool_for_execution(agent, current_tool)
+            except HomeAssistantError as err:
+                return not await self._async_discard(
+                    call_id, f"Function Tool is unavailable: {err}"
+                )
+
+            # A waiter armed from an Assist request inherits that request's ContextVars.
+            # Delayed Function Tools deliberately authorize at execution time, so discard
+            # only the pinned request Guest policy before entering the normal tool seam.
+            # The live agent then resolves the Guest policy that exists when the call is
+            # actually due, matching calls recovered after a Home Assistant restart.
+            from .conversation import _ACTIVE_GUEST_POLICY
+
+            executing = replace(record, status=_EXECUTING)
+            try:
+                await self._async_replace_record(executing)
+            except Exception:
+                _LOGGER.exception(
+                    "Unable to persist execution boundary for delayed Function Tool `%s`",
+                    record.tool_name,
+                )
+                return True
+
+            execution_context = Context(user_id=record.user_id)
+            delayed_context = SimpleNamespace(
+                context=execution_context,
+                device_id=record.device_id,
+                **{_DELAYED_EXECUTION_MARKER: True},
+            )
+            guest_policy_token = _ACTIVE_GUEST_POLICY.set(None)
+            try:
+                with bind_active_ha_context(execution_context):
+                    await agent._execute_function_tool(
+                        current_tool,
+                        llm.ToolInput(
+                            id=record.call_id,
+                            tool_name=record.tool_name,
+                            tool_args=deepcopy(record.arguments),
+                            external=True,
+                        ),
+                        delayed_context,
+                        get_exposed_entities(self.hass),
+                    )
+            except Exception:
+                _LOGGER.exception(
+                    "Delayed Function Tool `%s` failed during execution",
+                    record.tool_name,
+                )
+            else:
+                _LOGGER.info("Executed delayed Function Tool `%s`", record.tool_name)
+            finally:
+                _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
+                await self._async_finalize(call_id)
+            return False
 
     async def _async_retry_agent(self, record: DelayedToolCall) -> bool:
         """Retry a transient agent reload without losing the persisted call."""

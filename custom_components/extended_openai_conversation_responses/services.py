@@ -38,6 +38,7 @@ from .agent_config import (
     validate_function_groups,
     validate_function_tools,
 )
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     API_MODE_OPTIONS,
     API_MODE_RESPONSES,
@@ -258,25 +259,26 @@ async def async_set_function_tools_enabled(
 ) -> None:
     """Persist the authoritative enabled state for selected Function Tools."""
     _, subentry_id = resolve_memory_agent(hass, entry_id, agent_reference)
-    entry = hass.config_entries.async_get_entry(entry_id)
-    if entry is None:
-        raise HomeAssistantError("Config entry not found")
-    subentry = entry.subentries[subentry_id]
-    configured = validate_function_tools(subentry.data.get(CONF_FUNCTION_TOOLS, []))
-    requested = list(dict.fromkeys(function_names))
-    configured_names = {tool["spec"]["name"] for tool in configured}
-    missing = [name for name in requested if name not in configured_names]
-    if missing:
-        raise HomeAssistantError(
-            "Function Tool not found: " + ", ".join(sorted(missing))
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared():
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None:
+            raise HomeAssistantError("Config entry not found")
+        subentry = entry.subentries[subentry_id]
+        configured = validate_function_tools(subentry.data.get(CONF_FUNCTION_TOOLS, []))
+        requested = list(dict.fromkeys(function_names))
+        configured_names = {tool["spec"]["name"] for tool in configured}
+        missing = [name for name in requested if name not in configured_names]
+        if missing:
+            raise HomeAssistantError(
+                "Function Tool not found: " + ", ".join(sorted(missing))
+            )
+        for tool in configured:
+            if tool["spec"]["name"] in requested:
+                tool["enabled"] = enabled
+        normalized = merge_agent_config(
+            dict(subentry.data), {CONF_FUNCTION_TOOLS: configured}
         )
-    for tool in configured:
-        if tool["spec"]["name"] in requested:
-            tool["enabled"] = enabled
-    normalized = merge_agent_config(
-        dict(subentry.data), {CONF_FUNCTION_TOOLS: configured}
-    )
-    hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
+        hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
 
 
 async def async_set_function_groups_enabled(
@@ -288,26 +290,29 @@ async def async_set_function_groups_enabled(
 ) -> None:
     """Persist Function Group state without changing member Function Tool state."""
     _, subentry_id = resolve_memory_agent(hass, entry_id, agent_reference)
-    entry = hass.config_entries.async_get_entry(entry_id)
-    if entry is None:
-        raise HomeAssistantError("Config entry not found")
-    subentry = entry.subentries[subentry_id]
-    configured = validate_function_tools(subentry.data.get(CONF_FUNCTION_TOOLS, []))
-    groups = validate_function_groups(
-        subentry.data.get(CONF_FUNCTION_GROUPS, []), configured
-    )
-    requested = list(dict.fromkeys(group_ids))
-    configured_ids = {group["id"] for group in groups}
-    missing = [group_id for group_id in requested if group_id not in configured_ids]
-    if missing:
-        raise HomeAssistantError(
-            "Function Group not found: " + ", ".join(sorted(missing))
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared():
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None:
+            raise HomeAssistantError("Config entry not found")
+        subentry = entry.subentries[subentry_id]
+        configured = validate_function_tools(subentry.data.get(CONF_FUNCTION_TOOLS, []))
+        groups = validate_function_groups(
+            subentry.data.get(CONF_FUNCTION_GROUPS, []), configured
         )
-    for group in groups:
-        if group["id"] in requested:
-            group["enabled"] = enabled
-    normalized = merge_agent_config(dict(subentry.data), {CONF_FUNCTION_GROUPS: groups})
-    hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
+        requested = list(dict.fromkeys(group_ids))
+        configured_ids = {group["id"] for group in groups}
+        missing = [group_id for group_id in requested if group_id not in configured_ids]
+        if missing:
+            raise HomeAssistantError(
+                "Function Group not found: " + ", ".join(sorted(missing))
+            )
+        for group in groups:
+            if group["id"] in requested:
+                group["enabled"] = enabled
+        normalized = merge_agent_config(
+            dict(subentry.data), {CONF_FUNCTION_GROUPS: groups}
+        )
+        hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
 
 
 async def async_skill_source_ref(
@@ -641,52 +646,58 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             "target_directory": str(target_dir),
         }
 
-    async def _memory_for_call(call: ServiceCall):
+    async def memory_list(call: ServiceCall) -> ServiceResponse:
+        """Inspect memories in the caller's own user scope."""
         entry_id, subentry_id = resolve_memory_agent(
             hass, call.data["config_entry"], call.data["agent_id"]
         )
-        return await async_get_memory(hass, entry_id, subentry_id)
-
-    async def memory_list(call: ServiceCall) -> ServiceResponse:
-        """Inspect memories in the caller's own user scope."""
-        memory = await _memory_for_call(call)
-        user_id = memory_user_id(call)
-        if query := call.data.get("query"):
-            records = await memory.async_search(
-                user_id,
-                query,
-                call.data.get("category"),
-                call.data["limit"],
+        async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared():
+            memory = await async_get_memory(hass, entry_id, subentry_id)
+            user_id = memory_user_id(call)
+            if query := call.data.get("query"):
+                records = await memory.async_search(
+                    user_id,
+                    query,
+                    call.data.get("category"),
+                    call.data["limit"],
+                )
+            else:
+                records = await memory.async_list(
+                    user_id,
+                    call.data.get("category"),
+                    call.data["limit"],
+                    call.data["offset"],
+                )
+            return cast(
+                ServiceResponse,
+                {"memories": [memory_as_dict(record) for record in records]},
             )
-        else:
-            records = await memory.async_list(
-                user_id,
-                call.data.get("category"),
-                call.data["limit"],
-                call.data["offset"],
-            )
-        return cast(
-            ServiceResponse,
-            {"memories": [memory_as_dict(record) for record in records]},
-        )
 
     async def memory_delete(call: ServiceCall) -> ServiceResponse:
         """Delete selected memories in the caller's own user scope."""
-        memory = await _memory_for_call(call)
-        deleted = await memory.async_delete(
-            memory_user_id(call), call.data["memory_ids"]
+        entry_id, subentry_id = resolve_memory_agent(
+            hass, call.data["config_entry"], call.data["agent_id"]
         )
-        return {"deleted": deleted}
+        async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared():
+            memory = await async_get_memory(hass, entry_id, subentry_id)
+            deleted = await memory.async_delete(
+                memory_user_id(call), call.data["memory_ids"]
+            )
+            return {"deleted": deleted}
 
     async def memory_clear(call: ServiceCall) -> ServiceResponse:
         """Clear memories only after explicit confirmation."""
         if call.data["confirm"] is not True:
             raise HomeAssistantError("Set confirm to true to clear memories")
-        memory = await _memory_for_call(call)
-        deleted = await memory.async_clear(
-            memory_user_id(call), call.data.get("category")
+        entry_id, subentry_id = resolve_memory_agent(
+            hass, call.data["config_entry"], call.data["agent_id"]
         )
-        return {"deleted": deleted}
+        async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared():
+            memory = await async_get_memory(hass, entry_id, subentry_id)
+            deleted = await memory.async_clear(
+                memory_user_id(call), call.data.get("category")
+            )
+            return {"deleted": deleted}
 
     async def enable_function_tools(call: ServiceCall) -> None:
         """Enable one or more configured Function Tools."""
@@ -738,18 +749,19 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         entry_id, subentry_id = resolve_memory_agent(
             hass, call.data["config_entry"], call.data["agent_id"]
         )
-        manager = await async_get_guest_mode(hass, entry_id, subentry_id)
-        try:
-            return cast(
-                ServiceResponse,
-                await manager.async_update_trusted(
-                    active_from=call.data.get("active_from"),
-                    active_until=call.data.get("active_until"),
-                    indefinite=call.data["indefinite"],
-                ),
-            )
-        except ValueError as err:
-            raise HomeAssistantError(str(err)) from err
+        async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared():
+            manager = await async_get_guest_mode(hass, entry_id, subentry_id)
+            try:
+                return cast(
+                    ServiceResponse,
+                    await manager.async_update_trusted(
+                        active_from=call.data.get("active_from"),
+                        active_until=call.data.get("active_until"),
+                        indefinite=call.data["indefinite"],
+                    ),
+                )
+            except ValueError as err:
+                raise HomeAssistantError(str(err)) from err
 
     def _process_agent(agent_id: str | None):
         if agent_id:
@@ -822,8 +834,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         entry_id, subentry_id = resolve_memory_agent(
             hass, call.data["config_entry"], call.data["agent_id"]
         )
-        manager = await async_get_guest_mode(hass, entry_id, subentry_id)
-        return cast(ServiceResponse, await manager.async_disable_trusted())
+        async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared():
+            manager = await async_get_guest_mode(hass, entry_id, subentry_id)
+            return cast(ServiceResponse, await manager.async_disable_trusted())
 
     async def call_function(call: ServiceCall) -> ServiceResponse:
         """Bridge a native HA script action into the active configured function."""

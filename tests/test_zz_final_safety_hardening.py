@@ -14,7 +14,10 @@ from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from custom_components.extended_openai_conversation_responses import delayed_tools, intercom
+from custom_components.extended_openai_conversation_responses import (
+    delayed_tools,
+    intercom,
+)
 from custom_components.extended_openai_conversation_responses.built_in_functions import (
     built_in_function_catalog,
 )
@@ -22,7 +25,9 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
     DelayedToolCall,
     DelayedToolManager,
 )
-from custom_components.extended_openai_conversation_responses.functions import NativeFunction
+from custom_components.extended_openai_conversation_responses.functions import (
+    NativeFunction,
+)
 from custom_components.extended_openai_conversation_responses.ha_permissions import (
     bind_active_ha_context,
     get_active_ha_context,
@@ -34,7 +39,6 @@ from custom_components.extended_openai_conversation_responses.safety_hardening i
     MAX_STATISTIC_SPAN_BY_PERIOD,
     _normalized_statistics_arguments,
     _validate_history_request,
-    install_safety_hardening,
 )
 
 
@@ -57,7 +61,6 @@ async def test_recovered_delayed_tool_binds_persisted_user_for_complete_executio
     hass, monkeypatch
 ) -> None:
     """Restart-recovered calls use their persisted user for exposure and execution."""
-    install_safety_hardening()
     manager = DelayedToolManager(hass)
     record = _delayed_record()
     manager._records = {record.call_id: record}
@@ -110,17 +113,16 @@ async def test_recovered_delayed_tool_binds_persisted_user_for_complete_executio
     agent._execute_function_tool.assert_awaited_once()
 
 
-async def test_add_automation_requires_active_admin(hass, tmp_path, monkeypatch) -> None:
+async def test_add_automation_requires_active_admin(
+    hass, tmp_path, monkeypatch
+) -> None:
     """Persistent automation creation is unavailable to anonymous/restricted users."""
-    install_safety_hardening()
     function = NativeFunction()
     config = {
         "type": "native",
         "name": "add_automation",
     }
-    arguments = {
-        "automation_config": "alias: Test\ntrigger: []\naction: []\n"
-    }
+    arguments = {"automation_config": "alias: Test\ntrigger: []\naction: []\n"}
 
     hass.auth.async_get_user = AsyncMock(
         return_value=SimpleNamespace(is_active=True, is_admin=False)
@@ -212,18 +214,20 @@ def test_recorder_guards_bound_history_and_statistics_before_query() -> None:
 
 def test_builtin_history_schema_advertises_runtime_cardinality_bound() -> None:
     """The model sees the same non-empty/history ID cap enforced at runtime."""
-    install_safety_hardening()
     history = next(
-        item for item in built_in_function_catalog() if item["implementation"] == "get_history"
+        item
+        for item in built_in_function_catalog()
+        if item["implementation"] == "get_history"
     )
     schema = history["tool"]["spec"]["parameters"]["properties"]["entity_ids"]
     assert schema["minItems"] == 1
     assert schema["maxItems"] == MAX_HISTORY_ENTITY_IDS
 
 
-async def test_broadcast_state_is_serialized_and_save_failure_is_transactional(hass) -> None:
+async def test_broadcast_state_is_serialized_and_save_failure_is_transactional(
+    hass,
+) -> None:
     """Concurrent loads occur once and failed disables do not mutate live queues."""
-    install_safety_hardening()
     manager = intercom.IntercomManager(hass)
     manager._store.async_load = AsyncMock(return_value={"enabled": True})
 

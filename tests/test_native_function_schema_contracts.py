@@ -35,9 +35,6 @@ from custom_components.extended_openai_conversation_responses.request import (
 from custom_components.extended_openai_conversation_responses.resource_limits import (
     MAX_NATIVE_SERVICE_ACTIONS,
 )
-from custom_components.extended_openai_conversation_responses.safety_hardening import (
-    _install_native_tool_guards,
-)
 
 _STATISTICS_PERIODS = ["5minute", "hour", "day", "week", "month", "year"]
 _STATISTICS_TYPES = [
@@ -172,8 +169,7 @@ def _legacy_statistics_tool(periods: list[str] | None = None) -> dict[str, Any]:
                     },
                     "period": {
                         "type": "string",
-                        "enum": periods
-                        or ["5minute", "hour", "day", "month"],
+                        "enum": periods or ["5minute", "hour", "day", "month"],
                     },
                     "units": {"type": "object"},
                     "types": {"type": "array", "items": {"type": "string"}},
@@ -185,7 +181,9 @@ def _legacy_statistics_tool(periods: list[str] | None = None) -> dict[str, Any]:
     }
 
 
-@pytest.mark.parametrize("implementation", ["execute_service", "execute_service_single"])
+@pytest.mark.parametrize(
+    "implementation", ["execute_service", "execute_service_single"]
+)
 def test_service_presets_advertise_open_service_data(implementation: str) -> None:
     """Native service presets must expose their real service-specific data contract."""
     tool = _preset_tool(implementation)
@@ -228,7 +226,6 @@ async def test_native_service_forwards_service_specific_data(
     hass, exposed_entities, llm_context
 ) -> None:
     """The native executor must pass color and brightness data through unchanged."""
-    _install_native_tool_guards()
     function = NativeFunction()
     service_data = {
         "entity_id": ["light.living_room"],

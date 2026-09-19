@@ -5,6 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from custom_components.extended_openai_conversation_responses import restore_recovery
+
 import pytest
 
 from custom_components.extended_openai_conversation_responses import backup
@@ -244,6 +246,7 @@ def test_inspect_backup_validates_optional_guest_mode(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_restore_rollback_failure_escalates(monkeypatch, hass) -> None:
+    _journal_fixture(monkeypatch)
     entry = SimpleNamespace(entry_id="entry")
     subentry = SimpleNamespace(
         subentry_id="agent", title="Current", data=agent_config_defaults()
@@ -251,11 +254,15 @@ async def test_restore_rollback_failure_escalates(monkeypatch, hass) -> None:
     prepared = _prepared()
     rollback = _prepared()
     monkeypatch.setattr(backup, "inspect_backup", lambda _value, _agent: prepared)
-    monkeypatch.setattr(backup, "_managers", AsyncMock(return_value=(object(),)))
-    monkeypatch.setattr(backup, "_snapshot_for_restore", AsyncMock(return_value=rollback))
     monkeypatch.setattr(
-        backup,
-        "_apply_restore",
+        restore_recovery, "_durable_managers", AsyncMock(return_value=(object(),))
+    )
+    monkeypatch.setattr(
+        backup, "_snapshot_for_restore", AsyncMock(return_value=rollback)
+    )
+    monkeypatch.setattr(
+        restore_recovery,
+        "_apply_prepared",
         AsyncMock(
             side_effect=[
                 RuntimeError("restore failed"),
@@ -264,7 +271,7 @@ async def test_restore_rollback_failure_escalates(monkeypatch, hass) -> None:
         ),
     )
 
-    with pytest.raises(BackupError, match="could not be fully recovered"):
+    with pytest.raises(BackupError, match="recovery is still pending"):
         await backup.async_restore_backup(hass, entry, subentry, {})
 
 
@@ -400,3 +407,12 @@ async def test_apply_restore_updates_retention_and_all_managers() -> None:
     )
     guest.async_replace_backup.assert_awaited_once_with(prepared.guest_mode_schedule)
     rules.async_replace_backup.assert_awaited_once_with(prepared.request_rules)
+
+
+def _journal_fixture(monkeypatch):
+    from tests.test_restore_recovery import MemoryJournalStore
+
+    store = MemoryJournalStore()
+    monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_: store)
+    monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
+    monkeypatch.setattr(restore_recovery, "reset_restored_runtime", lambda *_: None)

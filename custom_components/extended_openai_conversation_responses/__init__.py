@@ -19,7 +19,6 @@ from homeassistant.helpers.typing import ConfigType
 # the authoritative config field set or normalizer. Keep Management initialized
 # before the remaining runtime installers import it (explicit re-export).
 from . import exposed_attributes as _exposed_attributes, management_ui as management_ui
-from .agent_maintenance import install_agent_maintenance_barrier
 from .backup_transfer import setup_backup_transfer_websocket
 from .const import (
     CONF_API_PROVIDER,
@@ -117,9 +116,8 @@ from .prompt_cache import PerformanceOpenAIClientProxy
 from .provider_credentials import setup_provider_credentials_websocket
 from .quiet_hours import async_get_quiet_hours
 from .regex_execution import install_configurable_regex_isolation
-from .restore_recovery import async_recover_pending_restores, install_restore_recovery
+from .restore_recovery import async_recover_pending_restores
 from .runtime_failure_hardening import install_runtime_failure_hardening
-from .safety_hardening import install_safety_hardening
 from .services import async_setup_services
 from .skill_runtime_availability import install_skill_runtime_availability
 from .template import async_setup_templates, async_unload_templates
@@ -146,11 +144,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     apply_openai_compatibility()
     install_delayed_tool_store_guard()
     install_runtime_failure_hardening()
-    install_safety_hardening()
     install_lifecycle_optimizations()
     install_hot_path_cleanup()
     install_context_usage_hardening()
-    install_restore_recovery()
     install_skill_runtime_availability()
     install_guest_policy_fast_path()
     install_deferred_context_summary()
@@ -161,8 +157,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_input_footprint()
     install_function_dependency_integrity()
     install_configurable_regex_isolation()
-    # Backup/service guards share the lease owned by the conversation entry.
-    install_agent_maintenance_barrier()
     # Activate the durable delayed-tool scheduler after entity hardening so its
     # execution hook wraps the final configured Function Tool seam.
     await async_setup_delayed_tools(hass)
