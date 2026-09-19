@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import datetime
@@ -583,8 +584,41 @@ class DebugOpenAIClientProxy:
         return getattr(self._delegate, name)
 
 
+@contextmanager
+def conversation_debug_trace(
+    agent: Any, user_input: Any
+) -> Iterator[DebugTrace | None]:
+    """Capture one opt-in request, preserving caller trace state on every exit.
+
+    The conversation owner assigns the completed result to the yielded trace.
+    Finalization happens after the inner request scopes have been restored.
+    """
+    manager = get_debug_manager(
+        agent.hass, agent.entry.entry_id, agent.subentry.subentry_id
+    )
+    if not manager.enabled:
+        yield None
+        return
+    trace = manager.begin(
+        entry_id=agent.entry.entry_id,
+        subentry_id=agent.subentry.subentry_id,
+        user_input=user_input,
+        incoming_conversation_id=user_input.conversation_id,
+    )
+    token = _ACTIVE_DEBUG_TRACE.set(trace)
+    try:
+        yield trace
+    except BaseException as err:
+        manager.finish(trace, successful=False, error=err)
+        raise
+    else:
+        manager.finish(trace, successful=trace.error_type is None, result=trace.result)
+    finally:
+        _ACTIVE_DEBUG_TRACE.reset(token)
+
+
 def install_debug_instrumentation() -> None:
-    """Install lightweight hooks once; they are inert until debug capture is enabled."""
+    """Instrument inner runtime phases; request capture belongs to its entry owner."""
     global _INSTRUMENTATION_INSTALLED
     if _INSTRUMENTATION_INSTALLED:
         return
@@ -593,7 +627,6 @@ def install_debug_instrumentation() -> None:
     from .continuity import ConversationContinuity
     from .conversation import ExtendedOpenAIAgentEntity
 
-    original_process = ExtendedOpenAIAgentEntity._async_process
     original_handle_message = ExtendedOpenAIAgentEntity._async_handle_message
     original_retrieve_memories = ExtendedOpenAIAgentEntity._async_retrieve_memories
     original_retrieve_temporary = (
@@ -601,32 +634,6 @@ def install_debug_instrumentation() -> None:
     )
     original_build_prompt = ExtendedOpenAIAgentEntity._build_system_prompt
     original_resolve = ConversationContinuity.async_resolve
-
-    @wraps(original_process)
-    async def traced_process(self: Any, user_input: Any) -> Any:
-        manager = get_debug_manager(
-            self.hass, self.entry.entry_id, self.subentry.subentry_id
-        )
-        if not manager.enabled:
-            return await original_process(self, user_input)
-        incoming_id = user_input.conversation_id
-        trace = manager.begin(
-            entry_id=self.entry.entry_id,
-            subentry_id=self.subentry.subentry_id,
-            user_input=user_input,
-            incoming_conversation_id=incoming_id,
-        )
-        token = _ACTIVE_DEBUG_TRACE.set(trace)
-        try:
-            result = await original_process(self, user_input)
-        except BaseException as err:
-            manager.finish(trace, successful=False, error=err)
-            raise
-        else:
-            manager.finish(trace, successful=trace.error_type is None, result=result)
-            return result
-        finally:
-            _ACTIVE_DEBUG_TRACE.reset(token)
 
     @wraps(original_handle_message)
     async def traced_handle_message(self: Any, *args: Any, **kwargs: Any) -> Any:
@@ -726,7 +733,6 @@ def install_debug_instrumentation() -> None:
             }
         return result
 
-    ExtendedOpenAIAgentEntity._async_process = traced_process  # type: ignore[method-assign]
     ExtendedOpenAIAgentEntity._async_handle_message = traced_handle_message  # type: ignore[method-assign]
     ExtendedOpenAIAgentEntity._async_retrieve_memories = traced_retrieve_memories  # type: ignore[method-assign]
     ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories = (

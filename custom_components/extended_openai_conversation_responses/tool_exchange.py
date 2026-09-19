@@ -21,7 +21,7 @@ from .function_tool_recovery import (
 )
 from .function_tool_resolution import latest_function_tool_for_execution
 from .ha_llm_tools import is_ha_tool
-from .ha_tool_result_compat import make_tool_result_content
+from .ha_tool_result_compat import is_tool_result_content, make_tool_result_content
 from .parallel_tool_execution import (
     async_execute_parallel_safe_batch_outcomes,
     resolve_parallel_safe_batch,
@@ -82,9 +82,10 @@ def append_unresolved_tool_results(
         for tool_call in content.tool_calls
     }
     completed_ids = {
-        content.tool_call_id
+        tool_call_id
         for content in chat_log.content
-        if isinstance(content, conversation.ToolResultContent)
+        if is_tool_result_content(content)
+        and isinstance((tool_call_id := getattr(content, "tool_call_id", None)), str)
     }
     unresolved = [
         tool_call

@@ -406,7 +406,7 @@ def test_openai_client_proxy_wraps_supported_resources_and_delegates_other_attrs
 
 
 async def test_install_debug_instrumentation_covers_lifecycle_and_phase_wrappers(
-    monkeypatch,
+    monkeypatch, entry_agent, entry_input,
 ) -> None:
     from custom_components.extended_openai_conversation_responses.continuity import (
         ConversationContinuity,
@@ -450,7 +450,7 @@ async def test_install_debug_instrumentation_covers_lifecycle_and_phase_wrappers
         assert namespace == "ns"
         return resolve_result
 
-    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_process", process)
+    entry_agent._async_process_with_continuity = lambda request: process(entry_agent, request)
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_handle_message", handle)
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_retrieve_memories", retrieve)
     monkeypatch.setattr(
@@ -473,7 +473,7 @@ async def test_install_debug_instrumentation_covers_lifecycle_and_phase_wrappers
     debug.install_debug_instrumentation()
     assert ExtendedOpenAIAgentEntity._async_process is wrapped_process
 
-    hass = SimpleNamespace(data={})
+    hass = entry_agent.hass
     manager = debug.get_debug_manager(hass, "entry", "agent")
     entity = SimpleNamespace(
         hass=hass,
@@ -483,11 +483,11 @@ async def test_install_debug_instrumentation_covers_lifecycle_and_phase_wrappers
     )
     user_input = SimpleNamespace(conversation_id="incoming", text="hello")
 
-    assert await wrapped_process(entity, user_input) == {"response": "ok"}
+    assert await entry_agent.async_process(entry_input) == {"response": "ok"}
     assert manager.status()["count"] == 0
 
     manager.configure(enabled=True)
-    assert await wrapped_process(entity, user_input) == {"response": "ok"}
+    assert await entry_agent.async_process(entry_input) == {"response": "ok"}
     assert manager.status()["count"] == 1
     assert manager.summaries()[0]["successful"] is True
 
@@ -528,7 +528,7 @@ async def test_install_debug_instrumentation_covers_lifecycle_and_phase_wrappers
     assert "continuity_resolution" in trace.phases_ms
 
 
-async def test_traced_process_records_failure_and_resets_context(monkeypatch) -> None:
+async def test_owned_request_records_failure_and_resets_context(monkeypatch, entry_agent, entry_input) -> None:
     from custom_components.extended_openai_conversation_responses.continuity import (
         ConversationContinuity,
     )
@@ -557,7 +557,7 @@ async def test_traced_process_records_failure_and_resets_context(monkeypatch) ->
     ):
         return None
 
-    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_process", fail)
+    entry_agent._async_process_with_continuity = lambda request: fail(entry_agent, request)
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_handle_message", no_result)
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_retrieve_memories", no_result)
     monkeypatch.setattr(
@@ -572,17 +572,11 @@ async def test_traced_process_records_failure_and_resets_context(monkeypatch) ->
 
     debug.install_debug_instrumentation()
     wrapped = ExtendedOpenAIAgentEntity._async_process
-    hass = SimpleNamespace(data={})
+    hass = entry_agent.hass
     manager = debug.get_debug_manager(hass, "entry", "agent")
     manager.configure(enabled=True)
-    entity = SimpleNamespace(
-        hass=hass,
-        entry=SimpleNamespace(entry_id="entry"),
-        subentry=SimpleNamespace(subentry_id="agent"),
-    )
-
     with pytest.raises(RuntimeError, match="pipeline failed"):
-        await wrapped(entity, SimpleNamespace(conversation_id=None))
+        await entry_agent.async_process(entry_input)
 
     assert debug.current_debug_trace() is None
     summary = manager.summaries()[0]

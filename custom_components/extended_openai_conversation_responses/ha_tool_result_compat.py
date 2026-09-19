@@ -38,6 +38,17 @@ def unwrap_tool_result(value: Any) -> Any:
 _MISSING_RESULT = object()
 
 
+def is_tool_result_content(content: Any) -> bool:
+    """Recognize tool-result content without relying on runtime class identity.
+
+    Supported HA versions expose either ``result`` or legacy ``tool_result``.
+    Test doubles use the same stable call-id/payload contract.
+    """
+    if not isinstance(getattr(content, "tool_call_id", None), str):
+        return False
+    return hasattr(content, "result") or hasattr(content, "tool_result")
+
+
 def tool_result_data(content: Any, default: Any = None) -> Any:
     """Read a chat-log result without accessing HA's deprecated compatibility property.
 

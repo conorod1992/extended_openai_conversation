@@ -79,40 +79,19 @@ def test_management_operation_gate_ownership_matrix(message, owns_gate) -> None:
     assert agent_maintenance._management_operation_owns_its_gate(message) is owns_gate
 
 
-async def test_conversation_guard_bypasses_partial_entities_and_gates_real_identity(
+async def test_conversation_lease_bypasses_partial_entities_and_gates_real_identity(
     monkeypatch,
 ) -> None:
-    from custom_components.extended_openai_conversation_responses import conversation
-
-    calls: list[str] = []
     gate = RecordingGate()
-
-    async def original(entity, marker):
-        calls.append(marker)
-        return marker
-
-    monkeypatch.setattr(
-        conversation.ExtendedOpenAIAgentEntity, "_async_process", original
-    )
-    monkeypatch.setattr(
-        agent_maintenance, "get_agent_maintenance_gate", lambda *_args: gate
-    )
-
-    agent_maintenance._install_conversation_guard()
-    wrapped = conversation.ExtendedOpenAIAgentEntity._async_process
-
-    partial = SimpleNamespace()
-    assert await wrapped(partial, "partial") == "partial"
-    assert gate.shared_entries == 0
-
+    monkeypatch.setattr(agent_maintenance, "get_agent_maintenance_gate", lambda *_: gate)
+    async with agent_maintenance.conversation_request_lease(SimpleNamespace()):
+        assert gate.shared_entries == 0
     complete = SimpleNamespace(
-        hass=object(),
-        entry=SimpleNamespace(entry_id="entry"),
+        hass=object(), entry=SimpleNamespace(entry_id="entry"),
         subentry=SimpleNamespace(subentry_id="agent"),
     )
-    assert await wrapped(complete, "complete") == "complete"
-    assert gate.shared_entries == 1
-    assert calls == ["partial", "complete"]
+    async with agent_maintenance.conversation_request_lease(complete):
+        assert gate.shared_entries == 1
 
 
 async def test_backup_guards_use_exclusive_gate_and_update_management_aliases(
@@ -282,11 +261,6 @@ def test_install_agent_maintenance_barrier_is_idempotent(monkeypatch) -> None:
 
     monkeypatch.setattr(agent_maintenance, "_INSTALLED", False)
     monkeypatch.setattr(
-        agent_maintenance,
-        "_install_conversation_guard",
-        lambda: calls.append("conversation"),
-    )
-    monkeypatch.setattr(
         agent_maintenance, "_install_backup_guards", lambda: calls.append("backup")
     )
     monkeypatch.setattr(
@@ -301,4 +275,4 @@ def test_install_agent_maintenance_barrier_is_idempotent(monkeypatch) -> None:
     agent_maintenance.install_agent_maintenance_barrier()
     agent_maintenance.install_agent_maintenance_barrier()
 
-    assert calls == ["conversation", "backup", "legacy", "services"]
+    assert calls == ["backup", "legacy", "services"]

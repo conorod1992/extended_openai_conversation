@@ -1,4 +1,4 @@
-"""Cancellation lifecycle coverage for the outer conversation pipeline."""
+"""Cancellation lifecycle coverage for the continuity request stage."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ class _ClaimedContinuity:
 
 
 def _user_input() -> Any:
-    """Return the minimum request surface consumed by ``_async_process``."""
+    """Return the minimum request surface consumed by ``_async_process_with_continuity``."""
     return SimpleNamespace(
         as_llm_context=lambda _domain: SimpleNamespace(
             context=SimpleNamespace(id="context-id")
@@ -67,7 +67,7 @@ def _user_input() -> Any:
 
 
 def _agent(continuity: Any, process_claimed: Any) -> Any:
-    """Return the minimum agent surface consumed by ``_async_process``."""
+    """Return the minimum agent surface consumed by ``_async_process_with_continuity``."""
     return SimpleNamespace(
         subentry=SimpleNamespace(data={}),
         _continuity=continuity,
@@ -93,7 +93,7 @@ async def test_cancellation_during_continuity_resolution_restores_request_contex
     )
 
     task = asyncio.create_task(
-        conversation_module.ExtendedOpenAIAgentEntity._async_process(
+        conversation_module.ExtendedOpenAIAgentEntity._async_process_with_continuity(
             agent, _user_input()
         )
     )
@@ -127,7 +127,7 @@ async def test_cancellation_after_continuity_claim_releases_turn_and_restores_co
     )
 
     task = asyncio.create_task(
-        conversation_module.ExtendedOpenAIAgentEntity._async_process(
+        conversation_module.ExtendedOpenAIAgentEntity._async_process_with_continuity(
             agent, _user_input()
         )
     )

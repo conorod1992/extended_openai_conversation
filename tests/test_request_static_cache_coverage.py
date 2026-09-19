@@ -28,7 +28,6 @@ def _skill_loader() -> dict:
 def restore_static_cache_wrappers():
     agent_type = conversation.ExtendedOpenAIAgentEntity
     originals = {
-        "process": agent_type._async_process,
         "format_tools": entity._format_tools,
         "render_template": prompt._render_template,
         "get_function_tools": agent_type._get_function_tools,
@@ -41,7 +40,6 @@ def restore_static_cache_wrappers():
     try:
         yield
     finally:
-        agent_type._async_process = originals["process"]
         entity._format_tools = originals["format_tools"]
         prompt._render_template = originals["render_template"]
         agent_type._get_function_tools = originals["get_function_tools"]
@@ -72,50 +70,39 @@ def test_non_json_tool_schema_bypasses_request_cache() -> None:
     assert calls == 2
 
 
-@pytest.mark.asyncio
-async def test_process_wrapper_uses_fresh_request_cache_and_restores_outer_context(
-    monkeypatch,
+async def test_request_owner_uses_fresh_cache_and_restores_outer_context(
+    entry_agent, entry_input,
 ) -> None:
-    agent_type = conversation.ExtendedOpenAIAgentEntity
-    seen: list[object] = []
-
-    async def original_process(_self, user_input):
+    seen = []
+    async def process(request):
         seen.append(request_static_cache._FORMATTED_TOOLS.get())
-        request_static_cache._FORMATTED_TOOLS.get()["inside"] = user_input
+        request_static_cache._FORMATTED_TOOLS.get()["inside"] = request.text
         return "ok"
-
-    monkeypatch.setattr(agent_type, "_async_process", original_process)
-    request_static_cache.install_request_static_caching()
-
+    entry_agent._async_process_with_continuity = process
     outer = {"outer": "preserved"}
     token = request_static_cache._FORMATTED_TOOLS.set(outer)
     try:
-        result = await agent_type._async_process(SimpleNamespace(), "hello")
+        result = await entry_agent.async_process(entry_input)
         assert request_static_cache._FORMATTED_TOOLS.get() is outer
     finally:
         request_static_cache._FORMATTED_TOOLS.reset(token)
-
     assert result == "ok"
     assert seen == [{"inside": "hello"}]
     assert outer == {"outer": "preserved"}
 
 
-@pytest.mark.asyncio
-async def test_process_wrapper_restores_cache_when_processing_raises(monkeypatch) -> None:
-    agent_type = conversation.ExtendedOpenAIAgentEntity
-
-    async def original_process(_self, _user_input):
+async def test_request_owner_restores_cache_when_processing_raises(
+    entry_agent, entry_input,
+) -> None:
+    async def process(_request):
         assert request_static_cache._FORMATTED_TOOLS.get() == {}
         raise RuntimeError("boom")
-
-    monkeypatch.setattr(agent_type, "_async_process", original_process)
-    request_static_cache.install_request_static_caching()
-
+    entry_agent._async_process_with_continuity = process
     outer = {"outer": "still-here"}
     token = request_static_cache._FORMATTED_TOOLS.set(outer)
     try:
         with pytest.raises(RuntimeError, match="boom"):
-            await agent_type._async_process(SimpleNamespace(), "hello")
+            await entry_agent.async_process(entry_input)
         assert request_static_cache._FORMATTED_TOOLS.get() is outer
     finally:
         request_static_cache._FORMATTED_TOOLS.reset(token)

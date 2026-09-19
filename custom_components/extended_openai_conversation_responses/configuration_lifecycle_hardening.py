@@ -1,4 +1,4 @@
-"""Request-boundary configuration guards retained with the processing stack."""
+"""Live capability guards retained at memory/tool runtime boundaries."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from typing import Any
 
 from .agent_configuration import (
     _archive_runtime_required,
-    async_reconcile_runtime_configuration,
     sync_memory_embedding_provider,
 )
 from .const import CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY, TEMPORARY_MEMORY_OFF
@@ -34,17 +33,8 @@ def _install_memory_embedding_lifecycle() -> None:
 
 
 def _install_runtime_configuration_lifecycle() -> None:
-    """Reconcile optional runtime managers at request boundaries and live gates."""
+    """Retain live capability checks at retrieval and tool execution boundaries."""
     from .conversation import ExtendedOpenAIAgentEntity
-
-    original_process = ExtendedOpenAIAgentEntity._async_process
-
-    @wraps(original_process)
-    async def async_process(entity: Any, *args: Any, **kwargs: Any) -> Any:
-        await async_reconcile_runtime_configuration(entity)
-        return await original_process(entity, *args, **kwargs)
-
-    ExtendedOpenAIAgentEntity._async_process = async_process  # type: ignore[assignment]
 
     original_memory_retrieve = ExtendedOpenAIAgentEntity._async_retrieve_memories
 
