@@ -25,9 +25,7 @@ class _BlockingResolveContinuity:
         await asyncio.Event().wait()
         raise AssertionError("cancelled resolution unexpectedly resumed")
 
-    async def async_release(
-        self, key: str | None, claim_token: str | None
-    ) -> None:
+    async def async_release(self, key: str | None, claim_token: str | None) -> None:
         self.release_calls.append((key, claim_token))
 
 
@@ -46,9 +44,7 @@ class _ClaimedContinuity:
             history=None,
         )
 
-    async def async_release(
-        self, key: str | None, claim_token: str | None
-    ) -> None:
+    async def async_release(self, key: str | None, claim_token: str | None) -> None:
         self.release_calls.append((key, claim_token))
         await asyncio.sleep(0)
         self.release_completed.set()
@@ -93,7 +89,7 @@ async def test_cancellation_during_continuity_resolution_restores_request_contex
     )
 
     task = asyncio.create_task(
-        conversation_module.ExtendedOpenAIAgentEntity._async_process(
+        conversation_module.ExtendedOpenAIAgentEntity._async_process_with_continuity(
             agent, _user_input()
         )
     )
@@ -127,7 +123,7 @@ async def test_cancellation_after_continuity_claim_releases_turn_and_restores_co
     )
 
     task = asyncio.create_task(
-        conversation_module.ExtendedOpenAIAgentEntity._async_process(
+        conversation_module.ExtendedOpenAIAgentEntity._async_process_with_continuity(
             agent, _user_input()
         )
     )

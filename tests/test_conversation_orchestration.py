@@ -66,7 +66,7 @@ class _UsageRecorder:
 
 def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
     entity = object.__new__(ExtendedOpenAIAgentEntity)
-    entity.hass = SimpleNamespace(bus=SimpleNamespace(async_fire=MagicMock()))
+    entity.hass = SimpleNamespace(data={}, bus=SimpleNamespace(async_fire=MagicMock()))
     entity.entry = SimpleNamespace(entry_id="entry")
     entity.subentry = SimpleNamespace(subentry_id="agent", data={})
     entity._attr_entity_id = "conversation.agent"

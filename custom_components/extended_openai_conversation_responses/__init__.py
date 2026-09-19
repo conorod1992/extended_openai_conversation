@@ -119,7 +119,6 @@ from .restore_recovery import async_recover_pending_restores, install_restore_re
 from .services import async_setup_services
 from .skill_runtime_availability import install_skill_runtime_availability
 from .template import async_setup_templates, async_unload_templates
-from .voice_identity_runtime import install_voice_identity_runtime
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -144,7 +143,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_persistence_transactions()
     install_restore_recovery()
     install_skill_runtime_availability()
-    install_voice_identity_runtime()
     install_guest_policy_fast_path()
     install_deferred_context_summary()
     install_debug_instrumentation()
@@ -155,7 +153,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_function_dependency_integrity()
     install_configurable_regex_isolation()
     install_model_search_hardening()
-    # Gate the remaining effective conversation and service entry points.
+    # Install the remaining backup, legacy Memory and service maintenance gates.
     install_agent_maintenance_barrier()
     # Activate the durable delayed-tool scheduler after entity hardening so its
     # execution hook wraps the final configured Function Tool seam.

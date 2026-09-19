@@ -8,7 +8,6 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     voice_identity_runtime,
 )
-from custom_components.extended_openai_conversation_responses import conversation
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_VOICE_DEFAULT_USER_ID,
     CONF_VOICE_DEVICE_MAPPINGS,
@@ -47,89 +46,50 @@ def test_satellite_fallback_is_preserved_without_registry_device() -> None:
         assert user_input.satellite_id == "assist_satellite.kitchen"
 
 
-@pytest.mark.asyncio
-async def test_installed_wrapper_uses_registry_device_and_restores_satellite(
-    monkeypatch,
-) -> None:
-    observed: list[tuple[str | None, str | None]] = []
+async def test_owned_entry_uses_registry_device_and_restores_satellite(
+    entry_agent, entry_input
+):
+    observed = []
 
-    async def original_process(_self, user_input):
-        observed.append((user_input.device_id, user_input.satellite_id))
+    async def core(request):
+        observed.append((request.device_id, request.satellite_id))
         return "processed"
 
-    monkeypatch.setattr(
-        conversation.ExtendedOpenAIAgentEntity,
-        "_async_process",
-        original_process,
-    )
-    monkeypatch.setattr(voice_identity_runtime, "_INSTALLED", False)
-
-    voice_identity_runtime.install_voice_identity_runtime()
-
-    auth_lookup = AsyncMock()
-    agent = SimpleNamespace(
-        hass=SimpleNamespace(auth=SimpleNamespace(async_get_user=auth_lookup)),
-        subentry=SimpleNamespace(data={}),
-    )
-    user_input = SimpleNamespace(
-        device_id="device-registry-id",
-        satellite_id="assist_satellite.kitchen",
-    )
-    result = await conversation.ExtendedOpenAIAgentEntity._async_process(
-        agent, user_input
-    )
-
-    assert result == "processed"
+    entry_agent._async_process_with_continuity = core
+    assert await entry_agent.async_process(entry_input) == "processed"
     assert observed == [("device-registry-id", None)]
-    assert user_input.satellite_id == "assist_satellite.kitchen"
-    auth_lookup.assert_not_awaited()
+    assert entry_input.satellite_id == "assist_satellite.kitchen"
+    entry_agent.hass.auth.async_get_user.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_runtime_stale_mapping_follows_unmapped_policy(monkeypatch) -> None:
+async def test_runtime_stale_mapping_follows_unmapped_policy(entry_agent, entry_input):
     options = {
         CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_DEVICE_MAPPING,
         CONF_VOICE_DEVICE_MAPPINGS: {"device-registry-id": "user:deleted-user"},
         CONF_VOICE_UNMAPPED_POLICY: VOICE_POLICY_SHARED,
     }
-    observed_scopes = []
+    entry_agent.subentry.data = options
+    observed = []
 
-    async def original_process(_self, user_input):
-        observed_scopes.append(
+    async def core(request):
+        observed.append(
             resolve_data_scope(
                 SimpleNamespace(
-                    context=SimpleNamespace(user_id=None),
-                    device_id=user_input.satellite_id or user_input.device_id,
+                    context=request.context,
+                    device_id=request.satellite_id or request.device_id,
                 ),
                 options,
             )
         )
         return "processed"
 
-    monkeypatch.setattr(
-        conversation.ExtendedOpenAIAgentEntity,
-        "_async_process",
-        original_process,
-    )
-    monkeypatch.setattr(voice_identity_runtime, "_INSTALLED", False)
-    voice_identity_runtime.install_voice_identity_runtime()
-
-    auth_lookup = AsyncMock(return_value=None)
-    agent = SimpleNamespace(
-        hass=SimpleNamespace(auth=SimpleNamespace(async_get_user=auth_lookup)),
-        subentry=SimpleNamespace(data=options),
-    )
-    user_input = SimpleNamespace(
-        device_id="device-registry-id",
-        satellite_id="assist_satellite.kitchen",
-    )
-
-    await conversation.ExtendedOpenAIAgentEntity._async_process(agent, user_input)
-
-    assert observed_scopes[0].scope_id == SHARED_HOUSEHOLD_SCOPE_ID
-    assert observed_scopes[0].source == "shared_voice_policy"
-    auth_lookup.assert_awaited_once_with("deleted-user")
-    assert user_input.satellite_id == "assist_satellite.kitchen"
+    entry_agent._async_process_with_continuity = core
+    entry_agent.hass.auth.async_get_user.return_value = None
+    await entry_agent.async_process(entry_input)
+    assert observed[0].scope_id == SHARED_HOUSEHOLD_SCOPE_ID
+    assert observed[0].source == "shared_voice_policy"
+    entry_agent.hass.auth.async_get_user.assert_awaited_once_with("deleted-user")
+    assert entry_input.satellite_id == "assist_satellite.kitchen"
 
 
 @pytest.mark.asyncio
@@ -299,21 +259,19 @@ async def test_inactive_default_user_cannot_be_bound() -> None:
     auth_lookup.assert_awaited_once_with("inactive-user")
 
 
-def test_installer_recognizes_existing_voice_identity_wrapper(monkeypatch) -> None:
-    """An existing marked wrapper is adopted instead of being wrapped a second time."""
+async def test_voice_identity_scope_restores_satellite_when_validation_is_cancelled(
+    entry_agent, entry_input, monkeypatch
+):
+    import asyncio
 
-    async def existing_wrapper(_self, _user_input):
-        return "processed"
-
-    existing_wrapper._extended_openai_voice_identity_device = True
     monkeypatch.setattr(
-        conversation.ExtendedOpenAIAgentEntity,
-        "_async_process",
-        existing_wrapper,
+        voice_identity_runtime,
+        "_active_configured_users",
+        AsyncMock(side_effect=asyncio.CancelledError()),
     )
-    monkeypatch.setattr(voice_identity_runtime, "_INSTALLED", False)
-
-    voice_identity_runtime.install_voice_identity_runtime()
-
-    assert voice_identity_runtime._INSTALLED is True
-    assert conversation.ExtendedOpenAIAgentEntity._async_process is existing_wrapper
+    with pytest.raises(asyncio.CancelledError):
+        async with voice_identity_runtime.voice_identity_scope(
+            entry_agent, entry_input
+        ):
+            pytest.fail("cancelled validation must not admit the request")
+    assert entry_input.satellite_id == "assist_satellite.kitchen"

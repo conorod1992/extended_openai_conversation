@@ -37,7 +37,11 @@ from .agent_config import (
     function_tool_enabled,
     validate_function_groups,
 )
-from .agent_configuration import sync_memory_embedding_provider
+from .agent_configuration import (
+    async_reconcile_runtime_configuration,
+    sync_memory_embedding_provider,
+)
+from .agent_maintenance import conversation_request_lease
 from .const import (
     CONF_ARCHIVE_ENABLED,
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -101,7 +105,7 @@ from .conversation_lifecycle import (
     request_fresh_conversation,
     requested_conversation_reset,
 )
-from .debug import record_current_provider_failure
+from .debug import conversation_debug_trace, record_current_provider_failure
 from .entity import ExtendedOpenAIBaseLLMEntity
 from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
 from .function_groups import (
@@ -140,6 +144,7 @@ from .ha_llm_tools import (
     is_ha_tool,
     tool_snapshot_scope,
 )
+from .ha_permissions import bind_active_ha_context
 from .ha_tool_result_compat import make_tool_result_content, tool_result_data
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
@@ -169,6 +174,7 @@ from .request_rules import (
     get_request_rule_runtime,
     request_rule_session_id,
 )
+from .request_static_cache import formatted_tool_cache
 from .scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
     ResolvedDataScope,
@@ -184,6 +190,7 @@ from .temporary_memory import (
     temporary_memory_as_dict,
 )
 from .usage import async_get_usage
+from .voice_identity_runtime import voice_identity_scope
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -534,66 +541,81 @@ class ExtendedOpenAIAgentEntity(
             _PROCESS_METADATA.reset(token)
 
     async def _async_process(self, user_input: ConversationInput) -> ConversationResult:
-        """Shared processing pipeline for Assist and the direct process action."""
+        """Own the request boundary shared by Assist and direct processing.
+
+        Preserve the effective order: HA caller, maintenance, capture, request cache,
+        Voice Identity, live configuration, then continuity and processing. Installers
+        must never replace this entry point or its request-entry owners.
+        """
+        with bind_active_ha_context(user_input.context):
+            async with conversation_request_lease(self):
+                with conversation_debug_trace(self, user_input) as trace:
+                    with formatted_tool_cache():
+                        async with voice_identity_scope(self, user_input):
+                            await async_reconcile_runtime_configuration(self)
+                            result = await self._async_process_with_continuity(
+                                user_input
+                            )
+                    if trace is not None:
+                        trace.result = result
+                    return result
+
+    async def _async_process_with_continuity(
+        self, user_input: ConversationInput
+    ) -> ConversationResult:
+        """Resolve request policy/scope and release any claimed continuity turn."""
         cache_token = _PROMPT_CACHE_CONTEXT.set(None)
         try:
             llm_context = user_input.as_llm_context(DOMAIN)
             request_policy = self._resolve_live_guest_policy()
             guest_policy_token = _ACTIVE_GUEST_POLICY.set(request_policy)
-            source_device_id = user_input.satellite_id or user_input.device_id
-            scope = resolve_data_scope(
-                SimpleNamespace(
-                    context=llm_context.context,
-                    device_id=source_device_id,
-                ),
-                self.subentry.data,
-            )
-            continuity_mode = self.subentry.data.get(
-                CONF_CONVERSATION_CONTINUITY, DEFAULT_CONVERSATION_CONTINUITY
-            )
-            timeout_minutes = int(
-                self.subentry.data.get(
-                    CONF_CONVERSATION_TIMEOUT_MINUTES,
-                    DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
-                )
-            )
-            source_device_id = source_device_id or scope.device_id
-            assert self._continuity is not None
             try:
+                source_device_id = user_input.satellite_id or user_input.device_id
+                scope = resolve_data_scope(
+                    SimpleNamespace(
+                        context=llm_context.context, device_id=source_device_id
+                    ),
+                    self.subentry.data,
+                )
+                continuity_mode = self.subentry.data.get(
+                    CONF_CONVERSATION_CONTINUITY, DEFAULT_CONVERSATION_CONTINUITY
+                )
+                timeout_minutes = int(
+                    self.subentry.data.get(
+                        CONF_CONVERSATION_TIMEOUT_MINUTES,
+                        DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+                    )
+                )
+                source_device_id = source_device_id or scope.device_id
+                assert self._continuity is not None
                 resolution = await self._continuity.async_resolve(
                     continuity_mode,
                     scope,
                     source_device_id,
                     user_input.conversation_id,
                     timeout_minutes,
-                    namespace=(
-                        GUEST_CONTINUITY_NAMESPACE
-                        if request_policy.guest_active
-                        else None
-                    ),
+                    namespace=GUEST_CONTINUITY_NAMESPACE
+                    if request_policy.guest_active
+                    else None,
                 )
-            except BaseException:
-                _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
-                raise
-            try:
-                return await self._async_process_claimed(
-                    user_input,
-                    llm_context,
-                    request_policy,
-                    scope,
-                    source_device_id,
-                    timeout_minutes,
-                    resolution,
-                )
-            finally:
                 try:
+                    return await self._async_process_claimed(
+                        user_input,
+                        llm_context,
+                        request_policy,
+                        scope,
+                        source_device_id,
+                        timeout_minutes,
+                        resolution,
+                    )
+                finally:
                     await asyncio.shield(
                         self._continuity.async_release(
                             resolution.key, resolution.claim_token
                         )
                     )
-                finally:
-                    _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
+            finally:
+                _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
         finally:
             _PROMPT_CACHE_CONTEXT.reset(cache_token)
 

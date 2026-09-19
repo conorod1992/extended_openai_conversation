@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
-from functools import wraps
+from collections.abc import AsyncIterator, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
 from .const import (
@@ -23,8 +22,6 @@ from .scope import (
     UNRETAINED_SCOPE_ID,
     bind_active_voice_identity_users,
 )
-
-_INSTALLED = False
 
 
 @contextmanager
@@ -102,28 +99,13 @@ async def _active_configured_users(agent: Any, user_input: Any) -> frozenset[str
     return frozenset()
 
 
-def install_voice_identity_runtime() -> None:
-    """Install Voice Identity runtime checks on the effective conversation entry point."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
+@asynccontextmanager
+async def voice_identity_scope(agent: Any, user_input: Any) -> AsyncIterator[None]:
+    """Validate data ownership using the registry source and restore all context.
 
-    from . import conversation
-
-    current = conversation.ExtendedOpenAIAgentEntity._async_process
-    if getattr(current, "_extended_openai_voice_identity_device", False):
-        _INSTALLED = True
-        return
-
-    @wraps(current)
-    async def process_with_registry_device(self: Any, user_input: Any) -> Any:
-        with _prefer_registry_device_source(user_input):
-            active_users = await _active_configured_users(self, user_input)
-            with bind_active_voice_identity_users(active_users):
-                return await current(self, user_input)
-
-    process_with_registry_device._extended_openai_voice_identity_device = True  # type: ignore[attr-defined]
-    conversation.ExtendedOpenAIAgentEntity._async_process = (  # type: ignore[method-assign]
-        process_with_registry_device
-    )
-    _INSTALLED = True
+    Voice Identity never replaces the authenticated HA caller used for permissions.
+    """
+    with _prefer_registry_device_source(user_input):
+        active_users = await _active_configured_users(agent, user_input)
+        with bind_active_voice_identity_users(active_users):
+            yield

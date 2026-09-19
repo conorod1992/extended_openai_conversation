@@ -137,7 +137,9 @@ async def test_endpoint_proxy_leaves_stream_untouched_without_active_trace() -> 
     assert await proxy.create(input="hello") is stream
 
 
-async def test_instrumentation_helpers_are_transparent_without_trace(monkeypatch) -> None:
+async def test_instrumentation_helpers_are_transparent_without_trace(
+    monkeypatch,
+) -> None:
     """Installed phase wrappers preserve behavior when no debug trace is active."""
     from custom_components.extended_openai_conversation_responses.continuity import (
         ConversationContinuity,
@@ -180,7 +182,6 @@ async def test_instrumentation_helpers_are_transparent_without_trace(monkeypatch
     ):
         return resolved
 
-    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_process", process)
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_handle_message", handle)
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_retrieve_memories", retrieve)
     monkeypatch.setattr(
@@ -206,9 +207,9 @@ async def test_instrumentation_helpers_are_transparent_without_trace(monkeypatch
     assert await ExtendedOpenAIAgentEntity._async_retrieve_memories(entity) == [
         "persistent"
     ]
-    assert await ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories(entity) == [
-        "temporary"
-    ]
+    assert await ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories(
+        entity
+    ) == ["temporary"]
     assert ExtendedOpenAIAgentEntity._build_system_prompt(entity) == "prompt"
     assert (
         await ConversationContinuity.async_resolve(
@@ -227,7 +228,9 @@ async def test_instrumentation_helpers_are_transparent_without_trace(monkeypatch
     no_usage_trace = _trace()
     token = debug._ACTIVE_DEBUG_TRACE.set(no_usage_trace)
     try:
-        assert await ExtendedOpenAIAgentEntity._async_handle_message(entity) == "handled"
+        assert (
+            await ExtendedOpenAIAgentEntity._async_handle_message(entity) == "handled"
+        )
     finally:
         debug._ACTIVE_DEBUG_TRACE.reset(token)
     assert no_usage_trace.usage_run_id is None
@@ -238,7 +241,9 @@ async def test_instrumentation_helpers_are_transparent_without_trace(monkeypatch
     entity._usage = SimpleNamespace(current_run=lambda: None)
     token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     try:
-        assert await ExtendedOpenAIAgentEntity._async_handle_message(entity) == "handled"
+        assert (
+            await ExtendedOpenAIAgentEntity._async_handle_message(entity) == "handled"
+        )
     finally:
         debug._ACTIVE_DEBUG_TRACE.reset(token)
 

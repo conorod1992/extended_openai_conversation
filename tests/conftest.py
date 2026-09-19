@@ -197,3 +197,42 @@ def management_message(management_agent):
         }
 
     return message
+
+
+@pytest.fixture
+def entry_agent(hass, monkeypatch):
+    """Real request owner with only the already-claimed processing stage stubbed."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from custom_components.extended_openai_conversation_responses import conversation
+
+    agent = object.__new__(conversation.ExtendedOpenAIAgentEntity)
+    agent.hass = hass
+    agent.entry = SimpleNamespace(entry_id="entry", data={})
+    agent.subentry = SimpleNamespace(subentry_id="agent", data={})
+    agent._async_process_with_continuity = AsyncMock(return_value="processed")
+    hass.auth.async_get_user = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        conversation, "async_reconcile_runtime_configuration", AsyncMock()
+    )
+    return agent
+
+
+@pytest.fixture
+def entry_input():
+    """Request-shaped input with both device-registry and satellite metadata."""
+    from types import SimpleNamespace
+
+    from homeassistant.core import Context
+
+    request = SimpleNamespace(
+        text="hello",
+        language="en",
+        context=Context(),
+        conversation_id=None,
+        device_id="device-registry-id",
+        satellite_id="assist_satellite.kitchen",
+    )
+    request.as_llm_context = lambda _domain: SimpleNamespace(context=request.context)
+    return request
