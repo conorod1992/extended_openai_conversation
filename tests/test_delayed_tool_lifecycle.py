@@ -75,8 +75,6 @@ async def test_async_setup_activates_delayed_tool_manager_after_entity_hardening
     order: list[str] = []
     sync_helpers = (
         "apply_openai_compatibility",
-        "install_management_loading_optimizations",
-        "install_delayed_tool_store_guard",
         "setup_provider_credentials_websocket",
     )
     for name in sync_helpers:

@@ -7,9 +7,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import (
-    runtime_failure_hardening as hardening,
-)
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
@@ -58,7 +55,6 @@ class FakeArchiveEntity:
 
 @pytest.mark.asyncio
 async def test_request_preparation_home_assistant_error_returns_assist_error() -> None:
-    hardening.install_runtime_failure_hardening()
     entity = FakeConversationEntity()
     user_input = SimpleNamespace(
         language="en",
@@ -77,7 +73,6 @@ async def test_request_preparation_home_assistant_error_returns_assist_error() -
 
 @pytest.mark.asyncio
 async def test_unexpected_archive_failure_is_labeled_as_archive() -> None:
-    hardening.install_runtime_failure_hardening()
     entity = FakeArchiveEntity()
     tool = {"function": {"type": "archive", "operation": "search"}}
     tool_input = SimpleNamespace(id="call", tool_name="archive_search", tool_args={})
@@ -93,8 +88,12 @@ async def test_unexpected_archive_failure_is_labeled_as_archive() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_repairs_tool_call_id_received_in_later_delta() -> None:
-    hardening.install_runtime_failure_hardening()
+@pytest.mark.parametrize(
+    "initial_id,expected_id", [(None, "call_late_123"), ("original", "original")]
+)
+async def test_chat_stream_repairs_tool_call_id_received_in_later_delta(
+    initial_id, expected_id
+) -> None:
     entity = SimpleNamespace(subentry=SimpleNamespace(data={}))
     chat_log = SimpleNamespace(async_trace=lambda _trace: None)
 
@@ -107,7 +106,7 @@ async def test_chat_stream_repairs_tool_call_id_received_in_later_delta() -> Non
                         tool_calls=[
                             SimpleNamespace(
                                 index=0,
-                                id=None,
+                                id=initial_id,
                                 function=SimpleNamespace(
                                     name="late_id_tool", arguments='{"value":'
                                 ),
@@ -145,6 +144,6 @@ async def test_chat_stream_repairs_tool_call_id_received_in_later_delta() -> Non
     tool_payload = next(item for item in output if item.get("tool_calls"))
     tool_call = tool_payload["tool_calls"][0]
 
-    assert tool_call.id == "call_late_123"
+    assert tool_call.id == expected_id
     assert tool_call.tool_name == "late_id_tool"
     assert tool_call.tool_args == json.loads('{"value":1}')

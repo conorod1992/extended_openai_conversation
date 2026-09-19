@@ -18,7 +18,6 @@ _TOOL_MUTATIONS = frozenset(
     {"save", "set_enabled", "delete", "save_group", "delete_group", "ha_add"}
 )
 _TEMPLATE_MARKERS = ("{{", "{%", "{#")
-_INSTALLED = False
 
 
 def _is_template_string(value: Any) -> bool:
@@ -268,25 +267,6 @@ async def async_validate_request_rule_functions(
         await async_validate_static_function_arguments(
             hass, cast(Mapping[str, Any], tool["spec"]), arguments
         )
-
-
-def install_function_dependency_integrity() -> None:
-    """Install recursive Request Rule reference operations; dispatch is owned directly."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-
-    setattr(  # noqa: B010
-        request_rules.RequestRules,
-        "function_references",
-        recursive_function_references,
-    )
-    setattr(  # noqa: B010
-        request_rules.RequestRules,
-        "async_rename_function_reference",
-        async_rename_function_reference_recursive,
-    )
-    _INSTALLED = True
 
 
 def group_reference_updates(

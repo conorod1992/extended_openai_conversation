@@ -342,62 +342,22 @@ class RequestRules:
         }
 
     def function_references(self, function_name: str) -> list[dict[str, str]]:
-        """Return Request Rules that directly call one configured Function Tool."""
-        service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
-        references: list[dict[str, str]] = []
-        for rule in self._rules:
-            actions = rule.get("action", {}).get("actions", [])
-            if any(
-                isinstance(action, Mapping)
-                and action.get("action", action.get("service")) == service_action
-                and isinstance(action.get("data"), Mapping)
-                and action["data"].get("function") == function_name
-                for action in actions
-            ):
-                references.append({"id": rule["id"], "name": rule["name"]})
-        return references
+        """Return references throughout the native script tree."""
+        from .function_dependency_integrity import recursive_function_references
+
+        return recursive_function_references(self, function_name)
 
     async def async_rename_function_reference(
-        self,
-        old_name: str,
-        new_name: str,
-        *,
-        expected_revision: str | None = None,
+        self, old_name: str, new_name: str, *, expected_revision: str | None = None
     ) -> int:
-        """Rewrite exact configured-function references and persist once."""
-        if old_name == new_name:
-            return 0
-        service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
-        async with self._lock:
-            self._require_revision_locked(expected_revision)
-            changed = 0
-            updated_rules: list[dict[str, Any]] = []
-            for rule in self._rules:
-                updated = deepcopy(rule)
-                for action in updated.get("action", {}).get("actions", []):
-                    if (
-                        isinstance(action, dict)
-                        and action.get("action", action.get("service"))
-                        == service_action
-                        and isinstance(action.get("data"), Mapping)
-                        and action["data"].get("function") == old_name
-                    ):
-                        action["data"] = {**action["data"], "function": new_name}
-                        changed += 1
-                updated_rules.append(
-                    validate_rule(
-                        updated,
-                        validate_sentence_pattern=rule["id"] not in self._diagnostics,
-                    )
-                )
-            if changed:
-                _validate_total_pattern_states(
-                    updated_rules, inactive_rule_ids=self._diagnostics
-                )
-                self._rules = updated_rules
-                self._sort_and_compile()
-                await self._async_save_locked()
-        return changed
+        """Persist recursive reference changes with rollback on failure."""
+        from .function_dependency_integrity import (
+            async_rename_function_reference_recursive,
+        )
+
+        return await async_rename_function_reference_recursive(
+            self, old_name, new_name, expected_revision=expected_revision
+        )
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return durable Request Rule state without management-only fields."""

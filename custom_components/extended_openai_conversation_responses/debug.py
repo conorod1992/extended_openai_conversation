@@ -390,6 +390,10 @@ class DebugTrace:
             "incoming_conversation_id": self.incoming_conversation_id,
             "resolved_conversation_id": self.continuity.get("resolved_conversation_id"),
             "continuity_resumed": self.continuity.get("resumed"),
+            "continuity_mode": self.continuity.get("mode"),
+            "restored_history_items": int(
+                self.continuity.get("restored_history_items") or 0
+            ),
             "provider_request_count": len(self.provider_requests),
             "first_text_ms": (
                 first_request.first_text_ms if first_request is not None else None

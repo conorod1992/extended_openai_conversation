@@ -69,31 +69,6 @@ def test_validate_preferences_enforces_configured_limits(
         ea._validate_preferences({"registry:a": ["long"]})
 
 
-def test_normalizer_delegates_non_dict_and_handles_optional_field(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[Any, bool, bool]] = []
-
-    def original(
-        data: Any, *, apply_defaults: bool, reject_unknown: bool
-    ) -> dict[str, Any]:
-        calls.append((data, apply_defaults, reject_unknown))
-        return {"base": True}
-
-    monkeypatch.setattr(ea, "_ORIGINAL_NORMALIZE_AGENT_CONFIG", original)
-
-    assert ea._normalize_agent_config_with_exposed_attributes(
-        "legacy", apply_defaults=False, reject_unknown=False
-    ) == {"base": True}
-    assert calls[-1] == ("legacy", False, False)
-
-    assert ea._normalize_agent_config_with_exposed_attributes(
-        {ea.CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:id": ["brightness"]}},
-        apply_defaults=False,
-    ) == {
-        "base": True,
-        ea.CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:id": ["brightness"]},
-    }
 
 
 def test_registry_lookup_supports_current_and_legacy_container_shapes() -> None:

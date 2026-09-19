@@ -1,5 +1,9 @@
 """Constants for the Extended OpenAI Conversation (Responses) integration."""
 
+from .native_function_schema_migration import migrate_legacy_stock_native_function_tools
+
+CONF_EXPOSED_ENTITY_ATTRIBUTES = "exposed_entity_attributes"
+
 DOMAIN = "extended_openai_conversation_responses"
 SUBSYSTEM_STATUS_KEY = f"{DOMAIN}.subsystem_status"
 CONFIG_ENTRY_VERSION = 8
@@ -347,7 +351,7 @@ DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION = 10
 CONF_SHORTEN_TOOL_CALL_ID = "shorten_tool_call_id"
 DEFAULT_SHORTEN_TOOL_CALL_ID = False
 CONF_FUNCTION_TOOLS = "functions"
-DEFAULT_CONF_FUNCTION_TOOLS = [
+_LEGACY_DEFAULT_CONF_FUNCTION_TOOLS = [
     {
         "spec": {
             "name": "execute_services",
@@ -478,6 +482,10 @@ DEFAULT_CONF_FUNCTION_TOOLS = [
         "function": {"type": "bash", "command": "{{command}}"},
     },
 ]
+
+DEFAULT_CONF_FUNCTION_TOOLS, _ = migrate_legacy_stock_native_function_tools(
+    _LEGACY_DEFAULT_CONF_FUNCTION_TOOLS
+)
 
 # Spoken-response post-processing. These options never mutate the visual response.
 CONF_SPEECH_PROCESSING_ENABLED = "speech_processing_enabled"

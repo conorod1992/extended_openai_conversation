@@ -8,10 +8,8 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import frontend_assets
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
-from custom_components.extended_openai_conversation_responses.management_loading_performance import (
-    async_setup_cached_debug_ui,
-    async_setup_cached_management_ui,
-)
+from custom_components.extended_openai_conversation_responses.debug_ui import async_setup_debug_ui
+from custom_components.extended_openai_conversation_responses.management_ui import async_setup_management_ui
 from homeassistant.core import HomeAssistant
 
 from tests_real_ha.test_management_backend_acceptance import _entry, _setup_entry
@@ -24,8 +22,8 @@ async def test_startup_serves_bundled_assets_idempotently(
 ) -> None:
     """Repeated setup preserves one production asset root and serves every chunk."""
     await _setup_entry(hass, _entry("Frontend Bundle Acceptance"))
-    await async_setup_cached_debug_ui(hass)
-    await async_setup_cached_management_ui(hass)
+    await async_setup_debug_ui(hass)
+    await async_setup_management_ui(hass)
 
     client = await aiohttp_client(hass.http.app)
     manifest = frontend_assets._manifest()

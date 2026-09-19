@@ -18,7 +18,6 @@ from custom_components.extended_openai_conversation_responses.functions.file imp
 )
 from custom_components.extended_openai_conversation_responses.persistence_hardening import (
     _async_prepare_private_store,
-    install_delayed_tool_store_guard,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
     STORAGE_VERSION,
@@ -109,7 +108,6 @@ async def test_request_rules_store_is_hardened_before_initialize(hass) -> None:
 
 async def test_delayed_tool_store_is_hardened_before_setup(hass) -> None:
     """Delayed-tool recovery uses the same private atomic Store policy."""
-    install_delayed_tool_store_guard()
     manager = DelayedToolManager(hass)
 
     await manager.async_setup()

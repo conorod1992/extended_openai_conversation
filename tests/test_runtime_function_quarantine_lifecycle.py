@@ -2,8 +2,6 @@
 
 import yaml
 
-import custom_components.extended_openai_conversation_responses.management_loading_performance as loading
-
 
 def _phone_tool(*, min_length):
     return {
@@ -30,26 +28,24 @@ def test_runtime_quarantine_does_not_leak_into_next_request(monkeypatch) -> None
     from custom_components.extended_openai_conversation_responses import agent_config
 
     broken = _phone_tool(min_length="legacy")
-    first_tools = loading._runtime_configured_function_tools(
+    first_tools = quarantine._runtime_configured_function_tools(
         {"functions": yaml.safe_dump([broken], sort_keys=False)}
     )
 
     assert first_tools == []
-    assert loading._RUNTIME_QUARANTINED_FUNCTION_NAMES.get() == frozenset(
+    assert quarantine._RUNTIME_QUARANTINED_FUNCTION_NAMES.get() == frozenset(
         {"invalid_phone_tool"}
     )
-    assert loading._RUNTIME_QUARANTINE_ALL_FUNCTIONS.get() is False
+    assert quarantine._RUNTIME_QUARANTINE_ALL_FUNCTIONS.get() is False
 
     repaired = _phone_tool(min_length=1)
-    second_tools = loading._runtime_configured_function_tools(
+    second_tools = quarantine._runtime_configured_function_tools(
         {"functions": yaml.safe_dump([repaired], sort_keys=False)}
     )
 
-    assert [tool["spec"]["name"] for tool in second_tools] == [
-        "invalid_phone_tool"
-    ]
-    assert loading._RUNTIME_QUARANTINED_FUNCTION_NAMES.get() == frozenset()
-    assert loading._RUNTIME_QUARANTINE_ALL_FUNCTIONS.get() is False
+    assert [tool["spec"]["name"] for tool in second_tools] == ["invalid_phone_tool"]
+    assert quarantine._RUNTIME_QUARANTINED_FUNCTION_NAMES.get() == frozenset()
+    assert quarantine._RUNTIME_QUARANTINE_ALL_FUNCTIONS.get() is False
 
     captured = {}
 
@@ -69,8 +65,13 @@ def test_runtime_quarantine_does_not_leak_into_next_request(monkeypatch) -> None
         }
     ]
 
-    result = loading._runtime_validate_function_groups(groups, second_tools)
+    result = quarantine._runtime_validate_function_groups(groups, second_tools)
 
     assert result[0]["functions"] == ["invalid_phone_tool"]
     assert captured["groups"][0]["functions"] == ["invalid_phone_tool"]
     assert captured["function_tools"] is second_tools
+
+
+from custom_components.extended_openai_conversation_responses import (
+    function_tool_quarantine as quarantine,
+)

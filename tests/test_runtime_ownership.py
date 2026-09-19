@@ -16,8 +16,10 @@ from custom_components.extended_openai_conversation_responses import (
     debug,
     entity as base,
     function_execution,
-    persistence_hardening,
     tool_exchange,
+)
+from custom_components.extended_openai_conversation_responses.conversation import (
+    _TEMPORARY_MEMORY_PREFETCH,
 )
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
     DelayedToolManager,
@@ -35,9 +37,6 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     is_tool_result_content,
     tool_result_data,
-)
-from custom_components.extended_openai_conversation_responses.lifecycle_optimizations import (
-    _TEMPORARY_MEMORY_PREFETCH,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     _ACTIVE_OWNER_SCOPE_ID,
@@ -154,7 +153,6 @@ async def test_repeated_setup_preserves_runtime_identity(hass, monkeypatch):
     executor = base.ExtendedOpenAIBaseLLMEntity._execute_function_tool
     monkeypatch.setattr(DelayedToolManager, "async_setup", AsyncMock())
     for _ in range(2):
-        persistence_hardening.install_delayed_tool_store_guard()
         await async_setup_delayed_tools(hass)
         assert methods == {name: getattr(cls, name) for name in methods}
         assert base.ExtendedOpenAIBaseLLMEntity._execute_function_tool is executor

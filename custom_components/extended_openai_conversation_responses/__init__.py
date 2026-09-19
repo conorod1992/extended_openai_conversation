@@ -15,10 +15,6 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
-# Register exposed-attribute agent configuration before modules import snapshots of
-# the authoritative config field set or normalizer. Keep Management initialized
-# before the remaining runtime installers import it (explicit re-export).
-from . import exposed_attributes as exposed_attributes, management_ui as management_ui
 from .backup_transfer import setup_backup_transfer_websocket
 from .const import (
     CONF_API_PROVIDER,
@@ -93,37 +89,26 @@ from .const import (
 from .debug import DebugOpenAIClientProxy
 from .debug_ui import async_setup_debug_ui
 from .delayed_tools import async_setup_delayed_tools
-from .function_dependency_integrity import install_function_dependency_integrity
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import get_authenticated_client, supports_openai_hosted_tools
 from .intercom_services import async_setup_intercom_services
-from .lifecycle_optimizations import install_lifecycle_optimizations
-from .management_loading_performance import install_management_loading_optimizations
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
 from .model_catalog_manager import async_setup_model_catalog
 from .native_function_schema_migration import (
-    install_current_default_native_function_schemas,
     migrate_legacy_stock_native_function_tools_yaml,
 )
 from .openai_compat import apply_openai_compatibility
-from .persistence_hardening import install_delayed_tool_store_guard
 from .prompt_cache import PerformanceOpenAIClientProxy
 from .provider_credentials import setup_provider_credentials_websocket
 from .quiet_hours import async_get_quiet_hours
 from .restore_recovery import async_recover_pending_restores
-from .runtime_failure_hardening import install_runtime_failure_hardening
 from .services import async_setup_services
 from .template import async_setup_templates, async_unload_templates
 
 _LOGGER = logging.getLogger(__name__)
 
 _REQUEST_RULE_RUNTIMES = "extended_openai_conversation_responses.request_rule_runtimes"
-
-# agent_config has already been loaded by the management/exposed-attribute modules.
-# Refresh its authoritative default snapshot once so newly-created agents are seeded
-# with the same current native schemas that the UI and provider will see.
-install_current_default_native_function_schemas()
 
 PLATFORMS = [Platform.AI_TASK, Platform.CONVERSATION, Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -136,15 +121,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_setup_model_catalog(hass)
     await async_get_quiet_hours(hass)
     apply_openai_compatibility()
-    install_management_loading_optimizations()
-    install_delayed_tool_store_guard()
-    install_runtime_failure_hardening()
-    install_lifecycle_optimizations()
-    # Install the remaining conversation/runtime enhancements. Management routes
-    # and result projections are owned directly by management_ui.
-    install_function_dependency_integrity()
-    # Activate the durable delayed-tool scheduler after entity hardening so its
-    # execution hook wraps the final configured Function Tool seam.
     await async_setup_delayed_tools(hass)
     await async_migrate_integration(hass)
     # Resolve any interrupted cross-store restore before conversation agents load.

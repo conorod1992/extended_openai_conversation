@@ -1,29 +1,33 @@
 """Tests for management frontend bootstrap and network optimizations."""
 
-import json
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import yaml
 
-from custom_components.extended_openai_conversation_responses import management_ui
+from custom_components.extended_openai_conversation_responses import (
+    debug_ui,
+    management_ui,
+)
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
     agent_config_snapshot,
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
+from custom_components.extended_openai_conversation_responses.debug_ui import (
+    async_setup_debug_ui,
+)
 from custom_components.extended_openai_conversation_responses.management_function_repair import (
     async_function_repair as _async_function_repair,
 )
-import custom_components.extended_openai_conversation_responses.management_loading_performance as loading
 from custom_components.extended_openai_conversation_responses.management_loading_performance import (
     _agent_snapshot,
     async_agent_catalog,
     async_overview_summary,
-    async_setup_cached_debug_ui,
-    async_setup_cached_management_ui,
+)
+from custom_components.extended_openai_conversation_responses.management_ui import (
+    async_setup_management_ui,
 )
 
 
@@ -108,18 +112,18 @@ def test_runtime_function_quarantine_keeps_valid_siblings() -> None:
     valid["spec"]["name"] = "valid_phone_tool"
     valid["spec"]["parameters"]["properties"]["phone"]["minLength"] = 1
 
-    tools = loading._runtime_configured_function_tools(
+    tools = quarantine._runtime_configured_function_tools(
         {"functions": yaml.safe_dump([valid, invalid], sort_keys=False)}
     )
 
     assert [tool["spec"]["name"] for tool in tools] == ["valid_phone_tool"]
-    assert loading._RUNTIME_QUARANTINED_FUNCTION_NAMES.get() == frozenset(
+    assert quarantine._RUNTIME_QUARANTINED_FUNCTION_NAMES.get() == frozenset(
         {"invalid_phone_tool"}
     )
-    assert loading._RUNTIME_QUARANTINE_ALL_FUNCTIONS.get() is False
+    assert quarantine._RUNTIME_QUARANTINE_ALL_FUNCTIONS.get() is False
 
-    loading._RUNTIME_QUARANTINED_FUNCTION_NAMES.set(frozenset())
-    loading._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
+    quarantine._RUNTIME_QUARANTINED_FUNCTION_NAMES.set(frozenset())
+    quarantine._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
 
 
 def test_runtime_group_quarantine_drops_only_quarantined_references(
@@ -135,11 +139,11 @@ def test_runtime_group_quarantine_drops_only_quarantined_references(
         return groups
 
     monkeypatch.setattr(agent_config, "validate_function_groups", validate)
-    loading._RUNTIME_QUARANTINED_FUNCTION_NAMES.set(frozenset({"broken_tool"}))
-    loading._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
+    quarantine._RUNTIME_QUARANTINED_FUNCTION_NAMES.set(frozenset({"broken_tool"}))
+    quarantine._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
     tools = [{"spec": {"name": "good_tool"}}]
 
-    result = loading._runtime_validate_function_groups(
+    result = quarantine._runtime_validate_function_groups(
         [
             {
                 "id": "test",
@@ -152,12 +156,12 @@ def test_runtime_group_quarantine_drops_only_quarantined_references(
     assert result[0]["functions"] == ["good_tool", "unrelated_missing_tool"]
     assert captured["function_tools"] is tools
 
-    loading._RUNTIME_QUARANTINED_FUNCTION_NAMES.set(frozenset())
-    loading._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
+    quarantine._RUNTIME_QUARANTINED_FUNCTION_NAMES.set(frozenset())
+    quarantine._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
 
 
 def test_cached_setup_uses_shared_production_asset_boundary() -> None:
-    assert loading.frontend_entry_url("management").startswith(
+    assert management_ui.frontend_entry_url("management").startswith(
         f"/{DOMAIN}/frontend/assets/management-"
     )
 
@@ -449,59 +453,60 @@ async def test_configuration_save_validation_failure_does_not_persist(
 async def test_management_setup_retry_resumes_after_panel_failure(monkeypatch) -> None:
     """A failed panel registration must not poison setup or duplicate earlier steps."""
     setup_key = "test.management_ui_setup"
-    fake_ui = SimpleNamespace(
-        _UI_SETUP=setup_key,
-        websocket_management=object(),
-    )
     hass = SimpleNamespace(data={})
     asset_register = AsyncMock()
     websocket_register = MagicMock()
     panel_register = AsyncMock(side_effect=[RuntimeError("panel unavailable"), None])
-    monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
-    monkeypatch.setattr(loading, "async_register_frontend_assets", asset_register)
+    monkeypatch.setattr(management_ui, "_UI_SETUP", setup_key)
+    monkeypatch.setattr(management_ui, "async_register_frontend_assets", asset_register)
     monkeypatch.setattr(
-        loading, "frontend_entry_url", lambda name: f"/built/{name}.js"
+        management_ui, "frontend_entry_url", lambda name: f"/built/{name}.js"
     )
     monkeypatch.setattr(
-        loading.websocket_api, "async_register_command", websocket_register
+        management_ui.websocket_api, "async_register_command", websocket_register
     )
-    monkeypatch.setattr(loading.panel_custom, "async_register_panel", panel_register)
+    monkeypatch.setattr(
+        management_ui.panel_custom, "async_register_panel", panel_register
+    )
 
     with pytest.raises(RuntimeError, match="panel unavailable"):
-        await async_setup_cached_management_ui(hass)
+        await async_setup_management_ui(hass)
 
     assert setup_key not in hass.data
-    await async_setup_cached_management_ui(hass)
+    await async_setup_management_ui(hass)
 
     assert hass.data[setup_key] is True
     assert asset_register.await_count == 1
     assert websocket_register.call_count == 1
     assert panel_register.await_count == 2
-    assert panel_register.await_args_list[0].kwargs["module_url"] == "/built/management.js"
+    assert (
+        panel_register.await_args_list[0].kwargs["module_url"] == "/built/management.js"
+    )
 
 
 async def test_debug_setup_retry_resumes_after_websocket_failure(monkeypatch) -> None:
     """A failed debug websocket registration retries without duplicating assets."""
     setup_key = "test.debug_ui_setup"
-    fake_ui = SimpleNamespace(
-        _DEBUG_UI_SETUP=setup_key,
-        websocket_request_debug=object(),
-    )
     hass = SimpleNamespace(data={})
     asset_register = AsyncMock()
     websocket_register = MagicMock(side_effect=[RuntimeError("ws unavailable"), None])
-    monkeypatch.setattr(loading, "_debug_ui", lambda: fake_ui)
-    monkeypatch.setattr(loading, "async_register_frontend_assets", asset_register)
+    monkeypatch.setattr(debug_ui, "_DEBUG_UI_SETUP", setup_key)
+    monkeypatch.setattr(debug_ui, "async_register_frontend_assets", asset_register)
     monkeypatch.setattr(
-        loading.websocket_api, "async_register_command", websocket_register
+        debug_ui.websocket_api, "async_register_command", websocket_register
     )
 
     with pytest.raises(RuntimeError, match="ws unavailable"):
-        await async_setup_cached_debug_ui(hass)
+        await async_setup_debug_ui(hass)
 
     assert setup_key not in hass.data
-    await async_setup_cached_debug_ui(hass)
+    await async_setup_debug_ui(hass)
 
     assert hass.data[setup_key] is True
     assert asset_register.await_count == 1
     assert websocket_register.call_count == 2
+
+
+from custom_components.extended_openai_conversation_responses import (
+    function_tool_quarantine as quarantine,
+)

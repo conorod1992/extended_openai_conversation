@@ -26,7 +26,7 @@ import {NAVIGATION, pageMetadata, routeFromPath, routePath} from "./frontend-nav
 import {prepareMemoryBrowser, finishMemoryBrowserLoad, renderPersistentMemories, decorateConversations, decorateGuestPolicy, filterPersistentMemories, bindMemoryBrowser, formatManagementTimestamp, freshGuestPolicyDraft} from "./guest-mode-ui.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview} from "./overview-page.js";
-import {formatUsageNumber, tokenBreakdown} from "./usage-format.js";
+import {formatUsageNumber} from "./usage-format.js";
 import {bindRequestRules, renderRequestRules, requestRulesDialog} from "./request-rules-ui.js";
 import {isAgentMutation, syncAgentPicker} from "./management-action-safety.js";
 import {REQUEST_RULE_CACHE_KEY, TOOL_MUTATIONS} from "./management-function-dependencies.js";
@@ -917,30 +917,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _homeAssistant(agent) {
     const contextIncluded = this._draft?.exposed_entities_enabled === true;
     return `<section class="page-intro"><h1>Home Assistant access</h1><p>Home Assistant controls which entities this assistant is allowed to access through Assist. Extended OpenAI can also automatically include exposed entity names and current states in the context sent to the model.</p></section><section class="content-card access-explainer"><div><h2>Entity access</h2><p>Home Assistant's Assist exposure settings decide which entities may be used by the assistant. Manage exposure in Home Assistant's voice assistant settings.</p></div><div class="compact-status"><span><strong>Include exposed entity states in the prompt</strong><small>Adds exposed entity names and current states to the context sent with each request. Turning this off does not necessarily prevent the assistant from using exposed entities through Home Assistant tools.</small></span><strong class="status-value ${contextIncluded ? "on" : ""}">${contextIncluded ? "On" : "Off"}</strong></div><button type="button" class="secondary inline-route" data-page="assistant" data-subsection="prompt-context">Configure exposed entity context</button></section><section class="notice"><strong>Guest Mode adds another boundary</strong><p>Guest Mode applies additional restrictions to the assistant's normal Home Assistant access.</p><button type="button" class="secondary inline-route" data-page="capabilities" data-subsection="guest-mode">Configure Guest Mode</button></section>`;
-  }
-
-  _overview(agent) {
-    const usage = this._result?.usage || {};
-    return `<section class="metric-grid" aria-label="Agent overview">
-      ${this._metric("Provider & model", agent.provider, agent.model)}
-      ${this._metric("Tokens today", usage.today?.total_tokens ?? 0)}
-      ${this._metric("Tokens this month", usage.month?.total_tokens ?? 0)}
-      ${this._metric("Lifetime tokens", usage.lifetime?.total_tokens ?? 0)}
-      ${this._metric("Latest response", usage.latest?.total_tokens ?? "—", "tokens")}
-      ${this._metric("Memories", this._titleCase(agent.memory_mode), `${formatUsageNumber(agent.memory_count)} memories`)}
-      ${this._metric("Knowledge", agent.knowledge_enabled ? "Enabled" : "Disabled", `${formatUsageNumber(agent.knowledge_source_count)} sources`)}
-      ${this._metric("Conversation archive", agent.archive_enabled ? "Enabled" : "Disabled")}
-      ${this._metric("Guest Mode", this._titleCase(String(agent.guest_mode?.state || "inactive").replaceAll("_", " ")))}
-    </section>`;
-  }
-
-  _usageBar(day, max) {
-    const { total, cached, uncached } = tokenBreakdown(day.total_tokens,day.cached_input_tokens);
-    const height = Math.max(2, total / max * 100);
-    const cachedShare = total ? cached / total * 100 : 0;
-    const uncachedShare = total ? uncached / total * 100 : 0;
-    const details = `${day.date} · ${formatUsageNumber(total)} total · ${formatUsageNumber(cached)} cached input · ${formatUsageNumber(uncached)} uncached`;
-    return `<span class="chart-column" tabindex="0" aria-label="${this._e(details)}" data-tooltip="${this._e(details)}" style="height:${height}%"><span class="chart-segment cached" style="height:${cachedShare}%"></span><span class="chart-segment uncached" style="height:${uncachedShare}%"></span></span>`;
   }
 
   _usage() {

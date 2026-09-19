@@ -11,7 +11,7 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     conversation as conversation_module,
-    lifecycle_optimizations as lifecycle,
+    conversation as lifecycle,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,

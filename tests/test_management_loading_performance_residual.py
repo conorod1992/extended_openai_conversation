@@ -5,12 +5,21 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import management_ui
+from custom_components.extended_openai_conversation_responses import (
+    debug_ui,
+    management_ui,
+)
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
+from custom_components.extended_openai_conversation_responses.debug_ui import (
+    async_setup_debug_ui,
+)
 import custom_components.extended_openai_conversation_responses.management_loading_performance as loading
+from custom_components.extended_openai_conversation_responses.management_ui import (
+    async_setup_management_ui,
+)
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -178,12 +187,9 @@ async def test_owned_command_routes_directly_to_loading_and_save(
 async def test_cached_management_setup_is_noop_when_complete(monkeypatch) -> None:
     """A completed setup marker prevents duplicate registrations."""
     setup_key = "test.management.complete"
-    fake_ui = SimpleNamespace(_UI_SETUP=setup_key)
-    monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
+    monkeypatch.setattr(management_ui, "_UI_SETUP", setup_key)
 
-    await loading.async_setup_cached_management_ui(
-        SimpleNamespace(data={setup_key: True})
-    )
+    await async_setup_management_ui(SimpleNamespace(data={setup_key: True}))
 
 
 async def test_cached_management_setup_respects_completed_step_markers(
@@ -191,15 +197,9 @@ async def test_cached_management_setup_respects_completed_step_markers(
 ) -> None:
     """Retry state skips completed static/websocket steps and resumes at panel."""
     setup_key = "test.management.partial"
-    static_key = loading._setup_step_key(setup_key, "static_paths")
-    websocket_key = loading._setup_step_key(setup_key, "websocket")
-    panel_key = loading._setup_step_key(setup_key, "panel")
-    fake_ui = SimpleNamespace(
-        _UI_SETUP=setup_key,
-        __file__="/integration/management_ui.py",
-        MANAGEMENT_FRONTEND_MODULES=("management-panel.js",),
-        websocket_management=object(),
-    )
+    static_key = f"{setup_key}.static_paths"
+    websocket_key = f"{setup_key}.websocket"
+    panel_key = f"{setup_key}.panel"
     static_paths = AsyncMock(side_effect=AssertionError("static paths repeated"))
     websocket_register = MagicMock(side_effect=AssertionError("websocket repeated"))
     panel_register = AsyncMock()
@@ -207,13 +207,15 @@ async def test_cached_management_setup_respects_completed_step_markers(
         data={static_key: True, websocket_key: True},
         http=SimpleNamespace(async_register_static_paths=static_paths),
     )
-    monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
+    monkeypatch.setattr(management_ui, "_UI_SETUP", setup_key)
     monkeypatch.setattr(
-        loading.websocket_api, "async_register_command", websocket_register
+        management_ui.websocket_api, "async_register_command", websocket_register
     )
-    monkeypatch.setattr(loading.panel_custom, "async_register_panel", panel_register)
+    monkeypatch.setattr(
+        management_ui.panel_custom, "async_register_panel", panel_register
+    )
 
-    await loading.async_setup_cached_management_ui(hass)
+    await async_setup_management_ui(hass)
 
     assert hass.data[panel_key] is True
     assert hass.data[setup_key] is True
@@ -225,115 +227,29 @@ async def test_cached_management_setup_respects_completed_step_markers(
 async def test_cached_debug_setup_is_noop_when_complete(monkeypatch) -> None:
     """A completed debug setup marker prevents duplicate registrations."""
     setup_key = "test.debug.complete"
-    fake_ui = SimpleNamespace(_DEBUG_UI_SETUP=setup_key)
-    monkeypatch.setattr(loading, "_debug_ui", lambda: fake_ui)
+    monkeypatch.setattr(debug_ui, "_DEBUG_UI_SETUP", setup_key)
 
-    await loading.async_setup_cached_debug_ui(SimpleNamespace(data={setup_key: True}))
+    await async_setup_debug_ui(SimpleNamespace(data={setup_key: True}))
 
 
 async def test_cached_debug_setup_respects_completed_step_markers(monkeypatch) -> None:
     """A retry can finish without repeating already completed debug steps."""
     setup_key = "test.debug.partial"
-    static_key = loading._setup_step_key(setup_key, "static_paths")
-    websocket_key = loading._setup_step_key(setup_key, "websocket")
-    fake_ui = SimpleNamespace(
-        _DEBUG_UI_SETUP=setup_key,
-        __file__="/integration/debug_ui.py",
-        websocket_request_debug=object(),
-    )
+    static_key = f"{setup_key}.static_paths"
+    websocket_key = f"{setup_key}.websocket"
     static_paths = AsyncMock(side_effect=AssertionError("static paths repeated"))
     websocket_register = MagicMock(side_effect=AssertionError("websocket repeated"))
     hass = SimpleNamespace(
         data={static_key: True, websocket_key: True},
         http=SimpleNamespace(async_register_static_paths=static_paths),
     )
-    monkeypatch.setattr(loading, "_debug_ui", lambda: fake_ui)
+    monkeypatch.setattr(debug_ui, "_DEBUG_UI_SETUP", setup_key)
     monkeypatch.setattr(
-        loading.websocket_api, "async_register_command", websocket_register
+        debug_ui.websocket_api, "async_register_command", websocket_register
     )
 
-    await loading.async_setup_cached_debug_ui(hass)
+    await async_setup_debug_ui(hass)
 
     assert hass.data[setup_key] is True
     static_paths.assert_not_awaited()
     websocket_register.assert_not_called()
-
-
-def test_install_management_loading_optimizations_is_idempotent(monkeypatch) -> None:
-    """Installation patches once without replacing the live package object."""
-    import custom_components.extended_openai_conversation_responses as package
-    from custom_components.extended_openai_conversation_responses import (
-        conversation,
-        function_tool_resolution,
-    )
-
-    original = AsyncMock()
-    fake_management = SimpleNamespace(
-        async_management_command=original,
-        MANAGEMENT_FRONTEND_MODULES=(
-            "management-panel.js",
-            "agent-config-editor-base.js",
-        ),
-        async_setup_management_ui=object(),
-    )
-    fake_debug = SimpleNamespace(async_setup_debug_ui=object())
-
-    monkeypatch.setattr(loading, "_INSTALLED", False)
-    monkeypatch.setattr(loading, "_management_ui", lambda: fake_management)
-    monkeypatch.setattr(loading, "_debug_ui", lambda: fake_debug)
-    monkeypatch.setattr(
-        conversation,
-        "configured_function_tools_from_data",
-        conversation.configured_function_tools_from_data,
-    )
-    monkeypatch.setattr(
-        conversation,
-        "validate_function_groups",
-        conversation.validate_function_groups,
-    )
-    monkeypatch.setattr(
-        function_tool_resolution,
-        "validate_function_groups",
-        function_tool_resolution.validate_function_groups,
-    )
-    monkeypatch.setattr(
-        package,
-        "async_setup_management_ui",
-        getattr(package, "async_setup_management_ui", None),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        package,
-        "async_setup_debug_ui",
-        getattr(package, "async_setup_debug_ui", None),
-        raising=False,
-    )
-
-    modules = fake_management.MANAGEMENT_FRONTEND_MODULES
-    loading.install_management_loading_optimizations()
-
-    assert loading._INSTALLED is True
-    assert fake_management.async_management_command is original
-    assert (
-        fake_management.async_setup_management_ui
-        is loading.async_setup_cached_management_ui
-    )
-    assert fake_debug.async_setup_debug_ui is loading.async_setup_cached_debug_ui
-    assert (
-        conversation.configured_function_tools_from_data
-        is loading._runtime_configured_function_tools
-    )
-    assert (
-        conversation.validate_function_groups
-        is loading._runtime_validate_function_groups
-    )
-    assert (
-        function_tool_resolution.validate_function_groups
-        is loading._runtime_validate_function_groups
-    )
-    assert fake_management.MANAGEMENT_FRONTEND_MODULES is modules
-    assert package.async_setup_management_ui is loading.async_setup_cached_management_ui
-    assert package.async_setup_debug_ui is loading.async_setup_cached_debug_ui
-
-    loading.install_management_loading_optimizations()
-    assert fake_management.MANAGEMENT_FRONTEND_MODULES is modules

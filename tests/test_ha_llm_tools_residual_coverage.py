@@ -11,28 +11,27 @@ from custom_components.extended_openai_conversation_responses import (
 )
 
 
-def test_serializer_compat_install_is_idempotent(monkeypatch) -> None:
-    """Do not wrap an already-installed compatibility serializer again."""
+def test_serializer_compat_preserves_ha_function_identity(monkeypatch) -> None:
+    """Calling the local compatibility helper never replaces HA functions."""
 
     def existing(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         return {}
 
-    existing._extended_openai_serializer_compat = True  # type: ignore[attr-defined]
     monkeypatch.setattr(tools.llm, "to_openapi", existing, raising=False)
 
-    tools._install_openapi_serializer_compat()
+    tools.compatible_to_openapi({})
 
     assert tools.llm.to_openapi is existing
 
 
-def test_serializer_compat_skips_when_optional_converter_is_unavailable(
+def test_serializer_compat_falls_back_when_probatio_is_unavailable(
     monkeypatch,
 ) -> None:
     """Keep HA untouched if the compatibility dependencies cannot be imported."""
     monkeypatch.setattr(tools.llm, "to_openapi", None, raising=False)
     monkeypatch.setitem(sys.modules, "probatio", None)
 
-    tools._install_openapi_serializer_compat()
+    tools.compatible_to_openapi({})
 
     assert tools.llm.to_openapi is None
 
@@ -75,8 +74,7 @@ def test_serializer_compat_selects_converter_and_translates_unsupported(
     monkeypatch.setitem(sys.modules, "voluptuous_openapi", voluptuous_openapi)
     monkeypatch.setattr(tools.llm, "to_openapi", None, raising=False)
 
-    tools._install_openapi_serializer_compat()
-    converter = tools.llm.to_openapi
+    converter = tools.compatible_to_openapi
 
     assert (
         converter(

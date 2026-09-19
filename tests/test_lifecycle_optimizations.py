@@ -5,9 +5,6 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import timedelta
 
-from homeassistant.components import conversation
-from homeassistant.util import dt as dt_util
-
 from custom_components.extended_openai_conversation_responses import agent_config
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_SERVICE_TIER,
@@ -16,12 +13,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.continuity import (
     ConversationContinuity,
 )
-from custom_components.extended_openai_conversation_responses.debug import (
-    DebugTrace,
-)
-from custom_components.extended_openai_conversation_responses.lifecycle_optimizations import (
-    install_lifecycle_optimizations,
-)
+from custom_components.extended_openai_conversation_responses.debug import DebugTrace
 from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
@@ -32,6 +24,8 @@ from custom_components.extended_openai_conversation_responses.usage import (
     UsageRequest,
     UsageRun,
 )
+from homeassistant.components import conversation
+from homeassistant.util import dt as dt_util
 
 
 class DelayedStorage:
@@ -173,9 +167,10 @@ async def test_ha_default_never_restores_history_between_distinct_ids() -> None:
     assert first.resumed is False and second.resumed is False
 
 
-def test_default_service_tier_is_interactive_standard_without_overriding_explicit_flex() -> None:
+def test_default_service_tier_is_interactive_standard_without_overriding_explicit_flex() -> (
+    None
+):
     """Missing service-tier settings use default while explicit flex remains valid."""
-    install_lifecycle_optimizations()
     defaults = agent_config.agent_config_defaults()
     assert defaults[CONF_SERVICE_TIER] == "default"
 
@@ -187,8 +182,9 @@ def test_default_service_tier_is_interactive_standard_without_overriding_explici
     assert explicit.api_kwargs.get("service_tier") == "flex"
 
 
-def test_debug_summary_exposes_mode_without_treating_cache_reuse_as_continuity() -> None:
-    install_lifecycle_optimizations()
+def test_debug_summary_exposes_mode_without_treating_cache_reuse_as_continuity() -> (
+    None
+):
     trace = DebugTrace(
         debug_id="debug",
         entry_id="entry",

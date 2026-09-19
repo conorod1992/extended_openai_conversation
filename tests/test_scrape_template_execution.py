@@ -12,9 +12,6 @@ import pytest
 import yaml
 
 import custom_components.extended_openai_conversation_responses as integration
-from custom_components.extended_openai_conversation_responses import (
-    management_loading_performance,
-)
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
     validate_function_tools,
@@ -49,8 +46,6 @@ async def execute_scrape(hass, monkeypatch):
     ):
         monkeypatch.setattr(integration, name, AsyncMock())
     monkeypatch.setattr(integration, "setup_provider_credentials_websocket", Mock())
-    for name in ("async_setup_cached_debug_ui", "async_setup_cached_management_ui"):
-        monkeypatch.setattr(management_loading_performance, name, AsyncMock())
     await integration.async_setup(hass, {})
     hass.loop = asyncio.get_running_loop()
     hass.is_stopping = False

@@ -7,10 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import custom_components.extended_openai_conversation_responses as integration
-from custom_components.extended_openai_conversation_responses import (
-    management_loading_performance,
-    template,
-)
+from custom_components.extended_openai_conversation_responses import template
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.helpers.template import Template, TemplateEnvironment
@@ -36,8 +33,6 @@ async def lifecycle(hass, monkeypatch):
         integration, "setup_provider_credentials_websocket", MagicMock()
     )
     monkeypatch.setattr(template, "async_setup_delayed_tools", AsyncMock())
-    for name in ("async_setup_cached_debug_ui", "async_setup_cached_management_ui"):
-        monkeypatch.setattr(management_loading_performance, name, AsyncMock())
     hass.config_entries.async_forward_entry_setups = AsyncMock()
     hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
     assert await integration.async_setup(hass, {})

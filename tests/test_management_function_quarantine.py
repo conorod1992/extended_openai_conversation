@@ -141,7 +141,7 @@ async def test_diagnostics_quarantines_invalid_tools_and_reports_warning(
             [TestCheck("Provider request", "Passed", "Request succeeded")],
         )
 
-    monkeypatch.setattr(quarantine, "_ORIGINAL_AGENT_TEST", original)
+    monkeypatch.setattr(quarantine, "async_test_configured_agent", original)
 
     result = await quarantine._tolerant_agent_test(SimpleNamespace(), entry, subentry)
 

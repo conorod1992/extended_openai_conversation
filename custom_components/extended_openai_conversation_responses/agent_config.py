@@ -33,6 +33,7 @@ from .const import (
     CONF_CURRENT_DATETIME_TEMPLATE,
     CONF_EXPOSED_ENTITIES_ENABLED,
     CONF_EXPOSED_ENTITIES_TEMPLATE,
+    CONF_EXPOSED_ENTITY_ATTRIBUTES,
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOL_ERROR_RECOVERY,
     CONF_FUNCTION_TOOLS,
@@ -228,6 +229,7 @@ def _tools_yaml(value: Any) -> str:
 
 AGENT_CONFIG_DEFAULTS = MappingProxyType(
     {
+        CONF_EXPOSED_ENTITY_ATTRIBUTES: {},
         CONF_PROMPT: DEFAULT_PROMPT,
         CONF_CURRENT_DATETIME_ENABLED: DEFAULT_CURRENT_DATETIME_ENABLED,
         CONF_CURRENT_DATETIME_TEMPLATE: DEFAULT_CURRENT_DATETIME_TEMPLATE,
@@ -1046,6 +1048,12 @@ def normalize_agent_config(
     result[CONF_MEMORY_MODE] = mode
     result[CONF_MEMORY_ENABLED] = mode != "off"
     result[CONF_MEMORY_AUTO_CREATE] = mode == "automatic"
+    if apply_defaults or CONF_EXPOSED_ENTITY_ATTRIBUTES in data:
+        from .exposed_attributes import _validate_preferences
+
+        result[CONF_EXPOSED_ENTITY_ATTRIBUTES] = _validate_preferences(
+            data.get(CONF_EXPOSED_ENTITY_ATTRIBUTES)
+        )
     return result
 
 

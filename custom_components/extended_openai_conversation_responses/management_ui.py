@@ -2345,18 +2345,31 @@ async def websocket_management(
 
 
 async def async_setup_management_ui(hass: HomeAssistant) -> None:
-    """Register exactly one integration-owned sidebar panel."""
-    if hass.data.get(_UI_SETUP):
+    """Register the bundled Management panel through the shared production assets."""
+    setup_key = _UI_SETUP
+    if hass.data.get(setup_key):
         return
-    await async_register_frontend_assets(hass)
-    websocket_api.async_register_command(hass, websocket_management)
-    await panel_custom.async_register_panel(
-        hass,
-        webcomponent_name="extended-openai-management-panel",
-        frontend_url_path=MANAGEMENT_PANEL_URL,
-        module_url=frontend_entry_url("management"),
-        sidebar_title=MANAGEMENT_PANEL_TITLE,
-        sidebar_icon="mdi:robot-outline",
-        require_admin=False,
-    )
-    hass.data[_UI_SETUP] = True
+
+    static_key = f"{setup_key}.static_paths"
+    websocket_key = f"{setup_key}.websocket"
+    panel_key = f"{setup_key}.panel"
+
+    if not hass.data.get(static_key):
+        await async_register_frontend_assets(hass)
+        hass.data[static_key] = True
+    if not hass.data.get(websocket_key):
+        websocket_api.async_register_command(hass, websocket_management)
+        hass.data[websocket_key] = True
+    if not hass.data.get(panel_key):
+        await panel_custom.async_register_panel(
+            hass,
+            webcomponent_name="extended-openai-management-panel",
+            frontend_url_path=MANAGEMENT_PANEL_URL,
+            module_url=frontend_entry_url("management"),
+            sidebar_title=MANAGEMENT_PANEL_TITLE,
+            sidebar_icon="mdi:robot-outline",
+            require_admin=False,
+        )
+        hass.data[panel_key] = True
+
+    hass.data[setup_key] = True

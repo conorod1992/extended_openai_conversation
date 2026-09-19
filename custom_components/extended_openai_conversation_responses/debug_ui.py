@@ -132,9 +132,19 @@ async def websocket_request_debug(
 
 
 async def async_setup_debug_ui(hass: HomeAssistant) -> None:
-    """Register request-debug API/modules used by Usage & Maintenance."""
-    if hass.data.get(_DEBUG_UI_SETUP):
+    """Register Request Debug against the shared bundled production assets."""
+    setup_key = _DEBUG_UI_SETUP
+    if hass.data.get(setup_key):
         return
-    await async_register_frontend_assets(hass)
-    websocket_api.async_register_command(hass, websocket_request_debug)
-    hass.data[_DEBUG_UI_SETUP] = True
+
+    static_key = f"{setup_key}.static_paths"
+    websocket_key = f"{setup_key}.websocket"
+
+    if not hass.data.get(static_key):
+        await async_register_frontend_assets(hass)
+        hass.data[static_key] = True
+    if not hass.data.get(websocket_key):
+        websocket_api.async_register_command(hass, websocket_request_debug)
+        hass.data[websocket_key] = True
+
+    hass.data[setup_key] = True

@@ -6,26 +6,25 @@ from collections.abc import Mapping
 import csv
 from io import StringIO
 import json
-from types import MappingProxyType
 from typing import Any
 
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.template.helpers import resolve_area_id
 
 from . import agent_config
-from .const import CONF_EXPOSED_ENTITIES_ENABLED
+from .const import (
+    CONF_EXPOSED_ENTITIES_ENABLED,
+    CONF_EXPOSED_ENTITY_ATTRIBUTES as CONF_EXPOSED_ENTITY_ATTRIBUTES,
+)
 from .entity_context_cache import get_entity_prompt_metadata
 from .helpers import get_exposed_entities
 
-CONF_EXPOSED_ENTITY_ATTRIBUTES = "exposed_entity_attributes"
 _REGISTRY_REF_PREFIX = "registry:"
 MAX_CONFIGURED_ENTITIES = 1000
 MAX_ATTRIBUTES_PER_ENTITY = 64
 MAX_ATTRIBUTE_NAME_LENGTH = 255
 MAX_ATTRIBUTE_VALUE_CHARACTERS = 4096
 MAX_TOTAL_ATTRIBUTE_CONTEXT_CHARACTERS = 32768
-
-_ORIGINAL_NORMALIZE_AGENT_CONFIG = agent_config.normalize_agent_config
 
 
 def _validate_preferences(value: Any) -> dict[str, list[str]]:
@@ -86,46 +85,6 @@ def _validate_preferences(value: Any) -> dict[str, list[str]]:
         if canonical:
             result[reference] = sorted(canonical)
     return dict(sorted(result.items()))
-
-
-def _normalize_agent_config_with_exposed_attributes(
-    data: dict[str, Any], *, apply_defaults: bool = True, reject_unknown: bool = True
-) -> dict[str, Any]:
-    """Extend the canonical agent contract without creating a second config store."""
-    if not isinstance(data, dict):
-        return _ORIGINAL_NORMALIZE_AGENT_CONFIG(
-            data, apply_defaults=apply_defaults, reject_unknown=reject_unknown
-        )
-    source = dict(data)
-    preference_value = source.pop(CONF_EXPOSED_ENTITY_ATTRIBUTES, None)
-    normalized = _ORIGINAL_NORMALIZE_AGENT_CONFIG(
-        source,
-        apply_defaults=apply_defaults,
-        reject_unknown=reject_unknown,
-    )
-    if apply_defaults or CONF_EXPOSED_ENTITY_ATTRIBUTES in data:
-        normalized[CONF_EXPOSED_ENTITY_ATTRIBUTES] = _validate_preferences(
-            preference_value if CONF_EXPOSED_ENTITY_ATTRIBUTES in data else {}
-        )
-    return normalized
-
-
-def _register_agent_config_contract() -> None:
-    """Register the field before modules import snapshots of the config contract."""
-    if CONF_EXPOSED_ENTITY_ATTRIBUTES in agent_config.AGENT_CONFIG_FIELDS:
-        return
-    defaults = dict(agent_config.AGENT_CONFIG_DEFAULTS)
-    defaults[CONF_EXPOSED_ENTITY_ATTRIBUTES] = {}
-    agent_config.AGENT_CONFIG_DEFAULTS = MappingProxyType(defaults)
-    agent_config.AGENT_CONFIG_FIELDS = frozenset(
-        {*agent_config.AGENT_CONFIG_FIELDS, CONF_EXPOSED_ENTITY_ATTRIBUTES}
-    )
-    agent_config.normalize_agent_config = (
-        _normalize_agent_config_with_exposed_attributes
-    )
-
-
-_register_agent_config_contract()
 
 
 def _registry_entry_by_id(registry: Any, entry_id: str) -> Any | None:
