@@ -69,10 +69,12 @@ class Echo(llm.Tool):
 
     async def async_call(self, hass, tool_input, llm_context):
         self.calls.append((tool_input, llm_context))
-        return {
+        payload = {
             "value": tool_input.tool_args["value"],
             "user": llm_context.context.user_id,
         }
+        tool_result_type = getattr(llm, "ToolResult", None)
+        return tool_result_type(data=payload) if tool_result_type is not None else payload
 
 
 class TestAPI(llm.API):
