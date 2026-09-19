@@ -65,10 +65,6 @@ def install_guest_policy_fast_path() -> None:
     install_management_loading_optimizations()
 
     # Effective Memory/Knowledge status wraps the optimized management API so the
-    # frontend sees the same configured/effective distinctions on every surface.
-    from .feature_status import install_management_feature_status
-
-    install_management_feature_status()
 
     # Publish installation only after the complete chain succeeds. If a later hook
     # raises, a same-process retry resumes installation rather than silently skipping

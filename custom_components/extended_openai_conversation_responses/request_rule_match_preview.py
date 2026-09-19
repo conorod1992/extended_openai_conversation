@@ -2,20 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from . import management_ui
 from .request_rule_patterns import SentenceMatchLimitError
-from .request_rules import RuleMatch, async_get_request_rules
-
-_PATCHED = "extended_openai_request_rule_match_preview"
-ManagementCommand = Callable[
-    [HomeAssistant, str, bool, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]
-]
+from .request_rules import RuleMatch
 
 
 def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
@@ -67,51 +60,14 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
     }
 
 
-def wrap_management_command(original: ManagementCommand) -> ManagementCommand:
-    """Intercept Request Rule tests before the legacy real-processing path."""
-
-    async def wrapped(
-        hass: HomeAssistant,
-        user_id: str,
-        is_admin: bool,
-        message: dict[str, Any],
-    ) -> dict[str, Any]:
-        if message.get("section") != "request_rules" or message.get("action") not in {
-            "test",
-            "test_match",
-        }:
-            return await original(hass, user_id, is_admin, message)
-
-        if not is_admin:
-            raise HomeAssistantError("Administrator permission is required")
-        entry_id = message.get("entry_id")
-        subentry_id = message.get("subentry_id")
-        if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
-            raise HomeAssistantError("entry_id and subentry_id are required")
-        management_ui.entry_and_agent(hass, entry_id, subentry_id)
-
-        text = message.get("text")
-        if not isinstance(text, str) or not text.strip():
-            raise HomeAssistantError("Test request text is required")
-        rules = await async_get_request_rules(hass, entry_id, subentry_id)
-        try:
-            match = await rules.async_match(hass, text)
-        except SentenceMatchLimitError as err:
-            raise HomeAssistantError(str(err)) from err
-        return request_rule_match_preview(match)
-
-    return wrapped
-
-
-def install_request_rule_match_preview() -> bool:
-    """Make both legacy and new management test actions side-effect free."""
-    if getattr(management_ui, _PATCHED, False):
-        return False
-    original = management_ui.async_management_command
-    setattr(  # noqa: B010
-        management_ui,
-        "async_management_command",
-        wrap_management_command(original),
-    )
-    setattr(management_ui, _PATCHED, True)
-    return True
+async def async_request_rule_match_preview(
+    hass: HomeAssistant,
+    rules: Any,
+    text: Any,
+) -> dict[str, Any]:
+    """Test a match without executing actions or making a provider request."""
+    try:
+        match = await rules.async_match(hass, text)
+    except SentenceMatchLimitError as err:
+        raise HomeAssistantError(str(err)) from err
+    return request_rule_match_preview(match)

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import suppress
+from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
 import json
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Final, cast
+from typing import Any, Final
 from uuid import uuid4
 
 import voluptuous as vol
@@ -19,7 +21,7 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er, service as service_helper
+from homeassistant.helpers import service as service_helper
 
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
@@ -29,25 +31,22 @@ from .agent_config import (
     agent_config_defaults,
     agent_config_options,
     agent_config_snapshot,
-    configured_function_tools_from_data,
+    configured_function_tools_from_data as _strict_configured_function_tools,
     function_tool_enabled,
     function_tool_yaml,
-    merge_agent_config,
     model_capabilities,
     normalize_agent_config,
     preserve_legacy_guest_policy,
     starter_function_tool_yaml,
     validate_agent_title,
-    validate_function_groups,
     validate_function_tools,
     validate_single_function_tool,
 )
-from .agent_test import async_test_agent
+from .agent_maintenance import management_command_lease
 from .backup import async_create_backup, async_restore_backup, inspect_backup
 from .built_in_functions import built_in_function_catalog
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
-    CONF_API_PROVIDER,
     CONF_ARCHIVE_ENABLED,
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
     CONF_ARCHIVE_RETENTION_DAYS,
@@ -74,10 +73,8 @@ from .const import (
     CONF_VOICE_SCOPE_POLICY,
     CONF_VOICE_UNMAPPED_POLICY,
     CONTINUE_CONVERSATION_CONDITIONAL,
-    DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
-    DEFAULT_CHAT_MODEL,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
@@ -99,6 +96,11 @@ from .const import (
 )
 from .continuity import ConversationContinuity, async_get_continuity
 from .conversation_archive import async_get_archive
+from .function_dependency_integrity import (
+    _TOOL_MUTATIONS,
+    async_validate_request_rule_functions,
+    group_reference_updates,
+)
 from .function_groups import assemble_function_tools, get_function_group_runtime
 from .functions import FUNCTIONS
 from .functions.security import FunctionSecurity, classify_tool
@@ -122,14 +124,36 @@ from .knowledge import (
     knowledge_source_as_dict,
 )
 from .local_intents import CONF_LOCAL_INTENT_EXCLUSIONS, local_handling_snapshot
-from .memory import (
-    ANONYMOUS_USER_ID,
-    async_get_memory,
-    get_memory_mode,
-    memory_as_dict,
-    memory_enabled,
+from .management_browser import async_browse_memories
+from .management_configuration_guidance import (
+    _configuration_action,
+    decorate_configuration_result,
 )
+from .management_function_quarantine import (
+    _management_configured_tools as configured_function_tools_from_data,
+    _management_merge_agent_config as merge_agent_config,
+    _management_validate_function_groups as validate_function_groups,
+    _tolerant_agent_test as async_test_agent,
+    _tolerant_persist_function_configuration,
+    management_function_tools,
+)
+from .management_history_queries import (
+    archive_get_page,
+    archive_list_page,
+    archive_search_page,
+    usage_breakdowns,
+    usage_daily_page,
+    usage_requests_page,
+    usage_runs_page,
+    usage_summary,
+)
+from .management_permissions import (
+    async_quiet_hours_command,
+    require_management_permission,
+)
+from .memory import ANONYMOUS_USER_ID, async_get_memory, memory_as_dict, memory_enabled
 from .prompt import render_effective_prompt
+from .regex_execution import async_process_speech_text
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
     assemble_integration_function_tools,
@@ -137,6 +161,7 @@ from .request import (
     canonical_json,
     format_function_tools,
 )
+from .request_rule_match_preview import async_request_rule_match_preview
 from .request_rules import (
     async_get_request_rules,
     get_request_rule_runtime,
@@ -146,7 +171,6 @@ from .request_rules import (
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID, user_scope
 from .secret_redaction import redact_secrets, restore_redacted_secrets
 from .skills import SkillManager
-from .speech import process_speech_text
 from .temporary_memory import (
     async_get_temporary_memory,
     async_read_temporary_memory_snapshot,
@@ -295,10 +319,16 @@ async def _async_preview_effective_request(
         and guest_policy.temporary_memory
     ):
         temporary_memories = (
-            await temporary.async_active_snapshot(temporary_scope)
+            await temporary.async_active_snapshot(
+                temporary_scope, owner_scope_id=f"user:{user_id}"
+            )
             if temporary is not None
             else await async_read_temporary_memory_snapshot(
-                hass, entry.entry_id, subentry.subentry_id, temporary_scope
+                hass,
+                entry.entry_id,
+                subentry.subentry_id,
+                temporary_scope,
+                owner_scope_id=f"user:{user_id}",
             )
         )
     elif temporary_mode != TEMPORARY_MEMORY_OFF:
@@ -598,11 +628,18 @@ def _validation_result(callback) -> dict[str, Any]:
 
 
 def _agent_config_revision(data: Mapping[str, Any], title: str) -> str:
-    """Return a stable optimistic-concurrency token for one saved agent config."""
-    payload = canonical_json(
-        {"title": title, "config": agent_config_snapshot(dict(data))}
-    )
-    return sha256(payload.encode("utf-8")).hexdigest()
+    """Hash the normalized config, or the unchanged raw config while tools need repair."""
+    from .management_function_repair import function_tools_issue
+
+    try:
+        config = agent_config_snapshot(dict(data))
+    except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
+        config = dict(data)
+        if function_tools_issue(config)[1] is None:
+            raise
+    return sha256(
+        canonical_json({"title": title, "config": config}).encode("utf-8")
+    ).hexdigest()
 
 
 def _require_agent_config_revision(subentry: Any, expected_revision: Any) -> None:
@@ -617,7 +654,7 @@ def _require_agent_config_revision(subentry: Any, expected_revision: Any) -> Non
         )
 
 
-def _persist_function_configuration(
+def _persist_valid_function_configuration(
     hass: HomeAssistant,
     entry: Any,
     subentry: Any,
@@ -646,6 +683,28 @@ def _persist_function_configuration(
         "function_groups": snapshot[CONF_FUNCTION_GROUPS],
         "revision": _agent_config_revision(normalized, subentry.title),
     }
+
+
+def _persist_function_configuration(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    tools: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+    *,
+    extra_updates: dict[str, Any] | None = None,
+    expected_revision: str | None = None,
+) -> dict[str, Any]:
+    """Persist one revision-checked tool edit without discarding quarantined siblings."""
+    return _tolerant_persist_function_configuration(
+        hass,
+        entry,
+        subentry,
+        tools,
+        groups,
+        extra_updates=extra_updates,
+        expected_revision=expected_revision,
+    )
 
 
 async def _function_reference_state(
@@ -690,7 +749,7 @@ def _redact_export_secrets(value: Any, *, schema: bool = False) -> Any:
 def _export_agent(subentry) -> dict[str, Any]:
     """Build a versioned configuration document with best-effort redaction."""
     snapshot = preserve_legacy_guest_policy(
-        dict(subentry.data), agent_config_snapshot(subentry.data)
+        dict(subentry.data), agent_config_snapshot(dict(subentry.data))
     )
     return {
         "schema": "extended_openai_conversation.agent",
@@ -848,7 +907,6 @@ def _unknown_management_action(request: _ManagementRequest) -> dict[str, Any]:
 async def async_request_rules_command(request: _ManagementRequest) -> dict[str, Any]:
     """Handle the request rules Management section."""
     hass = request.hass
-    user_id = request.user_id
     is_admin = request.is_admin
     message = request.message
     subentry = request.subentry
@@ -856,6 +914,16 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
     subentry_id = request.subentry_id
     action = request.message["action"]
     _require_admin(is_admin)
+    if action in {"test", "test_match"}:
+        text = message.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise HomeAssistantError("Test request text is required")
+        rules = await async_get_request_rules(hass, entry_id, subentry_id)
+        return await async_request_rule_match_preview(hass, rules, text)
+    if action in {"create", "update"}:
+        # Static validation can await Home Assistant schemas. Keep the legacy
+        # second read so the final rule validator sees current Function Tools.
+        _entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
     rules = await async_get_request_rules(hass, entry_id, subentry_id)
     if action == "list":
         snapshot = rules.snapshot()
@@ -880,33 +948,6 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             if function_tool_enabled(tool) and not is_ha_tool(tool)
         ]
         return snapshot
-    if action == "test":
-        text = message.get("text")
-        if not isinstance(text, str) or not text.strip():
-            raise HomeAssistantError("Test request text is required")
-        registry_entry = next(
-            (
-                item
-                for item in er.async_get(hass).entities.values()
-                if item.config_entry_id == entry_id
-                and item.config_subentry_id == subentry_id
-                and item.domain == "conversation"
-            ),
-            None,
-        )
-        if registry_entry is None:
-            raise HomeAssistantError("Conversation agent entity is not available")
-        return cast(
-            dict[str, Any],
-            await hass.services.async_call(
-                DOMAIN,
-                "process",
-                {"text": text.strip(), "agent_id": registry_entry.entity_id},
-                blocking=True,
-                context=Context(user_id=user_id),
-                return_response=True,
-            ),
-        )
     if action == "defaults":
         defaults = await rules.async_set_defaults(
             message.get("defaults"), expected_revision=message.get("revision")
@@ -968,8 +1009,6 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         )
         return {"rule": rule, "revision": rules.revision()}
     raise HomeAssistantError(f"Unknown Request Rules action: {action}")
-
-    return _unknown_management_action(request)
 
 
 async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any]:
@@ -1100,6 +1139,66 @@ async def async_backup_command(request: _ManagementRequest) -> dict[str, Any]:
     return _unknown_management_action(request)
 
 
+async def _async_save_configuration(request: _ManagementRequest) -> dict[str, Any]:
+    """Normalize once, persist that candidate, and return the frontend snapshot."""
+    from .management_loading_performance import (
+        _agent_snapshot,
+        _snapshot_normalized_configuration,
+    )
+
+    hass, is_admin, message = request.hass, request.is_admin, request.message
+    entry, subentry = request.entry, request.subentry
+    title = message.get("title")
+    if title is not None and (not isinstance(title, str) or not title.strip()):
+        return {"valid": False, "errors": {"title": "must not be empty"}}
+
+    _require_admin(is_admin)
+    updates = message.get("config", {})
+    if not isinstance(updates, dict):
+        raise HomeAssistantError("config must be an object")
+
+    validation: dict[str, Any] = _validation_result(
+        lambda: merge_agent_config(subentry.data, updates)
+    )
+    if not validation.get("valid"):
+        return validation
+
+    normalized = validation["config"]
+    persisted = preserve_legacy_guest_policy(dict(subentry.data), deepcopy(normalized))
+    saved_title = title.strip() if isinstance(title, str) else subentry.title
+    hass.config_entries.async_update_subentry(
+        entry,
+        subentry,
+        data=persisted,
+        **({"title": saved_title} if isinstance(title, str) else {}),
+    )
+
+    snapshot = _snapshot_normalized_configuration(persisted)
+    saved = {
+        "title": saved_title,
+        "config": snapshot,
+        "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
+        "local_handling": local_handling_snapshot(
+            hass,
+            str(entry.entry_id),
+            str(subentry.subentry_id),
+            snapshot.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
+        ),
+    }
+    return {
+        "valid": True,
+        "errors": {},
+        **saved,
+        "agent": _agent_snapshot(
+            hass,
+            entry,
+            subentry,
+            config=snapshot,
+            title=saved_title,
+        ),
+    }
+
+
 async def async_configuration_command(request: _ManagementRequest) -> dict[str, Any]:
     """Handle the configuration Management section."""
     hass = request.hass
@@ -1112,8 +1211,10 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
     subentry_id = request.subentry_id
     action = request.message["action"]
     _require_admin(is_admin)
+    if action == "save":
+        return await _async_save_configuration(request)
     if action == "get":
-        config = agent_config_snapshot(subentry.data)
+        config = agent_config_snapshot(dict(subentry.data))
         return {
             "title": subentry.title,
             "revision": _agent_config_revision(subentry.data, subentry.title),
@@ -1260,7 +1361,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         if not isinstance(sample, str) or not isinstance(updates, dict):
             raise HomeAssistantError("sample_text and config are invalid")
         normalized = merge_agent_config(subentry.data, updates)
-        return {"speech_text": process_speech_text(sample, normalized)}
+        return {
+            "speech_text": await async_process_speech_text(hass, sample, normalized)
+        }
     if action in {"prompt_preview", "request_preview"}:
         updates = message.get("config", {})
         if not isinstance(updates, dict):
@@ -1373,7 +1476,14 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             ha_existing[key] = ha_added_tool
             if ha_target_group is not None:
                 ha_target_group["functions"].append(ha_added_tool["spec"]["name"])
-        return _persist_function_configuration(hass, entry, subentry, tools, groups)
+        return _persist_function_configuration(
+            hass,
+            entry,
+            subentry,
+            tools,
+            groups,
+            expected_revision=message.get("revision"),
+        )
     if action == "validate":
         return _validation_result(lambda: validate_function_tools(message.get("tools")))
     if action == "serialize":
@@ -1442,11 +1552,25 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             raise HomeAssistantError(f"Function Tool {saved_name} already exists")
         if existing_index is None:
             tools.append(saved_tool)
-            return _persist_function_configuration(hass, entry, subentry, tools, groups)
+            return _persist_function_configuration(
+                hass,
+                entry,
+                subentry,
+                tools,
+                groups,
+                expected_revision=message.get("revision"),
+            )
 
         tools[existing_index] = saved_tool
         if original_name == saved_name:
-            return _persist_function_configuration(hass, entry, subentry, tools, groups)
+            return _persist_function_configuration(
+                hass,
+                entry,
+                subentry,
+                tools,
+                groups,
+                expected_revision=message.get("revision"),
+            )
 
         assert original_name is not None
         operation_revision = _agent_config_revision(subentry.data, subentry.title)
@@ -1519,7 +1643,14 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         if tool is None:
             raise HomeAssistantError("The Function Tool no longer exists")
         tool["enabled"] = enabled
-        result = _persist_function_configuration(hass, entry, subentry, tools, groups)
+        result = _persist_function_configuration(
+            hass,
+            entry,
+            subentry,
+            tools,
+            groups,
+            expected_revision=message.get("revision"),
+        )
         if not enabled:
             _rules, references = await _function_reference_state(
                 hass, entry_id, subentry_id, subentry.data, name
@@ -1587,7 +1718,19 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             [*remaining_groups, candidate], tools
         )
         return _persist_function_configuration(
-            hass, entry, subentry, tools, validated_groups
+            hass,
+            entry,
+            subentry,
+            tools,
+            validated_groups,
+            expected_revision=message.get("revision"),
+            extra_updates=group_reference_updates(
+                subentry.data, original_id, candidate["id"]
+            )
+            if isinstance(original_id, str)
+            and isinstance(candidate.get("id"), str)
+            and original_id != candidate["id"]
+            else None,
         )
     if action == "delete_group":
         if message.get("confirm") is not True:
@@ -1598,32 +1741,31 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         remaining = [group for group in groups if group["id"] != group_id]
         if len(remaining) == len(groups):
             raise HomeAssistantError("The Function Group no longer exists")
-        return _persist_function_configuration(hass, entry, subentry, tools, remaining)
+        return _persist_function_configuration(
+            hass,
+            entry,
+            subentry,
+            tools,
+            remaining,
+            expected_revision=message.get("revision"),
+            extra_updates=group_reference_updates(subentry.data, group_id, None),
+        )
 
     return _unknown_management_action(request)
 
 
 async def async_scopes_command(request: _ManagementRequest) -> dict[str, Any]:
-    """Handle the scopes Management section."""
-    hass = request.hass
-    user_id = request.user_id
-    is_admin = request.is_admin
-    entry_id = request.entry_id
-    subentry_id = request.subentry_id
-    action = request.message["action"]
-    if action == "catalog":
-        memory = await async_get_memory(hass, entry_id, subentry_id)
-        archive = await async_get_archive(hass, entry_id, subentry_id)
-        return {
-            "scopes": await _scope_catalog(
-                hass,
-                user_id,
-                is_admin,
-                memory.scope_counts(),
-                archive.scope_counts(),
-            )
-        }
+    """Load scopes concurrently, only when the Management browser requests them."""
+    from .management_loading_performance import async_scope_catalog
 
+    if request.message["action"] == "catalog":
+        return await async_scope_catalog(
+            request.hass,
+            request.user_id,
+            request.is_admin,
+            request.entry_id,
+            request.subentry_id,
+        )
     return _unknown_management_action(request)
 
 
@@ -1659,23 +1801,27 @@ async def async_usage_command(request: _ManagementRequest) -> dict[str, Any]:
     entry_id = request.entry_id
     subentry_id = request.subentry_id
     action = request.message["action"]
+    if action == "footprint":
+        from .input_footprint import async_input_footprint
+
+        return await async_input_footprint(hass, request.user_id, message)
     usage = await async_get_usage(hass, entry_id, subentry_id)
     if action == "summary":
-        return {
-            "lifetime": usage.as_dict(),
-            "today": usage.today_summary(),
-            "month": usage.month_summary(),
-            "latest": asdict_or_none(usage.latest_run),
-        }
+        result = usage_summary(usage)
+        if not is_admin:
+            result["latest"] = None
+        return result
     if action == "daily":
-        return {
-            "days": usage.daily_series(
-                str(message.get("start_date", "0000-01-01")),
-                str(message.get("end_date", "9999-12-31")),
-            )
-        }
+        return usage_daily_page(
+            usage,
+            start_date=str(message.get("start_date", "0000-01-01")),
+            end_date=str(message.get("end_date", "9999-12-31")),
+            limit=int(message.get("limit", 366)),
+            offset=int(message.get("offset", 0)),
+        )
     if action == "runs":
-        return usage.recent_runs(
+        return usage_runs_page(
+            usage,
             limit=int(message.get("limit", 50)),
             offset=int(message.get("offset", 0)),
             successful=message.get("successful"),
@@ -1684,13 +1830,18 @@ async def async_usage_command(request: _ManagementRequest) -> dict[str, Any]:
         run_id = message.get("run_id")
         if not isinstance(run_id, str):
             raise HomeAssistantError("run_id is required")
-        return usage.requests_for_run(
+        return usage_requests_page(
+            usage,
             run_id,
             limit=int(message.get("limit", 100)),
             offset=int(message.get("offset", 0)),
         )
     if action == "breakdowns":
-        return usage.breakdowns(message.get("start_date"), message.get("end_date"))
+        return usage_breakdowns(
+            usage,
+            start_date=message.get("start_date"),
+            end_date=message.get("end_date"),
+        )
     if action == "retention":
         return {
             "request_days": usage.request_retention_days,
@@ -1715,7 +1866,8 @@ async def async_conversations_command(request: _ManagementRequest) -> dict[str, 
     scope_id = _selected_scope(
         request.user_id, request.is_admin, request.message.get("scope_id")
     )
-    continuity = async_get_continuity(hass, entry_id, subentry_id)
+    if action in {"active", "end_active"}:
+        continuity = async_get_continuity(hass, entry_id, subentry_id)
     if action == "active":
         _require_admin(is_admin)
         return {
@@ -1742,13 +1894,15 @@ async def async_conversations_command(request: _ManagementRequest) -> dict[str, 
         return {"ended": int(ended)}
     archive = await async_get_archive(hass, entry_id, subentry_id)
     if action == "list":
-        return await archive.async_list_sessions(
+        return await archive_list_page(
+            archive,
             scope_id,
             limit=int(message.get("limit", 50)),
             offset=int(message.get("offset", 0)),
         )
     if action == "search":
-        return await archive.async_search(
+        return await archive_search_page(
+            archive,
             scope_id,
             str(message.get("query", "")),
             start_date=message.get("start_date"),
@@ -1757,11 +1911,12 @@ async def async_conversations_command(request: _ManagementRequest) -> dict[str, 
             offset=int(message.get("offset", 0)),
         )
     if action == "get":
-        return await archive.async_get(
+        return await archive_get_page(
+            archive,
             scope_id,
             str(message.get("session_id", "")),
-            int(message.get("start_turn", 0)),
-            int(message.get("limit", 20)),
+            start_turn=int(message.get("start_turn", 0)),
+            limit=int(message.get("limit", 20)),
         )
     if action == "delete":
         return await archive.async_delete_session(
@@ -1784,6 +1939,72 @@ async def async_conversations_command(request: _ManagementRequest) -> dict[str, 
     return _unknown_management_action(request)
 
 
+async def _async_temporary_memories_command(
+    request: _ManagementRequest,
+) -> dict[str, Any]:
+    """Manage complete Personal/Shared Temporary Memory without changing runtime retrieval."""
+    from .temporary_memory_ownership import _valid_owner_scope_id
+
+    hass, user_id, is_admin, message = (
+        request.hass,
+        request.user_id,
+        request.is_admin,
+        request.message,
+    )
+    action = message["action"]
+    entry, subentry = request.entry, request.subentry
+    selected_scope_id = _selected_scope(user_id, is_admin, message.get("scope_id"))
+    owner = _valid_owner_scope_id(selected_scope_id)
+    if owner is None:
+        raise HomeAssistantError(
+            "Temporary Memory can only be managed in Personal or Shared scopes"
+        )
+    manager = await async_get_temporary_memory(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    manager_any: Any = manager
+    if action == "temporary_list":
+        records = await manager_any.async_list_owned(owner)
+        return {
+            "memories": [
+                temporary_memory_as_dict(record, include_scope=True)
+                | {"owner_scope_id": record.owner_scope_id}
+                for record in records
+            ],
+            "scope_id": owner,
+            "stats": manager.stats(),
+        }
+    memory_id = message.get("memory_id")
+    if not isinstance(memory_id, str) or not memory_id:
+        raise HomeAssistantError("memory_id is required")
+    if action == "temporary_delete":
+        deleted = await manager_any.async_delete_owned(owner, [memory_id])
+        return {"deleted": deleted}
+    content = message.get("content")
+    category = message.get("category")
+    expires_at = message.get("expires_at")
+    if (
+        (content is not None and not isinstance(content, str))
+        or (category is not None and not isinstance(category, str))
+        or (expires_at is not None and not isinstance(expires_at, str))
+    ):
+        raise HomeAssistantError(
+            "content, category, and expires_at must be strings when supplied"
+        )
+    if content is None and category is None and expires_at is None:
+        raise HomeAssistantError("at least one Temporary Memory field is required")
+    try:
+        record = await manager_any.async_update_owned(
+            owner, memory_id, content, expires_at, category
+        )
+    except ValueError as err:
+        raise HomeAssistantError(str(err)) from err
+    return {
+        "memory": temporary_memory_as_dict(record, include_scope=True)
+        | {"owner_scope_id": record.owner_scope_id}
+    }
+
+
 async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
     """Handle the memories Management section."""
     hass = request.hass
@@ -1793,48 +2014,20 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
     entry_id = request.entry_id
     subentry_id = request.subentry_id
     action = request.message["action"]
+    if action in {"temporary_list", "temporary_update", "temporary_delete"}:
+        return await _async_temporary_memories_command(request)
     scope_id = _selected_scope(
         request.user_id, request.is_admin, request.message.get("scope_id")
     )
     if action.startswith("temporary_"):
-        temporary = await async_get_temporary_memory(hass, entry_id, subentry_id)
-        if action == "temporary_list":
-            temporary_records = (
-                await temporary.async_list_all()
-                if is_admin
-                else await temporary.async_list(scope_id)
-            )
-            return {
-                "memories": [
-                    temporary_memory_as_dict(record, include_scope=is_admin)
-                    for record in temporary_records
-                ]
-            }
-        if action == "temporary_delete":
-            memory_id = str(message.get("memory_id", ""))
-            requested_scope = message.get("temporary_scope_id", scope_id)
-            if not isinstance(requested_scope, str):
-                raise HomeAssistantError("temporary_scope_id is invalid")
-            if not is_admin and requested_scope != scope_id:
-                raise HomeAssistantError("This temporary memory is not available")
-            return {
-                "deleted": await temporary.async_delete(requested_scope, [memory_id])
-            }
+        # Preserve initialization on unrecognized legacy temporary actions.
+        await async_get_temporary_memory(hass, entry_id, subentry_id)
     memory = await async_get_memory(hass, entry_id, subentry_id)
     owner = _memory_scope(scope_id)
-    if action == "list":
-        records = await memory.async_list(
-            owner,
-            message.get("category"),
-            int(message.get("limit", 100)),
-            int(message.get("offset", 0)),
+    if action in {"list", "search"}:
+        return await async_browse_memories(
+            memory, owner, scope_id, message, include_scope=is_admin
         )
-        return {
-            "memories": [
-                memory_as_dict(record, include_scope=is_admin) for record in records
-            ],
-            "scope_id": scope_id,
-        }
     if action == "add":
         return await memory.async_add(
             owner,
@@ -1888,7 +2081,21 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
     _selected_scope(request.user_id, request.is_admin, request.message.get("scope_id"))
     library = await async_get_knowledge(hass, entry_id, subentry_id)
     if action == "list":
-        return {"sources": await library.async_list(), "stats": library.stats()}
+        from .feature_status import management_feature_status
+
+        sources = await library.async_list()
+        stats = library.stats()
+        source_count = len(sources) if isinstance(sources, list) else 0
+        if isinstance(stats, Mapping):
+            with suppress(TypeError, ValueError):
+                source_count = int(stats.get("source_count", source_count))
+        return {
+            "sources": sources,
+            "stats": stats,
+            "feature_status": management_feature_status(
+                request.subentry.data, knowledge_source_count=source_count
+            )["knowledge"],
+        }
     if action == "get":
         return {
             "source": knowledge_source_as_dict(
@@ -1953,8 +2160,30 @@ async def async_settings_command(request: _ManagementRequest) -> dict[str, Any]:
     return _unknown_management_action(request)
 
 
+async def async_overview_command(request: _ManagementRequest) -> dict[str, Any]:
+    """Load and project the selected agent's bounded Overview."""
+    from .management_loading_performance import async_overview_summary
+
+    if request.message["action"] == "summary":
+        return await async_overview_summary(
+            request.hass, request.entry, request.subentry, is_admin=request.is_admin
+        )
+    return _unknown_management_action(request)
+
+
+async def async_function_repair_command(request: _ManagementRequest) -> dict[str, Any]:
+    """Keep invalid Function Tool recovery at its existing dedicated boundary."""
+    from .management_function_repair import async_function_repair
+
+    return await async_function_repair(
+        request.hass, request.user_id, request.is_admin, request.message
+    )
+
+
 _MANAGEMENT_SECTION_HANDLERS: Final = MappingProxyType(
     {
+        "overview": async_overview_command,
+        "function_repair": async_function_repair_command,
         "request_rules": async_request_rules_command,
         "guest_mode": async_guest_mode_command,
         "backup": async_backup_command,
@@ -1978,79 +2207,46 @@ async def async_management_command(
     is_admin: bool,
     message: dict[str, Any],
 ) -> dict[str, Any]:
-    """Execute one narrow, validated management operation."""
-    section = message.get("section", "overview")
-    action = message["action"]
-    if action == "agents":
-        agents = []
-        for entry in hass.config_entries.async_entries(DOMAIN):
-            for subentry in entry.subentries.values():
-                if subentry.subentry_type != "conversation":
-                    continue
-                usage = await async_get_usage(
-                    hass, entry.entry_id, subentry.subentry_id
-                )
-                memory = await async_get_memory(
-                    hass, entry.entry_id, subentry.subentry_id
-                )
-                knowledge = await async_get_knowledge(
-                    hass, entry.entry_id, subentry.subentry_id
-                )
-                guest_mode = await async_get_guest_mode(
-                    hass, entry.entry_id, subentry.subentry_id
-                )
-                configured_tools = configured_function_tools_from_data(subentry.data)
-                guest_status = guest_mode.status()
-                guest_status["has_home_assistant_exclusions"] = any(
-                    subentry.data.get(key)
-                    for key in (
-                        "guest_excluded_labels",
-                        "guest_excluded_areas",
-                        "guest_excluded_domains",
-                        "guest_excluded_entities",
-                    )
-                )
-                agents.append(
-                    {
-                        "entry_id": entry.entry_id,
-                        "entry_title": entry.title,
-                        "subentry_id": subentry.subentry_id,
-                        "title": subentry.title,
-                        "provider": entry.data.get(
-                            CONF_API_PROVIDER, DEFAULT_API_PROVIDER
-                        ),
-                        "model": subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
-                        "memory_mode": get_memory_mode(subentry.data),
-                        "memory_count": memory.stats()["memory_count"],
-                        "knowledge_enabled": bool(
-                            subentry.data.get("knowledge_enabled", False)
-                        ),
-                        "knowledge_source_count": knowledge.source_count,
-                        "function_count": sum(
-                            function_tool_enabled(tool) for tool in configured_tools
-                        ),
-                        "function_group_count": len(
-                            subentry.data.get(
-                                CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS
-                            )
-                        ),
-                        "archive_enabled": bool(
-                            subentry.data.get(
-                                CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED
-                            )
-                        ),
-                        "tokens_today": usage.today_summary()["total_tokens"],
-                        "guest_mode": guest_status,
-                    }
-                )
-        return {
-            "agents": agents,
-            "scopes": await _scope_catalog(hass, user_id, is_admin),
-            "is_admin": is_admin,
-        }
+    """Execute one Management request through a stable, explicitly owned pipeline.
 
-    entry_id = message.get("entry_id")
-    subentry_id = message.get("subentry_id")
+    Keep maintenance outermost, including result projection. Integration-global
+    authorization precedes agent lookup; section-specific authorization stays with
+    its handler. No setup/feature installer replaces this function.
+    """
+    async with management_command_lease(hass, message):
+        return await _async_management_request(hass, user_id, is_admin, message)
+
+
+async def _async_management_request(
+    hass: HomeAssistant,
+    user_id: str,
+    is_admin: bool,
+    message: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate, select one agent, route, then apply the shared result contract."""
+    section = message.get("section", "overview")
+    action = message.get("action")
+    if not isinstance(section, str) or not isinstance(action, str):
+        raise HomeAssistantError("section and action must be strings")
+    require_management_permission(is_admin, message)
+    if section == "quiet_hours":
+        return await async_quiet_hours_command(hass, is_admin, message)
+    if action == "agents":
+        from .management_loading_performance import async_agent_catalog
+
+        return await async_agent_catalog(hass, user_id, is_admin)
+
+    entry_id, subentry_id = message.get("entry_id"), message.get("subentry_id")
+    if section == "memories" and action in {
+        "temporary_list",
+        "temporary_update",
+        "temporary_delete",
+    }:
+        # Keep the Temporary Memory API's existing per-field validation errors.
+        for key in ("entry_id", "subentry_id"):
+            value = message.get(key)
+            if not isinstance(value, str) or not value:
+                raise HomeAssistantError(f"{key} is required")
     if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
         raise HomeAssistantError("entry_id and subentry_id are required")
     entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
@@ -2060,7 +2256,32 @@ async def async_management_command(
     handler = _MANAGEMENT_SECTION_HANDLERS.get(section)
     if handler is None:
         return _unknown_management_action(request)
-    return await handler(request)
+    # These safety checks were outside the former quarantine/permission wrappers.
+    # Non-admin requests reach their section's authorization error, never schema
+    # or revision diagnostics. Rule mutations retain strict dependency validation.
+    if is_admin and section == "request_rules" and action in {"create", "update"}:
+        rule_id = message.get("rule_id") if action == "update" else None
+        candidate = _prepare_request_rule(
+            message.get("rule"), rule_id if isinstance(rule_id, str) else None
+        )
+        await async_validate_request_rule_functions(
+            hass, candidate, _strict_configured_function_tools(subentry.data)
+        )
+    elif is_admin and section == "tools" and action in _TOOL_MUTATIONS:
+        _require_agent_config_revision(subentry, message.get("revision"))
+
+    with management_function_tools(section):
+        result = await handler(request)
+
+    configuration_action = _configuration_action(message)
+    if configuration_action is not None:
+        result = decorate_configuration_result(
+            hass,
+            getattr(entry, "data", {}),
+            result,
+            action=configuration_action,
+        )
+    return result
 
 
 def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
@@ -2076,7 +2297,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
     return {key: normalized[key] for key in settings}
 
 
-def _settings_snapshot(options: dict[str, Any]) -> dict[str, Any]:
+def _settings_snapshot(options: Mapping[str, Any]) -> dict[str, Any]:
     defaults = {
         CONF_ARCHIVE_ENABLED: DEFAULT_ARCHIVE_ENABLED,
         CONF_ARCHIVE_RETENTION_DAYS: DEFAULT_ARCHIVE_RETENTION_DAYS,

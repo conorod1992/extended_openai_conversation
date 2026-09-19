@@ -14,6 +14,7 @@ from homeassistant.exceptions import HomeAssistantError
 from .agent_config import (
     agent_config_defaults,
     configured_function_tools_from_data,
+    preserve_legacy_guest_policy,
     validate_function_groups,
     validate_function_tools,
 )
@@ -354,7 +355,7 @@ async def async_function_repair(
         if not validation.get("valid"):
             return validation
         normalized = validation["config"]
-        persisted = management_loading_performance.preserve_legacy_guest_policy(
+        persisted = preserve_legacy_guest_policy(
             dict(subentry.data), deepcopy(normalized)
         )
         if CONF_FUNCTION_TOOLS in subentry.data:

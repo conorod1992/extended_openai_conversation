@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from . import management_ui
 from .const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -23,16 +22,12 @@ from .exposed_attributes import exposed_attribute_catalog
 from .helpers import get_api_mode, supports_openai_hosted_tools
 from .request import build_web_search_tool
 
-_PATCHED = "extended_openai_management_configuration_guidance"
 _CONFIGURATION_ACTIONS = {"get", "validate", "update", "save"}
 _FUNCTION_REPAIR_CONFIGURATION_ACTIONS = {
     "configuration_get": "get",
     "configuration_validate": "validate",
     "configuration_save": "save",
 }
-ManagementCommand = Callable[
-    [HomeAssistant, str, bool, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]
-]
 
 
 def configuration_guidance_snapshot(
@@ -110,47 +105,3 @@ def _configuration_action(message: Mapping[str, Any]) -> str | None:
     if section == "function_repair":
         return _FUNCTION_REPAIR_CONFIGURATION_ACTIONS.get(str(action))
     return None
-
-
-def wrap_management_configuration_guidance(
-    original: ManagementCommand,
-) -> ManagementCommand:
-    """Attach the shared Configuration metadata contract to management results."""
-
-    async def wrapped(
-        hass: HomeAssistant,
-        user_id: str,
-        is_admin: bool,
-        message: dict[str, Any],
-    ) -> dict[str, Any]:
-        result = await original(hass, user_id, is_admin, message)
-        action = _configuration_action(message)
-        if action is None or not isinstance(result, dict):
-            return result
-        if not isinstance(result.get("config"), dict):
-            return result
-
-        entry_id = message.get("entry_id")
-        subentry_id = message.get("subentry_id")
-        if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
-            return result
-        entry, _subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
-        return decorate_configuration_result(
-            hass,
-            getattr(entry, "data", {}),
-            result,
-            action=action,
-        )
-
-    return wrapped
-
-
-def install_management_configuration_guidance() -> bool:
-    """Install the guidance wrapper exactly once."""
-    if getattr(management_ui, _PATCHED, False):
-        return False
-    management_ui.async_management_command = wrap_management_configuration_guidance(  # type: ignore[assignment]
-        management_ui.async_management_command
-    )
-    setattr(management_ui, _PATCHED, True)
-    return True
