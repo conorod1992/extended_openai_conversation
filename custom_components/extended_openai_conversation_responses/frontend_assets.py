@@ -49,10 +49,10 @@ async def async_register_frontend_assets(hass: HomeAssistant) -> None:
     """Register the generated production directory once with immutable caching."""
     if hass.data.get(_FRONTEND_ASSET_SETUP):
         return
-    # Resolve both public entries before exposing the static directory so a
-    # partial or stale build fails setup deterministically.
+    # Resolve the public entry before exposing the static directory so a
+    # partial or stale build fails setup deterministically. Route/debug chunks
+    # are referenced transitively by this manifest-backed entry.
     frontend_entry_url("management")
-    frontend_entry_url("debug")
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
