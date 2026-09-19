@@ -21,6 +21,7 @@ test("configuration and Knowledge return final markup before any enhancement can
     host.innerHTML = modelDataControls(owner);
     initial.available = !host.querySelector('[data-model-data="apply"]').closest('.eoc-model-data-action').hidden && !host.querySelector('[data-model-data="apply"]').disabled;
     initial.update = host.querySelector('[data-model-data="apply"]').textContent;
+    await panel._navigate("data-memory", "knowledge");
     const old = panel._result;
     try {
       panel._result = {sources:[{source_id:"direct",title:"Notes",enabled:false}]};

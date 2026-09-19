@@ -1,7 +1,7 @@
 import {renderBackupTransferPanel, renderRestoreTransferDialog} from "./backup-transfer-ui.js";
 import {renderExposedAttributeSettings} from "./exposed-attributes-ui.js";
 import {modelFieldPresentation, modelFieldNotes} from "./agent-config-model-presentation.js";
-import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-configuration-clarity.js";
+import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
 import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {bindSingleRequestSave} from "./management-actions.js";
 import {saveBarMarkup} from "./unsaved-state.js";

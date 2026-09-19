@@ -7,7 +7,7 @@ assert.match(knowledgeSourceAvailabilityBadge({enabled:true}), /availability-bad
 assert.match(knowledgeSourceAvailabilityBadge({enabled:false}), /disabled-badge[^>]*>Unavailable</);
 assert.match(knowledgeSourceAvailabilityBadge({}), /availability-badge[^>]*>Available/);
 
-const source = await readFile(
+const source = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-dialogs.js", import.meta.url), "utf8") + await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js", import.meta.url),
   "utf8",
 );

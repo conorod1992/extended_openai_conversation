@@ -1,3 +1,5 @@
+export {bindGettingStarted} from "./overview-onboarding.js";
+export {enhanceOverviewHealthClarity} from "./management-overview-health-clarity.js";
 import {buildSetupHealth} from "./overview-health.js";
 
 const WS_BROADCAST = "extended_openai_conversation_responses/broadcast";

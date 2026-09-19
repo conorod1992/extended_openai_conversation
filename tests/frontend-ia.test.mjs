@@ -271,5 +271,5 @@ assert.match(navigationSearch, /subsection-nav/);
 assert.match(navigationSearch, /Current draft/);
 assert.match(navigationSearch, /configuration", "get"/);
 assert.match(navigationSearch, /_settingsSearchConfigAgentId === panel\._agentId/);
-assert.match(panel, /management-capabilities-ia\.js/);
+assert.match(await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url), "utf8"), /management-capabilities-ia\.js/);
 assert.match(panel, /from "\.\/management-navigation-search\.js"/);

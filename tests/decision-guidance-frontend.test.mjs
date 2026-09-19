@@ -85,7 +85,7 @@ assert.match(restoreScopeMarkup({_selectedAgent:()=>({title:"Kitchen"}),_e:Strin
 assert.match(source, /eoc-rule-live-test/);
 assert.match(source, /Run full request\?/);
 assert.match(source, /panel\._call\("request_rules", "test", \{text\}\)/);
-assert.match(source, /eoc-confirm-scope/);
+assert.match(await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-confirmation-scope.js", import.meta.url), "utf8"), /eoc-confirm-scope/);
 assert.match(source, /This backup will replace:/);
 assert.match(source, /Request Rule “\$\{rule\.name\}”/);
 
@@ -93,6 +93,6 @@ const panelSource = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url),
   "utf8",
 );
-assert.match(panelSource, /from "\.\/management-decision-guidance\.js"/);
+assert.match(panelSource, /from "\.\/management-confirmation-scope\.js"/);
 assert.match(panelSource, /enhanceConfirmationScope\(this, subject\)/);
 assert.doesNotMatch(source, /prototype\._confirm|installManagementDecisionGuidance/);

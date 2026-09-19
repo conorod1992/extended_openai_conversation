@@ -1,4 +1,4 @@
-import {friendlySettingLabel, settingEffectBadges} from "./management-configuration-clarity.js";
+import {friendlySettingLabel, settingEffectBadges} from "./management-setting-metadata.js";
 
 const MODEL_PARAMETERS = Object.freeze([
   Object.freeze({
@@ -382,14 +382,7 @@ function bindGuidanceRoutes(panel) {
   });
 }
 
-export function storeRuntimeGuidance(panel, result, agentId = panel._agentId) {
-  if (!result?.configuration_guidance || panel._agentId !== agentId) return;
-  panel._configurationGuidance = result.configuration_guidance;
-  panel._configurationGuidanceAgentId = agentId;
-  if (panel._result && typeof panel._result === "object") {
-    panel._result.configuration_guidance = result.configuration_guidance;
-  }
-}
+export {storeRuntimeGuidance} from "./management-runtime-guidance.js";
 
 export function enhanceConfigurationGuidance(panel) {
   if (!panel.shadowRoot) return;

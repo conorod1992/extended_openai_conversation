@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {freshGuestPolicyDraft, GUEST_EXCLUSION_KEYS} from "../custom_components/extended_openai_conversation_responses/frontend/guest-mode-ui.js";
 
-const panel = await readFile(
+const panel = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-guest-feature.js", import.meta.url), "utf8") + await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url),
   "utf8",
 );
@@ -71,6 +71,8 @@ globalThis.customElements = {define() {}, get() { return null; }, whenDefined() 
 const {ExtendedOpenAIManagementPanel} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js");
 
 const guestPanel = new ExtendedOpenAIManagementPanel();
+const {routeAssetPromise} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-route.js");
+await routeAssetPromise("capabilities/guest-mode", guestPanel);
 guestPanel._data = {is_admin:true};
 guestPanel._page = "capabilities";
 guestPanel._subsection = "guest-mode";

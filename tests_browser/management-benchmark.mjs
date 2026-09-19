@@ -1,10 +1,11 @@
 // Reproducible structural/latency benchmark against the shipped mock backend.
-// Usage: node tests_browser/management-benchmark.mjs http://127.0.0.1:4173 output.json
+// Usage: node tests_browser/management-benchmark.mjs http://127.0.0.1:4173 output.json [--bundle]
 // Serve JS/MJS with a JavaScript MIME type. No live HA credentials are used.
 import {chromium} from "@playwright/test";
 import {writeFile} from "node:fs/promises";
 const base = process.argv[2] || "http://127.0.0.1:4173";
 const output = process.argv[3] || "management-benchmark.json";
+const bundled = process.argv.includes("--bundle");
 const latency = 40;
 const browser = await chromium.launch({headless:true});
 const samples = [];
@@ -29,8 +30,10 @@ try {
       }
     });
     await page.coverage.startJSCoverage();
-    await page.goto(`${base}/tests_browser/fixture.html?route=overview`);
-    await page.waitForFunction(() => window.browserHarness?.panel?._result?.usage && !browserHarness.panel._busy);
+    await page.goto(`${base}/tests_browser/fixture.html?route=overview${bundled ? "&bundle=1" : ""}`);
+    await page.waitForFunction(() => window.browserHarness?.panel?._result?.usage
+      && !browserHarness.panel._busy
+      && browserHarness.panel.shadowRoot.querySelector(".dashboard-grid"));
     const cold = await page.evaluate(() => ({
       ms:Math.round(performance.now()),
       calls:browserHarness.calls.filter(c => c.type.endsWith("/management")).map(c => `${c.section || "root"}/${c.action}`),
@@ -80,7 +83,7 @@ try {
     samples.push({cold, routes, repeatedRender, expiredKnowledge, errors:await page.evaluate(() => [...browserHarness.windowErrors,...browserHarness.rejections])});
     await page.close();
   }
-  await writeFile(output, JSON.stringify({backendLatencyMs:latency, samples}, null, 2) + "\n");
+  await writeFile(output, JSON.stringify({mode:bundled ? "bundle" : "source", backendLatencyMs:latency, samples}, null, 2) + "\n");
   console.log(`Wrote ${samples.length} samples to ${output}`);
 } finally { await browser.close(); }
 

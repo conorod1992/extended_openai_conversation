@@ -36,10 +36,19 @@ if (predefine) {
   panel.route = {path: location.pathname};
   document.body.append(panel);
 }
-await import("/custom_components/extended_openai_conversation_responses/frontend/management-panel.js");
+const frontendRoot = "/custom_components/extended_openai_conversation_responses/frontend/";
+if (params.get("bundle") === "1") {
+  const manifest = await (await fetch(`${frontendRoot}dist/manifest.json`)).json();
+  const entry = Object.values(manifest).find((item) => item.isEntry && item.name === "management");
+  await import(`${frontendRoot}dist/${entry.file}`);
+} else {
+  await import(`${frontendRoot}management-panel.js`);
+}
 if (!panel) {
   panel = document.createElement("extended-openai-management-panel");
   document.body.append(panel);
   panel.hass = hass;
 }
 window.browserHarness.panel = panel;
+// Home Assistant supplies a new route property when its browser history changes.
+window.addEventListener("popstate", () => { panel.route = {path: location.pathname}; });

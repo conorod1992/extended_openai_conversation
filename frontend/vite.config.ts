@@ -4,6 +4,8 @@ const productionFrontend =
   "../custom_components/extended_openai_conversation_responses/frontend";
 
 export default defineConfig({
+  // HA serves this directory below its integration URL, not at the site root.
+  base: "./",
   build: {
     rollupOptions: {
       input: {

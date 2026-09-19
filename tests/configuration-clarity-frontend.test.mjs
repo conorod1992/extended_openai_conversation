@@ -18,7 +18,7 @@ const panelSource = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url),
   "utf8",
 );
-assert.match(panelSource, /from "\.\/management-configuration-clarity\.js"/);
+assert.match(panelSource, /from "\.\/management-draft-navigation\.js"/);
 assert.ok(
   panelSource.indexOf("applyManagementToolbarLayout(this)")
     < panelSource.indexOf("enhanceConfigurationClarity(this)"),
