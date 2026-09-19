@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
+from .ha_tool_result_compat import tool_result_data
 from .memory import MemoryRecord, memory_as_dict
 
 _INSTALLED = False
@@ -90,7 +91,7 @@ def knowledge_search_payload(
 
 def _compact_json_result_content(result: Any) -> Any:
     """Compact a ToolResultContent JSON string while preserving parsed semantics."""
-    tool_result = getattr(result, "tool_result", None)
+    tool_result = tool_result_data(result)
     if not isinstance(tool_result, dict):
         return result
     value = tool_result.get("result")
