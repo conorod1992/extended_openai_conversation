@@ -43,6 +43,10 @@ const [source, bootstrap, loading, permissions, management] = await Promise.all(
   readFile(new URL("../custom_components/extended_openai_conversation_responses/management_permissions.py", import.meta.url), "utf8"),
   readFile(new URL("../custom_components/extended_openai_conversation_responses/management_ui.py", import.meta.url), "utf8"),
 ]);
+const manifest = JSON.parse(await readFile(
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/dist/manifest.json", import.meta.url),
+  "utf8",
+));
 
 assert.match(source, /next_offset/);
 assert.match(source, /Previous turns/);
@@ -51,7 +55,11 @@ assert.match(source, /start_turn:/);
 assert.match(source, /limit: TURN_PAGE_LIMIT/);
 assert.match(source, /Clear search/);
 assert.match(bootstrap, /"data-memory\/conversations": \(\) => import\(".\/management-history-pagination\.js"\)/);
-assert.match(management, /"management-history-pagination\.js"/);
+const historyChunk = Object.entries(manifest).find(([asset]) =>
+  asset.endsWith("/management-history-pagination.js")
+);
+assert.ok(historyChunk, "History pagination must be emitted as a production lazy chunk");
+assert.equal(historyChunk[1].isDynamicEntry, true);
 // Backend ownership changes must not bypass the same bounded projections.
 assert.match(management, /"overview": async_overview_command/);
 assert.match(management, /"usage": async_usage_command/);

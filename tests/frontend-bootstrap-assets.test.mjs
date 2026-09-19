@@ -8,39 +8,48 @@ const COMPONENT = fileURLToPath(new URL(
   "../custom_components/extended_openai_conversation_responses/", import.meta.url,
 ));
 const FRONTEND = path.join(COMPONENT, "frontend");
+const DIST = path.join(FRONTEND, "dist");
+const manifest = JSON.parse(fs.readFileSync(path.join(DIST, "manifest.json"), "utf8"));
 
-function registry(source) {
-  const match = source.match(/^MANAGEMENT_FRONTEND_MODULES(?:\s*:[^=\n]+)?\s*=\s*\(([\s\S]*?)^\)/m);
-  assert.ok(match, "management_ui.py must declare the complete static registry");
-  return [...match[1].matchAll(/"([^"\n]+\.js)"/g)].map((item) => item[1]);
+function entryByName(name) {
+  return Object.values(manifest).find((entry) => entry.isEntry === true && entry.name === name);
 }
 
-const modules = registry(fs.readFileSync(path.join(COMPONENT, "management_ui.py"), "utf8"));
+function manifestSource(suffix) {
+  return Object.entries(manifest).find(([source]) => source.endsWith(suffix));
+}
 
-function assertImportsServed(registered) {
-  // Request Debug retains its separately owned setup/HTTP registration.
-  const served = new Set([...registered, "debug-panel.js"]);
-  for (const name of served) {
-    const source = fs.readFileSync(path.join(FRONTEND, name), "utf8");
-    const imports = [...source.matchAll(/(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)["']\.\/([^"']+\.js)["']/g)];
-    for (const match of imports) {
-      assert.ok(served.has(match[1]), `${name} imports unserved module ${match[1]}`);
-    }
+function assertOutputExists(file) {
+  assert.equal(typeof file, "string");
+  assert.ok(fs.existsSync(path.join(DIST, file)), `missing built asset ${file}`);
+}
+
+test("production manifest exposes one hashed management entry and lazy route chunks", () => {
+  const management = entryByName("management");
+  assert.ok(management, "production Management entry is required");
+  assert.match(management.file, /^assets\/management-[A-Za-z0-9_-]+\.js$/);
+  assertOutputExists(management.file);
+
+  assert.equal(entryByName("debug"), undefined, "Request Debug must not become a duplicate public entry");
+
+  const [, debugPanel] = manifestSource("/debug-panel.js") || [];
+  assert.ok(debugPanel, "Request Debug chunk must be present in the production graph");
+  assert.equal(debugPanel.isDynamicEntry, true);
+  assert.match(debugPanel.file, /^assets\/debug-panel-[A-Za-z0-9_-]+\.js$/);
+  assertOutputExists(debugPanel.file);
+
+  for (const source of management.dynamicImports || []) {
+    assert.ok(manifest[source], `missing lazy manifest entry for ${source}`);
+    assertOutputExists(manifest[source].file);
   }
-}
-
-test("the canonical registry covers every static and lazy frontend import", () => {
-  assert.equal(modules.length, new Set(modules).size, "duplicate static routes");
-  assertImportsServed(modules);
-  assert.equal(fs.existsSync(path.join(FRONTEND, "management-bootstrap.js")), false);
-  assert.equal(fs.existsSync(path.join(FRONTEND, "guide-page-base.js")), false);
-  assert.equal(modules.includes("guide-page-base.js"), false);
-  assert.equal(modules.includes("agent-config-model-presentation.js"), true);
 });
 
-test("missing direct or lazy assets cannot be hidden by unrelated Python strings", () => {
-  assert.throws(() => assertImportsServed(modules.filter((name) => name !== "management-route.js")),
-    /imports unserved module management-route\.js/);
-  assert.throws(() => assertImportsServed(modules.filter((name) => name !== "quiet-hours-ui.js")),
-    /imports unserved module quiet-hours-ui\.js/);
+test("every manifest import and emitted file resolves", () => {
+  for (const [source, entry] of Object.entries(manifest)) {
+    assertOutputExists(entry.file);
+    for (const dependency of [...(entry.imports || []), ...(entry.dynamicImports || [])]) {
+      assert.ok(manifest[dependency], `${source} references missing manifest dependency ${dependency}`);
+      assertOutputExists(manifest[dependency].file);
+    }
+  }
 });

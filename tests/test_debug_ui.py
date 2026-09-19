@@ -363,38 +363,33 @@ async def test_setup_debug_ui_registers_assets_and_command_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     diagnostics_calls = 0
+    asset_calls = 0
     command_calls: list[object] = []
-    static_calls: list[list[Any]] = []
 
     def install_diagnostics() -> None:
         nonlocal diagnostics_calls
         diagnostics_calls += 1
 
-    async def register_static_paths(paths: list[Any]) -> None:
-        static_calls.append(paths)
+    async def register_frontend_assets(hass: Any) -> None:
+        nonlocal asset_calls
+        asset_calls += 1
 
     monkeypatch.setattr(
         debug_ui, "install_payload_latency_diagnostics", install_diagnostics
+    )
+    monkeypatch.setattr(
+        debug_ui, "async_register_frontend_assets", register_frontend_assets
     )
     monkeypatch.setattr(
         debug_ui.websocket_api,
         "async_register_command",
         lambda hass, command: command_calls.append(command),
     )
-    hass = SimpleNamespace(
-        data={},
-        http=SimpleNamespace(async_register_static_paths=register_static_paths),
-    )
+    hass = SimpleNamespace(data={})
 
     await debug_ui.async_setup_debug_ui(cast(Any, hass))
     await debug_ui.async_setup_debug_ui(cast(Any, hass))
 
     assert diagnostics_calls == 2
-    assert len(static_calls) == 1
-    assert len(static_calls[0]) == 2
-    assert [path.url_path for path in static_calls[0]] == [
-        f"/{DOMAIN}/debug-panel.js",
-        f"/{DOMAIN}/debug-management.js",
-    ]
-    assert all(path.cache_headers is False for path in static_calls[0])
+    assert asset_calls == 1
     assert command_calls == [debug_ui.websocket_request_debug]

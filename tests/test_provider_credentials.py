@@ -1,5 +1,8 @@
 """Tests for provider credential rotation and its dedicated WebSocket boundary."""
 
+import json
+from pathlib import Path
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,9 +20,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_ORGANIZATION,
     CONF_SKIP_AUTHENTICATION,
     DOMAIN,
-)
-from custom_components.extended_openai_conversation_responses.management_ui import (
-    MANAGEMENT_FRONTEND_MODULES,
 )
 from custom_components.extended_openai_conversation_responses.provider_credentials import (
     WS_UPDATE_API_KEY,
@@ -326,4 +326,18 @@ def test_credential_websocket_registration_is_idempotent() -> None:
 
 
 def test_provider_credential_frontend_module_is_registered() -> None:
-    assert "management-provider-credentials.js" in MANAGEMENT_FRONTEND_MODULES
+    frontend = (
+        Path(__file__).parents[1]
+        / "custom_components"
+        / "extended_openai_conversation_responses"
+        / "frontend"
+        / "dist"
+    )
+    manifest = json.loads((frontend / "manifest.json").read_text(encoding="utf-8"))
+    provider = next(
+        entry
+        for source, entry in manifest.items()
+        if source.endswith("/management-provider-credentials.js")
+    )
+    assert provider.get("isDynamicEntry") is True
+    assert (frontend / provider["file"]).is_file()

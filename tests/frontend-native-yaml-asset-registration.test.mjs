@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
-const managementPath = new URL(
-  "../custom_components/extended_openai_conversation_responses/management_ui.py",
+const manifestPath = new URL(
+  "../custom_components/extended_openai_conversation_responses/frontend/dist/manifest.json",
   import.meta.url,
 );
 const loaderPath = new URL(
@@ -10,18 +10,19 @@ const loaderPath = new URL(
   import.meta.url,
 );
 
-const [managementSource, loaderSource] = await Promise.all([
-  readFile(managementPath, "utf8"),
+const [manifestText, loaderSource] = await Promise.all([
+  readFile(manifestPath, "utf8"),
   readFile(loaderPath, "utf8"),
 ]);
+const manifest = JSON.parse(manifestText);
 
 assert.match(
   loaderSource,
   /import\("\.\/agent-config-native-yaml\.js"\)/,
   "the agent configuration loader must lazy-load the native YAML wrapper",
 );
-assert.match(
-  managementSource,
-  /"agent-config-native-yaml\.js"/,
-  "every lazily imported management frontend module must be registered as a Home Assistant static asset",
+const nativeYaml = Object.entries(manifest).find(([source]) =>
+  source.endsWith("/agent-config-native-yaml.js")
 );
+assert.ok(nativeYaml, "the lazy native YAML module must be emitted in the production manifest");
+assert.equal(nativeYaml[1].isDynamicEntry, true);

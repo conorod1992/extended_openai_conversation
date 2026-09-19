@@ -111,7 +111,7 @@ test("shipped management panel loads and persists one configuration change insid
   expect(integrationConsoleErrors).toEqual([]);
   expect(integrationResponses.some(({url, status}) => {
     const path = new URL(url).pathname;
-    return /^\/extended_openai_conversation_responses\/assets\/[^/]+\/management-panel\.js$/.test(path)
+    return /^\/extended_openai_conversation_responses\/frontend\/assets\/management-[A-Za-z0-9_-]+\.js$/.test(path)
       && status === 200;
   })).toBe(true);
   expect(integrationResponses.filter(({status}) => status >= 400)).toEqual([]);

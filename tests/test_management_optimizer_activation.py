@@ -19,8 +19,8 @@ from custom_components.extended_openai_conversation_responses.management_loading
 )
 
 
-def test_management_panel_dependencies_are_registered() -> None:
-    """Every direct panel dependency must have a management static route."""
+def test_management_panel_dependencies_are_build_inputs() -> None:
+    """Every direct panel dependency remains present for the production build."""
     required = {
         "management-feature-status.js",
         "management-memory-settings.js",
@@ -31,7 +31,8 @@ def test_management_panel_dependencies_are_registered() -> None:
         "management-permission-boundaries.js",
         "management-navigation-search.js",
     }
-    assert required <= set(management_ui.MANAGEMENT_FRONTEND_MODULES)
+    frontend = Path(management_ui.__file__).parent / "frontend"
+    assert all((frontend / name).is_file() for name in required)
 
 
 def test_single_pass_save_snapshot_keeps_frontend_function_shape() -> None:
@@ -77,8 +78,8 @@ async def test_debug_assets_are_registered_before_management_panel(
     assert order == ["debug", "management"]
 
 
-def test_native_management_lifecycle_assets_are_registered() -> None:
-    """Direct imports must be available from the versioned HA asset routes."""
+def test_native_management_lifecycle_assets_are_build_inputs() -> None:
+    """Direct imports remain source inputs to the production bundle."""
     required = {
         "management-actions.js",
         "management-cache.js",
@@ -86,9 +87,5 @@ def test_native_management_lifecycle_assets_are_registered() -> None:
         "management-renderer.js",
         "management-route.js",
     }
-    assert required <= set(management_ui.MANAGEMENT_FRONTEND_MODULES)
     frontend = Path(management_ui.__file__).parent / "frontend"
-    assert all(
-        (frontend / name).is_file()
-        for name in management_ui.MANAGEMENT_FRONTEND_MODULES
-    )
+    assert all((frontend / name).is_file() for name in required)

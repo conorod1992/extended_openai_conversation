@@ -1,15 +1,24 @@
 import {defineConfig} from "vite";
 
+const productionFrontend =
+  "../custom_components/extended_openai_conversation_responses/frontend";
+
 export default defineConfig({
   build: {
-    lib: {
-      entry: "src/index.ts",
-      formats: ["es"],
-      fileName: "extended-openai-ui",
+    rollupOptions: {
+      input: {
+        management: `${productionFrontend}/management-panel.js`,
+      },
+      output: {
+        entryFileNames: "assets/[name]-[hash].js",
+        chunkFileNames: "assets/[name]-[hash].js",
+      },
     },
-    outDir: "dist",
+    outDir: `${productionFrontend}/dist`,
     emptyOutDir: true,
-    sourcemap: true,
-    minify: false,
+    manifest: "manifest.json",
+    target: "es2022",
+    minify: "oxc",
+    sourcemap: false,
   },
 });

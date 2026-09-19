@@ -406,7 +406,6 @@ def test_runtime_installer_wraps_every_copied_effective_renderer_reference() -> 
         "conversation": conversation.render_effective_prompt,
         "management": management_ui.render_effective_prompt,
         "command": management_ui.async_management_command,
-        "modules": management_ui.MANAGEMENT_FRONTEND_MODULES,
     }
     try:
         exposed_attributes._INSTALLED = False
@@ -415,7 +414,6 @@ def test_runtime_installer_wraps_every_copied_effective_renderer_reference() -> 
         assert prompt.render_effective_prompt is not saved["prompt"]
         assert conversation.render_effective_prompt is not saved["conversation"]
         assert management_ui.render_effective_prompt is not saved["management"]
-        assert "exposed-attributes-ui.js" in management_ui.MANAGEMENT_FRONTEND_MODULES
     finally:
         prompt._default_exposed_entities_context = saved["default"]
         prompt._render_template = saved["template"]
@@ -423,5 +421,4 @@ def test_runtime_installer_wraps_every_copied_effective_renderer_reference() -> 
         conversation.render_effective_prompt = saved["conversation"]
         management_ui.render_effective_prompt = saved["management"]
         management_ui.async_management_command = saved["command"]
-        management_ui.MANAGEMENT_FRONTEND_MODULES = saved["modules"]
         exposed_attributes._INSTALLED = saved["installed"]

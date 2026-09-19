@@ -8,7 +8,6 @@ from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
 import json
-from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final
 from uuid import uuid4
@@ -17,7 +16,6 @@ import voluptuous as vol
 import yaml
 
 from homeassistant.components import panel_custom, websocket_api
-from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -96,6 +94,7 @@ from .const import (
 )
 from .continuity import ConversationContinuity, async_get_continuity
 from .conversation_archive import async_get_archive
+from .frontend_assets import async_register_frontend_assets, frontend_entry_url
 from .function_dependency_integrity import (
     _TOOL_MUTATIONS,
     async_validate_request_rule_functions,
@@ -190,69 +189,6 @@ def _reset_request_rule_runtime(
     get_request_rule_runtime(hass, entry_id, subentry_id).reset(
         f"continuity:{continuity_key}"
     )
-
-
-# Complete Management asset registry, including lazy imports. Feature installers
-# must not extend this tuple; serving a module does not eagerly load it.
-MANAGEMENT_FRONTEND_MODULES: Final[tuple[str, ...]] = (
-    "management-panel.js",
-    "management-actions.js",
-    "management-cache.js",
-    "management-dialogs.js",
-    "management-renderer.js",
-    "management-route.js",
-    "agent-config-loader.js",
-    "request-rules-loader.js",
-    "agent-config-editor.js",
-    "agent-config-help.js",
-    "frontend-navigation.js",
-    "guest-mode-ui.js",
-    "guide-content.js",
-    "guide-page.js",
-    "overview-page.js",
-    "usage-chart.js",
-    "usage-format.js",
-    "request-rules-ui.js",
-    "backup-transfer-ui.js",
-    "exposed-attributes-ui.js",
-    "overview-onboarding.js",
-    "model-catalog.js",
-    "request-rules-match-test-ui.js",
-    "quiet-hours-ui.js",
-    "management-state-safety.js",
-    "management-page-drafts.js",
-    "unsaved-state.js",
-    "management-action-safety.js",
-    "management-function-dependencies.js",
-    "management-feature-status.js",
-    "management-temporary-memory.js",
-    "management-memory-settings.js",
-    "management-capabilities-ia.js",
-    "management-permission-boundaries.js",
-    "management-function-repair.js",
-    "management-navigation-search.js",
-    "management-toolbar-layout.js",
-    "management-history-pagination.js",
-    "usage-input-footprint.js",
-    "debug-management.js",
-    "management-configuration-clarity.js",
-    "management-configuration-guidance.js",
-    "management-decision-guidance.js",
-    "management-settings-polish.js",
-    "management-overview-health-clarity.js",
-    "agent-config-editor-base.js",
-    "agent-config-editor-model-v2.js",
-    "agent-config-model-presentation.js",
-    "agent-config-native-yaml.js",
-    "guide-page-impl.js",
-    "ha-llm-tools.js",
-    "management-provider-credentials.js",
-    "memory-settings-ui.js",
-    "overview-health.js",
-    "overview-page-impl.js",
-    "request-rules-ui-impl.js",
-    "voice-identity-ui.js",
-)
 
 
 def entry_and_agent(hass: HomeAssistant, entry_id: str, subentry_id: str):
@@ -2406,25 +2342,15 @@ async def async_setup_management_ui(hass: HomeAssistant) -> None:
     """Register exactly one integration-owned sidebar panel."""
     if hass.data.get(_UI_SETUP):
         return
-    hass.data[_UI_SETUP] = True
-    frontend_dir = Path(__file__).parent / "frontend"
-    await hass.http.async_register_static_paths(
-        [
-            StaticPathConfig(
-                f"/{DOMAIN}/{module_name}",
-                str(frontend_dir / module_name),
-                cache_headers=False,
-            )
-            for module_name in MANAGEMENT_FRONTEND_MODULES
-        ]
-    )
+    await async_register_frontend_assets(hass)
     websocket_api.async_register_command(hass, websocket_management)
     await panel_custom.async_register_panel(
         hass,
         webcomponent_name="extended-openai-management-panel",
         frontend_url_path=MANAGEMENT_PANEL_URL,
-        module_url=f"/{DOMAIN}/management-panel.js",
+        module_url=frontend_entry_url("management"),
         sidebar_title=MANAGEMENT_PANEL_TITLE,
         sidebar_icon="mdi:robot-outline",
         require_admin=False,
     )
+    hass.data[_UI_SETUP] = True
