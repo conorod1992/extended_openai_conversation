@@ -79,12 +79,12 @@ assert.match(diagnosticHtml, /do not estimate API cost/);
 
 const panelSource = await (await import("node:fs/promises")).readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
 const usageSource = await (await import("node:fs/promises")).readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-chart.js", import.meta.url), "utf8");
-assert.match(panelSource, /<time datetime=/);
-assert.match(panelSource, /Cached input<\/strong> is request content the provider has seen before and can reuse/);
-assert.match(panelSource, /included in the total token count/);
-assert.match(panelSource, /usually cheaper than uncached input when the provider supports discounted caching/);
-assert.match(panelSource, /formatUsageTimestamp\(run\.completed_at, undefined, this\._hass\?\.config\?\.time_zone\)/);
-assert.match(panelSource, /formatUsageNumber\(tokens\.total\)/);
+assert.match(usageSource, /<time datetime=/);
+assert.match(usageSource, /Cached input<\/strong> is request content the provider has seen before and can reuse/);
+assert.match(usageSource, /included in the total token count/);
+assert.match(usageSource, /usually cheaper than uncached input when the provider supports discounted caching/);
+assert.match(usageSource, /formatUsageTimestamp\(run\.completed_at, undefined, panel\._hass\?\.config\?\.time_zone\)/);
+assert.match(usageSource, /formatUsageNumber\(tokens\.total\)/);
 assert.match(panelSource, /Promise\.allSettled/);
 assert.match(usageSource, /_call\("usage", "requests"/);
 assert.match(usageSource, /usage-request-dialog/);

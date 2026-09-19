@@ -1,5 +1,3 @@
-const PATCHED = Symbol.for("extended-openai.usage-input-footprint");
-
 const number = (value) => Number(value || 0).toLocaleString();
 const approx = (value) => `~${number(value)}`;
 
@@ -69,35 +67,7 @@ export async function loadInputFootprint(panel) {
   }
 }
 
-function bindRetry(panel) {
-  panel.shadowRoot?.querySelector("#retry-input-footprint")?.addEventListener("click", () => {
-    void loadInputFootprint(panel);
-  });
-}
-
-export function installUsageInputFootprint(Panel) {
-  // A constructor is the production API; registry callers remain supported.
-  if (typeof Panel !== "function") {
-    const registry = Panel || globalThis.customElements;
-    if (!registry?.whenDefined) return Promise.resolve(false);
-    return registry.whenDefined("extended-openai-management-panel").then(() => installUsageInputFootprint(registry.get("extended-openai-management-panel")));
-  }
-  const constructor = Panel;
-  const prototype = constructor?.prototype;
-  if (!prototype || prototype[PATCHED]) return false;
-
-  const originalUsage = prototype._usage;
-  prototype._usage = function(...args) {
-    return `${footprintMarkup(this)}${originalUsage.apply(this, args)}`;
-  };
-
-  const originalBindActions = prototype._bindActions;
-  prototype._bindActions = function(...args) {
-    const result = originalBindActions.apply(this, args);
-    if (this._viewKey() === "usage-maintenance/usage") bindRetry(this);
-    return result;
-  };
-
-  prototype[PATCHED] = true;
-  return true;
+export function bindInputFootprint(panel) {
+  const button = panel.shadowRoot?.querySelector("#retry-input-footprint");
+  if (button) button.onclick = () => { void loadInputFootprint(panel); };
 }

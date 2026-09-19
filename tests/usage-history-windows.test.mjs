@@ -100,15 +100,15 @@ assert.deepEqual(paged.days.map((day) => day.date), pagedDays.map((day) => day.d
 assert.deepEqual(starts, ["0000-01-01","2026-09-03","2026-09-05"]);
 
 // Range changes are local renders over one loaded aggregate snapshot. Agent loads are
-// still generation-guarded, and the paging wrapper captures one agent identity before
+// still generation-guarded, and the paging helper captures one agent identity before
 // issuing any page so a mid-load selector change cannot mix agents.
 const panelSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
 const usageSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-chart.js", import.meta.url), "utf8");
 assert.match(panelSource, /const loadToken = \+\+this\._loadToken/);
 assert.match(panelSource, /if \(loadToken !== this\._loadToken\) return/);
-assert.match(usageSource, /const agent = this\._selectedAgent\?\.\(\)/);
+assert.match(usageSource, /const agent = panel\._selectedAgent\?\.\(\)/);
 assert.match(usageSource, /const identity = agent \? \{entry_id: agent\.entry_id, subentry_id: agent\.subentry_id\} : \{\}/);
-assert.match(usageSource, /this\._usageHistoryWindow = normalizeUsageWindow\(event\.target\.value\);\s*this\._render\(\)/);
+assert.match(usageSource, /panel\._usageHistoryWindow = normalizeUsageWindow\(event\.target\.value\);\s*panel\._render\(\)/);
 
 // The management-window feature must not replace or reinterpret Today / Month sensor semantics.
 const sensorSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/sensor.py", import.meta.url), "utf8");

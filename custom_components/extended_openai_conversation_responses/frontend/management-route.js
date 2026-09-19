@@ -36,51 +36,33 @@ export function routeAssetKind(view) {
 
 const featureModules = new Map();
 const featurePromises = new Map();
-// These extensions must be installed before their first data request. Editor/UI
-// assets below still load in parallel with backend work where independent.
+// These feature helpers must be available before their first data request.
+// Independent editor/UI assets still load in parallel with backend work.
 const DATA_FEATURES = new Set([
   "capabilities/quiet-hours", "capabilities/functions", "data-memory/conversations",
   "usage-maintenance/usage", "usage-maintenance/request-debug",
 ]);
 const featureLoaders = {
-  "capabilities/quiet-hours": async (panel) => {
-    const module = await import("./quiet-hours-ui.js");
-    module.installQuietHoursUI(panel.constructor);
-    return module;
-  },
-  "capabilities/functions": async (panel) => {
-    const module = await import("./management-function-repair.js");
-    module.installFunctionRepair(panel.constructor);
-    return module;
-  },
+  "capabilities/quiet-hours": () => import("./quiet-hours-ui.js"),
+  "capabilities/functions": () => import("./management-function-repair.js"),
   "data-memory/conversations": () => import("./management-history-pagination.js"),
-  "usage-maintenance/usage": async (panel) => {
+  "usage-maintenance/usage": async () => {
     const [usage, footprint] = await Promise.all([
       import("./usage-chart.js"), import("./usage-input-footprint.js"),
     ]);
-    usage.installUsageDiagnostics(panel.constructor);
-    footprint.installUsageInputFootprint(panel.constructor);
-    return {...usage, loadInputFootprint: footprint.loadInputFootprint};
+    return {...usage, ...footprint};
   },
-  "usage-maintenance/request-debug": async (panel) => {
-    const module = await import("./debug-management.js");
-    module.installManagementSection(panel.constructor);
-    return module;
-  },
-  "usage-maintenance/diagnostics": async (panel) => {
-    const module = await import("./management-provider-credentials.js");
-    module.installManagementProviderCredentials(panel.constructor);
-    return module;
-  },
+  "usage-maintenance/request-debug": () => import("./debug-management.js"),
+  "usage-maintenance/diagnostics": () => import("./management-provider-credentials.js"),
   "assistant/voice": () => import("./voice-identity-ui.js"),
   "data-memory/memory-settings": () => import("./memory-settings-ui.js"),
 };
 export function getRouteFeature(view) { return featureModules.get(view); }
 
-function featureAssetPromise(view, panel) {
+function featureAssetPromise(view) {
   if (!featureLoaders[view] || featureModules.has(view)) return null;
   if (!featurePromises.has(view)) {
-    featurePromises.set(view, featureLoaders[view](panel).then((module) => {
+    featurePromises.set(view, featureLoaders[view]().then((module) => {
       featureModules.set(view, module);
       return module;
     }).finally(() => featurePromises.delete(view)));
@@ -89,7 +71,7 @@ function featureAssetPromise(view, panel) {
 }
 
 export function routeAssetPromise(view, panel) {
-  const feature = featureAssetPromise(view, panel);
+  const feature = featureAssetPromise(view);
   const core = coreAssetPromise(view);
   return feature ? Promise.all([feature, core]) : core;
 }
@@ -228,7 +210,7 @@ export function loadRoute(panel, silent = false) {
   const view = panel._viewKey();
   const token = (panel._eocViewAssetToken || 0) + 1;
   panel._eocViewAssetToken = token;
-  const feature = featureAssetPromise(view, panel);
+  const feature = featureAssetPromise(view);
   const asset = coreAssetPromise(view);
   if (!feature && !asset) return loadRouteData(panel, silent, view, token);
   let loadData = () => loadRouteData(panel, silent, view, token);

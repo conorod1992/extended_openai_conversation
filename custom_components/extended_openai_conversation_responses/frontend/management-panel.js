@@ -26,7 +26,7 @@ import {NAVIGATION, pageMetadata, routeFromPath, routePath, searchSettings, shou
 import {prepareMemoryBrowser, finishMemoryBrowserLoad, renderPersistentMemories, decorateConversations, decorateGuestPolicy, filterPersistentMemories, bindMemoryBrowser, formatManagementTimestamp, freshGuestPolicyDraft} from "./guest-mode-ui.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview} from "./overview-page.js";
-import {formatUsageNumber, formatUsageTimestamp, tokenBreakdown} from "./usage-format.js";
+import {formatUsageNumber, tokenBreakdown} from "./usage-format.js";
 import {bindRequestRules, renderRequestRules, requestRulesDialog} from "./request-rules-ui.js";
 import {isAgentMutation, syncAgentPicker} from "./management-action-safety.js";
 import {REQUEST_RULE_CACHE_KEY, TOOL_MUTATIONS} from "./management-function-dependencies.js";
@@ -51,6 +51,8 @@ const NAVIGATION_MARK_PREFIX = "extended-openai:navigation";
 const LOAD_MARK_PREFIX = "extended-openai:load-section";
 const RENDER_MARK_PREFIX = "extended-openai:render";
 const MAX_MEASURE_ENTRIES = 100;
+// Performance entries are global to the document, not to a panel instance.
+let performanceSequence = 0;
 const BUSY_STYLE = `
   [data-eoc-main].eoc-loading-in-background,
   main.eoc-loading-in-background {
@@ -84,30 +86,40 @@ function performanceApi() {
 function startMeasure(panel, prefix) {
   const api = performanceApi();
   if (!api) return null;
-  panel._eocPerformanceSequence = (panel._eocPerformanceSequence || 0) + 1;
-  const id = `${prefix}:${panel._eocPerformanceSequence}`;
+  const id = `${prefix}:${++performanceSequence}`;
   const start = `${id}:start`;
-  api.mark(start);
-  return {api, id, start, panel};
+  try {
+    api.mark(start);
+    return {api, id, start, panel};
+  } catch (_err) {
+    return null;
+  }
 }
 
 function finishMeasure(measure, detail = null) {
   if (!measure) return;
   const {api, id, start, panel} = measure;
   const end = `${id}:end`;
-  api.mark(end);
   try {
-    api.measure(id, {start, end, detail});
+    api.mark(end);
+    try {
+      api.measure(id, {start, end, detail});
+    } catch (_err) {
+      api.measure(id, start, end);
+    }
+    panel._eocPerformanceMeasureIds ||= [];
+    panel._eocPerformanceMeasureIds.push(id);
+    while (panel._eocPerformanceMeasureIds.length > MAX_MEASURE_ENTRIES) {
+      api.clearMeasures?.(panel._eocPerformanceMeasureIds.shift());
+    }
   } catch (_err) {
-    api.measure(id, start, end);
+    // Optional profiling must never turn a successful load into a UI error or
+    // replace the original failure, even if the host cleared an active mark.
+  } finally {
+    for (const name of [start, end]) {
+      try { api.clearMarks?.(name); } catch (_err) { /* Best-effort cleanup. */ }
+    }
   }
-  panel._eocPerformanceMeasureIds ||= [];
-  panel._eocPerformanceMeasureIds.push(id);
-  while (panel._eocPerformanceMeasureIds.length > MAX_MEASURE_ENTRIES) {
-    api.clearMeasures?.(panel._eocPerformanceMeasureIds.shift());
-  }
-  api.clearMarks(start);
-  api.clearMarks(end);
 }
 
 function trackAsync(panel, prefix, operation, navigation = false) {
@@ -210,9 +222,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this[name] = value;
     }
     bindStateSafety(this);
+    getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
   }
 
   disconnectedCallback() {
+    getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     cleanupStateSafety(this);
   }
 
@@ -337,6 +351,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _call(section, action, extra = {}) {
+    const usage = getRouteFeature("usage-maintenance/usage");
+    if (usage && section === "usage" && action === "daily" && !extra.start_date && !extra.end_date) {
+      return usage.loadUsageDaily(this, extra);
+    }
     const guidanceCall = section === "configuration"
       && ["get", "validate", "update", "save"].includes(action);
     const guidanceAgentId = this._agentId;
@@ -734,6 +752,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _render(...args) {
+    getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     const view = this._viewKey?.() || null;
     const busy = Boolean(this._busy);
     const measure = startMeasure(this, RENDER_MARK_PREFIX);
@@ -747,15 +766,20 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         && main.childNodes.length
         && !main.querySelector?.(".loading")
       );
+      let result;
       if (preserve) {
         ensureBusyStyle(root);
         main.setAttribute("aria-busy", "true");
         main.inert = true;
         main.classList.add("eoc-loading-in-background");
-        return undefined;
+      } else {
+        result = this._renderContent(...args);
+        getRouteFeature("data-memory/conversations")?.decorateConversationPager(this);
       }
-      const result = this._renderContent(...args);
-      getRouteFeature("data-memory/conversations")?.decorateConversationPager(this);
+      getRouteFeature("capabilities/functions")?.bindFunctionRepair(this);
+      getRouteFeature("usage-maintenance/request-debug")?.bindManagementDebug(this);
+      getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
+      if (preserve) return undefined;
       return result;
     } finally {
       const main = this.shadowRoot?.querySelector?.("[data-eoc-main]")
@@ -874,7 +898,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       return content;
     }
     if (view === "capabilities/request-rules") return renderRequestRules(this);
-    if (view === "capabilities/functions") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${(getConfigurationEditor()?.renderTools(this) || this._loading())}`;
+    if (view === "capabilities/functions") {
+      const repair = getRouteFeature(view);
+      const issue = repair?.repairIssue(this);
+      if (issue && repair.repairMetadata(this)?.isolatable === false) return repair.renderFallbackRepair(this, issue);
+      const content = `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${(getConfigurationEditor()?.renderTools(this) || this._loading())}`;
+      return issue ? repair.decorateFunctionsContent(this, content) : content;
+    }
+    if (view === "capabilities/quiet-hours") return getRouteFeature(view)?.renderQuietHours(this) || this._loading();
+    if (view === "usage-maintenance/request-debug") return getRouteFeature(view)?.renderManagementDebug(this) || this._loading();
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
     if (view === "data-memory/knowledge") return `${knowledgeAvailabilityMarkup(this)}<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
@@ -915,33 +947,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _usage() {
-    const result = this._result || {};
-    const days = result.days?.days || [];
-    const chartDays = days.slice(-31);
-    const max = Math.max(1, ...days.map((day) => day.total_tokens));
-    const today = result.summary?.today || {};
-    const month = result.summary?.month || {};
-    const lifetime = result.summary?.lifetime || {};
-    const latest = result.summary?.latest || null;
-    const cachedMeta = (value) => `${formatUsageNumber(value || 0)} cached input`;
-    const loadWarnings = (result.load_errors || []).map((issue) => `<div class="notice"><strong>${this._e(issue.label)} unavailable</strong><p>${this._e(issue.message)} Other usage information is still shown where available.</p></div>`).join("");
-    const dayLabel = (day) => {
-      const value = String(day?.date || "");
-      const date = new Date(`${value}T12:00:00`);
-      if (!value || Number.isNaN(date.getTime())) return value;
-      try { return new Intl.DateTimeFormat(undefined, {month:"short", day:"numeric", timeZone:this._hass?.config?.time_zone}).format(date); }
-      catch (_) { return value; }
-    };
-    const chartAxis = chartDays.length ? `<div class="chart-axis" aria-hidden="true"><span>${this._e(dayLabel(chartDays[0]))}</span><span>${this._e(dayLabel(chartDays[Math.floor((chartDays.length - 1) / 2)]))}</span><span>${this._e(dayLabel(chartDays[chartDays.length - 1]))}</span></div>` : "";
-    const recentRows = (result.runs?.runs || []).map((run) => {
-      const tokens = tokenBreakdown(run.total_tokens,run.cached_input_tokens);
-      const completed = formatUsageTimestamp(run.completed_at, undefined, this._hass?.config?.time_zone);
-      return `<tr><td><time datetime="${this._e(completed.datetime)}" title="${this._e(completed.datetime)}">${this._e(completed.display)}</time></td><td>${formatUsageNumber(tokens.total)}</td><td>${formatUsageNumber(tokens.cached)}</td><td>${formatUsageNumber(tokens.uncached)}</td><td>${formatUsageNumber(run.request_count)}</td><td>${this._e(`${formatUsageNumber(run.duration_ms)} ms`)}</td><td>${this._e(run.successful ? "Success" : run.error_type || "Failed")}</td></tr>`;
-    }).join("");
-    return `${loadWarnings}<section class="metric-grid compact">${this._metric("Today",today.total_tokens || 0,cachedMeta(today.cached_input_tokens))}${this._metric("This month",month.total_tokens || 0,cachedMeta(month.cached_input_tokens))}${this._metric("Lifetime",lifetime.total_tokens || 0,cachedMeta(lifetime.cached_input_tokens))}${this._metric("Latest response",latest?.total_tokens ?? "—",latest ? cachedMeta(latest.cached_input_tokens) : "")}</section>
-      <section class="content-card"><div class="chart-heading"><h2>Tokens by day</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" aria-label="Daily token usage; cached input tokens are included within each day's total">${chartDays.map((day) => this._usageBar(day,max)).join("") || this._empty("No completed runs yet.")}</div>${chartAxis}<p class="chart-note"><strong>Cached input</strong> is request content the provider has seen before and can reuse. It is included in the total token count, but cached input is usually cheaper than uncached input when the provider supports discounted caching.</p></section>
-      <section class="content-card"><h2>Recent runs</h2><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody>${recentRows}</tbody></table></div></section>
-      ${this._data?.is_admin ? `<section class="content-card"><h2>Usage detail maintenance</h2><p>Retention is available in the local Retention & maintenance subsection.</p><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Daily, monthly, and lifetime totals are never removed by detail pruning.</small></section>` : ""}`;
+    const usage = getRouteFeature("usage-maintenance/usage");
+    return usage ? `${usage.footprintMarkup(this)}${usage.renderUsagePage(this, this._result || {})}` : this._loading();
   }
 
   _conversations() {
@@ -1101,7 +1108,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       <dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope">${this._scopeOptions("memories", true, true)}</select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>
       <dialog id="confirm-dialog" class="editor-dialog confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-header"><h2 id="confirm-title">Confirm</h2></div><div class="dialog-body"><p id="confirm-message"></p></div><div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">Cancel</button><button type="button" class="danger" id="confirm-accept">Confirm</button></div></dialog>
       ${this._viewKey() === "capabilities/request-rules" ? requestRulesDialog(this) : ""}${routeAssetKind(this._viewKey()) === "agent-config" ? getConfigurationEditor()?.configurationDialogs(this) || "" : ""}${this._viewKey() === "usage-maintenance/backup-restore" ? getConfigurationEditor()?.restoreDialog(this) || "" : ""}`;
-    return `${content}${temporaryDialog(this)}`;
+    const usageDialog = this._viewKey() === "usage-maintenance/usage"
+      ? getRouteFeature("usage-maintenance/usage")?.requestDetailsDialog() || "" : "";
+    return `${content}${temporaryDialog(this)}${usageDialog}`;
   }
 
   _bindActions() {
@@ -1148,7 +1157,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     bindTemporaryMemory(this);
     bindMemorySettings(this);
     bindCapabilities(this);
-    if (this._viewKey() === "assistant/voice") getRouteFeature("assistant/voice")?.bindVoiceIdentity(this);
+    const view = this._viewKey();
+    if (view === "assistant/voice") getRouteFeature(view)?.bindVoiceIdentity(this);
+    if (view === "capabilities/quiet-hours") getRouteFeature(view)?.bindQuietHours(this);
+    if (view === "usage-maintenance/usage") {
+      getRouteFeature(view)?.bindUsageDiagnostics(this);
+      getRouteFeature(view)?.bindInputFootprint(this);
+    }
   }
 
   _activate(element, callback) {
