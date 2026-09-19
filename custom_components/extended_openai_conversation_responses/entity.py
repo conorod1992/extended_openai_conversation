@@ -346,7 +346,7 @@ def _convert_content_to_responses_param(
                     "type": "function_call_output",
                     "call_id": content.tool_call_id,
                     "output": orjson.dumps(
-                        content.tool_result, option=orjson.OPT_SORT_KEYS
+                        tool_result_data(content), option=orjson.OPT_SORT_KEYS
                     ).decode(),
                 }
             )
