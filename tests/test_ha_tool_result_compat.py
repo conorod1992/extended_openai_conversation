@@ -106,6 +106,7 @@ def test_production_tool_result_construction_stays_centralized() -> None:
         / "custom_components"
         / "extended_openai_conversation_responses"
     )
+    # Parse syntax rather than grep text so comments/docstrings cannot create false positives.
     offenders: list[str] = []
     for path in root.rglob("*.py"):
         if path.name == "ha_tool_result_compat.py":
