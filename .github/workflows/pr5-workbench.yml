@@ -53,8 +53,7 @@ jobs:
           PY
       - name: Check production and format changed Python
         run: |
-          git diff --name-only --diff-filter=ACM -- '*.py' > /tmp/pr5-python-paths
-          git ls-files --others --exclude-standard '*.py' >> /tmp/pr5-python-paths
+          git diff 4176cbb8011d7ce375750dd2fb0a321abb53a6f5 --name-only --diff-filter=ACM -- custom_components tests tests_real_ha | grep '\.py$' > /tmp/pr5-python-paths
           xargs -r python -m ruff check --select I --fix < /tmp/pr5-python-paths
           xargs -r python -m ruff format < /tmp/pr5-python-paths
           python -m ruff check custom_components
@@ -84,8 +83,10 @@ jobs:
         run: python -m mypy custom_components/extended_openai_conversation_responses
       - name: Genuine Home Assistant acceptance
         if: always()
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
-          python -m pytest -c pytest-real-ha.ini tests_real_ha -q --tb=short > /tmp/pr5-real-ha.log 2>&1; result=$?
+          python -m pytest tests_real_ha/ --asyncio-mode=auto --timeout=60 -q --tb=short > /tmp/pr5-real-ha.log 2>&1; result=$?
           cat /tmp/pr5-real-ha.log
           exit "$result"
         shell: bash {0}
