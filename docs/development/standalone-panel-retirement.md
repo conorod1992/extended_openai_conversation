@@ -4,6 +4,9 @@ Audited `develop` at `7232aee041ebda074809c39ebb47132e794c4404` for the
 second post-PR5 simplification PR. This is a **partial retirement**: Knowledge
 can be removed; Memory needs a separate parity decision before removal.
 
+The Temporary Memory row below was updated by the subsequent direct-owner
+cleanup. The original panel-retirement scope and parity decisions are unchanged.
+
 ## Production reachability
 
 - `__init__.py:async_setup` registers Debug and unified Management UI only.
@@ -38,7 +41,7 @@ can be removed; Memory needs a separate parity decision before removal.
 | Personal/shared/legacy scopes | `_selected_scope`, `_memory_scope`, scope catalog; admin-only legacy reassignment | Retained; authorization differs deliberately |
 | Persistent metadata edits and scope moves | Unified editor sends content/category only; legacy supports importance, subject, key, valid-from, clear-fields and moving ownership | **Gap: retain Memory** |
 | Revision and confirmation semantics | Legacy serializes revisions and passes `expected_revision` and `refresh_confirmation=False`; unified list/editor/update do not | **Gap: retain Memory** |
-| Temporary list/update/delete | `temporary_memory_ownership` wraps unified actions using validated owner scopes | Retained; unified adds editing |
+| Temporary list/update/delete | Unified Management calls `TemporaryMemory.async_list_owned`, `async_update_owned` and `async_delete_owned` with validated owner scopes | Retained; unified adds editing |
 | Temporary bulk clear | Legacy confirms and deletes the authenticated user's records in batches; no unified `temporary_clear` action/control | **Gap: retain Memory** |
 | Agent testing | Unified diagnostics `test_agent`, plus native options flow | Parity; current admin restriction retained |
 | Knowledge list/get/create/update/delete | Unified `knowledge` section calls the same core library | Parity |
@@ -91,3 +94,24 @@ migration and UI behavior. Keep all other Memory tests, including the core stale
 revision and blank-update regressions in `test_memory_management_parity.py`.
 Core stores, model tools, backups, Guest Mode, runtime, services and diagnostics
 are not changed.
+
+## Temporary Memory direct-owner follow-up
+
+`temporary_memory.py` now owns the retained Personal/Shared owner contract,
+startup migration and overflow recovery, owned Management operations, backup
+normalization, read-only snapshots and coalesced expiry persistence directly.
+Continuity identifiers are metadata, never authorization for retained records.
+Management listing returns all active records for the selected owner; model
+injection retains its separate record and character limits.
+
+The class also owns its transactional save boundary: failed writes roll back,
+caller cancellation is deferred until the Store write settles, and failed
+initialization remains retryable. Other managers and unrelated maintenance
+installers are outside this change. No storage format or panel-parity decision
+changes, and no runtime installer or imported-alias repair is needed for
+Temporary Memory.
+
+`test_temporary_memory_direct_ownership.py` covers structural ownership, startup
+failure recovery, cancelled/failed persistence and concurrent owner contexts.
+The genuine-HA unload/reload regression also verifies stable method identities
+and foreign-owner exclusion after reload.
