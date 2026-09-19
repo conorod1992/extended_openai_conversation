@@ -9,7 +9,9 @@ from typing import Any
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import persistence_hardening as ph
+from custom_components.extended_openai_conversation_responses import (
+    persistence_hardening as ph,
+)
 
 
 class _DummyManager:
@@ -63,9 +65,7 @@ def test_repair_private_store_mode_changes_only_insecure_existing_file(
 
     fake_os.stat = lambda _path: SimpleNamespace(st_mode=0o644)
     ph._repair_private_store_mode("/config/.storage/insecure")
-    assert chmod_calls == [
-        ("/config/.storage/insecure", ph._PRIVATE_STORE_MODE)
-    ]
+    assert chmod_calls == [("/config/.storage/insecure", ph._PRIVATE_STORE_MODE)]
 
 
 def test_repair_private_store_mode_ignores_missing_file(
@@ -84,7 +84,9 @@ def test_repair_private_store_mode_ignores_missing_file(
 
 
 @pytest.mark.asyncio
-async def test_manager_guard_resets_failed_initialization_and_remains_retryable() -> None:
+async def test_manager_guard_resets_failed_initialization_and_remains_retryable() -> (
+    None
+):
     _install_dummy_guard()
     manager = _DummyManager()
     manager.initialize_error = RuntimeError("load failed")
@@ -102,7 +104,9 @@ async def test_manager_guard_resets_failed_initialization_and_remains_retryable(
 
 
 @pytest.mark.asyncio
-async def test_manager_guard_rolls_back_when_underlying_save_task_is_cancelled() -> None:
+async def test_manager_guard_rolls_back_when_underlying_save_task_is_cancelled() -> (
+    None
+):
     _install_dummy_guard()
     manager = _DummyManager()
     await manager.async_initialize()
@@ -141,7 +145,9 @@ async def test_manager_guard_caller_cancellation_wins_over_later_save_failure() 
 
 
 @pytest.mark.asyncio
-async def test_manager_guard_defers_cancellation_until_successful_save_commits() -> None:
+async def test_manager_guard_defers_cancellation_until_successful_save_commits() -> (
+    None
+):
     _install_dummy_guard()
     manager = _DummyManager()
     await manager.async_initialize()
@@ -202,23 +208,9 @@ def test_reset_knowledge_clears_indexes_and_committed_state() -> None:
     assert not hasattr(manager, ph._COMMITTED_STATE)
 
 
-def test_reset_temporary_memory_clears_counter_and_committed_state() -> None:
-    manager = SimpleNamespace(
-        _records={"record": object()},
-        expired_pruned=7,
-        _initialized=True,
-    )
-    setattr(manager, ph._COMMITTED_STATE, {"records": {"record": object()}})
-
-    ph._reset_temporary_memory(manager)
-
-    assert manager._records == {}
-    assert manager.expired_pruned == 0
-    assert manager._initialized is False
-    assert not hasattr(manager, ph._COMMITTED_STATE)
-
-
-def test_reset_request_rules_restores_defaults_with_or_without_committed_state() -> None:
+def test_reset_request_rules_restores_defaults_with_or_without_committed_state() -> (
+    None
+):
     compile_calls: list[int] = []
     manager = SimpleNamespace(
         _defaults={"custom": True},

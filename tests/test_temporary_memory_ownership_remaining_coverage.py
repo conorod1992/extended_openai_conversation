@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    temporary_memory as ownership,
     temporary_memory as temporary_module,
-    temporary_memory_ownership as ownership,
 )
 from custom_components.extended_openai_conversation_responses.scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
-    MAX_ACTIVE_RECORDS,
     MAX_DELETE_RECORDS,
     TemporaryMemory,
     TemporaryMemoryRecord,
@@ -43,210 +44,6 @@ def _record(
         created_at=(now - timedelta(minutes=1)).isoformat(),
         updated_at=(now + updated_delta).isoformat(),
         owner_scope_id=owner,
-    )
-
-
-def _register_manager_mutations(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure direct installer mutations are restored after each test."""
-    for name in (
-        "async_initialize",
-        "async_active",
-        "async_add",
-        "async_update",
-        "async_delete",
-        "async_active_snapshot",
-        "async_list",
-        "async_list_all",
-        "stats",
-        "validate_backup_data",
-        "async_replace_backup",
-    ):
-        monkeypatch.setattr(TemporaryMemory, name, getattr(TemporaryMemory, name))
-    monkeypatch.setattr(
-        temporary_module, "_matches_owner", temporary_module._matches_owner
-    )
-    monkeypatch.setattr(
-        temporary_module,
-        "_clean_owner_scope_id",
-        temporary_module._clean_owner_scope_id,
-    )
-
-
-@pytest.mark.asyncio
-async def test_manager_contract_enforces_owner_and_owned_helpers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Installed manager helpers fail closed and preserve the resolved owner."""
-    _register_manager_mutations(monkeypatch)
-
-    update_calls: list[tuple[Any, ...]] = []
-    delete_calls: list[tuple[Any, ...]] = []
-    replacement_batches: list[list[TemporaryMemoryRecord]] = []
-
-    async def fake_update(
-        _manager: Any,
-        scope_id: str,
-        memory_id: str,
-        content: str | None,
-        expires_at: str | None,
-        category: str | None,
-        *,
-        owner_scope_id: str | None = None,
-    ) -> TemporaryMemoryRecord:
-        update_calls.append(
-            (scope_id, memory_id, content, expires_at, category, owner_scope_id)
-        )
-        return _record(memory_id, owner=owner_scope_id, scope_id=scope_id)
-
-    async def fake_delete(
-        _manager: Any,
-        scope_id: str,
-        memory_ids: list[str],
-        *,
-        owner_scope_id: str | None = None,
-    ) -> int:
-        delete_calls.append((scope_id, list(memory_ids), owner_scope_id))
-        return len(memory_ids)
-
-    def fake_validate_backup(_payload: Any) -> list[TemporaryMemoryRecord]:
-        return [
-            _record("valid", owner="user:alice"),
-            _record("legacy", owner=None, scope_id=SHARED_HOUSEHOLD_SCOPE_ID),
-            _record("invalid", owner="device:kitchen"),
-        ]
-
-    async def fake_replace_backup(
-        _manager: Any, records: list[TemporaryMemoryRecord]
-    ) -> None:
-        replacement_batches.append(list(records))
-
-    monkeypatch.setattr(TemporaryMemory, "async_update", fake_update)
-    monkeypatch.setattr(TemporaryMemory, "async_delete", fake_delete)
-    monkeypatch.setattr(
-        TemporaryMemory, "validate_backup_data", staticmethod(fake_validate_backup)
-    )
-    monkeypatch.setattr(TemporaryMemory, "async_replace_backup", fake_replace_backup)
-
-    ownership._install_manager_contract()
-
-    fake_manager = object.__new__(TemporaryMemory)
-    fake_manager._records = {
-        "alice": _record("alice", owner="user:alice"),
-        "shared": _record("shared", owner=SHARED_HOUSEHOLD_SCOPE_ID),
-        "expired": _record(
-            "expired", owner="user:alice", expires_delta=timedelta(hours=-1)
-        ),
-        "invalid": _record("invalid", owner="device:kitchen"),
-        "bad_expiry": TemporaryMemoryRecord(
-            memory_id="bad_expiry",
-            scope_id="conversation:test",
-            content="bad",
-            category="general",
-            source="automatic",
-            expires_at="not-a-date",
-            created_at=datetime.now(UTC).isoformat(),
-            updated_at=datetime.now(UTC).isoformat(),
-            owner_scope_id="user:alice",
-        ),
-    }
-    fake_manager.invalid_owners_pruned = 2
-    fake_manager.overflow_pruned = 3
-
-    assert await TemporaryMemory.async_active_snapshot(fake_manager, "scope") == []
-
-    updated = await TemporaryMemory.async_update_owned(
-        fake_manager, "user:alice", "m1", "new", None, "note"
-    )
-    assert updated.owner_scope_id == "user:alice"
-    assert update_calls == [("user:alice", "m1", "new", None, "note", "user:alice")]
-
-    with pytest.raises(ValueError, match="memory_ids must contain"):
-        await TemporaryMemory.async_delete_owned(fake_manager, "user:alice", [])
-    with pytest.raises(ValueError, match="memory_ids must contain"):
-        await TemporaryMemory.async_delete_owned(
-            fake_manager,
-            "user:alice",
-            [str(index) for index in range(MAX_DELETE_RECORDS + 1)],
-        )
-    assert (
-        await TemporaryMemory.async_delete_owned(fake_manager, "user:alice", ["m1"])
-        == 1
-    )
-    assert delete_calls == [("user:alice", ["m1"], "user:alice")]
-
-    assert TemporaryMemory.owner_counts(fake_manager) == {
-        "user:alice": 1,
-        SHARED_HOUSEHOLD_SCOPE_ID: 1,
-    }
-
-    validated = TemporaryMemory.validate_backup_data({"ignored": True})
-    assert [record.memory_id for record in validated] == ["valid", "legacy"]
-    assert validated[1].owner_scope_id == SHARED_HOUSEHOLD_SCOPE_ID
-
-    oversized = [
-        _record(
-            f"m{index:03d}",
-            owner="user:alice",
-            updated_delta=timedelta(seconds=index),
-        )
-        for index in range(MAX_ACTIVE_RECORDS + 2)
-    ]
-    oversized.append(_record("drop-invalid", owner="device:kitchen"))
-    await TemporaryMemory.async_replace_backup(fake_manager, oversized)
-    assert len(replacement_batches) == 1
-    assert len(replacement_batches[0]) == MAX_ACTIVE_RECORDS
-    assert replacement_batches[0][0].memory_id == f"m{MAX_ACTIVE_RECORDS + 1:03d}"
-    assert all(
-        record.owner_scope_id == "user:alice" for record in replacement_batches[0]
-    )
-
-
-@pytest.mark.asyncio
-async def test_snapshot_contract_fails_closed_and_forwards_owner(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Cold snapshot reads require the same owner identity as live reads."""
-    from custom_components.extended_openai_conversation_responses import management_ui
-
-    calls: list[str | None] = []
-
-    async def original(
-        _hass: Any,
-        _entry_id: str,
-        _subentry_id: str,
-        _scope_id: str,
-        owner_scope_id: str | None = None,
-    ) -> list[TemporaryMemoryRecord]:
-        calls.append(owner_scope_id)
-        return [_record("one", owner=owner_scope_id)]
-
-    monkeypatch.setattr(
-        temporary_module, "async_read_temporary_memory_snapshot", original
-    )
-    monkeypatch.setattr(management_ui, "async_read_temporary_memory_snapshot", original)
-
-    ownership._install_snapshot_contract()
-
-    assert (
-        await temporary_module.async_read_temporary_memory_snapshot(
-            object(), "entry", "sub", "scope"
-        )
-        == []
-    )
-    assert calls == []
-
-    token = ownership._ACTIVE_OWNER_SCOPE_ID.set("user:alice")
-    try:
-        records = await temporary_module.async_read_temporary_memory_snapshot(
-            object(), "entry", "sub", "scope"
-        )
-    finally:
-        ownership._ACTIVE_OWNER_SCOPE_ID.reset(token)
-
-    assert [record.memory_id for record in records] == ["one"]
-    assert calls == ["user:alice"]
-    assert management_ui.async_read_temporary_memory_snapshot is (
-        temporary_module.async_read_temporary_memory_snapshot
     )
 
 
@@ -482,17 +279,76 @@ async def test_management_contract_validates_and_enriches_owner_operations(
     assert unchanged == {"scopes": "not-a-list"}
 
 
-def test_public_installer_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Repeated startup installation never stacks ownership wrappers."""
-    monkeypatch.setattr(ownership, "_INSTALLED", True)
-    for name in (
-        "_install_manager_contract",
-        "_install_snapshot_contract",
-    ):
-        monkeypatch.setattr(
-            ownership,
-            name,
-            lambda: pytest.fail("installer should not run when already installed"),
+async def test_direct_manager_backup_and_owned_helpers() -> None:
+    store = SimpleNamespace(
+        async_load=AsyncMock(return_value=None), async_save=AsyncMock()
+    )
+    memory = TemporaryMemory(store)
+    await memory.async_initialize()
+    records = [
+        _record("valid", owner="user:alice"),
+        _record("legacy", owner=None, scope_id=SHARED_HOUSEHOLD_SCOPE_ID),
+        _record("invalid", owner="device:kitchen"),
+    ]
+    validated = TemporaryMemory.validate_backup_data(
+        {"records": [asdict(r) for r in records]}
+    )
+    assert [r.memory_id for r in validated] == ["valid", "legacy"]
+    assert validated[1].owner_scope_id == SHARED_HOUSEHOLD_SCOPE_ID
+    await memory.async_replace_backup(records)
+    updated = await memory.async_update_owned(
+        "user:alice", "valid", "new", None, "note"
+    )
+    assert updated.owner_scope_id == "user:alice"
+    assert updated.scope_id == "conversation:test"
+    assert memory.owner_counts() == {"user:alice": 1, SHARED_HOUSEHOLD_SCOPE_ID: 1}
+    with pytest.raises(ValueError, match="memory_ids must contain"):
+        await memory.async_delete_owned("user:alice", [])
+    with pytest.raises(ValueError, match="memory_ids must contain"):
+        await memory.async_delete_owned(
+            "user:alice", [str(i) for i in range(MAX_DELETE_RECORDS + 1)]
         )
+    assert await memory.async_delete_owned("user:alice", ["legacy"]) == 0
+    assert await memory.async_delete_owned("user:alice", ["valid"]) == 1
 
-    ownership.install_temporary_memory_ownership()
+
+async def test_snapshot_contract_fails_closed_before_io_and_uses_bound_owner(
+    monkeypatch,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import management_ui
+
+    store = SimpleNamespace(
+        async_load=AsyncMock(
+            return_value={
+                "records": [
+                    asdict(_record("one", owner="user:alice")),
+                    asdict(_record("foreign", owner="user:bob")),
+                ]
+            }
+        )
+    )
+
+    def factory(*_):
+        return store
+
+    monkeypatch.setattr(temporary_module, "_temporary_memory_store", factory)
+    assert (
+        await temporary_module.async_read_temporary_memory_snapshot(
+            object(), "entry", "sub", "scope"
+        )
+        == []
+    )
+    store.async_load.assert_not_awaited()
+    token = temporary_module._ACTIVE_OWNER_SCOPE_ID.set("user:alice")
+    try:
+        records = await management_ui.async_read_temporary_memory_snapshot(
+            object(), "entry", "sub", "different-continuity"
+        )
+    finally:
+        temporary_module._ACTIVE_OWNER_SCOPE_ID.reset(token)
+    assert [r.memory_id for r in records] == ["one"]
+    store.async_load.assert_awaited_once()
+    assert (
+        management_ui.async_read_temporary_memory_snapshot
+        is temporary_module.async_read_temporary_memory_snapshot
+    )

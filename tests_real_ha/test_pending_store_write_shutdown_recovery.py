@@ -71,9 +71,7 @@ async def _new_manager(hass: Any):
         _temporary_memory_store,
     )
 
-    manager = TemporaryMemory(
-        _temporary_memory_store(hass, _ENTRY_ID, _SUBENTRY_ID)
-    )
+    manager = TemporaryMemory(_temporary_memory_store(hass, _ENTRY_ID, _SUBENTRY_ID))
     await manager.async_initialize()
     return manager
 
@@ -91,9 +89,7 @@ async def _interrupt_phase(hass: Any, config_dir: Path, mode: str) -> None:
         "acceptance",
         owner_scope_id=_SCOPE_ID,
     )
-    assert _contents(await manager.async_active(_SCOPE_ID, _SCOPE_ID)) == [
-        _OLD_MARKER
-    ]
+    assert _contents(await manager.async_active(_SCOPE_ID, _SCOPE_ID)) == [_OLD_MARKER]
     assert _raw_record_contents(config_dir) == [_OLD_MARKER]
 
     store = manager._store
@@ -101,7 +97,7 @@ async def _interrupt_phase(hass: Any, config_dir: Path, mode: str) -> None:
     save_reached = asyncio.Event()
     save_cancelled = asyncio.Event()
 
-    async def gated_save(data: dict[str, Any]) -> None:
+    async def interrupted_write(data: dict[str, Any]) -> None:
         # Exercise both valid atomic outcomes around the real Store commit point.
         if mode == "after_commit":
             await real_save(data)
@@ -111,6 +107,15 @@ async def _interrupt_phase(hass: Any, config_dir: Path, mode: str) -> None:
         except asyncio.CancelledError:
             save_cancelled.set()
             raise
+
+    async def gated_save(data: dict[str, Any]) -> None:
+        # The transactional owner shields Store writes from caller cancellation.
+        # Give this deliberately non-terminating I/O double a real HA shutdown
+        # owner so the write itself reaches a known cancelled outcome at stop.
+        # An untracked infinite gate would never settle, unlike a real Store write.
+        await hass.async_create_background_task(
+            interrupted_write(data), "acceptance_pending_store_write"
+        )
 
     with patch.object(store, "async_save", gated_save):
         mutation_task = hass.async_create_task(
@@ -128,13 +133,23 @@ async def _interrupt_phase(hass: Any, config_dir: Path, mode: str) -> None:
         # async_add() still owns the manager lock while it awaits Store.async_save(),
         # so inspect the already-mutated private record set here rather than trying
         # to re-enter the lock through a public snapshot method.
-        assert _NEW_MARKER in {
-            record.content for record in manager._records.values()
-        }
+        assert _NEW_MARKER in {record.content for record in manager._records.values()}
+        # A cancelled caller must not tear down an in-flight Store write. The
+        # manager is now transactional even before integration installers run.
+        mutation_task.cancel()
+        await asyncio.sleep(0)
+        assert not mutation_task.done()
+        assert not save_cancelled.is_set()
+
         async with asyncio.timeout(20):
             await hass.async_stop()
+        # Allow the shielded save and its mutation to observe HA's cancellation.
+        async with asyncio.timeout(5):
+            await asyncio.gather(mutation_task, return_exceptions=True)
 
-        assert save_cancelled.is_set(), "pending Store save did not receive cancellation"
+        assert save_cancelled.is_set(), (
+            "pending Store save did not receive cancellation"
+        )
         assert mutation_task.done(), "Store-backed mutation survived HA shutdown"
         assert mutation_task.cancelled(), "interrupted Store mutation was not cancelled"
 
@@ -164,13 +179,19 @@ async def _recover_phase(hass: Any, config_dir: Path, mode: str) -> None:
         owner_scope_id=_SCOPE_ID,
     )
     expected_after_write = sorted([*expected, _RECOVERY_MARKER])
-    assert _contents(await manager.async_active(_SCOPE_ID, _SCOPE_ID)) == expected_after_write
+    assert (
+        _contents(await manager.async_active(_SCOPE_ID, _SCOPE_ID))
+        == expected_after_write
+    )
     assert _raw_record_contents(config_dir) == expected_after_write
 
     # Re-open through a brand-new Store/manager instance to prove the rewritten
     # canonical payload is independently loadable rather than merely cached in RAM.
     reloaded = await _new_manager(hass)
-    assert _contents(await reloaded.async_active(_SCOPE_ID, _SCOPE_ID)) == expected_after_write
+    assert (
+        _contents(await reloaded.async_active(_SCOPE_ID, _SCOPE_ID))
+        == expected_after_write
+    )
 
 
 async def _child_main() -> None:

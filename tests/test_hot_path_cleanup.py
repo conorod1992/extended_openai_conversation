@@ -8,8 +8,6 @@ from datetime import timedelta
 import time
 from types import SimpleNamespace
 
-from homeassistant.util import dt as dt_util
-
 from custom_components.extended_openai_conversation_responses import (
     debug,
     local_intents,
@@ -25,10 +23,7 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
     TemporaryMemory,
     TemporaryMemoryRecord,
 )
-from custom_components.extended_openai_conversation_responses.temporary_memory_performance import (
-    _PRUNE_SAVE_TASK,
-    install_temporary_memory_read_fast_path,
-)
+from homeassistant.util import dt as dt_util
 
 
 class BlockingStorage:
@@ -50,7 +45,7 @@ class BlockingStorage:
 
 async def test_temporary_memory_expiry_save_runs_after_active_read_returns() -> None:
     """Expired facts disappear immediately while their Store write runs later."""
-    install_temporary_memory_read_fast_path()
+
     store = BlockingStorage()
     manager = TemporaryMemory(store)
     now = dt_util.utcnow()
@@ -73,7 +68,7 @@ async def test_temporary_memory_expiry_save_runs_after_active_read_returns() -> 
     assert result == []
     assert manager.expired_pruned == 1
     assert "expired" not in manager._records
-    task = getattr(manager, _PRUNE_SAVE_TASK)
+    task = manager._prune_save_task
     assert task is not None
     await asyncio.wait_for(store.started.wait(), timeout=1)
     assert not task.done()

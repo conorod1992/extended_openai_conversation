@@ -9,23 +9,15 @@ import pytest
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
 )
-from custom_components.extended_openai_conversation_responses.memory import PersistentMemory
+from custom_components.extended_openai_conversation_responses.memory import (
+    PersistentMemory,
+)
 from custom_components.extended_openai_conversation_responses.scope import user_scope
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     MAX_ACTIVE_RECORDS,
     TemporaryMemory,
 )
-from custom_components.extended_openai_conversation_responses.temporary_memory_ownership import (
-    install_temporary_memory_ownership,
-)
-from custom_components.extended_openai_conversation_responses.temporary_memory_performance import (
-    install_temporary_memory_read_fast_path,
-)
 from homeassistant.util import dt as dt_util
-
-# Exercise the same effective method composition installed by integration startup.
-install_temporary_memory_read_fast_path()
-install_temporary_memory_ownership()
 
 
 class MemoryStorage:
@@ -60,9 +52,7 @@ class ArchiveStorage:
     async def async_load_partition(self, partition: str) -> dict[str, Any] | None:
         return deepcopy(self.partitions.get(partition))
 
-    async def async_save_partition(
-        self, partition: str, data: dict[str, Any]
-    ) -> None:
+    async def async_save_partition(self, partition: str, data: dict[str, Any]) -> None:
         self.partitions[partition] = deepcopy(data)
 
 
@@ -138,9 +128,7 @@ async def test_temporary_memory_expiry_boundary_removes_only_expired_records(
     assert memory.stats()["expired_temporary_memories_pruned"] == 1
     assert [record["memory_id"] for record in storage.data["records"]] == ["live"]
 
-    monkeypatch.setattr(
-        dt_util, "utcnow", lambda: now + timedelta(microseconds=1)
-    )
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now + timedelta(microseconds=1))
     assert await memory.async_list_owned("user:alice") == []
     assert storage.data == {"records": []}
 
@@ -149,9 +137,7 @@ async def test_temporary_memory_capacity_rejects_record_beyond_live_limit() -> N
     """The runtime ceiling rejects record 101 without evicting a live record."""
     now = dt_util.utcnow()
     records = [
-        _temporary_record(
-            f"memory-{index:03d}", expires_at=now + timedelta(days=1)
-        )
+        _temporary_record(f"memory-{index:03d}", expires_at=now + timedelta(days=1))
         for index in range(MAX_ACTIVE_RECORDS)
     ]
     storage = MemoryStorage({"records": records})

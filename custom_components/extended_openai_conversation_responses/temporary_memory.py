@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass
+from contextvars import ContextVar
+from dataclasses import asdict, dataclass, replace
 from datetime import timedelta
+import logging
 from typing import Any, cast
 from uuid import uuid4
 
@@ -14,6 +17,12 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .memory import validate_memory_privacy
+from .scope import SHARED_HOUSEHOLD_SCOPE_ID
+
+_LOGGER = logging.getLogger(__name__)
+_ACTIVE_OWNER_SCOPE_ID: ContextVar[str | None] = ContextVar(
+    "extended_openai_temporary_memory_owner_scope_id", default=None
+)
 
 STORAGE_VERSION = 1
 STORAGE_KEY_PREFIX = f"{DOMAIN}.temporary_memory"
@@ -59,41 +68,66 @@ class TemporaryMemory:
         self._lock = asyncio.Lock()
         self._initialized = False
         self.expired_pruned = 0
+        self.invalid_owners_pruned = 0
+        self.overflow_pruned = 0
+        self._prune_save_task: asyncio.Task[None] | None = None
+        self._committed_state: tuple[dict[str, TemporaryMemoryRecord], int] | None = (
+            None
+        )
 
     async def async_initialize(self) -> None:
-        """Load and prune records once at startup."""
+        """Load retryably, then persist canonical ownership and the startup ceiling."""
         async with self._lock:
-            if self._initialized:
-                return
-            data = await self._store.async_load()
-            raw_records = data.get("records", []) if isinstance(data, Mapping) else []
-            for raw in raw_records:
-                try:
-                    record = _record_from_storage(raw)
-                    if _parse_expiry(record.expires_at) > dt_util.utcnow():
-                        self._records[record.memory_id] = record
-                    else:
-                        self.expired_pruned += 1
-                except TypeError, ValueError:
-                    continue
-            self._initialized = True
-            if self.expired_pruned:
-                await self._async_save_locked()
+            try:
+                if not self._initialized:
+                    data = await self._store.async_load()
+                    raw_records = (
+                        data.get("records", []) if isinstance(data, Mapping) else []
+                    )
+                    for raw in raw_records:
+                        try:
+                            record = _record_from_storage(raw)
+                            if _parse_expiry(record.expires_at) > dt_util.utcnow():
+                                self._records[record.memory_id] = record
+                            else:
+                                self.expired_pruned += 1
+                        except TypeError, ValueError:
+                            continue
+                    self._initialized = True
+                    if self.expired_pruned:
+                        await self._async_save_locked()
+            except Exception:
+                self._records.clear()
+                self.expired_pruned = 0
+                self._initialized = False
+                self._committed_state = None
+                raise
+            self._remember_committed_state()
+            await self._async_normalize_loaded_records_locked()
 
     async def async_active(
         self, scope_id: str, owner_scope_id: str | None = None
     ) -> list[TemporaryMemoryRecord]:
-        """Return bounded active context and opportunistically prune expiry."""
+        """Return owner-only context; persist expiry pruning off the read path."""
+        owner = _resolve_owner_scope_id(owner_scope_id)
+        if owner is None:
+            return []
         async with self._lock:
-            await self._async_prune_locked()
-            return self._active_snapshot_locked(scope_id, owner_scope_id)
+            expired = self._prune_expired_locked()
+            result = self._active_snapshot_locked(scope_id, owner)
+        if expired:
+            self._schedule_pruned_state_save()
+        return result
 
     async def async_active_snapshot(
         self, scope_id: str, owner_scope_id: str | None = None
     ) -> list[TemporaryMemoryRecord]:
-        """Return active context without pruning, saving, or changing counters."""
+        """Return owner-only context without pruning, saving, or changing counters."""
+        owner = _resolve_owner_scope_id(owner_scope_id)
+        if owner is None:
+            return []
         async with self._lock:
-            return self._active_snapshot_locked(scope_id, owner_scope_id)
+            return self._active_snapshot_locked(scope_id, owner)
 
     def _active_snapshot_locked(
         self, scope_id: str, owner_scope_id: str | None = None
@@ -140,9 +174,9 @@ class TemporaryMemory:
         owner_scope_id: str | None = None,
     ) -> dict[str, Any]:
         """Add an automatic fact, coalescing an exact owned active duplicate."""
+        owner_scope_id = _require_owner_scope_id(owner_scope_id)
         content = _clean(content, MAX_CONTENT_LENGTH, "content")
         category = _clean(category, MAX_CATEGORY_LENGTH, "category")
-        owner_scope_id = _clean_owner_scope_id(owner_scope_id)
         validate_memory_privacy(content, automatic=True)
         expiry = _parse_future_expiry(expires_at)
         async with self._lock:
@@ -198,7 +232,7 @@ class TemporaryMemory:
         owner_scope_id: str | None = None,
     ) -> TemporaryMemoryRecord:
         """Update/supersede a temporary fact owned by the current request."""
-        owner_scope_id = _clean_owner_scope_id(owner_scope_id)
+        owner_scope_id = _require_owner_scope_id(owner_scope_id)
         async with self._lock:
             await self._async_prune_locked()
             current = self._owned(scope_id, memory_id, owner_scope_id)
@@ -238,9 +272,9 @@ class TemporaryMemory:
         owner_scope_id: str | None = None,
     ) -> int:
         """Delete selected records only from the current scope and optional owner."""
+        owner_scope_id = _require_owner_scope_id(owner_scope_id)
         if not memory_ids or len(memory_ids) > MAX_DELETE_RECORDS:
             raise ValueError(f"memory_ids must contain 1 to {MAX_DELETE_RECORDS} IDs")
-        owner_scope_id = _clean_owner_scope_id(owner_scope_id)
         async with self._lock:
             deleted = 0
             for memory_id in set(memory_ids):
@@ -255,25 +289,27 @@ class TemporaryMemory:
             return deleted
 
     async def async_list(
-        self, scope_id: str, owner_scope_id: str | None = None
+        self,
+        _scope_id: str | None = None,
+        owner_scope_id: str | None = None,
     ) -> list[TemporaryMemoryRecord]:
-        """List active records for management."""
-        return await self.async_active(scope_id, owner_scope_id)
+        owner = _require_owner_scope_id(owner_scope_id)
+        return await self.async_list_owned(owner)
 
-    async def async_list_all(self) -> list[TemporaryMemoryRecord]:
-        """List bounded active records for administrator management."""
-        async with self._lock:
-            await self._async_prune_locked()
-            records = sorted(
-                self._records.values(), key=lambda item: item.updated_at, reverse=True
-            )
-            return records[:MAX_ACTIVE_RECORDS]
+    async def async_list_all(
+        self,
+        owner_scope_id: str | None = None,
+    ) -> list[TemporaryMemoryRecord]:
+        owner = _require_owner_scope_id(owner_scope_id)
+        return await self.async_list_owned(owner)
 
     def stats(self) -> dict[str, int]:
         """Return non-sensitive diagnostics."""
         return {
             "active_temporary_memory_count": len(self._records),
             "expired_temporary_memories_pruned": self.expired_pruned,
+            "invalid_owner_records_pruned": self.invalid_owners_pruned,
+            "startup_overflow_records_pruned": self.overflow_pruned,
         }
 
     def scope_counts(self) -> dict[str, int]:
@@ -346,14 +382,26 @@ class TemporaryMemory:
             ):
                 raise ValueError("temporary memory timestamp is invalid")
             seen.add(record.memory_id)
-            if expiry > now:
-                records.append(record)
+            if (
+                expiry > now
+                and (normalized := _normalize_record_owner(record)) is not None
+            ):
+                records.append(normalized)
         return records
 
     async def async_replace_backup(self, records: list[TemporaryMemoryRecord]) -> None:
         """Replace active temporary memories without changing their expiry."""
+        normalized = [
+            migrated
+            for record in records
+            if (migrated := _normalize_record_owner(record)) is not None
+        ]
+        if len(normalized) > MAX_ACTIVE_RECORDS:
+            normalized = sorted(normalized, key=_owner_record_sort_key, reverse=True)[
+                :MAX_ACTIVE_RECORDS
+            ]
         async with self._lock:
-            self._records = {record.memory_id: record for record in records}
+            self._records = {record.memory_id: record for record in normalized}
             await self._async_save_locked()
 
     def _owned(
@@ -368,6 +416,154 @@ class TemporaryMemory:
         return record
 
     async def _async_prune_locked(self) -> None:
+        if self._prune_expired_locked():
+            await self._async_save_locked()
+
+    async def _async_save_locked(self) -> None:
+        """Settle each Store write before propagating cancellation or rolling back."""
+        save_task = asyncio.ensure_future(
+            self._store.async_save(
+                {"records": [asdict(record) for record in self._records.values()]}
+            )
+        )
+        cancellation: asyncio.CancelledError | None = None
+
+        # A caller cancellation must not abort a Store write after the manager's live
+        # state has already changed. Keep observing the save until it reaches a known
+        # result; repeated cancellation requests remain deferred to this boundary.
+        while not save_task.done():
+            try:
+                await asyncio.shield(save_task)
+            except asyncio.CancelledError as err:
+                if save_task.cancelled():
+                    self._restore_committed_state()
+                    raise
+                if cancellation is None:
+                    cancellation = err
+            except Exception:
+                # Inspect the finished task below so rollback and cancellation
+                # precedence stay in one place.
+                break
+
+        try:
+            save_task.result()
+        except asyncio.CancelledError:
+            self._restore_committed_state()
+            raise
+        except Exception as err:
+            self._restore_committed_state()
+            if cancellation is not None:
+                raise cancellation from err
+            raise
+
+        self._remember_committed_state()
+        if cancellation is not None:
+            raise cancellation
+
+    async def _async_normalize_loaded_records_locked(self) -> None:
+        """Persist safe owner migration while retaining the pre-save retry state."""
+        original = self._records
+        normalized: list[TemporaryMemoryRecord] = []
+        invalid = 0
+        for record in original.values():
+            migrated = _normalize_record_owner(record)
+            if migrated is None:
+                invalid += 1
+                continue
+            normalized.append(migrated)
+
+        overflow = max(0, len(normalized) - MAX_ACTIVE_RECORDS)
+        if overflow:
+            normalized = sorted(normalized, key=_owner_record_sort_key, reverse=True)[
+                :MAX_ACTIVE_RECORDS
+            ]
+
+        replacement = {record.memory_id: record for record in normalized}
+        if replacement == original:
+            return
+
+        self._records = replacement
+        try:
+            await self._async_save_locked()
+        except BaseException:
+            self._records = original
+            raise
+
+        self.invalid_owners_pruned += invalid
+        self.overflow_pruned += overflow
+        if invalid:
+            _LOGGER.warning(
+                "Removed %s Temporary Memory record(s) without a valid retained owner",
+                invalid,
+            )
+        if overflow:
+            _LOGGER.warning(
+                "Temporary Memory exceeded the %s-record ceiling at startup; "
+                "kept the newest %s records and removed %s",
+                MAX_ACTIVE_RECORDS,
+                MAX_ACTIVE_RECORDS,
+                overflow,
+            )
+
+    async def async_list_owned(
+        self, owner_scope_id: str
+    ) -> list[TemporaryMemoryRecord]:
+        await self.async_initialize()
+        async with self._lock:
+            await self._async_prune_locked()
+            return self._records_for_owner(owner_scope_id)
+
+    async def async_update_owned(
+        self,
+        owner_scope_id: str,
+        memory_id: str,
+        content: str | None,
+        expires_at: str | None,
+        category: str | None,
+    ) -> TemporaryMemoryRecord:
+        owner = _require_owner_scope_id(owner_scope_id)
+        return await self.async_update(
+            owner,
+            memory_id,
+            content,
+            expires_at,
+            category,
+            owner_scope_id=owner,
+        )
+
+    async def async_delete_owned(
+        self,
+        owner_scope_id: str,
+        memory_ids: list[str],
+    ) -> int:
+        owner = _require_owner_scope_id(owner_scope_id)
+        return await self.async_delete(owner, memory_ids, owner_scope_id=owner)
+
+    def owner_counts(self) -> dict[str, int]:
+        now = dt_util.utcnow()
+        counts: Counter[str] = Counter()
+        for record in self._records.values():
+            owner = _valid_owner_scope_id(record.owner_scope_id)
+            expiry = dt_util.parse_datetime(record.expires_at)
+            if owner is not None and expiry is not None and expiry > now:
+                counts[owner] += 1
+        return dict(counts)
+
+    def _records_for_owner(self, owner_scope_id: str) -> list[TemporaryMemoryRecord]:
+        """Return every active record belonging to an owner without injection limits."""
+        owner = _require_owner_scope_id(owner_scope_id)
+        now = dt_util.utcnow()
+        records = [
+            record
+            for record in self._records.values()
+            if record.owner_scope_id == owner
+            and (dt_util.parse_datetime(record.expires_at) or now) > now
+        ]
+        records.sort(key=lambda record: (record.expires_at, record.memory_id))
+        return records
+
+    def _prune_expired_locked(self) -> bool:
+        """Remove expired records in RAM; the caller chooses the save boundary."""
         now = dt_util.utcnow()
         expired = [
             memory_id
@@ -378,12 +574,42 @@ class TemporaryMemory:
             del self._records[memory_id]
         if expired:
             self.expired_pruned += len(expired)
-            await self._async_save_locked()
+        return bool(expired)
 
-    async def _async_save_locked(self) -> None:
-        await self._store.async_save(
-            {"records": [asdict(record) for record in self._records.values()]}
+    def _schedule_pruned_state_save(self) -> None:
+        """Persist an expiry-only mutation later through the transactional save seam."""
+        current = self._prune_save_task
+        if current is not None and not current.done():
+            return
+
+        async def persist() -> None:
+            try:
+                async with self._lock:
+                    await self._async_save_locked()
+            except Exception:
+                # Expired records remain invisible by timestamp even if persistence fails;
+                # the owner's transactional save restores the last committed state.
+                _LOGGER.exception("Unable to persist pruned temporary memories")
+
+        task = asyncio.create_task(
+            persist(), name="extended_openai_temporary_memory_expiry_persistence"
         )
+        self._prune_save_task = task
+
+        def done(completed: asyncio.Task[None]) -> None:
+            if self._prune_save_task is completed:
+                self._prune_save_task = None
+
+        task.add_done_callback(done)
+
+    def _remember_committed_state(self) -> None:
+        self._committed_state = (dict(self._records), self.expired_pruned)
+
+    def _restore_committed_state(self) -> None:
+        if self._committed_state is not None:
+            records, expired_pruned = self._committed_state
+            self._records = dict(records)
+            self.expired_pruned = expired_pruned
 
 
 def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
@@ -401,24 +627,11 @@ def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
 
 
 def _matches_owner(
-    record: TemporaryMemoryRecord, scope_id: str, owner_scope_id: str | None
+    record: TemporaryMemoryRecord, _scope_id: str, owner_scope_id: str | None
 ) -> bool:
-    """Require both continuity scope and owner when an owner is resolved."""
-    return record.scope_id == scope_id and (
-        owner_scope_id is None or record.owner_scope_id == owner_scope_id
-    )
-
-
-def _clean_owner_scope_id(owner_scope_id: str | None) -> str | None:
-    """Validate a resolved owner without inventing one for legacy callers."""
-    if owner_scope_id is None:
-        return None
-    if not isinstance(owner_scope_id, str):
-        raise ValueError("owner_scope_id must be a string")
-    owner_scope_id = owner_scope_id.strip()
-    if not owner_scope_id or len(owner_scope_id) > 128:
-        raise ValueError("owner_scope_id must contain 1 to 128 characters")
-    return owner_scope_id
+    """Continuity is metadata, never authorization for retained data."""
+    owner = _valid_owner_scope_id(owner_scope_id)
+    return owner is not None and record.owner_scope_id == owner
 
 
 def _parse_expiry(value: str):
@@ -565,6 +778,9 @@ async def async_read_temporary_memory_snapshot(
     owner_scope_id: str | None = None,
 ) -> list[TemporaryMemoryRecord]:
     """Read active stored context without creating, pruning, or saving a manager."""
+    owner_scope_id = _resolve_owner_scope_id(owner_scope_id)
+    if owner_scope_id is None:
+        return []
     data = await _temporary_memory_store(hass, entry_id, subentry_id).async_load()
     raw_records = data.get("records", []) if isinstance(data, Mapping) else []
     records: list[TemporaryMemoryRecord] = []
@@ -590,3 +806,84 @@ async def async_get_temporary_memory(
     manager = managers[key]
     await manager.async_initialize()
     return cast(TemporaryMemory, manager)
+
+
+def _valid_owner_scope_id(value: object) -> str | None:
+    """Return one canonical retained owner, or None when it is not valid."""
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if candidate == SHARED_HOUSEHOLD_SCOPE_ID:
+        return candidate
+    if candidate.startswith("user:"):
+        user_id = candidate[5:]
+        if user_id and len(candidate) <= 128:
+            return candidate
+    return None
+
+
+def _require_owner_scope_id(value: object = None) -> str:
+    """Resolve and validate the retained owner for one operation."""
+    valid = _resolve_owner_scope_id(value)
+    if valid is None:
+        raise ValueError(
+            "Temporary Memory requires a resolved Personal or Shared owner"
+        )
+    return valid
+
+
+def _owner_from_resolved_scope(scope: object) -> str | None:
+    """Translate only the established data-scope contract into a retained owner."""
+    if scope is None:
+        return None
+    scope_type = getattr(scope, "scope_type", None)
+    if scope_type == "user":
+        user_id = getattr(scope, "user_id", None)
+        return _valid_owner_scope_id(f"user:{user_id}") if user_id else None
+    if scope_type == "shared":
+        return SHARED_HOUSEHOLD_SCOPE_ID
+    return None
+
+
+def _normalize_record_owner(
+    record: TemporaryMemoryRecord,
+) -> TemporaryMemoryRecord | None:
+    """Preserve proven ownership and conservatively migrate canonical legacy data."""
+    if record.owner_scope_id is not None:
+        owner = _valid_owner_scope_id(record.owner_scope_id)
+        if owner is None:
+            return None
+        return (
+            record
+            if owner == record.owner_scope_id
+            else replace(record, owner_scope_id=owner)
+        )
+
+    # Pre-owner records whose scope itself was a canonical retained scope are safe
+    # to migrate. Device/conversation continuity keys cannot establish ownership.
+    inferred = _valid_owner_scope_id(record.scope_id)
+    if inferred is None:
+        return None
+    return replace(record, owner_scope_id=inferred)
+
+
+def _owner_record_sort_key(record: TemporaryMemoryRecord) -> tuple[Any, ...]:
+    """Keep the newest bounded records deterministically during startup recovery."""
+
+    def parsed(value: str) -> float:
+        parsed_value = dt_util.parse_datetime(value)
+        return parsed_value.timestamp() if parsed_value is not None else 0.0
+
+    return (
+        parsed(record.updated_at),
+        parsed(record.expires_at),
+        parsed(record.created_at),
+        record.memory_id,
+    )
+
+
+def _resolve_owner_scope_id(value: object = None) -> str | None:
+    """Resolve an explicit owner or the request-bound owner, failing closed."""
+    return _valid_owner_scope_id(
+        value if value is not None else _ACTIVE_OWNER_SCOPE_ID.get()
+    )

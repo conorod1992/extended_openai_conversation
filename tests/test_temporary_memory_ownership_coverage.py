@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
@@ -12,13 +11,14 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     management_ui,
-    temporary_memory_ownership as ownership,
+    temporary_memory as ownership,
 )
 from custom_components.extended_openai_conversation_responses.scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     MAX_ACTIVE_RECORDS,
+    TemporaryMemory,
     TemporaryMemoryRecord,
 )
 from homeassistant.exceptions import HomeAssistantError
@@ -120,13 +120,11 @@ async def test_normalize_loaded_records_prunes_invalid_and_overflow_and_persists
         for i in range(MAX_ACTIVE_RECORDS + 2)
     }
     records["invalid"] = _record("invalid", owner_scope_id="device:kitchen")
-    manager = SimpleNamespace(
-        _lock=asyncio.Lock(),
-        _records=records,
-        _async_save_locked=AsyncMock(),
-    )
-
-    await ownership._normalize_loaded_records(manager)
+    manager = TemporaryMemory(None)
+    manager._records = records
+    manager._async_save_locked = AsyncMock()
+    async with manager._lock:
+        await manager._async_normalize_loaded_records_locked()
 
     assert len(manager._records) == MAX_ACTIVE_RECORDS
     assert "invalid" not in manager._records
@@ -141,14 +139,12 @@ async def test_normalize_loaded_records_prunes_invalid_and_overflow_and_persists
 async def test_normalize_loaded_records_restores_original_on_save_failure() -> None:
     invalid = _record("invalid", owner_scope_id="device:kitchen")
     original = {"invalid": invalid}
-    manager = SimpleNamespace(
-        _lock=asyncio.Lock(),
-        _records=original,
-        _async_save_locked=AsyncMock(side_effect=OSError("disk failed")),
-    )
-
+    manager = TemporaryMemory(None)
+    manager._records = original
+    manager._async_save_locked = AsyncMock(side_effect=OSError("disk failed"))
     with pytest.raises(OSError, match="disk failed"):
-        await ownership._normalize_loaded_records(manager)
+        async with manager._lock:
+            await manager._async_normalize_loaded_records_locked()
 
     assert manager._records is original
 
@@ -162,7 +158,9 @@ def test_records_for_owner_filters_expired_and_orders_deterministically() -> Non
             "expired": _record("expired", expires_delta=-10),
         }
     )
-    result = ownership._records_for_owner(manager, "user:one")
+    memory = TemporaryMemory(None)
+    memory._records = manager._records
+    result = memory._records_for_owner("user:one")
     assert [item.memory_id for item in result] == ["earlier", "later"]
 
 
@@ -296,21 +294,3 @@ async def test_scope_catalog_is_enriched_with_owner_counts(
     )
     assert [scope["temporary_memory_count"] for scope in result["scopes"]] == [2, 3, 0]
     get_manager.assert_awaited_once_with(hass, "entry-1", "agent-1")
-
-
-def test_install_is_idempotent(monkeypatch) -> None:
-    calls = []
-    monkeypatch.setattr(ownership, "_INSTALLED", False)
-    for name in (
-        "_install_manager_contract",
-        "_install_snapshot_contract",
-    ):
-        monkeypatch.setattr(ownership, name, lambda n=name: calls.append(n))
-
-    ownership.install_temporary_memory_ownership()
-    ownership.install_temporary_memory_ownership()
-
-    assert calls == [
-        "_install_manager_contract",
-        "_install_snapshot_contract",
-    ]
