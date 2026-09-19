@@ -101,71 +101,58 @@ const TOOLBAR_STYLE = `
   }
 `;
 
-function clearPreviousLayout(root) {
-  const toolbar = root.querySelector(".eoc-management-toolbar");
-  if (toolbar) {
-    while (toolbar.firstChild) toolbar.before(toolbar.firstChild);
-    toolbar.remove();
-  }
-
-  const contextRow = root.querySelector(".eoc-agent-context-row");
-  if (contextRow) {
-    while (contextRow.firstChild) contextRow.before(contextRow.firstChild);
-    contextRow.remove();
-  }
-
-  const actions = root.querySelector(".eoc-agent-actions");
-  if (actions) {
-    while (actions.firstChild) actions.before(actions.firstChild);
-    actions.remove();
-  }
-}
-
 export function applyManagementToolbarLayout(panel) {
   const root = panel?.shadowRoot;
   if (!root) return false;
 
-  root.querySelector("style[data-eoc-management-toolbar]")?.remove();
-  const style = document.createElement("style");
-  style.dataset.eocManagementToolbar = "";
-  style.textContent = TOOLBAR_STYLE;
-  root.append(style);
-
-  clearPreviousLayout(root);
+  if (!root.querySelector("style[data-eoc-management-toolbar]")) {
+    const style = document.createElement("style");
+    style.dataset.eocManagementToolbar = "";
+    style.textContent = TOOLBAR_STYLE;
+    root.append(style);
+  }
 
   const header = root.querySelector("header");
   const topNav = root.querySelector(".top-nav");
   const agentPicker = root.querySelector(".agent-picker");
   const settingsSearch = root.querySelector(".eoc-global-search");
-  const actionsMenu = root.querySelector(".agent-actions-menu");
-  const actionHelp = root.querySelector(".action-help");
+  const actionsMenu = root.querySelector("main .agent-actions-menu") || root.querySelector(".agent-actions-menu");
+  const actionHelp = root.querySelector("main .action-help") || root.querySelector(".action-help");
   if (!header || !topNav || (!agentPicker && !settingsSearch)) return false;
 
-  if (settingsSearch) header.append(settingsSearch);
+  if (settingsSearch && settingsSearch.parentElement !== header) header.append(settingsSearch);
 
   if (agentPicker) {
-    const contextRow = document.createElement("div");
-    contextRow.className = "eoc-agent-context-row";
-    contextRow.setAttribute("aria-label", "Assistant context");
-    contextRow.append(agentPicker);
+    let contextRow = root.querySelector(".eoc-agent-context-row");
+    if (!contextRow) {
+      contextRow = document.createElement("div");
+      contextRow.className = "eoc-agent-context-row";
+      contextRow.setAttribute("aria-label", "Assistant context");
+      topNav.before(contextRow);
+    }
+    if (agentPicker.parentElement !== contextRow) contextRow.prepend(agentPicker);
 
     if (actionsMenu) {
       const summary = actionsMenu.querySelector("summary");
-      if (summary) summary.textContent = "Assistant actions";
-      const actionGroup = document.createElement("div");
-      actionGroup.className = "eoc-agent-actions";
-      actionGroup.append(actionsMenu);
-      if (actionHelp) actionGroup.append(actionHelp);
-      contextRow.append(actionGroup);
+      if (summary && summary.textContent !== "Assistant actions") summary.textContent = "Assistant actions";
+      let actionGroup = contextRow.querySelector(".eoc-agent-actions");
+      if (!actionGroup) {
+        actionGroup = document.createElement("div");
+        actionGroup.className = "eoc-agent-actions";
+        contextRow.append(actionGroup);
+      }
+      if (actionsMenu.parentElement !== actionGroup) {
+        actionGroup.replaceChildren(actionsMenu);
+        if (actionHelp) actionGroup.append(actionHelp);
+      }
       const configToolbar = root.querySelector(".config-toolbar");
       if (configToolbar && !configToolbar.children.length) configToolbar.remove();
     }
 
-    topNav.before(contextRow);
   }
 
   const subsectionNav = root.querySelector(".subsection-nav");
-  if (subsectionNav) topNav.after(subsectionNav);
+  if (subsectionNav && topNav.nextElementSibling !== subsectionNav) topNav.after(subsectionNav);
   return true;
 }
 

@@ -1,21 +1,9 @@
 import {refreshSettingEffects} from "./management-configuration-clarity.js";
 import {updateDialogs} from "./management-dialogs.js";
-import {NAVIGATION, pageMetadata, searchSettings, shouldShowGlobalSettingsSearch} from "./frontend-navigation.js";
-
-const SEARCH_DEBOUNCE_MS = 80;
+import {NAVIGATION, pageMetadata} from "./frontend-navigation.js";
 
 function navigationFor(panel) {
   return NAVIGATION.filter((item) => panel._canAccessView(item.id));
-}
-
-function settingsItems(panel, query = panel._settingsSearchQuery) {
-  return searchSettings(query).filter((item) => panel._canAccessView(item.page, item.section));
-}
-
-export function settingsResultsMarkup(panel, query = panel._settingsSearchQuery) {
-  if (!String(query || "").trim()) return "";
-  const items = settingsItems(panel, query);
-  return items.map((item) => `<button type="button" class="settings-result" role="option" data-page="${item.page}" data-subsection="${item.section}" data-target="${item.target || ""}"><strong>${panel._e(item.label)}</strong><span>${panel._e(pageMetadata(item.page).label)} › ${panel._e(pageMetadata(item.page).sections.find((section) => section.id === item.section)?.label || "")}</span><small>${panel._e(item.description)}</small></button>`).join("") || `<p class="empty">No settings match.</p>`;
 }
 
 function setDependent(root, key, enabled) {
@@ -128,13 +116,10 @@ function preparePersistentShell(panel) {
   root.querySelector("style")?.setAttribute("data-eoc-persistent-styles", "");
   layout.querySelector("main")?.setAttribute("data-eoc-main", "");
 
-  const settingsHost = ensureHost(shell, "eoc-settings-host", layout);
   const scopeHost = ensureHost(shell, "eoc-scope-host", layout);
   const sectionHost = ensureHost(shell, "eoc-section-host", layout);
-  const existingSettings = [...shell.children].find((item) => item.classList?.contains("global-search"));
   const existingScope = [...shell.children].find((item) => item.classList?.contains("scope-bar"));
   const existingSection = [...shell.children].find((item) => item.classList?.contains("section-selector"));
-  if (existingSettings) settingsHost.append(existingSettings);
   if (existingScope) scopeHost.append(existingScope);
   if (existingSection) sectionHost.append(existingSection);
 
@@ -147,10 +132,12 @@ function preparePersistentShell(panel) {
     [...root.children].filter((item) => item.tagName === "DIALOG").forEach((dialog) => dialogHost.append(dialog));
   }
 
+  const template = document.createElement("template");
+  template.innerHTML = panel._eocDialogMarkup;
+  panel._eocDialogTemplate = template.content;
   panel._eocPersistentReady = true;
   bindDynamicBase(panel);
   bindIncrementalDraftUpdates(panel);
-  bindSettingsSearch(panel, true);
   return true;
 }
 
@@ -177,7 +164,7 @@ function updateAgentPicker(panel, agent) {
       detail = document.createElement("small");
       picker.append(detail);
     }
-    detail.textContent = `${agent.provider} · ${agent.model}`;
+    if (!detail.textContent) detail.textContent = `${agent.provider} · ${agent.model}`;
   } else {
     detail?.remove();
   }
@@ -193,73 +180,6 @@ function updateNavigation(panel, navigation) {
   });
   const mobile = root.querySelector("#top-section-mobile");
   if (mobile) mobile.value = panel._page;
-}
-
-function bindSettingsResultButtons(panel) {
-  panel.shadowRoot.querySelectorAll("#eoc-settings-host .settings-result").forEach((button) => {
-    if (button.dataset.eocBound) return;
-    button.dataset.eocBound = "";
-    button.addEventListener("click", async () => {
-      panel._pendingSettingFocus = button.dataset.target;
-      panel._settingsSearchQuery = "";
-      await panel._navigate(button.dataset.page, button.dataset.subsection);
-    });
-  });
-}
-
-function updateSettingsResults(panel) {
-  const root = panel.shadowRoot;
-  const search = root.querySelector("#eoc-settings-host .global-search");
-  if (!search) return;
-  const query = panel._settingsSearchQuery || "";
-  let results = search.querySelector(".search-results");
-  if (!query.trim()) {
-    results?.remove();
-    return;
-  }
-  if (!results) {
-    results = document.createElement("div");
-    results.className = "search-results";
-    results.setAttribute("role", "listbox");
-    results.setAttribute("aria-label", "Settings search results");
-    search.append(results);
-  }
-  results.innerHTML = settingsResultsMarkup(panel, query);
-  bindSettingsResultButtons(panel);
-}
-
-function bindSettingsSearch(panel, stripLegacyListener = false) {
-  const root = panel.shadowRoot;
-  let input = root.querySelector("#eoc-settings-host #settings-search");
-  if (!input) return;
-  if (stripLegacyListener && !input.dataset.eocSearchBound) {
-    const replacement = input.cloneNode(true);
-    input.replaceWith(replacement);
-    input = replacement;
-  }
-  if (input.dataset.eocSearchBound) return;
-  input.dataset.eocSearchBound = "";
-  input.addEventListener("input", () => {
-    panel._settingsSearchQuery = input.value;
-    clearTimeout(panel._eocSettingsSearchTimer);
-    panel._eocSettingsSearchTimer = setTimeout(() => updateSettingsResults(panel), SEARCH_DEBOUNCE_MS);
-  });
-}
-
-function updateSettingsHost(panel) {
-  const root = panel.shadowRoot;
-  const host = root.querySelector("#eoc-settings-host");
-  if (!host) return;
-  const visible = shouldShowGlobalSettingsSearch(panel._page, panel._subsection);
-  host.hidden = !visible;
-  if (!visible) return;
-  if (!host.querySelector(".global-search")) {
-    host.innerHTML = `<div class="global-search"><label><span class="sr-only">Search all settings</span><input id="settings-search" type="search" value="${panel._e(panel._settingsSearchQuery)}" placeholder="Search all settings" aria-label="Search all settings"></label></div>`;
-  }
-  const input = host.querySelector("#settings-search");
-  if (input && document.activeElement !== input && input.value !== panel._settingsSearchQuery) input.value = panel._settingsSearchQuery || "";
-  bindSettingsSearch(panel);
-  updateSettingsResults(panel);
 }
 
 function bindDynamicBase(panel) {
@@ -283,7 +203,6 @@ function bindDynamicBase(panel) {
       }
     });
   }
-  bindSettingsResultButtons(panel);
 }
 
 const regionMarkup = new WeakMap();
@@ -310,7 +229,6 @@ function renderDynamicRegions(panel) {
 
   updateAgentPicker(panel, agent);
   updateNavigation(panel, navigationFor(panel));
-  updateSettingsHost(panel);
 
   const scopeHost = root.querySelector("#eoc-scope-host");
   updateRegion(scopeHost, ["data-memory/conversations", "data-memory/memories"].includes(panel._viewKey()) ? panel._scopePicker() : "");
@@ -328,9 +246,9 @@ function renderDynamicRegions(panel) {
         : panel._content(agent);
   const dialogs = panel._dialogs();
   const route = `${panel._agentId}|${panel._viewKey()}`;
-  const changed = route !== panel._eocRenderedRoute || markup !== panel._eocMainMarkup
-    || dialogs !== panel._eocDialogMarkup;
-  if (main && changed && route === panel._eocRenderedRoute && root.querySelector("dialog[open]")) {
+  const changed = route !== panel._eocRenderedRoute || markup !== panel._eocMainMarkup;
+  const dialogsChanged = dialogs !== panel._eocDialogMarkup;
+  if ((changed || dialogsChanged) && route === panel._eocRenderedRoute && root.querySelector("dialog[open]")) {
     panel._eocDeferredEditorRender = true;
     return;
   }
@@ -338,13 +256,18 @@ function renderDynamicRegions(panel) {
   if (main && changed) {
     main.innerHTML = markup;
     panel._eocMainMarkup = markup;
-    panel._eocDialogMarkup = dialogs;
     panel._eocRenderedRoute = route;
+    // Page bindings include feature dialog handlers, so refresh those editors here.
     updateDialogs(panel, dialogs);
+    panel._eocDialogMarkup = dialogs;
     panel._bindActions();
     bindDynamicMain(panel);
   }
 
+  if (!changed && dialogsChanged) {
+    updateDialogs(panel, dialogs, {preserveEditors: true});
+    panel._eocDialogMarkup = dialogs;
+  }
   bindDynamicBase(panel);
   bindIncrementalDraftUpdates(panel);
 }

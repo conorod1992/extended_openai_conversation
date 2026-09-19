@@ -203,8 +203,17 @@ function noteElement(guidance, key = "") {
   return note;
 }
 
-function clearGeneratedGuidance(panel) {
-  panel.shadowRoot?.querySelectorAll("[data-eoc-guidance-generated]").forEach((item) => item.remove());
+const guidanceKeys = new WeakMap();
+function placeGuidance(panel, target, position, guidance, key) {
+  if (!target || !guidance) return;
+  guidanceKeys.get(panel).add(key);
+  const existing = panel.shadowRoot.querySelector(`[data-eoc-guidance-generated="${key}"]`);
+  const signature = JSON.stringify(guidance);
+  if (existing?._eocGuidance === signature) return;
+  const note = noteElement(guidance, key);
+  note._eocGuidance = signature;
+  if (existing) existing.replaceWith(note);
+  else target.insertAdjacentElement(position, note);
 }
 
 function decorateDependencies(panel) {
@@ -223,7 +232,7 @@ function decorateDependencies(panel) {
       return;
     }
     const guidance = dependencyGuidance(key, config, localHandling);
-    if (guidance) container.prepend(noteElement(guidance, `dependency-${key}`));
+    placeGuidance(panel, container, "afterbegin", guidance, `dependency-${key}`);
   });
 }
 
@@ -236,9 +245,9 @@ function decorateMemory(panel) {
 
   const guidance = hybridMemoryGuidance(config);
   if (config.memory_retrieval_mode === "hybrid") {
-    retrieval?.append(noteElement(guidance, "memory-hybrid-consequence"));
+    placeGuidance(panel, retrieval, "beforeend", guidance, "memory-hybrid-consequence");
   } else {
-    embedding?.append(noteElement(guidance, "memory-embedding-dormant"));
+    placeGuidance(panel, embedding, "beforeend", guidance, "memory-embedding-dormant");
   }
   const description = embedding?.querySelector(":scope > small");
   if (description) {
@@ -255,15 +264,15 @@ function decorateProviderGuidance(panel) {
 
   const apiMode = root.querySelector('[data-field="api_mode"]');
   const auto = apiModeConsequence(config, runtime);
-  if (apiMode && auto) apiMode.append(noteElement(auto, "api-mode-auto"));
+  placeGuidance(panel, apiMode, "beforeend", auto, "api-mode-auto");
 
   const webSearch = root.querySelector('[data-field="web_search"]');
   const conflict = webSearchConflict(config, runtime);
-  if (webSearch && conflict) webSearch.insertAdjacentElement("afterend", noteElement(conflict, "web-search-conflict"));
+  placeGuidance(panel, webSearch, "afterend", conflict, "web-search-conflict");
 
   const webDetail = root.querySelector('[data-field="web_search_context"]');
   const consequence = webSearchDetailConsequence(config, runtime);
-  if (webDetail && consequence) webDetail.append(noteElement(consequence, "web-search-detail"));
+  placeGuidance(panel, webDetail, "beforeend", consequence, "web-search-detail");
 }
 
 function createDisabledModelField(panel, spec, value) {
@@ -328,6 +337,7 @@ function injectAndDecorateModelParameters(panel) {
   const capabilities = activeCapabilities(panel);
   const anchor = grid.querySelector('[data-field="shorten_tool_call_id"]');
 
+  const fields = [];
   for (const spec of MODEL_PARAMETERS) {
     let field = grid.querySelector(`[data-field="${spec.key}"]`);
     const unsupported = capabilities[spec.capability] === false;
@@ -338,9 +348,14 @@ function injectAndDecorateModelParameters(panel) {
     if (unsupported && !field) {
       field = createDisabledModelField(panel, spec, config[spec.key]);
     }
-    if (field) grid.insertBefore(field, anchor || null);
+    if (field) fields.push(field);
     const guidance = modelParameterGuidance(spec.key, capabilities);
-    if (field && guidance) field.append(noteElement(guidance, `model-${spec.key}`));
+    placeGuidance(panel, field, "beforeend", guidance, `model-${spec.key}`);
+  }
+  let next = anchor || null;
+  for (const field of fields.reverse()) {
+    if (field.parentElement !== grid || field.nextElementSibling !== next) grid.insertBefore(field, next);
+    next = field;
   }
 }
 
@@ -379,11 +394,15 @@ export function storeRuntimeGuidance(panel, result, agentId = panel._agentId) {
 export function enhanceConfigurationGuidance(panel) {
   if (!panel.shadowRoot) return;
   ensureStyles(panel);
-  clearGeneratedGuidance(panel);
+  const desiredGuidance = new Set();
+  guidanceKeys.set(panel, desiredGuidance);
   injectAndDecorateModelParameters(panel);
   decorateDependencies(panel);
   decorateMemory(panel);
   decorateProviderGuidance(panel);
+  panel.shadowRoot.querySelectorAll("[data-eoc-guidance-generated]").forEach((node) => {
+    if (!desiredGuidance.has(node.dataset.eocGuidanceGenerated)) node.remove();
+  });
   decorateSearchAvailability(panel);
   bindGuidanceRoutes(panel);
 }
@@ -398,7 +417,7 @@ function queueEnhance(panel) {
 }
 
 function configControlFromEvent(event) {
-  return event.composedPath?.().find((item) => item?.dataset?.config) || null;
+  return event.composedPath?.().find((item) => (item?.dataset?.config || item?.dataset?.memoryConfig)) || null;
 }
 
 function refreshRuntimeGuidance(panel) {
@@ -415,7 +434,7 @@ function refreshRuntimeGuidance(panel) {
 export function bindConfigurationGuidance(panel) {
   if (panel._eocGuidanceHostBound) return;
   panel._eocGuidanceHostBound = true;
-  panel.addEventListener("input", () => queueEnhance(panel), true);
+  panel.addEventListener("input", (event) => { if (configControlFromEvent(event)) queueEnhance(panel); }, true);
   panel.addEventListener("change", (event) => {
     queueEnhance(panel);
     const control = configControlFromEvent(event);
