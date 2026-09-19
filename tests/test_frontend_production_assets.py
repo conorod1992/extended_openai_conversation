@@ -23,17 +23,13 @@ def test_checked_in_production_entry_is_hashed_and_present() -> None:
     assert (frontend_assets._PRODUCTION_DIR / relative).is_file()
 
     manifest = frontend_assets._manifest()
-    management_entry = next(
+    debug_panel = next(
         entry
-        for entry in manifest.values()
-        if entry.get("isEntry") is True and entry.get("name") == "management"
+        for source, entry in manifest.items()
+        if source.endswith("/debug-panel.js")
     )
-    dynamic_files = [
-        manifest[key]["file"]
-        for key in management_entry.get("dynamicImports", [])
-        if key in manifest
-    ]
-    assert any(str(filename).startswith("assets/debug-panel-") for filename in dynamic_files)
+    assert debug_panel.get("isDynamicEntry") is True
+    assert str(debug_panel.get("file", "")).startswith("assets/debug-panel-")
 
 
 def test_frontend_entry_rejects_missing_manifest_asset(
