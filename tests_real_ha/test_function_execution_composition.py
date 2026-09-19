@@ -18,6 +18,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
 )
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    is_tool_result_content,
     tool_result_data,
 )
 from homeassistant.components import conversation
@@ -441,7 +442,7 @@ async def test_ha_owned_tool_runtime_failure_skips_later_call_and_next_turn_reco
         chat_log: conversation.ChatLog,
         content: conversation.Content,
     ) -> None:
-        if isinstance(content, conversation.ToolResultContent):
+        if is_tool_result_content(content):
             captured_results.append(content)
         original_add(chat_log, content)
 
