@@ -1,0 +1,27 @@
+name: PR5 isolated workbench
+on:
+  push:
+    branches: [refactor/conversation-entry-ownership]
+    paths:
+      - .github/workflows/pr5-workbench.yml
+      - scripts/pr5_workbench.py
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Export exact source and request-entry inventory
+        run: |
+          git rev-parse HEAD > source-sha.txt
+          git archive HEAD | gzip > pr5-source.tar.gz
+          grep -R -nE '_async_process|install_.*\(' custom_components/extended_openai_conversation_responses/{__init__,conversation,guest_performance,agent_maintenance,voice_identity_runtime,quiet_hours_runtime,context_usage_hardening,context_summary_performance,prompt_cache,debug,runtime_failure_hardening,safety_hardening}.py > pr5-entry-inventory.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr5-source
+          path: |
+            source-sha.txt
+            pr5-source.tar.gz
+            pr5-entry-inventory.txt
+          retention-days: 2
