@@ -1,3 +1,5 @@
+from pathlib import Path
+
 """Tests for the cheap Overview setup-health facts."""
 
 from types import SimpleNamespace
@@ -14,10 +16,6 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.management_setup_health import (
     build_setup_health_facts,
 )
-from custom_components.extended_openai_conversation_responses.management_ui import (
-    MANAGEMENT_FRONTEND_MODULES,
-)
-
 
 def _entry(*, runtime_loaded: bool = True):
     return SimpleNamespace(
@@ -124,5 +122,11 @@ def test_unavailable_counts_remain_unknown_facts(monkeypatch) -> None:
 
 
 def test_overview_health_frontend_helpers_are_registered() -> None:
-    assert "overview-health.js" in MANAGEMENT_FRONTEND_MODULES
-    assert "overview-onboarding.js" in MANAGEMENT_FRONTEND_MODULES
+    frontend = (
+        Path(__file__).parents[1]
+        / "custom_components"
+        / "extended_openai_conversation_responses"
+        / "frontend"
+    )
+    assert (frontend / "overview-health.js").is_file()
+    assert (frontend / "overview-onboarding.js").is_file()
