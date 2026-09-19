@@ -1340,21 +1340,28 @@ class ExtendedOpenAIAgentEntity(
         """Consume one prefetch, checking live capability before exposing records."""
         task = _TEMPORARY_MEMORY_PREFETCH.get()
         _TEMPORARY_MEMORY_PREFETCH.set(None)
-        if (
-            self.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
-            == TEMPORARY_MEMORY_OFF
-            or _ACTIVE_TEMPORARY_SCOPE.get() is None
-            or _owner_from_resolved_scope(_ACTIVE_SCOPE.get()) is None
-            or not self._effective_guest_policy().temporary_memory
-        ):
+        try:
+            if (
+                self.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
+                == TEMPORARY_MEMORY_OFF
+                or _ACTIVE_TEMPORARY_SCOPE.get() is None
+                or _owner_from_resolved_scope(_ACTIVE_SCOPE.get()) is None
+                or not self._effective_guest_policy().temporary_memory
+            ):
+                if task is not None:
+                    task.cancel()
+                    # A cancelled child is expected; cancellation of this request is not.
+                    await asyncio.gather(task, return_exceptions=True)
+                return []
             if task is not None:
+                return cast(list[TemporaryMemoryRecord], await task)
+            return await self._async_load_temporary_memories()
+        except BaseException:
+            if task is not None and not task.done():
                 task.cancel()
                 with suppress(BaseException):
                     await task
-            return []
-        if task is not None:
-            return cast(list[TemporaryMemoryRecord], await task)
-        return await self._async_load_temporary_memories()
+            raise
 
     async def _async_load_temporary_memories(self) -> list[TemporaryMemoryRecord]:
         """Load active facts under the resolved retained owner, including prefetch."""

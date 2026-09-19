@@ -86,11 +86,8 @@ def _replacements(source):
                                 setters.add(target.id)
 
     def protected(value):
-        return (
-            isinstance(value, ast.Constant)
-            and value.value in RUNTIME_METHODS
-            or isinstance(value, ast.Name)
-            and strings.get(value.id) in RUNTIME_METHODS
+        return (isinstance(value, ast.Constant) and value.value in RUNTIME_METHODS) or (
+            isinstance(value, ast.Name) and strings.get(value.id) in RUNTIME_METHODS
         )
 
     found = []
@@ -102,12 +99,9 @@ def _replacements(source):
             targets = [node.target]
         for target in targets:
             if any(
-                isinstance(part, ast.Attribute)
-                and part.attr in RUNTIME_METHODS
-                or isinstance(part, ast.Name)
-                and part.id in RUNTIME_METHODS
-                or isinstance(part, ast.Subscript)
-                and protected(part.slice)
+                (isinstance(part, ast.Attribute) and part.attr in RUNTIME_METHODS)
+                or (isinstance(part, ast.Name) and part.id in RUNTIME_METHODS)
+                or (isinstance(part, ast.Subscript) and protected(part.slice))
                 for part in ast.walk(target)
             ):
                 found.append(node.lineno)
@@ -115,9 +109,10 @@ def _replacements(source):
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id in setters
+            and len(node.args) >= 2
+            and protected(node.args[1])
         ):
-            if len(node.args) >= 2 and protected(node.args[1]):
-                found.append(node.lineno)
+            found.append(node.lineno)
     return found
 
 
@@ -487,4 +482,44 @@ async def test_prefetch_uses_resolved_owner_and_records_each_retrieval_once(
         "temporary_memory_retrieval",
     }
     assert _ACTIVE_OWNER_SCOPE_ID.get() is None
+    assert _TEMPORARY_MEMORY_PREFETCH.get() is None
+
+
+async def test_request_cancellation_survives_disabled_prefetch_cleanup(runtime_agent):
+    started = asyncio.Event()
+    cleaning = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def load():
+        try:
+            started.set()
+            await asyncio.Event().wait()
+        finally:
+            cleaning.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                finished.set()
+
+    prefetch = asyncio.create_task(load())
+    _TEMPORARY_MEMORY_PREFETCH.set(prefetch)
+    await started.wait()
+    runtime_agent.subentry.data["temporary_memory"] = "off"
+    request = asyncio.create_task(runtime_agent._async_retrieve_temporary_memories())
+    await cleaning.wait()
+    request.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    assert finished.is_set() and prefetch.cancelled()
+
+
+async def test_prefetch_is_drained_when_live_policy_check_fails(runtime_agent):
+    task = asyncio.create_task(asyncio.sleep(60))
+    _TEMPORARY_MEMORY_PREFETCH.set(task)
+    runtime_agent._effective_guest_policy = Mock(
+        side_effect=RuntimeError("policy failed")
+    )
+    with pytest.raises(RuntimeError, match="policy failed"):
+        await runtime_agent._async_retrieve_temporary_memories()
+    assert task.cancelled()
     assert _TEMPORARY_MEMORY_PREFETCH.get() is None
