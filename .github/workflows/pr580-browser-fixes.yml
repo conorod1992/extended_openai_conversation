@@ -1,0 +1,97 @@
+name: PR580 browser fixes
+on:
+  push:
+    branches: [refactor/frontend-lazy-feature-ownership]
+    paths: [.github/pr580-browser-fixes.patch.b64, .github/workflows/pr580-browser-fixes.yml]
+permissions:
+  contents: write
+concurrency:
+  group: pr580-browser-fixes
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: github.repository == 'conorod1992/extended_openai_conversation' && github.ref == 'refs/heads/refactor/frontend-lazy-feature-ownership'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: refactor/frontend-lazy-feature-ownership
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Apply reviewed fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          import hashlib
+          import subprocess
+          import zlib
+          assert subprocess.check_output(['git', 'branch', '--show-current'], text=True).strip() == 'refactor/frontend-lazy-feature-ownership'
+          frontend = Path('custom_components/extended_openai_conversation_responses/frontend')
+          for name, sha in {
+              'agent-config-editor-base.js': '18912efe374452ac62f3ce7c8cd8de7952c57f60',
+              'agent-config-native-yaml.js': 'aeb4c97b6d8e64e7bb3e90de8a93ef4d0a77a5ce',
+              'management-panel.js': 'e8f299495f28e463f7d7b360d865517ec86a3ab5',
+          }.items():
+              actual = subprocess.check_output(['git', 'hash-object', str(frontend / name)], text=True).strip()
+              assert actual == sha, f'Concurrent source change: {name}'
+          patch = zlib.decompress(base64.b64decode(Path('.github/pr580-browser-fixes.patch.b64').read_text()))
+          assert hashlib.sha256(patch).hexdigest() == '1e4ee45e22486370779bba3ff01ef98f5a344ecca575903a321b899c1b8026be'
+          subprocess.run(['git', 'apply', '--check'], input=patch, check=True)
+          subprocess.run(['git', 'apply'], input=patch, check=True)
+          path = frontend / 'agent-config-editor-base.js'
+          source = path.read_text()
+          before = '''  root.querySelector("#tool-dialog")?.addEventListener("close", () => {
+            // A queued close event from the previous session must not unlock a new load.
+            if (root.querySelector("#tool-dialog")?.open) return;'''
+          after = '''  root.querySelector("#tool-dialog")?.addEventListener("close", (event) => {
+            // Ignore queued close events after navigation, DOM replacement or reopening.
+            if (event.target !== root.querySelector("#tool-dialog") || event.target.open) return;'''
+          assert before in source
+          path.write_text(source.replace(before, after))
+          path = Path('tests/function-tool-editor-loading.test.mjs')
+          source = path.read_text()
+          marker = '// The Add path waits for both the starter and built-in catalog, not just one reply.'
+          addition = '''// A close event queued before navigation/re-render must not touch newer controls.
+          for (const change of ["removed", "replaced", "reopened"]) {
+            const {panel, controls: c, edit, loads} = harness();
+            const oldDialog = c["tool-dialog"];
+            const opened = edit.emit("click");
+            const currentToken = panel._toolEditorLoad;
+            if (change === "removed") {
+              delete c["tool-dialog"];
+              delete c["tool-yaml"];
+            } else if (change === "replaced") {
+              c["tool-dialog"] = new Control("tool-dialog");
+            }
+            await oldDialog.emit("close");
+            assert.equal(panel._toolEditorLoad, currentToken);
+            assert.equal(c["tool-save"].disabled, true);
+            loads[0].resolve({yaml: "finished"});
+            await opened;
+          }
+
+          '''
+          assert marker in source
+          path.write_text(source.replace(marker, addition + marker))
+          PY
+      - name: Check shipped modules and standalone regression suites
+        run: |
+          find custom_components/extended_openai_conversation_responses/frontend -maxdepth 1 -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+          find tests -maxdepth 1 -type f -name '*.test.mjs' -print0 | sort -z | xargs -0 -n1 node
+          git diff --check
+      - name: Commit fixes and remove patch transport
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add custom_components/extended_openai_conversation_responses/frontend/management-panel.js tests/management-timing-isolation.test.mjs
+          git diff --cached --check
+          git commit -m 'Keep panel timing isolated and non-fatal across HA restarts'
+          git add custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js custom_components/extended_openai_conversation_responses/frontend/agent-config-native-yaml.js tests/agent-config-native-yaml-guards.test.mjs tests/function-tool-editor-loading.test.mjs tests_browser/management-editor-loading.spec.mjs tests_browser/real-ha-backend.spec.mjs
+          git diff --cached --check
+          git commit -m 'Protect Function Tool edits from asynchronous YAML hydration'
+          git rm .github/pr580-browser-fixes.patch.b64
+          git commit -m 'Remove temporary browser fix patch transport'
+          git push origin HEAD:refs/heads/refactor/frontend-lazy-feature-ownership
