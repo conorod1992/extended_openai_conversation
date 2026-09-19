@@ -8,20 +8,55 @@ on:
 permissions:
   contents: read
 jobs:
-  snapshot:
+  environment:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Export exact source and request-entry inventory
+      - id: version
+        run: echo "python=$(curl -fsSL https://raw.githubusercontent.com/home-assistant/core/dev/.python-version | tr -d '\n')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ steps.version.outputs.python }}
+      - name: Install HA test environment
+        run: |
+          python -m pip install -r requirements_test.txt
+          python -m pip install ruff mypy
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+          import homeassistant
+          components = Path(next(iter(homeassistant.__path__))) / 'components'
+          custom = json.loads(Path('custom_components/extended_openai_conversation_responses/manifest.json').read_text())
+          requirements = set(custom.get('requirements', []))
+          pending = [*custom.get('dependencies', []), *custom.get('after_dependencies', []), 'openai_conversation', 'camera', 'stream', 'conversation']
+          seen = set()
+          while pending:
+              domain = pending.pop()
+              if domain in seen:
+                  continue
+              seen.add(domain)
+              manifest = components / domain / 'manifest.json'
+              if not manifest.exists():
+                  continue
+              info = json.loads(manifest.read_text())
+              requirements.update(info.get('requirements', []))
+              pending.extend(info.get('dependencies', []))
+              pending.extend(info.get('after_dependencies', []))
+          subprocess.check_call([sys.executable, '-m', 'pip', 'install', *sorted(requirements)])
+          PY
+          python -m pip check
+      - name: Export isolated dependencies and exact source
         run: |
           git rev-parse HEAD > source-sha.txt
           git archive HEAD | gzip > pr5-source.tar.gz
-          grep -R -nE '_async_process|install_.*\(' custom_components/extended_openai_conversation_responses/{__init__,conversation,guest_performance,agent_maintenance,voice_identity_runtime,quiet_hours_runtime,context_usage_hardening,context_summary_performance,prompt_cache,debug,runtime_failure_hardening,safety_hardening}.py > pr5-entry-inventory.txt
+          tar -czf pr5-python.tar.gz -C "$pythonLocation" .
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr5-source
+          name: pr5-validation-environment
           path: |
             source-sha.txt
             pr5-source.tar.gz
-            pr5-entry-inventory.txt
+            pr5-python.tar.gz
           retention-days: 2
