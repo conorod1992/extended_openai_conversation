@@ -156,35 +156,25 @@ class _SharedGateProxy:
         return guarded
 
 
-def _install_conversation_guard() -> None:
-    from .conversation import ExtendedOpenAIAgentEntity
-
-    current = ExtendedOpenAIAgentEntity._async_process
-    if getattr(current, "_extended_openai_maintenance_gate", False):
+@asynccontextmanager
+async def conversation_request_lease(entity: Any) -> AsyncIterator[None]:
+    """Hold one agent lease across preparation, processing and result capture."""
+    # Retain support for focused tests of an unregistered/partial entity. Every
+    # registered conversation entity supplies these three identity fields.
+    entry = getattr(entity, "entry", None)
+    subentry = getattr(entity, "subentry", None)
+    hass = getattr(entity, "hass", None)
+    entry_id = getattr(entry, "entry_id", None)
+    subentry_id = getattr(subentry, "subentry_id", None)
+    if (
+        hass is None
+        or not isinstance(entry_id, str)
+        or not isinstance(subentry_id, str)
+    ):
+        yield
         return
-
-    @wraps(current)
-    async def guarded(entity: Any, *args: Any, **kwargs: Any) -> Any:
-        # Some focused unit tests deliberately construct a partial entity with
-        # object.__new__ to exercise inner pipeline cleanup. A real registered
-        # conversation entity always has all three identity fields.
-        entry = getattr(entity, "entry", None)
-        subentry = getattr(entity, "subentry", None)
-        hass = getattr(entity, "hass", None)
-        entry_id = getattr(entry, "entry_id", None)
-        subentry_id = getattr(subentry, "subentry_id", None)
-        if (
-            hass is None
-            or not isinstance(entry_id, str)
-            or not isinstance(subentry_id, str)
-        ):
-            return await current(entity, *args, **kwargs)
-        gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
-        async with gate.shared():
-            return await current(entity, *args, **kwargs)
-
-    guarded._extended_openai_maintenance_gate = True  # type: ignore[attr-defined]
-    setattr(ExtendedOpenAIAgentEntity, "_async_process", guarded)  # noqa: B010
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared():
+        yield
 
 
 def _install_backup_guards() -> None:
@@ -355,7 +345,6 @@ def install_agent_maintenance_barrier() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
-    _install_conversation_guard()
     _install_backup_guards()
     _install_legacy_memory_guard()
     _install_service_guards()
