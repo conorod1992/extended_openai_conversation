@@ -813,12 +813,7 @@ async def test_websocket_and_setup_wiring(monkeypatch) -> None:
         asset.url_path
         for asset in hass.http.async_register_static_paths.await_args.args[0]
     }
-    assert f"/{DOMAIN}/management-panel.js" in registered_assets
-    assert not registered_assets & {
-        f"/{DOMAIN}/{asset}"
-        for asset in (
-            "memory-panel.js",
-            "memory-management-panel.js",
-            "knowledge-panel.js",
-        )
-    }
+    assert registered_assets == {f"/{DOMAIN}/frontend"}
+    module_url = register_panel.await_args.kwargs["module_url"]
+    assert module_url.startswith(f"/{DOMAIN}/frontend/assets/management-")
+    assert module_url.endswith(".js")
