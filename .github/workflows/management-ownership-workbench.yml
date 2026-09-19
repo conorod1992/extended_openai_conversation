@@ -10,6 +10,9 @@ permissions:
 concurrency:
   group: management-ownership-workbench
   cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
 jobs:
   apply-and-test:
     runs-on: ubuntu-latest
@@ -33,7 +36,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add custom_components tests tests_real_ha
           if ! git diff --cached --quiet; then
-            git commit -m 'Split Management dispatcher into explicit section handlers'
+            git commit -m 'Make Management command ownership explicit'
             git push origin HEAD:refactor/management-api-ownership
           fi
       - name: Install stable test environment
@@ -61,6 +64,15 @@ jobs:
               pending.extend(dependency.get('after_dependencies', []))
           subprocess.check_call([sys.executable, '-m', 'pip', 'install', *sorted(requirements)])
           PY
+      - name: Export isolated Python test dependencies
+        run: |
+          prefix=$(python -c 'import sys; print(sys.prefix)')
+          tar --exclude='__pycache__' --exclude='*.pyc' -C "$prefix" -czf /tmp/python-management-env.tar.gz bin lib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: management-python-environment
+          path: /tmp/python-management-env.tar.gz
+          retention-days: 2
       - name: Run Management regression tests
         env:
           PYTHONPATH: ${{ github.workspace }}
