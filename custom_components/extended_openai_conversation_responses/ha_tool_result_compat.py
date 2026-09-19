@@ -37,6 +37,8 @@ def unwrap_tool_result(value: Any) -> Any:
 
 def tool_result_data(content: Any) -> Any:
     """Return raw ToolResultContent data without touching HA's deprecated property."""
-    if "result" in signature(type(content)).parameters:
-        return unwrap_tool_result(content.result)
-    return content.tool_result
+    missing = object()
+    result = getattr(content, "result", missing)
+    if result is not missing:
+        return unwrap_tool_result(result)
+    return getattr(content, "tool_result", None)
