@@ -40,7 +40,7 @@ jobs:
 
       - name: Commit generated production assets
         run: |
-          git add custom_components/extended_openai_conversation_responses/frontend/dist
+          git add -f custom_components/extended_openai_conversation_responses/frontend/dist
           if git diff --cached --quiet; then
             echo "Production bundle already up to date."
             exit 0
