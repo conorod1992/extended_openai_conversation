@@ -63,14 +63,6 @@ _RUNTIME_QUARANTINED_FUNCTION_NAMES: ContextVar[frozenset[str]] = ContextVar(
 _RUNTIME_QUARANTINE_ALL_FUNCTIONS: ContextVar[bool] = ContextVar(
     "extended_openai_runtime_quarantine_all_functions", default=False
 )
-_EXTRA_FRONTEND_MODULES = (
-    "agent-config-editor-base.js",
-    "ha-llm-tools.js",
-    "request-rules-ui-impl.js",
-    "overview-page-impl.js",
-    "guide-page-impl.js",
-    "guide-page-base.js",
-)
 
 
 def _asset_url(module_name: str) -> str:
@@ -570,11 +562,6 @@ def install_management_loading_optimizations() -> None:
         _runtime_validate_function_groups  # type: ignore[assignment]
     )
 
-    management_ui.MANAGEMENT_FRONTEND_MODULES = tuple(
-        dict.fromkeys(
-            (*management_ui.MANAGEMENT_FRONTEND_MODULES, *_EXTRA_FRONTEND_MODULES)
-        )
-    )
     management_ui.async_setup_management_ui = async_setup_cached_management_ui  # type: ignore[assignment]
     debug_ui.async_setup_debug_ui = async_setup_cached_debug_ui  # type: ignore[assignment]
 

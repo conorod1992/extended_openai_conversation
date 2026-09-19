@@ -16,8 +16,9 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 # Register exposed-attribute agent configuration before modules import snapshots of
-# the authoritative config field set or normalizer.
-from . import exposed_attributes as _exposed_attributes, management_ui as _management_ui
+# the authoritative config field set or normalizer. Keep Management initialized
+# before the remaining runtime installers import it (explicit re-export).
+from . import exposed_attributes as _exposed_attributes, management_ui as management_ui
 from .agent_maintenance import install_agent_maintenance_barrier
 from .backup_transfer import setup_backup_transfer_websocket
 from .const import (
@@ -131,42 +132,6 @@ _REQUEST_RULE_RUNTIMES = "extended_openai_conversation_responses.request_rule_ru
 # with the same current native schemas that the UI and provider will see.
 install_current_default_native_function_schemas()
 
-
-def _register_split_frontend_modules() -> None:
-    """Add implementation modules used by the management frontend wrappers."""
-    extras = (
-        "agent-config-editor-base.js",
-        "agent-config-editor-model-v2.js",
-        "agent-config-native-yaml.js",
-        "model-catalog.js",
-        "ha-llm-tools.js",
-        "agent-config-loader.js",
-        "quiet-hours-ui.js",
-        "exposed-attributes-ui.js",
-        "backup-transfer-ui.js",
-        "guide-page-base.js",
-        "request-rules-match-test-ui.js",
-        "management-permission-boundaries.js",
-        "management-feature-status.js",
-        "management-memory-settings.js",
-        "memory-settings-ui.js",
-        "management-capabilities-ia.js",
-        "voice-identity-ui.js",
-        "management-navigation-search.js",
-        "management-toolbar-layout.js",
-        "usage-input-footprint.js",
-        "management-provider-credentials.js",
-        "management-function-dependencies.js",
-        "management-action-safety.js",
-    )
-    modules = tuple(
-        dict.fromkeys((*_management_ui.MANAGEMENT_FRONTEND_MODULES, *extras))
-    )
-    setattr(_management_ui, "MANAGEMENT_FRONTEND_MODULES", modules)  # noqa: B010
-
-
-_register_split_frontend_modules()
-
 PLATFORMS = [Platform.AI_TASK, Platform.CONVERSATION, Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -210,8 +175,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # command before exposing the management panel.
     setup_provider_credentials_websocket(hass)
     setup_backup_transfer_websocket(hass)
-    # The management bootstrap imports debug-management.js, so register the
-    # debug assets before exposing the panel itself.
+    # Request Debug loads lazily from Management; register its asset routes
+    # before exposing the panel itself.
     await async_setup_debug_ui(hass)
     await async_setup_management_ui(hass)
     return True

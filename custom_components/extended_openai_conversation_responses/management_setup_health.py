@@ -28,19 +28,7 @@ from .management_function_repair import editable_function_tools, isolated_functi
 from .memory import get_memory_mode
 
 _PATCHED = "extended_openai_management_setup_health"
-_FRONTEND_MODULES = ("overview-health.js", "overview-onboarding.js")
 OverviewCommand = Callable[..., Awaitable[dict[str, Any]]]
-
-
-def _register_frontend_modules() -> None:
-    """Expose Overview setup presentation helpers before UI static paths exist."""
-    modules = tuple(
-        dict.fromkeys((*management_ui.MANAGEMENT_FRONTEND_MODULES, *_FRONTEND_MODULES))
-    )
-    setattr(management_ui, "MANAGEMENT_FRONTEND_MODULES", modules)  # noqa: B010
-
-
-_register_frontend_modules()
 
 
 def _exposed_entity_count(hass: HomeAssistant) -> int:
