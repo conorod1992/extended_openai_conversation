@@ -44,7 +44,7 @@ assert.match(debugPanel, /Copy first page/);
 assert.match(debugPanel, /bounded\/truncated management view/);
 assert.doesNotMatch(integration, /Entire debug log copied/);
 assert.doesNotMatch(backend, /async_register_panel/);
-assert.match(backend, /debug-management\.js/);
+assert.match(backend, /async_register_frontend_assets/);
 assert.match(backend, /debug_trace_page/);
 assert.match(backend, /vol\.Optional\("provider_offset"\): int/);
 assert.match(backend, /vol\.Optional\("provider_limit"\): int/);
