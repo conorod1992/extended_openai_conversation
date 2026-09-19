@@ -1181,7 +1181,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._editorInitial = this._knowledgeValues();
     }
     this._updateKnowledgeCounter();
-    requestAnimationFrame(() => (this._knowledgeMode === "edit-error" ? root.querySelector(".close-editor") : root.querySelector("#knowledge-title")).focus());
+    // The dialog and fields are ready; a deferred focus can steal later input.
+    (this._knowledgeMode === "edit-error" ? dialog.querySelector(".close-editor") : root.querySelector("#knowledge-title")).focus();
   }
 
   async _openMemory(memoryId = null) {
@@ -1200,7 +1201,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._setDialogError("memory", "");
     this._editorInitial = this._memoryValues();
     root.querySelector("#memory-dialog").showModal();
-    requestAnimationFrame(() => root.querySelector("#memory-content").focus());
+    root.querySelector("#memory-content").focus();
   }
 
   async _requestEditorClose() {
