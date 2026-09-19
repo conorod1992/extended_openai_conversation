@@ -75,7 +75,7 @@ test("cancelled editor loads cannot overwrite a reopened dialog", async ({page})
   await page.evaluate(() => window.toolEditorLoads[0].resolve());
   await expect.poll(() => page.evaluate(() => window.toolEditorSettled)).toBe(2);
   await expect(editor).toHaveValue(editedYaml);
-  await panel.locator("#tool-save")).click();
+  await panel.locator("#tool-save").click();
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
   const sentYaml = await page.evaluate(() => window.browserHarness.calls
     .filter((call) => call.section === "tools" && call.action === "validate_yaml")
