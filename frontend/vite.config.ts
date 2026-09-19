@@ -8,7 +8,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         management: `${productionFrontend}/management-panel.js`,
-        debug: `${productionFrontend}/debug-panel.js`,
       },
       output: {
         entryFileNames: "assets/[name]-[hash].js",
