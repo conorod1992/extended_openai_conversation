@@ -76,7 +76,6 @@ async def test_auth_change_fails_closed_then_refreshes_user(hass, monkeypatch):
     """Changed users disappear from the cache until their fresh object is loaded."""
     stale = SimpleNamespace(id="user-1")
     refreshed = SimpleNamespace(id="user-1")
-    monkeypatch.setattr(ha_permissions, "_install_request_context_binding", Mock())
     monkeypatch.setattr(hass.auth, "async_get_users", AsyncMock(return_value=[stale]))
     get_user = AsyncMock(return_value=refreshed)
     monkeypatch.setattr(hass.auth, "async_get_user", get_user)
@@ -115,7 +114,6 @@ async def test_auth_change_ignores_invalid_id_and_removal_does_not_refresh(
 ):
     """Malformed auth events are ignored and removals only evict cached users."""
     user = SimpleNamespace(id="user-1")
-    monkeypatch.setattr(ha_permissions, "_install_request_context_binding", Mock())
     monkeypatch.setattr(hass.auth, "async_get_users", AsyncMock(return_value=[user]))
     get_user = AsyncMock()
     monkeypatch.setattr(hass.auth, "async_get_user", get_user)
@@ -149,7 +147,6 @@ async def test_auth_change_ignores_invalid_id_and_removal_does_not_refresh(
 async def test_auth_refresh_does_not_cache_missing_user(hass, monkeypatch):
     """A changed user that no longer exists remains fail-closed in the cache."""
     user = SimpleNamespace(id="user-1")
-    monkeypatch.setattr(ha_permissions, "_install_request_context_binding", Mock())
     monkeypatch.setattr(hass.auth, "async_get_users", AsyncMock(return_value=[user]))
     monkeypatch.setattr(hass.auth, "async_get_user", AsyncMock(return_value=None))
     listeners: dict[str, object] = {}
