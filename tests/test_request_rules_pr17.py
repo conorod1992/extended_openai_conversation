@@ -149,7 +149,10 @@ async def test_duplicate_orders_are_reindexed_after_mutations() -> None:
 
     await rules.async_update("z", {**local_rule("Zulu", rule_id="wrong"), "order": 0})
     assert [rule["order"] for rule in rules.snapshot()["rules"]] == [0, 1, 2]
-    assert next(rule for rule in rules.snapshot()["rules"] if rule["id"] == "z")["id"] == "z"
+    assert (
+        next(rule for rule in rules.snapshot()["rules"] if rule["id"] == "z")["id"]
+        == "z"
+    )
 
     await rules.async_delete("m")
     assert [rule["order"] for rule in rules.snapshot()["rules"]] == [0, 1]
@@ -202,9 +205,10 @@ async def test_request_reset_does_not_clear_conversation_override() -> None:
         CONF_REASONING_EFFORT: "high",
     }
     defaults = {CONF_CHAT_MODEL: "gpt-4o", CONF_REASONING_EFFORT: "low"}
-    assert runtime.effective_options(
-        defaults, "session", result.request_override
-    ) == defaults
+    assert (
+        runtime.effective_options(defaults, "session", result.request_override)
+        == defaults
+    )
 
 
 async def test_conversation_reset_still_clears_conversation_override() -> None:
@@ -279,7 +283,9 @@ async def test_captured_routing_values_are_resolved_and_validated() -> None:
     )
     assert runtime.get("session")[CONF_REASONING_EFFORT] == "high"
 
-    with pytest.raises(HomeAssistantError, match="Unsupported captured reasoning effort"):
+    with pytest.raises(
+        HomeAssistantError, match="Unsupported captured reasoning effort"
+    ):
         await async_evaluate_rule(
             SimpleNamespace(),
             await manager(effort_rule),
@@ -309,6 +315,7 @@ def test_routing_captures_reject_jinja_and_partial_effort_templates() -> None:
 
 
 async def test_management_create_assigns_id_and_validates_canonical_function_reference(
+    hass,
     monkeypatch,
 ) -> None:
     store = MemoryStore()
@@ -324,7 +331,7 @@ async def test_management_create_assigns_id_and_validates_canonical_function_ref
                 "required": ["fact"],
             },
         },
-        "function": {"type": "native", "name": "get_attributes"},
+        "function": {"type": "template", "value_template": "{{ fact }}"},
         "enabled": True,
     }
     subentry = SimpleNamespace(
@@ -336,9 +343,7 @@ async def test_management_create_assigns_id_and_validates_canonical_function_ref
         domain=DOMAIN,
         subentries={"agent": subentry},
     )
-    hass = SimpleNamespace(
-        config_entries=SimpleNamespace(async_get_entry=lambda _entry_id: entry)
-    )
+    hass.config_entries.async_get_entry.return_value = entry
 
     async def get_rules(*_args):
         return rules
@@ -392,7 +397,9 @@ async def test_management_create_assigns_id_and_validates_canonical_function_ref
 
     missing_input = deepcopy(rule)
     missing_input["action"]["actions"][0]["arguments"] = {}
-    with pytest.raises(HomeAssistantError, match="needs input: fact"):
+    with pytest.raises(
+        HomeAssistantError, match="Missing required function input: fact"
+    ):
         await async_management_command(
             hass,
             "admin",

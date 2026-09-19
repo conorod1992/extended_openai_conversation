@@ -9,7 +9,6 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     conversation,
-    feature_status,
     guest_performance,
     management_loading_performance,
     request_static_cache,
@@ -31,13 +30,14 @@ def _install_with_controlled_original(
         original_effective_guest_policy,
     )
     monkeypatch.setattr(guest_performance, "_INSTALLED", False)
-    monkeypatch.setattr(request_static_cache, "install_request_static_caching", lambda: None)
+    monkeypatch.setattr(
+        request_static_cache, "install_request_static_caching", lambda: None
+    )
     monkeypatch.setattr(
         management_loading_performance,
         "install_management_loading_optimizations",
         lambda: None,
     )
-    monkeypatch.setattr(feature_status, "install_management_feature_status", lambda: None)
 
     guest_performance.install_guest_policy_fast_path()
     assert guest_performance._INSTALLED is True
@@ -52,12 +52,12 @@ def test_can_reuse_request_policy_requires_unrestricted_inactive_guest_mode() ->
 
     assert guest_performance.can_reuse_request_policy(inactive_policy, None) is True
     assert (
-        guest_performance.can_reuse_request_policy(
-            inactive_policy, inactive_guest_mode
-        )
+        guest_performance.can_reuse_request_policy(inactive_policy, inactive_guest_mode)
         is True
     )
-    assert guest_performance.can_reuse_request_policy(None, inactive_guest_mode) is False
+    assert (
+        guest_performance.can_reuse_request_policy(None, inactive_guest_mode) is False
+    )
     assert (
         guest_performance.can_reuse_request_policy(active_policy, inactive_guest_mode)
         is False

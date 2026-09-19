@@ -1,125 +1,105 @@
-"""Tests for agent-global management authorization boundaries."""
+"""Authorization and private usage projections through the owned Management API."""
 
-from __future__ import annotations
-
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import (
+    management_loading_performance as loading,
+    management_ui as ui,
+)
 from homeassistant.exceptions import HomeAssistantError
 
-from custom_components.extended_openai_conversation_responses.management_permissions import (
-    sanitize_non_admin_overview,
-    wrap_management_permissions,
+
+@pytest.mark.parametrize(
+    "section", ["knowledge", "diagnostics", "function_repair", "quiet_hours"]
 )
+async def test_non_admin_cannot_access_agent_global_management_sections(hass, section):
+    with pytest.raises(
+        HomeAssistantError, match="Administrator permission is required"
+    ):
+        await ui.async_management_command(
+            hass, "normal-user", False, {"section": section, "action": "list"}
+        )
+    hass.config_entries.async_get_entry.assert_not_called()
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("section", ["knowledge", "diagnostics"])
-async def test_non_admin_cannot_access_agent_global_management_sections(section) -> None:
-    original = AsyncMock(return_value={"unexpected": True})
-    wrapped = wrap_management_permissions(original)
-
-    with pytest.raises(HomeAssistantError, match="Administrator permission is required"):
-        await wrapped(None, "normal-user", False, {"section": section, "action": "list"})
-
-    original.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["daily", "runs", "requests", "breakdowns", "retention"])
-async def test_non_admin_cannot_access_usage_details(action) -> None:
-    original = AsyncMock(return_value={"unexpected": True})
-    wrapped = wrap_management_permissions(original)
-
-    with pytest.raises(HomeAssistantError, match="Administrator permission is required"):
-        await wrapped(None, "normal-user", False, {"section": "usage", "action": action})
-
-    original.assert_not_awaited()
+@pytest.mark.parametrize(
+    "action",
+    [
+        "daily",
+        "runs",
+        "requests",
+        "breakdowns",
+        "retention",
+        "footprint",
+        "clear_details",
+    ],
+)
+async def test_non_admin_cannot_access_usage_details(hass, action):
+    with pytest.raises(
+        HomeAssistantError, match="Administrator permission is required"
+    ):
+        await ui.async_management_command(
+            hass, "normal-user", False, {"section": "usage", "action": action}
+        )
+    hass.config_entries.async_get_entry.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_non_admin_usage_summary_keeps_aggregates_but_hides_latest_run() -> None:
-    original = AsyncMock(
-        return_value={
-            "lifetime": {"total_tokens": 1234},
-            "today": {"total_tokens": 42},
-            "month": {"total_tokens": 900},
-            "latest": {
-                "run_id": "private-run",
-                "source_device_id": "kitchen-satellite",
-            },
-        }
+@pytest.mark.parametrize("is_admin", [True, False])
+async def test_usage_summary_keeps_aggregates_and_only_exposes_admin_latest(
+    hass, management_message, monkeypatch, is_admin
+):
+    raw = {
+        "lifetime": {"total_tokens": 1234},
+        "today": {"total_tokens": 42},
+        "month": {"total_tokens": 900},
+        "latest": {"run_id": "private-run", "source_device_id": "kitchen"},
+    }
+    get_usage = AsyncMock(return_value=object())
+    monkeypatch.setattr(ui, "async_get_usage", get_usage)
+    monkeypatch.setattr(ui, "usage_summary", lambda _: dict(raw))
+    result = await ui.async_management_command(
+        hass, "user", is_admin, management_message("usage", "summary")
     )
-    wrapped = wrap_management_permissions(original)
-
-    result = await wrapped(
-        None,
-        "normal-user",
-        False,
-        {"section": "usage", "action": "summary"},
-    )
-
     assert result["lifetime"]["total_tokens"] == 1234
     assert result["today"]["total_tokens"] == 42
-    assert result["latest"] is None
-    original.assert_awaited_once()
+    assert result["latest"] == (raw["latest"] if is_admin else None)
+    assert raw["latest"]["run_id"] == "private-run"
+    get_usage.assert_awaited_once()
 
 
-@pytest.mark.asyncio
-async def test_non_admin_optimized_overview_hides_latest_run_metadata() -> None:
-    original = AsyncMock(
-        return_value={
-            "agent": {"title": "Jarvis"},
-            "usage": {
-                "today": {"total_tokens": 42},
-                "latest": {
-                    "run_id": "private-run",
-                    "source_device_id": "kitchen-satellite",
-                },
-            },
-        }
+@pytest.mark.parametrize("is_admin", [True, False])
+async def test_overview_bounds_and_sanitizes_usage_once(
+    hass, management_message, monkeypatch, is_admin
+):
+    get_usage = AsyncMock(return_value=object())
+    monkeypatch.setattr(loading, "async_get_usage", get_usage)
+    monkeypatch.setattr(
+        loading,
+        "usage_summary",
+        lambda _: {"today": {"total_tokens": 42}, "latest": {"run_id": "private"}},
     )
-    wrapped = wrap_management_permissions(original)
-
-    result = await wrapped(
-        None,
-        "normal-user",
-        False,
-        {"section": "overview", "action": "summary"},
+    monkeypatch.setattr(
+        loading,
+        "async_get_memory",
+        AsyncMock(return_value=SimpleNamespace(stats=lambda: {"memory_count": 2})),
     )
-
+    monkeypatch.setattr(
+        loading,
+        "async_get_knowledge",
+        AsyncMock(return_value=SimpleNamespace(source_count=0)),
+    )
+    monkeypatch.setattr(
+        loading,
+        "async_get_guest_mode",
+        AsyncMock(return_value=SimpleNamespace(status=lambda: {})),
+    )
+    result = await ui.async_management_command(
+        hass, "user", is_admin, management_message("overview", "summary")
+    )
     assert result["usage"]["today"]["total_tokens"] == 42
-    assert result["usage"]["latest"] is None
-
-
-def test_overview_sanitizer_preserves_non_usage_fields_and_aggregates() -> None:
-    original = {
-        "agent": {"title": "Jarvis"},
-        "usage": {
-            "lifetime": {"total_tokens": 1234},
-            "latest": {"run_id": "private-run"},
-        },
-        "conversations": {"archive_enabled": True},
-    }
-
-    result = sanitize_non_admin_overview(original)
-
-    assert result["agent"] == original["agent"]
-    assert result["conversations"] == original["conversations"]
-    assert result["usage"]["lifetime"] == {"total_tokens": 1234}
-    assert result["usage"]["latest"] is None
-    assert original["usage"]["latest"] == {"run_id": "private-run"}
-
-
-@pytest.mark.asyncio
-async def test_admin_management_requests_pass_through_unchanged() -> None:
-    expected = {"source": {"id": "knowledge-1", "content": "private"}}
-    original = AsyncMock(return_value=expected)
-    wrapped = wrap_management_permissions(original)
-    message = {"section": "knowledge", "action": "get"}
-
-    result = await wrapped(None, "admin-user", True, message)
-
-    assert result is expected
-    original.assert_awaited_once_with(None, "admin-user", True, message)
+    assert result["usage"]["latest"] == ({"run_id": "private"} if is_admin else None)
+    assert result["agent"]["memory_count"] == 2
+    get_usage.assert_awaited_once()

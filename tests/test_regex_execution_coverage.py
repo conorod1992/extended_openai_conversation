@@ -6,12 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses import regex_execution
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_SPEECH_REGEX_REPLACEMENTS,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def _rules() -> list[dict[str, str]]:
@@ -181,13 +180,18 @@ def test_speech_replacement_items_enforces_all_size_limits():
 
 async def test_speech_replacements_short_circuit_invalid_and_large_inputs(caplog):
     """Invalid configuration and oversized speech preserve the original text."""
-    assert await regex_execution._async_apply_speech_replacements("hello", []) == "hello"
+    assert (
+        await regex_execution._async_apply_speech_replacements("hello", []) == "hello"
+    )
     assert (
         await regex_execution._async_apply_speech_replacements("hello", "bad rules")
         == "hello"
     )
     oversized = "x" * (regex_execution.MAX_SPEECH_REPLACEMENT_INPUT_CHARS + 1)
-    assert await regex_execution._async_apply_speech_replacements(oversized, _rules()) == oversized
+    assert (
+        await regex_execution._async_apply_speech_replacements(oversized, _rules())
+        == oversized
+    )
     assert "preserving spoken text" in caplog.text
     assert "input exceeds" in caplog.text
 
@@ -205,8 +209,7 @@ async def test_speech_replacements_fail_open_on_worker_errors(monkeypatch, error
     )
 
     assert (
-        await regex_execution._async_apply_speech_replacements("old", _rules())
-        == "old"
+        await regex_execution._async_apply_speech_replacements("old", _rules()) == "old"
     )
 
 
@@ -231,8 +234,7 @@ async def test_speech_replacements_rejects_malformed_worker_success(
     )
 
     assert (
-        await regex_execution._async_apply_speech_replacements("old", _rules())
-        == "old"
+        await regex_execution._async_apply_speech_replacements("old", _rules()) == "old"
     )
 
 
@@ -242,21 +244,20 @@ async def test_speech_replacements_rejects_output_beyond_parent_limit(monkeypatc
     monkeypatch.setattr(
         regex_execution,
         "_async_run_regex_worker",
-        AsyncMock(
-            return_value={"invalid": [], "text": "four", "overflow": False}
-        ),
+        AsyncMock(return_value={"invalid": [], "text": "four", "overflow": False}),
     )
 
     assert (
-        await regex_execution._async_apply_speech_replacements("old", _rules())
-        == "old"
+        await regex_execution._async_apply_speech_replacements("old", _rules()) == "old"
     )
 
 
 def test_deferred_speech_shim_records_only_when_enabled(monkeypatch):
     """The sync shim defers custom rules but preserves the ordinary sync path."""
     original = MagicMock(return_value="sync-cleaned")
-    monkeypatch.setattr(regex_execution, "has_custom_speech_replacements", lambda cfg: True)
+    monkeypatch.setattr(
+        regex_execution, "has_custom_speech_replacements", lambda cfg: True
+    )
     shim = regex_execution._deferred_process_speech_text_factory(original)
     config = {CONF_SPEECH_REGEX_REPLACEMENTS: _rules()}
 
@@ -274,54 +275,27 @@ def test_deferred_speech_shim_records_only_when_enabled(monkeypatch):
     original.assert_called_once_with("original", config)
 
 
-async def test_preview_isolation_defers_custom_regex_and_is_idempotent(monkeypatch):
-    """Preview replaces deferred speech asynchronously and installs only once."""
+@pytest.mark.parametrize("custom", [False, True])
+async def test_management_speech_preview_calls_isolated_regex_engine(
+    hass, management_message, monkeypatch, custom
+):
     from custom_components.extended_openai_conversation_responses import management_ui
 
-    def sync_process(text, config):
-        return f"sync:{text}"
-
-    async def original_command(hass, user_id, is_admin, message):
-        return {
-            "speech_text": management_ui.process_speech_text(
-                message["text"], message["config"]
-            )
-        }
-
-    monkeypatch.setattr(management_ui, "process_speech_text", sync_process)
-    monkeypatch.setattr(management_ui, "async_management_command", original_command)
-    monkeypatch.setattr(regex_execution, "has_custom_speech_replacements", lambda cfg: True)
-    processed = AsyncMock(return_value="async:hello")
-    monkeypatch.setattr(regex_execution, "async_process_speech_text", processed)
-
-    regex_execution._install_speech_preview_isolation()
-    wrapped = management_ui.async_management_command
-    result = await wrapped(
-        object(),
-        "user",
+    process = AsyncMock(return_value="processed")
+    monkeypatch.setattr(management_ui, "async_process_speech_text", process)
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
         True,
-        {
-            "action": "speech_preview",
-            "text": "hello",
-            "config": {CONF_SPEECH_REGEX_REPLACEMENTS: _rules()},
-        },
+        management_message(
+            "configuration",
+            "speech_preview",
+            sample_text="Some text",
+            config={CONF_SPEECH_REGEX_REPLACEMENTS: _rules() if custom else []},
+        ),
     )
-
-    assert result["speech_text"] == "async:hello"
-    processed.assert_awaited_once()
-
-    regex_execution._install_speech_preview_isolation()
-    assert management_ui.async_management_command is wrapped
-
-    processed.reset_mock()
-    result = await wrapped(
-        object(),
-        "user",
-        True,
-        {"action": "other", "text": "hello", "config": {}},
-    )
-    assert result["speech_text"] == "sync:hello"
-    processed.assert_not_awaited()
+    assert result["speech_text"] == "processed"
+    process.assert_awaited_once()
 
 
 async def test_live_isolation_defers_custom_regex_and_is_idempotent(monkeypatch):
@@ -345,40 +319,39 @@ async def test_live_isolation_defers_custom_regex_and_is_idempotent(monkeypatch)
         return result
 
     monkeypatch.setattr(conversation, "process_speech_text", sync_process)
-    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_handle_message", original_handle)
-    monkeypatch.setattr(regex_execution, "has_custom_speech_replacements", lambda cfg: True)
+    monkeypatch.setattr(
+        ExtendedOpenAIAgentEntity, "_async_handle_message", original_handle
+    )
+    monkeypatch.setattr(
+        regex_execution, "has_custom_speech_replacements", lambda cfg: True
+    )
     processed = AsyncMock(return_value="async:hello")
     monkeypatch.setattr(regex_execution, "async_process_speech_text", processed)
 
     regex_execution._install_speech_regex_isolation()
-    wrapped = ExtendedOpenAIAgentEntity._async_handle_message
+    command = ExtendedOpenAIAgentEntity._async_handle_message
     agent = SimpleNamespace(
         hass=object(),
-        subentry=SimpleNamespace(
-            data={CONF_SPEECH_REGEX_REPLACEMENTS: _rules()}
-        ),
+        subentry=SimpleNamespace(data={CONF_SPEECH_REGEX_REPLACEMENTS: _rules()}),
     )
 
-    result = await wrapped(agent, object(), object())
+    result = await command(agent, object(), object())
 
     processed.assert_awaited_once()
     result.response.async_set_speech.assert_called_once_with("async:hello")
 
     regex_execution._install_speech_regex_isolation()
-    assert ExtendedOpenAIAgentEntity._async_handle_message is wrapped
+    assert ExtendedOpenAIAgentEntity._async_handle_message is command
 
 
 def test_install_configurable_regex_isolation_runs_once(monkeypatch):
     """Top-level installation remains idempotent."""
     live = MagicMock()
-    preview = MagicMock()
     monkeypatch.setattr(regex_execution, "_INSTALLED", False)
     monkeypatch.setattr(regex_execution, "_install_speech_regex_isolation", live)
-    monkeypatch.setattr(regex_execution, "_install_speech_preview_isolation", preview)
 
     regex_execution.install_configurable_regex_isolation()
     regex_execution.install_configurable_regex_isolation()
 
     live.assert_called_once_with()
-    preview.assert_called_once_with()
     assert regex_execution._INSTALLED is True

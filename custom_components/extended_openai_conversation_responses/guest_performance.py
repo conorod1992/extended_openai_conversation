@@ -64,8 +64,6 @@ def install_guest_policy_fast_path() -> None:
 
     install_management_loading_optimizations()
 
-    # Effective Memory/Knowledge status wraps the optimized management API so the
-
     # Publish installation only after the complete chain succeeds. If a later hook
     # raises, a same-process retry resumes installation rather than silently skipping
     # an unfinished startup sequence; the method wrapper above is independently

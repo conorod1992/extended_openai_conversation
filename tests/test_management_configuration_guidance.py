@@ -1,7 +1,5 @@
 """Tests for side-effect-free management configuration guidance."""
 
-from types import SimpleNamespace
-
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
 )
@@ -12,7 +10,6 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from custom_components.extended_openai_conversation_responses.management_configuration_guidance import (
     configuration_guidance_snapshot,
-    wrap_management_configuration_guidance,
 )
 from custom_components.extended_openai_conversation_responses.management_ui import (
     MANAGEMENT_FRONTEND_MODULES,
@@ -51,24 +48,11 @@ def test_configuration_guidance_frontend_modules_are_registered() -> None:
     assert "management-decision-guidance.js" in MANAGEMENT_FRONTEND_MODULES
 
 
-async def test_management_wrapper_adds_guidance_to_successful_config(
-    monkeypatch,
-) -> None:
-    config = agent_config_defaults()
-    config[CONF_API_MODE] = "responses"
-    entry = SimpleNamespace(data={})
-    subentry = SimpleNamespace()
-    monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_configuration_guidance.management_ui.entry_and_agent",
-        lambda _hass, _entry_id, _subentry_id: (entry, subentry),
-    )
+async def test_management_adds_guidance_to_successful_config(hass, management_agent):
+    from custom_components.extended_openai_conversation_responses import management_ui
 
-    async def original(_hass, _user_id, _is_admin, _message):
-        return {"valid": True, "config": config}
-
-    wrapped = wrap_management_configuration_guidance(original)
-    result = await wrapped(
-        object(),
+    result = await management_ui.async_management_command(
+        hass,
         "admin",
         True,
         {
@@ -76,18 +60,18 @@ async def test_management_wrapper_adds_guidance_to_successful_config(
             "action": "validate",
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
+            "config": {CONF_API_MODE: "responses"},
         },
     )
+    assert result["valid"] is True
     assert result["configuration_guidance"]["web_search"]["available"] is True
 
 
-async def test_management_wrapper_leaves_invalid_validation_untouched() -> None:
-    async def original(_hass, _user_id, _is_admin, _message):
-        return {"valid": False, "errors": {"prompt": "invalid"}}
+async def test_management_leaves_invalid_validation_untouched(hass, management_agent):
+    from custom_components.extended_openai_conversation_responses import management_ui
 
-    wrapped = wrap_management_configuration_guidance(original)
-    result = await wrapped(
-        object(),
+    result = await management_ui.async_management_command(
+        hass,
         "admin",
         True,
         {
@@ -95,6 +79,11 @@ async def test_management_wrapper_leaves_invalid_validation_untouched() -> None:
             "action": "validate",
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
+            "config": {
+                "speech_regex_replacements": [{"pattern": "[", "replacement": ""}]
+            },
         },
     )
+    assert result["valid"] is False
     assert "configuration_guidance" not in result
+    hass.config_entries.async_update_subentry.assert_not_called()

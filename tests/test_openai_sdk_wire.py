@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+import gc
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -12,8 +13,6 @@ from unittest.mock import AsyncMock
 import httpx
 from openai import AsyncOpenAI, RateLimitError
 import pytest
-
-from homeassistant.components import conversation
 
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
@@ -24,7 +23,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
 )
-
+from homeassistant.components import conversation
 
 MODEL = "gpt-4.1-mini"
 
@@ -255,14 +254,18 @@ def _chat_text_stream(text: str) -> bytes:
 class _Wire:
     """Queue deterministic raw HTTP responses and retain every real SDK request."""
 
-    def __init__(self, responders: list[Callable[[httpx.Request], httpx.Response]]) -> None:
+    def __init__(
+        self, responders: list[Callable[[httpx.Request], httpx.Response]]
+    ) -> None:
         self._responders = list(responders)
         self.requests: list[httpx.Request] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         if not self._responders:
-            raise AssertionError(f"Unexpected OpenAI SDK request: {request.method} {request.url}")
+            raise AssertionError(
+                f"Unexpected OpenAI SDK request: {request.method} {request.url}"
+            )
         return self._responders.pop(0)(request)
 
 
@@ -292,6 +295,10 @@ def _client(wire: _Wire) -> AsyncOpenAI:
 async def _close_client(client: AsyncOpenAI) -> None:
     """Close the SDK client and let scheduled stream finalizers finish."""
     await client.close()
+    # The SDK's cyclic SSE iterators may otherwise be collected by the HA test
+    # fixture *after* this coroutine returns, scheduling late async finalizers.
+    gc.collect()
+    await asyncio.sleep(0)
     await asyncio.sleep(0)
 
 
@@ -400,9 +407,7 @@ async def test_responses_real_sdk_serializes_and_parses_tool_round_trip(hass) ->
         item for item in second["input"] if item.get("type") == "function_call"
     )
     provider_output = next(
-        item
-        for item in second["input"]
-        if item.get("type") == "function_call_output"
+        item for item in second["input"] if item.get("type") == "function_call_output"
     )
     assert provider_call["call_id"] == "call_response_1"
     assert provider_call["name"] == "get_state"

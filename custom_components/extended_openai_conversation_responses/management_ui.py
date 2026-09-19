@@ -1759,13 +1759,25 @@ async def async_scopes_command(request: _ManagementRequest) -> dict[str, Any]:
     from .management_loading_performance import async_scope_catalog
 
     if request.message["action"] == "catalog":
-        return await async_scope_catalog(
+        result = await async_scope_catalog(
             request.hass,
             request.user_id,
             request.is_admin,
             request.entry_id,
             request.subentry_id,
         )
+        scopes = result.get("scopes")
+        if isinstance(scopes, list):
+            temporary_memory: Any = await async_get_temporary_memory(
+                request.hass, request.entry_id, request.subentry_id
+            )
+            counts = temporary_memory.owner_counts()
+            for scope in scopes:
+                if isinstance(scope, dict):
+                    scope["temporary_memory_count"] = counts.get(
+                        str(scope.get("scope_id") or ""), 0
+                    )
+        return result
     return _unknown_management_action(request)
 
 

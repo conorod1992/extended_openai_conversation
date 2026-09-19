@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
-from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import (
     temporary_memory as temporary_module,
@@ -24,6 +21,7 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
     TemporaryMemory,
     TemporaryMemoryRecord,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def _record(
@@ -170,9 +168,10 @@ async def test_manager_contract_enforces_owner_and_owned_helpers(
             "user:alice",
             [str(index) for index in range(MAX_DELETE_RECORDS + 1)],
         )
-    assert await TemporaryMemory.async_delete_owned(
-        fake_manager, "user:alice", ["m1"]
-    ) == 1
+    assert (
+        await TemporaryMemory.async_delete_owned(fake_manager, "user:alice", ["m1"])
+        == 1
+    )
     assert delete_calls == [("user:alice", ["m1"], "user:alice")]
 
     assert TemporaryMemory.owner_counts(fake_manager) == {
@@ -221,7 +220,9 @@ async def test_snapshot_contract_fails_closed_and_forwards_owner(
         calls.append(owner_scope_id)
         return [_record("one", owner=owner_scope_id)]
 
-    monkeypatch.setattr(temporary_module, "async_read_temporary_memory_snapshot", original)
+    monkeypatch.setattr(
+        temporary_module, "async_read_temporary_memory_snapshot", original
+    )
     monkeypatch.setattr(management_ui, "async_read_temporary_memory_snapshot", original)
 
     ownership._install_snapshot_contract()
@@ -269,8 +270,12 @@ async def test_conversation_contract_binds_and_resets_owner_context(
         return {"ok": True}
 
     entity_cls = conversation.ExtendedOpenAIAgentEntity
-    monkeypatch.setattr(entity_cls, "_async_retrieve_temporary_memories", original_retrieve)
-    monkeypatch.setattr(entity_cls, "_async_execute_temporary_memory_tool", original_tool)
+    monkeypatch.setattr(
+        entity_cls, "_async_retrieve_temporary_memories", original_retrieve
+    )
+    monkeypatch.setattr(
+        entity_cls, "_async_execute_temporary_memory_tool", original_tool
+    )
 
     ownership._install_conversation_contract()
 
@@ -285,7 +290,9 @@ async def test_conversation_contract_binds_and_resets_owner_context(
     temporary_token = conversation._ACTIVE_TEMPORARY_SCOPE.set("conversation:one")
     try:
         records = await entity_cls._async_retrieve_temporary_memories(entity)
-        result = await entity_cls._async_execute_temporary_memory_tool(entity, "add", {})
+        result = await entity_cls._async_execute_temporary_memory_tool(
+            entity, "add", {}
+        )
     finally:
         conversation._ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
         conversation._ACTIVE_SCOPE.reset(scope_token)
@@ -298,48 +305,21 @@ async def test_conversation_contract_binds_and_resets_owner_context(
 
 @pytest.mark.asyncio
 async def test_management_contract_validates_and_enriches_owner_operations(
+    hass,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Management commands cannot escape Personal/Shared ownership boundaries."""
-    from custom_components.extended_openai_conversation_responses import management_ui
-
-    monkeypatch.setattr(
+    from custom_components.extended_openai_conversation_responses import (
+        management_loading_performance as loading,
         management_ui,
-        "MANAGEMENT_FRONTEND_MODULES",
-        management_ui.MANAGEMENT_FRONTEND_MODULES,
-    )
-    monkeypatch.setattr(
-        management_ui,
-        "_async_preview_effective_request",
-        management_ui._async_preview_effective_request,
-    )
-    monkeypatch.setattr(
-        management_ui,
-        "_async_preview_effective_prompt",
-        management_ui._async_preview_effective_prompt,
-    )
-    monkeypatch.setattr(
-        management_ui, "async_management_command", management_ui.async_management_command
     )
 
-    preview_seen: list[str | None] = []
+    fallback_results = []
 
-    async def preview(
-        _hass: Any,
-        _entry: Any,
-        _subentry: Any,
-        _candidate: dict[str, Any],
-        _user_id: str,
-    ) -> dict[str, Any]:
-        preview_seen.append(ownership._ACTIVE_OWNER_SCOPE_ID.get())
-        return {"preview": True}
-
-    fallback_results: list[dict[str, Any]] = []
-
-    async def fallback(
-        _hass: Any, _user_id: str, _is_admin: bool, _message: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def fallback(*_args):
         return fallback_results.pop(0)
+
+    monkeypatch.setattr(loading, "async_scope_catalog", fallback)
 
     class Manager:
         def stats(self) -> dict[str, int]:
@@ -372,9 +352,6 @@ async def test_management_contract_validates_and_enriches_owner_operations(
     entry = SimpleNamespace(entry_id="entry")
     subentry = SimpleNamespace(subentry_id="sub")
 
-    monkeypatch.setattr(management_ui, "_async_preview_effective_request", preview)
-    monkeypatch.setattr(management_ui, "_async_preview_effective_prompt", preview)
-    monkeypatch.setattr(management_ui, "async_management_command", fallback)
     monkeypatch.setattr(
         management_ui,
         "entry_and_agent",
@@ -391,15 +368,6 @@ async def test_management_contract_validates_and_enriches_owner_operations(
 
     monkeypatch.setattr(management_ui, "async_get_temporary_memory", get_manager)
 
-    ownership._install_management_contract()
-
-    assert "management-temporary-memory.js" in management_ui.MANAGEMENT_FRONTEND_MODULES
-    assert await management_ui._async_preview_effective_request(
-        object(), entry, subentry, {}, "alice"
-    ) == {"preview": True}
-    assert preview_seen == ["user:alice"]
-    assert ownership._ACTIVE_OWNER_SCOPE_ID.get() is None
-
     base = {
         "section": "memories",
         "entry_id": "entry",
@@ -407,18 +375,18 @@ async def test_management_contract_validates_and_enriches_owner_operations(
         "scope_id": "user:alice",
     }
     listed = await management_ui.async_management_command(
-        object(), "alice", False, base | {"action": "temporary_list"}
+        hass, "alice", False, base | {"action": "temporary_list"}
     )
     assert listed["scope_id"] == "user:alice"
     assert listed["memories"][0]["owner_scope_id"] == "user:alice"
 
     with pytest.raises(HomeAssistantError, match="memory_id is required"):
         await management_ui.async_management_command(
-            object(), "alice", False, base | {"action": "temporary_delete"}
+            hass, "alice", False, base | {"action": "temporary_delete"}
         )
 
     deleted = await management_ui.async_management_command(
-        object(),
+        hass,
         "alice",
         False,
         base | {"action": "temporary_delete", "memory_id": "owned"},
@@ -427,7 +395,7 @@ async def test_management_contract_validates_and_enriches_owner_operations(
 
     with pytest.raises(HomeAssistantError, match="must be strings when supplied"):
         await management_ui.async_management_command(
-            object(),
+            hass,
             "alice",
             False,
             base
@@ -440,7 +408,7 @@ async def test_management_contract_validates_and_enriches_owner_operations(
 
     with pytest.raises(HomeAssistantError, match="at least one Temporary Memory field"):
         await management_ui.async_management_command(
-            object(),
+            hass,
             "alice",
             False,
             base | {"action": "temporary_update", "memory_id": "owned"},
@@ -448,7 +416,7 @@ async def test_management_contract_validates_and_enriches_owner_operations(
 
     with pytest.raises(HomeAssistantError, match="invalid update"):
         await management_ui.async_management_command(
-            object(),
+            hass,
             "alice",
             False,
             base
@@ -460,7 +428,7 @@ async def test_management_contract_validates_and_enriches_owner_operations(
         )
 
     updated = await management_ui.async_management_command(
-        object(),
+        hass,
         "alice",
         False,
         base
@@ -479,7 +447,7 @@ async def test_management_contract_validates_and_enriches_owner_operations(
     )
     with pytest.raises(HomeAssistantError, match="Personal or Shared scopes"):
         await management_ui.async_management_command(
-            object(), "alice", False, base | {"action": "temporary_list"}
+            hass, "alice", False, base | {"action": "temporary_list"}
         )
 
     fallback_results.extend(
@@ -495,7 +463,7 @@ async def test_management_contract_validates_and_enriches_owner_operations(
         ]
     )
     catalog = await management_ui.async_management_command(
-        object(),
+        hass,
         "alice",
         True,
         {
@@ -509,10 +477,15 @@ async def test_management_contract_validates_and_enriches_owner_operations(
     assert catalog["scopes"][1]["temporary_memory_count"] == 4
 
     unchanged = await management_ui.async_management_command(
-        object(),
+        hass,
         "alice",
         True,
-        {"section": "scopes", "action": "catalog"},
+        {
+            "section": "scopes",
+            "action": "catalog",
+            "entry_id": "entry",
+            "subentry_id": "sub",
+        },
     )
     assert unchanged == {"scopes": "not-a-list"}
 
@@ -524,7 +497,6 @@ def test_public_installer_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None
         "_install_manager_contract",
         "_install_snapshot_contract",
         "_install_conversation_contract",
-        "_install_management_contract",
     ):
         monkeypatch.setattr(
             ownership,
