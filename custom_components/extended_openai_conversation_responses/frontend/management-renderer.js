@@ -239,13 +239,24 @@ function renderDynamicRegions(panel) {
   }
 
   const main = root.querySelector("[data-eoc-main]") || root.querySelector("main");
+  const dialogs = panel._dialogs();
+  const route = `${panel._agentId}|${panel._viewKey()}`;
+  if (agent && !panel._busy && !panel._error && route === panel._eocRenderedRoute
+      && !root.querySelector("dialog[open]") && panel._reconcileCollectionView?.()) {
+    panel._eocDeferredEditorRender = false;
+    if (dialogs !== panel._eocDialogMarkup) {
+      updateDialogs(panel, dialogs, {preserveEditors: true});
+      panel._eocDialogMarkup = dialogs;
+    }
+    bindDynamicBase(panel);
+    bindIncrementalDraftUpdates(panel);
+    return;
+  }
   const markup = !agent
     ? panel._empty("No conversation agents configured.")
     : panel._busy ? panel._loading()
       : panel._error ? `<div class="error" role="alert">${panel._e(panel._error)}</div>`
         : panel._content(agent);
-  const dialogs = panel._dialogs();
-  const route = `${panel._agentId}|${panel._viewKey()}`;
   const changed = route !== panel._eocRenderedRoute || markup !== panel._eocMainMarkup;
   const dialogsChanged = dialogs !== panel._eocDialogMarkup;
   if ((changed || dialogsChanged) && route === panel._eocRenderedRoute && root.querySelector("dialog[open]")) {

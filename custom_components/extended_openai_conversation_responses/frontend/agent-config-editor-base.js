@@ -1,3 +1,4 @@
+import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys, setAttribute, setText} from "./keyed-collection.js";
 import {renderBackupTransferPanel, renderRestoreTransferDialog} from "./backup-transfer-ui.js";
 import {renderExposedAttributeSettings} from "./exposed-attributes-ui.js";
 import {modelFieldPresentation, modelFieldNotes} from "./agent-config-model-presentation.js";
@@ -549,7 +550,7 @@ function functionToolCard(panel, tool, allTools) {
   const assignment = functionGroupAssignment(panel, tool, index);
   if (isHALlmTool(tool)) return renderHAToolCard(panel, tool, index, assignment);
   const enabled = isFunctionToolEnabled(tool);
-  return `<article class="list-card tool-card ${enabled ? "" : "is-disabled"}" data-tool-index="${index}" data-tool-search="${panel._e(`${tool.spec?.name || ""} ${tool.spec?.description || ""} ${tool.function?.type || ""} ${enabled ? "enabled" : "disabled"}`.toLowerCase())}"><div class="card-main"><div class="tool-title"><h4>${panel._e(tool.spec?.name||"Unnamed tool")}</h4><span class="type-badge">${panel._e(tool.function?.type||"Unknown type")}</span>${enabled ? "" : '<span class="disabled-badge">Disabled</span>'}</div><p class="description">${panel._e(tool.spec?.description||"No description")}</p>${assignment}</div><div class="actions tool-card-actions"><label class="tool-enabled-control"><span>Enabled</span><span class="switch-control"><input class="tool-enabled" data-index="${index}" type="checkbox" role="switch" aria-label="Enable ${panel._e(tool.spec?.name||"Function Tool")}" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></span></label><button type="button" class="secondary edit-tool" data-index="${index}">Edit</button><button type="button" class="secondary duplicate-tool" data-index="${index}">Duplicate</button><button type="button" class="danger delete-tool" data-index="${index}">Delete</button></div></article>`;
+  return `<article class="list-card tool-card ${enabled ? "" : "is-disabled"}" data-tool-key="${panel._e(tool.spec?.name || "")}" data-tool-index="${index}" data-tool-search="${panel._e(`${tool.spec?.name || ""} ${tool.spec?.description || ""} ${tool.function?.type || ""} ${enabled ? "enabled" : "disabled"}`.toLowerCase())}"><div class="card-main"><div class="tool-title"><h4>${panel._e(tool.spec?.name||"Unnamed tool")}</h4><span class="type-badge">${panel._e(tool.function?.type||"Unknown type")}</span>${enabled ? "" : '<span class="disabled-badge">Disabled</span>'}</div><p class="description">${panel._e(tool.spec?.description||"No description")}</p>${assignment}</div><div class="actions tool-card-actions"><label class="tool-enabled-control"><span>Enabled</span><span class="switch-control"><input class="tool-enabled" data-index="${index}" type="checkbox" role="switch" aria-label="Enable ${panel._e(tool.spec?.name||"Function Tool")}" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></span></label><button type="button" class="secondary edit-tool" data-index="${index}">Edit</button><button type="button" class="secondary duplicate-tool" data-index="${index}">Duplicate</button><button type="button" class="danger delete-tool" data-index="${index}">Delete</button></div></article>`;
 }
 
 function functionGroupCard(panel, group, tools) {
@@ -565,7 +566,205 @@ export function renderTools(panel, {repairCards = ""} = {}) {
   const enabledCount = tools.filter(isFunctionToolEnabled).length;
   const categories = categorizeFunctionTools(config);
   const ungrouped = categories.alwaysAvailable.map((tool)=>functionToolCard(panel,tool,tools)).join("");
-  return `<style data-function-group-assignment>${FUNCTION_GROUP_ASSIGNMENT_STYLE}</style><section class="content-card tools-surface"><div class="section-heading"><div><span class="setting-label-row"><h2>Function Tools & Groups</h2>${helpButton(panel,"function_tools")}</span><p>Function Tools give the assistant actions beyond normal Home Assistant access. Changes to functions and groups save immediately.</p><small>${enabledCount} enabled · ${tools.length - enabledCount} disabled · ${categories.groups.length} groups</small></div><div class="actions"><button type="button" class="secondary" id="add-group">+ Create group</button><button type="button" class="secondary" id="add-ha-tools">+ Add LLM Tools</button><button type="button" id="add-tool">+ Add Function Tool</button></div></div><div class="notice function-groups-help"><strong>Loading groups only when needed</strong><p>The assistant initially sees each group's name and description, then loads its full tool instructions if the current task needs them. This reduces input-token usage but may add one model round-trip the first time a group is used.</p></div><label class="tool-search"><span class="sr-only">Search functions and groups</span><input id="tool-search" type="search" placeholder="Search functions and groups..." aria-label="Search functions and groups"></label><div class="function-groups">${repairCards}<article class="function-group-card always-card" data-group-search="always available ungrouped general"><div class="function-group-heading"><div><div class="tool-title"><h3>Available on every request</h3><span class="availability-badge">Always available</span><span class="function-count">${functionToolCountLabel(categories.alwaysAvailable)}</span></div><p>These ungrouped functions send their full instructions with every request, so the assistant can use them immediately.</p></div></div><details open><summary>Show included functions</summary><div class="list tool-list">${ungrouped || panel._empty("No ungrouped functions.")}</div></details></article>${categories.groups.map((group)=>functionGroupCard(panel,group,tools)).join("")||panel._empty("No groups yet. Existing functions remain available on every request until you create one.")}</div><div class="section-actions tools-actions">${tools.some(isHALlmTool)?'<button type="button" class="secondary" id="refresh-ha-tools">Refresh HA tool availability</button>':""}<button type="button" class="secondary" id="validate-tools">Check tool configuration</button><span id="tool-status" class="validation" aria-live="polite"></span></div></section>`;
+  return `<style data-function-group-assignment>${FUNCTION_GROUP_ASSIGNMENT_STYLE}</style><section class="content-card tools-surface"><div class="section-heading"><div><span class="setting-label-row"><h2>Function Tools & Groups</h2>${helpButton(panel,"function_tools")}</span><p>Function Tools give the assistant actions beyond normal Home Assistant access. Changes to functions and groups save immediately.</p><small data-function-totals>${enabledCount} enabled · ${tools.length - enabledCount} disabled · ${categories.groups.length} groups</small></div><div class="actions"><button type="button" class="secondary" id="add-group">+ Create group</button><button type="button" class="secondary" id="add-ha-tools">+ Add LLM Tools</button><button type="button" id="add-tool">+ Add Function Tool</button></div></div><div class="notice function-groups-help"><strong>Loading groups only when needed</strong><p>The assistant initially sees each group's name and description, then loads its full tool instructions if the current task needs them. This reduces input-token usage but may add one model round-trip the first time a group is used.</p></div><label class="tool-search"><span class="sr-only">Search functions and groups</span><input id="tool-search" type="search" placeholder="Search functions and groups..." aria-label="Search functions and groups"></label><div class="function-groups">${repairCards}<article class="function-group-card always-card" data-group-search="always available ungrouped general"><div class="function-group-heading"><div><div class="tool-title"><h3>Available on every request</h3><span class="availability-badge">Always available</span><span class="function-count">${functionToolCountLabel(categories.alwaysAvailable)}</span></div><p>These ungrouped functions send their full instructions with every request, so the assistant can use them immediately.</p></div></div><details open><summary>Show included functions</summary><div class="list tool-list">${ungrouped || panel._empty("No ungrouped functions.")}</div></details></article>${categories.groups.map((group)=>functionGroupCard(panel,group,tools)).join("")||panel._empty("No groups yet. Existing functions remain available on every request until you create one.")}</div><div class="section-actions tools-actions"><button type="button" class="secondary" id="refresh-ha-tools" ${tools.some(isHALlmTool)?"":"hidden"}>Refresh HA tool availability</button><button type="button" class="secondary" id="validate-tools">Check tool configuration</button><span id="tool-status" class="validation" aria-live="polite"></span></div></section>`;
+}
+
+// Only DOM references and presentation signatures are retained here. Mutations
+// still synchronize _draft/_configData from the backend before reconciling.
+const toolCollections = new WeakMap();
+
+function applyFunctionSearch(panel) {
+  const root = panel.shadowRoot;
+  const query = root.querySelector("#tool-search")?.value || "";
+  root.querySelectorAll(".function-group-card").forEach(card => {
+    const groupMatch = Boolean(query.trim()) && matchesFunctionSearch(query, card.dataset.groupSearch);
+    let toolMatch = false;
+    card.querySelectorAll(".tool-card").forEach(tool => {
+      const matches = !query.trim() || groupMatch || matchesFunctionSearch(query, tool.dataset.toolSearch);
+      if (tool.hidden === matches) tool.hidden = !matches;
+      toolMatch ||= matches;
+    });
+    const hidden = Boolean(query.trim()) && !groupMatch && !toolMatch;
+    if (card.hidden !== hidden) card.hidden = hidden;
+    if (query.trim() && toolMatch) {
+      const details = card.querySelector("details");
+      if (details && !details.open) details.open = true;
+    }
+  });
+}
+
+function prepareToolsCollection(panel) {
+  const host = panel.shadowRoot.querySelector(".tools-surface");
+  if (!host || toolCollections.has(host)) return;
+  toolCollections.set(host, {
+    tools: adoptKeyedElements(host, "[data-tool-key]", "toolKey"),
+    groups: adoptKeyedElements(host, ".function-group-card[data-group-id]", "groupId"),
+    always: {node: host.querySelector(".always-card")},
+    repair: host.querySelector(".function-repair-attention"),
+    repairSignature: JSON.stringify(panel._result?.function_repair),
+    noGroups: [...host.querySelector(".function-groups").children].find(node => node.classList.contains("empty")),
+  });
+  reconcileTools(panel);
+}
+
+export function reconcileTools(panel, {repairCards} = {}) {
+  const host = panel.shadowRoot.querySelector(".tools-surface");
+  const state = toolCollections.get(host);
+  if (!state) return false;
+  const config = panel._draft || panel._result?.config || {};
+  const tools = config.functions || [];
+  const groups = config.function_groups || [];
+  const categories = categorizeFunctionTools(config);
+  const membership = new Map(groups.flatMap(group => (group.functions || []).map(name => [name, group])));
+  const choices = JSON.stringify(groups.map(({id, name, enabled}) => ({id, name, enabled})));
+  const toolNodes = new Map();
+  tools.forEach((tool, index) => {
+    const name = tool.spec?.name || "";
+    const info = isHALlmTool(tool) && panel._haCatalogAgent === panel._agentId ? panel._haCatalog?.saved?.[name] : null;
+    const record = keyedElement(state.tools, name, JSON.stringify([tool, info]), () => functionToolCard(panel, tool, tools));
+    const card = record.node;
+    record.indices ||= [card, ...card.querySelectorAll("[data-index]")];
+    for (const node of record.indices) setAttribute(node, node === card ? "data-tool-index" : "data-index", index);
+    const current = membership.get(name);
+    const assignment = `${choices}|${current?.id || ""}`;
+    if (record.assignment !== undefined && record.assignment !== assignment) {
+      const old = card.querySelector(".function-group-assignment-control");
+      old?.replaceWith(elementFromMarkup(functionGroupAssignment(panel, tool, index)));
+      record.indices = null;
+    }
+    record.assignment = assignment;
+    toolNodes.set(name, card);
+  });
+
+  function updateMembers(record, members, emptyText) {
+    record.list ||= record.node.querySelector(".tool-list");
+    record.count ||= record.node.querySelector(".function-count");
+    setText(record.count, functionToolCountLabel(members));
+    if (!members.length) record.empty ||= record.list.querySelector(".empty") || elementFromMarkup(panel._empty(emptyText));
+    placeChildren(record.list, members.length ? members.map(tool => toolNodes.get(tool.spec.name)) : [record.empty]);
+  }
+  updateMembers(state.always, categories.alwaysAvailable, "No ungrouped functions.");
+  const groupNodes = categories.groups.map(group => {
+    let record = state.groups.get(group.id);
+    if (!record) {
+      record = {node: elementFromMarkup(functionGroupCard(panel, {...group, tools: []}, tools))};
+      state.groups.set(group.id, record);
+    }
+    const {functions, tools: members, ...metadata} = group;
+    const signature = JSON.stringify(metadata);
+    if (record.signature !== undefined && record.signature !== signature) {
+      const fresh = elementFromMarkup(functionGroupCard(panel, {...group, tools: []}, tools));
+      record.node.querySelector(".function-group-heading").replaceWith(fresh.querySelector(".function-group-heading"));
+      record.node.className = fresh.className;
+      setAttribute(record.node, "data-group-search", fresh.dataset.groupSearch);
+      record.count = null;
+    }
+    record.signature = signature;
+    updateMembers(record, members, "This group has no functions yet. Edit it to choose functions.");
+    return record.node;
+  });
+  if (repairCards !== undefined && state.repairMarkup !== repairCards) {
+    // Repair cards have a separate owner; only rebuild that small section when
+    // its rendered validation/quarantine information actually changes.
+    if (state.repairSignature !== JSON.stringify(panel._result?.function_repair) || !state.repair) state.repair = repairCards ? elementFromMarkup(repairCards) : null;
+    state.repairSignature = JSON.stringify(panel._result?.function_repair);
+    state.repairMarkup = repairCards;
+  }
+  if (!groupNodes.length) state.noGroups ||= elementFromMarkup(panel._empty("No groups yet. Existing functions remain available on every request until you create one."));
+  placeChildren(host.querySelector(".function-groups"), [
+    ...(state.repair ? [state.repair] : []), state.always.node,
+    ...(groupNodes.length ? groupNodes : [state.noGroups]),
+  ]);
+  pruneKeys(state.tools, new Set(tools.map(tool => tool.spec?.name || "")));
+  pruneKeys(state.groups, new Set(groups.map(group => group.id)));
+  const enabled = tools.filter(isFunctionToolEnabled).length;
+  setText(host.querySelector("[data-function-totals]"), `${enabled} enabled · ${tools.length - enabled} disabled · ${groups.length} groups`);
+  const refresh = host.querySelector("#refresh-ha-tools");
+  const hideRefresh = !tools.some(isHALlmTool);
+  if (refresh.hidden !== hideRefresh) refresh.hidden = hideRefresh;
+  applyFunctionSearch(panel);
+  return true;
+}
+
+function collectionToolIndex(panel, control) {
+  const name = control.closest("[data-tool-key]")?.dataset.toolKey;
+  return (panel._draft.functions || []).findIndex(tool => tool.spec?.name === name);
+}
+
+function bindToolCollection(panel) {
+  const root = panel.shadowRoot;
+  const host = root.querySelector(".tools-surface");
+  if (!host || host.__eocToolsBound) return;
+  host.__eocToolsBound = true;
+  host.addEventListener("input", event => {
+    if (event.target.id === "tool-search") applyFunctionSearch(panel);
+  });
+  host.addEventListener("click", async event => {
+    const button = event.target.closest?.("button");
+    if (!button || button.disabled) return;
+    if (button.id === "add-tool") return openTool(panel);
+    if (button.id === "add-group") return openFunctionGroup(panel);
+    if (button.matches(".edit-group")) return openFunctionGroup(panel, button.dataset.groupId);
+    if (button.matches(".delete-group")) {
+      const group = (panel._draft.function_groups || []).find(item => item.id === button.dataset.groupId);
+      if (!group || !await panel._confirm("Delete function group?", `The group “${group.name}” will be removed. Its functions will not be deleted; they will move to Always available.`, "Delete group")) return;
+      try {
+        const result = await panel._call("tools", "delete_group", {group_id: group.id, confirm: true});
+        synchronizePersistedFunctions(panel, result);
+        panel._toast("Function group deleted");
+        panel._render();
+      } catch (err) { panel._toast(`Unable to delete group: ${err.message || String(err)}`, true); }
+      return;
+    }
+    const index = collectionToolIndex(panel, button);
+    const tool = panel._draft.functions[index];
+    if (!tool) return;
+    if (button.matches(".edit-tool")) return openTool(panel, index);
+    if (button.matches(".duplicate-tool")) {
+      const copy = clone(tool);
+      const names = new Set(panel._draft.functions.map(item => item.spec?.name));
+      const original = copy.spec.name;
+      copy.spec.name = `${original}_copy`;
+      let suffix = 2;
+      while (names.has(copy.spec.name)) copy.spec.name = `${original}_copy_${suffix++}`;
+      return openTool(panel, null, copy);
+    }
+    if (button.matches(".delete-tool")) {
+      if (!await panel._confirm(isHALlmTool(tool) ? "Remove HA LLM Tool?" : "Delete function tool?", isHALlmTool(tool)
+        ? `Remove “${haToolName(tool)}” from this agent and its groups? The underlying Home Assistant capability remains unchanged. Saved dependencies must be removed first.`
+        : `The Function Tool “${tool.spec?.name || "Unnamed"}” will be deleted and removed from any Function Group. Deletion is refused while Request Rules or Guest Mode still reference it.`, isHALlmTool(tool) ? "Remove tool" : "Delete function")) return;
+      try {
+        const result = await panel._call("tools", "delete", {name: tool.spec.name, confirm: true});
+        synchronizePersistedFunctions(panel, result);
+        panel._toast("Function deleted");
+        panel._render();
+      } catch (err) { panel._toast(`Unable to delete function: ${err.message || String(err)}`, true); }
+    }
+  });
+  host.addEventListener("change", async event => {
+    const input = event.target;
+    if (!input.matches?.(".tool-enabled,.group-enabled") || input.disabled) return;
+    const isGroup = input.matches(".group-enabled");
+    const item = isGroup
+      ? (panel._draft.function_groups || []).find(group => group.id === input.dataset.groupId)
+      : panel._draft.functions[collectionToolIndex(panel, input)];
+    if (!item) return;
+    const enabled = input.checked;
+    input.disabled = true;
+    try {
+      const result = isGroup
+        ? await panel._call("tools", "save_group", {group: {...item, enabled}, original_id: item.id})
+        : await panel._call("tools", "set_enabled", {name: item.spec.name, enabled});
+      synchronizePersistedFunctions(panel, result);
+      const references = result.references || {};
+      const affected = (references.request_rules || []).length + (references.guest_mode ? 1 : 0);
+      panel._toast(isGroup
+        ? enabled ? "Function group enabled" : "Function group disabled; member Function Tool settings were kept"
+        : enabled ? "Function enabled" : affected ? `Function disabled; ${affected} saved reference${affected === 1 ? "" : "s"} remain configured but unavailable until it is re-enabled` : "Function disabled");
+      panel._render();
+    } catch (err) { input.checked = item.enabled !== false; panel._toast(`Unable to update ${isGroup ? "Function Group" : "function"}: ${err.message || String(err)}`, true); }
+    finally { input.disabled = false; }
+  });
 }
 
 export function synchronizePersistedFunctions(panel, result) {
@@ -597,7 +796,7 @@ function setToolEditorLoading(root, loading) {
   root.querySelector("#tool-dialog").setAttribute("aria-busy", String(loading));
 }
 
-async function openTool(panel, index = null, initialTool = null) {
+export async function openTool(panel, index = null, initialTool = null) {
   const tool = initialTool || (index === null ? null : panel._draft.functions[index]);
   panel._toolIndex = index;
   panel._toolOriginalName = index === null ? null : tool?.spec?.name || null;
@@ -727,15 +926,8 @@ export function bindTools(panel) {
   bindHALlmTools(panel, synchronizePersistedFunctions);
   const root=panel.shadowRoot;
   bindHelp(panel);
-  root.querySelector("#add-tool")?.addEventListener("click",()=>openTool(panel));
-  root.querySelector("#add-group")?.addEventListener("click",()=>openFunctionGroup(panel));
-  root.querySelectorAll(".edit-group").forEach((button)=>button.addEventListener("click",()=>openFunctionGroup(panel,button.dataset.groupId)));
-  root.querySelectorAll(".delete-group").forEach((button)=>button.addEventListener("click",async()=>{const group=(panel._draft.function_groups||[]).find((item)=>item.id===button.dataset.groupId);if(!await panel._confirm("Delete function group?",`The group “${group?.name||button.dataset.groupId}” will be removed. Its functions will not be deleted; they will move to Always available.`,"Delete group"))return;try{const result=await panel._call("tools","delete_group",{group_id:button.dataset.groupId,confirm:true});synchronizePersistedFunctions(panel,result);panel._toast("Function group deleted");panel._render();}catch(err){panel._toast(`Unable to delete group: ${err.message||String(err)}`,true);}}));
-  root.querySelector("#tool-search")?.addEventListener("input",(event)=>{const query=event.target.value;root.querySelectorAll(".function-group-card").forEach((card)=>{const groupMatch=Boolean(query.trim())&&matchesFunctionSearch(query,card.dataset.groupSearch);let toolMatch=false;card.querySelectorAll(".tool-card").forEach((tool)=>{const matches=!query.trim()||groupMatch||matchesFunctionSearch(query,tool.dataset.toolSearch);tool.hidden=!matches;toolMatch=toolMatch||matches;});card.hidden=Boolean(query.trim())&&!groupMatch&&!toolMatch;if(query.trim()&&toolMatch)card.querySelector("details")?.setAttribute("open","");});});
-  root.querySelectorAll(".edit-tool").forEach(button=>button.addEventListener("click",()=>openTool(panel,Number(button.dataset.index))));
-  root.querySelectorAll(".tool-enabled").forEach((input)=>input.addEventListener("change",async()=>{const tool=panel._draft.functions[Number(input.dataset.index)];input.disabled=true;try{const result=await panel._call("tools","set_enabled",{name:tool.spec.name,enabled:input.checked});synchronizePersistedFunctions(panel,result);const references=result.references||{};const affected=(references.request_rules||[]).length+(references.guest_mode?1:0);panel._toast(input.checked?"Function enabled":affected?`Function disabled; ${affected} saved reference${affected===1?"":"s"} remain configured but unavailable until it is re-enabled`:"Function disabled");panel._render();}catch(err){input.checked=!input.checked;input.disabled=false;panel._toast(`Unable to update function: ${err.message||String(err)}`,true);}}));
-  root.querySelectorAll(".duplicate-tool").forEach(button=>button.addEventListener("click",()=>{const tool=clone(panel._draft.functions[Number(button.dataset.index)]);let base=`${tool.spec.name}_copy`,name=base,n=2;const names=new Set(panel._draft.functions.map(item=>item.spec?.name));while(names.has(name))name=`${base}_${n++}`;tool.spec.name=name;openTool(panel,null,tool);}));
-  root.querySelectorAll(".delete-tool").forEach(button=>button.addEventListener("click",async()=>{const tool=panel._draft.functions[Number(button.dataset.index)];if(!await panel._confirm(isHALlmTool(tool)?"Remove HA LLM Tool?":"Delete function tool?",isHALlmTool(tool)?`Remove “${haToolName(tool)}” from this agent and its groups? The underlying Home Assistant capability remains unchanged. Saved dependencies must be removed first.`:`The Function Tool “${tool.spec?.name||"Unnamed"}” will be deleted and removed from any Function Group. Deletion is refused while Request Rules or Guest Mode still reference it.`,isHALlmTool(tool)?"Remove tool":"Delete function"))return;try{const result=await panel._call("tools","delete",{name:tool.spec.name,confirm:true});synchronizePersistedFunctions(panel,result);panel._toast("Function deleted");panel._render();}catch(err){panel._toast(`Unable to delete function: ${err.message||String(err)}`,true);}}));
+  prepareToolsCollection(panel);
+  bindToolCollection(panel);
   root.querySelector("#validate-tools")?.addEventListener("click",async()=>{const status=root.querySelector("#tool-status");try{const result=await panel._call("tools","validate_current");status.className=`validation ${result.valid?"valid":"invalid"}`;status.textContent=result.valid?"All saved tools and groups are valid":toolErrorText(result.errors);}catch(err){status.className="validation invalid";status.textContent=err.message||String(err);}});
   root.querySelector("#tool-yaml")?.addEventListener("input",()=>{root.querySelector("#tool-error").className="validation";root.querySelector("#tool-error").textContent="YAML changed; validate to refresh metadata.";});
   root.querySelector("#built-in-function")?.addEventListener("change",async(event)=>{const preset=(panel._builtInFunctions||[]).find((item)=>item.implementation===event.target.value);if(!preset)return;const editor=root.querySelector("#tool-yaml");const replaceable=canReplaceToolYamlWithoutConfirmation(editor.value,panel._toolReplaceableYaml);if(!replaceable&&!await panel._confirm("Replace current YAML with this built-in function preset?","Your current Function Tool YAML will be replaced in the editor. Nothing is saved until you select Save.","Replace YAML")){event.target.value="";return;}editor.value=preset.yaml;panel._toolReplaceableYaml=preset.yaml;await validateDialogTool(panel);});

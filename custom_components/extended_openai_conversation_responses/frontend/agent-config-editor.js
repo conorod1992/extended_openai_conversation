@@ -101,23 +101,11 @@ export function renderTools(panel, presentation) {
 export function bindTools(panel) {
   const module = getAgentConfigModule();
   if (!module) return queueRender(panel);
-  const result = module.bindTools(panel);
-  panel?.shadowRoot?.querySelectorAll(".group-enabled").forEach((input) => input.addEventListener("change", async () => {
-    const group = (panel._draft.function_groups || []).find((item) => item.id === input.dataset.groupId);
-    if (!group) return;
-    input.disabled = true;
-    try {
-      const response = await panel._call("tools", "save_group", {group: {...group, enabled: input.checked}, original_id: group.id});
-      synchronizePersistedFunctions(panel, response);
-      panel._toast(input.checked ? "Function group enabled" : "Function group disabled; member Function Tool settings were kept");
-      panel._render();
-    } catch (err) {
-      input.checked = !input.checked;
-      input.disabled = false;
-      panel._toast(`Unable to update Function Group: ${err.message || String(err)}`, true);
-    }
-  }));
-  return result;
+  return module.bindTools(panel);
+}
+
+export function reconcileTools(panel, presentation) {
+  return getAgentConfigModule()?.reconcileTools(panel, presentation) || false;
 }
 
 export function configurationDialogs(...args) {

@@ -81,25 +81,16 @@ export function renderRequestRules(panel) {
   return module.renderRequestRules(panel, {query: panel._query || "", inPlaceSearch: Boolean(panel._eocInPlaceRequestRuleSearch)});
 }
 
+export function reconcileRequestRules(panel) {
+  return getRequestRulesModule()?.reconcileRequestRules(panel) || false;
+}
+
 export function bindRequestRules(panel) {
   const module = getRequestRulesModule();
   if (!module) return queueRender(panel);
   const result = module.bindRequestRules(panel);
   bindDecisionRequestRules(panel);
   const root = panel.shadowRoot;
-  root?.querySelectorAll(".rule-move:not([disabled])").forEach((button) => button.addEventListener("click", async () => {
-    button.disabled = true;
-    try {
-      await panel._call("request_rules", "move", {
-        rule_id: button.dataset.id,
-        direction: button.dataset.direction,
-        revision: panel._result?.revision,
-      });
-      await panel._loadSection();
-    } catch (err) {
-      await module.recoverRequestRuleMutation(panel, err, "Unable to move Request Rule");
-    }
-  }));
   let revision = 0;
   const refreshRouting = async () => {
     syncRequestRuleRoutingControls(root);
@@ -114,7 +105,10 @@ export function bindRequestRules(panel) {
       if (current === revision) syncRequestRuleRoutingControls(root, data.reasoning_effort_options, selectedEffort);
     } catch (err) { panel._toast(`Unable to load model choices: ${err.message || String(err)}`, true); }
   };
-  root?.querySelectorAll(".rule-edit,#rule-add,#rule-empty-add").forEach((button) => button.addEventListener("click", refreshRouting));
+  root?.querySelector("#rule-add")?.addEventListener("click", refreshRouting);
+  root?.querySelector(".rule-list")?.addEventListener("click", event => {
+    if (event.target.closest?.(".rule-edit,#rule-empty-add")) void refreshRouting();
+  });
   for (const selector of ["#rule-action-type", "#rule-match", "#rule-scope", "#rule-model", "#rule-reset", "#rule-continue-to-ai"]) {
     const element = root?.querySelector(selector);
     if (!element) continue;

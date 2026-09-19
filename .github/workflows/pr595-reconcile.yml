@@ -1,0 +1,35 @@
+name: PR595 reconciliation validation
+on:
+  push:
+    branches:
+      - perf/persistent-functions-request-rules
+permissions:
+  contents: write
+jobs:
+  reconcile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - run: npm run check --prefix frontend
+      - run: npm test --prefix frontend
+      - name: Standalone JavaScript tests
+        run: for test in tests/*.test.mjs; do node "$test"; done
+      - run: npm run build --prefix frontend
+      - run: git diff --check
+      - name: Commit reconciled production assets
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/extended_openai_conversation_responses/frontend/dist
+          git rm .github/workflows/pr595-reconcile.yml
+          git commit -m "Rebuild frontend after PR1 reconciliation"
+          git push

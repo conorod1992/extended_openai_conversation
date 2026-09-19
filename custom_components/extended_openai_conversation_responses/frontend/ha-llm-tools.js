@@ -16,7 +16,7 @@ export function renderHAToolCard(panel, tool, index, assignment = "") {
   const name = haToolName(tool);
   const source = info?.source || `${tool.function.source_id} · ${tool.function.api_id}`;
   const enabled = tool.enabled !== false;
-  return `<article class="list-card tool-card ${enabled ? "" : "is-disabled"}" data-tool-index="${index}" data-tool-search="${panel._e(`${name} ${source} ${info?.description || ""} ${enabled ? "enabled" : "disabled"} ${info?.available === false ? "unavailable" : ""}`.toLowerCase())}">
+  return `<article class="list-card tool-card ${enabled ? "" : "is-disabled"}" data-tool-key="${panel._e(tool.spec.name)}" data-tool-index="${index}" data-tool-search="${panel._e(`${name} ${source} ${info?.description || ""} ${enabled ? "enabled" : "disabled"} ${info?.available === false ? "unavailable" : ""}`.toLowerCase())}">
     <div class="card-main"><div class="tool-title"><h4>${panel._e(name)}</h4><span class="type-badge">HA LLM Tool</span>${info?.available === false ? '<span class="disabled-badge">Unavailable</span>' : ""}</div>
     <p>${panel._e(source)}</p><p class="description">${panel._e(info?.description || "Live capability supplied by Home Assistant or an installed service.")}</p>${assignment}</div>
     <div class="actions tool-card-actions"><label class="tool-enabled-control"><span>Enabled</span><span class="switch-control"><input class="tool-enabled" data-index="${index}" type="checkbox" role="switch" aria-label="Enable ${panel._e(name)}" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></span></label>
@@ -98,6 +98,9 @@ export function bindHALlmTools(panel, synchronize) {
           dialog.close();
           panel._toast("HA LLM Tool references added");
           panel._render();
+          // Collection updates no longer rebind this module. Fetch the new
+          // saved-tool metadata explicitly rather than relying on a rebind.
+          void load().then(() => panel._render()).catch(err => panel._toast(`Unable to refresh HA LLM Tools: ${err.message || err}`, true));
         } catch (err) { status.textContent = err.message || String(err); button.disabled = false; }
       };
       render();
