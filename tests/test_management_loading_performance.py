@@ -17,12 +17,13 @@ from custom_components.extended_openai_conversation_responses.const import DOMAI
 from custom_components.extended_openai_conversation_responses.frontend_version import (
     FRONTEND_VERSION,
 )
+from custom_components.extended_openai_conversation_responses.management_function_repair import (
+    async_function_repair as _async_function_repair,
+)
 import custom_components.extended_openai_conversation_responses.management_loading_performance as loading
 from custom_components.extended_openai_conversation_responses.management_loading_performance import (
     _agent_snapshot,
     _asset_url,
-    _async_function_repair,
-    _async_save_configuration,
     _static_paths,
     async_agent_catalog,
     async_overview_summary,
@@ -126,7 +127,9 @@ def test_runtime_function_quarantine_keeps_valid_siblings() -> None:
     loading._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
 
 
-def test_runtime_group_quarantine_drops_only_quarantined_references(monkeypatch) -> None:
+def test_runtime_group_quarantine_drops_only_quarantined_references(
+    monkeypatch,
+) -> None:
     from custom_components.extended_openai_conversation_responses import agent_config
 
     captured = {}
@@ -214,7 +217,9 @@ def test_agent_snapshot_keeps_invalid_function_tool_agent_discoverable() -> None
     assert "minLength" in result["configuration_issue"]["message"]
 
 
-async def test_agent_catalog_does_not_initialize_per_agent_managers(monkeypatch) -> None:
+async def test_agent_catalog_does_not_initialize_per_agent_managers(
+    monkeypatch,
+) -> None:
     hass, _entry, _subentry = _hass_with_agent()
     for name in (
         "async_get_usage",
@@ -235,7 +240,9 @@ async def test_agent_catalog_does_not_initialize_per_agent_managers(monkeypatch)
     assert result["is_admin"] is True
 
 
-async def test_agent_catalog_keeps_invalid_function_tool_agent_visible(monkeypatch) -> None:
+async def test_agent_catalog_keeps_invalid_function_tool_agent_visible(
+    monkeypatch,
+) -> None:
     hass, _entry, subentry = _hass_with_agent()
     subentry.data["functions"] = _persisted_invalid_function_tools()
     monkeypatch.setattr(management_ui, "_scope_catalog", AsyncMock(return_value=[]))
@@ -249,7 +256,9 @@ async def test_agent_catalog_keeps_invalid_function_tool_agent_visible(monkeypat
     assert "minLength" in issue["message"]
 
 
-async def test_function_repair_get_exposes_invalid_persisted_tools_without_normalizing() -> None:
+async def test_function_repair_get_exposes_invalid_persisted_tools_without_normalizing() -> (
+    None
+):
     hass, _entry, subentry = _hass_with_agent()
     subentry.data["functions"] = _persisted_invalid_function_tools()
 
@@ -264,9 +273,10 @@ async def test_function_repair_get_exposes_invalid_persisted_tools_without_norma
         },
     )
 
-    assert result["tools"][0]["spec"]["parameters"]["properties"]["phone"][
-        "minLength"
-    ] == "legacy"
+    assert (
+        result["tools"][0]["spec"]["parameters"]["properties"]["phone"]["minLength"]
+        == "legacy"
+    )
     assert "minLength" in result["validation_error"]
     assert isinstance(result["revision"], str)
     assert hass.config_entries.updates == 0
@@ -367,12 +377,7 @@ async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) 
             mock,
         )
 
-    result = await async_overview_summary(
-        hass,
-        "admin",
-        True,
-        {"entry_id": "entry-1", "subentry_id": "agent-1"},
-    )
+    result = await async_overview_summary(hass, _entry, _subentry, is_admin=True)
 
     assert result["usage"]["today"]["total_tokens"] == 20
     assert result["agent"]["memory_count"] == 7
@@ -386,6 +391,11 @@ async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) 
 async def test_configuration_save_normalizes_once(monkeypatch) -> None:
     """The combined Save path validates and persists one normalized candidate."""
     hass, _entry, subentry = _hass_with_agent()
+    from custom_components.extended_openai_conversation_responses import (
+        management_configuration_guidance as guidance,
+    )
+
+    monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_: {})
     original_merge = management_ui.merge_agent_config
     merge_calls = 0
 
@@ -401,13 +411,15 @@ async def test_configuration_save_normalizes_once(monkeypatch) -> None:
         lambda _hass, _entry, _subentry, _snapshot: {},
     )
 
-    result = await _async_save_configuration(
+    result = await management_ui.async_management_command(
         hass,
         "admin",
         True,
         {
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "save",
             "config": {"chat_model": "gpt-5-mini"},
             "title": "Updated Jarvis",
         },
@@ -436,13 +448,15 @@ async def test_configuration_save_validation_failure_does_not_persist(
 
     monkeypatch.setattr(management_ui, "merge_agent_config", counted_merge)
 
-    result = await _async_save_configuration(
+    result = await management_ui.async_management_command(
         hass,
         "admin",
         True,
         {
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "save",
             "config": {
                 "speech_regex_replacements": [{"pattern": "[", "replacement": ""}]
             },
@@ -472,7 +486,9 @@ async def test_management_setup_retry_resumes_after_panel_failure(monkeypatch) -
     websocket_register = MagicMock()
     panel_register = AsyncMock(side_effect=[RuntimeError("panel unavailable"), None])
     monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
-    monkeypatch.setattr(loading.websocket_api, "async_register_command", websocket_register)
+    monkeypatch.setattr(
+        loading.websocket_api, "async_register_command", websocket_register
+    )
     monkeypatch.setattr(loading.panel_custom, "async_register_panel", panel_register)
 
     with pytest.raises(RuntimeError, match="panel unavailable"):
@@ -502,7 +518,9 @@ async def test_debug_setup_retry_resumes_after_websocket_failure(monkeypatch) ->
     )
     websocket_register = MagicMock(side_effect=[RuntimeError("ws unavailable"), None])
     monkeypatch.setattr(loading, "_debug_ui", lambda: fake_ui)
-    monkeypatch.setattr(loading.websocket_api, "async_register_command", websocket_register)
+    monkeypatch.setattr(
+        loading.websocket_api, "async_register_command", websocket_register
+    )
 
     with pytest.raises(RuntimeError, match="ws unavailable"):
         await async_setup_cached_debug_ui(hass)

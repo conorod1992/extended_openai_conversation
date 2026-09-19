@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import (
+    management_browser,
+    management_ui,
+)
 from homeassistant.exceptions import HomeAssistantError
-
-from custom_components.extended_openai_conversation_responses import management_browser
 
 
 class FakeMemory:
@@ -122,13 +124,14 @@ def test_search_page_is_bounded_and_paginated() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wrapper_keeps_scope_authorization_before_memory_access(monkeypatch) -> None:
-    original = AsyncMock(return_value={"unexpected": True})
-    wrapped = management_browser.wrap_management_browser(original)
+async def test_command_keeps_scope_authorization_before_memory_access(
+    hass, monkeypatch
+) -> None:
+    command = management_ui.async_management_command
     memory_get = AsyncMock()
-    monkeypatch.setattr(management_browser, "async_get_memory", memory_get)
+    monkeypatch.setattr(management_ui, "async_get_memory", memory_get)
     monkeypatch.setattr(
-        management_browser.management_ui,
+        management_ui,
         "entry_and_agent",
         lambda *args: (object(), object()),
     )
@@ -136,8 +139,8 @@ async def test_wrapper_keeps_scope_authorization_before_memory_access(monkeypatc
     with pytest.raises(
         HomeAssistantError, match="This scope is not available to the current user"
     ):
-        await wrapped(
-            None,
+        await command(
+            hass,
             "user-a",
             False,
             {
@@ -151,4 +154,3 @@ async def test_wrapper_keeps_scope_authorization_before_memory_access(monkeypatc
         )
 
     memory_get.assert_not_awaited()
-    original.assert_not_awaited()

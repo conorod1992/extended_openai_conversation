@@ -8,6 +8,7 @@ import time
 from typing import Any, cast
 
 from .function_groups import get_function_group_runtime
+from .ha_tool_result_compat import tool_result_data
 from .payload_diagnostics import (
     approximate_tokens,
     cache_usage_metrics,
@@ -44,7 +45,7 @@ def _record_preparation(
 
 
 def _result_characters(result: Any) -> int:
-    tool_result = getattr(result, "tool_result", None)
+    tool_result = tool_result_data(result)
     if not isinstance(tool_result, dict):
         return 0
     value = tool_result.get("result")

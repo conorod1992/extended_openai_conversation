@@ -30,6 +30,9 @@ from custom_components.extended_openai_conversation_responses.functions import w
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from homeassistant.helpers.template import Template
 from tests.test_remote_response_bounds import _FakeResponse, _FakeSession
 
@@ -82,7 +85,7 @@ async def execute_scrape(hass, monkeypatch):
             None,
             [],
         )
-        return result.tool_result["result"]
+        return tool_result_data(result)["result"]
 
     return execute, session
 

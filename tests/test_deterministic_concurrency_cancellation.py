@@ -9,9 +9,6 @@ from typing import Any
 
 import pytest
 
-from homeassistant.components import conversation
-from homeassistant.helpers import llm
-
 from custom_components.extended_openai_conversation_responses.function_call_budget import (
     FunctionCallBudget,
 )
@@ -24,12 +21,17 @@ from custom_components.extended_openai_conversation_responses.ha_llm_tools impor
     current_snapshot,
     tool_snapshot_scope,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeLibrary,
 )
 from custom_components.extended_openai_conversation_responses.tool_exchange import (
     async_execute_tool_exchange,
 )
+from homeassistant.components import conversation
+from homeassistant.helpers import llm
 
 
 class _BlockingLoadStorage:
@@ -202,7 +204,7 @@ async def test_cancelled_tool_execution_resets_recovery_context_and_closes_call(
     ]
     assert len(results) == 1
     assert results[0].tool_call_id == "cancel-call"
-    result = results[0].tool_result["result"]
+    result = tool_result_data(results[0])["result"]
     assert result["status"] == "error"
     assert "CancelledError" in result["error"]
 

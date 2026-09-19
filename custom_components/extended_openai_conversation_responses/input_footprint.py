@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable
 import math
 from typing import Any
 
@@ -15,10 +15,6 @@ from .usage import async_get_usage
 
 _LATEST_FOOTPRINTS = f"{DOMAIN}.input_footprints"
 _INSTALLED = False
-
-ManagementCommand = Callable[
-    [HomeAssistant, str, bool, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]
-]
 
 
 def _serialized_footprint(input_value: Any, tools: Any = None) -> tuple[int, int, int]:
@@ -150,35 +146,16 @@ async def async_input_footprint(
     }
 
 
-def _wrap_management_command(original: ManagementCommand) -> ManagementCommand:
-    async def wrapped(
-        hass: HomeAssistant,
-        user_id: str,
-        is_admin: bool,
-        message: dict[str, Any],
-    ) -> dict[str, Any]:
-        if message.get("section") == "usage" and message.get("action") == "footprint":
-            # The management-permissions wrapper is installed after this hook, so
-            # detailed Usage actions remain administrator-only.
-            return await async_input_footprint(hass, user_id, message)
-        return await original(hass, user_id, is_admin, message)
-
-    return wrapped
-
-
 def install_input_footprint() -> None:
     """Install footprint capture and the content-free management read once."""
     global _INSTALLED, _ORIGINAL_ESTIMATE
     if _INSTALLED:
         return
 
-    from . import context_usage_hardening, management_ui
+    from . import context_usage_hardening
 
     _ORIGINAL_ESTIMATE = context_usage_hardening.estimate_provider_input_tokens
     context_usage_hardening.estimate_provider_input_tokens = _capture_live_footprint
-    management_ui.async_management_command = _wrap_management_command(  # type: ignore[assignment]
-        management_ui.async_management_command
-    )
     _INSTALLED = True
 
 

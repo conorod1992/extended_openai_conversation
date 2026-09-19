@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.extended_openai_conversation_responses import backup
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -26,14 +27,20 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
     DATA_DELAYED_TOOL_MANAGER,
     DelayedToolManager,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from homeassistant.auth.models import Group
-from homeassistant.auth.permissions.const import CAT_ENTITIES, POLICY_CONTROL, POLICY_READ
+from homeassistant.auth.permissions.const import (
+    CAT_ENTITIES,
+    POLICY_CONTROL,
+    POLICY_READ,
+)
 from homeassistant.auth.permissions.entities import ENTITY_ENTITY_IDS
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import llm
-from pytest_homeassistant_custom_component.common import MockUser
 from tests_real_ha.test_provider_wire_e2e import _agent
 
 _ENTITY_ID = "light.delayed_restore_collision"
@@ -155,7 +162,7 @@ async def _schedule_delayed_call(
         [],
     )
 
-    assert result.tool_result == {"result": "Scheduled"}
+    assert tool_result_data(result) == {"result": "Scheduled"}
     created = set(manager._records) - before  # noqa: SLF001
     assert len(created) == 1
     delayed_call_id = created.pop()

@@ -41,6 +41,9 @@ from custom_components.extended_openai_conversation_responses.ha_llm_tools impor
     tool_snapshot_scope,
     validate_reference,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.parallel_tool_execution import (
     is_parallel_safe_integration_tool,
 )
@@ -66,10 +69,12 @@ class Echo(llm.Tool):
 
     async def async_call(self, hass, tool_input, llm_context):
         self.calls.append((tool_input, llm_context))
-        return {
+        payload = {
             "value": tool_input.tool_args["value"],
             "user": llm_context.context.user_id,
         }
+        tool_result_type = getattr(llm, "ToolResult", None)
+        return tool_result_type(data=payload) if tool_result_type is not None else payload
 
 
 class TestAPI(llm.API):
@@ -371,7 +376,7 @@ async def test_guest_denies_external_even_if_policy_allows_name(hass):
     result = await entity._execute_function_tool(
         tool, llm.ToolInput(tool_name=tool["spec"]["name"], tool_args={}), context(), []
     )
-    assert result.tool_result
+    assert tool_result_data(result)
     assert not current_snapshot().tools
 
 
@@ -508,7 +513,7 @@ async def test_deactivation_during_discovery_denies_before_tool_call(hass):
         context(),
         [],
     )
-    assert "Guest Mode" in str(result.tool_result)
+    assert "Guest Mode" in str(tool_result_data(result))
     assert not api.tools[0].calls
 
 
@@ -526,7 +531,7 @@ async def test_removed_user_is_not_authorized_by_management_preview(hass):
         context("removed"),
         [],
     )
-    assert "no longer active" in str(result.tool_result)
+    assert "no longer active" in str(tool_result_data(result))
     assert not api.tools[0].calls
     assert api.contexts[-1].context.user_id == "removed"
 

@@ -61,9 +61,7 @@ def test_safe_function_configuration_quarantines_unknown_native() -> None:
     safe = quarantine._safe_function_configuration(data)
     parsed = yaml.safe_load(safe[CONF_FUNCTION_TOOLS])
 
-    assert [tool["spec"]["name"] for tool in parsed] == [
-        valid_tool["spec"]["name"]
-    ]
+    assert [tool["spec"]["name"] for tool in parsed] == [valid_tool["spec"]["name"]]
     assert invalid_tool["spec"]["name"] not in {
         name
         for group in safe[CONF_FUNCTION_GROUPS]
@@ -97,49 +95,29 @@ def test_management_merge_preserves_repair_owned_function_fields(
     assert merged[CONF_FUNCTION_GROUPS] == original_groups
 
 
-@pytest.mark.asyncio
-async def test_tolerant_management_scope_is_limited_to_affected_sections(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Request Rules, Guest Mode, and Functions get valid siblings; others stay strict."""
+@pytest.mark.parametrize("section", ["request_rules", "guest_mode", "tools"])
+def test_tolerant_management_scope_is_limited_and_reset_after_errors(
+    monkeypatch, section
+):
     sentinel = [{"spec": {"name": "valid"}, "function": {"type": "template"}}]
+    monkeypatch.setattr(quarantine, "_usable_function_tools", lambda _: sentinel)
 
-    monkeypatch.setattr(quarantine, "_usable_function_tools", lambda _data: sentinel)
-
-    def strict(_data: Any) -> list[dict[str, Any]]:
+    def strict(_):
         raise AssertionError("strict parser used")
 
     monkeypatch.setattr(quarantine, "_STRICT_CONFIGURED_TOOLS", strict)
-
-    async def original(
-        _hass: Any,
-        _user_id: str,
-        _is_admin: bool,
-        _message: dict[str, Any],
-    ) -> dict[str, Any]:
-        return {
-            "tools": quarantine._management_configured_tools(
-                {CONF_FUNCTION_TOOLS: "broken"}
+    with pytest.raises(RuntimeError, match="handler failed"):
+        with quarantine.management_function_tools(section):
+            assert (
+                quarantine._management_configured_tools({CONF_FUNCTION_TOOLS: "broken"})
+                == sentinel
             )
-        }
-
-    wrapped = quarantine._wrap_management_command(original)
-
-    request_rules = await wrapped(
-        SimpleNamespace(), "admin", True, {"section": "request_rules"}
-    )
-    guest_mode = await wrapped(
-        SimpleNamespace(), "admin", True, {"section": "guest_mode"}
-    )
-    functions = await wrapped(
-        SimpleNamespace(), "admin", True, {"section": "tools"}
-    )
-
-    assert request_rules["tools"] == sentinel
-    assert guest_mode["tools"] == sentinel
-    assert functions["tools"] == sentinel
+            raise RuntimeError("handler failed")
     with pytest.raises(AssertionError, match="strict parser used"):
-        await wrapped(SimpleNamespace(), "admin", True, {"section": "assistant"})
+        quarantine._management_configured_tools({})
+    with quarantine.management_function_tools("configuration"):
+        with pytest.raises(AssertionError, match="strict parser used"):
+            quarantine._management_configured_tools({})
 
 
 @pytest.mark.asyncio
@@ -157,9 +135,7 @@ async def test_diagnostics_quarantines_invalid_tools_and_reports_warning(
     observed: dict[str, Any] = {}
 
     async def original(_hass: Any, _entry: Any, safe_subentry: Any) -> AgentTestResult:
-        observed["tools"] = yaml.safe_load(
-            safe_subentry.data[CONF_FUNCTION_TOOLS]
-        )
+        observed["tools"] = yaml.safe_load(safe_subentry.data[CONF_FUNCTION_TOOLS])
         return AgentTestResult(
             "Passed",
             [TestCheck("Provider request", "Passed", "Request succeeded")],
@@ -167,9 +143,7 @@ async def test_diagnostics_quarantines_invalid_tools_and_reports_warning(
 
     monkeypatch.setattr(quarantine, "_ORIGINAL_AGENT_TEST", original)
 
-    result = await quarantine._tolerant_agent_test(
-        SimpleNamespace(), entry, subentry
-    )
+    result = await quarantine._tolerant_agent_test(SimpleNamespace(), entry, subentry)
 
     assert [tool["spec"]["name"] for tool in observed["tools"]] == [
         valid_tool["spec"]["name"]
@@ -188,9 +162,6 @@ async def test_overview_fallback_uses_persisted_provider_and_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Unrelated tool damage must not become Unknown provider / No model selected."""
-    from custom_components.extended_openai_conversation_responses import (
-        management_loading_performance,
-    )
 
     entry = SimpleNamespace(
         entry_id="entry-1",
@@ -202,50 +173,19 @@ async def test_overview_fallback_uses_persisted_provider_and_model(
         data={CONF_CHAT_MODEL: "gpt-5.6-luna"},
     )
 
-    async def overview(
-        _hass: Any,
-        _user_id: str,
-        _is_admin: bool,
-        _message: dict[str, Any],
-    ) -> dict[str, Any]:
-        return {
-            "agent": {"knowledge_source_count": 0},
-            "load_errors": [{"key": "functions", "message": "repair required"}],
-            "setup_health": {
-                "provider_runtime": {
-                    "client_loaded": False,
-                    "provider": "",
-                    "model": "",
-                }
-            },
-        }
-
-    monkeypatch.setattr(management_loading_performance, "async_overview_summary", overview)
-    monkeypatch.delattr(
-        management_loading_performance, quarantine._OVERVIEW_PATCHED, raising=False
-    )
-    monkeypatch.setattr(
-        quarantine.management_ui,
-        "entry_and_agent",
-        lambda *_args, **_kwargs: (entry, subentry),
+    from custom_components.extended_openai_conversation_responses import (
+        management_setup_health,
     )
 
-    # Force the narrow fallback branch so this stays independent of HA registries.
-    def fail_health(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    def fail_health(*args, **kwargs):
         raise RuntimeError("registry unavailable")
 
     monkeypatch.setattr(
-        quarantine.management_setup_health, "build_setup_health_facts", fail_health
+        management_setup_health, "build_setup_health_facts", fail_health
     )
-
-    quarantine._install_overview_provider_fallback()
-    result = await management_loading_performance.async_overview_summary(
-        SimpleNamespace(),
-        "admin",
-        True,
-        {"entry_id": "entry-1", "subentry_id": "agent-1"},
+    result = management_setup_health.add_setup_health(
+        object(), entry, subentry, {"agent": {}}, is_admin=True
     )
-
     runtime = result["setup_health"]["provider_runtime"]
     assert runtime["provider"] == "openai"
     assert runtime["model"] == "gpt-5.6-luna"

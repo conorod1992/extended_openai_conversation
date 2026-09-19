@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from contextvars import ContextVar
 from copy import deepcopy
-from functools import wraps
 from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from . import management_ui, request_rules
-from .agent_config import configured_function_tools_from_data, function_tool_enabled
+from . import request_rules
+from .agent_config import function_tool_enabled
 from .const import CONF_GUEST_ALLOWED_GROUP_IDS, DOMAIN, SERVICE_CALL_FUNCTION
 from .function_execution import async_validate_function_arguments
 
@@ -20,12 +18,6 @@ _TOOL_MUTATIONS = frozenset(
     {"save", "set_enabled", "delete", "save_group", "delete_group", "ha_add"}
 )
 _TEMPLATE_MARKERS = ("{{", "{%", "{#")
-_ACTIVE_CONFIG_REVISION: ContextVar[str | None] = ContextVar(
-    "function_dependency_config_revision", default=None
-)
-_ACTIVE_GROUP_MUTATION: ContextVar[tuple[str, str | None] | None] = ContextVar(
-    "function_dependency_group_mutation", default=None
-)
 _INSTALLED = False
 
 
@@ -278,147 +270,8 @@ async def async_validate_request_rule_functions(
         )
 
 
-def wrap_persist_function_configuration(original):
-    """Apply the active revision and legacy group-reference update in one config write."""
-
-    @wraps(original)
-    def wrapped(
-        hass: HomeAssistant,
-        entry: Any,
-        subentry: Any,
-        tools: list[dict[str, Any]],
-        groups: list[dict[str, Any]],
-        *,
-        extra_updates: dict[str, Any] | None = None,
-        expected_revision: str | None = None,
-    ) -> dict[str, Any]:
-        updates = dict(extra_updates or {})
-        group_mutation = _ACTIVE_GROUP_MUTATION.get()
-        if group_mutation is not None:
-            old_id, new_id = group_mutation
-            current_ids = subentry.data.get(CONF_GUEST_ALLOWED_GROUP_IDS, [])
-            if isinstance(current_ids, list):
-                if new_id is None:
-                    changed_ids = [item for item in current_ids if item != old_id]
-                else:
-                    changed_ids = [
-                        new_id if item == old_id else item for item in current_ids
-                    ]
-                updates[CONF_GUEST_ALLOWED_GROUP_IDS] = list(dict.fromkeys(changed_ids))
-
-        return cast(
-            dict[str, Any],
-            original(
-                hass,
-                entry,
-                subentry,
-                tools,
-                groups,
-                extra_updates=updates or None,
-                expected_revision=(
-                    expected_revision
-                    if expected_revision is not None
-                    else _ACTIVE_CONFIG_REVISION.get()
-                ),
-            ),
-        )
-
-    return wrapped
-
-
-def wrap_management_command(original):
-    """Complete revision and nested dependency checks around the effective dispatcher."""
-
-    @wraps(original)
-    async def wrapped(
-        hass: HomeAssistant,
-        user_id: str,
-        is_admin: bool,
-        message: dict[str, Any],
-    ) -> dict[str, Any]:
-        section = message.get("section")
-        action = message.get("action")
-
-        if not is_admin and (
-            (section == "request_rules" and action in {"create", "update"})
-            or (section == "tools" and action in _TOOL_MUTATIONS)
-        ):
-            # Preserve the existing authorization boundary as the first observable
-            # failure instead of exposing validation or revision details.
-            return cast(
-                dict[str, Any], await original(hass, user_id, is_admin, message)
-            )
-
-        if section == "request_rules" and action in {"create", "update"}:
-            entry_id = message.get("entry_id")
-            subentry_id = message.get("subentry_id")
-            if isinstance(entry_id, str) and isinstance(subentry_id, str):
-                _entry, subentry = management_ui.entry_and_agent(
-                    hass, entry_id, subentry_id
-                )
-                rule_id = message.get("rule_id") if action == "update" else None
-                candidate = management_ui._prepare_request_rule(
-                    message.get("rule"), rule_id if isinstance(rule_id, str) else None
-                )
-                await async_validate_request_rule_functions(
-                    hass,
-                    candidate,
-                    configured_function_tools_from_data(subentry.data),
-                )
-
-        if section != "tools" or action not in _TOOL_MUTATIONS:
-            return cast(
-                dict[str, Any], await original(hass, user_id, is_admin, message)
-            )
-
-        entry_id = message.get("entry_id")
-        subentry_id = message.get("subentry_id")
-        if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
-            return cast(
-                dict[str, Any], await original(hass, user_id, is_admin, message)
-            )
-        _entry, subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
-        revision = message.get("revision")
-        # Missing revisions remain accepted for older direct callers, but every current
-        # management frontend mutation supplies one. When present it is checked both
-        # now and again at the final persistence seam.
-        management_ui._require_agent_config_revision(subentry, revision)
-
-        group_mutation: tuple[str, str | None] | None = None
-        if action == "save_group":
-            original_id = message.get("original_id")
-            group_candidate = message.get("group")
-            new_id = (
-                group_candidate.get("id")
-                if isinstance(group_candidate, Mapping)
-                else None
-            )
-            if (
-                isinstance(original_id, str)
-                and isinstance(new_id, str)
-                and original_id != new_id
-            ):
-                group_mutation = (original_id, new_id)
-        elif action == "delete_group" and isinstance(message.get("group_id"), str):
-            group_mutation = (str(message["group_id"]), None)
-
-        revision_token = _ACTIVE_CONFIG_REVISION.set(
-            revision if isinstance(revision, str) else None
-        )
-        group_token = _ACTIVE_GROUP_MUTATION.set(group_mutation)
-        try:
-            return cast(
-                dict[str, Any], await original(hass, user_id, is_admin, message)
-            )
-        finally:
-            _ACTIVE_GROUP_MUTATION.reset(group_token)
-            _ACTIVE_CONFIG_REVISION.reset(revision_token)
-
-    return wrapped
-
-
 def install_function_dependency_integrity() -> None:
-    """Install dependency hardening around the current effective management path."""
+    """Install recursive Request Rule reference operations; dispatch is owned directly."""
     global _INSTALLED
     if _INSTALLED:
         return
@@ -433,12 +286,21 @@ def install_function_dependency_integrity() -> None:
         "async_rename_function_reference",
         async_rename_function_reference_recursive,
     )
-    management_ui._persist_function_configuration = (  # type: ignore[misc]
-        wrap_persist_function_configuration(
-            management_ui._persist_function_configuration
-        )
-    )
-    management_ui.async_management_command = wrap_management_command(  # type: ignore[misc]
-        management_ui.async_management_command
-    )
     _INSTALLED = True
+
+
+def group_reference_updates(
+    options: Mapping[str, Any],
+    old_id: str,
+    new_id: str | None,
+) -> dict[str, Any]:
+    """Carry a group rename/removal into legacy Guest references in the same write."""
+    current_ids = options.get(CONF_GUEST_ALLOWED_GROUP_IDS, [])
+    if not isinstance(current_ids, list):
+        return {}
+    changed_ids = (
+        [item for item in current_ids if item != old_id]
+        if new_id is None
+        else [new_id if item == old_id else item for item in current_ids]
+    )
+    return {CONF_GUEST_ALLOWED_GROUP_IDS: list(dict.fromkeys(changed_ids))}

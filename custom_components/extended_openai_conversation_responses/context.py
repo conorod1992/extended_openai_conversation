@@ -9,6 +9,8 @@ from typing import Any
 
 from homeassistant.components import conversation
 
+from .ha_tool_result_compat import tool_result_data
+
 
 @dataclass(slots=True)
 class HistoryParts:
@@ -129,7 +131,7 @@ def history_as_summary_text(items: list[conversation.Content]) -> str:
         if isinstance(item, conversation.ToolResultContent):
             lines.append(
                 f"tool result {item.tool_name}: "
-                f"{json.dumps(item.tool_result, ensure_ascii=False, default=str)}"
+                f"{json.dumps(tool_result_data(item), ensure_ascii=False, default=str)}"
             )
         native = getattr(item, "native", None)
         if native is not None and not content:

@@ -25,6 +25,9 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.memory import (
     MEMORY_TOOL_NAMES,
     HomeAssistantMemoryStorage,
@@ -483,7 +486,7 @@ async def test_storage_failure_returns_tool_error_instead_of_breaking_chat() -> 
         [],
     )
 
-    assert "temporarily unavailable" in result.tool_result["result"]
+    assert "temporarily unavailable" in tool_result_data(result)["result"]
 
 
 def test_prompt_frames_memories_as_potentially_relevant_untrusted_data(hass) -> None:

@@ -7,8 +7,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses import management_ui
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
@@ -23,13 +21,12 @@ from custom_components.extended_openai_conversation_responses.function_dependenc
     async_validate_request_rule_functions,
     async_validate_static_function_arguments,
     recursive_function_references,
-    wrap_management_command,
-    wrap_persist_function_configuration,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
     DEFAULT_MATCHING,
     RequestRules,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def _call(function: str = "nested_tool", arguments: dict | None = None) -> dict:
@@ -123,7 +120,9 @@ async def test_nested_function_rename_updates_every_reference_and_rolls_back_on_
     assert recursive_function_references(manager, "third_tool") == []
 
 
-async def test_static_request_rule_arguments_use_full_nested_function_schema(hass) -> None:
+async def test_static_request_rule_arguments_use_full_nested_function_schema(
+    hass,
+) -> None:
     parameters = {
         "type": "object",
         "properties": {
@@ -191,7 +190,9 @@ async def test_dynamic_request_rule_leaf_defers_only_that_leaf(hass) -> None:
         )
 
 
-async def test_nested_rule_validation_rejects_missing_or_invalid_function_calls(hass) -> None:
+async def test_nested_rule_validation_rejects_missing_or_invalid_function_calls(
+    hass,
+) -> None:
     parameters = {
         "type": "object",
         "properties": {"count": {"type": "integer", "minimum": 1}},
@@ -220,13 +221,18 @@ async def test_tool_mutations_reject_stale_loaded_revision(hass, monkeypatch) ->
         title="Jarvis",
         data=agent_config_defaults(),
     )
-    entry = SimpleNamespace(entry_id="entry-1", domain=DOMAIN, subentries={"agent-1": subentry})
-    monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_args: (entry, subentry))
-    original = AsyncMock(return_value={"ok": True})
-    command = wrap_management_command(original)
+    entry = SimpleNamespace(
+        entry_id="entry-1", domain=DOMAIN, subentries={"agent-1": subentry}
+    )
+    monkeypatch.setattr(
+        management_ui, "entry_and_agent", lambda *_args: (entry, subentry)
+    )
+    command = management_ui.async_management_command
 
     for action in ("save", "set_enabled", "delete", "save_group", "delete_group"):
-        with pytest.raises(HomeAssistantError, match="Configuration changed in another tab"):
+        with pytest.raises(
+            HomeAssistantError, match="Configuration changed in another tab"
+        ):
             await command(
                 hass,
                 "admin",
@@ -239,7 +245,6 @@ async def test_tool_mutations_reject_stale_loaded_revision(hass, monkeypatch) ->
                     "revision": "stale",
                 },
             )
-    original.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -247,12 +252,21 @@ async def test_tool_mutations_reject_stale_loaded_revision(hass, monkeypatch) ->
     [
         (
             "save_group",
-            {"original_id": "old_group", "group": {"id": "new_group"}},
+            {
+                "original_id": "old_group",
+                "group": {
+                    "id": "new_group",
+                    "name": "New group",
+                    "description": "New",
+                    "functions": [],
+                    "loading_mode": "always",
+                },
+            },
             ["new_group", "other_group"],
         ),
         (
             "delete_group",
-            {"group_id": "old_group"},
+            {"group_id": "old_group", "confirm": True},
             ["other_group"],
         ),
     ],
@@ -262,14 +276,34 @@ async def test_group_dependency_update_shares_config_revision_and_write(
 ) -> None:
     data = agent_config_defaults()
     data[CONF_GUEST_ALLOWED_GROUP_IDS] = ["old_group", "other_group"]
+    data["function_groups"] = [
+        {
+            "id": "old_group",
+            "name": "Old group",
+            "description": "Old",
+            "functions": [],
+            "loading_mode": "always",
+        },
+        {
+            "id": "other_group",
+            "name": "Other group",
+            "description": "Other",
+            "functions": [],
+            "loading_mode": "always",
+        },
+    ]
     subentry = SimpleNamespace(
         subentry_id="agent-1",
         subentry_type="conversation",
         title="Jarvis",
         data=data,
     )
-    entry = SimpleNamespace(entry_id="entry-1", domain=DOMAIN, subentries={"agent-1": subentry})
-    monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_args: (entry, subentry))
+    entry = SimpleNamespace(
+        entry_id="entry-1", domain=DOMAIN, subentries={"agent-1": subentry}
+    )
+    monkeypatch.setattr(
+        management_ui, "entry_and_agent", lambda *_args: (entry, subentry)
+    )
     revision = management_ui._agent_config_revision(subentry.data, subentry.title)
     seen: dict = {}
 
@@ -290,15 +324,10 @@ async def test_group_dependency_update_shares_config_revision_and_write(
     monkeypatch.setattr(
         management_ui,
         "_persist_function_configuration",
-        wrap_persist_function_configuration(persist),
+        persist,
     )
 
-    async def original(_hass, _user_id, _is_admin, _message):
-        return management_ui._persist_function_configuration(
-            hass, entry, subentry, [], []
-        )
-
-    command = wrap_management_command(original)
+    command = management_ui.async_management_command
     result = await command(
         hass,
         "admin",

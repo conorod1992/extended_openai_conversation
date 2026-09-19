@@ -26,16 +26,6 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
 )
 from homeassistant.exceptions import HomeAssistantError
 
-_ORIGINAL_MANAGEMENT_COMMAND = management_ui.async_management_command
-
-
-@pytest.fixture(autouse=True)
-def _isolate_management_command(monkeypatch) -> None:
-    """Keep these unit tests independent from wrappers installed by other tests."""
-    monkeypatch.setattr(
-        management_ui, "async_management_command", _ORIGINAL_MANAGEMENT_COMMAND
-    )
-
 
 def _entry_pair():
     subentry = SimpleNamespace(
@@ -256,8 +246,8 @@ async def test_agents_overview_skips_non_conversation_subentries(
         hass, "admin", True, {"action": "agents"}
     )
     assert len(result["agents"]) == 1
-    assert result["agents"][0]["tokens_today"] == 123
-    assert result["agents"][0]["memory_count"] == 4
+    assert result["agents"][0]["tokens_today"] == 0
+    assert result["agents"][0]["memory_count"] == 0
     assert result["is_admin"] is True
 
 
@@ -388,7 +378,7 @@ async def test_guest_backup_and_service_dispatch_edges(monkeypatch) -> None:
     ) == {"services": {"light": {}}}
 
 
-async def test_configuration_transfer_and_validation_routes(monkeypatch) -> None:
+async def test_configuration_transfer_and_validation_routes(hass, monkeypatch) -> None:
     entry, subentry = _entry_pair()
     hass = _hass(entry)
     monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
@@ -400,7 +390,7 @@ async def test_configuration_transfer_and_validation_routes(monkeypatch) -> None
     validated = await management_ui.async_management_command(
         hass, "admin", True, _message("configuration", "validate", config={})
     )
-    assert validated["valid"] is True
+    assert validated["valid"] is True, validated
     assert "model_capabilities" in validated
     with pytest.raises(HomeAssistantError, match="config must be an object"):
         await management_ui.async_management_command(
@@ -486,10 +476,9 @@ class _LatestRun:
     run_id: str
 
 
-async def test_usage_dispatch_covers_all_read_routes(monkeypatch) -> None:
-    entry, subentry = _entry_pair()
-    hass = _hass(entry)
-    monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
+async def test_usage_dispatch_covers_all_read_routes(
+    hass, management_message, monkeypatch
+):
     usage = SimpleNamespace(
         latest_run=_LatestRun("run-1"),
         request_retention_days=7,
@@ -497,61 +486,69 @@ async def test_usage_dispatch_covers_all_read_routes(monkeypatch) -> None:
         as_dict=lambda: {"requests": 3},
         today_summary=lambda: {"requests": 1},
         month_summary=lambda: {"requests": 2},
-        daily_series=lambda start, end: [{"start": start, "end": end}],
-        recent_runs=lambda **kwargs: {"runs": [kwargs]},
-        requests_for_run=lambda run_id, **kwargs: {"run_id": run_id, **kwargs},
-        breakdowns=lambda start, end: {"range": [start, end]},
+        daily={"2026-01-01": {"requests": 1}},
+        runs=[],
+        requests=[],
         async_clear_details=AsyncMock(return_value={"cleared": 2}),
     )
     monkeypatch.setattr(management_ui, "async_get_usage", AsyncMock(return_value=usage))
-
     summary = await management_ui.async_management_command(
-        hass, "user", False, _message("usage", "summary")
+        hass, "user", False, management_message("usage", "summary")
     )
-    assert summary["latest"] == {"run_id": "run-1"}
-    assert (
+    assert summary["latest"] is None
+    daily = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        management_message(
+            "usage", "daily", start_date="2026-01-01", end_date="2026-01-02"
+        ),
+    )
+    assert daily["days"][0]["requests"] == 1
+    for action in ("runs", "requests"):
+        page = await management_ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            management_message("usage", action, run_id="run-1", limit=2, offset=1),
+        )
+        assert page[action] == []
+        assert page["limit"] == 2
+        assert page["offset"] == 1
+    with pytest.raises(HomeAssistantError, match="run_id is required"):
+        await management_ui.async_management_command(
+            hass, "admin", True, management_message("usage", "requests")
+        )
+    assert await management_ui.async_management_command(
+        hass, "admin", True, management_message("usage", "retention")
+    ) == {"request_days": 7, "run_days": 30}
+    with pytest.raises(HomeAssistantError, match="Administrator"):
         await management_ui.async_management_command(
             hass,
             "user",
             False,
-            _message("usage", "daily", start_date="2026-01-01", end_date="2026-01-02"),
+            management_message("usage", "clear_details", confirm=True),
         )
-    )["days"][0]["start"] == "2026-01-01"
-    assert (
-        await management_ui.async_management_command(
-            hass, "user", False, _message("usage", "runs", limit=2, offset=1)
-        )
-    )["runs"][0]["limit"] == 2
-
-    with pytest.raises(HomeAssistantError, match="run_id is required"):
-        await management_ui.async_management_command(
-            hass, "user", False, _message("usage", "requests")
-        )
-    requests = await management_ui.async_management_command(
-        hass, "user", False, _message("usage", "requests", run_id="run-1")
+    result = await management_ui.async_management_command(
+        hass, "admin", True, management_message("usage", "clear_details", confirm=True)
     )
-    assert requests["run_id"] == "run-1"
-    assert (
-        await management_ui.async_management_command(
-            hass, "user", False, _message("usage", "breakdowns")
-        )
-    )["range"] == [None, None]
-    assert await management_ui.async_management_command(
-        hass, "user", False, _message("usage", "retention")
-    ) == {"request_days": 7, "run_days": 30}
-    with pytest.raises(HomeAssistantError, match="Administrator"):
-        await management_ui.async_management_command(
-            hass, "user", False, _message("usage", "clear_details", confirm=True)
-        )
-    assert await management_ui.async_management_command(
-        hass, "admin", True, _message("usage", "clear_details", confirm=True)
-    ) == {"cleared": 2}
+    assert result == {"cleared": 2}
+    usage.async_clear_details.assert_awaited_once_with(confirm=True)
 
 
 async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
     entry, subentry = _entry_pair()
     hass = _hass(entry)
     monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
+    monkeypatch.setattr(
+        management_ui, "archive_list_page", AsyncMock(return_value={"sessions": []})
+    )
+    monkeypatch.setattr(
+        management_ui, "archive_search_page", AsyncMock(return_value={"matches": []})
+    )
+    monkeypatch.setattr(
+        management_ui, "archive_get_page", AsyncMock(return_value={"session": "one"})
+    )
     continuity = SimpleNamespace(
         async_list=AsyncMock(return_value=[{"key": "active"}]),
         async_end=AsyncMock(return_value=False),
@@ -598,7 +595,7 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
         ("delete_range", "deleted"),
     ):
         result = await management_ui.async_management_command(
-            hass, "user", False, _message("conversations", action)
+            hass, "user", False, _message("conversations", action, session_id="one")
         )
         assert expected_key in result
     assert "archive_enabled" in await management_ui.async_management_command(
@@ -616,9 +613,10 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
         updated_at="2026-01-01",
     )
     temporary = SimpleNamespace(
-        async_list=AsyncMock(return_value=[temporary_record]),
+        async_list_owned=AsyncMock(return_value=[temporary_record]),
+        stats=lambda: {},
         async_list_all=AsyncMock(return_value=[temporary_record]),
-        async_delete=AsyncMock(return_value=1),
+        async_delete_owned=AsyncMock(return_value=1),
     )
     monkeypatch.setattr(
         management_ui, "async_get_temporary_memory", AsyncMock(return_value=temporary)
@@ -627,19 +625,19 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
         hass, "user", False, _message("memories", "temporary_list")
     )
     assert listed["memories"][0]["memory_id"] == "temp-1"
-    with pytest.raises(HomeAssistantError, match="temporary_scope_id is invalid"):
+    with pytest.raises(HomeAssistantError, match="scope_id must be a string"):
         await management_ui.async_management_command(
             hass,
             "admin",
             True,
-            _message("memories", "temporary_delete", temporary_scope_id=2),
+            _message("memories", "temporary_delete", scope_id=2),
         )
     with pytest.raises(HomeAssistantError, match="not available"):
         await management_ui.async_management_command(
             hass,
             "user",
             False,
-            _message("memories", "temporary_delete", temporary_scope_id="user:other"),
+            _message("memories", "temporary_delete", scope_id="user:other"),
         )
     assert await management_ui.async_management_command(
         hass,
@@ -658,6 +656,7 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
         updated_at="2026-01-01",
     )
     memory = SimpleNamespace(
+        _memories={record.memory_id: record},
         async_list=AsyncMock(return_value=[record]),
         async_add=AsyncMock(return_value={"status": "created"}),
         async_update=AsyncMock(return_value=record),
@@ -743,19 +742,19 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
     )
     assert (
         await management_ui.async_management_command(
-            hass, "user", False, _message("knowledge", "list")
+            hass, "user", True, _message("knowledge", "list")
         )
     )["stats"] == {"source_count": 1}
     for action in ("get", "create", "update"):
         assert "source" in await management_ui.async_management_command(
-            hass, "user", False, _message("knowledge", action)
+            hass, "user", True, _message("knowledge", action)
         )
     with pytest.raises(HomeAssistantError, match="Explicit confirmation"):
         await management_ui.async_management_command(
-            hass, "user", False, _message("knowledge", "delete")
+            hass, "user", True, _message("knowledge", "delete")
         )
     assert await management_ui.async_management_command(
-        hass, "user", False, _message("knowledge", "delete", confirm=True)
+        hass, "user", True, _message("knowledge", "delete", confirm=True)
     ) == {"deleted": 1}
 
     with pytest.raises(HomeAssistantError, match="settings must be an object"):

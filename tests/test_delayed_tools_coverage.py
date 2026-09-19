@@ -9,20 +9,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from homeassistant.components import conversation
-from homeassistant.core import Context
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import llm
-from homeassistant.util import dt as dt_util
-
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
-    DATA_DELAYED_TOOL_MANAGER,
-    DelayedToolCall,
-    DelayedToolManager,
     _DELAYED_EXECUTION_MARKER,
     _EXECUTING,
     _MAX_AGENT_RETRIES,
+    DATA_DELAYED_TOOL_MANAGER,
+    DelayedToolCall,
+    DelayedToolManager,
     _delay_as_timedelta,
     _install_execution_hook,
     async_setup_delayed_tools,
@@ -30,6 +24,14 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
+from homeassistant.components import conversation
+from homeassistant.core import Context
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import llm
+from homeassistant.util import dt as dt_util
 
 
 def _record(
@@ -590,7 +592,7 @@ async def test_delayed_hook_executes_native_replay_directly(hass, monkeypatch) -
         context,
         [],
     )
-    assert result.tool_result == {"result": "done"}
+    assert tool_result_data(result) == {"result": "done"}
 
 
 async def test_delayed_hook_requires_scheduler_for_background_call(
@@ -676,4 +678,4 @@ async def test_delayed_hook_schedules_background_call_and_returns_receipt(
         entity, "control_light", arguments, context
     )
     original_spy.assert_not_awaited()
-    assert result.tool_result == {"result": "Scheduled"}
+    assert tool_result_data(result) == {"result": "Scheduled"}

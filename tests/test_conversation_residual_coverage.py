@@ -35,6 +35,9 @@ from custom_components.extended_openai_conversation_responses.function_groups im
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
     shared_scope,
@@ -468,7 +471,7 @@ async def test_dispatch_converts_guest_mode_errors_and_denials_to_results(
         None,
         [],
     )
-    decoded = json.loads(result.tool_result["result"])
+    decoded = json.loads(tool_result_data(result)["result"])
     assert decoded == {
         "status": "error",
         "error": conversation_module.GUEST_MODE_UNAVAILABLE,

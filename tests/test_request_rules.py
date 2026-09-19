@@ -1067,13 +1067,15 @@ async def test_management_api_permissions_crud_and_delete_confirmation(
     monkeypatch,
 ) -> None:
     rules = await manager()
-    subentry = SimpleNamespace(subentry_id="agent", subentry_type="conversation")
+    subentry = SimpleNamespace(
+        subentry_id="agent", subentry_type="conversation", data={}
+    )
     entry = SimpleNamespace(
         domain="extended_openai_conversation_responses",
         subentries={"agent": subentry},
     )
     config_entries = SimpleNamespace(async_get_entry=lambda entry_id: entry)
-    hass = SimpleNamespace(config_entries=config_entries)
+    hass = SimpleNamespace(data={}, config_entries=config_entries)
 
     async def get_rules(*args):
         return rules
@@ -1167,7 +1169,9 @@ async def test_management_api_permissions_crud_and_delete_confirmation(
 )
 def test_legacy_routing_flow_is_normalized_once(match_type, expected) -> None:
     rule = routing_rule(
-        scope="conversation" if match_type in {"equals", "sentence_pattern"} else "request",
+        scope="conversation"
+        if match_type in {"equals", "sentence_pattern"}
+        else "request",
         match_type=match_type,
     )
     validated = validate_rule(rule)
@@ -1211,7 +1215,9 @@ async def test_explicit_continue_to_ai_decouples_equals_from_consumption() -> No
     }
 
 
-async def test_explicit_standalone_routing_decouples_contains_from_consumption() -> None:
+async def test_explicit_standalone_routing_decouples_contains_from_consumption() -> (
+    None
+):
     rule = routing_rule(scope="conversation", match_type="contains")
     rule["action"]["continue_to_ai"] = False
     runtime = RequestRuleRuntime()

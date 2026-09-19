@@ -17,6 +17,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
     DOMAIN,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -501,17 +504,17 @@ async def test_ha_owned_tool_runtime_failure_skips_later_call_and_next_turn_reco
         if result.tool_call_id in failed_batch_ids
     }
     assert set(failed_batch_results) == failed_batch_ids
-    success_a = failed_batch_results["call-ha-valid-a"].tool_result
+    success_a = tool_result_data(failed_batch_results["call-ha-valid-a"])
     assert entity_a in _serialized(success_a)
     assert "ready" in _serialized(success_a)
 
-    error_b = failed_batch_results["call-ha-stale-b"].tool_result["result"]
+    error_b = tool_result_data(failed_batch_results["call-ha-stale-b"])["result"]
     assert error_b["status"] == "error"
     assert "HomeAssistantError" in error_b["error"]
     assert entity_b in error_b["error"]
     assert "unavailable" in error_b["error"]
 
-    skipped_c = failed_batch_results["call-ha-valid-c"].tool_result["result"]
+    skipped_c = tool_result_data(failed_batch_results["call-ha-valid-c"])["result"]
     assert skipped_c["status"] == "skipped"
     assert "failed" in skipped_c["error"].lower()
 

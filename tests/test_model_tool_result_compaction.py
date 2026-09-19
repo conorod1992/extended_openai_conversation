@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.memory import (
     MemoryRecord,
     memory_as_dict,
@@ -63,8 +66,8 @@ def test_tool_result_content_compaction_keeps_non_json_unchanged() -> None:
     _compact_json_result_content(json_result)
     _compact_json_result_content(text_result)
 
-    assert json_result.tool_result["result"] == '{"a":1,"b":[2,3]}'
-    assert text_result.tool_result["result"] == "plain custom tool output"
+    assert tool_result_data(json_result)["result"] == '{"a":1,"b":[2,3]}'
+    assert tool_result_data(text_result)["result"] == "plain custom tool output"
 
 
 def test_model_memory_projection_omits_only_absent_optional_fields() -> None:

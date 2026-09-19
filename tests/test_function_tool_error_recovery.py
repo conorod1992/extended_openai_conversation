@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import AsyncIterator
+import inspect
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-
-from homeassistant.components import conversation
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import llm
 
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
@@ -33,9 +29,15 @@ from custom_components.extended_openai_conversation_responses.function_tool_reco
     correctable_validation_failure,
     recovery_tool_result,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.tool_exchange import (
     async_execute_tool_exchange,
 )
+from homeassistant.components import conversation
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import llm
 
 
 def test_stream_transformer_contract_does_not_expose_recovery_state() -> None:
@@ -206,7 +208,7 @@ async def test_pre_dispatch_argument_failures_are_recoverable(
     entity._execute_function_tool.assert_not_awaited()
     assert budget.used == 1
     assert state.used == 1
-    result = _results(chat_log)[0].tool_result["result"]
+    result = tool_result_data(_results(chat_log)[0])["result"]
     assert result["reason"] == "correctable_tool_error"
     assert result["stage"] == "pre_dispatch_validation"
     assert expected_text in result["error"]
@@ -242,7 +244,7 @@ async def test_disabled_recovery_preserves_previous_execution_path(hass) -> None
 
     entity._execute_function_tool.assert_awaited_once()
     assert entity._execute_function_tool.await_args.args[1].tool_args == {}
-    assert _results(chat_log)[0].tool_result == {"result": {"status": "legacy"}}
+    assert tool_result_data(_results(chat_log)[0]) == {"result": {"status": "legacy"}}
 
 
 async def test_normal_function_budget_applies_before_recovery(hass) -> None:
@@ -275,7 +277,7 @@ async def test_normal_function_budget_applies_before_recovery(hass) -> None:
 
     assert state.used == 0
     entity._execute_function_tool.assert_not_awaited()
-    assert _results(chat_log)[0].tool_result["result"]["status"] == "error"
+    assert tool_result_data(_results(chat_log)[0])["result"]["status"] == "error"
 
 
 async def test_recovery_limit_fails_closed_without_dispatch(hass) -> None:
@@ -310,11 +312,11 @@ async def test_recovery_limit_fails_closed_without_dispatch(hass) -> None:
     assert state.used == 2
     results = _results(chat_log)
     assert [result.tool_call_id for result in results] == ["call-1", "call-2", "call-3"]
-    assert [result.tool_result["result"].get("reason") for result in results[:2]] == [
+    assert [tool_result_data(result)["result"].get("reason") for result in results[:2]] == [
         "correctable_tool_error",
         "correctable_tool_error",
     ]
-    assert results[2].tool_result["result"]["status"] == "error"
+    assert tool_result_data(results[2])["result"]["status"] == "error"
 
 
 async def test_post_dispatch_home_assistant_error_is_not_recovered(hass) -> None:
@@ -340,7 +342,7 @@ async def test_post_dispatch_home_assistant_error_is_not_recovered(hass) -> None
 
     assert state.used == 0
     entity._execute_function_tool.assert_awaited_once()
-    result = _results(chat_log)[0].tool_result["result"]
+    result = tool_result_data(_results(chat_log)[0])["result"]
     assert result["status"] == "error"
     assert result.get("reason") != "correctable_tool_error"
 
@@ -424,7 +426,7 @@ async def test_ha_llm_tool_runtime_failure_is_not_recovered(hass) -> None:
         )
 
     assert state.used == 0
-    assert _results(chat_log)[0].tool_result["result"]["status"] == "error"
+    assert tool_result_data(_results(chat_log)[0])["result"]["status"] == "error"
 
 
 async def test_integration_owned_tool_schema_failure_can_recover_before_dispatch(hass) -> None:
@@ -456,7 +458,7 @@ async def test_integration_owned_tool_schema_failure_can_recover_before_dispatch
     )
 
     entity._execute_function_tool.assert_not_awaited()
-    assert _results(chat_log)[0].tool_result["result"]["code"] == "invalid_arguments"
+    assert tool_result_data(_results(chat_log)[0])["result"]["code"] == "invalid_arguments"
 
 
 async def test_delayed_tool_invalid_delay_is_rejected_before_scheduling(hass) -> None:
@@ -494,7 +496,7 @@ async def test_delayed_tool_invalid_delay_is_rejected_before_scheduling(hass) ->
     )
 
     entity._execute_function_tool.assert_not_awaited()
-    assert _results(chat_log)[0].tool_result["result"]["stage"] == "pre_dispatch_validation"
+    assert tool_result_data(_results(chat_log)[0])["result"]["stage"] == "pre_dispatch_validation"
 
 
 async def test_successful_serial_sibling_is_never_replayed(hass) -> None:
@@ -568,7 +570,7 @@ async def test_parallel_safe_sibling_executes_once_when_other_call_is_malformed(
     assert entity._execute_function_tool.await_args.args[1].id == "call-2"
     results = _results(chat_log)
     assert [result.tool_call_id for result in results] == ["call-1", "call-2"]
-    assert results[0].tool_result["result"]["code"] == "invalid_json"
+    assert tool_result_data(results[0])["result"]["code"] == "invalid_json"
 
 
 def _response_event(event_type: str, **kwargs: Any) -> SimpleNamespace:
@@ -676,6 +678,6 @@ def test_recovery_error_text_is_bounded(hass) -> None:
     call = _call("call-1", "action")
     failure = correctable_validation_failure(HomeAssistantError("x" * 2000))
     result = recovery_tool_result("conversation.recovery", call, failure)
-    error = result.tool_result["result"]["error"]
+    error = tool_result_data(result)["result"]["error"]
     assert len(error) <= 320
     assert "Traceback" not in error

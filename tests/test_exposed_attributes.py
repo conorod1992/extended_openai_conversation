@@ -7,7 +7,9 @@ from typing import Any
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import exposed_attributes as ea
+from custom_components.extended_openai_conversation_responses import (
+    exposed_attributes as ea,
+)
 
 
 class _States:
@@ -51,7 +53,9 @@ def test_validate_preferences_rejects_malformed_values(
         ea._validate_preferences(value)
 
 
-def test_validate_preferences_enforces_configured_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_validate_preferences_enforces_configured_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(ea, "MAX_CONFIGURED_ENTITIES", 1)
     with pytest.raises(ea.agent_config.AgentConfigError, match="at most 1 entities"):
         ea._validate_preferences({"registry:a": ["x"], "registry:b": ["y"]})
@@ -70,7 +74,9 @@ def test_normalizer_delegates_non_dict_and_handles_optional_field(
 ) -> None:
     calls: list[tuple[Any, bool, bool]] = []
 
-    def original(data: Any, *, apply_defaults: bool, reject_unknown: bool) -> dict[str, Any]:
+    def original(
+        data: Any, *, apply_defaults: bool, reject_unknown: bool
+    ) -> dict[str, Any]:
         calls.append((data, apply_defaults, reject_unknown))
         return {"base": True}
 
@@ -92,7 +98,11 @@ def test_normalizer_delegates_non_dict_and_handles_optional_field(
 
 def test_registry_lookup_supports_current_and_legacy_container_shapes() -> None:
     entry = SimpleNamespace(id="entry-1", entity_id="light.kitchen")
-    current = SimpleNamespace(entities=SimpleNamespace(get_entry=lambda entry_id: entry if entry_id == "entry-1" else None))
+    current = SimpleNamespace(
+        entities=SimpleNamespace(
+            get_entry=lambda entry_id: entry if entry_id == "entry-1" else None
+        )
+    )
     legacy = SimpleNamespace(entities=SimpleNamespace(values=lambda: [entry]))
     unsupported = SimpleNamespace(entities=SimpleNamespace())
 
@@ -101,7 +111,10 @@ def test_registry_lookup_supports_current_and_legacy_container_shapes() -> None:
     assert ea._registry_entry_by_id(legacy, "missing") is None
     assert ea._registry_entry_by_id(unsupported, "entry-1") is None
 
-    registry = SimpleNamespace(async_get=lambda entity_id: entry if entity_id == "light.kitchen" else None, entities=current.entities)
+    registry = SimpleNamespace(
+        async_get=lambda entity_id: entry if entity_id == "light.kitchen" else None,
+        entities=current.entities,
+    )
     assert ea._reference_for_entity(registry, "light.kitchen") == "registry:entry-1"
     assert ea._reference_for_entity(registry, "light.missing") is None
     assert ea._entry_for_reference(registry, "entity:entry-1") is None
@@ -110,7 +123,9 @@ def test_registry_lookup_supports_current_and_legacy_container_shapes() -> None:
 
 def test_preferences_from_options_fails_closed() -> None:
     assert ea._preferences_from_options(object()) == {}
-    assert ea._preferences_from_options({ea.CONF_EXPOSED_ENTITY_ATTRIBUTES: "bad"}) == {}
+    assert (
+        ea._preferences_from_options({ea.CONF_EXPOSED_ENTITY_ATTRIBUTES: "bad"}) == {}
+    )
 
 
 def test_exposed_attribute_catalog_keeps_stale_saved_selection(
@@ -120,12 +135,16 @@ def test_exposed_attribute_catalog_keeps_stale_saved_selection(
     stale_entry = SimpleNamespace(id="two", entity_id="sensor.old")
     entries = {"one": exposed_entry, "two": stale_entry}
     registry = SimpleNamespace(
-        async_get=lambda entity_id: exposed_entry if entity_id == "light.kitchen" else None,
+        async_get=lambda entity_id: (
+            exposed_entry if entity_id == "light.kitchen" else None
+        ),
         entities=SimpleNamespace(get_entry=lambda entry_id: entries.get(entry_id)),
     )
     hass = _hass(
         {
-            "light.kitchen": SimpleNamespace(attributes={"brightness": 100, "effect": "none"}),
+            "light.kitchen": SimpleNamespace(
+                attributes={"brightness": 100, "effect": "none"}
+            ),
         }
     )
     monkeypatch.setattr(ea.er, "async_get", lambda _hass: registry)
@@ -211,7 +230,13 @@ def test_enrich_exposed_entities_handles_stale_state_and_budget(
         entities=SimpleNamespace(get_entry=lambda entry_id: entries.get(entry_id))
     )
     monkeypatch.setattr(ea.er, "async_get", lambda _hass: registry)
-    hass = _hass({"light.kitchen": SimpleNamespace(attributes={"brightness": 123, "effect": "rainbow"})})
+    hass = _hass(
+        {
+            "light.kitchen": SimpleNamespace(
+                attributes={"brightness": 123, "effect": "rainbow"}
+            )
+        }
+    )
     exposed = [
         {"entity_id": "light.kitchen", "name": "Kitchen"},
         {"entity_id": "light.missing", "name": "Missing"},
@@ -240,12 +265,19 @@ def test_enrich_exposed_entities_fast_paths(monkeypatch: pytest.MonkeyPatch) -> 
     exposed = [{"entity_id": "light.kitchen"}]
     assert ea.enrich_exposed_entities(_hass(), {}, exposed) is exposed
 
-    monkeypatch.setattr(ea, "_preferences_from_options", lambda _options: {"registry:x": ["brightness"]})
-    registry = SimpleNamespace(entities=SimpleNamespace(get_entry=lambda _entry_id: None))
+    monkeypatch.setattr(
+        ea, "_preferences_from_options", lambda _options: {"registry:x": ["brightness"]}
+    )
+    registry = SimpleNamespace(
+        entities=SimpleNamespace(get_entry=lambda _entry_id: None)
+    )
     monkeypatch.setattr(ea.er, "async_get", lambda _hass: registry)
-    assert ea.enrich_exposed_entities(
-        _hass(), {ea.CONF_EXPOSED_ENTITIES_ENABLED: True}, exposed
-    ) is exposed
+    assert (
+        ea.enrich_exposed_entities(
+            _hass(), {ea.CONF_EXPOSED_ENTITIES_ENABLED: True}, exposed
+        )
+        is exposed
+    )
 
 
 def test_attribute_helpers_and_renderers_cover_empty_and_non_string_entities(
@@ -256,10 +288,20 @@ def test_attribute_helpers_and_renderers_cover_empty_and_non_string_entities(
     assert ea._attribute_context_size({}) == 0
     assert ea._attribute_item_size("x", 1) > 0
 
-    monkeypatch.setattr(ea, "resolve_area_id", lambda _hass, entity_id: f"area-{entity_id}")
+    monkeypatch.setattr(
+        ea, "resolve_area_id", lambda _hass, entity_id: f"area-{entity_id}"
+    )
     rendered = ea._render_legacy_default(
         object(),
-        [{"entity_id": "light.kitchen", "name": "Kitchen", "state": "on", "aliases": ["K"], "attributes": {"brightness": 1}}],
+        [
+            {
+                "entity_id": "light.kitchen",
+                "name": "Kitchen",
+                "state": "on",
+                "aliases": ["K"],
+                "attributes": {"brightness": 1},
+            }
+        ],
         include_attributes=True,
     )
     assert "attributes" in rendered
@@ -282,25 +324,34 @@ def test_effective_prompt_wrapper_enriches_only_explicit_entity_lists(
     )
     wrapped = ea._wrap_effective_prompt_renderer(original)
 
-    assert wrapped(object(), {}, exposed_entities=[{"entity_id": "light.one"}]) == "rendered"
+    assert (
+        wrapped(object(), {}, exposed_entities=[{"entity_id": "light.one"}])
+        == "rendered"
+    )
     assert calls[-1][-1]["entity_id"] == "sensor.extra"
     assert wrapped(object(), {}, exposed_entities="not-a-list") == "rendered"
     assert calls[-1] == "not-a-list"
 
 
-def test_configuration_result_decoration_and_install_idempotence(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_configuration_projection_preserves_shape_and_exposed_catalog(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import (
+        management_configuration_guidance as guidance,
+    )
+
     untouched = {"config": "invalid"}
-    assert ea._decorate_configuration_result(object(), untouched) is untouched
-
-    monkeypatch.setattr(ea, "exposed_attribute_catalog", lambda _hass, config: {"seen": config})
-    result = ea._decorate_configuration_result(object(), {"config": {"x": 1}, "other": True})
-    assert result == {
-        "config": {"x": 1},
-        "other": True,
-        "exposed_attribute_catalog": {"seen": {"x": 1}},
-    }
-
+    assert (
+        guidance.decorate_configuration_result(object(), {}, untouched, action="get")
+        is untouched
+    )
+    monkeypatch.setattr(
+        guidance, "exposed_attribute_catalog", lambda _hass, config: {"seen": config}
+    )
+    result = guidance.decorate_configuration_result(
+        object(), {}, {"config": {"x": 1}, "other": True}, action="get"
+    )
+    assert result["config"] == {"x": 1}
+    assert result["other"] is True
+    assert result["exposed_attribute_catalog"] == {"seen": {"x": 1}}
+    assert "configuration_guidance" in result
     monkeypatch.setattr(ea, "_INSTALLED", True)
     ea.install_exposed_attribute_runtime()

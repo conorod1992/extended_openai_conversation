@@ -8,11 +8,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from homeassistant.components import conversation
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import llm
-
-import custom_components.extended_openai_conversation_responses.regex_execution as regex_execution
 from custom_components.extended_openai_conversation_responses.exceptions import (
     FunctionValidationInfrastructureError,
 )
@@ -25,9 +20,16 @@ from custom_components.extended_openai_conversation_responses.function_execution
 from custom_components.extended_openai_conversation_responses.function_tool_recovery import (
     ToolRecoveryState,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
+import custom_components.extended_openai_conversation_responses.regex_execution as regex_execution
 from custom_components.extended_openai_conversation_responses.tool_exchange import (
     async_execute_tool_exchange,
 )
+from homeassistant.components import conversation
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import llm
 
 
 def _tool() -> dict[str, Any]:
@@ -135,8 +137,8 @@ async def test_regex_validation_infrastructure_failure_is_not_recoverable(
     assert state.used == 0
     results = _results(chat_log)
     assert len(results) == 1
-    assert results[0].tool_result["result"]["status"] == "error"
-    assert results[0].tool_result["result"].get("reason") != "correctable_tool_error"
+    assert tool_result_data(results[0])["result"]["status"] == "error"
+    assert tool_result_data(results[0])["result"].get("reason") != "correctable_tool_error"
 
 
 @pytest.mark.parametrize("failure_index", [0, 1, 2])
@@ -194,7 +196,7 @@ async def test_parallel_validation_infrastructure_failure_closes_all_calls(
         "call-3",
     ]
     assert len({result.tool_call_id for result in results}) == 3
-    assert [result.tool_result["result"]["status"] for result in results] == [
+    assert [tool_result_data(result)["result"]["status"] for result in results] == [
         "error" if index == failure_index else "skipped" for index in range(3)
     ]
 
@@ -265,7 +267,7 @@ async def test_regex_argument_mismatch_remains_correctable(hass, monkeypatch) ->
 
     entity._execute_function_tool.assert_not_awaited()
     assert state.used == 1
-    result = _results(chat_log)[0].tool_result["result"]
+    result = tool_result_data(_results(chat_log)[0])["result"]
     assert result["reason"] == "correctable_tool_error"
     assert result["code"] == "invalid_arguments"
     assert "does not match its required pattern" in result["error"]

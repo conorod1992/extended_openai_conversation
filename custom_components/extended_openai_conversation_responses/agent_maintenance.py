@@ -240,34 +240,28 @@ def _management_operation_owns_its_gate(message: dict[str, Any]) -> bool:
     )
 
 
-def _install_management_guard() -> None:
-    from . import management_ui
+@asynccontextmanager
+async def management_command_lease(
+    hass: HomeAssistant,
+    message: dict[str, Any],
+) -> AsyncIterator[None]:
+    """Hold the original Management lease across validation, dispatch and projection.
 
-    current = management_ui.async_management_command
-    if getattr(current, "_extended_openai_maintenance_gate", False):
+    Backup and provider diagnostics own their gates. The legacy Request Rules
+    ``test`` exemption is retained even though testing now only previews matching.
+    """
+    entry_id = message.get("entry_id")
+    subentry_id = message.get("subentry_id")
+    if (
+        message.get("action") == "agents"
+        or _management_operation_owns_its_gate(message)
+        or not isinstance(entry_id, str)
+        or not isinstance(subentry_id, str)
+    ):
+        yield
         return
-
-    @wraps(current)
-    async def guarded(
-        hass: HomeAssistant,
-        user_id: str,
-        is_admin: bool,
-        message: dict[str, Any],
-    ) -> dict[str, Any]:
-        if message.get("action") == "agents" or _management_operation_owns_its_gate(
-            message
-        ):
-            return await current(hass, user_id, is_admin, message)
-        entry_id = message.get("entry_id")
-        subentry_id = message.get("subentry_id")
-        if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
-            return await current(hass, user_id, is_admin, message)
-        gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
-        async with gate.shared():
-            return await current(hass, user_id, is_admin, message)
-
-    guarded._extended_openai_maintenance_gate = True  # type: ignore[attr-defined]
-    management_ui.async_management_command = guarded
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared():
+        yield
 
 
 def _install_legacy_memory_guard() -> None:
@@ -363,7 +357,6 @@ def install_agent_maintenance_barrier() -> None:
         return
     _install_conversation_guard()
     _install_backup_guards()
-    _install_management_guard()
     _install_legacy_memory_guard()
     _install_service_guards()
     _INSTALLED = True

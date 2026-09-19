@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from copy import deepcopy
 import logging
@@ -21,7 +20,6 @@ from homeassistant.exceptions import HomeAssistantError
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
     agent_config_defaults,
-    preserve_legacy_guest_policy,
     validate_function_groups,
     validate_function_tools,
 )
@@ -41,22 +39,22 @@ from .const import (
     MANAGEMENT_PANEL_URL,
 )
 from .conversation_archive import async_get_archive
+from .feature_status import management_feature_status
 from .frontend_version import FRONTEND_VERSION
 from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
-from .knowledge import async_get_knowledge
-from .local_intents import CONF_LOCAL_INTENT_EXCLUSIONS
+from .knowledge import async_get_knowledge, get_loaded_knowledge
 from .management_function_repair import (
-    async_function_repair as _async_function_repair,
     function_tools_issue as _function_tools_issue,
     isolated_function_tools as _isolated_function_tools,
 )
+from .management_history_queries import usage_summary
+from .management_setup_health import add_setup_health
 from .memory import async_get_memory, get_memory_mode
 from .usage import async_get_usage
 
 _LOGGER = logging.getLogger(__name__)
 
 _INSTALLED = False
-_ORIGINAL_MANAGEMENT_COMMAND: Callable[..., Awaitable[dict[str, Any]]] | None = None
 _RUNTIME_QUARANTINED_FUNCTION_NAMES: ContextVar[frozenset[str]] = ContextVar(
     "extended_openai_runtime_quarantined_function_names", default=frozenset()
 )
@@ -206,6 +204,14 @@ def _agent_snapshot(
         "tokens_today": tokens_today,
         "guest_mode": guest_status,
     }
+    if knowledge_source_count == 0:
+        loaded = get_loaded_knowledge(hass, entry.entry_id, subentry.subentry_id)
+        if loaded is not None:
+            knowledge_source_count = int(loaded.source_count)
+            snapshot["knowledge_source_count"] = knowledge_source_count
+    snapshot["feature_status"] = management_feature_status(
+        options, knowledge_source_count=knowledge_source_count
+    )
     if function_issue is not None:
         snapshot["configuration_issue"] = {
             "field": CONF_FUNCTION_TOOLS,
@@ -245,15 +251,11 @@ async def async_scope_catalog(
     hass: HomeAssistant,
     user_id: str,
     is_admin: bool,
-    message: dict[str, Any],
+    entry_id: str,
+    subentry_id: str,
 ) -> dict[str, Any]:
-    """Load memory and archive scope metadata concurrently when first needed."""
+    """Load scopes for the already-validated Management agent concurrently."""
     management_ui = _management_ui()
-    entry_id = message.get("entry_id")
-    subentry_id = message.get("subentry_id")
-    if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
-        raise HomeAssistantError("entry_id and subentry_id are required")
-    management_ui.entry_and_agent(hass, entry_id, subentry_id)
     memory, archive = await asyncio.gather(
         async_get_memory(hass, entry_id, subentry_id),
         async_get_archive(hass, entry_id, subentry_id),
@@ -271,18 +273,13 @@ async def async_scope_catalog(
 
 async def async_overview_summary(
     hass: HomeAssistant,
-    user_id: str,
+    entry: Any,
+    subentry: Any,
+    *,
     is_admin: bool,
-    message: dict[str, Any],
 ) -> dict[str, Any]:
-    """Load selected-agent overview data concurrently in one websocket request."""
-    del user_id, is_admin
+    """Load and bound the already-selected agent's Overview in one request."""
     management_ui = _management_ui()
-    requested_entry_id = message.get("entry_id")
-    requested_subentry_id = message.get("subentry_id")
-    entry, subentry = management_ui.entry_and_agent(
-        hass, requested_entry_id, requested_subentry_id
-    )
     entry_id = str(entry.entry_id)
     subentry_id = str(subentry.subentry_id)
 
@@ -310,12 +307,9 @@ async def async_overview_summary(
     if isinstance(usage_result, BaseException):
         record_failure("usage", "Usage", usage_result)
     else:
-        usage = {
-            "lifetime": usage_result.as_dict(),
-            "today": usage_result.today_summary(),
-            "month": usage_result.month_summary(),
-            "latest": management_ui.asdict_or_none(usage_result.latest_run),
-        }
+        usage = usage_summary(usage_result)
+        if not is_admin:
+            usage["latest"] = None
         tokens_today = int(usage["today"].get("total_tokens", 0))
 
     memory_count = 0
@@ -336,7 +330,7 @@ async def async_overview_summary(
     else:
         guest_status = guest_result.status()
 
-    return {
+    result = {
         "agent": _agent_snapshot(
             hass,
             entry,
@@ -350,6 +344,8 @@ async def async_overview_summary(
         "conversations": management_ui._settings_snapshot(dict(subentry.data)),
         "load_errors": load_errors,
     }
+
+    return add_setup_health(hass, entry, subentry, result, is_admin=is_admin)
 
 
 def _snapshot_normalized_configuration(config: dict[str, Any]) -> dict[str, Any]:
@@ -368,95 +364,6 @@ def _snapshot_normalized_configuration(config: dict[str, Any]) -> dict[str, Any]
         snapshot[CONF_FUNCTION_GROUPS], function_tools
     )
     return snapshot
-
-
-async def _async_save_configuration(
-    hass: HomeAssistant,
-    user_id: str,
-    is_admin: bool,
-    message: dict[str, Any],
-) -> dict[str, Any]:
-    """Normalize once, persist that candidate, and return the frontend snapshot."""
-    del user_id
-    title = message.get("title")
-    if title is not None and (not isinstance(title, str) or not title.strip()):
-        return {"valid": False, "errors": {"title": "must not be empty"}}
-
-    management_ui = _management_ui()
-    management_ui._require_admin(is_admin)
-    updates = message.get("config", {})
-    if not isinstance(updates, dict):
-        raise HomeAssistantError("config must be an object")
-
-    entry, subentry = management_ui.entry_and_agent(
-        hass, message.get("entry_id"), message.get("subentry_id")
-    )
-    validation: dict[str, Any] = management_ui._validation_result(
-        lambda: management_ui.merge_agent_config(subentry.data, updates)
-    )
-    if not validation.get("valid"):
-        return validation
-
-    normalized = validation["config"]
-    persisted = preserve_legacy_guest_policy(dict(subentry.data), deepcopy(normalized))
-    saved_title = title.strip() if isinstance(title, str) else subentry.title
-    hass.config_entries.async_update_subentry(
-        entry,
-        subentry,
-        data=persisted,
-        **({"title": saved_title} if isinstance(title, str) else {}),
-    )
-
-    snapshot = _snapshot_normalized_configuration(persisted)
-    saved = {
-        "title": saved_title,
-        "config": snapshot,
-        "model_capabilities": management_ui.model_capabilities(
-            snapshot[CONF_CHAT_MODEL]
-        ),
-        "local_handling": management_ui.local_handling_snapshot(
-            hass,
-            str(entry.entry_id),
-            str(subentry.subentry_id),
-            snapshot.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
-        ),
-    }
-    return {
-        "valid": True,
-        "errors": {},
-        **saved,
-        "agent": _agent_snapshot(
-            hass,
-            entry,
-            subentry,
-            config=snapshot,
-            title=saved_title,
-        ),
-    }
-
-
-async def optimized_management_command(
-    hass: HomeAssistant,
-    user_id: str,
-    is_admin: bool,
-    message: dict[str, Any],
-) -> dict[str, Any]:
-    """Dispatch optimized read paths while preserving the existing API fallback."""
-    original = _ORIGINAL_MANAGEMENT_COMMAND
-    if original is None:
-        original = _management_ui().async_management_command
-
-    if message.get("action") == "agents":
-        return await async_agent_catalog(hass, user_id, is_admin)
-    if message.get("section") == "scopes" and message.get("action") == "catalog":
-        return await async_scope_catalog(hass, user_id, is_admin, message)
-    if message.get("section") == "overview" and message.get("action") == "summary":
-        return await async_overview_summary(hass, user_id, is_admin, message)
-    if message.get("section") == "configuration" and message.get("action") == "save":
-        return await _async_save_configuration(hass, user_id, is_admin, message)
-    if message.get("section") == "function_repair":
-        return await _async_function_repair(hass, user_id, is_admin, message)
-    return await original(hass, user_id, is_admin, message)
 
 
 def _static_paths(
@@ -540,7 +447,7 @@ async def async_setup_cached_debug_ui(hass: HomeAssistant) -> None:
 
 def install_management_loading_optimizations() -> None:
     """Install frontend loading optimizations and runtime Function Tool quarantine."""
-    global _INSTALLED, _ORIGINAL_MANAGEMENT_COMMAND
+    global _INSTALLED
     if _INSTALLED:
         return
     _INSTALLED = True
@@ -549,8 +456,6 @@ def install_management_loading_optimizations() -> None:
 
     management_ui = _management_ui()
     debug_ui = _debug_ui()
-    _ORIGINAL_MANAGEMENT_COMMAND = management_ui.async_management_command
-    management_ui.async_management_command = optimized_management_command  # type: ignore[assignment]
 
     # agent_config owns strict cached validation. Keep configuration boundaries
     # strict while quarantining persisted invalid siblings at request assembly.

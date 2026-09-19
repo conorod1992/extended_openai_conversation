@@ -36,10 +36,10 @@ assert.deepEqual(
   }],
 );
 
-const [source, bootstrap, runtime, permissions, management] = await Promise.all([
+const [source, bootstrap, loading, permissions, management] = await Promise.all([
   readFile(frontend("management-history-pagination.js"), "utf8"),
   readFile(frontend("management-route.js"), "utf8"),
-  readFile(new URL("../custom_components/extended_openai_conversation_responses/management_history_runtime.py", import.meta.url), "utf8"),
+  readFile(new URL("../custom_components/extended_openai_conversation_responses/management_loading_performance.py", import.meta.url), "utf8"),
   readFile(new URL("../custom_components/extended_openai_conversation_responses/management_permissions.py", import.meta.url), "utf8"),
   readFile(new URL("../custom_components/extended_openai_conversation_responses/management_ui.py", import.meta.url), "utf8"),
 ]);
@@ -52,7 +52,16 @@ assert.match(source, /limit: TURN_PAGE_LIMIT/);
 assert.match(source, /Clear search/);
 assert.match(bootstrap, /"data-memory\/conversations": \(\) => import\(".\/management-history-pagination\.js"\)/);
 assert.match(management, /"management-history-pagination\.js"/);
-assert.match(runtime, /section not in \{"overview", "usage", "conversations"\}/);
-assert.match(runtime, /result = \{\*\*result, "usage": usage_summary\(usage\)\}/);
-assert.match(permissions, /install_management_history_bounds\(\)/);
-assert.match(permissions, /wrap_management_permissions/);
+// Backend ownership changes must not bypass the same bounded projections.
+assert.match(management, /"overview": async_overview_command/);
+assert.match(management, /"usage": async_usage_command/);
+assert.match(management, /"conversations": async_conversations_command/);
+for (const query of ["archive_list_page", "archive_search_page", "archive_get_page"]) {
+  assert.ok(management.includes(`return await ${query}(`), `${query} remains the History read owner`);
+}
+assert.match(management, /result = usage_summary\(usage\)/);
+assert.match(loading, /usage = usage_summary\(usage_result\)/);
+assert.match(management, /require_management_permission\(is_admin, message\)/);
+assert.match(permissions, /section == "usage" and message\.get\("action"\) != "summary"/);
+assert.doesNotMatch(management, /wrap_management_history_bounds|install_management_history_bounds/);
+assert.doesNotMatch(permissions, /wrap_management_permissions/);

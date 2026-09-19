@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -23,12 +22,7 @@ from custom_components.extended_openai_conversation_responses.management_history
     usage_runs_page,
     usage_summary,
 )
-from custom_components.extended_openai_conversation_responses.management_history_runtime import (
-    wrap_management_history_bounds,
-)
-from custom_components.extended_openai_conversation_responses.usage import (
-    UsageRun,
-)
+from custom_components.extended_openai_conversation_responses.usage import UsageRun
 
 
 class _Storage:
@@ -227,7 +221,9 @@ def test_usage_daily_and_breakdown_dimensions_are_explicitly_bounded() -> None:
 async def test_archive_list_search_and_turn_reads_return_real_pages() -> None:
     archive = ConversationArchive(_Storage(), "agent")
     await archive.async_initialize()
-    archive._sessions = {_session(index).session_id: _session(index) for index in range(70)}
+    archive._sessions = {
+        _session(index).session_id: _session(index) for index in range(70)
+    }
 
     listed = await archive_list_page(archive, "user:alice", offset=40, limit=20)
     assert listed["total"] == 70
@@ -241,7 +237,11 @@ async def test_archive_list_search_and_turn_reads_return_real_pages() -> None:
     archive._sessions = {searchable.session_id: searchable}
     archive._turns = defaultdict(
         list,
-        {searchable.session_id: [_turn(searchable.session_id, index) for index in range(30)]},
+        {
+            searchable.session_id: [
+                _turn(searchable.session_id, index) for index in range(30)
+            ]
+        },
     )
     found = await archive_search_page(
         archive,
@@ -266,7 +266,11 @@ async def test_archive_list_search_and_turn_reads_return_real_pages() -> None:
     archive._sessions = {long_session.session_id: long_session}
     archive._turns = defaultdict(
         list,
-        {long_session.session_id: [_turn(long_session.session_id, index) for index in range(45)]},
+        {
+            long_session.session_id: [
+                _turn(long_session.session_id, index) for index in range(45)
+            ]
+        },
     )
     turns = await archive_get_page(
         archive,
@@ -282,38 +286,36 @@ async def test_archive_list_search_and_turn_reads_return_real_pages() -> None:
     assert turns["next_offset"] == 20
 
 
-@pytest.mark.asyncio
-async def test_optimized_overview_usage_is_reprojected_through_bounds(monkeypatch) -> None:
-    providers = {f"provider-{index}": index + 1 for index in range(105)}
-    usage = _Usage(daily={"2026-01-01": _day("2026-01-01", providers=providers)}, details=providers)
-    original = AsyncMock(
-        return_value={
-            "agent": {"title": "Jarvis"},
-            "usage": {"lifetime": {"details": providers}},
-            "conversations": {},
-        }
-    )
-
+async def test_optimized_overview_usage_is_bounded_at_source(
+    hass, management_agent, monkeypatch
+):
     from custom_components.extended_openai_conversation_responses import (
-        management_history_runtime as runtime,
+        management_loading_performance as loading,
+        management_ui,
     )
 
-    monkeypatch.setattr(runtime.management_ui, "entry_and_agent", lambda *_: (object(), object()))
-    monkeypatch.setattr(runtime, "async_get_usage", AsyncMock(return_value=usage))
-    wrapped = wrap_management_history_bounds(original)
+    providers = {f"provider-{index}": index + 1 for index in range(105)}
+    usage = _Usage(
+        daily={"2026-01-01": _day("2026-01-01", providers=providers)}, details=providers
+    )
+    get_usage = AsyncMock(return_value=usage)
+    monkeypatch.setattr(loading, "async_get_usage", get_usage)
+    for name in ("async_get_memory", "async_get_knowledge", "async_get_guest_mode"):
+        monkeypatch.setattr(
+            loading, name, AsyncMock(side_effect=RuntimeError("unavailable"))
+        )
 
-    result = await wrapped(
-        None,
+    result = await management_ui.async_management_command(
+        hass,
         "admin",
         True,
         {
             "section": "overview",
             "action": "summary",
-            "entry_id": "entry",
-            "subentry_id": "agent",
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
         },
     )
-
     assert len(result["usage"]["lifetime"]["details"]) == 100
     assert result["usage"]["lifetime"]["details_meta"]["has_more"] is True
-    original.assert_awaited_once()
+    get_usage.assert_awaited_once()

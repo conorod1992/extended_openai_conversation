@@ -140,7 +140,7 @@ from .ha_llm_tools import (
     is_ha_tool,
     tool_snapshot_scope,
 )
-from .ha_tool_result_compat import make_tool_result_content
+from .ha_tool_result_compat import make_tool_result_content, tool_result_data
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
@@ -1131,7 +1131,7 @@ class ExtendedOpenAIAgentEntity(
             llm_context,
             self._get_exposed_entities(),
         )
-        result_value = result.tool_result.get("result", "")
+        result_value = tool_result_data(result).get("result", "")
         try:
             outcome = json.loads(result_value) if isinstance(result_value, str) else {}
         except json.JSONDecodeError:
