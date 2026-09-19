@@ -198,23 +198,33 @@ class GuestModeManager:
         self._listeners: set[Callable[[], None]] = set()
         self._mutation_lock = asyncio.Lock()
         self._initialized = False
+        self._initialization_lock = asyncio.Lock()
 
     async def async_initialize(self) -> None:
-        if self._initialized:
-            return
-        try:
+        """Publish validated state once, leaving Store failures retryable."""
+        async with self._initialization_lock:
+            if self._initialized:
+                return
+            # Storage I/O failures are not malformed state. Propagate them so a
+            # later getter/setup can retry instead of silently disabling Guest Mode.
             data = await self._store.async_load()
             raw = data.get("schedule") if isinstance(data, Mapping) else None
+            schedule = None
             if isinstance(raw, Mapping):
-                schedule = GuestModeSchedule(**dict(raw))
-                _parse_timestamp(self.hass, schedule.active_from, "active_from")
-                if schedule.active_until is not None:
-                    _parse_timestamp(self.hass, schedule.active_until, "active_until")
-                self._schedule = schedule
-        except Exception:
-            _LOGGER.warning("Ignoring malformed Guest Mode state", exc_info=True)
-            self._schedule = None
-        self._initialized = True
+                try:
+                    candidate = GuestModeSchedule(**dict(raw))
+                    _parse_timestamp(self.hass, candidate.active_from, "active_from")
+                    if candidate.active_until is not None:
+                        _parse_timestamp(
+                            self.hass, candidate.active_until, "active_until"
+                        )
+                    schedule = candidate
+                except TypeError, ValueError:
+                    _LOGGER.warning(
+                        "Ignoring malformed Guest Mode state", exc_info=True
+                    )
+            self._schedule = schedule
+            self._initialized = True
 
     @property
     def schedule(self) -> GuestModeSchedule | None:

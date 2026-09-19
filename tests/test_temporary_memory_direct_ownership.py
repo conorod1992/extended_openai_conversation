@@ -15,9 +15,6 @@ from custom_components.extended_openai_conversation_responses import (
     management_ui,
     temporary_memory as temporary,
 )
-from custom_components.extended_openai_conversation_responses.persistence_hardening import (
-    install_persistence_transactions,
-)
 from homeassistant.util import dt as dt_util
 
 
@@ -84,8 +81,6 @@ def test_temporary_memory_is_owned_without_installers_or_alias_repair():
         assert method.__qualname__ == f"TemporaryMemory.{name}"
         assert not hasattr(method, "__wrapped__")
         assert Path(inspect.getsourcefile(method)).name == "temporary_memory.py"
-    install_persistence_transactions()
-    install_persistence_transactions()
     assert {name: getattr(cls, name) for name in names} == originals
     assert (
         management_ui.async_read_temporary_memory_snapshot

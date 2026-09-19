@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import persistence_hardening
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
 )
@@ -63,55 +62,6 @@ class _Archive(ConversationArchive):
         self._active = {"scope": "old"}
         self._partitions = {"2026-08"}
         self._pending_partitions: set[str] = set()
-
-
-@pytest.mark.asyncio
-async def test_manager_save_failure_restores_committed_state_and_allows_retry() -> None:
-    """A failed save rolls RAM back and does not poison the next save."""
-
-    class Manager:
-        def __init__(self) -> None:
-            self.value = "initial"
-            self.fail_save = False
-
-        async def async_initialize(self) -> None:
-            self.value = "committed"
-
-        async def _async_save_locked(self) -> None:
-            if self.fail_save:
-                raise RuntimeError("save failed")
-
-    def snapshot(manager: Manager) -> str:
-        return manager.value
-
-    def restore(manager: Manager, value: str) -> None:
-        manager.value = value
-
-    def reset(manager: Manager) -> None:
-        manager.value = "reset"
-
-    persistence_hardening._install_manager_guard(Manager, snapshot, restore, reset)
-    manager = Manager()
-    await manager.async_initialize()
-
-    manager.value = "uncommitted"
-    manager.fail_save = True
-    with pytest.raises(RuntimeError, match="save failed"):
-        await manager._async_save_locked()
-
-    assert manager.value == "committed"
-
-    manager.fail_save = False
-    manager.value = "next-commit"
-    await manager._async_save_locked()
-    assert manager.value == "next-commit"
-
-    manager.value = "later-uncommitted"
-    manager.fail_save = True
-    with pytest.raises(RuntimeError, match="save failed"):
-        await manager._async_save_locked()
-
-    assert manager.value == "next-commit"
 
 
 @pytest.mark.asyncio

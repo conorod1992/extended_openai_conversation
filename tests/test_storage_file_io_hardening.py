@@ -7,8 +7,6 @@ import stat
 
 import pytest
 
-from homeassistant.helpers.storage import Store
-
 from custom_components.extended_openai_conversation_responses.const import (
     FILE_READ_SIZE_LIMIT,
 )
@@ -20,13 +18,14 @@ from custom_components.extended_openai_conversation_responses.functions.file imp
 )
 from custom_components.extended_openai_conversation_responses.persistence_hardening import (
     _async_prepare_private_store,
-    install_persistence_transactions,
+    install_delayed_tool_store_guard,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
+    STORAGE_VERSION,
     RequestRules,
     RequestRuleStore,
-    STORAGE_VERSION,
 )
+from homeassistant.helpers.storage import Store
 
 
 def test_atomic_write_rejects_oversized_content_without_touching_file(
@@ -96,9 +95,10 @@ async def test_private_store_hardening_repairs_existing_file_without_rewrite(
 
 
 async def test_request_rules_store_is_hardened_before_initialize(hass) -> None:
-    """The existing Request Rules manager guard prepares its real HA Store."""
-    install_persistence_transactions()
-    store = RequestRuleStore(hass, STORAGE_VERSION, "extended_openai_test.request_rules")
+    """Request Rules prepares its real HA Store without a startup installer."""
+    store = RequestRuleStore(
+        hass, STORAGE_VERSION, "extended_openai_test.request_rules"
+    )
     rules = RequestRules(store)
 
     await rules.async_initialize()
@@ -109,7 +109,7 @@ async def test_request_rules_store_is_hardened_before_initialize(hass) -> None:
 
 async def test_delayed_tool_store_is_hardened_before_setup(hass) -> None:
     """Delayed-tool recovery uses the same private atomic Store policy."""
-    install_persistence_transactions()
+    install_delayed_tool_store_guard()
     manager = DelayedToolManager(hass)
 
     await manager.async_setup()

@@ -155,7 +155,7 @@ async def test_repeated_setup_preserves_runtime_identity(hass, monkeypatch):
     executor = base.ExtendedOpenAIBaseLLMEntity._execute_function_tool
     monkeypatch.setattr(DelayedToolManager, "async_setup", AsyncMock())
     for _ in range(2):
-        persistence_hardening.install_persistence_transactions()
+        persistence_hardening.install_delayed_tool_store_guard()
         debug.install_debug_instrumentation()
         request_diagnostics.install_payload_latency_diagnostics()
         await async_setup_delayed_tools(hass)

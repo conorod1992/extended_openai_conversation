@@ -19,9 +19,6 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
     GuestModeManager,
     GuestModeSchedule,
 )
-from custom_components.extended_openai_conversation_responses.persistence_hardening import (
-    install_persistence_transactions,
-)
 from custom_components.extended_openai_conversation_responses.request_rules import (
     DEFAULT_MATCHING,
     RequestRules,
@@ -29,7 +26,6 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
 from custom_components.extended_openai_conversation_responses.runtime_hardening import (
     MAX_MODEL_TOOL_RESULT_CHARACTERS,
     bounded_tool_result_text,
-    install_runtime_hardening,
 )
 from custom_components.extended_openai_conversation_responses.skills import SkillManager
 from custom_components.extended_openai_conversation_responses.usage import (
@@ -66,7 +62,6 @@ class ToggleStorage:
 
 async def test_usage_initialization_is_serialized_and_retry_clean() -> None:
     """Concurrent/retried initialization cannot duplicate retained usage detail."""
-    install_runtime_hardening()
     now = dt_util.utcnow().isoformat()
     totals = ToggleStorage({"totals": {"api_request_count": 1}})
     details = ToggleStorage(
@@ -131,7 +126,6 @@ async def test_usage_getter_returns_one_manager_during_concurrent_first_use(
     hass, monkeypatch
 ) -> None:
     """The first two callers cannot initialize separate UsageManager instances."""
-    install_runtime_hardening()
     calls = 0
 
     async def slow_load(_store: Store) -> None:
@@ -174,7 +168,6 @@ class SkillHass:
 
 async def test_skill_first_load_waits_and_failed_reload_keeps_catalog(tmp_path) -> None:
     """No caller sees a half-loaded catalogue and reload failure is non-destructive."""
-    install_runtime_hardening()
     SkillManager._instance = None
     skills_dir = tmp_path / "skills"
     skill_path = skills_dir / "demo" / "SKILL.md"
@@ -211,7 +204,6 @@ async def test_skill_first_load_waits_and_failed_reload_keeps_catalog(tmp_path) 
 
 async def test_skill_initial_failure_clears_singleton_for_retry(tmp_path) -> None:
     """A failed first discovery does not publish a permanently broken singleton."""
-    install_runtime_hardening()
     SkillManager._instance = None
     skills_dir = tmp_path / "skills"
     hass = SkillHass(
@@ -242,12 +234,12 @@ def _guest_manager(store: ToggleStorage) -> GuestModeManager:
     manager._listeners = set()
     manager._mutation_lock = asyncio.Lock()
     manager._initialized = False
+    manager._initialization_lock = asyncio.Lock()
     return manager
 
 
 async def test_guest_mode_store_failure_retries_without_fail_open() -> None:
     """Transient load errors are retried rather than converted to inactive state."""
-    install_runtime_hardening()
     now = dt_util.utcnow()
     schedule = GuestModeSchedule(
         active_from=(now - timedelta(minutes=1)).isoformat(),
@@ -271,7 +263,6 @@ async def test_guest_mode_store_failure_retries_without_fail_open() -> None:
 
 async def test_guest_mode_failed_disable_keeps_last_durable_policy() -> None:
     """A failed Store write cannot publish an unsaved Guest Mode relaxation."""
-    install_runtime_hardening()
     now = dt_util.utcnow()
     schedule = GuestModeSchedule(
         active_from=(now - timedelta(minutes=1)).isoformat(),
@@ -292,7 +283,6 @@ async def test_guest_mode_failed_disable_keeps_last_durable_policy() -> None:
 
 async def test_request_rule_save_failure_rolls_back_live_configuration() -> None:
     """Request Rules expose only the last successfully persisted configuration."""
-    install_persistence_transactions()
     storage = ToggleStorage()
     manager = RequestRules(storage)  # type: ignore[arg-type]
     await manager.async_initialize()
@@ -309,7 +299,6 @@ async def test_request_rule_save_failure_rolls_back_live_configuration() -> None
 
 def test_model_facing_tool_results_are_bounded_after_delayed_hook() -> None:
     """The outer conversation seam remains bounded even after delay wrapping."""
-    install_runtime_hardening()
     from custom_components.extended_openai_conversation_responses.conversation import (
         ExtendedOpenAIAgentEntity,
     )

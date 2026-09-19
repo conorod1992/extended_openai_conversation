@@ -5,12 +5,6 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
-
-from homeassistant.components import conversation
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_FINAL_WRITE
-from homeassistant.core import HomeAssistant
-from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.extended_openai_conversation_responses import (
@@ -19,6 +13,7 @@ from custom_components.extended_openai_conversation_responses import (
     knowledge as knowledge_module,
     memory as memory_module,
     request_rules as request_rules_module,
+    skills as skills_module,
     temporary_memory as temporary_memory_module,
     usage as usage_module,
 )
@@ -37,7 +32,11 @@ from custom_components.extended_openai_conversation_responses.conversation impor
     ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.scope import user_scope
-
+from homeassistant.components import conversation
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_FINAL_WRITE
+from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 OWNER_SCOPE = "user:alice"
 
@@ -128,6 +127,33 @@ async def test_real_ha_unload_reload_rehydrates_durable_agent_state(
     hass: HomeAssistant,
 ) -> None:
     """Every major per-agent durable state family survives a genuinely fresh runtime."""
+    manager_methods = {
+        cls: {name: cls.__dict__[name] for name in names}
+        for cls, names in (
+            (
+                memory_module.PersistentMemory,
+                ("async_initialize", "_async_save_locked"),
+            ),
+            (
+                knowledge_module.KnowledgeLibrary,
+                ("async_initialize", "_async_save_locked"),
+            ),
+            (
+                request_rules_module.RequestRules,
+                ("async_initialize", "_async_save_locked"),
+            ),
+            (guest_mode_module.GuestModeManager, ("async_initialize",)),
+            (
+                skills_module.SkillManager,
+                (
+                    "async_initialize",
+                    "async_load_skills",
+                    "async_get_instance",
+                    "get_loaded_instance",
+                ),
+            ),
+        )
+    }
     entry = _conversation_entry()
     await _setup_entry(hass, entry)
     subentry_id = _subentry_id(entry)
@@ -259,6 +285,8 @@ async def test_real_ha_unload_reload_rehydrates_durable_agent_state(
         ),
     }
     assert after == before
+    for cls, methods in manager_methods.items():
+        assert {name: cls.__dict__[name] for name in methods} == methods
 
     # Rebuilt derived indexes/selection state must also behave like the pre-reload
     # runtime, not merely deserialize into superficially equal dictionaries.
@@ -344,9 +372,7 @@ async def test_transient_request_routing_state_does_not_cross_restart_boundary(
     await rules.async_create(_durable_rule())
     durable_before = await rules.async_backup_data()
 
-    runtime = request_rules_module.get_request_rule_runtime(
-        hass, entry_id, subentry_id
-    )
+    runtime = request_rules_module.get_request_rule_runtime(hass, entry_id, subentry_id)
     runtime.set("conversation:one", {"chat_model": "gpt-4.1-mini"})
     assert runtime.get("conversation:one") == {"chat_model": "gpt-4.1-mini"}
 

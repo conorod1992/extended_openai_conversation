@@ -128,33 +128,47 @@ class KnowledgeLibrary:
         self._token_index: dict[str, set[tuple[str, int]]] = defaultdict(set)
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._committed_state: dict[str, Any] | None = None
 
     async def async_initialize(self) -> None:
         """Load and index the library exactly once."""
         async with self._lock:
             if self._initialized:
                 return
-            data = await self._storage.async_load()
-            raw_sources = data.get("sources", []) if isinstance(data, Mapping) else []
-            if not isinstance(raw_sources, list):
-                raw_sources = []
-            for raw in raw_sources:
-                if len(self._sources) >= MAX_SOURCES_PER_AGENT:
-                    _LOGGER.warning(
-                        "Ignoring Knowledge Library records beyond the per-agent limit"
-                    )
-                    break
-                try:
-                    source = _source_from_stored(raw)
-                except KeyError, TypeError, ValueError:
-                    _LOGGER.warning("Ignoring malformed Knowledge Library record")
-                    continue
-                if source.source_id in self._sources:
-                    _LOGGER.warning("Ignoring duplicate Knowledge Library source ID")
-                    continue
-                self._sources[source.source_id] = source
-                self._index(source)
-            self._initialized = True
+            try:
+                data = await self._storage.async_load()
+                raw_sources = (
+                    data.get("sources", []) if isinstance(data, Mapping) else []
+                )
+                if not isinstance(raw_sources, list):
+                    raw_sources = []
+                for raw in raw_sources:
+                    if len(self._sources) >= MAX_SOURCES_PER_AGENT:
+                        _LOGGER.warning(
+                            "Ignoring Knowledge Library records beyond the per-agent limit"
+                        )
+                        break
+                    try:
+                        source = _source_from_stored(raw)
+                    except KeyError, TypeError, ValueError:
+                        _LOGGER.warning("Ignoring malformed Knowledge Library record")
+                        continue
+                    if source.source_id in self._sources:
+                        _LOGGER.warning(
+                            "Ignoring duplicate Knowledge Library source ID"
+                        )
+                        continue
+                    self._sources[source.source_id] = source
+                    self._index(source)
+                self._remember_committed_state()
+                self._initialized = True
+            except BaseException:
+                self._sources.clear()
+                self._chunks.clear()
+                self._token_index = defaultdict(set)
+                self._initialized = False
+                self._committed_state = None
+                raise
 
     @property
     def source_count(self) -> int:
@@ -530,9 +544,58 @@ class KnowledgeLibrary:
                     del self._token_index[token]
 
     async def _async_save_locked(self) -> None:
-        await self._storage.async_save(
-            {"sources": [asdict(source) for source in self._sources.values()]}
+        """Settle each Store write before propagating cancellation or rolling back."""
+        save_task = asyncio.ensure_future(
+            self._storage.async_save(
+                {"sources": [asdict(source) for source in self._sources.values()]}
+            )
         )
+        cancellation: asyncio.CancelledError | None = None
+
+        # A caller cancellation must not abort a Store write after the manager's live
+        # state has already changed. Keep observing the save until it reaches a known
+        # result; repeated cancellation requests remain deferred to this boundary.
+        while not save_task.done():
+            try:
+                await asyncio.shield(save_task)
+            except asyncio.CancelledError as err:
+                if save_task.cancelled():
+                    self._restore_committed_state()
+                    raise
+                if cancellation is None:
+                    cancellation = err
+            except Exception:
+                # Inspect the finished task below so rollback and cancellation
+                # precedence stay in one place.
+                break
+
+        try:
+            save_task.result()
+        except asyncio.CancelledError:
+            self._restore_committed_state()
+            raise
+        except Exception as err:
+            self._restore_committed_state()
+            if cancellation is not None:
+                raise cancellation from err
+            raise
+
+        self._remember_committed_state()
+        if cancellation is not None:
+            raise cancellation
+
+    def _remember_committed_state(self) -> None:
+        self._committed_state = {"sources": dict(self._sources)}
+
+    def _restore_committed_state(self) -> None:
+        snapshot = self._committed_state
+        if snapshot is None:
+            return
+        self._sources = dict(snapshot["sources"])
+        self._chunks.clear()
+        self._token_index = defaultdict(set)
+        for source in self._sources.values():
+            self._index(source)
 
     def _ensure_initialized(self) -> None:
         if not self._initialized:

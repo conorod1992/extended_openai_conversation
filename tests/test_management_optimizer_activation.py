@@ -47,7 +47,7 @@ async def test_debug_assets_are_registered_before_management_panel(
     """The management panel must not race its lazy Request Debug assets."""
     for name in (
         "apply_openai_compatibility",
-        "install_persistence_transactions",
+        "install_delayed_tool_store_guard",
         "install_guest_policy_fast_path",
         "install_deferred_context_summary",
         "install_debug_instrumentation",

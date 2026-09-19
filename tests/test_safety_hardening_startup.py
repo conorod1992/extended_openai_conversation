@@ -9,7 +9,6 @@ from custom_components.extended_openai_conversation_responses import (
     conversation,
     guest_performance,
     management_loading_performance,
-    persistence_hardening,
     request_static_cache,
 )
 
@@ -48,18 +47,16 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
     )
 
     for name in (
-        "_install_manager_guard",
-        "_install_delayed_tool_store_guard",
+        "install_delayed_tool_store_guard",
         "install_runtime_failure_hardening",
-        "install_runtime_hardening",
         "install_lifecycle_optimizations",
         "install_hot_path_cleanup",
         "install_context_usage_hardening",
     ):
-        monkeypatch.setattr(persistence_hardening, name, MagicMock())
+        monkeypatch.setattr(integration, name, MagicMock())
     install_safety_hardening = MagicMock()
     monkeypatch.setattr(
-        persistence_hardening, "install_safety_hardening", install_safety_hardening
+        integration, "install_safety_hardening", install_safety_hardening
     )
 
     for name in (

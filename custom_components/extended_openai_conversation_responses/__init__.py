@@ -92,6 +92,7 @@ from .const import (
     MEMORY_MODE_OFF,
 )
 from .context_summary_performance import install_deferred_context_summary
+from .context_usage_hardening import install_context_usage_hardening
 from .debug import DebugOpenAIClientProxy, install_debug_instrumentation
 from .debug_ui import async_setup_debug_ui
 from .delayed_tools import async_setup_delayed_tools
@@ -99,8 +100,10 @@ from .function_dependency_integrity import install_function_dependency_integrity
 from .guest_performance import install_guest_policy_fast_path
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import get_authenticated_client, supports_openai_hosted_tools
+from .hot_path_cleanup import install_hot_path_cleanup
 from .input_footprint import install_input_footprint
 from .intercom_services import async_setup_intercom_services
+from .lifecycle_optimizations import install_lifecycle_optimizations
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
 from .model_catalog_manager import async_setup_model_catalog
@@ -109,12 +112,14 @@ from .native_function_schema_migration import (
     migrate_legacy_stock_native_function_tools_yaml,
 )
 from .openai_compat import apply_openai_compatibility
-from .persistence_hardening import install_persistence_transactions
+from .persistence_hardening import install_delayed_tool_store_guard
 from .prompt_cache import PerformanceOpenAIClientProxy
 from .provider_credentials import setup_provider_credentials_websocket
 from .quiet_hours import async_get_quiet_hours
 from .regex_execution import install_configurable_regex_isolation
 from .restore_recovery import async_recover_pending_restores, install_restore_recovery
+from .runtime_failure_hardening import install_runtime_failure_hardening
+from .safety_hardening import install_safety_hardening
 from .services import async_setup_services
 from .skill_runtime_availability import install_skill_runtime_availability
 from .template import async_setup_templates, async_unload_templates
@@ -139,7 +144,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_setup_model_catalog(hass)
     await async_get_quiet_hours(hass)
     apply_openai_compatibility()
-    install_persistence_transactions()
+    install_delayed_tool_store_guard()
+    install_runtime_failure_hardening()
+    install_safety_hardening()
+    install_lifecycle_optimizations()
+    install_hot_path_cleanup()
+    install_context_usage_hardening()
     install_restore_recovery()
     install_skill_runtime_availability()
     install_guest_policy_fast_path()

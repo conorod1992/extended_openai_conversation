@@ -6,16 +6,15 @@ from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from homeassistant.util import dt as dt_util
-
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
+    _MAX_AGENT_RETRIES,
     DelayedToolCall,
     DelayedToolManager,
-    _MAX_AGENT_RETRIES,
 )
 from custom_components.extended_openai_conversation_responses.persistence_hardening import (
-    _install_delayed_tool_store_guard,
+    install_delayed_tool_store_guard,
 )
+from homeassistant.util import dt as dt_util
 
 
 def _record(*, retry_count: int = 0) -> DelayedToolCall:
@@ -34,7 +33,7 @@ def _record(*, retry_count: int = 0) -> DelayedToolCall:
 
 async def test_retry_budget_advances_when_retry_state_persistence_fails(hass) -> None:
     """A Store outage must not make agent-resolution retries unbounded."""
-    _install_delayed_tool_store_guard()
+    install_delayed_tool_store_guard()
     manager = DelayedToolManager(hass)
     record = _record()
     manager._records = {record.call_id: record}
@@ -64,7 +63,7 @@ async def test_retry_budget_advances_when_retry_state_persistence_fails(hass) ->
 
 async def test_successful_retry_write_catches_up_after_previous_failure(hass) -> None:
     """A later healthy Store write persists the advanced in-memory retry count."""
-    _install_delayed_tool_store_guard()
+    install_delayed_tool_store_guard()
     manager = DelayedToolManager(hass)
     record = _record()
     manager._records = {record.call_id: record}
