@@ -21,10 +21,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
-      - name: Inspect lazy ownership references
-        run: |
-          git rev-parse HEAD
-          rg -n 'installQuietHoursUI|installFunctionRepair|installUsageDiagnostics|installUsageInputFootprint|installManagementProviderCredentials|installManagementSection|installDebugPresentation|__managementPresentationInstalled' tests frontend/test tests_browser || true
       - name: Apply reviewed branch edits
         if: hashFiles('.github/lazy-ownership-edit.py') != ''
         run: |
@@ -37,6 +33,18 @@ jobs:
         run: |
           find custom_components/extended_openai_conversation_responses/frontend -maxdepth 1 -type f -name '*.js' -print0 | xargs -0 -n1 node --check
           find tests -maxdepth 1 -type f -name '*.test.mjs' -print0 | sort -z | xargs -0 -n1 node
+      - name: Verify frontend types tests and production build
+        if: hashFiles('.github/lazy-ownership-edit.py') != ''
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run verify
+      - name: Verify shipped Chromium journeys
+        if: hashFiles('.github/lazy-ownership-edit.py') != ''
+        run: |
+          npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+          npx playwright install --with-deps chromium
+          npx playwright test --config=playwright.config.mjs
       - name: Prepare source snapshot
         if: always()
         run: |
@@ -45,5 +53,8 @@ jobs:
         if: always()
         with:
           name: lazy-ownership-source
-          path: /tmp/lazy-ownership-source.tar.gz
+          path: |
+            /tmp/lazy-ownership-source.tar.gz
+            test-results/
+            playwright-report/
           retention-days: 1
