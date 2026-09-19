@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import deque
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -18,69 +19,6 @@ from custom_components.extended_openai_conversation_responses.ha_permissions imp
 )
 
 
-def test_install_safety_hardening_is_idempotent(monkeypatch) -> None:
-    """A repeated install must not stack another layer of global wrappers."""
-    delayed = AsyncMock()
-    native = AsyncMock()
-    broadcast = AsyncMock()
-    schema = AsyncMock()
-    monkeypatch.setattr(safety_hardening, "_INSTALLED", False)
-    monkeypatch.setattr(safety_hardening, "_install_delayed_permission_context", delayed)
-    monkeypatch.setattr(safety_hardening, "_install_native_tool_guards", native)
-    monkeypatch.setattr(safety_hardening, "_install_broadcast_state_transactions", broadcast)
-    monkeypatch.setattr(safety_hardening, "_update_builtin_resource_schema", schema)
-
-    safety_hardening.install_safety_hardening()
-    safety_hardening.install_safety_hardening()
-
-    delayed.assert_called_once()
-    native.assert_called_once()
-    broadcast.assert_called_once()
-    schema.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_delayed_permission_context_uses_durable_origin_and_restores_caller(
-    monkeypatch,
-) -> None:
-    """Recovered delayed calls execute as their persisted origin, without leaking it."""
-    from custom_components.extended_openai_conversation_responses.delayed_tools import (
-        DelayedToolManager,
-    )
-
-    seen: list[tuple[str, str | None]] = []
-
-    async def original(manager, call_id):
-        context = get_active_ha_context()
-        seen.append((call_id, getattr(context, "user_id", None)))
-        return True
-
-    monkeypatch.setattr(DelayedToolManager, "_async_execute_due", original)
-    safety_hardening._install_delayed_permission_context()
-    wrapped = DelayedToolManager._async_execute_due
-
-    safety_hardening._install_delayed_permission_context()
-    assert DelayedToolManager._async_execute_due is wrapped
-
-    previous = get_active_ha_context()
-    caller = Context(user_id="caller-user")
-    set_active_ha_context(caller)
-    try:
-        missing = SimpleNamespace(_records={})
-        assert await wrapped(missing, "missing") is True
-        assert get_active_ha_context() is caller
-
-        recovered = SimpleNamespace(
-            _records={"due": SimpleNamespace(user_id="origin-user")}
-        )
-        assert await wrapped(recovered, "due") is True
-        assert get_active_ha_context() is caller
-    finally:
-        set_active_ha_context(previous)
-
-    assert seen == [("missing", "caller-user"), ("due", "origin-user")]
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "user",
@@ -92,7 +30,9 @@ async def test_delayed_permission_context_uses_durable_origin_and_restores_calle
 )
 async def test_require_admin_rejects_missing_inactive_and_non_admin_users(user) -> None:
     """Durable HA mutation fails closed for every non-active-admin identity."""
-    hass = SimpleNamespace(auth=SimpleNamespace(async_get_user=AsyncMock(return_value=user)))
+    hass = SimpleNamespace(
+        auth=SimpleNamespace(async_get_user=AsyncMock(return_value=user))
+    )
     llm_context = SimpleNamespace(context=Context(user_id="user-1"))
 
     with pytest.raises(HomeAssistantError, match="active Home Assistant administrator"):
@@ -105,7 +45,9 @@ async def test_require_admin_rejects_missing_inactive_and_non_admin_users(user) 
 async def test_require_admin_accepts_active_admin_from_active_context() -> None:
     """The active HA context is a valid fallback when the LLM context has none."""
     admin = SimpleNamespace(is_active=True, is_admin=True)
-    hass = SimpleNamespace(auth=SimpleNamespace(async_get_user=AsyncMock(return_value=admin)))
+    hass = SimpleNamespace(
+        auth=SimpleNamespace(async_get_user=AsyncMock(return_value=admin))
+    )
     previous = get_active_ha_context()
     set_active_ha_context(Context(user_id="admin-user"))
     try:
@@ -119,7 +61,9 @@ async def test_require_admin_accepts_active_admin_from_active_context() -> None:
 @pytest.mark.parametrize("value", [123, "definitely-not-a-datetime"])
 def test_parse_datetime_rejects_non_iso_values(value) -> None:
     """Recorder bounds reject malformed timestamps before querying Recorder."""
-    with pytest.raises(HomeAssistantError, match="start_time must be an ISO 8601 datetime"):
+    with pytest.raises(
+        HomeAssistantError, match="start_time must be an ISO 8601 datetime"
+    ):
         safety_hardening._parse_datetime(value, "start_time")
 
 
@@ -173,7 +117,9 @@ def test_execute_service_validation_rejects_invalid_and_oversized_batches() -> N
         )
 
 
-def test_statistics_validation_defaults_period_and_rejects_bad_period_or_window() -> None:
+def test_statistics_validation_defaults_period_and_rejects_bad_period_or_window() -> (
+    None
+):
     """Statistics normalizes a safe default and enforces period-specific windows."""
     normalized = safety_hardening._normalized_statistics_arguments(
         {
@@ -213,7 +159,7 @@ class _Delivery:
             self.events.append((status, reason))
 
 
-def test_expire_pending_broadcasts_preserves_only_in_flight_delivery() -> None:
+async def test_expire_pending_broadcasts_preserves_only_in_flight_delivery() -> None:
     """Disabling Broadcast expires queued work but never rewrites terminal/in-flight work."""
     entity_id = "assist_satellite.kitchen"
     pending = _Delivery("pending")
@@ -230,7 +176,13 @@ def test_expire_pending_broadcasts_preserves_only_in_flight_delivery() -> None:
         }
     )
 
-    safety_hardening._expire_pending_broadcasts(manager)
+    from custom_components.extended_openai_conversation_responses.intercom import (
+        IntercomManager,
+    )
+
+    manager._state_lock = asyncio.Lock()
+    manager._store = SimpleNamespace(async_save=AsyncMock())
+    await IntercomManager.async_set_enabled(manager, False)
 
     assert pending.status == "expired"
     assert delivered.status == "delivered"
@@ -250,9 +202,6 @@ async def test_broadcast_state_transactions_load_once_and_persist_before_expiry(
     async def placeholder(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(IntercomManager, "async_initialize", placeholder)
-    monkeypatch.setattr(IntercomManager, "async_set_enabled", placeholder)
-    safety_hardening._install_broadcast_state_transactions()
     initialize = IntercomManager.async_initialize
     set_enabled = IntercomManager.async_set_enabled
 
@@ -266,6 +215,7 @@ async def test_broadcast_state_transactions_load_once_and_persist_before_expiry(
     delivery = _Delivery("pending", events)
     item = SimpleNamespace(deliveries={entity_id: delivery})
     manager = SimpleNamespace(
+        _state_lock=asyncio.Lock(),
         _loaded=False,
         _enabled=False,
         _store=SimpleNamespace(async_load=load, async_save=save),
@@ -293,6 +243,5 @@ async def test_broadcast_state_transactions_load_once_and_persist_before_expiry(
     assert events == [("saved", True)]
     assert manager._enabled is True
 
-    safety_hardening._install_broadcast_state_transactions()
     assert IntercomManager.async_initialize is initialize
     assert IntercomManager.async_set_enabled is set_enabled

@@ -32,6 +32,12 @@ from ..const import DOMAIN, EVENT_AUTOMATION_REGISTERED
 from ..exceptions import CallServiceError, EntityNotExposed, NativeNotFound
 from ..ha_actions import async_call_ha_action
 from ..intercom import async_get_intercom
+from ..safety_hardening import (
+    _async_require_admin,
+    _normalized_statistics_arguments,
+    _validate_execute_service_request,
+    _validate_history_request,
+)
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -355,6 +361,7 @@ class NativeFunction(Function):
                 domain,
                 service,
                 data=service_data,
+                blocking=True,
             )
             result: dict[str, Any] = {"success": True}
             if previous_state:
@@ -372,6 +379,7 @@ class NativeFunction(Function):
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        _validate_execute_service_request(arguments)
         result = []
         for service_argument in arguments.get("list", []):
             result.append(
@@ -393,6 +401,7 @@ class NativeFunction(Function):
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> str:
+        await _async_require_admin(hass, llm_context)
         config = await hass.async_add_executor_job(
             _parse_automation_config, arguments["automation_config"]
         )
@@ -444,6 +453,7 @@ class NativeFunction(Function):
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> list[list[dict[str, Any]]]:
+        _validate_history_request(arguments)
         start_time = arguments.get("start_time")
         end_time = arguments.get("end_time")
         entity_ids = arguments.get("entity_ids", [])
@@ -530,6 +540,7 @@ class NativeFunction(Function):
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        arguments = _normalized_statistics_arguments(arguments)
         raw_statistic_ids = arguments.get("statistic_ids")
         if (
             not isinstance(raw_statistic_ids, list)

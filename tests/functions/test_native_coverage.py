@@ -315,3 +315,18 @@ def test_datetime_and_state_conversion_edges() -> None:
     assert function.as_dict(state)["entity_id"] == "sensor.temperature"
     mapping = {"state": "21"}
     assert function.as_dict(mapping) is mapping
+
+
+@pytest.fixture(autouse=True)
+def authenticated_automation_admin(hass):
+    from types import SimpleNamespace
+    from homeassistant.core import Context
+    from custom_components.extended_openai_conversation_responses.ha_permissions import (
+        bind_active_ha_context,
+    )
+
+    hass.auth.async_get_user = AsyncMock(
+        return_value=SimpleNamespace(is_active=True, is_admin=True)
+    )
+    with bind_active_ha_context(Context(user_id="admin")):
+        yield

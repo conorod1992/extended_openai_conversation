@@ -54,10 +54,6 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
         "install_context_usage_hardening",
     ):
         monkeypatch.setattr(integration, name, MagicMock())
-    install_safety_hardening = MagicMock()
-    monkeypatch.setattr(
-        integration, "install_safety_hardening", install_safety_hardening
-    )
 
     for name in (
         "async_migrate_integration",
@@ -69,8 +65,37 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
     ):
         monkeypatch.setattr(integration, name, AsyncMock())
 
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        delayed_tools,
+        intercom,
+        memory_ui,
+        services,
+    )
+    from custom_components.extended_openai_conversation_responses.functions.native import (
+        NativeFunction,
+    )
+
+    owners = [
+        (delayed_tools.DelayedToolManager, "_async_execute_due"),
+        (NativeFunction, "execute_service"),
+        (NativeFunction, "add_automation"),
+        (NativeFunction, "get_history"),
+        (NativeFunction, "get_statistics"),
+        (intercom.IntercomManager, "async_initialize"),
+        (intercom.IntercomManager, "async_set_enabled"),
+        (backup, "async_create_backup"),
+        (backup, "async_restore_backup"),
+        (memory_ui, "async_manage_command"),
+        (services, "async_get_memory"),
+        (services, "async_get_guest_mode"),
+        (services, "async_set_function_tools_enabled"),
+    ]
+    methods = [getattr(owner, name) for owner, name in owners]
     assert await integration.async_setup(hass, {}) is True
-    install_safety_hardening.assert_called_once_with()
+    assert await integration.async_setup(hass, {}) is True
+    assert [getattr(owner, name) for owner, name in owners] == methods
+    assert not hasattr(integration, "install_safety_hardening")
     assert guest_performance._INSTALLED is True
     assert getattr(
         conversation.ExtendedOpenAIAgentEntity._effective_guest_policy,

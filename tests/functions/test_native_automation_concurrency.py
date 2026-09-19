@@ -50,7 +50,9 @@ async def test_concurrent_add_automation_calls_preserve_both_entries(
         ),
     )
 
-    document = yaml.safe_load(Path(hass.config.config_dir, "automations.yaml").read_text())
+    document = yaml.safe_load(
+        Path(hass.config.config_dir, "automations.yaml").read_text()
+    )
     assert [item["alias"] for item in document] == ["First", "Second"]
     assert len({item["id"] for item in document}) == 2
 
@@ -101,7 +103,9 @@ async def test_reload_failure_restores_original_file(hass, monkeypatch) -> None:
     path = Path(hass.config.config_dir, "automations.yaml")
     original = "- id: existing\n  alias: Existing\n"
     path.write_text(original, encoding="utf-8")
-    hass.services.async_call = AsyncMock(side_effect=[RuntimeError("reload failed"), None])
+    hass.services.async_call = AsyncMock(
+        side_effect=[RuntimeError("reload failed"), None]
+    )
 
     with pytest.raises(RuntimeError, match="reload failed"):
         await NativeFunction().add_automation(
@@ -145,3 +149,18 @@ async def test_reload_failure_preserves_external_edit_during_rollback(
 
     assert path.read_text(encoding="utf-8") == external
     assert hass.services.async_call.await_count == 1
+
+
+@pytest.fixture(autouse=True)
+def authenticated_automation_admin(hass):
+    from types import SimpleNamespace
+    from homeassistant.core import Context
+    from custom_components.extended_openai_conversation_responses.ha_permissions import (
+        bind_active_ha_context,
+    )
+
+    hass.auth.async_get_user = AsyncMock(
+        return_value=SimpleNamespace(is_active=True, is_admin=True)
+    )
+    with bind_active_ha_context(Context(user_id="admin")):
+        yield
