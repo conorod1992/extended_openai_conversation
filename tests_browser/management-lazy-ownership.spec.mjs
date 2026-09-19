@@ -6,6 +6,7 @@ const frontend = "/custom_components/extended_openai_conversation_responses/fron
 const lazyJourneys = [
   ["assistant", "basics", "management-configuration-feature", '[data-config="__title"]'],
   ["capabilities", "guest-mode", "management-guest-feature", "#guest-now"],
+  ["data-memory", "knowledge", "management-knowledge-feature", "#add-source"],
   ["data-memory", "memories", "management-memory-feature", "#add-memory"],
   ["capabilities", "request-rules", "request-rules-ui", "#rule-search"],
   ["usage-maintenance", "usage", "usage-chart", "#usage-window"],
@@ -25,7 +26,7 @@ for (const route of ["overview", "guide"]) {
       const absent = [
         "agent-config-editor", "agent-config-model-presentation", "management-configuration-feature",
         "management-configuration-guidance", "management-configuration-clarity", "management-guest-feature",
-        "guest-mode-ui", "management-memory-feature", "management-temporary-memory", "request-rules-ui",
+        "guest-mode-ui", "management-knowledge-feature", "management-memory-feature", "keyed-collection", "management-temporary-memory", "request-rules-ui",
         "usage-chart", "usage-input-footprint", "management-feature-status", "backup-transfer-ui",
       ];
       for (const name of absent) {
@@ -49,6 +50,7 @@ for (const route of ["overview", "guide"]) {
 }
 
 for (const [destination, section, asset, control, backend] of [
+  ["data-memory", "knowledge", "management-knowledge-feature", "#add-source", "knowledge"],
   ["capabilities", "guest-mode", "management-guest-feature", "#guest-now", "guest_mode"],
   ["capabilities", "request-rules", "request-rules-ui", "#rule-search", "request_rules"],
   ["data-memory", "memories", "management-memory-feature", "#add-memory", "memories"],

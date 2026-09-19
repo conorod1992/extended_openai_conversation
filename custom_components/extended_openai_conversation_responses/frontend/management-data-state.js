@@ -37,3 +37,8 @@ export function ensureTemporaryScope(panel) {
   const current = scopes.find((scope) => scope.is_current_user) || scopes[0];
   if (current) panel._scopeId = current.scope_id;
 }
+
+// DOM and async search ownership are local to one agent, user, scope and kind.
+export function memoryCollectionIdentity(panel) {
+  return JSON.stringify([panel._selectedAgent?.()?.entry_id, panel._agentId, panel._hass?.user?.id, panel._scopeId, panel._memoryKind]);
+}

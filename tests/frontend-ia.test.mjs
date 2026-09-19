@@ -256,7 +256,7 @@ const configurationOwner = {_e:escape,_titleCase:String,_result:{config:{},optio
 assert.doesNotMatch(renderConfiguration(configurationOwner), /data-field="memory_auto_retrieve_limit"/);
 assert.match(renderConfiguration(configurationOwner), /id="reset-model-parameters"/);
 assert.doesNotMatch(memoryManagement, /assistant\/advanced/);
-assert.match(panel, /subsection: "memory-settings", label: "Configure memory"/);
+assert.match(await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/guest-mode-ui.js", import.meta.url), "utf8"), /subsection: "memory-settings", label: "Configure memory"/);
 assert.doesNotMatch(featureStatus, /assistant.*advanced/);
 assert.match(capabilitiesIA, /capabilities\/home-assistant/);
 assert.match(capabilitiesIA, /capabilities\/web-skills/);

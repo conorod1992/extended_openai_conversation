@@ -1,3 +1,5 @@
+import {reconcileKeyedChildren, delegateCollectionActions, setText} from "./keyed-collection.js";
+
 class ExtendedOpenAIMemoryPanel extends HTMLElement {
   constructor() {
     super();
@@ -10,6 +12,8 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     this._scopeFilter = "all";
     this._narrow = false;
     this._confirmResolver = null;
+    this._memoryCards = new Map();
+    this._temporaryMemoryCards = new Map();
   }
 
   set hass(value) {
@@ -47,6 +51,7 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
         }
 
         * { box-sizing: border-box; }
+        [hidden] { display: none !important; }
 
         .page {
           width: min(100% - 32px, 980px);
@@ -622,6 +627,23 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
 
   _bind() {
     const root = this.shadowRoot;
+    if (root.__eocMemoryActionsBound) return;
+    root.__eocMemoryActionsBound = true;
+    delegateCollectionActions(root.querySelector("#memories"), "[data-memory-action]", control => {
+      const memory = this._memories.find(item => this._memoryKey(item) === control.closest("article")?.dataset.memoryKey);
+      if (control.dataset.memoryAction === "add") this._openMemoryDialog();
+      else if (memory && control.dataset.memoryAction === "edit") this._openMemoryDialog(memory);
+      else if (memory) void this._deleteMemory(memory);
+    });
+    delegateCollectionActions(root.querySelector("#temporaryMemories"), "[data-memory-action]", control => {
+      const memory = this._temporaryMemories.find(item => this._memoryKey(item) === control.closest("article")?.dataset.memoryKey);
+      if (memory) void this._deleteTemporaryMemory(memory);
+    });
+    delegateCollectionActions(root.querySelector("#categories"), "[data-category]", control => {
+      this._activeCategory = control.dataset.category;
+      this._renderCategories();
+      this._renderMemories();
+    });
     root.querySelector("#agent").addEventListener("change", () => {
       this._activeCategory = "all";
       this._query = "";
@@ -738,21 +760,41 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     }
   }
 
+  _memoryIdentity() {
+    const agent = this._selected();
+    return JSON.stringify([agent?.entry_id, agent?.subentry_id, this._hass?.user?.id]);
+  }
+
+  _beginMemoryLoad() {
+    const identity = this._memoryIdentity();
+    const sequence = this._memoryLoadSequence = (this._memoryLoadSequence || 0) + 1;
+    if (this._memoryCollectionIdentity !== identity) {
+      this._memoryCollectionIdentity = identity;
+      this._memories = []; this._temporaryMemories = [];
+      this._memoryCards.clear(); this._temporaryMemoryCards.clear();
+      this._activeCategory = "all";
+      this._renderCategories(); this._renderMemories(); this._renderTemporaryMemories();
+    }
+    return {identity, sequence, data: this._data()};
+  }
+
+  _memoryLoadCurrent(load) {
+    return load.sequence === this._memoryLoadSequence && load.identity === this._memoryIdentity();
+  }
+
   async _loadMemories() {
     if (!this._selected()) return;
+    const load = this._beginMemoryLoad();
     try {
       this._status("");
-      const result = await this._call("list", this._data());
+      const result = await this._call("list", load.data);
+      if (!this._memoryLoadCurrent(load)) return;
       this._memories = Array.isArray(result.memories) ? result.memories : [];
       this._temporaryMemories = Array.isArray(result.temporary_memories) ? result.temporary_memories : [];
-      if (this._activeCategory !== "all" && !this._memories.some((memory) => memory.category === this._activeCategory)) {
-        this._activeCategory = "all";
-      }
-      this._renderCategories();
-      this._renderMemories();
-      this._renderTemporaryMemories();
+      if (this._activeCategory !== "all" && !this._memories.some((memory) => (memory.category || "general") === this._activeCategory)) this._activeCategory = "all";
+      this._renderCategories(); this._renderMemories(); this._renderTemporaryMemories();
     } catch (err) {
-      this._status(err.message || String(err), true);
+      if (this._memoryLoadCurrent(load)) this._status(err.message || String(err), true);
     }
   }
 
@@ -771,18 +813,18 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     const counts = this._categoryCounts();
     const categories = [...counts.keys()].sort((a, b) => a.localeCompare(b));
 
-    container.replaceChildren();
-    suggestions.replaceChildren();
-
-    const all = this._makeCategoryChip("all", `All ${this._memories.length}`);
-    container.append(all);
-
-    for (const category of categories) {
-      container.append(this._makeCategoryChip(category, `${category} ${counts.get(category)}`));
-      const option = document.createElement("option");
-      option.value = category;
-      suggestions.append(option);
+    const signature = JSON.stringify([this._memories.length, categories.map(category => [category, counts.get(category)])]);
+    if (signature !== this._categorySignature) {
+      this._categorySignature = signature;
+      container.replaceChildren(this._makeCategoryChip("all", `All ${this._memories.length}`));
+      suggestions.replaceChildren();
+      for (const category of categories) {
+        container.append(this._makeCategoryChip(category, `${category} ${counts.get(category)}`));
+        const option = document.createElement("option"); option.value = category;
+        suggestions.append(option);
+      }
     }
+    for (const button of container.children) button.setAttribute("aria-pressed", String(button.dataset.category === this._activeCategory));
 
     const clearCategory = this.shadowRoot.querySelector("#clearCategoryButton");
     clearCategory.disabled = this._activeCategory === "all";
@@ -797,11 +839,7 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     button.className = "chip";
     button.textContent = label;
     button.setAttribute("aria-pressed", String(this._activeCategory === category));
-    button.addEventListener("click", () => {
-      this._activeCategory = category;
-      this._renderCategories();
-      this._renderMemories();
-    });
+    button.dataset.category = category;
     return button;
   }
 
@@ -816,52 +854,47 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     });
   }
 
+  _memoryKey(memory) {
+    return JSON.stringify([memory.scope || "Personal", memory.memory_id]);
+  }
+
+  _collectionEmpty(container) {
+    let empty = container.querySelector(".empty-state");
+    if (!empty) {
+      empty = document.createElement("div"); empty.className = "empty-state";
+      empty.append(document.createElement("strong"), document.createElement("div"));
+      const add = document.createElement("button"); add.type = "button"; add.className = "primary-button";
+      add.dataset.memoryAction = "add"; add.textContent = "+ Add memory";
+      empty.append(add);
+    }
+    return empty;
+  }
+
   _renderMemories() {
     const container = this.shadowRoot.querySelector("#memories");
-    const heading = this.shadowRoot.querySelector("#memoryHeading");
-    const visible = this._visibleMemories();
-
-    heading.textContent = this._memories.length === 1 ? "1 memory" : `${this._memories.length} memories`;
-    container.replaceChildren();
-
-    if (!visible.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-
-      const title = document.createElement("strong");
-      const copy = document.createElement("div");
-
-      if (!this._memories.length) {
-        title.textContent = "No memories yet";
-        copy.textContent = "Add a memory here, or ask the assistant to remember something when memory is enabled.";
-        const add = document.createElement("button");
-        add.type = "button";
-        add.className = "primary-button";
-        add.textContent = "+ Add memory";
-        add.addEventListener("click", () => this._openMemoryDialog());
-        empty.append(title, copy, add);
-      } else if (this._query) {
-        title.textContent = "No matching memories";
-        copy.textContent = "Try a different search or category.";
-        empty.append(title, copy);
-      } else {
-        title.textContent = `No memories in ${this._activeCategory}`;
-        copy.textContent = "Memories assigned to this category will appear here.";
-        empty.append(title, copy);
-      }
-
-      container.append(empty);
-      return;
+    const visible = new Set(this._visibleMemories().map(memory => this._memoryKey(memory)));
+    const empty = this._collectionEmpty(container);
+    setText(this.shadowRoot.querySelector("#memoryHeading"), this._memories.length === 1 ? "1 memory" : `${this._memories.length} memories`);
+    reconcileKeyedChildren(container, this._memoryCards, this._memories, memory => this._memoryKey(memory),
+      memory => JSON.stringify([memory.content, memory.category, memory.source, memory.updated_at, memory.importance, memory.scope, memory.subject, memory.key, memory.valid_from, memory.last_confirmed_at]),
+      memory => this._memoryCard(memory), [empty]);
+    for (const [key, record] of this._memoryCards) {
+      const show = visible.has(key);
+      if (record.node.hidden === show) record.node.hidden = !show;
     }
-
-    for (const memory of visible) {
-      container.append(this._memoryCard(memory));
-    }
+    empty.hidden = visible.size > 0;
+    empty.querySelector("button").hidden = this._memories.length > 0;
+    setText(empty.querySelector("strong"), !this._memories.length ? "No memories yet" : this._query ? "No matching memories" : `No memories in ${this._activeCategory}`);
+    setText(empty.querySelector("div"), !this._memories.length
+      ? "Add a memory here, or ask the assistant to remember something when memory is enabled."
+      : this._query ? "Try a different search or category." : "Memories assigned to this category will appear here.");
   }
 
   _memoryCard(memory) {
     const card = document.createElement("article");
     card.className = "memory-card";
+    card.dataset.memoryId = memory.memory_id;
+    card.dataset.memoryKey = this._memoryKey(memory);
 
     const body = document.createElement("div");
     const content = document.createElement("p");
@@ -908,7 +941,7 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     edit.textContent = "✎";
     edit.title = "Edit memory";
     edit.setAttribute("aria-label", "Edit memory");
-    edit.addEventListener("click", () => this._openMemoryDialog(memory));
+    edit.dataset.memoryAction = "edit";
 
     const remove = document.createElement("button");
     remove.type = "button";
@@ -916,7 +949,7 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     remove.textContent = "×";
     remove.title = "Delete memory";
     remove.setAttribute("aria-label", "Delete memory");
-    remove.addEventListener("click", () => this._deleteMemory(memory));
+    remove.dataset.memoryAction = "delete";
 
     actions.append(edit, remove);
     card.append(body, actions);
@@ -926,37 +959,25 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
   _renderTemporaryMemories() {
     const container = this.shadowRoot.querySelector("#temporaryMemories");
     const heading = this.shadowRoot.querySelector("#temporaryMemoryHeading");
-    const clear = this.shadowRoot.querySelector("#clearTemporaryButton");
-    const selected = this._selected();
-
-    heading.textContent = this._temporaryMemories.length === 1
-      ? "1 temporary memory"
-      : `${this._temporaryMemories.length} temporary memories`;
-    clear.disabled = !this._temporaryMemories.length;
-    container.replaceChildren();
-
-    if (!this._temporaryMemories.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      const title = document.createElement("strong");
-      title.textContent = "No user-scoped temporary memories";
-      const copy = document.createElement("div");
-      copy.textContent = selected?.temporary_memory_enabled
-        ? "Temporary context associated with your Home Assistant user will appear here until it expires."
-        : "Temporary Memory is disabled for this agent. Any previously stored user-scoped context remains manageable until it expires.";
-      empty.append(title, copy);
-      container.append(empty);
-      return;
-    }
-
-    for (const memory of this._temporaryMemories) {
-      container.append(this._temporaryMemoryCard(memory));
-    }
+    const empty = this._collectionEmpty(container);
+    setText(heading, this._temporaryMemories.length === 1 ? "1 temporary memory" : `${this._temporaryMemories.length} temporary memories`);
+    this.shadowRoot.querySelector("#clearTemporaryButton").disabled = !this._temporaryMemories.length;
+    reconcileKeyedChildren(container, this._temporaryMemoryCards, this._temporaryMemories, memory => this._memoryKey(memory),
+      memory => JSON.stringify([memory.content, memory.category, memory.source, memory.updated_at, memory.expires_at]),
+      memory => this._temporaryMemoryCard(memory), [empty]);
+    empty.hidden = this._temporaryMemories.length > 0;
+    empty.querySelector("button").hidden = true;
+    setText(empty.querySelector("strong"), "No user-scoped temporary memories");
+    setText(empty.querySelector("div"), this._selected()?.temporary_memory_enabled
+      ? "Temporary context associated with your Home Assistant user will appear here until it expires."
+      : "Temporary Memory is disabled for this agent. Any previously stored user-scoped context remains manageable until it expires.");
   }
 
   _temporaryMemoryCard(memory) {
     const card = document.createElement("article");
     card.className = "memory-card";
+    card.dataset.memoryId = memory.memory_id;
+    card.dataset.memoryKey = this._memoryKey(memory);
 
     const body = document.createElement("div");
     const content = document.createElement("p");
@@ -985,7 +1006,7 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
     remove.textContent = "×";
     remove.title = "Delete temporary memory";
     remove.setAttribute("aria-label", "Delete temporary memory");
-    remove.addEventListener("click", () => this._deleteTemporaryMemory(memory));
+    remove.dataset.memoryAction = "temporary-delete";
     actions.append(remove);
 
     card.append(body, actions);

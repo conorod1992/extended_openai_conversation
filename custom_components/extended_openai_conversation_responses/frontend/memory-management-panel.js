@@ -18,6 +18,7 @@ class ExtendedOpenAIMemoryManagementPanel extends BaseMemoryPanel {
 
   async _loadMemories() {
     if (!this._selected()) return;
+    const load = this._beginMemoryLoad();
     try {
       this._status("");
       const memories = [];
@@ -27,7 +28,8 @@ class ExtendedOpenAIMemoryManagementPanel extends BaseMemoryPanel {
       let complete = false;
 
       while (pages < MAX_PAGES) {
-        const result = await this._call("list", this._data({limit: PAGE_SIZE, offset}));
+        const result = await this._call("list", {...load.data, limit: PAGE_SIZE, offset});
+        if (!this._memoryLoadCurrent(load)) return;
         const page = Array.isArray(result.memories) ? result.memories : [];
         memories.push(...page);
         if (pages === 0) {
@@ -50,14 +52,14 @@ class ExtendedOpenAIMemoryManagementPanel extends BaseMemoryPanel {
 
       this._memories = memories;
       this._temporaryMemories = temporaryMemories;
-      if (this._activeCategory !== "all" && !this._memories.some((memory) => memory.category === this._activeCategory)) {
+      if (this._activeCategory !== "all" && !this._memories.some((memory) => (memory.category || "general") === this._activeCategory)) {
         this._activeCategory = "all";
       }
       this._renderCategories();
       this._renderMemories();
       this._renderTemporaryMemories();
     } catch (err) {
-      this._status(err.message || String(err), true);
+      if (this._memoryLoadCurrent(load)) this._status(err.message || String(err), true);
     }
   }
 

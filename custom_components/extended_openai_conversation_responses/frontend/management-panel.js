@@ -593,6 +593,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _loadSection(silent = false) {
+    // Same-scope Memory refreshes keep their read-only collection on screen.
+    // Scope/agent/kind changes still take the normal loading/replacement path.
+    if (this._viewKey() === "data-memory/memories" && getRouteFeature("data-memory/memories")?.hasMemoryCollection(this)) silent = true;
     if (this._viewKey() === "data-memory/memories" && this._memoryKind === "temporary") ensureTemporaryScope(this);
     prepareMemoryBrowser(this);
     const value = await trackAsync(this, LOAD_MARK_PREFIX, () => loadRoute(this, silent));
@@ -871,6 +874,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _reconcileCollectionView() {
     const view = this._viewKey();
+    if (view === "data-memory/knowledge") return getRouteFeature(view)?.reconcileKnowledge(this) || false;
+    if (view === "data-memory/memories") return getRouteFeature(view)?.reconcileMemories(this) || false;
     if (view === "capabilities/request-rules") return getRouteFeature(view)?.reconcileRequestRules?.(this) || false;
     if (view !== "capabilities/functions") return false;
     const repair = getRouteFeature(view);
@@ -956,14 +961,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _memories() {
     if (this._memoryKind === "temporary") return getRouteFeature("data-memory/memories")?.renderTemporaryMemories(this);
-    return `${getRouteFeature("status")?.featureStatusMarkup(this, "Persistent memory", getRouteFeature("status")?.selectedFeatureStatus(this, "memory"), {page: "data-memory", subsection: "memory-settings", label: "Configure memory"})}${getRouteFeature("memory-browser")?.renderPersistentMemories(this)}`;
+    return getRouteFeature("memory-browser")?.renderPersistentMemories(this);
   }
 
   _knowledge() {
-    const sources = this._result?.sources || [];
-    const items = this._filtered(sources, (source) => `${source.title} ${source.description}`);
-    const content = `<section class="content-card"><div class="section-heading"><div><h2>Knowledge Library</h2><p>${formatUsageNumber(sources.length)} source${sources.length === 1 ? "" : "s"} stored locally for on-demand search.</p></div><button type="button" id="add-source">+ Add source</button></div><input id="list-search" class="search" type="search" value="${this._e(this._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${items.map((source) => `<article class="list-card"><div class="card-main clickable edit-source" tabindex="0" role="button" data-id="${this._e(source.source_id)}"><h3>${this._e(source.title)}</h3>${getRouteFeature("capabilities")?.knowledgeSourceAvailabilityBadge(source)}<p class="description">${this._e(source.description || "No description")}</p><p class="meta">${formatUsageNumber(source.character_count || 0)} characters · Updated ${this._e(this._formatDate(source.updated_at))}</p></div><div class="actions"><button type="button" class="secondary source-edit-button" data-id="${this._e(source.source_id)}">Edit</button><button type="button" class="danger delete-source" data-id="${this._e(source.source_id)}">Delete</button></div></article>`).join("") || this._empty(this._query ? "No sources match this filter." : "No Knowledge sources yet. Add one to make reference information available on demand.")}</div></section>`;
-    return `${getRouteFeature("status")?.featureStatusMarkup(this, "Knowledge Library", getRouteFeature("status")?.selectedFeatureStatus(this, "knowledge"))}${content}`;
+    return getRouteFeature("data-memory/knowledge")?.renderKnowledge(this) || this._loading();
   }
 
   _guestMode() {
@@ -1076,19 +1078,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _bindActions() {
     const root = this.shadowRoot;
     const q = (selector) => root.querySelector(selector);
-    q("#list-search")?.addEventListener("input", (event) => { this._query = event.target.value; this._updateVisibleList(); });
-    q("#add-source")?.addEventListener("click", () => this._openKnowledge());
-    q("#add-memory")?.addEventListener("click", () => this._openMemory());
-    root.querySelectorAll(".edit-source, .source-edit-button").forEach((element) => this._activate(element, () => this._openKnowledge(element.dataset.id)));
-    root.querySelectorAll(".edit-memory, .memory-edit-button").forEach((element) => this._activate(element, () => this._openMemory(element.dataset.id)));
+    if (!["data-memory/knowledge", "data-memory/memories"].includes(this._viewKey())) {
+      q("#list-search")?.addEventListener("input", (event) => { this._query = event.target.value; this._updateVisibleList(); });
+    }
+    getRouteFeature("data-memory/knowledge")?.bindKnowledge(this);
     root.querySelectorAll(".open-session, .view-session").forEach((element) => this._activate(element, () => this._openSession(element.dataset.id)));
-    root.querySelectorAll(".delete-source").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSource(button.dataset.id); }));
-    root.querySelectorAll(".delete-memory").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteMemory(button.dataset.id); }));
-    root.querySelectorAll(".delete-temporary").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteTemporaryMemory(button.dataset.id, button.dataset.scope); }));
-    root.querySelectorAll(".memory-kind").forEach((button) => button.addEventListener("click", async () => { this._memoryKind = button.dataset.kind; this._query = ""; await this._loadSection(); }));
     root.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => { if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return; await this._call("conversations", "end_active", { continuity_key: button.dataset.key }); await this._loadSection(); }));
     root.querySelectorAll(".delete-session").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSession(button.dataset.id); }));
-    root.querySelectorAll(".reassign-memory").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._openReassign(button.dataset.id); }));
     q("#clear-details")?.addEventListener("click", () => this._clearUsageDetails());
     q("#archive-search")?.addEventListener("click", () => this._searchArchive());
     q("#archive-query")?.addEventListener("keydown", (event) => { if (event.key === "Enter") this._searchArchive(); });
@@ -1132,7 +1128,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _updateVisibleList() {
-    if (this._viewKey() === "data-memory/memories" && this._memoryKind === "persistent") return getRouteFeature("memory-browser")?.filterPersistentMemories(this);
+    if (this._viewKey() === "data-memory/knowledge") return getRouteFeature("data-memory/knowledge")?.filterKnowledge(this);
+    if (this._viewKey() === "data-memory/memories") return this._memoryKind === "persistent"
+      ? getRouteFeature("memory-browser")?.filterPersistentMemories(this)
+      : getRouteFeature("data-memory/memories")?.filterTemporaryMemories(this);
     const query = this._query.trim().toLocaleLowerCase();
     this.shadowRoot.querySelectorAll(".list-card").forEach((card) => {
       card.hidden = query && !card.textContent.toLocaleLowerCase().includes(query);
@@ -1187,7 +1186,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _openMemory(memoryId = null) {
     const root = this.shadowRoot;
-    const memory = (this._result?.memories || []).find((item) => item.memory_id === memoryId) || null;
+    const memory = getRouteFeature("memory-browser")?.findPersistentMemory(this, memoryId) || null;
     this._editingMemory = memory;
     this._editorKind = "memory";
     root.querySelector("#memory-dialog-title").textContent = memory ? "Edit memory" : "Add memory";

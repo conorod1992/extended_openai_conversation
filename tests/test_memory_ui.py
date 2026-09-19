@@ -460,8 +460,13 @@ async def test_setup_memory_ui_registers_once(monkeypatch) -> None:
     await memory_ui.async_setup_memory_ui(hass)
 
     assert hass.data[memory_ui._UI_SETUP] is True
-    assert static_path.call_count == 2
+    assert static_path.call_count == 3
     register_paths.assert_awaited_once()
+    assert [(url, cache) for url, _, cache in register_paths.call_args.args[0]] == [
+        (f"/{DOMAIN}/memory-panel.js", False),
+        (f"/{DOMAIN}/keyed-collection.js", False),
+        (f"/{DOMAIN}/memory-management-panel.js", False),
+    ]
     register_command.assert_called_once_with(hass, memory_ui.websocket_manage)
     register_panel.assert_awaited_once_with(
         hass,
