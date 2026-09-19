@@ -474,8 +474,11 @@ async def test_assist_passes_configured_continuity_scope_timeout_and_guest_names
     args = resolve.await_args.args
     assert args[0] == mode
     assert args[1].user_id == "alice"
-    assert args[1].device_id == (satellite or "kitchen")
-    assert args[2:] == (satellite or "kitchen", "incoming-ha-id", 37)
+    # Production Voice Identity has always preferred HA's registry device ID when
+    # Assist supplies both device_id and satellite_id. The explicit owner now makes
+    # that installed runtime behavior visible to this orchestration fixture too.
+    assert args[1].device_id == "kitchen"
+    assert args[2:] == ("kitchen", "incoming-ha-id", 37)
     assert resolve.await_args.kwargs == {"namespace": "guest" if guest else None}
 
 
