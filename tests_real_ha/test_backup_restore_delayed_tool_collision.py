@@ -81,11 +81,10 @@ async def _prepare_runtime(
     user = _authorized_user()
     user.add_to_hass(hass)
 
+    owned_restore = backup.async_restore_backup
     agent = await _agent(hass, API_MODE_CHAT_COMPLETIONS)
     assert agent is not None
-    assert getattr(
-        backup.async_restore_backup, "_extended_openai_maintenance_gate", False
-    )
+    assert backup.async_restore_backup is owned_restore
 
     # The shared provider-wire fixture deliberately stores Function Tools as a Python
     # list because its tests never cross a persistence/reload boundary. This test does:
@@ -103,6 +102,7 @@ async def _prepare_runtime(
     assert isinstance(live_subentry.data[CONF_FUNCTION_TOOLS], str)
     assert await hass.config_entries.async_reload(entry_id)
     await hass.async_block_till_done()
+    assert backup.async_restore_backup is owned_restore
     agent = conversation.async_get_agent(hass, entry_id)
     assert agent is not None
 
