@@ -628,10 +628,6 @@ def install_debug_instrumentation() -> None:
     from .conversation import ExtendedOpenAIAgentEntity
 
     original_handle_message = ExtendedOpenAIAgentEntity._async_handle_message
-    original_retrieve_memories = ExtendedOpenAIAgentEntity._async_retrieve_memories
-    original_retrieve_temporary = (
-        ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories
-    )
     original_build_prompt = ExtendedOpenAIAgentEntity._build_system_prompt
     original_resolve = ConversationContinuity.async_resolve
 
@@ -650,32 +646,6 @@ def install_debug_instrumentation() -> None:
                 trace.phases_ms["model_path_total"] = int(
                     (time.monotonic() - started) * 1000
                 )
-
-    @wraps(original_retrieve_memories)
-    async def traced_retrieve_memories(self: Any, *args: Any, **kwargs: Any) -> Any:
-        trace = current_debug_trace()
-        started = time.monotonic()
-        result = await original_retrieve_memories(self, *args, **kwargs)
-        if trace is not None:
-            trace.phases_ms["persistent_memory_retrieval"] = int(
-                (time.monotonic() - started) * 1000
-            )
-            trace.memory["persistent_count"] = len(result)
-            trace.memory["persistent_records"] = _jsonable(result)
-        return result
-
-    @wraps(original_retrieve_temporary)
-    async def traced_retrieve_temporary(self: Any, *args: Any, **kwargs: Any) -> Any:
-        trace = current_debug_trace()
-        started = time.monotonic()
-        result = await original_retrieve_temporary(self, *args, **kwargs)
-        if trace is not None:
-            trace.phases_ms["temporary_memory_retrieval"] = int(
-                (time.monotonic() - started) * 1000
-            )
-            trace.memory["temporary_count"] = len(result)
-            trace.memory["temporary_records"] = _jsonable(result)
-        return result
 
     @wraps(original_build_prompt)
     def traced_build_prompt(self: Any, *args: Any, **kwargs: Any) -> str:
@@ -734,9 +704,16 @@ def install_debug_instrumentation() -> None:
         return result
 
     ExtendedOpenAIAgentEntity._async_handle_message = traced_handle_message  # type: ignore[method-assign]
-    ExtendedOpenAIAgentEntity._async_retrieve_memories = traced_retrieve_memories  # type: ignore[method-assign]
-    ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories = (
-        traced_retrieve_temporary  # type: ignore[method-assign]
-    )
     ExtendedOpenAIAgentEntity._build_system_prompt = traced_build_prompt  # type: ignore[method-assign]
     ConversationContinuity.async_resolve = traced_resolve  # type: ignore[method-assign]
+
+
+def record_memory_retrieval(kind: str, started: float, records: list[Any]) -> None:
+    """Record the completed retrieval at its explicit runtime boundary."""
+    trace = current_debug_trace()
+    if trace is not None:
+        trace.phases_ms[f"{kind}_memory_retrieval"] = int(
+            (time.monotonic() - started) * 1000
+        )
+        trace.memory[f"{kind}_count"] = len(records)
+        trace.memory[f"{kind}_records"] = _jsonable(records)

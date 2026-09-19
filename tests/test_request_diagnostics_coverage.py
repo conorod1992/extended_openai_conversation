@@ -34,7 +34,6 @@ def restore_wrappers():
         "render": conversation_module.render_effective_prompt,
         "exposed": agent_type._get_exposed_entities,
         "tools": agent_type._get_function_tools,
-        "execute": agent_type._execute_function_tool,
         "start_provider": debug.DebugTrace.start_provider_request,
         "provider_as_dict": debug.DebugProviderRequest.as_dict,
         "trace_as_dict": debug.DebugTrace.as_dict,
@@ -48,7 +47,6 @@ def restore_wrappers():
         conversation_module.render_effective_prompt = originals["render"]
         agent_type._get_exposed_entities = originals["exposed"]
         agent_type._get_function_tools = originals["tools"]
-        agent_type._execute_function_tool = originals["execute"]
         debug.DebugTrace.start_provider_request = originals["start_provider"]
         debug.DebugProviderRequest.as_dict = originals["provider_as_dict"]
         debug.DebugTrace.as_dict = originals["trace_as_dict"]
@@ -67,24 +65,33 @@ def test_helper_aggregation_filters_and_orders_values() -> None:
         "max_ms": 9,
         "last_count": 3,
     }
-    assert request_diagnostics._result_characters(
-        SimpleNamespace(tool_result={"result": "hello"})
-    ) == 5
-    assert request_diagnostics._result_characters(
-        SimpleNamespace(tool_result={"result": 123})
-    ) == 0
+    assert (
+        request_diagnostics._result_characters(
+            SimpleNamespace(tool_result={"result": "hello"})
+        )
+        == 5
+    )
+    assert (
+        request_diagnostics._result_characters(
+            SimpleNamespace(tool_result={"result": 123})
+        )
+        == 0
+    )
     assert request_diagnostics._result_characters(SimpleNamespace()) == 0
     assert request_diagnostics._slowest_phases(
         {"slow": 20.9, "fast": 2, "ignored": "not-a-number"}, limit=1
     ) == [{"name": "slow", "duration_ms": 20}]
 
 
-def test_prompt_entity_and_tool_preparation_wrappers_record_debug_metrics(monkeypatch) -> None:
+def test_prompt_entity_and_tool_preparation_wrappers_record_debug_metrics(
+    monkeypatch,
+) -> None:
     trace = _trace()
     agent_type = conversation_module.ExtendedOpenAIAgentEntity
     prompt = SimpleNamespace(text="Rendered prompt text", sections=[])
 
     monkeypatch.setattr(request_diagnostics, "_debug_trace", lambda: trace)
+    monkeypatch.setattr(conversation_module, "current_debug_trace", lambda: trace)
     monkeypatch.setattr(
         conversation_module,
         "render_effective_prompt",
@@ -122,9 +129,9 @@ def test_prompt_entity_and_tool_preparation_wrappers_record_debug_metrics(monkey
     assert preparation["exposed_entity_context"]["last_count"] == 1
     assert preparation["function_tool_assembly"]["last_count"] == 1
     assert preparation["function_groups"] == {"loaded_groups": 2}
-    assert trace.memory[request_diagnostics._INTERNAL_PROMPT_METRICS]["characters"] == len(
-        prompt.text
-    )
+    assert trace.memory[request_diagnostics._INTERNAL_PROMPT_METRICS][
+        "characters"
+    ] == len(prompt.text)
 
 
 @pytest.mark.asyncio
@@ -142,10 +149,11 @@ async def test_tool_execution_records_success_and_failure_without_changing_seman
         return SimpleNamespace(tool_result={"result": "done"})
 
     monkeypatch.setattr(request_diagnostics, "_debug_trace", lambda: trace)
-    monkeypatch.setattr(agent_type, "_execute_function_tool", original_execute)
+    monkeypatch.setattr(conversation_module, "current_debug_trace", lambda: trace)
+    monkeypatch.setattr(agent_type, "_async_dispatch_function_tool", original_execute)
     request_diagnostics.install_payload_latency_diagnostics()
 
-    agent = SimpleNamespace()
+    agent = object.__new__(agent_type)
     tool = {"spec": {"name": "demo"}, "function": {"type": "native"}}
     result = await agent_type._execute_function_tool(
         agent,
@@ -249,15 +257,20 @@ def test_trace_and_summary_expose_aggregated_model_diagnostics() -> None:
 
     summary = trace.summary()
     assert summary["model_request_count"] == 2
-    assert summary["first_model_request_characters"] == first.metrics["request_characters"]
-    assert summary["first_model_request_approx_input_tokens"] == first.metrics[
-        "approx_input_tokens"
-    ]
+    assert (
+        summary["first_model_request_characters"] == first.metrics["request_characters"]
+    )
+    assert (
+        summary["first_model_request_approx_input_tokens"]
+        == first.metrics["approx_input_tokens"]
+    )
     assert summary["provider_reported_model_cache_ratio"] == pytest.approx(0.3333)
     assert summary["slowest_phase"] == {"name": "provider", "duration_ms": 30}
 
 
-def test_wrappers_fall_back_to_original_behavior_when_no_debug_trace(monkeypatch) -> None:
+def test_wrappers_fall_back_to_original_behavior_when_no_debug_trace(
+    monkeypatch,
+) -> None:
     agent_type = conversation_module.ExtendedOpenAIAgentEntity
     render_calls: list[str] = []
 
@@ -271,7 +284,7 @@ def test_wrappers_fall_back_to_original_behavior_when_no_debug_trace(monkeypatch
     monkeypatch.setattr(agent_type, "_get_function_tools", lambda _agent: ["tool"])
     request_diagnostics.install_payload_latency_diagnostics()
 
-    agent = SimpleNamespace()
+    agent = object.__new__(agent_type)
     assert conversation_module.render_effective_prompt() == "plain"
     assert agent_type._get_exposed_entities(agent) == ["entity"]
     assert agent_type._get_function_tools(agent) == ["tool"]

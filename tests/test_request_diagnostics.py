@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
 from datetime import UTC, datetime
 from enum import Enum
+import json
 
 import pytest
 
@@ -39,7 +39,6 @@ def restore_request_diagnostics_wrappers():
         "render": conversation_module.render_effective_prompt,
         "exposed": agent_type._get_exposed_entities,
         "tools": agent_type._get_function_tools,
-        "execute": agent_type._execute_function_tool,
         "start_provider": debug.DebugTrace.start_provider_request,
         "provider_as_dict": debug.DebugProviderRequest.as_dict,
         "trace_as_dict": debug.DebugTrace.as_dict,
@@ -53,7 +52,6 @@ def restore_request_diagnostics_wrappers():
         conversation_module.render_effective_prompt = originals["render"]
         agent_type._get_exposed_entities = originals["exposed"]
         agent_type._get_function_tools = originals["tools"]
-        agent_type._execute_function_tool = originals["execute"]
         debug.DebugTrace.start_provider_request = originals["start_provider"]
         debug.DebugProviderRequest.as_dict = originals["provider_as_dict"]
         debug.DebugTrace.as_dict = originals["trace_as_dict"]
@@ -72,9 +70,12 @@ def test_trace_as_dict_with_diagnostics_empty_trace() -> None:
     assert result["payload_latency_diagnostics"]["embedding_request_count"] == 0
     assert result["payload_latency_diagnostics"]["preparation"] == {}
     assert result["payload_latency_diagnostics"]["function_tool_calls"] == []
-    assert result["payload_latency_diagnostics"][
-        "largest_first_model_request_contributors"
-    ] == []
+    assert (
+        result["payload_latency_diagnostics"][
+            "largest_first_model_request_contributors"
+        ]
+        == []
+    )
 
 
 def test_trace_as_dict_with_diagnostics_populated_payloads() -> None:
@@ -126,12 +127,14 @@ def test_trace_as_dict_with_diagnostics_populated_payloads() -> None:
     assert request.metrics["tool_breakdown"][0]["name"] == "demo"
     diagnostics = result["payload_latency_diagnostics"]
     assert diagnostics["model_request_count"] == 1
-    assert diagnostics["preparation"] == original_memory[
-        request_diagnostics._INTERNAL_PREPARATION
-    ]
-    assert diagnostics["function_tool_calls"] == original_memory[
-        request_diagnostics._INTERNAL_TOOL_CALLS
-    ]
+    assert (
+        diagnostics["preparation"]
+        == original_memory[request_diagnostics._INTERNAL_PREPARATION]
+    )
+    assert (
+        diagnostics["function_tool_calls"]
+        == original_memory[request_diagnostics._INTERNAL_TOOL_CALLS]
+    )
     assert diagnostics["slowest_phases"][0] == {
         "name": "provider",
         "duration_ms": 25,
@@ -154,7 +157,9 @@ def test_trace_as_dict_falls_back_when_trace_serialization_raises(monkeypatch) -
     assert "SECRET_RAW_PAYLOAD" not in json.dumps(result)
 
 
-def test_trace_as_dict_diagnostics_failure_uses_safe_serialized_base(monkeypatch) -> None:
+def test_trace_as_dict_diagnostics_failure_uses_safe_serialized_base(
+    monkeypatch,
+) -> None:
     request_diagnostics.install_payload_latency_diagnostics()
     trace = _trace()
     trace.memory = {"api_key": "CANARY_SECRET", "ordinary": "safe"}

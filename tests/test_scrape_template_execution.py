@@ -13,7 +13,6 @@ import yaml
 
 import custom_components.extended_openai_conversation_responses as integration
 from custom_components.extended_openai_conversation_responses import (
-    delayed_tools,
     management_loading_performance,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -53,7 +52,6 @@ async def execute_scrape(hass, monkeypatch):
     for name in ("async_setup_cached_debug_ui", "async_setup_cached_management_ui"):
         monkeypatch.setattr(management_loading_performance, name, AsyncMock())
     await integration.async_setup(hass, {})
-    delayed_tools._install_execution_hook()
     hass.loop = asyncio.get_running_loop()
     hass.is_stopping = False
     hass.config.legacy_templates = False

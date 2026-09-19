@@ -64,12 +64,14 @@ from .context import (
     partition_history,
     select_summary_history,
 )
+from .delayed_tools import (
+    _DELAYED_EXECUTION_MARKER,
+    DATA_DELAYED_TOOL_MANAGER,
+    DelayedToolManager,
+)
 from .exceptions import ParseArgumentsFailed, TokenLengthExceededError
 from .function_call_budget import FunctionCallBudget
-from .function_execution import (
-    async_validate_function_arguments,
-    split_legacy_execution_delay,
-)
+from .function_execution import async_execution_arguments, split_legacy_execution_delay
 from .function_tool_recovery import (
     MalformedToolArguments,
     ToolRecoveryState,
@@ -1398,6 +1400,35 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         exposed_entities: list[dict[str, Any]],
     ) -> conversation.ToolResultContent:
         """Execute a configured Function Tool."""
+        delayed = getattr(llm_context, _DELAYED_EXECUTION_MARKER, False)
+        if is_ha_tool(function_tool) and delayed:
+            raise HomeAssistantError(
+                "HA LLM Tools cannot execute in the delayed scheduler"
+            )
+        if not is_ha_tool(function_tool):
+            spec = function_tool.get("spec", {})
+            arguments = await async_execution_arguments(self.hass, spec, tool_input)
+            execution_arguments, execution_delay = split_legacy_execution_delay(
+                spec, arguments
+            )
+            if not delayed and self.should_run_in_background(execution_delay):
+                manager = self.hass.data.get(DOMAIN, {}).get(DATA_DELAYED_TOOL_MANAGER)
+                if not isinstance(manager, DelayedToolManager):
+                    raise HomeAssistantError(
+                        "Delayed Function Tool scheduler is unavailable"
+                    )
+                await manager.async_schedule(
+                    self,
+                    str(spec.get("name", tool_input.tool_name)),
+                    arguments,
+                    llm_context,
+                )
+                return make_tool_result_content(
+                    agent_id=self.entity_id,
+                    tool_call_id=tool_input.id,
+                    tool_name=tool_input.tool_name,
+                    tool_result={"result": "Scheduled"},
+                )
         try:
             if is_ha_tool(function_tool):
                 if llm_context is None:
@@ -1431,44 +1462,20 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     tool_name=tool_input.tool_name,
                     tool_result={"result": _normalize_function_result(ha_result)},
                 )
-            spec = function_tool.get("spec", {})
-            arguments = await async_validate_function_arguments(
-                self.hass, spec, tool_input.tool_args
-            )
-            execution_arguments, execution_delay = split_legacy_execution_delay(
-                spec, arguments
-            )
             function_config = function_tool["function"]
             function = get_function(function_config["type"])
-
-            if self.should_run_in_background(execution_delay):
-                # Preserve the documented legacy delay object as scheduling metadata,
-                # but keep it out of the configured Function Tool's own arguments.
-                function_config = self.get_delayed_function_config(
-                    function_config, execution_delay
-                )
-                function = get_function(function_config["type"])
-                self.entry.async_create_task(
-                    self.hass,
-                    function.execute(
-                        self.hass,
-                        function_config,
-                        execution_arguments,
-                        llm_context,
-                        exposed_entities,
-                    ),
-                )
-                result: Any = "Scheduled"
-            else:
-                result = await function.execute(
-                    self.hass,
-                    function_config,
-                    execution_arguments,
-                    llm_context,
-                    exposed_entities,
-                )
+            result = await function.execute(
+                self.hass,
+                function_config,
+                execution_arguments,
+                llm_context,
+                exposed_entities,
+            )
+            if delayed:
+                # Retain the scheduler's existing textual result contract.
+                result = str(result)
         except HomeAssistantError as err:
-            if strict_execution_failures_enabled():
+            if delayed or strict_execution_failures_enabled():
                 raise
             _LOGGER.warning("Function Tool `%s` failed: %s", tool_input.tool_name, err)
             result = {"status": "error", "error": str(err)}
@@ -1489,25 +1496,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
     ) -> bool:
         """Check whether explicit legacy scheduling metadata is present."""
         return execution_delay is not None
-
-    def get_delayed_function_config(
-        self,
-        function_config: dict[str, Any],
-        execution_delay: Mapping[str, Any] | None,
-    ) -> dict[str, Any]:
-        """Wrap a function with its explicit scheduling delay."""
-        if execution_delay is None:
-            raise HomeAssistantError("Delayed Function Tool execution requires a delay")
-        return {
-            "type": "composite",
-            "sequence": [
-                {
-                    "type": "script",
-                    "sequence": [{"delay": dict(execution_delay)}],
-                },
-                function_config,
-            ],
-        }
 
     async def _truncate_message_history(
         self,

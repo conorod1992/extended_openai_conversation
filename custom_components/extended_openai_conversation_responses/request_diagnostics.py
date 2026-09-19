@@ -84,7 +84,6 @@ def install_payload_latency_diagnostics() -> None:
     original_render = conversation_module.render_effective_prompt
     original_exposed = agent_type._get_exposed_entities
     original_tools = agent_type._get_function_tools
-    original_execute = agent_type._execute_function_tool
     original_start_provider = trace_type.start_provider_request
     original_provider_as_dict = provider_request_type.as_dict
     original_trace_as_dict = trace_type.as_dict
@@ -140,58 +139,6 @@ def install_payload_latency_diagnostics() -> None:
         except Exception:
             pass
         return result
-
-    async def execute_with_timing(
-        agent: Any,
-        function_tool: Any,
-        tool_input: Any,
-        llm_context: Any,
-        exposed_entities: Any,
-    ) -> Any:
-        trace = _debug_trace()
-        if trace is None:
-            return await original_execute(
-                agent, function_tool, tool_input, llm_context, exposed_entities
-            )
-        started = time.monotonic()
-        successful = False
-        result: Any = None
-        try:
-            result = await original_execute(
-                agent, function_tool, tool_input, llm_context, exposed_entities
-            )
-            successful = True
-            return result
-        finally:
-            try:
-                spec = (
-                    function_tool.get("spec", {})
-                    if isinstance(function_tool, dict)
-                    else {}
-                )
-                implementation = (
-                    function_tool.get("function", {})
-                    if isinstance(function_tool, dict)
-                    else {}
-                )
-                trace.memory.setdefault(_INTERNAL_TOOL_CALLS, []).append(
-                    {
-                        "name": str(
-                            spec.get("name")
-                            or getattr(tool_input, "tool_name", "unknown")
-                        ),
-                        "implementation_type": str(
-                            implementation.get("type") or "unknown"
-                        ),
-                        "duration_ms": int((time.monotonic() - started) * 1000),
-                        "successful": successful,
-                        "result_characters": (
-                            _result_characters(result) if successful else 0
-                        ),
-                    }
-                )
-            except Exception:
-                pass
 
     def start_provider_with_metrics(
         trace: Any, api_surface: str, args: tuple[Any, ...], kwargs: dict[str, Any]
@@ -347,9 +294,39 @@ def install_payload_latency_diagnostics() -> None:
     conversation_module.render_effective_prompt = render_with_metrics
     agent_type._get_exposed_entities = exposed_with_timing
     agent_type._get_function_tools = tools_with_timing
-    agent_type._execute_function_tool = execute_with_timing
     trace_type.start_provider_request = start_provider_with_metrics
     provider_request_type.as_dict = provider_as_dict_with_cache
     trace_type.as_dict = trace_as_dict_with_diagnostics
     trace_type.summary = summary_with_diagnostics
     _INSTALLED = True
+
+
+def record_tool_execution(
+    trace: Any,
+    function_tool: Any,
+    tool_input: Any,
+    started: float,
+    successful: bool,
+    result: Any,
+) -> None:
+    """Record a completed or interrupted tool attempt without affecting execution."""
+    if trace is None:
+        return
+    try:
+        spec = function_tool.get("spec", {}) if isinstance(function_tool, dict) else {}
+        implementation = (
+            function_tool.get("function", {}) if isinstance(function_tool, dict) else {}
+        )
+        trace.memory.setdefault(_INTERNAL_TOOL_CALLS, []).append(
+            {
+                "name": str(
+                    spec.get("name") or getattr(tool_input, "tool_name", "unknown")
+                ),
+                "implementation_type": str(implementation.get("type") or "unknown"),
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "successful": successful,
+                "result_characters": (_result_characters(result) if successful else 0),
+            }
+        )
+    except Exception:
+        pass

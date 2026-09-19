@@ -410,52 +410,6 @@ def _install_snapshot_contract() -> None:
         management.async_read_temporary_memory_snapshot = read_snapshot
 
 
-def _install_conversation_contract() -> None:
-    """Bind the resolved Personal/Shared owner around effective live runtime calls."""
-    from . import conversation
-
-    conversation_any: Any = conversation
-    entity_cls: Any = conversation.ExtendedOpenAIAgentEntity
-    current_retrieve = entity_cls._async_retrieve_temporary_memories
-    current_tool = entity_cls._async_execute_temporary_memory_tool
-
-    def request_owner() -> str | None:
-        if conversation_any._ACTIVE_TEMPORARY_SCOPE.get() is None:
-            return None
-        return _owner_from_resolved_scope(conversation_any._ACTIVE_SCOPE.get())
-
-    @wraps(current_retrieve)
-    async def retrieve(entity: Any) -> list[TemporaryMemoryRecord]:
-        owner = request_owner()
-        if owner is None:
-            return []
-        token = _ACTIVE_OWNER_SCOPE_ID.set(owner)
-        try:
-            return cast(list[TemporaryMemoryRecord], await current_retrieve(entity))
-        finally:
-            _ACTIVE_OWNER_SCOPE_ID.reset(token)
-
-    @wraps(current_tool)
-    async def execute_tool(
-        entity: Any, operation: str, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        owner = request_owner()
-        if owner is None:
-            raise RuntimeError(
-                "temporary memory is unavailable for this retained-data scope"
-            )
-        token = _ACTIVE_OWNER_SCOPE_ID.set(owner)
-        try:
-            return cast(
-                dict[str, Any], await current_tool(entity, operation, arguments)
-            )
-        finally:
-            _ACTIVE_OWNER_SCOPE_ID.reset(token)
-
-    entity_cls._async_retrieve_temporary_memories = retrieve
-    entity_cls._async_execute_temporary_memory_tool = execute_tool
-
-
 def install_temporary_memory_ownership() -> None:
     """Install owner-safe Temporary Memory after existing effective wrappers."""
     global _INSTALLED
@@ -463,5 +417,4 @@ def install_temporary_memory_ownership() -> None:
         return
     _install_manager_contract()
     _install_snapshot_contract()
-    _install_conversation_contract()
     _INSTALLED = True

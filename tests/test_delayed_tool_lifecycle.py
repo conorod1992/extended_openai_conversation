@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock, MagicMock, sentinel
 import pytest
 
 import custom_components.extended_openai_conversation_responses as integration
-from custom_components.extended_openai_conversation_responses import delayed_tools
+from custom_components.extended_openai_conversation_responses import (
+    delayed_tools,
+    entity as entity_module,
+    function_execution,
+)
 from custom_components.extended_openai_conversation_responses.agent_maintenance import (
     get_agent_maintenance_gate,
 )
@@ -19,7 +23,6 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
     DATA_DELAYED_TOOL_MANAGER,
     DelayedToolCall,
     DelayedToolManager,
-    _install_execution_hook,
 )
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
@@ -65,13 +68,6 @@ def _entity(hass) -> SimpleNamespace:
     )
 
 
-def _install_test_hook(monkeypatch, original: AsyncMock) -> None:
-    """Install the wrapper over an AsyncMock without tripping its dynamic attrs."""
-    original._extended_openai_delayed_hook = False
-    monkeypatch.setattr(ExtendedOpenAIBaseLLMEntity, "_execute_function_tool", original)
-    _install_execution_hook()
-
-
 async def test_async_setup_activates_delayed_tool_manager_after_entity_hardening(
     hass, monkeypatch
 ) -> None:
@@ -85,7 +81,6 @@ async def test_async_setup_activates_delayed_tool_manager_after_entity_hardening
         "install_debug_instrumentation",
         "install_input_footprint",
         "install_configurable_regex_isolation",
-        "install_model_search_hardening",
         "setup_provider_credentials_websocket",
     )
     for name in sync_helpers:
@@ -129,9 +124,11 @@ async def test_delay_hook_leaves_immediate_and_literal_delay_arguments_alone(
 ) -> None:
     """Only the documented legacy delay object opts a call into scheduling."""
     original = AsyncMock(return_value=sentinel.immediate)
-    _install_test_hook(monkeypatch, original)
     monkeypatch.setattr(
-        delayed_tools,
+        entity_module, "get_function", lambda _kind: SimpleNamespace(execute=original)
+    )
+    monkeypatch.setattr(
+        function_execution,
         "async_validate_function_arguments",
         AsyncMock(side_effect=lambda _hass, _spec, values: dict(values)),
     )
@@ -145,16 +142,18 @@ async def test_delay_hook_leaves_immediate_and_literal_delay_arguments_alone(
         _entity(hass), function_tool, tool_input, None, []
     )
 
-    assert result is sentinel.immediate
+    assert tool_result_data(result) == {"result": str(sentinel.immediate)}
     original.assert_awaited_once()
 
 
 async def test_legacy_delay_object_is_scheduled_durably(hass, monkeypatch) -> None:
     """The documented legacy delay shape is handed to the durable manager."""
     original = AsyncMock(return_value=sentinel.immediate)
-    _install_test_hook(monkeypatch, original)
     monkeypatch.setattr(
-        delayed_tools,
+        entity_module, "get_function", lambda _kind: SimpleNamespace(execute=original)
+    )
+    monkeypatch.setattr(
+        function_execution,
         "async_validate_function_arguments",
         AsyncMock(side_effect=lambda _hass, _spec, values: dict(values)),
     )
@@ -184,14 +183,16 @@ async def test_recovered_delayed_execution_strips_scheduler_metadata(
 ) -> None:
     """A recovered durable call executes the function without its legacy delay field."""
     original = AsyncMock(return_value=sentinel.immediate)
-    _install_test_hook(monkeypatch, original)
     monkeypatch.setattr(
-        delayed_tools,
+        entity_module, "get_function", lambda _kind: SimpleNamespace(execute=original)
+    )
+    monkeypatch.setattr(
+        function_execution,
         "async_validate_function_arguments",
         AsyncMock(side_effect=lambda _hass, _spec, values: dict(values)),
     )
     function = SimpleNamespace(execute=AsyncMock(return_value="done"))
-    monkeypatch.setattr(delayed_tools, "get_function", MagicMock(return_value=function))
+    monkeypatch.setattr(entity_module, "get_function", MagicMock(return_value=function))
 
     context = SimpleNamespace()
     setattr(context, _DELAYED_EXECUTION_MARKER, True)

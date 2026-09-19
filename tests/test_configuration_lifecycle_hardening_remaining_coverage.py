@@ -10,7 +10,6 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     agent_config,
     agent_configuration as hardening,
-    configuration_lifecycle_hardening as guards,
     const,
     conversation,
     conversation_archive,
@@ -104,7 +103,7 @@ async def test_temporary_memory_initialization_failure_requests_retry(
     failure = RuntimeError("temporary store unavailable")
     get_temporary = AsyncMock(side_effect=failure)
     monkeypatch.setattr(temporary_memory, "async_get_temporary_memory", get_temporary)
-    monkeypatch.setattr(guards, "memory_enabled", lambda _options: False)
+    monkeypatch.setattr(hardening, "memory_enabled", lambda _options: False)
 
     await hardening.async_reconcile_runtime_configuration(entity, force=True)
 
@@ -132,7 +131,7 @@ async def test_archive_get_failure_requests_retry_and_records_status(
     failure = RuntimeError("archive unavailable")
     get_archive = AsyncMock(side_effect=failure)
     monkeypatch.setattr(conversation_archive, "async_get_archive", get_archive)
-    monkeypatch.setattr(guards, "memory_enabled", lambda _options: False)
+    monkeypatch.setattr(hardening, "memory_enabled", lambda _options: False)
 
     await hardening.async_reconcile_runtime_configuration(entity, force=True)
 
@@ -159,7 +158,7 @@ async def test_archive_initializer_leaving_runtime_missing_requests_retry(
     entity = _entity(options)
     initializer = AsyncMock()
     entity._async_initialize_archive = initializer
-    monkeypatch.setattr(guards, "memory_enabled", lambda _options: False)
+    monkeypatch.setattr(hardening, "memory_enabled", lambda _options: False)
 
     await hardening.async_reconcile_runtime_configuration(entity, force=True)
 
@@ -195,34 +194,22 @@ async def test_archive_initializer_leaving_runtime_missing_requests_retry(
 async def test_disabled_tool_guards_block_original_execution(
     monkeypatch, tool_name: str, options: dict, message: str
 ) -> None:
-    cls = conversation.ExtendedOpenAIAgentEntity
-    patched_names = (
-        "_async_process",
-        "_async_retrieve_memories",
-        "_async_retrieve_temporary_memories",
-        "_async_execute_memory_tool",
-        "_async_execute_temporary_memory_tool",
-        "_async_execute_archive_tool",
-        "supports_streaming",
+    entity = object.__new__(conversation.ExtendedOpenAIAgentEntity)
+    entity.subentry = SimpleNamespace(data=options)
+    monkeypatch.setattr(conversation, "memory_enabled", lambda _options: False)
+    scope = conversation._ACTIVE_SCOPE.set(
+        SimpleNamespace(scope_type="user", user_id="alice")
     )
-    for name in patched_names:
-        monkeypatch.setattr(cls, name, getattr(cls, name))
-
-    originals = {
-        "_async_execute_memory_tool": AsyncMock(),
-        "_async_execute_temporary_memory_tool": AsyncMock(),
-        "_async_execute_archive_tool": AsyncMock(),
-    }
-    for name, original in originals.items():
-        monkeypatch.setattr(cls, name, original)
-
-    monkeypatch.setattr(guards, "memory_enabled", lambda _options: False)
-    guards._install_runtime_configuration_lifecycle()
-
-    entity = SimpleNamespace(subentry=SimpleNamespace(data=options))
-    wrapped = getattr(cls, tool_name)
-
-    with pytest.raises(RuntimeError, match=message):
-        await wrapped(entity)
-
-    originals[tool_name].assert_not_awaited()
+    temporary = conversation._ACTIVE_TEMPORARY_SCOPE.set("session")
+    try:
+        method = getattr(entity, tool_name)
+        args = (
+            ("list", {}, None)
+            if tool_name == "_async_execute_memory_tool"
+            else ("list", {})
+        )
+        with pytest.raises(RuntimeError, match=message):
+            await method(*args)
+    finally:
+        conversation._ACTIVE_SCOPE.reset(scope)
+        conversation._ACTIVE_TEMPORARY_SCOPE.reset(temporary)

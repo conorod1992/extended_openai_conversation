@@ -24,14 +24,8 @@ from homeassistant.util import dt as dt_util
 from .agent_config import configured_function_tools_from_data, function_tool_enabled
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import DOMAIN
-from .function_execution import (
-    async_validate_function_arguments,
-    split_legacy_execution_delay,
-)
 from .function_tool_resolution import latest_function_tool_for_execution
-from .functions import get_function
 from .ha_permissions import bind_active_ha_context
-from .ha_tool_result_compat import make_tool_result_content
 from .helpers import get_exposed_entities
 
 _LOGGER = logging.getLogger(__name__)
@@ -495,7 +489,7 @@ class DelayedToolManager:
 
 
 async def async_setup_delayed_tools(hass: HomeAssistant) -> DelayedToolManager:
-    """Set up the shared scheduler and install the internal entity execution hook."""
+    """Set up the shared durable scheduler used by the base tool executor."""
     domain_data = hass.data.setdefault(DOMAIN, {})
     existing = domain_data.get(DATA_DELAYED_TOOL_MANAGER)
     if isinstance(existing, DelayedToolManager):
@@ -504,82 +498,4 @@ async def async_setup_delayed_tools(hass: HomeAssistant) -> DelayedToolManager:
         manager = DelayedToolManager(hass)
         domain_data[DATA_DELAYED_TOOL_MANAGER] = manager
     await manager.async_setup()
-    _install_execution_hook()
     return manager
-
-
-def _install_execution_hook() -> None:
-    """Replace only this integration's base tool seam with durable delay handling."""
-    from .entity import ExtendedOpenAIBaseLLMEntity
-
-    current = ExtendedOpenAIBaseLLMEntity._execute_function_tool
-    if getattr(current, "_extended_openai_delayed_hook", False):
-        return
-    original = current
-
-    async def execute_function_tool(
-        entity: Any,
-        function_tool: dict[str, Any],
-        tool_input: llm.ToolInput,
-        llm_context: llm.LLMContext | None,
-        exposed_entities: list[dict[str, Any]],
-    ) -> conversation.ToolResultContent:
-        if function_tool.get("function", {}).get("type") == "ha_llm":
-            if getattr(llm_context, _DELAYED_EXECUTION_MARKER, False):
-                raise HomeAssistantError(
-                    "HA LLM Tools cannot execute in the delayed scheduler"
-                )
-            return await original(
-                entity, function_tool, tool_input, llm_context, exposed_entities
-            )
-        spec = function_tool.get("spec", {})
-        arguments = await async_validate_function_arguments(
-            entity.hass, spec, tool_input.tool_args
-        )
-        execution_arguments, execution_delay = split_legacy_execution_delay(
-            spec, arguments
-        )
-        if getattr(llm_context, _DELAYED_EXECUTION_MARKER, False):
-            function_config = function_tool["function"]
-            function = get_function(function_config["type"])
-            result = await function.execute(
-                entity.hass,
-                function_config,
-                execution_arguments,
-                llm_context,
-                exposed_entities,
-            )
-            return make_tool_result_content(
-                agent_id=entity.entity_id,
-                tool_call_id=tool_input.id,
-                tool_name=tool_input.tool_name,
-                tool_result={"result": str(result)},
-            )
-
-        if not entity.should_run_in_background(execution_delay):
-            return await original(
-                entity,
-                function_tool,
-                tool_input,
-                llm_context,
-                exposed_entities,
-            )
-
-        manager = entity.hass.data.get(DOMAIN, {}).get(DATA_DELAYED_TOOL_MANAGER)
-        if not isinstance(manager, DelayedToolManager):
-            raise HomeAssistantError("Delayed Function Tool scheduler is unavailable")
-        await manager.async_schedule(
-            entity,
-            str(function_tool.get("spec", {}).get("name", tool_input.tool_name)),
-            arguments,
-            llm_context,
-        )
-        return make_tool_result_content(
-            agent_id=entity.entity_id,
-            tool_call_id=tool_input.id,
-            tool_name=tool_input.tool_name,
-            tool_result={"result": "Scheduled"},
-        )
-
-    execute_function_tool._extended_openai_delayed_hook = True  # type: ignore[attr-defined]
-    ExtendedOpenAIBaseLLMEntity._execute_function_tool = execute_function_tool  # type: ignore[method-assign,assignment]

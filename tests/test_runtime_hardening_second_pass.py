@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
-    delayed_tools,
     runtime_hardening,
     skills,
 )
@@ -134,27 +132,3 @@ def test_loaded_skill_getter_returns_none_for_uninitialized_singleton(
     runtime_hardening._install_skill_hardening()
 
     assert manager_type.get_loaded_instance() is None
-
-
-def test_tool_result_installer_is_lazy_when_hook_is_guarded_and_conversation_absent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Idempotent installation should not eagerly import/wrap the conversation platform."""
-
-    def guarded_install() -> None:
-        raise AssertionError("already-guarded hook should not be replaced or called")
-
-    guarded_install._extended_openai_result_install_guard = True  # type: ignore[attr-defined]
-    monkeypatch.setattr(delayed_tools, "_install_execution_hook", guarded_install)
-    monkeypatch.delitem(
-        sys.modules,
-        "custom_components.extended_openai_conversation_responses.conversation",
-        raising=False,
-    )
-    wrap = Mock()
-    monkeypatch.setattr(runtime_hardening, "_wrap_conversation_tool_results", wrap)
-
-    runtime_hardening._install_tool_result_hardening()
-
-    assert delayed_tools._install_execution_hook is guarded_install
-    wrap.assert_not_called()

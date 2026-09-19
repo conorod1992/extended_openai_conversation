@@ -16,7 +16,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     SHARED_MEMORY_EXPLICIT,
 )
 
-
 Agent = conversation_module.ExtendedOpenAIAgentEntity
 
 
@@ -91,6 +90,9 @@ async def test_guest_configured_tool_is_revalidated_against_latest_config(
         lambda _agent, tool: tool,
     )
 
+    agent._async_dispatch_function_tool = lambda *args: (
+        Agent._async_dispatch_function_tool(agent, *args)
+    )
     result = await Agent._execute_function_tool(
         agent,
         exposed_tool,

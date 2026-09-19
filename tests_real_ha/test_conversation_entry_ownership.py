@@ -32,7 +32,19 @@ async def test_request_entry_identity_and_public_paths_survive_real_setup_reload
         "_async_process",
         "_async_process_with_continuity",
         "_async_process_claimed",
+        "_execute_function_tool",
+        "_async_dispatch_function_tool",
+        "_async_retrieve_memories",
+        "_async_select_memories",
+        "_async_rank_memories",
+        "_async_retrieve_temporary_memories",
+        "_async_load_temporary_memories",
+        "_async_execute_memory_tool",
+        "_async_execute_temporary_memory_tool",
+        "_async_execute_archive_tool",
+        "_async_execute_knowledge_tool",
     )
+    base_executor = agent_module.ExtendedOpenAIBaseLLMEntity._execute_function_tool
     owners = {name: getattr(cls, name) for name in names}
     helpers = (
         agent_maintenance.conversation_request_lease,
@@ -51,6 +63,10 @@ async def test_request_entry_identity_and_public_paths_survive_real_setup_reload
             if reloaded:
                 assert await hass.config_entries.async_reload(entry.entry_id)
                 await hass.async_block_till_done()
+            assert (
+                agent_module.ExtendedOpenAIBaseLLMEntity._execute_function_tool
+                is base_executor
+            )
             for name, method in owners.items():
                 assert getattr(cls, name) is method
                 assert not hasattr(method, "__wrapped__")

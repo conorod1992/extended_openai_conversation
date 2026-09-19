@@ -2,11 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any
-
-import pytest
-
 from custom_components.extended_openai_conversation_responses import model_tool_results
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
@@ -54,50 +49,27 @@ def test_knowledge_search_payload_omits_default_source_filter() -> None:
     assert "source_filter" in result
 
 
-def test_installed_knowledge_get_omits_terminal_cursor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The installed knowledge wrapper compacts the terminal get cursor."""
+async def test_owned_knowledge_get_omits_terminal_cursor() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
 
-    async def fake_knowledge(
-        _agent: Any, operation: str, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        assert operation == "get"
-        assert arguments == {"record_id": "doc-1"}
-        return {
-            "content": "document text",
-            "has_more": False,
-            "next_start_character": None,
-        }
-
-    # Register all three attributes with monkeypatch before installation so the
-    # module's direct assignments are fully restored at test teardown.
-    monkeypatch.setattr(
-        ExtendedOpenAIAgentEntity,
-        "_execute_function_tool",
-        ExtendedOpenAIAgentEntity._execute_function_tool,
-    )
-    monkeypatch.setattr(
-        ExtendedOpenAIAgentEntity,
-        "_async_execute_memory_tool",
-        ExtendedOpenAIAgentEntity._async_execute_memory_tool,
-    )
-    monkeypatch.setattr(
-        ExtendedOpenAIAgentEntity,
-        "_async_execute_knowledge_tool",
-        fake_knowledge,
-    )
-    monkeypatch.setattr(model_tool_results, "_INSTALLED", False)
-
-    model_tool_results.install_model_tool_result_compaction()
-
-    compacted = asyncio.run(
-        ExtendedOpenAIAgentEntity._async_execute_knowledge_tool(
-            object(), "get", {"record_id": "doc-1"}
-        )
+    from custom_components.extended_openai_conversation_responses.guest_mode import (
+        GuestCapabilityPolicy,
     )
 
-    assert compacted == {
-        "content": "document text",
-        "has_more": False,
-    }
+    agent = object.__new__(ExtendedOpenAIAgentEntity)
+    agent.subentry = SimpleNamespace(data={"knowledge_enabled": True})
+    agent._effective_guest_policy = GuestCapabilityPolicy.unrestricted
+    agent._knowledge = SimpleNamespace(
+        source_count=1,
+        async_get_section=AsyncMock(
+            return_value={
+                "content": "document text",
+                "has_more": False,
+                "next_start_character": None,
+            }
+        ),
+    )
+    compacted = await agent._async_execute_knowledge_tool("get", {"source_id": "doc-1"})
+    assert compacted == {"content": "document text", "has_more": False}
+    agent._knowledge.async_get_section.assert_awaited_once_with("doc-1", 0, 6000)

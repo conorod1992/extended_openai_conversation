@@ -32,7 +32,6 @@ def restore_wrappers():
         "render": conversation_module.render_effective_prompt,
         "exposed": agent_type._get_exposed_entities,
         "tools": agent_type._get_function_tools,
-        "execute": agent_type._execute_function_tool,
         "start_provider": debug.DebugTrace.start_provider_request,
         "provider_as_dict": debug.DebugProviderRequest.as_dict,
         "trace_as_dict": debug.DebugTrace.as_dict,
@@ -46,7 +45,6 @@ def restore_wrappers():
         conversation_module.render_effective_prompt = originals["render"]
         agent_type._get_exposed_entities = originals["exposed"]
         agent_type._get_function_tools = originals["tools"]
-        agent_type._execute_function_tool = originals["execute"]
         debug.DebugTrace.start_provider_request = originals["start_provider"]
         debug.DebugProviderRequest.as_dict = originals["provider_as_dict"]
         debug.DebugTrace.as_dict = originals["trace_as_dict"]
@@ -120,11 +118,11 @@ async def test_execute_wrapper_passthrough_without_trace(monkeypatch) -> None:
     agent_type = conversation_module.ExtendedOpenAIAgentEntity
     expected = SimpleNamespace(tool_result={"result": "ok"})
     original_execute = AsyncMock(return_value=expected)
-    monkeypatch.setattr(agent_type, "_execute_function_tool", original_execute)
+    monkeypatch.setattr(agent_type, "_async_dispatch_function_tool", original_execute)
     request_diagnostics.install_payload_latency_diagnostics()
 
     result = await agent_type._execute_function_tool(
-        SimpleNamespace(), {}, SimpleNamespace(tool_name="demo"), object(), {}
+        object.__new__(agent_type), {}, SimpleNamespace(tool_name="demo"), object(), {}
     )
 
     assert result is expected
@@ -136,7 +134,7 @@ async def test_execute_diagnostic_failure_never_masks_tool_result(monkeypatch) -
     agent_type = conversation_module.ExtendedOpenAIAgentEntity
     expected = SimpleNamespace(tool_result={"result": "ok"})
     monkeypatch.setattr(
-        agent_type, "_execute_function_tool", AsyncMock(return_value=expected)
+        agent_type, "_async_dispatch_function_tool", AsyncMock(return_value=expected)
     )
     request_diagnostics.install_payload_latency_diagnostics()
     monkeypatch.setattr(
@@ -149,7 +147,7 @@ async def test_execute_diagnostic_failure_never_masks_tool_result(monkeypatch) -
     token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     try:
         result = await agent_type._execute_function_tool(
-            SimpleNamespace(),
+            object.__new__(agent_type),
             {"spec": {"name": "demo"}, "function": {"type": "native"}},
             SimpleNamespace(tool_name="demo"),
             object(),
@@ -162,7 +160,9 @@ async def test_execute_diagnostic_failure_never_masks_tool_result(monkeypatch) -
     assert trace.memory[request_diagnostics._INTERNAL_TOOL_CALLS] == []
 
 
-def test_provider_serialization_cache_metric_failure_is_transparent(monkeypatch) -> None:
+def test_provider_serialization_cache_metric_failure_is_transparent(
+    monkeypatch,
+) -> None:
     request_diagnostics.install_payload_latency_diagnostics()
     trace = _trace()
     request = trace.start_provider_request(
@@ -182,7 +182,9 @@ def test_provider_serialization_cache_metric_failure_is_transparent(monkeypatch)
 
 def test_summary_metric_failure_keeps_original_summary(monkeypatch) -> None:
     base_summary = {"debug_id": "debug-residual", "status": "complete"}
-    monkeypatch.setattr(debug.DebugTrace, "summary", Mock(return_value=base_summary.copy()))
+    monkeypatch.setattr(
+        debug.DebugTrace, "summary", Mock(return_value=base_summary.copy())
+    )
     request_diagnostics.install_payload_latency_diagnostics()
     monkeypatch.setattr(
         request_diagnostics,

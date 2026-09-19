@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    conversation as owner,
     conversation_archive,
 )
 from custom_components.extended_openai_conversation_responses.const import (
@@ -17,9 +20,6 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
-)
-from custom_components.extended_openai_conversation_responses.model_search_hardening import (
-    _install_on_agent_class,
 )
 from custom_components.extended_openai_conversation_responses.request import (
     assemble_integration_function_tools,
@@ -189,51 +189,23 @@ def test_model_search_schemas_require_nonempty_query() -> None:
 
     for name in ("memory_search", "conversation_search", "knowledge_search"):
         assert (
-            by_name[name]["spec"]["parameters"]["properties"]["query"]["minLength"]
-            == 1
+            by_name[name]["spec"]["parameters"]["properties"]["query"]["minLength"] == 1
         )
 
 
-class _FakeAgent:
-    """Agent seam used to test wrappers without mutating the production class."""
-
-    rank_calls = 0
-    memory_calls = 0
-    knowledge_calls = 0
-    archive_calls = 0
-
-    async def _async_rank_memories(self, scope_ids, query, limit):
-        type(self).rank_calls += 1
-        return [scope_ids, query, limit]
-
-    async def _async_execute_memory_tool(self, operation, arguments, llm_context):
-        type(self).memory_calls += 1
-        return {"operation": operation, "arguments": arguments}
-
-    async def _async_execute_knowledge_tool(self, operation, arguments):
-        type(self).knowledge_calls += 1
-        return {"operation": operation, "arguments": arguments}
-
-    async def _async_execute_archive_tool(self, operation, arguments):
-        type(self).archive_calls += 1
-        if arguments.get("explode"):
-            raise OSError("archive backend failed")
-        if arguments.get("state_error"):
-            raise RuntimeError("archive unavailable")
-        return {"operation": operation, "arguments": arguments}
-
-
-def _wrapped_fake_agent() -> _FakeAgent:
-    class WrappedFakeAgent(_FakeAgent):
-        pass
-
-    _install_on_agent_class(WrappedFakeAgent)
-    return WrappedFakeAgent()
+def _runtime_agent():
+    agent = object.__new__(owner.ExtendedOpenAIAgentEntity)
+    agent.subentry = SimpleNamespace(
+        data={"archive_enabled": True, "archive_model_search_enabled": True}
+    )
+    agent._archive = SimpleNamespace(async_search=AsyncMock())
+    agent._async_search_memories = AsyncMock()
+    return agent
 
 
 async def test_model_search_wrappers_reject_blank_before_backend_work() -> None:
     """All three model-facing search paths reject whitespace before their backend."""
-    agent = _wrapped_fake_agent()
+    agent = _runtime_agent()
 
     with pytest.raises(ValueError, match="blank"):
         await agent._async_execute_memory_tool("search", {"query": "  "}, None)
@@ -242,28 +214,31 @@ async def test_model_search_wrappers_reject_blank_before_backend_work() -> None:
     with pytest.raises(ValueError, match="blank"):
         await agent._async_execute_archive_tool("search", {"query": "\n"})
 
-    assert type(agent).memory_calls == 0
-    assert type(agent).knowledge_calls == 0
-    assert type(agent).archive_calls == 0
+    agent._archive.async_search.assert_not_awaited()
 
 
 async def test_blank_automatic_memory_ranking_skips_original_retrieval() -> None:
     """A useless automatic-memory query must not reach embedding/retrieval work."""
-    agent = _wrapped_fake_agent()
+    agent = _runtime_agent()
 
     result = await agent._async_rank_memories(["alice"], "   ", 3)
 
     assert result == []
-    assert type(agent).rank_calls == 0
+    agent._async_search_memories.assert_not_awaited()
 
 
 async def test_archive_wrapper_reports_archive_specific_unavailability() -> None:
     """Unexpected Archive failures are not mislabeled as Knowledge failures."""
-    agent = _wrapped_fake_agent()
+    agent = _runtime_agent()
 
-    result = await agent._async_execute_archive_tool(
-        "search", {"query": "kitchen", "explode": True}
-    )
+    agent._archive.async_search.side_effect = OSError("archive backend failed")
+    token = owner._ACTIVE_SCOPE.set(SimpleNamespace(scope_id="user:alice"))
+    active = owner._ACTIVE_ARCHIVE.set(("session", "id"))
+    try:
+        result = await agent._async_execute_archive_tool("search", {"query": "kitchen"})
+    finally:
+        owner._ACTIVE_ARCHIVE.reset(active)
+        owner._ACTIVE_SCOPE.reset(token)
 
     assert result == {
         "status": "unavailable",
@@ -273,9 +248,10 @@ async def test_archive_wrapper_reports_archive_specific_unavailability() -> None
 
 async def test_archive_wrapper_preserves_expected_runtime_errors() -> None:
     """Expected Archive state/input errors still flow to the shared error result path."""
-    agent = _wrapped_fake_agent()
+    agent = _runtime_agent()
 
-    with pytest.raises(RuntimeError, match="archive unavailable"):
+    agent._archive = None
+    with pytest.raises(RuntimeError, match="archive is unavailable"):
         await agent._async_execute_archive_tool(
             "search", {"query": "kitchen", "state_error": True}
         )

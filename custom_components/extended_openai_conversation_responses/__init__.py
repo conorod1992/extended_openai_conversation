@@ -104,7 +104,6 @@ from .intercom_services import async_setup_intercom_services
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
 from .model_catalog_manager import async_setup_model_catalog
-from .model_search_hardening import install_model_search_hardening
 from .native_function_schema_migration import (
     install_current_default_native_function_schemas,
     migrate_legacy_stock_native_function_tools_yaml,
@@ -152,7 +151,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     install_input_footprint()
     install_function_dependency_integrity()
     install_configurable_regex_isolation()
-    install_model_search_hardening()
     # Backup/service guards share the lease owned by the conversation entry.
     install_agent_maintenance_barrier()
     # Activate the durable delayed-tool scheduler after entity hardening so its

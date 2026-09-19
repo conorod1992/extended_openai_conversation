@@ -280,12 +280,6 @@ def test_background_helpers_cover_both_decisions() -> None:
     entity = _entity()
     assert entity.should_run_in_background(None) is False
     assert entity.should_run_in_background({"seconds": 1}) is True
-    with pytest.raises(HomeAssistantError, match="requires a delay"):
-        entity.get_delayed_function_config({}, None)
-    delayed = entity.get_delayed_function_config(
-        {"type": "template", "template": "hello"}, {"seconds": 1}
-    )
-    assert delayed["sequence"][0]["sequence"][0]["delay"] == {"seconds": 1}
 
 
 async def test_truncation_fallback_and_summary_success(monkeypatch) -> None:
@@ -346,16 +340,20 @@ async def test_tool_execution_error_and_background_branches(monkeypatch) -> None
     monkeypatch.setattr(module, "is_ha_tool", lambda _tool: False)
     monkeypatch.setattr(
         module,
-        "async_validate_function_arguments",
+        "async_execution_arguments",
         AsyncMock(return_value={"delay": {"seconds": 1}}),
     )
     function = SimpleNamespace(execute=AsyncMock(return_value="ignored"))
     monkeypatch.setattr(module, "get_function", lambda _type: function)
 
-    def create_task(_hass: Any, task: Any) -> None:
-        task.close()
+    from custom_components.extended_openai_conversation_responses.delayed_tools import (
+        DATA_DELAYED_TOOL_MANAGER,
+        DelayedToolManager,
+    )
 
-    entity.entry.async_create_task = create_task
+    manager = object.__new__(DelayedToolManager)
+    manager.async_schedule = AsyncMock()
+    entity.hass.data = {module.DOMAIN: {DATA_DELAYED_TOOL_MANAGER: manager}}
     scheduled = await entity._execute_function_tool(
         {
             "spec": {
@@ -384,7 +382,7 @@ async def test_tool_execution_error_and_background_branches(monkeypatch) -> None
 
     monkeypatch.setattr(
         module,
-        "async_validate_function_arguments",
+        "async_execution_arguments",
         AsyncMock(side_effect=HomeAssistantError("strict failure")),
     )
     monkeypatch.setattr(module, "strict_execution_failures_enabled", lambda: True)

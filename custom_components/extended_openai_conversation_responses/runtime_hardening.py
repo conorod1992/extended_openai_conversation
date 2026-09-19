@@ -6,13 +6,11 @@ import asyncio
 from collections.abc import Mapping
 import logging
 from pathlib import Path
-import sys
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-from .ha_tool_result_compat import tool_result_data
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,7 +36,6 @@ def install_runtime_hardening() -> None:
         return
     _install_skill_hardening()
     _install_guest_mode_hardening()
-    _install_tool_result_hardening()
     _INSTALLED = True
 
 
@@ -176,51 +173,3 @@ def _install_guest_mode_hardening() -> None:
 
     async_initialize._extended_openai_guest_guard = True  # type: ignore[attr-defined]
     manager_type.async_initialize = async_initialize  # type: ignore[method-assign,assignment]
-
-
-def _install_tool_result_hardening() -> None:
-    """Bound every conversation tool result after delayed-tool wrapping is installed."""
-    from . import delayed_tools
-
-    current_install = delayed_tools._install_execution_hook
-    if not getattr(current_install, "_extended_openai_result_install_guard", False):
-        original_install = current_install
-
-        def install_execution_hook() -> None:
-            original_install()
-            _wrap_conversation_tool_results()
-
-        install_execution_hook._extended_openai_result_install_guard = True  # type: ignore[attr-defined]
-        delayed_tools._install_execution_hook = install_execution_hook
-
-    # Tests or reload paths may already have imported the conversation platform.
-    if f"{__package__}.conversation" in sys.modules:
-        _wrap_conversation_tool_results()
-
-
-def _wrap_conversation_tool_results() -> None:
-    """Install the outermost result bound on the conversation-agent tool seam."""
-    from .conversation import ExtendedOpenAIAgentEntity
-
-    current = ExtendedOpenAIAgentEntity._execute_function_tool
-    if getattr(current, "_extended_openai_tool_result_guard", False):
-        return
-    original = current
-
-    async def execute_function_tool(
-        entity: Any,
-        function_tool: dict[str, Any],
-        tool_input: Any,
-        llm_context: Any,
-        exposed_entities: list[dict[str, Any]],
-    ) -> Any:
-        content = await original(
-            entity, function_tool, tool_input, llm_context, exposed_entities
-        )
-        payload = tool_result_data(content)
-        if isinstance(payload, dict) and isinstance(payload.get("result"), str):
-            payload["result"] = bounded_tool_result_text(payload["result"])
-        return content
-
-    execute_function_tool._extended_openai_tool_result_guard = True  # type: ignore[attr-defined]
-    ExtendedOpenAIAgentEntity._execute_function_tool = execute_function_tool  # type: ignore[method-assign,assignment]

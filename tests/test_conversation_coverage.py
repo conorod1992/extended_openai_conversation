@@ -48,8 +48,12 @@ def _policy(*, read=None, control=None, **extra):
         ("home_assistant", True, False, True),
     ],
 )
-def test_continue_conversation_resolution(mode, ha_default, conditional, expected) -> None:
-    assert conv._resolve_continue_conversation(mode, ha_default, conditional) is expected
+def test_continue_conversation_resolution(
+    mode, ha_default, conditional, expected
+) -> None:
+    assert (
+        conv._resolve_continue_conversation(mode, ha_default, conditional) is expected
+    )
 
 
 def test_guest_argument_filter_rejects_broad_area_and_device_selectors() -> None:
@@ -103,9 +107,12 @@ def test_guest_argument_filter_checks_list_entity_selectors() -> None:
     ],
 )
 def test_filter_read_scopes_selects_only_requested_scope(selector, expected) -> None:
-    assert conv.ExtendedOpenAIAgentEntity._filter_read_scopes(
-        ["user-1", conv.SHARED_HOUSEHOLD_SCOPE_ID], selector
-    ) == expected
+    assert (
+        conv.ExtendedOpenAIAgentEntity._filter_read_scopes(
+            ["user-1", conv.SHARED_HOUSEHOLD_SCOPE_ID], selector
+        )
+        == expected
+    )
 
 
 def test_filter_read_scopes_rejects_unknown_selector() -> None:
@@ -154,7 +161,9 @@ def test_conversation_lifecycle_schedules_fresh_context_without_active_sessions(
     assert result["status"] == "scheduled"
 
 
-async def test_temporary_memory_tool_requires_permission_store_and_scope(monkeypatch) -> None:
+async def test_temporary_memory_tool_requires_permission_store_and_scope(
+    monkeypatch,
+) -> None:
     agent = _agent(data={conv.CONF_TEMPORARY_MEMORY: "balanced"})
     scope_token = conv._ACTIVE_SCOPE.set(user_scope("user-1", source="test"))
     temporary_scope_token = conv._ACTIVE_TEMPORARY_SCOPE.set("conversation:test")
@@ -203,7 +212,9 @@ class _TemporaryMemory:
         return len(memory_ids)
 
 
-async def test_temporary_memory_tool_validates_and_executes_add_delete(monkeypatch) -> None:
+async def test_temporary_memory_tool_validates_and_executes_add_delete(
+    monkeypatch,
+) -> None:
     agent = _agent(data={conv.CONF_TEMPORARY_MEMORY: "balanced"})
     store = _TemporaryMemory()
     agent._temporary_memory = store
@@ -231,7 +242,9 @@ async def test_temporary_memory_tool_validates_and_executes_add_delete(monkeypat
         assert added == {"status": "added"}
 
         with pytest.raises(ValueError, match="memory_ids must be a list of strings"):
-            await agent._async_execute_temporary_memory_tool("delete", {"memory_ids": "x"})
+            await agent._async_execute_temporary_memory_tool(
+                "delete", {"memory_ids": "x"}
+            )
 
         deleted = await agent._async_execute_temporary_memory_tool(
             "delete", {"memory_ids": ["one", "two"]}
@@ -249,14 +262,16 @@ async def test_archive_tool_requires_store_and_active_session() -> None:
     agent = _agent(data={conv.CONF_ARCHIVE_ENABLED: True})
 
     with pytest.raises(RuntimeError, match="conversation archive is unavailable"):
-        await agent._async_execute_archive_tool("search", {})
+        await agent._async_execute_archive_tool("search", {"query": "test"})
 
     agent._archive = SimpleNamespace()
     scope_token = conv._ACTIVE_SCOPE.set(None)
     archive_token = conv._ACTIVE_ARCHIVE.set(None)
     try:
-        with pytest.raises(RuntimeError, match="active conversation session is unavailable"):
-            await agent._async_execute_archive_tool("search", {})
+        with pytest.raises(
+            RuntimeError, match="active conversation session is unavailable"
+        ):
+            await agent._async_execute_archive_tool("search", {"query": "test"})
     finally:
         conv._ACTIVE_SCOPE.reset(scope_token)
         conv._ACTIVE_ARCHIVE.reset(archive_token)
