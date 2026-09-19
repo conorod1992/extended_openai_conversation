@@ -94,13 +94,13 @@ from .const import (
 )
 from .continuity import ConversationContinuity, async_get_continuity
 from .conversation_archive import async_get_archive
+from .frontend_assets import async_register_frontend_assets, frontend_entry_url
 from .function_dependency_integrity import (
     _TOOL_MUTATIONS,
     async_validate_request_rule_functions,
     group_reference_updates,
 )
 from .function_groups import assemble_function_tools, get_function_group_runtime
-from .frontend_assets import async_register_frontend_assets, frontend_entry_url
 from .functions import FUNCTIONS
 from .functions.security import FunctionSecurity, classify_tool
 from .guest_mode import (
