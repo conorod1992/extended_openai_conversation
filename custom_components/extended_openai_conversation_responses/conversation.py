@@ -553,7 +553,9 @@ class ExtendedOpenAIAgentEntity(
                     with formatted_tool_cache():
                         async with voice_identity_scope(self, user_input):
                             await async_reconcile_runtime_configuration(self)
-                            result = await self._async_process_with_continuity(user_input)
+                            result = await self._async_process_with_continuity(
+                                user_input
+                            )
                     if trace is not None:
                         trace.result = result
                     return result
