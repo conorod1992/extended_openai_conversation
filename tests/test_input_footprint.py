@@ -5,23 +5,22 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses import (
     context_usage_hardening,
+    input_footprint as footprint,
+    management_ui,
 )
-from custom_components.extended_openai_conversation_responses import input_footprint as footprint
 from custom_components.extended_openai_conversation_responses.input_footprint import (
     _baseline_footprint,
     _latest_provider_usage,
     input_footprint_metrics,
 )
-from custom_components.extended_openai_conversation_responses.management_permissions import (
-    wrap_management_permissions,
-)
+from homeassistant.exceptions import HomeAssistantError
 
 
-def test_live_footprint_reuses_context_serialization_without_changing_estimate() -> None:
+def test_live_footprint_reuses_context_serialization_without_changing_estimate() -> (
+    None
+):
     input_value = [
         {"role": "system", "content": "Use the kitchen light and remember café."},
         {"role": "user", "content": "Turn it on"},
@@ -229,9 +228,10 @@ async def test_async_input_footprint_combines_preview_latest_and_provider_usage(
 
     assert result["baseline"]["characters"] == 800
     assert result["baseline"]["without_function_groups_characters"] == 1000
-    assert result["latest"] == hass.data[footprint._LATEST_FOOTPRINTS][
-        ("entry-1", "agent-1")
-    ]
+    assert (
+        result["latest"]
+        == hass.data[footprint._LATEST_FOOTPRINTS][("entry-1", "agent-1")]
+    )
     assert result["latest_provider_usage"]["input_tokens"] == 777
     assert "provider billing tokens" in result["notice"]
     preview_call.assert_awaited_once()
@@ -239,30 +239,32 @@ async def test_async_input_footprint_combines_preview_latest_and_provider_usage(
 
 
 @pytest.mark.asyncio
-async def test_management_wrapper_routes_only_footprint_action(monkeypatch) -> None:
-    original = AsyncMock(return_value={"source": "original"})
-    wrapped = footprint._wrap_management_command(original)
+async def test_management_routes_only_footprint_action(
+    hass, management_agent, monkeypatch
+):
     footprint_read = AsyncMock(return_value={"source": "footprint"})
     monkeypatch.setattr(footprint, "async_input_footprint", footprint_read)
+    get_usage = AsyncMock(return_value=SimpleNamespace())
+    monkeypatch.setattr(management_ui, "async_get_usage", get_usage)
+    message = {
+        "section": "usage",
+        "action": "footprint",
+        "entry_id": "entry-1",
+        "subentry_id": "agent-1",
+    }
 
-    result = await wrapped(
-        SimpleNamespace(),
-        "user-1",
-        True,
-        {"section": "usage", "action": "footprint"},
-    )
+    result = await management_ui.async_management_command(hass, "user-1", True, message)
     assert result == {"source": "footprint"}
-    footprint_read.assert_awaited_once()
-    original.assert_not_awaited()
+    footprint_read.assert_awaited_once_with(hass, "user-1", message)
+    get_usage.assert_not_awaited()
 
-    result = await wrapped(
-        SimpleNamespace(),
-        "user-1",
-        True,
-        {"section": "usage", "action": "list"},
-    )
-    assert result == {"source": "original"}
-    original.assert_awaited_once()
+    with pytest.raises(
+        HomeAssistantError, match="Unknown usage management action: list"
+    ):
+        await management_ui.async_management_command(
+            hass, "user-1", True, {**message, "action": "list"}
+        )
+    assert footprint_read.await_count == 1
 
 
 def test_install_input_footprint_is_idempotent(monkeypatch) -> None:
@@ -279,14 +281,20 @@ def test_install_input_footprint_is_idempotent(monkeypatch) -> None:
     footprint.install_input_footprint()
     wrapped_command = management_ui.async_management_command
 
-    assert context_usage_hardening.estimate_provider_input_tokens is footprint._capture_live_footprint
+    assert (
+        context_usage_hardening.estimate_provider_input_tokens
+        is footprint._capture_live_footprint
+    )
     assert footprint._ORIGINAL_ESTIMATE is original_estimate
-    assert wrapped_command is not original_command
+    assert wrapped_command is original_command
     assert footprint._INSTALLED is True
 
     footprint.install_input_footprint()
     assert management_ui.async_management_command is wrapped_command
-    assert context_usage_hardening.estimate_provider_input_tokens is footprint._capture_live_footprint
+    assert (
+        context_usage_hardening.estimate_provider_input_tokens
+        is footprint._capture_live_footprint
+    )
 
 
 @pytest.mark.asyncio
@@ -294,7 +302,7 @@ async def test_input_footprint_usage_action_remains_admin_only() -> None:
     async def original(*_args, **_kwargs):
         return {"ok": True}
 
-    wrapped = wrap_management_permissions(original)
+    wrapped = management_ui.async_management_command
     with pytest.raises(HomeAssistantError, match="Administrator permission"):
         await wrapped(
             None,  # type: ignore[arg-type]

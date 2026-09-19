@@ -12,6 +12,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
+from .ha_tool_result_compat import tool_result_data
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -216,7 +217,7 @@ def _wrap_conversation_tool_results() -> None:
         content = await original(
             entity, function_tool, tool_input, llm_context, exposed_entities
         )
-        payload = getattr(content, "tool_result", None)
+        payload = tool_result_data(content)
         if isinstance(payload, dict) and isinstance(payload.get("result"), str):
             payload["result"] = bounded_tool_result_text(payload["result"])
         return content

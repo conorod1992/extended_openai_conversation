@@ -7,12 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
-
-from custom_components.extended_openai_conversation_responses import (
-    management_history_runtime,
-)
+from custom_components.extended_openai_conversation_responses import management_ui
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ArchiveSession,
     ArchiveTurn,
@@ -27,6 +22,8 @@ from custom_components.extended_openai_conversation_responses.usage import (
     _empty_day,
     async_get_usage,
 )
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from tests_real_ha.test_management_backend_acceptance import (
     ADMIN_ID,
     _admin_client,
@@ -35,7 +32,6 @@ from tests_real_ha.test_management_backend_acceptance import (
     _management_call,
     _setup_entry,
 )
-
 
 ADMIN_SCOPE_ID = f"user:{ADMIN_ID}"
 
@@ -398,7 +394,7 @@ async def test_history_runtime_unavailable_returns_controlled_websocket_error(
     await _setup_entry(hass, entry)
     client = await _admin_client(hass, hass_ws_client)
     getter = AsyncMock(side_effect=HomeAssistantError("archive runtime unavailable"))
-    monkeypatch.setattr(management_history_runtime, "async_get_archive", getter)
+    monkeypatch.setattr(management_ui, "async_get_archive", getter)
 
     response = await _raw_management_call(
         client,
@@ -433,7 +429,7 @@ async def test_history_query_failure_translates_to_websocket_error_without_mutat
     client = await _admin_client(hass, hass_ws_client)
 
     query = AsyncMock(side_effect=RuntimeError("history query failed"))
-    monkeypatch.setattr(management_history_runtime, "archive_list_page", query)
+    monkeypatch.setattr(management_ui, "archive_list_page", query)
     response = await _raw_management_call(
         client,
         entry=entry,
@@ -448,3 +444,46 @@ async def test_history_query_failure_translates_to_websocket_error_without_mutat
     }
     assert await archive.async_backup_data() == before
     query.assert_awaited_once()
+
+
+async def test_owned_dispatcher_survives_setup_reload_and_retains_temporary_counts(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+) -> None:
+    """Real startup/reload never installs a dispatcher and scoped counts survive it."""
+    from datetime import timedelta
+
+    from custom_components.extended_openai_conversation_responses.temporary_memory import (
+        async_get_temporary_memory,
+    )
+    from homeassistant.util import dt as dt_util
+
+    command = management_ui.async_management_command
+    handlers = management_ui._MANAGEMENT_SECTION_HANDLERS
+    entry = _entry("Owned Management API")
+    await _setup_entry(hass, entry)
+    client = await _admin_client(hass, hass_ws_client)
+    subentry = _conversation_subentry(entry)
+    manager = await async_get_temporary_memory(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    await manager.async_add(
+        "conversation:temporary-count-regression",
+        "A parcel is due this afternoon.",
+        (dt_util.utcnow() + timedelta(hours=1)).isoformat(),
+        owner_scope_id=ADMIN_SCOPE_ID,
+    )
+    for reloaded in (False, True):
+        if reloaded:
+            assert await hass.config_entries.async_reload(entry.entry_id)
+            await hass.async_block_till_done()
+        assert management_ui.async_management_command is command
+        assert management_ui._MANAGEMENT_SECTION_HANDLERS is handlers
+        assert not hasattr(command, "__wrapped__")
+        catalog = await _management_call(
+            client, entry=entry, section="scopes", action="catalog"
+        )
+        own_scope = next(
+            scope for scope in catalog["scopes"] if scope["scope_id"] == ADMIN_SCOPE_ID
+        )
+        assert own_scope["temporary_memory_count"] == 1

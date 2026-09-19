@@ -9,7 +9,6 @@ from functools import wraps
 import logging
 from typing import Any, cast
 
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
@@ -18,7 +17,6 @@ from .temporary_memory import (
     MAX_DELETE_RECORDS,
     TemporaryMemory,
     TemporaryMemoryRecord,
-    temporary_memory_as_dict,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -167,14 +165,6 @@ def _records_for_owner(
     ]
     records.sort(key=lambda record: (record.expires_at, record.memory_id))
     return records
-
-
-def _required_message_string(message: dict[str, Any], key: str) -> str:
-    """Return one required WebSocket identifier."""
-    value = message.get(key)
-    if not isinstance(value, str) or not value:
-        raise HomeAssistantError(f"{key} is required")
-    return value
 
 
 def _install_manager_contract() -> None:
@@ -466,134 +456,6 @@ def _install_conversation_contract() -> None:
     entity_cls._async_execute_temporary_memory_tool = execute_tool
 
 
-def _install_management_contract() -> None:
-    """Expose owner-scoped complete Temporary Memory management."""
-    from . import management_ui
-
-    management: Any = management_ui
-
-    current_preview = management._async_preview_effective_request
-
-    @wraps(current_preview)
-    async def preview(
-        hass: Any,
-        entry: Any,
-        subentry: Any,
-        candidate: dict[str, Any],
-        user_id: str,
-    ) -> dict[str, Any]:
-        token = _ACTIVE_OWNER_SCOPE_ID.set(f"user:{user_id}")
-        try:
-            return cast(
-                dict[str, Any],
-                await current_preview(hass, entry, subentry, candidate, user_id),
-            )
-        finally:
-            _ACTIVE_OWNER_SCOPE_ID.reset(token)
-
-    management._async_preview_effective_request = preview
-    if getattr(management, "_async_preview_effective_prompt", None) is current_preview:
-        management._async_preview_effective_prompt = preview
-
-    current_command = management.async_management_command
-
-    async def command(
-        hass: Any,
-        user_id: str,
-        is_admin: bool,
-        message: dict[str, Any],
-    ) -> dict[str, Any]:
-        section = message.get("section")
-        action = message.get("action")
-        if section == "memories" and action in {
-            "temporary_list",
-            "temporary_update",
-            "temporary_delete",
-        }:
-            entry_id = _required_message_string(message, "entry_id")
-            subentry_id = _required_message_string(message, "subentry_id")
-            entry, subentry = management.entry_and_agent(hass, entry_id, subentry_id)
-            selected_scope_id = management._selected_scope(
-                user_id, is_admin, message.get("scope_id")
-            )
-            owner = _valid_owner_scope_id(selected_scope_id)
-            if owner is None:
-                raise HomeAssistantError(
-                    "Temporary Memory can only be managed in Personal or Shared scopes"
-                )
-            manager = await management.async_get_temporary_memory(
-                hass, entry.entry_id, subentry.subentry_id
-            )
-            manager_any: Any = manager
-            if action == "temporary_list":
-                records = await manager_any.async_list_owned(owner)
-                return {
-                    "memories": [
-                        temporary_memory_as_dict(record, include_scope=True)
-                        | {"owner_scope_id": record.owner_scope_id}
-                        for record in records
-                    ],
-                    "scope_id": owner,
-                    "stats": manager.stats(),
-                }
-            memory_id = message.get("memory_id")
-            if not isinstance(memory_id, str) or not memory_id:
-                raise HomeAssistantError("memory_id is required")
-            if action == "temporary_delete":
-                deleted = await manager_any.async_delete_owned(owner, [memory_id])
-                return {"deleted": deleted}
-            content = message.get("content")
-            category = message.get("category")
-            expires_at = message.get("expires_at")
-            if (
-                (content is not None and not isinstance(content, str))
-                or (category is not None and not isinstance(category, str))
-                or (expires_at is not None and not isinstance(expires_at, str))
-            ):
-                raise HomeAssistantError(
-                    "content, category, and expires_at must be strings when supplied"
-                )
-            if content is None and category is None and expires_at is None:
-                raise HomeAssistantError(
-                    "at least one Temporary Memory field is required"
-                )
-            try:
-                record = await manager_any.async_update_owned(
-                    owner, memory_id, content, expires_at, category
-                )
-            except ValueError as err:
-                raise HomeAssistantError(str(err)) from err
-            return {
-                "memory": temporary_memory_as_dict(record, include_scope=True)
-                | {"owner_scope_id": record.owner_scope_id}
-            }
-
-        result = cast(
-            dict[str, Any], await current_command(hass, user_id, is_admin, message)
-        )
-        if section == "scopes" and action == "catalog":
-            scopes = result.get("scopes")
-            if isinstance(scopes, list):
-                entry_id = _required_message_string(message, "entry_id")
-                subentry_id = _required_message_string(message, "subentry_id")
-                entry, subentry = management.entry_and_agent(
-                    hass, entry_id, subentry_id
-                )
-                manager = await management.async_get_temporary_memory(
-                    hass, entry.entry_id, subentry.subentry_id
-                )
-                manager_any = manager
-                counts = manager_any.owner_counts()
-                for scope in scopes:
-                    if isinstance(scope, dict):
-                        scope["temporary_memory_count"] = counts.get(
-                            str(scope.get("scope_id") or ""), 0
-                        )
-        return result
-
-    management.async_management_command = command
-
-
 def install_temporary_memory_ownership() -> None:
     """Install owner-safe Temporary Memory after existing effective wrappers."""
     global _INSTALLED
@@ -602,5 +464,4 @@ def install_temporary_memory_ownership() -> None:
     _install_manager_contract()
     _install_snapshot_contract()
     _install_conversation_contract()
-    _install_management_contract()
     _INSTALLED = True

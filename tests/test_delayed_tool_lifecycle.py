@@ -15,14 +15,17 @@ from custom_components.extended_openai_conversation_responses.agent_maintenance 
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
+    _DELAYED_EXECUTION_MARKER,
     DATA_DELAYED_TOOL_MANAGER,
     DelayedToolCall,
     DelayedToolManager,
-    _DELAYED_EXECUTION_MARKER,
     _install_execution_hook,
 )
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
+)
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
 )
 from homeassistant.helpers import llm
 
@@ -80,9 +83,7 @@ async def test_async_setup_activates_delayed_tool_manager_after_entity_hardening
         "install_guest_policy_fast_path",
         "install_deferred_context_summary",
         "install_debug_instrumentation",
-        "install_request_rule_match_preview",
         "install_input_footprint",
-        "install_management_permissions",
         "install_configurable_regex_isolation",
         "install_model_search_hardening",
         "setup_provider_credentials_websocket",
@@ -175,7 +176,7 @@ async def test_legacy_delay_object_is_scheduled_durably(hass, monkeypatch) -> No
     manager.async_schedule.assert_awaited_once_with(
         entity, "control_light", arguments, None
     )
-    assert result.tool_result == {"result": "Scheduled"}
+    assert tool_result_data(result) == {"result": "Scheduled"}
 
 
 async def test_recovered_delayed_execution_strips_scheduler_metadata(
@@ -222,7 +223,9 @@ def _due_call(call_id: str = "call-due") -> DelayedToolCall:
     )
 
 
-async def test_due_delayed_tool_waits_behind_exclusive_restore(hass, monkeypatch) -> None:
+async def test_due_delayed_tool_waits_behind_exclusive_restore(
+    hass, monkeypatch
+) -> None:
     """A due action cannot cross its live execution boundary during restore."""
     manager = DelayedToolManager(hass)
     manager._started = True

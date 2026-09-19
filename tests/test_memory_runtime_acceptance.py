@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -24,7 +24,12 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
 )
-from custom_components.extended_openai_conversation_responses.memory import PersistentMemory
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
+from custom_components.extended_openai_conversation_responses.memory import (
+    PersistentMemory,
+)
 from custom_components.extended_openai_conversation_responses.scope import user_scope
 from homeassistant.components import conversation
 from homeassistant.core import Context
@@ -162,7 +167,7 @@ async def test_memory_store_bundle_prompt_and_tool_update_form_one_runtime_contr
             llm_context,
             [],
         )
-        tool_payload = json.loads(tool_result.tool_result["result"])
+        tool_payload = json.loads(tool_result_data(tool_result)["result"])
         assert tool_payload["status"] == "updated"
         assert tool_payload["memory"]["memory_id"] == memory_id
 

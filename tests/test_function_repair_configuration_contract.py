@@ -21,9 +21,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
 )
-from custom_components.extended_openai_conversation_responses.management_function_repair import (
-    async_function_repair,
-)
 
 
 class _FakeConfigEntries:
@@ -49,9 +46,9 @@ def _repairable_agent() -> tuple[Any, Any]:
     valid_tool = deepcopy(tools[0])
     broken_tool = deepcopy(tools[0])
     broken_tool["spec"]["name"] = f"{broken_tool['spec']['name']}_broken"
-    broken_tool["spec"].setdefault(
-        "parameters", {"type": "object", "properties": {}}
-    )["description"] = 123
+    broken_tool["spec"].setdefault("parameters", {"type": "object", "properties": {}})[
+        "description"
+    ] = 123
 
     subentry = SimpleNamespace(
         subentry_id="agent-1",
@@ -114,9 +111,7 @@ async def test_function_repair_configuration_get_preserves_dynamic_metadata(
         lambda _hass: [{"entity_id": "light.kitchen", "name": "Kitchen"}],
     )
 
-    repair_configuration = guidance.wrap_management_configuration_guidance(
-        async_function_repair
-    )
+    repair_configuration = management_ui.async_management_command
     payload = await repair_configuration(
         hass,
         "admin",
@@ -188,9 +183,15 @@ async def test_shared_configuration_response_contract_covers_normal_and_repair_a
     ) -> dict[str, Any]:
         return {"config": {"marker": action}, "preserved": True}
 
-    wrapped = guidance.wrap_management_configuration_guidance(original)
+    async def handler(_request):
+        return {"config": {"marker": action}, "preserved": True}
+
+    monkeypatch.setattr(
+        management_ui, "_MANAGEMENT_SECTION_HANDLERS", {section: handler}
+    )
+    wrapped = management_ui.async_management_command
     result = await wrapped(
-        object(),
+        SimpleNamespace(data={}),
         "admin",
         True,
         {

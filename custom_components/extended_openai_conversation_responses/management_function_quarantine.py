@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
-from functools import wraps
-from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -14,17 +14,19 @@ import yaml
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from . import function_dependency_integrity, management_setup_health, management_ui
-from .agent_test import AgentTestResult, TestCheck, _overall
-from .const import (
-    CONF_API_PROVIDER,
-    CONF_CHAT_MODEL,
-    CONF_FUNCTION_GROUPS,
-    CONF_FUNCTION_TOOLS,
-    DEFAULT_API_PROVIDER,
-    DEFAULT_CHAT_MODEL,
-    DEFAULT_FUNCTION_GROUPS,
+from . import management_ui
+from .agent_config import (
+    configured_function_tools_from_data as _STRICT_CONFIGURED_TOOLS,
+    merge_agent_config as _STRICT_MERGE_AGENT_CONFIG,
+    validate_function_groups as _STRICT_VALIDATE_FUNCTION_GROUPS,
 )
+from .agent_test import (
+    AgentTestResult,
+    TestCheck,
+    _overall,
+    async_test_agent as _ORIGINAL_AGENT_TEST,
+)
+from .const import CONF_FUNCTION_GROUPS, CONF_FUNCTION_TOOLS, DEFAULT_FUNCTION_GROUPS
 from .management_function_repair import (
     editable_function_tools,
     effective_function_configuration,
@@ -33,21 +35,12 @@ from .management_function_repair import (
     repair_revision,
 )
 
-_PATCHED = "extended_openai_management_function_quarantine"
-_OVERVIEW_PATCHED = "extended_openai_management_function_quarantine_overview"
 _ALLOW_QUARANTINED_TOOLS: ContextVar[bool] = ContextVar(
     "extended_openai_management_allow_quarantined_tools", default=False
 )
 _QUARANTINED_FUNCTION_NAMES: ContextVar[frozenset[str]] = ContextVar(
     "extended_openai_management_quarantined_function_names", default=frozenset()
 )
-
-_STRICT_CONFIGURED_TOOLS = management_ui.configured_function_tools_from_data
-_STRICT_MERGE_AGENT_CONFIG = management_ui.merge_agent_config
-_STRICT_VALIDATE_FUNCTION_GROUPS = management_ui.validate_function_groups
-_STRICT_PERSIST_FUNCTION_CONFIGURATION = management_ui._persist_function_configuration
-_STRICT_AGENT_CONFIG_REVISION = management_ui._agent_config_revision
-_ORIGINAL_AGENT_TEST = management_ui.async_test_agent
 
 
 def _safe_function_configuration(data: dict[str, Any]) -> dict[str, Any]:
@@ -83,11 +76,6 @@ def _management_configured_tools(data: Any) -> list[dict[str, Any]]:
     return _STRICT_CONFIGURED_TOOLS(data)
 
 
-def _dependency_configured_tools(data: Any) -> list[dict[str, Any]]:
-    """Validate Request Rule references against usable siblings, not broken tools."""
-    return _usable_function_tools(data)
-
-
 def _management_validate_function_groups(
     value: Any, function_tools: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -108,19 +96,6 @@ def _management_validate_function_groups(
                 name for name in group["functions"] if name not in quarantined
             ]
     return _STRICT_VALIDATE_FUNCTION_GROUPS(safe, function_tools)
-
-
-def _management_agent_config_revision(data: Any, title: str) -> str:
-    """Use a raw revision only when strict normalization is blocked by Function Tools."""
-    try:
-        return _STRICT_AGENT_CONFIG_REVISION(data, title)
-    except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
-        raw = dict(data)
-        _tools, issue = function_tools_issue(raw)
-        if issue is None:
-            raise
-        payload = management_ui.canonical_json({"title": title, "config": raw})
-        return sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _management_merge_agent_config(
@@ -187,7 +162,7 @@ def _tolerant_persist_function_configuration(
     raw = dict(subentry.data)
     _valid, invalid, issue = isolated_function_tools(raw)
     if issue is None or not invalid:
-        return _STRICT_PERSIST_FUNCTION_CONFIGURATION(
+        return management_ui._persist_valid_function_configuration(
             hass,
             entry,
             subentry,
@@ -287,120 +262,16 @@ async def _tolerant_agent_test(
     return result
 
 
-def _wrap_management_command(original):
-    """Scope tolerant Function Tool reads to management surfaces that can degrade."""
-
-    @wraps(original)
-    async def wrapped(
-        hass: HomeAssistant,
-        user_id: str,
-        is_admin: bool,
-        message: dict[str, Any],
-    ) -> dict[str, Any]:
-        if message.get("section") not in {"request_rules", "guest_mode", "tools"}:
-            return cast(
-                dict[str, Any], await original(hass, user_id, is_admin, message)
-            )
-        token = _ALLOW_QUARANTINED_TOOLS.set(True)
-        names_token = _QUARANTINED_FUNCTION_NAMES.set(frozenset())
-        try:
-            return cast(
-                dict[str, Any], await original(hass, user_id, is_admin, message)
-            )
-        finally:
-            _QUARANTINED_FUNCTION_NAMES.reset(names_token)
-            _ALLOW_QUARANTINED_TOOLS.reset(token)
-
-    return wrapped
-
-
-def _install_overview_provider_fallback() -> None:
-    """Never lose persisted provider/model identity to an unrelated config failure."""
-    from . import management_loading_performance
-
-    if getattr(management_loading_performance, _OVERVIEW_PATCHED, False):
+@contextmanager
+def management_function_tools(section: str) -> Iterator[None]:
+    """Limit tolerant reads to the three existing repair-aware Management sections."""
+    if section not in {"request_rules", "guest_mode", "tools"}:
+        yield
         return
-    original = management_loading_performance.async_overview_summary
-
-    @wraps(original)
-    async def wrapped(
-        hass: HomeAssistant,
-        user_id: str,
-        is_admin: bool,
-        message: dict[str, Any],
-    ) -> dict[str, Any]:
-        result = await original(hass, user_id, is_admin, message)
-        facts = result.get("setup_health") if isinstance(result, dict) else None
-        runtime = facts.get("provider_runtime") if isinstance(facts, dict) else None
-        if (
-            isinstance(runtime, dict)
-            and runtime.get("provider")
-            and runtime.get("model")
-        ):
-            return result
-
-        entry_id = message.get("entry_id")
-        subentry_id = message.get("subentry_id")
-        if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
-            return result
-        entry, subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
-        try:
-            agent = result.get("agent", {})
-            load_errors = result.get("load_errors", [])
-            failed_keys = {
-                item.get("key") for item in load_errors if isinstance(item, dict)
-            }
-            rebuilt = management_setup_health.build_setup_health_facts(
-                hass,
-                entry,
-                subentry,
-                memory_available="memories" not in failed_keys,
-                knowledge_source_count=int(agent.get("knowledge_source_count", 0)),
-                knowledge_available="knowledge" not in failed_keys,
-                is_admin=is_admin,
-            )
-        except Exception:
-            rebuilt = dict(facts) if isinstance(facts, dict) else {}
-            rebuilt["provider_runtime"] = {
-                "client_loaded": getattr(entry, "runtime_data", None) is not None,
-                "provider": str(
-                    entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER)
-                ),
-                "model": str(
-                    subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
-                ).strip(),
-            }
-            rebuilt["can_manage"] = is_admin
-            rebuilt["live_provider_tested"] = False
-        return {**result, "setup_health": rebuilt}
-
-    management_loading_performance.async_overview_summary = wrapped  # type: ignore[assignment]
-    setattr(management_loading_performance, _OVERVIEW_PATCHED, True)
-
-
-def install_management_function_quarantine() -> bool:
-    """Install tolerant management seams without weakening strict config validation."""
-    if getattr(management_ui, _PATCHED, False):
-        return False
-
-    management_ui.configured_function_tools_from_data = (  # type: ignore[assignment]
-        _management_configured_tools
-    )
-    management_ui.validate_function_groups = _management_validate_function_groups  # type: ignore[assignment]
-    management_ui.merge_agent_config = _management_merge_agent_config  # type: ignore[assignment]
-    management_ui._agent_config_revision = _management_agent_config_revision  # type: ignore[assignment]
-    management_ui._persist_function_configuration = (  # type: ignore[assignment]
-        _tolerant_persist_function_configuration
-    )
-    # This module performs its Request Rule preflight before delegating to the
-    # management dispatcher, so give that preflight the same valid-sibling view.
-    function_dependency_integrity.configured_function_tools_from_data = (  # type: ignore[assignment]
-        _dependency_configured_tools
-    )
-    management_ui.async_test_agent = _tolerant_agent_test  # type: ignore[assignment]
-    management_ui.async_management_command = _wrap_management_command(  # type: ignore[assignment]
-        management_ui.async_management_command
-    )
-    _install_overview_provider_fallback()
-    setattr(management_ui, _PATCHED, True)
-    return True
+    token = _ALLOW_QUARANTINED_TOOLS.set(True)
+    names_token = _QUARANTINED_FUNCTION_NAMES.set(frozenset())
+    try:
+        yield
+    finally:
+        _QUARANTINED_FUNCTION_NAMES.reset(names_token)
+        _ALLOW_QUARANTINED_TOOLS.reset(token)

@@ -2,25 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from . import management_ui
-from .management_browser import install_management_browser
-from .management_configuration_guidance import install_management_configuration_guidance
-from .management_function_quarantine import install_management_function_quarantine
-from .management_history_runtime import install_management_history_bounds
-from .management_setup_health import install_management_setup_health
 from .quiet_hours import async_get_quiet_hours
-
-_PATCHED = "extended_openai_management_permissions"
-_OPTIMIZED_OVERVIEW_PATCHED = "extended_openai_management_overview_permissions"
-ManagementCommand = Callable[
-    [HomeAssistant, str, bool, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]
-]
 
 
 def _require_admin(is_admin: bool) -> None:
@@ -28,15 +15,7 @@ def _require_admin(is_admin: bool) -> None:
         raise HomeAssistantError("Administrator permission is required")
 
 
-def sanitize_non_admin_overview(result: dict[str, Any]) -> dict[str, Any]:
-    """Remove agent-global run metadata while retaining aggregate overview usage."""
-    usage = result.get("usage")
-    if not isinstance(usage, dict):
-        return result
-    return {**result, "usage": {**usage, "latest": None}}
-
-
-async def _quiet_hours_command(
+async def async_quiet_hours_command(
     hass: HomeAssistant, is_admin: bool, message: dict[str, Any]
 ) -> dict[str, Any]:
     """Handle the domain-global Quiet Hours management surface."""
@@ -56,92 +35,14 @@ async def _quiet_hours_command(
     raise HomeAssistantError(f"Unknown Quiet Hours action: {action}")
 
 
-def wrap_management_permissions(original: ManagementCommand) -> ManagementCommand:
-    """Protect agent-global data and paid diagnostics from normal HA users."""
-
-    async def wrapped(
-        hass: HomeAssistant,
-        user_id: str,
-        is_admin: bool,
-        message: dict[str, Any],
-    ) -> dict[str, Any]:
-        section = message.get("section", "overview")
-        action = message.get("action")
-
-        # Quiet Hours is integration-global rather than agent-specific, so handle it
-        # before the underlying dispatcher requires an entry/subentry selection.
-        if section == "quiet_hours":
-            return await _quiet_hours_command(hass, is_admin, message)
-
-        # Knowledge sources belong to the agent rather than an individual user.
-        # Reading them can expose private reference material, while writes affect
-        # every user of the agent, so fail closed for the whole section.
-        if section == "knowledge":
-            _require_admin(is_admin)
-
-        # Diagnostics can issue real provider requests using the owner's account.
-        # Keep the whole section admin-only so future diagnostics inherit the same
-        # boundary instead of needing an action-by-action allow-list.
-        if section == "diagnostics":
-            _require_admin(is_admin)
-
-        # Usage details are also agent-global. Keep the harmless aggregate summary
-        # available for Overview, but never expose the latest run metadata or any
-        # detailed usage endpoint to a normal HA user.
-        if section == "usage" and not is_admin:
-            if action != "summary":
-                _require_admin(False)
-            result = await original(hass, user_id, is_admin, message)
-            return {**result, "latest": None}
-
-        # The optimized management dispatcher has a combined Overview endpoint.
-        # Sanitize it here too when this wrapper is outermost.
-        if section == "overview" and action == "summary" and not is_admin:
-            return sanitize_non_admin_overview(
-                await original(hass, user_id, is_admin, message)
-            )
-
-        return await original(hass, user_id, is_admin, message)
-
-    return wrapped
-
-
-def _install_optimized_overview_guard() -> None:
-    """Keep the optimized Overview safe regardless of monkey-patch install order."""
-    from . import management_loading_performance
-
-    if getattr(management_loading_performance, _OPTIMIZED_OVERVIEW_PATCHED, False):
-        return
-    original = management_loading_performance.async_overview_summary
-
-    async def wrapped(
-        hass: HomeAssistant,
-        user_id: str,
-        is_admin: bool,
-        message: dict[str, Any],
-    ) -> dict[str, Any]:
-        result = await original(hass, user_id, is_admin, message)
-        return result if is_admin else sanitize_non_admin_overview(result)
-
-    management_loading_performance.async_overview_summary = wrapped  # type: ignore[assignment]
-    setattr(management_loading_performance, _OPTIMIZED_OVERVIEW_PATCHED, True)
-
-
-def install_management_permissions() -> bool:
-    """Install management result bounds inside the authorization wrapper."""
-    install_management_browser()
-    _install_optimized_overview_guard()
-    install_management_setup_health()
-    install_management_function_quarantine()
-    # Result bounds must sit inside authorization so they cannot bypass existing
-    # non-admin restrictions, while still wrapping the optimized history routes.
-    install_management_history_bounds()
-    if getattr(management_ui, _PATCHED, False):
-        install_management_configuration_guidance()
-        return False
-    management_ui.async_management_command = wrap_management_permissions(  # type: ignore[assignment]
-        management_ui.async_management_command
-    )
-    setattr(management_ui, _PATCHED, True)
-    install_management_configuration_guidance()
-    return True
+def require_management_permission(is_admin: bool, message: dict[str, Any]) -> None:
+    """Reject agent-global reads before agent lookup or feature-specific validation."""
+    section = message.get("section", "overview")
+    if section in {"quiet_hours", "knowledge", "diagnostics", "function_repair"}:
+        _require_admin(is_admin)
+    if section == "request_rules" and message.get("action") in {"test", "test_match"}:
+        _require_admin(is_admin)
+    if section == "configuration" and message.get("action") == "save":
+        _require_admin(is_admin)
+    if section == "usage" and message.get("action") != "summary":
+        _require_admin(is_admin)

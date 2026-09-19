@@ -6,15 +6,17 @@ import asyncio
 
 import pytest
 
-from homeassistant.components import conversation
-from homeassistant.helpers import llm
-
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.parallel_tool_execution import (
     async_execute_parallel_safe_batch,
     async_execute_parallel_safe_batch_outcomes,
     is_parallel_safe_integration_tool,
     resolve_parallel_safe_batch,
 )
+from homeassistant.components import conversation
+from homeassistant.helpers import llm
 
 
 def _tool(
@@ -234,7 +236,7 @@ async def test_parallel_outcomes_retain_successful_sibling_after_ordinary_failur
     assert isinstance(outcomes[1], conversation.ToolResultContent)
     assert outcomes[1].tool_call_id == "2"
     assert outcomes[1].tool_name == "second"
-    assert outcomes[1].tool_result == {"result": "2"}
+    assert tool_result_data(outcomes[1]) == {"result": "2"}
     assert invocation_counts == {"1": 1, "2": 1}
 
 

@@ -41,7 +41,9 @@ def _hass_with_agent():
 async def test_agent_catalog_does_not_load_scope_dependencies(monkeypatch) -> None:
     """The initial catalogue must stay independent of lazy scope work."""
     hass = _hass_with_agent()
-    scope_catalog = AsyncMock(side_effect=AssertionError("scope catalogue should be lazy"))
+    scope_catalog = AsyncMock(
+        side_effect=AssertionError("scope catalogue should be lazy")
+    )
     monkeypatch.setattr(management_ui, "_scope_catalog", scope_catalog)
 
     for name in ("async_get_memory", "async_get_archive"):
@@ -91,7 +93,8 @@ async def test_scope_catalog_loads_memory_and_archive_concurrently(monkeypatch) 
         hass,
         "admin",
         True,
-        {"entry_id": "entry-1", "subentry_id": "agent-1"},
+        "entry-1",
+        "agent-1",
     )
 
     assert result == {"scopes": [{"id": "all", "label": "All"}]}

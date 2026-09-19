@@ -411,53 +411,10 @@ def _install_speech_regex_isolation() -> None:
     ExtendedOpenAIAgentEntity._async_handle_message = async_handle_message  # type: ignore[method-assign,assignment]
 
 
-def _install_speech_preview_isolation() -> None:
-    """Run Speech Preview through the same async bounded engine as live speech."""
-    from . import management_ui
-
-    current = management_ui.async_management_command
-    if getattr(current, "_extended_openai_speech_preview_executor", False):
-        return
-
-    original_command = current
-    original_process_speech_text = management_ui.process_speech_text
-    management_ui.process_speech_text = _deferred_process_speech_text_factory(
-        original_process_speech_text
-    )
-
-    async def async_management_command(
-        hass: HomeAssistant,
-        user_id: str,
-        is_admin: bool,
-        message: dict[str, Any],
-    ) -> dict[str, Any]:
-        defer = message.get("action") == "speech_preview"
-        defer_token = _DEFER_SPEECH_PROCESSING.set(defer)
-        input_token = _DEFERRED_SPEECH_INPUT.set(None)
-        deferred_input: tuple[str, Mapping[str, Any]] | None = None
-        try:
-            result = await original_command(hass, user_id, is_admin, message)
-            deferred_input = _DEFERRED_SPEECH_INPUT.get()
-        finally:
-            _DEFERRED_SPEECH_INPUT.reset(input_token)
-            _DEFER_SPEECH_PROCESSING.reset(defer_token)
-
-        if deferred_input is not None:
-            result = dict(result)
-            result["speech_text"] = await async_process_speech_text(
-                hass, *deferred_input
-            )
-        return result
-
-    async_management_command._extended_openai_speech_preview_executor = True  # type: ignore[attr-defined]
-    management_ui.async_management_command = async_management_command  # type: ignore[assignment]
-
-
 def install_configurable_regex_isolation() -> None:
     """Install process-isolated handling for administrator-configured speech regex."""
     global _INSTALLED
     if _INSTALLED:
         return
     _install_speech_regex_isolation()
-    _install_speech_preview_isolation()
     _INSTALLED = True

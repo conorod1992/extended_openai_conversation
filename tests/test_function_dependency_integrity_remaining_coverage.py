@@ -146,37 +146,14 @@ async def test_function_rename_rejects_immutable_matching_action(monkeypatch) ->
     manager._sort_and_compile.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    "guest_group_ids",
-    [pytest.param(("old",), id="tuple"), pytest.param("old", id="string")],
-)
-def test_guest_group_mutation_ignores_non_list_saved_ids(guest_group_ids) -> None:
-    seen: dict[str, object] = {}
-
-    def original(
-        _hass,
-        _entry,
-        _subentry,
-        _tools,
-        _groups,
-        *,
-        extra_updates=None,
-        expected_revision=None,
-    ):
-        seen["extra_updates"] = extra_updates
-        seen["expected_revision"] = expected_revision
-        return {"ok": True}
-
-    subentry = SimpleNamespace(data={CONF_GUEST_ALLOWED_GROUP_IDS: guest_group_ids})
-    wrapped = integrity.wrap_persist_function_configuration(original)
-    token = integrity._ACTIVE_GROUP_MUTATION.set(("old", "new"))
-    try:
-        result = wrapped(object(), object(), subentry, [], [])
-    finally:
-        integrity._ACTIVE_GROUP_MUTATION.reset(token)
-
-    assert result == {"ok": True}
-    assert seen["extra_updates"] is None
+@pytest.mark.parametrize("guest_group_ids", [("old",), "old"])
+def test_guest_group_mutation_ignores_non_list_saved_ids(guest_group_ids):
+    assert (
+        integrity.group_reference_updates(
+            {CONF_GUEST_ALLOWED_GROUP_IDS: guest_group_ids}, "old", "new"
+        )
+        == {}
+    )
 
 
 @pytest.mark.asyncio
@@ -214,26 +191,13 @@ def test_guest_group_mutation_ignores_non_list_saved_ids(guest_group_ids) -> Non
 async def test_management_mutations_with_invalid_ids_delegate_unchanged(
     hass, monkeypatch, message
 ) -> None:
-    expected = {"delegated": True}
-    original = AsyncMock(return_value=expected)
-    wrapped = integrity.wrap_management_command(original)
-    entry_and_agent = Mock(side_effect=AssertionError("IDs should not be resolved"))
-    validate = AsyncMock(
-        side_effect=AssertionError("dependency validation should be skipped")
-    )
-    require_revision = Mock(
-        side_effect=AssertionError("revision should not be checked")
-    )
-    monkeypatch.setattr(integrity.management_ui, "entry_and_agent", entry_and_agent)
-    monkeypatch.setattr(integrity, "async_validate_request_rule_functions", validate)
-    monkeypatch.setattr(
-        integrity.management_ui, "_require_agent_config_revision", require_revision
-    )
+    from custom_components.extended_openai_conversation_responses import management_ui
+    from homeassistant.exceptions import HomeAssistantError
 
-    result = await wrapped(hass, "admin", True, message)
-
-    assert result is expected
-    original.assert_awaited_once_with(hass, "admin", True, message)
-    entry_and_agent.assert_not_called()
-    validate.assert_not_awaited()
-    require_revision.assert_not_called()
+    select = Mock(side_effect=AssertionError("invalid selection was resolved"))
+    monkeypatch.setattr(management_ui, "entry_and_agent", select)
+    with pytest.raises(
+        HomeAssistantError, match="entry_id and subentry_id are required"
+    ):
+        await management_ui.async_management_command(hass, "admin", True, message)
+    select.assert_not_called()

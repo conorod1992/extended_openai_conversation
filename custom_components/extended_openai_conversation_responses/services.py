@@ -70,6 +70,7 @@ from .const import (
     SERVICE_RELOAD_SKILLS,
 )
 from .guest_mode import async_get_guest_mode
+from .ha_tool_result_compat import tool_result_data
 from .helpers import get_api_mode, get_authenticated_client, get_token_param_for_model
 from .memory import async_get_memory, memory_as_dict, memory_user_id
 from .provider_errors import (
@@ -829,8 +830,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         result = await async_call_active_function(
             call.data["function"], call.data.get("arguments", {})
         )
-        if hasattr(result, "tool_result"):
-            result = result.tool_result
+        result = tool_result_data(result, default=result)
         return cast(ServiceResponse, {"result": result})
 
     hass.services.async_register(

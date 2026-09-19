@@ -25,6 +25,9 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
     GuestModeDenied,
     guest_arguments_allowed_runtime,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -225,7 +228,7 @@ async def test_static_script_target_is_checked_again_at_execution(monkeypatch) -
 
     tool["function"]["sequence"][0]["target"] = {"entity_id": "lock.private"}
     denied = await entity._execute_function_tool(tool, tool_input, None, [])
-    outcome = json.loads(denied.tool_result["result"])
+    outcome = json.loads(tool_result_data(denied)["result"])
     assert outcome["status"] == "denied"
     assert outcome["reason"] == "guest_mode"
     execute.assert_awaited_once()
@@ -278,7 +281,7 @@ async def test_direct_scoped_control_obeys_execution_target_policy(monkeypatch) 
         id="call-denied",
     )
     denied = await entity._execute_function_tool(tool, denied_input, None, [])
-    outcome = json.loads(denied.tool_result["result"])
+    outcome = json.loads(tool_result_data(denied)["result"])
     assert outcome["status"] == "denied"
     assert outcome["reason"] == "guest_mode"
     execute.assert_awaited_once()
@@ -323,13 +326,13 @@ async def test_guest_permitted_execution_failure_is_generic(monkeypatch) -> None
         None,
         [],
     )
-    outcome = json.loads(result.tool_result["result"])
+    outcome = json.loads(tool_result_data(result)["result"])
     assert outcome == {
         "status": "error",
         "reason": "execution_failed",
         "error": "The requested action could not be completed.",
     }
-    assert "private device detail" not in result.tool_result["result"]
+    assert "private device detail" not in tool_result_data(result)["result"]
 
 
 @pytest.mark.parametrize(
@@ -416,7 +419,7 @@ async def test_indirect_wrapper_is_rejected_at_execution(
         None,
         [],
     )
-    outcome = json.loads(denied.tool_result["result"])
+    outcome = json.loads(tool_result_data(denied)["result"])
     assert outcome["status"] == "denied"
     assert outcome["reason"] == "guest_mode"
     execute.assert_not_awaited()

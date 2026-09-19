@@ -6,17 +6,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import (
-    request_rule_match_preview as preview_module,
-)
+from custom_components.extended_openai_conversation_responses import management_ui
 from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
     request_rule_match_preview,
-    wrap_management_command,
 )
 from custom_components.extended_openai_conversation_responses.request_rule_patterns import (
     SentenceMatchLimitError,
 )
-from custom_components.extended_openai_conversation_responses.request_rules import RuleMatch
+from custom_components.extended_openai_conversation_responses.request_rules import (
+    RuleMatch,
+)
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -95,13 +94,7 @@ def test_preview_summarizes_model_routing_and_no_match() -> None:
 async def test_management_test_actions_never_delegate_to_real_processing(
     monkeypatch: pytest.MonkeyPatch, action: str
 ) -> None:
-    delegated = 0
     matched_text: list[str] = []
-
-    async def original(*_args, **_kwargs):
-        nonlocal delegated
-        delegated += 1
-        raise AssertionError("real management processing must not run")
 
     class Rules:
         async def async_match(self, _hass, text: str):
@@ -109,7 +102,7 @@ async def test_management_test_actions_never_delegate_to_real_processing(
             return _local_match()
 
     monkeypatch.setattr(
-        preview_module.management_ui,
+        management_ui,
         "entry_and_agent",
         lambda _hass, _entry_id, _subentry_id: (object(), object()),
     )
@@ -117,16 +110,17 @@ async def test_management_test_actions_never_delegate_to_real_processing(
     async def get_rules(_hass, _entry_id, _subentry_id):
         return Rules()
 
-    monkeypatch.setattr(preview_module, "async_get_request_rules", get_rules)
-    wrapped = wrap_management_command(original)
+    monkeypatch.setattr(management_ui, "async_get_request_rules", get_rules)
+    command = management_ui.async_management_command
     hass = SimpleNamespace(
+        data={},
         services=SimpleNamespace(
             async_call=lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 AssertionError("Home Assistant services must not be called")
             )
-        )
+        ),
     )
-    result = await wrapped(
+    result = await command(
         hass,
         "admin-user",
         True,
@@ -141,26 +135,21 @@ async def test_management_test_actions_never_delegate_to_real_processing(
     assert result["matched"] is True
     assert result["rule"]["name"] == "Good night"
     assert matched_text == ["  good night kitchen  "]
-    assert delegated == 0
 
 
 async def test_match_preview_reports_bounded_match_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Preview should surface limits and never fall through to real processing."""
-    delegated = 0
-
-    async def original(*_args, **_kwargs):
-        nonlocal delegated
-        delegated += 1
-        raise AssertionError("real management processing must not run")
 
     class Rules:
         async def async_match(self, _hass, _text: str):
-            raise SentenceMatchLimitError("Request Rule matching supports at most 2048 characters")
+            raise SentenceMatchLimitError(
+                "Request Rule matching supports at most 2048 characters"
+            )
 
     monkeypatch.setattr(
-        preview_module.management_ui,
+        management_ui,
         "entry_and_agent",
         lambda _hass, _entry_id, _subentry_id: (object(), object()),
     )
@@ -168,11 +157,11 @@ async def test_match_preview_reports_bounded_match_failure(
     async def get_rules(_hass, _entry_id, _subentry_id):
         return Rules()
 
-    monkeypatch.setattr(preview_module, "async_get_request_rules", get_rules)
-    wrapped = wrap_management_command(original)
+    monkeypatch.setattr(management_ui, "async_get_request_rules", get_rules)
+    command = management_ui.async_management_command
     with pytest.raises(HomeAssistantError, match="2048 characters"):
-        await wrapped(
-            SimpleNamespace(),
+        await command(
+            SimpleNamespace(data={}),
             "admin-user",
             True,
             {
@@ -183,17 +172,14 @@ async def test_match_preview_reports_bounded_match_failure(
                 "text": "oversized",
             },
         )
-    assert delegated == 0
 
 
 async def test_match_preview_requires_admin_and_text() -> None:
-    async def original(*_args, **_kwargs):
-        raise AssertionError
 
-    wrapped = wrap_management_command(original)
+    command = management_ui.async_management_command
     with pytest.raises(HomeAssistantError, match="Administrator permission"):
-        await wrapped(
-            SimpleNamespace(),
+        await command(
+            SimpleNamespace(data={}),
             "user",
             False,
             {
@@ -204,7 +190,6 @@ async def test_match_preview_requires_admin_and_text() -> None:
                 "text": "hello",
             },
         )
-
 
 
 def test_preview_uses_explicit_routing_flow_not_match_type() -> None:

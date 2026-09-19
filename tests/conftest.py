@@ -17,7 +17,6 @@ from homeassistant.components import conversation  # noqa: E402
 from homeassistant.helpers import config_validation as cv, llm  # noqa: E402
 from homeassistant.helpers.template import TemplateEnvironment  # noqa: E402
 
-
 # Home Assistant dev changed ToolResultContent(tool_result=...) to
 # ToolResultContent(result=llm.ToolResult(...)). Keep legacy unit-test fixtures
 # valid on both APIs without replacing the class or changing isinstance checks.
@@ -144,3 +143,57 @@ def temp_db_path(tmp_path: Path) -> Path:
     conn.close()
 
     return db_path
+
+
+@pytest.fixture
+def management_agent(hass, monkeypatch):
+    """Select one mutable agent for Management command contract tests."""
+    from types import SimpleNamespace
+
+    from custom_components.extended_openai_conversation_responses import management_ui
+    from custom_components.extended_openai_conversation_responses.agent_config import (
+        agent_config_defaults,
+    )
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+
+    subentry = SimpleNamespace(
+        subentry_id="agent-1",
+        subentry_type="conversation",
+        title="Jarvis",
+        data=agent_config_defaults(),
+    )
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        domain=DOMAIN,
+        title="Provider",
+        data={},
+        subentries={subentry.subentry_id: subentry},
+    )
+    monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
+
+    def update(selected_entry, selected_subentry, *, data, title=None):
+        assert selected_entry is entry and selected_subentry is subentry
+        subentry.data = data
+        if title is not None:
+            subentry.title = title
+
+    hass.config_entries.async_update_subentry.side_effect = update
+    hass.config_entries.async_get_entry.return_value = entry
+    return entry, subentry
+
+
+@pytest.fixture
+def management_message(management_agent):
+    """Build a request selecting the fixture's existing conversation agent."""
+    entry, subentry = management_agent
+
+    def message(section, action, **fields):
+        return {
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+            "section": section,
+            "action": action,
+            **fields,
+        }
+
+    return message

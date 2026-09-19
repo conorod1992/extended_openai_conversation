@@ -2,19 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
 from typing import Any
 
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
-
-from . import management_ui
-from .memory import MAX_LIST_LIMIT, async_get_memory, memory_as_dict
-
-_PATCHED = "extended_openai_management_browser"
-ManagementCommand = Callable[
-    [HomeAssistant, str, bool, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]
-]
+from .memory import MAX_LIST_LIMIT, memory_as_dict
 
 
 def _bounded_limit(message: dict[str, Any], default: int) -> int:
@@ -94,68 +84,25 @@ async def _list_page(
     }
 
 
-def wrap_management_browser(original: ManagementCommand) -> ManagementCommand:
-    """Add complete paged persistent-memory browsing to the management API."""
-
-    async def wrapped(
-        hass: HomeAssistant,
-        user_id: str,
-        is_admin: bool,
-        message: dict[str, Any],
-    ) -> dict[str, Any]:
-        if message.get("section") != "memories" or message.get("action") not in {
-            "list",
-            "search",
-        }:
-            return await original(hass, user_id, is_admin, message)
-
-        entry_id = message.get("entry_id")
-        subentry_id = message.get("subentry_id")
-        if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
-            raise HomeAssistantError("entry_id and subentry_id are required")
-        management_ui.entry_and_agent(hass, entry_id, subentry_id)
-        scope_id = management_ui._selected_scope(
-            user_id, is_admin, message.get("scope_id")
+async def async_browse_memories(
+    memory: Any,
+    owner: str,
+    scope_id: str,
+    message: dict[str, Any],
+    *,
+    include_scope: bool,
+) -> dict[str, Any]:
+    """Return a complete, bounded list/search page for an authorized Memory owner."""
+    query = str(message.get("query", "")).strip()
+    if message.get("action") == "list" or not query:
+        return await _list_page(
+            memory, owner, scope_id, message, include_scope=include_scope
         )
-        owner = management_ui._memory_scope(scope_id)
-        memory = await async_get_memory(hass, entry_id, subentry_id)
-
-        if message.get("action") == "list":
-            return await _list_page(
-                memory,
-                owner,
-                scope_id,
-                message,
-                include_scope=is_admin,
-            )
-
-        query = str(message.get("query", "")).strip()
-        if not query:
-            return await _list_page(
-                memory,
-                owner,
-                scope_id,
-                message,
-                include_scope=is_admin,
-            )
-        return _search_page(
-            memory,
-            owner,
-            query,
-            limit=_bounded_limit(message, 100),
-            offset=_bounded_offset(message),
-            include_scope=is_admin,
-        )
-
-    return wrapped
-
-
-def install_management_browser() -> bool:
-    """Install complete Memory browsing before authorization wrappers are applied."""
-    if getattr(management_ui, _PATCHED, False):
-        return False
-    management_ui.async_management_command = wrap_management_browser(  # type: ignore[assignment]
-        management_ui.async_management_command
+    return _search_page(
+        memory,
+        owner,
+        query,
+        limit=_bounded_limit(message, 100),
+        offset=_bounded_offset(message),
+        include_scope=include_scope,
     )
-    setattr(management_ui, _PATCHED, True)
-    return True

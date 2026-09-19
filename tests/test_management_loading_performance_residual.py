@@ -1,17 +1,17 @@
 """Residual branch coverage for management loading/performance helpers."""
 
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
+from custom_components.extended_openai_conversation_responses import management_ui
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 import custom_components.extended_openai_conversation_responses.management_loading_performance as loading
+from homeassistant.exceptions import HomeAssistantError
 
 
 class _ConfigEntries:
@@ -63,9 +63,9 @@ async def test_overview_summary_isolates_each_manager_failure(monkeypatch) -> No
 
     result = await loading.async_overview_summary(
         hass,
-        "admin",
-        True,
-        {"entry_id": entry.entry_id, "subentry_id": subentry.subentry_id},
+        entry,
+        subentry,
+        is_admin=True,
     )
 
     assert result["usage"] == {}
@@ -101,20 +101,24 @@ async def test_overview_summary_uses_exception_type_when_message_is_empty(
         function_tool_enabled=lambda tool: tool.get("enabled", True) is True,
     )
     monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
-    monkeypatch.setattr(loading, "async_get_usage", AsyncMock(side_effect=RuntimeError()))
+    monkeypatch.setattr(
+        loading, "async_get_usage", AsyncMock(side_effect=RuntimeError())
+    )
     monkeypatch.setattr(
         loading,
         "async_get_memory",
         AsyncMock(return_value=SimpleNamespace(stats=lambda: {})),
     )
-    monkeypatch.setattr(loading, "async_get_knowledge", AsyncMock(return_value=knowledge))
+    monkeypatch.setattr(
+        loading, "async_get_knowledge", AsyncMock(return_value=knowledge)
+    )
     monkeypatch.setattr(loading, "async_get_guest_mode", AsyncMock(return_value=guest))
 
     result = await loading.async_overview_summary(
         hass,
-        "admin",
-        True,
-        {"entry_id": entry.entry_id, "subentry_id": subentry.subentry_id},
+        entry,
+        subentry,
+        is_admin=True,
     )
 
     assert result["load_errors"] == [
@@ -122,79 +126,53 @@ async def test_overview_summary_uses_exception_type_when_message_is_empty(
     ]
 
 
-async def test_save_configuration_rejects_bad_title_before_management_lookup() -> None:
-    """Blank and non-string titles are frontend validation errors, not writes."""
-    hass = SimpleNamespace()
+@pytest.mark.parametrize("title", ["   ", 123])
+async def test_save_configuration_rejects_bad_title_without_writing(
+    hass, management_message, title
+):
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        management_message("configuration", "save", title=title, config={}),
+    )
+    assert result == {"valid": False, "errors": {"title": "must not be empty"}}
+    hass.config_entries.async_update_subentry.assert_not_called()
 
-    for title in ("   ", 123):
-        result = await loading._async_save_configuration(
+
+async def test_save_configuration_rejects_non_object_config(hass, management_message):
+    with pytest.raises(HomeAssistantError, match="config must be an object"):
+        await management_ui.async_management_command(
             hass,
             "admin",
             True,
-            {"title": title, "config": {}},
+            management_message("configuration", "save", config=["not", "an", "object"]),
         )
-        assert result == {"valid": False, "errors": {"title": "must not be empty"}}
+    hass.config_entries.async_update_subentry.assert_not_called()
 
 
-async def test_save_configuration_rejects_non_object_config(monkeypatch) -> None:
-    """The optimized save path keeps the original object-only API contract."""
-    fake_ui = SimpleNamespace(_require_admin=MagicMock())
-    monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
-
-    with pytest.raises(HomeAssistantError, match="config must be an object"):
-        await loading._async_save_configuration(
-            SimpleNamespace(),
-            "admin",
-            True,
-            {"config": ["not", "an", "object"]},
-        )
-
-    fake_ui._require_admin.assert_called_once_with(True)
-
-
-async def test_optimized_management_command_routes_all_fast_paths(monkeypatch) -> None:
-    """Each optimized command is dispatched without touching the legacy handler."""
-    legacy = AsyncMock(side_effect=AssertionError("legacy handler should not run"))
-    monkeypatch.setattr(loading, "_ORIGINAL_MANAGEMENT_COMMAND", legacy)
-
+async def test_owned_command_routes_directly_to_loading_and_save(
+    hass, management_message, management_agent, monkeypatch
+):
     agents = AsyncMock(return_value={"path": "agents"})
     overview = AsyncMock(return_value={"path": "overview"})
     save = AsyncMock(return_value={"path": "save"})
     monkeypatch.setattr(loading, "async_agent_catalog", agents)
     monkeypatch.setattr(loading, "async_overview_summary", overview)
-    monkeypatch.setattr(loading, "_async_save_configuration", save)
-
-    hass = SimpleNamespace()
-    assert await loading.optimized_management_command(
+    monkeypatch.setattr(management_ui, "_async_save_configuration", save)
+    assert await management_ui.async_management_command(
         hass, "user", False, {"action": "agents"}
     ) == {"path": "agents"}
-    assert await loading.optimized_management_command(
-        hass, "user", False, {"section": "overview", "action": "summary"}
+    assert await management_ui.async_management_command(
+        hass, "user", False, management_message("overview", "summary")
     ) == {"path": "overview"}
-    assert await loading.optimized_management_command(
-        hass, "user", True, {"section": "configuration", "action": "save"}
+    assert await management_ui.async_management_command(
+        hass, "user", True, management_message("configuration", "save")
     ) == {"path": "save"}
-
-    legacy.assert_not_awaited()
-    agents.assert_awaited_once()
-    overview.assert_awaited_once()
+    agents.assert_awaited_once_with(hass, "user", False)
+    overview.assert_awaited_once_with(hass, *management_agent, is_admin=False)
     save.assert_awaited_once()
-
-
-async def test_optimized_management_command_falls_back_to_live_handler(monkeypatch) -> None:
-    """Before installation, non-optimized commands use the current management handler."""
-    fallback = AsyncMock(return_value={"path": "legacy"})
-    fake_ui = SimpleNamespace(async_management_command=fallback)
-    monkeypatch.setattr(loading, "_ORIGINAL_MANAGEMENT_COMMAND", None)
-    monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
-
-    message = {"section": "usage", "action": "summary"}
-    result = await loading.optimized_management_command(
-        SimpleNamespace(), "user", False, message
-    )
-
-    assert result == {"path": "legacy"}
-    fallback.assert_awaited_once_with(ANY, "user", False, message)
+    assert save.await_args.args[0].subentry is management_agent[1]
 
 
 async def test_cached_management_setup_is_noop_when_complete(monkeypatch) -> None:
@@ -230,7 +208,9 @@ async def test_cached_management_setup_respects_completed_step_markers(
         http=SimpleNamespace(async_register_static_paths=static_paths),
     )
     monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
-    monkeypatch.setattr(loading.websocket_api, "async_register_command", websocket_register)
+    monkeypatch.setattr(
+        loading.websocket_api, "async_register_command", websocket_register
+    )
     monkeypatch.setattr(loading.panel_custom, "async_register_panel", panel_register)
 
     await loading.async_setup_cached_management_ui(hass)
@@ -268,7 +248,9 @@ async def test_cached_debug_setup_respects_completed_step_markers(monkeypatch) -
         http=SimpleNamespace(async_register_static_paths=static_paths),
     )
     monkeypatch.setattr(loading, "_debug_ui", lambda: fake_ui)
-    monkeypatch.setattr(loading.websocket_api, "async_register_command", websocket_register)
+    monkeypatch.setattr(
+        loading.websocket_api, "async_register_command", websocket_register
+    )
 
     await loading.async_setup_cached_debug_ui(hass)
 
@@ -297,7 +279,6 @@ def test_install_management_loading_optimizations_is_idempotent(monkeypatch) -> 
     fake_debug = SimpleNamespace(async_setup_debug_ui=object())
 
     monkeypatch.setattr(loading, "_INSTALLED", False)
-    monkeypatch.setattr(loading, "_ORIGINAL_MANAGEMENT_COMMAND", None)
     monkeypatch.setattr(loading, "_management_ui", lambda: fake_management)
     monkeypatch.setattr(loading, "_debug_ui", lambda: fake_debug)
     monkeypatch.setattr(
@@ -332,13 +313,24 @@ def test_install_management_loading_optimizations_is_idempotent(monkeypatch) -> 
     loading.install_management_loading_optimizations()
 
     assert loading._INSTALLED is True
-    assert loading._ORIGINAL_MANAGEMENT_COMMAND is original
-    assert fake_management.async_management_command is loading.optimized_management_command
-    assert fake_management.async_setup_management_ui is loading.async_setup_cached_management_ui
+    assert fake_management.async_management_command is original
+    assert (
+        fake_management.async_setup_management_ui
+        is loading.async_setup_cached_management_ui
+    )
     assert fake_debug.async_setup_debug_ui is loading.async_setup_cached_debug_ui
-    assert conversation.configured_function_tools_from_data is loading._runtime_configured_function_tools
-    assert conversation.validate_function_groups is loading._runtime_validate_function_groups
-    assert function_tool_resolution.validate_function_groups is loading._runtime_validate_function_groups
+    assert (
+        conversation.configured_function_tools_from_data
+        is loading._runtime_configured_function_tools
+    )
+    assert (
+        conversation.validate_function_groups
+        is loading._runtime_validate_function_groups
+    )
+    assert (
+        function_tool_resolution.validate_function_groups
+        is loading._runtime_validate_function_groups
+    )
     assert fake_management.MANAGEMENT_FRONTEND_MODULES is modules
     assert package.async_setup_management_ui is loading.async_setup_cached_management_ui
     assert package.async_setup_debug_ui is loading.async_setup_cached_debug_ui

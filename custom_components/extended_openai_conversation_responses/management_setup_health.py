@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 from homeassistant.components import conversation
@@ -10,7 +9,6 @@ from homeassistant.components.homeassistant.exposed_entities import async_should
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
 
-from . import management_ui
 from .const import (
     CONF_API_MODE,
     CONF_API_PROVIDER,
@@ -26,9 +24,6 @@ from .const import (
 from .management_configuration_guidance import configuration_guidance_snapshot
 from .management_function_repair import editable_function_tools, isolated_function_tools
 from .memory import get_memory_mode
-
-_PATCHED = "extended_openai_management_setup_health"
-OverviewCommand = Callable[..., Awaitable[dict[str, Any]]]
 
 
 def _exposed_entity_count(hass: HomeAssistant) -> int:
@@ -115,58 +110,44 @@ def build_setup_health_facts(
     }
 
 
-def install_management_setup_health() -> bool:
-    """Attach setup facts to the optimized Overview response exactly once."""
-    from . import management_loading_performance
-
-    if getattr(management_loading_performance, _PATCHED, False):
-        return False
-    original: OverviewCommand = management_loading_performance.async_overview_summary
-
-    async def wrapped(
-        hass: HomeAssistant,
-        user_id: str,
-        is_admin: bool,
-        message: dict[str, Any],
-    ) -> dict[str, Any]:
-        result = await original(hass, user_id, is_admin, message)
-        try:
-            entry_id = message.get("entry_id")
-            subentry_id = message.get("subentry_id")
-            if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
-                raise ValueError("entry_id and subentry_id are required")
-            entry, subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
-            agent = result.get("agent") if isinstance(result, dict) else None
-            knowledge_source_count = (
-                int(agent.get("knowledge_source_count", 0))
-                if isinstance(agent, dict)
-                else 0
-            )
-            load_errors = (
-                result.get("load_errors", []) if isinstance(result, dict) else []
-            )
-            failed_keys = {
-                issue.get("key") for issue in load_errors if isinstance(issue, dict)
-            }
-            setup_health = build_setup_health_facts(
-                hass,
-                entry,
-                subentry,
-                memory_available="memories" not in failed_keys,
-                knowledge_source_count=knowledge_source_count,
-                knowledge_available="knowledge" not in failed_keys,
-                is_admin=is_admin,
-            )
-        except Exception:
-            # Setup health is additive. Never turn a failure in this summary layer
-            # into an Overview failure when the original Overview data is usable.
-            setup_health = {
-                "unavailable": True,
-                "can_manage": is_admin,
-                "live_provider_tested": False,
-            }
-        return {**result, "setup_health": setup_health}
-
-    management_loading_performance.async_overview_summary = wrapped  # type: ignore[assignment]
-    setattr(management_loading_performance, _PATCHED, True)
-    return True
+def add_setup_health(
+    hass: HomeAssistant,
+    entry: ConfigEntry[Any],
+    subentry: ConfigSubentry,
+    result: dict[str, Any],
+    *,
+    is_admin: bool,
+) -> dict[str, Any]:
+    """Add setup facts without turning a partial Overview into a request failure."""
+    try:
+        agent = result.get("agent", {})
+        failed_keys = {
+            issue.get("key")
+            for issue in result.get("load_errors", [])
+            if isinstance(issue, dict)
+        }
+        facts = build_setup_health_facts(
+            hass,
+            entry,
+            subentry,
+            memory_available="memories" not in failed_keys,
+            knowledge_source_count=int(agent.get("knowledge_source_count", 0)),
+            knowledge_available="knowledge" not in failed_keys,
+            is_admin=is_admin,
+        )
+    except Exception:
+        facts = {
+            "unavailable": True,
+            "provider_runtime": {
+                "client_loaded": getattr(entry, "runtime_data", None) is not None,
+                "provider": str(
+                    entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER)
+                ),
+                "model": str(
+                    subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+                ).strip(),
+            },
+            "can_manage": is_admin,
+            "live_provider_tested": False,
+        }
+    return {**result, "setup_health": facts}

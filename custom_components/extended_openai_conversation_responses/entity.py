@@ -80,7 +80,7 @@ from .function_tool_recovery import (
 )
 from .functions import get_function
 from .ha_llm_tools import async_discover, current_snapshot, is_ha_tool, reference_key
-from .ha_tool_result_compat import make_tool_result_content
+from .ha_tool_result_compat import make_tool_result_content, tool_result_data
 from .helpers import get_api_mode, get_model_config
 from .provider_errors import provider_stream_error, provider_transport_error
 from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
@@ -305,7 +305,7 @@ def _convert_content_to_param(
                     if shorten_tool_call_id
                     else content.tool_call_id,
                     "content": orjson.dumps(
-                        content.tool_result, option=orjson.OPT_SORT_KEYS
+                        tool_result_data(content), option=orjson.OPT_SORT_KEYS
                     ).decode(),
                 }
             )
@@ -346,7 +346,7 @@ def _convert_content_to_responses_param(
                     "type": "function_call_output",
                     "call_id": content.tool_call_id,
                     "output": orjson.dumps(
-                        content.tool_result, option=orjson.OPT_SORT_KEYS
+                        tool_result_data(content), option=orjson.OPT_SORT_KEYS
                     ).decode(),
                 }
             )

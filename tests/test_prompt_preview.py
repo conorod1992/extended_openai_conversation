@@ -306,7 +306,9 @@ async def test_preview_reads_temporary_context_without_mutation(
         "admin",
     )
 
-    manager.async_active_snapshot.assert_awaited_once_with("user:admin")
+    manager.async_active_snapshot.assert_awaited_once_with(
+        "user:admin", owner_scope_id="user:admin"
+    )
     manager.async_active.assert_not_awaited()
     assert "A delivery is due today" in result["prompt"]
 
@@ -343,7 +345,9 @@ async def test_preview_reads_stored_temporary_context_before_manager_load(
         "admin",
     )
 
-    read_snapshot.assert_awaited_once_with(hass, "entry-1", "agent-1", "user:admin")
+    read_snapshot.assert_awaited_once_with(
+        hass, "entry-1", "agent-1", "user:admin", owner_scope_id="user:admin"
+    )
     assert "A delivery is due today" in result["prompt"]
 
 

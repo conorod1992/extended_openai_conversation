@@ -437,17 +437,8 @@ def _wrap_effective_prompt_renderer(original: Callable[..., Any]) -> Callable[..
     return wrapped
 
 
-def _decorate_configuration_result(hass: Any, result: dict[str, Any]) -> dict[str, Any]:
-    config = result.get("config")
-    if not isinstance(config, dict):
-        return result
-    decorated = dict(result)
-    decorated["exposed_attribute_catalog"] = exposed_attribute_catalog(hass, config)
-    return decorated
-
-
 def install_exposed_attribute_runtime() -> None:
-    """Install prompt and management seams after existing optimization layers."""
+    """Install selected-attribute prompt rendering for runtime and request previews."""
     global _INSTALLED
     if _INSTALLED:
         return
@@ -502,20 +493,3 @@ def install_exposed_attribute_runtime() -> None:
     management_ui.render_effective_prompt = _wrap_effective_prompt_renderer(
         management_ui.render_effective_prompt
     )
-
-    original_management_command = management_ui.async_management_command
-
-    @wraps(original_management_command)
-    async def management_command(
-        hass: Any, user_id: str, is_admin: bool, message: dict[str, Any]
-    ) -> dict[str, Any]:
-        result = await original_management_command(hass, user_id, is_admin, message)
-        if (
-            message.get("section") == "configuration"
-            and message.get("action") in {"get", "update", "save"}
-            and isinstance(result, dict)
-        ):
-            return _decorate_configuration_result(hass, result)
-        return result
-
-    management_ui.async_management_command = management_command

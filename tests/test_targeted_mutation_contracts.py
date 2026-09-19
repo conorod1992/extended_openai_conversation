@@ -9,9 +9,6 @@ from unittest.mock import Mock
 
 import pytest
 
-from homeassistant.components import conversation
-from homeassistant.helpers import llm
-
 from custom_components.extended_openai_conversation_responses.exceptions import (
     FunctionNotFound,
 )
@@ -26,11 +23,16 @@ from custom_components.extended_openai_conversation_responses.function_tool_reso
     configured_function_tool_for_execution,
     latest_function_tool_for_execution,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.parallel_tool_execution import (
     async_execute_parallel_safe_batch,
     async_execute_parallel_safe_batch_outcomes,
     is_parallel_safe_integration_tool,
 )
+from homeassistant.components import conversation
+from homeassistant.helpers import llm
 
 
 def _call(name: str, call_id: str) -> llm.ToolInput:
@@ -121,7 +123,7 @@ def test_recovery_feedback_has_bounded_text_and_stable_protocol_fields() -> None
     assert result.agent_id == "conversation.mutation"
     assert result.tool_call_id == "call-1"
     assert result.tool_name == "action"
-    assert result.tool_result == {
+    assert tool_result_data(result) == {
         "result": {
             "status": "error",
             "reason": "correctable_tool_error",

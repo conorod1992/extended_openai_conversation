@@ -217,30 +217,17 @@ async def test_request_rule_test_defaults_duplicate_move_and_errors(
     monkeypatch.setattr(
         management_ui, "async_get_request_rules", AsyncMock(return_value=rules)
     )
-    registry = SimpleNamespace(entities={})
-    monkeypatch.setattr(management_ui.er, "async_get", lambda _hass: registry)
-
+    rules.async_match = AsyncMock(return_value=None)
     with pytest.raises(HomeAssistantError, match="Test request text is required"):
         await management_ui.async_management_command(
             hass, "admin", True, _message("request_rules", "test", text=" ")
         )
-    with pytest.raises(HomeAssistantError, match="entity is not available"):
-        await management_ui.async_management_command(
-            hass, "admin", True, _message("request_rules", "test", text="hello")
-        )
-
-    registry.entities["conversation.jarvis"] = SimpleNamespace(
-        config_entry_id="entry-1",
-        config_subentry_id="agent-1",
-        domain="conversation",
-        entity_id="conversation.jarvis",
+    result = await management_ui.async_management_command(
+        hass, "admin", True, _message("request_rules", "test", text=" hello ")
     )
-    hass.services.async_call.return_value = {"response": "ok"}
-    assert (
-        await management_ui.async_management_command(
-            hass, "admin", True, _message("request_rules", "test", text=" hello ")
-        )
-    ) == {"response": "ok"}
+    assert result["matched"] is False
+    rules.async_match.assert_awaited_once()
+    hass.services.async_call.assert_not_awaited()
     assert "defaults" in await management_ui.async_management_command(
         hass, "admin", True, _message("request_rules", "defaults", defaults={})
     )
@@ -305,7 +292,7 @@ async def test_backup_preview_and_diagnostics_success_routes(
         hass, "admin", True, _message("configuration", "request_preview", config={})
     ) == {"preview": True}
     assert await management_ui.async_management_command(
-        hass, "user", False, _message("diagnostics", "test_agent")
+        hass, "user", True, _message("diagnostics", "test_agent")
     ) == {"healthy": True}
 
 
@@ -623,6 +610,11 @@ async def test_conversation_cleanup_and_admin_temporary_delete(
 async def test_fallthrough_branches_and_scope_catalog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        management_ui,
+        "async_get_temporary_memory",
+        AsyncMock(return_value=SimpleNamespace(owner_counts=lambda: {})),
+    )
     entry, subentry = _entry_pair()
     hass = _hass(entry)
     monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
@@ -671,6 +663,12 @@ async def test_fallthrough_branches_and_scope_catalog(
         AsyncMock(return_value=[{"scope_id": "user:user"}]),
     )
 
+    from custom_components.extended_openai_conversation_responses import (
+        management_loading_performance as loading,
+    )
+
+    monkeypatch.setattr(loading, "async_get_archive", management_ui.async_get_archive)
+    monkeypatch.setattr(loading, "async_get_memory", management_ui.async_get_memory)
     catalog = await management_ui.async_management_command(
         hass, "admin", True, _message("scopes", "catalog")
     )

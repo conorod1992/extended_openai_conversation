@@ -22,6 +22,9 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.usage import RequestUsage
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
@@ -327,7 +330,7 @@ async def test_tool_execution_error_and_background_branches(monkeypatch) -> None
     ha_tool = {"function": {"reference": "missing"}}
     monkeypatch.setattr(module, "is_ha_tool", lambda _tool: True)
     no_context = await entity._execute_function_tool(ha_tool, tool_input, None, [])
-    assert "context unavailable" in str(no_context.tool_result)
+    assert "context unavailable" in str(tool_result_data(no_context))
 
     monkeypatch.setattr(
         module,
@@ -338,7 +341,7 @@ async def test_tool_execution_error_and_background_branches(monkeypatch) -> None
     unavailable = await entity._execute_function_tool(
         ha_tool, tool_input, SimpleNamespace(context=None), []
     )
-    assert "current request" in str(unavailable.tool_result)
+    assert "current request" in str(tool_result_data(unavailable))
 
     monkeypatch.setattr(module, "is_ha_tool", lambda _tool: False)
     monkeypatch.setattr(
@@ -377,7 +380,7 @@ async def test_tool_execution_error_and_background_branches(monkeypatch) -> None
         None,
         [],
     )
-    assert scheduled.tool_result == {"result": "Scheduled"}
+    assert tool_result_data(scheduled) == {"result": "Scheduled"}
 
     monkeypatch.setattr(
         module,

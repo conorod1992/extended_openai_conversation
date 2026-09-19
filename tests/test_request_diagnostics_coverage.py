@@ -11,6 +11,9 @@ from custom_components.extended_openai_conversation_responses import (
     debug,
     request_diagnostics,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 
 
 def _trace() -> debug.DebugTrace:
@@ -151,7 +154,7 @@ async def test_tool_execution_records_success_and_failure_without_changing_seman
         None,
         None,
     )
-    assert result.tool_result["result"] == "done"
+    assert tool_result_data(result)["result"] == "done"
 
     with pytest.raises(RuntimeError, match="tool failed"):
         await agent_type._execute_function_tool(

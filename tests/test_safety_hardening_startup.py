@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock
 import custom_components.extended_openai_conversation_responses as integration
 from custom_components.extended_openai_conversation_responses import (
     conversation,
-    feature_status,
     guest_performance,
     management_loading_performance,
     persistence_hardening,
@@ -21,8 +20,6 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
         "apply_openai_compatibility",
         "install_deferred_context_summary",
         "install_debug_instrumentation",
-        "install_request_rule_match_preview",
-        "install_management_permissions",
     ):
         monkeypatch.setattr(integration, name, MagicMock())
 
@@ -39,9 +36,6 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
         management_loading_performance,
         "install_management_loading_optimizations",
         MagicMock(),
-    )
-    monkeypatch.setattr(
-        feature_status, "install_management_feature_status", MagicMock()
     )
 
     def base_effective_guest_policy(_self):
@@ -89,54 +83,3 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
         "_extended_openai_guest_policy_fast_path",
         False,
     )
-
-
-async def test_management_loading_is_installed_before_permissions(
-    hass, monkeypatch
-) -> None:
-    """Keep the permission wrapper outermost around optimized management routes."""
-    order: list[str] = []
-    monkeypatch.setattr(guest_performance, "_INSTALLED", False)
-    monkeypatch.setattr(
-        request_static_cache, "install_request_static_caching", MagicMock()
-    )
-    monkeypatch.setattr(
-        feature_status, "install_management_feature_status", MagicMock()
-    )
-    monkeypatch.setattr(
-        conversation.ExtendedOpenAIAgentEntity,
-        "_effective_guest_policy",
-        lambda self: None,
-    )
-    for name in (
-        "apply_openai_compatibility",
-        "install_persistence_transactions",
-        "install_deferred_context_summary",
-        "install_debug_instrumentation",
-        "install_request_rule_match_preview",
-    ):
-        monkeypatch.setattr(integration, name, MagicMock())
-
-    monkeypatch.setattr(
-        management_loading_performance,
-        "install_management_loading_optimizations",
-        MagicMock(side_effect=lambda: order.append("loading")),
-    )
-    monkeypatch.setattr(
-        integration,
-        "install_management_permissions",
-        MagicMock(side_effect=lambda: order.append("permissions")),
-    )
-
-    for name in (
-        "async_migrate_integration",
-        "async_setup_ha_permissions",
-        "async_setup_services",
-        "async_setup_intercom_services",
-        "async_setup_management_ui",
-        "async_setup_debug_ui",
-    ):
-        monkeypatch.setattr(integration, name, AsyncMock())
-
-    assert await integration.async_setup(hass, {}) is True
-    assert order == ["loading", "permissions"]

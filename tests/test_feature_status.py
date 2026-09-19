@@ -1,12 +1,11 @@
 """Tests for management-facing effective feature status."""
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
-    feature_status as feature_status_module,
-    knowledge,
     management_loading_performance,
     management_ui,
 )
@@ -113,45 +112,17 @@ def test_invalid_auto_retrieve_limit_falls_back_to_default() -> None:
     )
 
 
-def test_install_is_idempotent_when_already_installed(monkeypatch) -> None:
-    """Repeated setup must not stack additional management wrappers."""
-    original_snapshot = management_loading_performance._agent_snapshot
-    original_command = management_ui.async_management_command
-    monkeypatch.setattr(feature_status_module, "_INSTALLED", True)
-
-    feature_status_module.install_management_feature_status()
-
-    assert management_loading_performance._agent_snapshot is original_snapshot
-    assert management_ui.async_management_command is original_command
-
-
-def test_installed_snapshot_enriches_from_loaded_knowledge(monkeypatch) -> None:
-    """Overview snapshots expose effective status even when cheap counts are stale."""
-
-    def base_snapshot(_hass, _entry, _subentry, *args, **kwargs):
-        return {"knowledge_source_count": 0, "marker": "base"}
-
-    monkeypatch.setattr(feature_status_module, "_INSTALLED", False)
-    monkeypatch.setattr(management_loading_performance, "_agent_snapshot", base_snapshot)
+def test_snapshot_enriches_from_loaded_knowledge(hass, management_agent, monkeypatch):
+    entry, subentry = management_agent
+    subentry.data.update(
+        {CONF_MEMORY_MODE: MEMORY_MODE_MANUAL, CONF_KNOWLEDGE_ENABLED: True}
+    )
     monkeypatch.setattr(
-        knowledge,
+        management_loading_performance,
         "get_loaded_knowledge",
-        lambda _hass, _entry_id, _subentry_id: SimpleNamespace(source_count=3),
+        lambda *_: SimpleNamespace(source_count=3),
     )
-
-    feature_status_module.install_management_feature_status()
-
-    entry = SimpleNamespace(entry_id="entry-1")
-    subentry = SimpleNamespace(
-        subentry_id="agent-1",
-        data={
-            CONF_MEMORY_MODE: MEMORY_MODE_MANUAL,
-            CONF_KNOWLEDGE_ENABLED: True,
-        },
-    )
-    result = management_loading_performance._agent_snapshot(object(), entry, subentry)
-
-    assert result["marker"] == "base"
+    result = management_loading_performance._agent_snapshot(hass, entry, subentry)
     assert result["knowledge_source_count"] == 3
     assert result["feature_status"]["memory"]["label"] == "Manual"
     assert result["feature_status"]["knowledge"]["state"] == "available"
@@ -159,112 +130,41 @@ def test_installed_snapshot_enriches_from_loaded_knowledge(monkeypatch) -> None:
     assert "management-feature-status.js" in management_ui.MANAGEMENT_FRONTEND_MODULES
 
 
-@pytest.mark.asyncio
-async def test_installed_command_leaves_unrelated_actions_unchanged(monkeypatch) -> None:
-    """Only Memory and Knowledge list responses should be enriched."""
-    expected = {"ok": True, "payload": "unchanged"}
-
-    async def base_command(_hass, _user_id, _is_admin, _message):
-        return expected
-
-    monkeypatch.setattr(feature_status_module, "_INSTALLED", False)
-    monkeypatch.setattr(management_ui, "async_management_command", base_command)
-
-    feature_status_module.install_management_feature_status()
-
-    result = await management_ui.async_management_command(
-        object(),
-        "user-1",
-        True,
-        {"section": "knowledge", "action": "get"},
-    )
-
-    assert result is expected
-    assert "feature_status" not in result
-
-
-@pytest.mark.asyncio
-async def test_installed_memory_list_adds_memory_feature_status(monkeypatch) -> None:
-    """Memory list responses expose the current effective Memory policy."""
-
-    async def base_command(_hass, _user_id, _is_admin, _message):
-        return {"memories": []}
-
-    subentry = SimpleNamespace(
-        data={
-            CONF_MEMORY_MODE: MEMORY_MODE_AUTOMATIC,
-            CONF_MEMORY_AUTO_RETRIEVE_LIMIT: 2,
-            CONF_SHARED_MEMORY_MODE: SHARED_MEMORY_DISABLED,
-        }
-    )
-    monkeypatch.setattr(feature_status_module, "_INSTALLED", False)
-    monkeypatch.setattr(management_ui, "async_management_command", base_command)
+async def test_knowledge_get_does_not_add_list_feature_status(
+    hass, management_message, monkeypatch
+):
+    source = {"id": "a", "title": "A"}
+    library = SimpleNamespace(async_get=AsyncMock(return_value=source))
     monkeypatch.setattr(
-        management_ui,
-        "entry_and_agent",
-        lambda _hass, _entry_id, _subentry_id: (object(), subentry),
+        management_ui, "async_get_knowledge", AsyncMock(return_value=library)
     )
-
-    feature_status_module.install_management_feature_status()
-
+    monkeypatch.setattr(management_ui, "knowledge_source_as_dict", lambda value: value)
     result = await management_ui.async_management_command(
-        object(),
-        "user-1",
-        True,
-        {
-            "section": "memories",
-            "action": "list",
-            "entry_id": "entry-1",
-            "subentry_id": "agent-1",
-        },
+        hass, "admin", True, management_message("knowledge", "get", source_id="a")
     )
-
-    assert result["memories"] == []
-    assert result["feature_status"]["state"] == "enabled"
-    assert result["feature_status"]["label"] == "Automatic"
-    assert result["feature_status"]["automatic_inclusion_limit"] == 2
-    assert result["feature_status"]["shared_memory_enabled"] is False
+    assert result == {"source": source}
+    library.async_get.assert_awaited_once_with("a")
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stats", "expected_count"),
-    [
-        ({"source_count": "4"}, 4),
-        ({"source_count": "invalid"}, 2),
-    ],
+    [({"source_count": "4"}, 4), ({"source_count": "invalid"}, 2)],
 )
-async def test_installed_knowledge_list_uses_safe_source_count(
-    monkeypatch, stats, expected_count
-) -> None:
-    """Knowledge status prefers valid stats and safely falls back to listed sources."""
-
-    async def base_command(_hass, _user_id, _is_admin, _message):
-        return {"sources": [{"id": "a"}, {"id": "b"}], "stats": stats}
-
-    subentry = SimpleNamespace(data={CONF_KNOWLEDGE_ENABLED: True})
-    monkeypatch.setattr(feature_status_module, "_INSTALLED", False)
-    monkeypatch.setattr(management_ui, "async_management_command", base_command)
+async def test_knowledge_list_uses_safe_source_count(
+    hass, management_agent, management_message, monkeypatch, stats, expected_count
+):
+    management_agent[1].data[CONF_KNOWLEDGE_ENABLED] = True
+    library = SimpleNamespace(
+        async_list=AsyncMock(return_value=[{"id": "a"}, {"id": "b"}]),
+        stats=lambda: stats,
+    )
     monkeypatch.setattr(
-        management_ui,
-        "entry_and_agent",
-        lambda _hass, _entry_id, _subentry_id: (object(), subentry),
+        management_ui, "async_get_knowledge", AsyncMock(return_value=library)
     )
-
-    feature_status_module.install_management_feature_status()
-
+    monkeypatch.setattr(management_ui, "knowledge_source_as_dict", lambda value: value)
     result = await management_ui.async_management_command(
-        object(),
-        "user-1",
-        True,
-        {
-            "section": "knowledge",
-            "action": "list",
-            "entry_id": "entry-1",
-            "subentry_id": "agent-1",
-        },
+        hass, "admin", True, management_message("knowledge", "list")
     )
-
     assert result["feature_status"]["state"] == "available"
     assert result["feature_status"]["source_count"] == expected_count
     assert result["feature_status"]["available"] is True
