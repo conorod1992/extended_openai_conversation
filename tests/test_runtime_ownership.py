@@ -523,3 +523,23 @@ async def test_prefetch_is_drained_when_live_policy_check_fails(runtime_agent):
         await runtime_agent._async_retrieve_temporary_memories()
     assert task.cancelled()
     assert _TEMPORARY_MEMORY_PREFETCH.get() is None
+
+
+async def test_failed_completed_prefetch_is_drained_on_policy_failure(
+    runtime_agent, caplog
+):
+    async def fail():
+        raise RuntimeError("prefetch policy failed")
+
+    task = asyncio.create_task(fail())
+    _TEMPORARY_MEMORY_PREFETCH.set(task)
+    await asyncio.sleep(0)
+    assert task.done()
+    runtime_agent._effective_guest_policy = Mock(
+        side_effect=RuntimeError("policy failed")
+    )
+    with pytest.raises(RuntimeError, match="policy failed"):
+        await runtime_agent._async_retrieve_temporary_memories()
+    assert _TEMPORARY_MEMORY_PREFETCH.get() is None
+    del task
+    assert "Task exception was never retrieved" not in caplog.text

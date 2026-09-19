@@ -1357,7 +1357,7 @@ class ExtendedOpenAIAgentEntity(
                 return cast(list[TemporaryMemoryRecord], await task)
             return await self._async_load_temporary_memories()
         except BaseException:
-            if task is not None and not task.done():
+            if task is not None:
                 task.cancel()
                 with suppress(BaseException):
                     await task
