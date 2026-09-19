@@ -9,10 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import (
-    runtime_hardening,
-    skills,
-)
+from custom_components.extended_openai_conversation_responses import skills
 
 
 class _Parser:
@@ -22,33 +19,8 @@ class _Parser:
 
 
 def _skill_manager_type():
-    class FakeManager:
+    class FakeManager(skills.SkillManager):
         _instance = None
-
-        def __init__(self, hass: Any) -> None:
-            self._hass = hass
-            self._skills = {}
-            self._user_skills_dir: Path | None = None
-
-        @property
-        def user_skills_dir(self) -> Path:
-            return self._user_skills_dir or Path("/default-skills")
-
-        def _load_skills_from_dir_sync(self, _path: Path) -> list[Any]:
-            return []
-
-        async def async_load_skills(self) -> None:
-            raise AssertionError("installer should replace this method")
-
-        @classmethod
-        async def async_get_instance(
-            cls, hass: Any, user_skills_dir: str | None = None
-        ) -> Any:
-            raise AssertionError("installer should replace this method")
-
-        @classmethod
-        def get_loaded_instance(cls) -> Any:
-            return None
 
     return FakeManager
 
@@ -59,16 +31,19 @@ async def test_skill_getter_initializes_without_custom_directory(
 ) -> None:
     """The default Skill directory path remains valid on first initialization."""
     manager_type = _skill_manager_type()
-    hass = SimpleNamespace(data={}, async_add_executor_job=AsyncMock(return_value=[]))
+    hass = SimpleNamespace(
+        config=SimpleNamespace(config_dir="/config"),
+        data={},
+        async_add_executor_job=AsyncMock(return_value=[]),
+    )
     monkeypatch.setattr(skills, "SkillManager", manager_type)
     monkeypatch.setattr(skills, "SkillMdParser", _Parser)
 
-    runtime_hardening._install_skill_hardening()
     manager = await manager_type.async_get_instance(hass)
 
     assert manager_type._instance is manager
-    assert manager._user_skills_dir is None
-    assert manager._extended_openai_skills_initialized is True
+    assert manager._user_skills_dir == manager.user_skills_dir
+    assert manager._initialized is True
 
 
 @pytest.mark.asyncio
@@ -77,13 +52,16 @@ async def test_skill_getter_adopts_late_directory_before_first_load(
 ) -> None:
     """An existing uninitialized singleton may still adopt its configured Skill path."""
     manager_type = _skill_manager_type()
-    hass = SimpleNamespace(data={}, async_add_executor_job=AsyncMock(return_value=[]))
+    hass = SimpleNamespace(
+        config=SimpleNamespace(config_dir="/config"),
+        data={},
+        async_add_executor_job=AsyncMock(return_value=[]),
+    )
     manager = manager_type(hass)
     manager_type._instance = manager
     monkeypatch.setattr(skills, "SkillManager", manager_type)
     monkeypatch.setattr(skills, "SkillMdParser", _Parser)
 
-    runtime_hardening._install_skill_hardening()
     resolved = await manager_type.async_get_instance(hass, "/late-skills")
 
     assert resolved is manager
@@ -106,13 +84,12 @@ async def test_skill_first_load_failure_does_not_clear_newer_singleton(
         raise OSError("load failed")
 
     hass = SimpleNamespace(
+        config=SimpleNamespace(config_dir="/config"),
         data={},
         async_add_executor_job=AsyncMock(side_effect=fail_after_replacement),
     )
     monkeypatch.setattr(skills, "SkillManager", manager_type)
     monkeypatch.setattr(skills, "SkillMdParser", _Parser)
-
-    runtime_hardening._install_skill_hardening()
 
     with pytest.raises(OSError, match="load failed"):
         await manager_type.async_get_instance(hass)
@@ -128,7 +105,5 @@ def test_loaded_skill_getter_returns_none_for_uninitialized_singleton(
     manager_type._instance = manager_type(SimpleNamespace())
     monkeypatch.setattr(skills, "SkillManager", manager_type)
     monkeypatch.setattr(skills, "SkillMdParser", _Parser)
-
-    runtime_hardening._install_skill_hardening()
 
     assert manager_type.get_loaded_instance() is None

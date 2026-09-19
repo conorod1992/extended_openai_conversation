@@ -383,11 +383,3 @@ class SkillManager:
     def get_all_skills(self) -> list[Skill]:
         """Get all Skills from the current atomic catalogue snapshot."""
         return list(self._skills.values())
-
-
-# runtime_hardening predates the manager-owned boundary. These markers preserve the
-# existing installation order while preventing it from replacing the authoritative
-# manager implementations with a second lock/catalogue path.
-SkillManager.async_load_skills._extended_openai_atomic_load = True  # type: ignore[attr-defined]
-SkillManager.async_get_instance.__func__._extended_openai_init_guard = True  # type: ignore[attr-defined]
-SkillManager.get_loaded_instance.__func__._extended_openai_loaded_guard = True  # type: ignore[attr-defined]

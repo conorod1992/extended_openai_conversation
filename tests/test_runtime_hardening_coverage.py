@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -20,21 +21,6 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
 )
 
 
-def test_install_runtime_hardening_is_one_shot(monkeypatch: pytest.MonkeyPatch) -> None:
-    installers = [Mock() for _ in range(2)]
-    monkeypatch.setattr(runtime_hardening, "_INSTALLED", False)
-    monkeypatch.setattr(runtime_hardening, "_install_skill_hardening", installers[0])
-    monkeypatch.setattr(
-        runtime_hardening, "_install_guest_mode_hardening", installers[1]
-    )
-
-    runtime_hardening.install_runtime_hardening()
-    runtime_hardening.install_runtime_hardening()
-
-    for installer in installers:
-        installer.assert_called_once_with()
-
-
 @pytest.mark.asyncio
 async def test_skill_load_publishes_complete_result_and_skips_bad_skill(
     monkeypatch: pytest.MonkeyPatch,
@@ -48,35 +34,11 @@ async def test_skill_load_publishes_complete_result_and_skips_bad_skill(
                 return None
             return SimpleNamespace(name=path.parent.name)
 
-    class FakeManager:
+    class FakeManager(skills.SkillManager):
         _instance = None
 
-        def __init__(self, hass: Any) -> None:
-            self._hass = hass
-            self._skills = {"old": object()}
-            self._user_skills_dir: Path | None = None
-
-        @property
-        def user_skills_dir(self) -> Path:
-            return self._user_skills_dir or Path("/skills")
-
-        def _load_skills_from_dir_sync(self, _path: Path) -> list[tuple[Path, str]]:
-            raise AssertionError("executor stub should supply discovery data")
-
-        async def async_load_skills(self) -> None:
-            raise AssertionError("installer should replace this method")
-
-        @classmethod
-        async def async_get_instance(
-            cls, hass: Any, user_skills_dir: str | None = None
-        ):
-            raise AssertionError("installer should replace this method")
-
-        @classmethod
-        def get_loaded_instance(cls):
-            return None
-
     hass = SimpleNamespace(
+        config=SimpleNamespace(config_dir="/config"),
         data={},
         async_add_executor_job=AsyncMock(
             return_value=[
@@ -89,12 +51,11 @@ async def test_skill_load_publishes_complete_result_and_skips_bad_skill(
     monkeypatch.setattr(skills, "SkillManager", FakeManager)
     monkeypatch.setattr(skills, "SkillMdParser", FakeParser)
 
-    runtime_hardening._install_skill_hardening()
     manager = FakeManager(hass)
     await manager.async_load_skills()
 
     assert set(manager._skills) == {"good"}
-    assert manager._extended_openai_skills_initialized is True
+    assert manager._initialized is True
 
 
 @pytest.mark.asyncio
@@ -106,40 +67,17 @@ async def test_skill_first_load_failure_clears_singleton_and_retry_succeeds(
         def parse(_content: str, _path: Path, _base: Path) -> Any:
             return None
 
-    class FakeManager:
+    class FakeManager(skills.SkillManager):
         _instance = None
 
-        def __init__(self, hass: Any) -> None:
-            self._hass = hass
-            self._skills = {}
-            self._user_skills_dir: Path | None = None
-
-        @property
-        def user_skills_dir(self) -> Path:
-            return self._user_skills_dir or Path("/default-skills")
-
-        def _load_skills_from_dir_sync(self, _path: Path) -> list[Any]:
-            return []
-
-        async def async_load_skills(self) -> None:
-            raise AssertionError("installer should replace this method")
-
-        @classmethod
-        async def async_get_instance(
-            cls, hass: Any, user_skills_dir: str | None = None
-        ):
-            raise AssertionError("installer should replace this method")
-
-        @classmethod
-        def get_loaded_instance(cls):
-            return None
-
     executor = AsyncMock(side_effect=[OSError("disk unavailable"), []])
-    hass = SimpleNamespace(data={}, async_add_executor_job=executor)
+    hass = SimpleNamespace(
+        config=SimpleNamespace(config_dir="/config"),
+        data={},
+        async_add_executor_job=executor,
+    )
     monkeypatch.setattr(skills, "SkillManager", FakeManager)
     monkeypatch.setattr(skills, "SkillMdParser", FakeParser)
-
-    runtime_hardening._install_skill_hardening()
 
     with pytest.raises(OSError, match="disk unavailable"):
         await FakeManager.async_get_instance(hass, "/custom-skills")
@@ -148,7 +86,7 @@ async def test_skill_first_load_failure_clears_singleton_and_retry_succeeds(
     manager = await FakeManager.async_get_instance(hass, "/custom-skills")
     assert FakeManager._instance is manager
     assert manager._user_skills_dir == Path("/custom-skills")
-    assert manager._extended_openai_skills_initialized is True
+    assert manager._initialized is True
     assert FakeManager.get_loaded_instance() is manager
     assert await FakeManager.async_get_instance(hass, "/ignored-after-init") is manager
 
@@ -161,9 +99,9 @@ async def test_guest_mode_storage_failure_remains_retryable(
         def __init__(self, **values: Any) -> None:
             self.__dict__.update(values)
 
-    class FakeManager:
-        async def async_initialize(self) -> None:
-            raise AssertionError("installer should replace this method")
+    class FakeManager(guest_mode.GuestModeManager):
+        def __init__(self):
+            self._initialization_lock = asyncio.Lock()
 
     store = SimpleNamespace(
         async_load=AsyncMock(
@@ -189,8 +127,6 @@ async def test_guest_mode_storage_failure_remains_retryable(
     parse_timestamp = Mock()
     monkeypatch.setattr(guest_mode, "_parse_timestamp", parse_timestamp)
 
-    runtime_hardening._install_guest_mode_hardening()
-
     with pytest.raises(OSError, match="storage unavailable"):
         await manager.async_initialize()
     assert manager._initialized is False
@@ -212,9 +148,9 @@ async def test_guest_mode_malformed_state_is_ignored_but_initialized(
         def __init__(self, **values: Any) -> None:
             self.__dict__.update(values)
 
-    class FakeManager:
-        async def async_initialize(self) -> None:
-            raise AssertionError("installer should replace this method")
+    class FakeManager(guest_mode.GuestModeManager):
+        def __init__(self):
+            self._initialization_lock = asyncio.Lock()
 
     manager = FakeManager()
     manager.hass = SimpleNamespace()
@@ -236,7 +172,6 @@ async def test_guest_mode_malformed_state_is_ignored_but_initialized(
         Mock(side_effect=ValueError("invalid timestamp")),
     )
 
-    runtime_hardening._install_guest_mode_hardening()
     await manager.async_initialize()
 
     assert manager._initialized is True

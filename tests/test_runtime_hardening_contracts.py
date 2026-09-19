@@ -1,25 +1,17 @@
 """Regression contracts for runtime hardening state and retry behavior."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses import guest_mode
-from custom_components.extended_openai_conversation_responses import runtime_hardening as runtime
 
 
 @pytest.fixture
-def install_state_guard(monkeypatch):
-    """Install the state initializer guard from a clean unwrapped baseline."""
-
-    async def original_initialize(_manager):
-        raise AssertionError("guard did not replace the original initializer")
-
-    monkeypatch.setattr(
-        guest_mode.GuestModeManager, "async_initialize", original_initialize
-    )
-    runtime._install_guest_mode_hardening()
+def install_state_guard():
+    """Exercise the initializer defined by the owning manager."""
     return guest_mode.GuestModeManager.async_initialize
 
 
@@ -30,6 +22,7 @@ def manager(hass, stored):
         _store=SimpleNamespace(async_load=AsyncMock(return_value=stored)),
         _schedule="unchanged",
         _initialized=False,
+        _initialization_lock=asyncio.Lock(),
     )
 
 
@@ -69,6 +62,7 @@ async def test_storage_failure_stays_retryable(hass, install_state_guard):
         _store=SimpleNamespace(async_load=load),
         _schedule=None,
         _initialized=False,
+        _initialization_lock=asyncio.Lock(),
     )
 
     with pytest.raises(OSError, match="store unavailable"):
@@ -81,20 +75,3 @@ async def test_storage_failure_stays_retryable(hass, install_state_guard):
     assert subject._initialized is True
     assert subject._schedule is None
     assert load.await_count == 2
-
-
-def test_state_guard_installation_is_idempotent(monkeypatch):
-    async def original_initialize(_manager):
-        return None
-
-    monkeypatch.setattr(
-        guest_mode.GuestModeManager, "async_initialize", original_initialize
-    )
-
-    runtime._install_guest_mode_hardening()
-    installed = guest_mode.GuestModeManager.async_initialize
-    runtime._install_guest_mode_hardening()
-
-    assert guest_mode.GuestModeManager.async_initialize is installed
-    assert installed is not original_initialize
-    assert installed._extended_openai_guest_guard is True

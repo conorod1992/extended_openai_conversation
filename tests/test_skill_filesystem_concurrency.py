@@ -7,9 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses.runtime_hardening import (
-    install_runtime_hardening,
-)
 from custom_components.extended_openai_conversation_responses.skills import SkillManager
 
 
@@ -39,7 +36,6 @@ async def _manager(hass, tmp_path: Path) -> SkillManager:
 
 async def test_runtime_hardening_keeps_manager_owned_boundary(hass, tmp_path) -> None:
     """Startup wrappers must not replace the manager's authoritative lock path."""
-    install_runtime_hardening()
     manager = await _manager(hass, tmp_path)
     assert manager.filesystem_concurrency_safe is True
     assert hasattr(manager, "_filesystem_lock")
@@ -114,7 +110,9 @@ async def test_staging_is_outside_discovery_and_incomplete_paths_stay_hidden(
     assert manager.get_all_skills() == []
 
 
-async def test_scan_publish_and_remove_share_one_serialized_boundary(hass, tmp_path) -> None:
+async def test_scan_publish_and_remove_share_one_serialized_boundary(
+    hass, tmp_path
+) -> None:
     """Concurrent operations never expose staging or partial removal state."""
     manager = await _manager(hass, tmp_path)
     _write_skill(manager.user_skills_dir / "alpha", "Alpha")
@@ -142,7 +140,9 @@ async def test_scan_publish_and_remove_share_one_serialized_boundary(hass, tmp_p
     assert [skill.name for skill in manager.get_all_skills()] == ["beta"]
 
 
-async def test_publish_rescans_without_reentering_non_reentrant_lock(hass, tmp_path) -> None:
+async def test_publish_rescans_without_reentering_non_reentrant_lock(
+    hass, tmp_path
+) -> None:
     """Publication may discover under the owned lock without calling the public loader."""
     manager = await _manager(hass, tmp_path)
     staged = manager.staging_dir / "demo.download-test"

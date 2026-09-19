@@ -1,11 +1,7 @@
-"""Transactional persistence guards for durable in-memory managers."""
+"""Private Store preparation and residual delayed-tool persistence hardening."""
 
 from __future__ import annotations
 
-import asyncio
-from collections import defaultdict
-from collections.abc import Awaitable, Callable
-from copy import deepcopy
 from dataclasses import replace
 import os
 import stat
@@ -13,53 +9,7 @@ from typing import Any
 
 from homeassistant.helpers.storage import Store
 
-from .context_usage_hardening import install_context_usage_hardening
-from .hot_path_cleanup import install_hot_path_cleanup
-from .knowledge import KnowledgeLibrary
-from .lifecycle_optimizations import install_lifecycle_optimizations
-from .memory import PersistentMemory
-from .request_rules import DEFAULT_MATCHING, DEFAULT_WORDING_GROUPS, RequestRules
-from .runtime_failure_hardening import install_runtime_failure_hardening
-from .runtime_hardening import install_runtime_hardening
-from .safety_hardening import install_safety_hardening
-
-_COMMITTED_STATE = "_extended_openai_committed_state"
-_INSTALLED: set[type[Any]] = set()
 _PRIVATE_STORE_MODE = 0o600
-
-
-type Snapshotter = Callable[[Any], Any]
-type Restorer = Callable[[Any, Any], None]
-type Resetter = Callable[[Any], None]
-
-
-def install_persistence_transactions() -> None:
-    """Make durable manager mutations roll back when their Store write fails."""
-    _install_manager_guard(
-        PersistentMemory,
-        _snapshot_memory,
-        _restore_memory,
-        _reset_memory,
-    )
-    _install_manager_guard(
-        KnowledgeLibrary,
-        _snapshot_knowledge,
-        _restore_knowledge,
-        _reset_knowledge,
-    )
-    _install_manager_guard(
-        RequestRules,
-        _snapshot_request_rules,
-        _restore_request_rules,
-        _reset_request_rules,
-    )
-    _install_delayed_tool_store_guard()
-    install_runtime_failure_hardening()
-    install_runtime_hardening()
-    install_safety_hardening()
-    install_lifecycle_optimizations()
-    install_hot_path_cleanup()
-    install_context_usage_hardening()
 
 
 def _repair_private_store_mode(path: str) -> None:
@@ -83,7 +33,7 @@ async def _async_prepare_private_store(store: Any) -> None:
     await store.hass.async_add_executor_job(_repair_private_store_mode, store.path)
 
 
-def _install_delayed_tool_store_guard() -> None:
+def install_delayed_tool_store_guard() -> None:
     """Harden delayed-tool persistence and keep retry limits fail-safe."""
     from .delayed_tools import _MAX_AGENT_RETRIES, DelayedToolManager
 
@@ -135,154 +85,3 @@ def _install_delayed_tool_store_guard() -> None:
         "_async_retry_agent",
         async_retry_agent,
     )
-
-
-def _install_manager_guard(
-    manager_type: type[Any],
-    snapshotter: Snapshotter,
-    restorer: Restorer,
-    resetter: Resetter,
-) -> None:
-    """Wrap initialization and the save boundary once for one manager class."""
-    if manager_type in _INSTALLED:
-        return
-
-    original_initialize: Callable[..., Awaitable[Any]] = manager_type.async_initialize
-    original_save: Callable[..., Awaitable[Any]] = manager_type._async_save_locked
-
-    async def async_initialize(manager: Any, *args: Any, **kwargs: Any) -> Any:
-        if manager_type is RequestRules:
-            await _async_prepare_private_store(manager._store)
-        try:
-            result = await original_initialize(manager, *args, **kwargs)
-        except Exception:
-            # Initialization can itself rewrite migrated/pruned data. A failed write
-            # must leave the manager retryable instead of exposing half-loaded state.
-            resetter(manager)
-            raise
-        setattr(manager, _COMMITTED_STATE, snapshotter(manager))
-        return result
-
-    async def async_save_locked(manager: Any, *args: Any, **kwargs: Any) -> Any:
-        save_task: asyncio.Future[Any] = asyncio.ensure_future(
-            original_save(manager, *args, **kwargs)
-        )
-        cancellation: asyncio.CancelledError | None = None
-
-        # A caller cancellation must not abort a Store write after the manager's live
-        # state has already changed. Keep observing the save until it reaches a known
-        # result; repeated cancellation requests remain deferred to this boundary.
-        while not save_task.done():
-            try:
-                await asyncio.shield(save_task)
-            except asyncio.CancelledError as err:
-                if save_task.cancelled():
-                    committed = getattr(manager, _COMMITTED_STATE, None)
-                    if committed is not None:
-                        restorer(manager, committed)
-                    raise
-                if cancellation is None:
-                    cancellation = err
-            except Exception:
-                # Inspect the finished task below so rollback and cancellation
-                # precedence stay in one place.
-                break
-
-        try:
-            result = save_task.result()
-        except asyncio.CancelledError:
-            committed = getattr(manager, _COMMITTED_STATE, None)
-            if committed is not None:
-                restorer(manager, committed)
-            raise
-        except Exception as err:
-            committed = getattr(manager, _COMMITTED_STATE, None)
-            if committed is not None:
-                restorer(manager, committed)
-            if cancellation is not None:
-                raise cancellation from err
-            raise
-
-        setattr(manager, _COMMITTED_STATE, snapshotter(manager))
-        if cancellation is not None:
-            raise cancellation
-        return result
-
-    manager_type.async_initialize = async_initialize
-    manager_type._async_save_locked = async_save_locked
-    _INSTALLED.add(manager_type)
-
-
-def _snapshot_memory(manager: Any) -> dict[str, Any]:
-    """Keep only durable facts/counter state; derived indexes are rebuilt if needed."""
-    return {"memories": dict(manager._memories)}
-
-
-def _restore_memory(manager: Any, snapshot: dict[str, Any]) -> None:
-    manager._memories = dict(snapshot["memories"])
-    manager._token_index = defaultdict(set)
-    manager._key_index = {}
-    for memory in manager._memories.values():
-        manager._index(memory)
-    # Embeddings are a regenerable cache. Clearing them is safer than retaining an
-    # entry invalidated by the failed mutation while restoring an older fact.
-    manager._embedding_cache.clear()
-    manager._embedding_cache_dirty = True
-
-
-def _reset_memory(manager: Any) -> None:
-    manager._memories.clear()
-    manager._token_index = defaultdict(set)
-    manager._key_index.clear()
-    manager._embedding_cache.clear()
-    manager._embedding_cache_dirty = False
-    manager._initialized = False
-    if hasattr(manager, _COMMITTED_STATE):
-        delattr(manager, _COMMITTED_STATE)
-
-
-def _snapshot_knowledge(manager: Any) -> dict[str, Any]:
-    return {"sources": dict(manager._sources)}
-
-
-def _restore_knowledge(manager: Any, snapshot: dict[str, Any]) -> None:
-    manager._sources = dict(snapshot["sources"])
-    manager._chunks.clear()
-    manager._token_index = defaultdict(set)
-    for source in manager._sources.values():
-        manager._index(source)
-
-
-def _reset_knowledge(manager: Any) -> None:
-    manager._sources.clear()
-    manager._chunks.clear()
-    manager._token_index = defaultdict(set)
-    manager._initialized = False
-    if hasattr(manager, _COMMITTED_STATE):
-        delattr(manager, _COMMITTED_STATE)
-
-
-def _snapshot_request_rules(manager: Any) -> dict[str, Any]:
-    """Capture the exact last committed Request Rule configuration."""
-    return {
-        "defaults": deepcopy(manager._defaults),
-        "wording_groups": deepcopy(manager._wording_groups),
-        "rules": deepcopy(manager._rules),
-    }
-
-
-def _restore_request_rules(manager: Any, snapshot: dict[str, Any]) -> None:
-    manager._defaults = deepcopy(snapshot["defaults"])
-    manager._wording_groups = deepcopy(snapshot["wording_groups"])
-    manager._rules = deepcopy(snapshot["rules"])
-    manager._sort_and_compile()
-
-
-def _reset_request_rules(manager: Any) -> None:
-    manager._defaults = dict(DEFAULT_MATCHING)
-    manager._wording_groups = deepcopy(list(DEFAULT_WORDING_GROUPS))
-    manager._rules = []
-    manager._sort_and_compile()
-    manager._initialized = False
-    if hasattr(manager, _COMMITTED_STATE):
-        delattr(manager, _COMMITTED_STATE)

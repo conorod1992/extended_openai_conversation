@@ -303,60 +303,72 @@ class PersistentMemory:
         async with self._lock:
             if self._initialized:
                 return
-            data = await self._storage.async_load()
-            needs_save = False
-            if data is None:
-                raw_memories: list[Any] = []
-            elif not isinstance(data, Mapping) or "memories" not in data:
-                raw_memories = []
-                needs_save = True
-            else:
-                candidate = data.get("memories")
-                if not isinstance(candidate, list):
+            try:
+                data = await self._storage.async_load()
+                needs_save = False
+                if data is None:
+                    raw_memories: list[Any] = []
+                elif not isinstance(data, Mapping) or "memories" not in data:
                     raw_memories = []
                     needs_save = True
                 else:
-                    raw_memories = candidate
-                    if len(raw_memories) > MAX_MEMORIES_PER_AGENT:
-                        raw_memories = raw_memories[:MAX_MEMORIES_PER_AGENT]
+                    candidate = data.get("memories")
+                    if not isinstance(candidate, list):
+                        raw_memories = []
                         needs_save = True
+                    else:
+                        raw_memories = candidate
+                        if len(raw_memories) > MAX_MEMORIES_PER_AGENT:
+                            raw_memories = raw_memories[:MAX_MEMORIES_PER_AGENT]
+                            needs_save = True
 
-            legacy_embeddings_found = False
-            seen_ids: set[str] = set()
-            seen_keys: set[tuple[str, str]] = set()
-            for raw in raw_memories:
-                legacy_embeddings_found |= (
-                    isinstance(raw, Mapping) and "embedding" in raw
-                )
-                try:
-                    memory = _validate_persistent_memory_record(raw)
-                    if memory.memory_id in seen_ids:
-                        raise ValueError("duplicate persistent memory ID")
-                    if memory.key is not None:
-                        key_pair = (memory.user_id, memory.key)
-                        if key_pair in seen_keys:
-                            raise ValueError("duplicate canonical key in memory scope")
-                        seen_keys.add(key_pair)
-                except TypeError, ValueError:
-                    needs_save = True
-                    _LOGGER.warning("Ignoring malformed persistent memory record")
-                    continue
-                seen_ids.add(memory.memory_id)
-                self._assert_key_available(memory)
-                self._memories[memory.memory_id] = memory
-                self._index(memory)
-            if legacy_embeddings_found or needs_save:
-                await self._storage.async_save(
-                    {
-                        "memories": [
-                            _record_as_storage_dict(memory)
-                            for memory in self._memories.values()
-                        ]
-                    }
-                )
-            await self._async_load_embedding_cache_locked()
-            self._committed_state = self._snapshot_mutation_state()
-            self._initialized = True
+                legacy_embeddings_found = False
+                seen_ids: set[str] = set()
+                seen_keys: set[tuple[str, str]] = set()
+                for raw in raw_memories:
+                    legacy_embeddings_found |= (
+                        isinstance(raw, Mapping) and "embedding" in raw
+                    )
+                    try:
+                        memory = _validate_persistent_memory_record(raw)
+                        if memory.memory_id in seen_ids:
+                            raise ValueError("duplicate persistent memory ID")
+                        if memory.key is not None:
+                            key_pair = (memory.user_id, memory.key)
+                            if key_pair in seen_keys:
+                                raise ValueError(
+                                    "duplicate canonical key in memory scope"
+                                )
+                            seen_keys.add(key_pair)
+                    except TypeError, ValueError:
+                        needs_save = True
+                        _LOGGER.warning("Ignoring malformed persistent memory record")
+                        continue
+                    seen_ids.add(memory.memory_id)
+                    self._assert_key_available(memory)
+                    self._memories[memory.memory_id] = memory
+                    self._index(memory)
+                if legacy_embeddings_found or needs_save:
+                    await self._storage.async_save(
+                        {
+                            "memories": [
+                                _record_as_storage_dict(memory)
+                                for memory in self._memories.values()
+                            ]
+                        }
+                    )
+                await self._async_load_embedding_cache_locked()
+                self._remember_committed_state()
+                self._initialized = True
+            except BaseException:
+                self._memories.clear()
+                self._token_index = defaultdict(set)
+                self._key_index.clear()
+                self._embedding_cache.clear()
+                self._embedding_cache_dirty = False
+                self._initialized = False
+                self._committed_state = None
+                raise
 
     def set_embedding_provider(
         self, provider: EmbeddingProvider | None, model: str = "default"
@@ -1144,23 +1156,64 @@ class PersistentMemory:
         return True
 
     async def _async_save_locked(self) -> None:
-        previous = self._committed_state
+        """Settle each Store write before propagating cancellation or rolling back."""
+        save_task = asyncio.ensure_future(self._async_persist_locked())
+        cancellation: asyncio.CancelledError | None = None
+
+        # A caller cancellation must not abort a Store write after the manager's live
+        # state has already changed. Keep observing the save until it reaches a known
+        # result; repeated cancellation requests remain deferred to this boundary.
+        while not save_task.done():
+            try:
+                await asyncio.shield(save_task)
+            except asyncio.CancelledError as err:
+                if save_task.cancelled():
+                    self._restore_committed_state()
+                    raise
+                if cancellation is None:
+                    cancellation = err
+            except Exception:
+                # Inspect the finished task below so rollback and cancellation
+                # precedence stay in one place.
+                break
+
         try:
-            await self._storage.async_save(
-                {
-                    "memories": [
-                        _record_as_storage_dict(memory)
-                        for memory in self._memories.values()
-                    ]
-                }
-            )
-        except Exception:
-            if previous is not None:
-                self._restore_mutation_state(previous)
+            save_task.result()
+        except asyncio.CancelledError:
+            self._restore_committed_state()
             raise
+        except Exception as err:
+            self._restore_committed_state()
+            if cancellation is not None:
+                raise cancellation from err
+            raise
+
+        self._remember_committed_state()
+        if cancellation is not None:
+            raise cancellation
+
+    async def _async_persist_locked(self) -> None:
+        """Write durable facts and then the regenerable embedding cache."""
+        await self._storage.async_save(
+            {
+                "memories": [
+                    _record_as_storage_dict(memory)
+                    for memory in self._memories.values()
+                ]
+            }
+        )
         if self._embedding_cache_dirty:
             await self._async_save_embedding_cache_locked()
+
+    def _remember_committed_state(self) -> None:
         self._committed_state = self._snapshot_mutation_state()
+
+    def _restore_committed_state(self) -> None:
+        if self._committed_state is not None:
+            self._restore_mutation_state(self._committed_state)
+            # Embeddings are regenerable; a failed durable mutation invalidates them.
+            self._embedding_cache.clear()
+            self._embedding_cache_dirty = True
 
     def _cached_embedding(self, memory: MemoryRecord) -> list[float] | None:
         entry = self._embedding_cache.get(memory.memory_id)

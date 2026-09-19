@@ -39,6 +39,7 @@ from .guest_mode import (
 )
 from .helpers import get_model_config, get_reasoning_effort_options
 from .model_catalog import all_reasoning_efforts
+from .persistence_hardening import _async_prepare_private_store
 from .request_rule_patterns import (
     MAX_AGENT_PATTERN_STATES,
     CompiledSentencePattern,
@@ -207,88 +208,102 @@ class RequestRules:
         self._diagnostics: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._committed_state: dict[str, Any] | None = None
 
     async def async_initialize(self) -> None:
         """Load stored rules while preserving newly unsupported patterns for repair."""
         async with self._lock:
             if self._initialized:
                 return
-            stored = await self._store.async_load()
-            migrated = False
-            raw_rules: Sequence[Any] = ()
-            if stored is None:
-                pass
-            elif not isinstance(stored, Mapping):
-                _LOGGER.warning("Resetting malformed stored Request Rules container")
-                migrated = True
-            else:
-                try:
-                    self._defaults = validate_matching_settings(
-                        stored.get("defaults", DEFAULT_MATCHING)
-                    )
-                except ValueError:
-                    _LOGGER.warning("Ignoring invalid stored Request Rule defaults")
-                    migrated = True
-                try:
-                    self._wording_groups = validate_wording_groups(
-                        stored.get("wording_groups", DEFAULT_WORDING_GROUPS)
-                    )
-                except ValueError:
+            try:
+                await _async_prepare_private_store(self._store)
+                stored = await self._store.async_load()
+                migrated = False
+                raw_rules: Sequence[Any] = ()
+                if stored is None:
+                    pass
+                elif not isinstance(stored, Mapping):
                     _LOGGER.warning(
-                        "Ignoring invalid stored Request Rule wording groups"
+                        "Resetting malformed stored Request Rules container"
                     )
-                    migrated = True
-                stored_rules = stored.get("rules", [])
-                if not isinstance(stored_rules, Sequence) or isinstance(
-                    stored_rules, (str, bytes)
-                ):
-                    _LOGGER.warning("Resetting malformed stored Request Rules list")
                     migrated = True
                 else:
-                    if len(stored_rules) > MAX_RULES:
+                    try:
+                        self._defaults = validate_matching_settings(
+                            stored.get("defaults", DEFAULT_MATCHING)
+                        )
+                    except ValueError:
+                        _LOGGER.warning("Ignoring invalid stored Request Rule defaults")
+                        migrated = True
+                    try:
+                        self._wording_groups = validate_wording_groups(
+                            stored.get("wording_groups", DEFAULT_WORDING_GROUPS)
+                        )
+                    except ValueError:
                         _LOGGER.warning(
-                            "Stored Request Rules exceed the supported limit; "
-                            "keeping the first %d",
-                            MAX_RULES,
+                            "Ignoring invalid stored Request Rule wording groups"
                         )
                         migrated = True
-                    raw_rules = stored_rules[:MAX_RULES]
+                    stored_rules = stored.get("rules", [])
+                    if not isinstance(stored_rules, Sequence) or isinstance(
+                        stored_rules, (str, bytes)
+                    ):
+                        _LOGGER.warning("Resetting malformed stored Request Rules list")
+                        migrated = True
+                    else:
+                        if len(stored_rules) > MAX_RULES:
+                            _LOGGER.warning(
+                                "Stored Request Rules exceed the supported limit; "
+                                "keeping the first %d",
+                                MAX_RULES,
+                            )
+                            migrated = True
+                        raw_rules = stored_rules[:MAX_RULES]
 
-            seen_ids: set[str] = set()
-            for raw in raw_rules:
-                try:
-                    candidate, scope_migrated = (
-                        _normalize_legacy_consumed_request_scope(raw)
-                    )
-                    if scope_migrated:
-                        _LOGGER.warning(
-                            "Migrating stored complete Request Rule %s from request "
-                            "scope to conversation scope",
-                            raw.get("id", "<unknown>")
-                            if isinstance(raw, Mapping)
-                            else "<unknown>",
+                seen_ids: set[str] = set()
+                for raw in raw_rules:
+                    try:
+                        candidate, scope_migrated = (
+                            _normalize_legacy_consumed_request_scope(raw)
                         )
-                        migrated = True
-                    validated = validate_rule(
-                        candidate, validate_sentence_pattern=False
-                    )
-                    if validated["id"] in seen_ids:
-                        _LOGGER.warning(
-                            "Ignoring duplicate stored Request Rule id: %s",
-                            validated["id"],
+                        if scope_migrated:
+                            _LOGGER.warning(
+                                "Migrating stored complete Request Rule %s from request "
+                                "scope to conversation scope",
+                                raw.get("id", "<unknown>")
+                                if isinstance(raw, Mapping)
+                                else "<unknown>",
+                            )
+                            migrated = True
+                        validated = validate_rule(
+                            candidate, validate_sentence_pattern=False
                         )
+                        if validated["id"] in seen_ids:
+                            _LOGGER.warning(
+                                "Ignoring duplicate stored Request Rule id: %s",
+                                validated["id"],
+                            )
+                            migrated = True
+                            continue
+                        seen_ids.add(validated["id"])
+                        self._rules.append(validated)
+                        migrated = migrated or validated != raw
+                    except ValueError as err:
+                        _LOGGER.warning("Ignoring invalid stored Request Rule: %s", err)
                         migrated = True
-                        continue
-                    seen_ids.add(validated["id"])
-                    self._rules.append(validated)
-                    migrated = migrated or validated != raw
-                except ValueError as err:
-                    _LOGGER.warning("Ignoring invalid stored Request Rule: %s", err)
-                    migrated = True
-            migrated = self._sort_and_compile() or migrated
-            if migrated:
-                await self._async_save_locked()
-            self._initialized = True
+                migrated = self._sort_and_compile() or migrated
+                if migrated:
+                    await self._async_save_locked()
+                self._remember_committed_state()
+                self._initialized = True
+            except BaseException:
+                self._defaults = dict(DEFAULT_MATCHING)
+                self._wording_groups = deepcopy(list(DEFAULT_WORDING_GROUPS))
+                self._rules = []
+                self._sort_and_compile()
+                self._initialized = False
+                self._committed_state = None
+                raise
 
     def revision(self) -> str:
         """Return a deterministic token for the current durable rule set."""
@@ -721,13 +736,66 @@ class RequestRules:
         return order_changed
 
     async def _async_save_locked(self) -> None:
-        await self._store.async_save(
-            {
-                "defaults": self._defaults,
-                "wording_groups": self._wording_groups,
-                "rules": self._rules,
-            }
+        """Settle each Store write before propagating cancellation or rolling back."""
+        save_task = asyncio.ensure_future(
+            self._store.async_save(
+                {
+                    "defaults": self._defaults,
+                    "wording_groups": self._wording_groups,
+                    "rules": self._rules,
+                }
+            )
         )
+        cancellation: asyncio.CancelledError | None = None
+
+        # A caller cancellation must not abort a Store write after the manager's live
+        # state has already changed. Keep observing the save until it reaches a known
+        # result; repeated cancellation requests remain deferred to this boundary.
+        while not save_task.done():
+            try:
+                await asyncio.shield(save_task)
+            except asyncio.CancelledError as err:
+                if save_task.cancelled():
+                    self._restore_committed_state()
+                    raise
+                if cancellation is None:
+                    cancellation = err
+            except Exception:
+                # Inspect the finished task below so rollback and cancellation
+                # precedence stay in one place.
+                break
+
+        try:
+            save_task.result()
+        except asyncio.CancelledError:
+            self._restore_committed_state()
+            raise
+        except Exception as err:
+            self._restore_committed_state()
+            if cancellation is not None:
+                raise cancellation from err
+            raise
+
+        self._remember_committed_state()
+        if cancellation is not None:
+            raise cancellation
+
+    def _remember_committed_state(self) -> None:
+        """Capture the exact last committed Request Rule configuration."""
+        self._committed_state = {
+            "defaults": deepcopy(self._defaults),
+            "wording_groups": deepcopy(self._wording_groups),
+            "rules": deepcopy(self._rules),
+        }
+
+    def _restore_committed_state(self) -> None:
+        snapshot = self._committed_state
+        if snapshot is None:
+            return
+        self._defaults = deepcopy(snapshot["defaults"])
+        self._wording_groups = deepcopy(snapshot["wording_groups"])
+        self._rules = deepcopy(snapshot["rules"])
+        self._sort_and_compile()
 
 
 class RequestRuleRuntime:

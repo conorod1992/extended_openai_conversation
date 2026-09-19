@@ -15,7 +15,6 @@ from custom_components.extended_openai_conversation_responses.request_rule_patte
 from custom_components.extended_openai_conversation_responses.request_rules import (
     DEFAULT_MATCHING,
     RequestRuleRuntime,
-    RequestRuleStore,
     RequestRules,
     async_evaluate_rule,
 )
@@ -192,6 +191,7 @@ async def test_legacy_rules_can_be_repaired_disabled_and_backed_up() -> None:
 
 async def test_matching_uses_complete_snapshot_during_rebuild(monkeypatch) -> None:
     from concurrent.futures import ThreadPoolExecutor
+
     from custom_components.extended_openai_conversation_responses import (
         request_rules as module,
     )
@@ -368,17 +368,20 @@ async def test_in_flight_match_keeps_its_original_configuration(monkeypatch) -> 
     assert manager.match("hello") is None
 
 
-async def test_persistence_reset_clears_matching_and_diagnostics() -> None:
-    from custom_components.extended_openai_conversation_responses.persistence_hardening import (
-        _reset_request_rules,
+async def test_persistence_reset_clears_matching_and_diagnostics(monkeypatch) -> None:
+    store = MemoryStore(
+        {"rules": [_rule(0, "hello"), _rule(1, "(on; downstairs)"), {}]}
     )
+    manager = RequestRules(store)
 
-    manager = RequestRules(
-        MemoryStore({"rules": [_rule(0, "hello"), _rule(1, "(on; downstairs)")]})
-    )
-    await manager.async_initialize()
-    assert manager.match("hello") is not None
-    assert manager.snapshot()["diagnostics"]
-    _reset_request_rules(manager)
+    async def fail_save(data):
+        assert manager.match("hello") is not None
+        assert manager.snapshot()["diagnostics"]
+        raise OSError("repair write failed")
+
+    monkeypatch.setattr(store, "async_save", fail_save)
+    with pytest.raises(OSError, match="repair write failed"):
+        await manager.async_initialize()
+    assert not manager._initialized
     assert manager.match("hello") is None
     assert not manager.snapshot()["diagnostics"]

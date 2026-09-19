@@ -15,13 +15,6 @@ from custom_components.extended_openai_conversation_responses.knowledge import (
 from custom_components.extended_openai_conversation_responses.memory import (
     PersistentMemory,
 )
-from custom_components.extended_openai_conversation_responses.persistence_hardening import (
-    _COMMITTED_STATE,
-    _snapshot_knowledge,
-    _snapshot_memory,
-    _snapshot_request_rules,
-    install_persistence_transactions,
-)
 from custom_components.extended_openai_conversation_responses.request_rules import (
     RequestRules,
 )
@@ -85,16 +78,20 @@ async def _create_manager(kind: str, storage: BlockingStorage) -> Any:
 
 def _snapshot(kind: str, manager: Any) -> Any:
     if kind == "memory":
-        value = _snapshot_memory(manager)
+        value = {"memories": dict(manager._memories)}
     elif kind == "temporary_memory":
         value = {
             "records": dict(manager._records),
             "expired_pruned": manager.expired_pruned,
         }
     elif kind == "knowledge":
-        value = _snapshot_knowledge(manager)
+        value = {"sources": dict(manager._sources)}
     elif kind == "request_rules":
-        value = _snapshot_request_rules(manager)
+        value = {
+            "defaults": manager._defaults,
+            "wording_groups": manager._wording_groups,
+            "rules": manager._rules,
+        }
     else:  # pragma: no cover - protected by parametrization
         raise AssertionError(kind)
     return deepcopy(value)
@@ -104,7 +101,9 @@ def _committed_snapshot(kind, manager):
     if kind == "temporary_memory":
         records, expired_pruned = manager._committed_state
         return deepcopy({"records": records, "expired_pruned": expired_pruned})
-    return deepcopy(getattr(manager, _COMMITTED_STATE))
+    if kind == "memory":
+        return deepcopy({"memories": manager._committed_state.memories})
+    return deepcopy(manager._committed_state)
 
 
 async def _mutate(kind: str, manager: Any, marker: str) -> None:
@@ -157,7 +156,6 @@ async def test_cancellation_waits_for_successful_commit_and_advances_snapshot(
     kind: str,
 ) -> None:
     """Caller cancellation is deferred until each manager's save commits."""
-    install_persistence_transactions()
     storage = BlockingStorage()
     manager = await _create_manager(kind, storage)
     baseline = _snapshot(kind, manager)
@@ -196,7 +194,6 @@ async def test_cancellation_waits_for_successful_commit_and_advances_snapshot(
 @pytest.mark.parametrize("kind", _MANAGER_TYPES)
 async def test_cancellation_waits_for_failed_commit_then_rolls_back(kind: str) -> None:
     """A cancelled caller sees cancellation only after failed persistence rolls back."""
-    install_persistence_transactions()
     storage = BlockingStorage()
     manager = await _create_manager(kind, storage)
     baseline = _snapshot(kind, manager)

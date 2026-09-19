@@ -11,8 +11,6 @@ from unittest.mock import AsyncMock, patch
 import openai
 import pytest
 
-from homeassistant.util import dt as dt_util
-
 from custom_components.extended_openai_conversation_responses import async_unload_entry
 from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeLibrary,
@@ -23,15 +21,13 @@ from custom_components.extended_openai_conversation_responses.memory import (
 from custom_components.extended_openai_conversation_responses.openai_compat import (
     apply_openai_compatibility,
 )
-from custom_components.extended_openai_conversation_responses.persistence_hardening import (
-    install_persistence_transactions,
-)
 from custom_components.extended_openai_conversation_responses.template import (
     ExtendedOpenAITemplateManager,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemory,
 )
+from homeassistant.util import dt as dt_util
 
 
 class ToggleStorage:
@@ -52,7 +48,6 @@ class ToggleStorage:
 
 async def test_memory_save_failure_rolls_back_fact_and_indexes() -> None:
     """A failed durable write cannot leak the attempted memory update in-process."""
-    install_persistence_transactions()
     storage = ToggleStorage()
     manager = PersistentMemory(storage)
     await manager.async_initialize()
@@ -78,7 +73,6 @@ async def test_memory_save_failure_rolls_back_fact_and_indexes() -> None:
 
 async def test_knowledge_save_failure_rolls_back_source_and_index() -> None:
     """Knowledge search and management views remain at the last durable version."""
-    install_persistence_transactions()
     storage = ToggleStorage()
     manager = KnowledgeLibrary(storage)
     await manager.async_initialize()
@@ -88,9 +82,7 @@ async def test_knowledge_save_failure_rolls_back_source_and_index() -> None:
 
     storage.fail_saves = True
     with pytest.raises(RuntimeError, match="simulated Store failure"):
-        await manager.async_update(
-            source.source_id, content="Boiler marker zirconium."
-        )
+        await manager.async_update(source.source_id, content="Boiler marker zirconium.")
 
     restored = await manager.async_get(source.source_id)
     assert restored.content == "Boiler pressure should be 1.2 bar."
@@ -102,7 +94,6 @@ async def test_knowledge_save_failure_rolls_back_source_and_index() -> None:
 
 async def test_temporary_memory_save_failure_rolls_back_record() -> None:
     """Temporary memory also exposes only successfully persisted mutations."""
-    install_persistence_transactions()
     storage = ToggleStorage()
     manager = TemporaryMemory(storage)  # type: ignore[arg-type]
     await manager.async_initialize()
@@ -135,7 +126,9 @@ async def test_temporary_memory_save_failure_rolls_back_record() -> None:
 
 async def test_failed_platform_unload_keeps_template_lifecycle_acquired() -> None:
     """A failed platform unload must not tear down global template helpers."""
-    config_entries = SimpleNamespace(async_unload_platforms=AsyncMock(return_value=False))
+    config_entries = SimpleNamespace(
+        async_unload_platforms=AsyncMock(return_value=False)
+    )
     hass = SimpleNamespace(config_entries=config_entries)
     entry = SimpleNamespace(entry_id="entry-1")
 
@@ -149,7 +142,9 @@ async def test_failed_platform_unload_keeps_template_lifecycle_acquired() -> Non
 
 async def test_successful_platform_unload_releases_exact_entry() -> None:
     """Template lifecycle release happens only after platform unload succeeds."""
-    config_entries = SimpleNamespace(async_unload_platforms=AsyncMock(return_value=True))
+    config_entries = SimpleNamespace(
+        async_unload_platforms=AsyncMock(return_value=True)
+    )
     hass = SimpleNamespace(config_entries=config_entries)
     entry = SimpleNamespace(entry_id="entry-2")
 
