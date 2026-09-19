@@ -80,7 +80,11 @@ from .function_tool_recovery import (
 )
 from .functions import get_function
 from .ha_llm_tools import async_discover, current_snapshot, is_ha_tool, reference_key
-from .ha_tool_result_compat import make_tool_result_content, tool_result_data
+from .ha_tool_result_compat import (
+    is_tool_result_content,
+    make_tool_result_content,
+    tool_result_data,
+)
 from .helpers import get_api_mode, get_model_config
 from .provider_errors import provider_stream_error, provider_transport_error
 from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
@@ -340,7 +344,7 @@ def _convert_content_to_responses_param(
     items: list[dict[str, Any]] = []
 
     for content in chat_content:
-        if isinstance(content, conversation.ToolResultContent):
+        if is_tool_result_content(content):
             items.append(
                 {
                     "type": "function_call_output",
