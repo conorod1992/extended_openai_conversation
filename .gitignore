@@ -30,6 +30,8 @@ env/
 node_modules/
 frontend/dist/
 frontend/.vite/
+!custom_components/extended_openai_conversation_responses/frontend/dist/
+!custom_components/extended_openai_conversation_responses/frontend/dist/**
 
 # IDE
 .vscode/
