@@ -8,10 +8,6 @@ from typing import Any
 
 import pytest
 
-from homeassistant.components import conversation
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import llm
-
 from custom_components.extended_openai_conversation_responses import (
     entity as entity_module,
 )
@@ -23,6 +19,12 @@ from custom_components.extended_openai_conversation_responses.entity import (
 from custom_components.extended_openai_conversation_responses.function_execution import (
     split_legacy_execution_delay,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
+from homeassistant.components import conversation
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import llm
 
 
 class _ExecutorHass:
@@ -95,7 +97,7 @@ async def test_structured_function_results_are_preserved(
         [],
     )
 
-    assert result.tool_result == {"result": return_value}
+    assert tool_result_data(result) == {"result": return_value}
 
 
 def test_tool_result_serialization_is_deterministic() -> None:
@@ -132,7 +134,7 @@ async def test_expected_execution_failure_becomes_tool_result(monkeypatch) -> No
         [],
     )
 
-    assert result.tool_result == {
+    assert tool_result_data(result) == {
         "result": {"status": "error", "error": "action is unavailable"}
     }
 
@@ -208,7 +210,7 @@ async def test_real_delay_argument_reaches_function(monkeypatch) -> None:
     )
 
     assert received == [{"delay": 2.5}]
-    assert result.tool_result == {"result": "ok"}
+    assert tool_result_data(result) == {"result": "ok"}
 
 
 def test_documented_legacy_delay_is_split_from_arguments() -> None:

@@ -24,6 +24,9 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from homeassistant.helpers import llm
 
 
@@ -173,7 +176,7 @@ async def test_legacy_delay_object_is_scheduled_durably(hass, monkeypatch) -> No
     manager.async_schedule.assert_awaited_once_with(
         entity, "control_light", arguments, None
     )
-    assert result.tool_result == {"result": "Scheduled"}
+    assert tool_result_data(result) == {"result": "Scheduled"}
 
 
 async def test_recovered_delayed_execution_strips_scheduler_metadata(

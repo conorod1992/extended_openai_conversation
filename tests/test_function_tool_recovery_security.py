@@ -6,9 +6,6 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
-from homeassistant.components import conversation
-from homeassistant.helpers import llm
-
 from custom_components.extended_openai_conversation_responses.function_call_budget import (
     FunctionCallBudget,
 )
@@ -18,9 +15,14 @@ from custom_components.extended_openai_conversation_responses.function_tool_reco
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     guest_mode_denial_result,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.tool_exchange import (
     async_execute_tool_exchange,
 )
+from homeassistant.components import conversation
+from homeassistant.helpers import llm
 
 
 def _tool() -> dict[str, Any]:
@@ -93,4 +95,4 @@ async def test_guest_mode_denial_is_not_a_recovery_attempt(hass) -> None:
         if isinstance(item, conversation.ToolResultContent)
     ]
     assert results == [denial]
-    assert results[0].tool_result["result"]["reason"] == "guest_mode"
+    assert tool_result_data(results[0])["result"]["reason"] == "guest_mode"

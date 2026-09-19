@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
-import json
 from contextlib import nullcontext
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import entity as entity_module
 from custom_components.extended_openai_conversation_responses import (
+    entity as entity_module,
     function_tool_resolution,
 )
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
+)
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
 )
 
 
@@ -162,7 +165,7 @@ async def test_missing_function_group_loader_returns_clean_tool_error(
     tool_result = chat_log.added_without_tools[0]
     assert tool_result.tool_call_id == call.id
     assert tool_result.tool_name == call.tool_name
-    payload = json.loads(tool_result.tool_result["result"])
+    payload = json.loads(tool_result_data(tool_result)["result"])
     assert payload == {
         "status": "error",
         "error": "Function-group loading is unavailable",
@@ -234,4 +237,4 @@ async def test_ha_tool_without_user_id_skips_auth_lookup_and_executes(monkeypatc
     live_tool.async_call.assert_awaited_once_with(tool_input)
     assert result.tool_call_id == tool_input.id
     assert result.tool_name == tool_input.tool_name
-    assert result.tool_result == {"result": "executed"}
+    assert tool_result_data(result) == {"result": "executed"}

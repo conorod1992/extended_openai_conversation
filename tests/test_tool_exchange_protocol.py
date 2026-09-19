@@ -11,10 +11,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from homeassistant.components import conversation
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import llm
-
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -33,6 +29,9 @@ from custom_components.extended_openai_conversation_responses.exceptions import 
 from custom_components.extended_openai_conversation_responses.function_call_budget import (
     FunctionCallBudget,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.provider_errors import (
     ProviderStreamError,
 )
@@ -40,6 +39,9 @@ from custom_components.extended_openai_conversation_responses.tool_exchange impo
     append_unresolved_tool_results,
     async_execute_tool_exchange,
 )
+from homeassistant.components import conversation
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import llm
 
 
 class FakeStream:
@@ -274,8 +276,8 @@ async def test_serial_budget_failure_is_protocol_valid_on_following_turn(hass) -
     assert executed == ["first"]
     results = _retained_results(chat_log)
     assert [result.tool_call_id for result in results] == ["call-1", "call-2"]
-    assert results[0].tool_result == {"result": "ok"}
-    assert results[1].tool_result["result"]["status"] == "error"
+    assert tool_result_data(results[0]) == {"result": "ok"}
+    assert tool_result_data(results[1])["result"]["status"] == "error"
 
     chat_log.async_add_user_content(conversation.UserContent(content="Continue"))
     await entity._async_handle_chat_log(chat_log, [first, second], [])
@@ -339,7 +341,7 @@ async def test_provider_failure_after_execution_never_retries_side_effect(hass) 
     results = _retained_results(chat_log)
     assert len(results) == 1
     assert results[0].tool_call_id == "call-1"
-    assert results[0].tool_result == {"result": "ok"}
+    assert tool_result_data(results[0]) == {"result": "ok"}
 
 
 async def test_cancellation_closes_current_and_skips_later_serial_call(hass) -> None:
@@ -380,8 +382,8 @@ async def test_cancellation_closes_current_and_skips_later_serial_call(hass) -> 
     assert executed == ["first"]
     results = _retained_results(chat_log)
     assert [result.tool_call_id for result in results] == ["call-1", "call-2"]
-    assert results[0].tool_result["result"]["status"] == "error"
-    assert results[1].tool_result["result"]["status"] == "skipped"
+    assert tool_result_data(results[0])["result"]["status"] == "error"
+    assert tool_result_data(results[1])["result"]["status"] == "skipped"
 
 
 async def test_current_effective_tool_disappearance_fails_before_dispatch(hass) -> None:
@@ -407,7 +409,7 @@ async def test_current_effective_tool_disappearance_fails_before_dispatch(hass) 
     entity._execute_function_tool.assert_not_awaited()
     results = _retained_results(chat_log)
     assert len(results) == 1
-    assert results[0].tool_result["result"]["status"] == "error"
+    assert tool_result_data(results[0])["result"]["status"] == "error"
 
 
 async def test_unknown_provider_tool_is_closed_without_dispatch(hass) -> None:
@@ -422,7 +424,7 @@ async def test_unknown_provider_tool_is_closed_without_dispatch(hass) -> None:
     results = _retained_results(chat_log)
     assert len(results) == 1
     assert results[0].tool_call_id == "call-x"
-    assert results[0].tool_result["result"]["status"] == "error"
+    assert tool_result_data(results[0])["result"]["status"] == "error"
 
 
 async def test_parallel_eligibility_is_reassessed_from_current_definitions(hass) -> None:
@@ -523,8 +525,8 @@ async def test_parallel_failure_preserves_successful_sibling_result(hass) -> Non
 
     results = _retained_results(chat_log)
     assert [result.tool_call_id for result in results] == ["call-1", "call-2"]
-    assert results[0].tool_result["result"]["status"] == "error"
-    assert results[1].tool_result == {"result": "second-ok"}
+    assert tool_result_data(results[0])["result"]["status"] == "error"
+    assert tool_result_data(results[1]) == {"result": "second-ok"}
 
 
 async def test_iteration_exhaustion_leaves_each_round_call_closed(hass, monkeypatch) -> None:
@@ -556,7 +558,7 @@ async def test_iteration_exhaustion_leaves_each_round_call_closed(hass, monkeypa
 
     results = _retained_results(chat_log)
     assert [result.tool_call_id for result in results] == ["call-1", "call-2"]
-    assert all(result.tool_result == {"result": "ok"} for result in results)
+    assert all(tool_result_data(result) == {"result": "ok"} for result in results)
 
 
 async def test_malformed_arguments_do_not_leave_a_retained_tool_call(hass) -> None:

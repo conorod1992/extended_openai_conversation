@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import tool_exchange
 from custom_components.extended_openai_conversation_responses.exceptions import (
@@ -20,6 +19,10 @@ from custom_components.extended_openai_conversation_responses.function_tool_reco
     CorrectableToolFailure,
     ToolRecoveryState,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
+from homeassistant.exceptions import HomeAssistantError
 
 
 @dataclass
@@ -110,11 +113,11 @@ def test_append_unresolved_results_preserves_completed_and_marks_failure_then_sk
     )
 
     assert [item.tool_call_id for item in chat_log.added] == ["bad", "later"]
-    assert chat_log.added[0].tool_result == {
+    assert tool_result_data(chat_log.added[0]) == {
         "result": {"status": "error", "error": "RuntimeError: boom"}
     }
-    assert chat_log.added[1].tool_result["result"]["status"] == "skipped"
-    assert "`second` failed" in chat_log.added[1].tool_result["result"]["error"]
+    assert tool_result_data(chat_log.added[1])["result"]["status"] == "skipped"
+    assert "`second` failed" in tool_result_data(chat_log.added[1])["result"]["error"]
 
 
 def test_append_unresolved_uses_first_unresolved_for_round_failure_and_is_idempotent(
@@ -131,8 +134,8 @@ def test_append_unresolved_uses_first_unresolved_for_round_failure_and_is_idempo
 
     assert len(chat_log.added) == 2
     assert chat_log.added[0].tool_call_id == "a"
-    assert chat_log.added[0].tool_result["result"]["status"] == "error"
-    assert chat_log.added[1].tool_result["result"]["status"] == "skipped"
+    assert tool_result_data(chat_log.added[0])["result"]["status"] == "error"
+    assert tool_result_data(chat_log.added[1])["result"]["status"] == "skipped"
 
 
 def test_append_unresolved_is_noop_without_calls_or_unresolved_calls(monkeypatch) -> None:
@@ -307,8 +310,8 @@ async def test_serial_exchange_failure_closes_current_and_later_retained_calls(
         )
 
     assert [item.tool_call_id for item in chat_log.added] == ["a", "b"]
-    assert chat_log.added[0].tool_result["result"]["status"] == "error"
-    assert chat_log.added[1].tool_result["result"]["status"] == "skipped"
+    assert tool_result_data(chat_log.added[0])["result"]["status"] == "error"
+    assert tool_result_data(chat_log.added[1])["result"]["status"] == "skipped"
     entity._execute_function_tool.assert_not_awaited()
 
 
@@ -345,8 +348,8 @@ async def test_parallel_exchange_budget_failure_marks_the_first_refused_call(mon
         item.tool_call_id for item in chat_log.added
     ] == ["a", "b"]
     by_id = {item.tool_call_id: item for item in chat_log.added}
-    assert by_id["b"].tool_result["result"]["status"] == "error"
-    assert by_id["a"].tool_result["result"]["status"] == "skipped"
+    assert tool_result_data(by_id["b"])["result"]["status"] == "error"
+    assert tool_result_data(by_id["a"])["result"]["status"] == "skipped"
 
 
 @pytest.mark.asyncio
@@ -389,7 +392,7 @@ async def test_parallel_exchange_records_success_and_failure_then_raises_first_e
 
     by_id = {item.tool_call_id: item for item in chat_log.added}
     assert by_id["a"] is success
-    assert by_id["b"].tool_result["result"] == {
+    assert tool_result_data(by_id["b"])["result"] == {
         "status": "error",
         "error": "RuntimeError: beta failed",
     }
@@ -439,7 +442,7 @@ async def test_recovery_parallel_validation_exhaustion_closes_exchange(monkeypat
         )
 
     assert len(chat_log.added) == 1
-    assert chat_log.added[0].tool_result["result"]["status"] == "error"
+    assert tool_result_data(chat_log.added[0])["result"]["status"] == "error"
 
 
 @pytest.mark.asyncio
@@ -493,7 +496,7 @@ async def test_recovery_parallel_mixes_correctable_success_and_runtime_failure(m
         )
 
     by_id = {item.tool_call_id: item for item in chat_log.added}
-    assert by_id["recover"].tool_result["result"]["reason"] == "correctable_tool_error"
+    assert tool_result_data(by_id["recover"])["result"]["reason"] == "correctable_tool_error"
     assert by_id["ok"] is success
-    assert by_id["bad"].tool_result["result"]["status"] == "error"
+    assert tool_result_data(by_id["bad"])["result"]["status"] == "error"
     assert state.used == 1

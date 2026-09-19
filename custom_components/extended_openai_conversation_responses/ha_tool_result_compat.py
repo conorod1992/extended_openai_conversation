@@ -35,10 +35,17 @@ def unwrap_tool_result(value: Any) -> Any:
     return value
 
 
-def tool_result_data(content: Any) -> Any:
-    """Return raw ToolResultContent data without touching HA's deprecated property."""
-    missing = object()
-    result = getattr(content, "result", missing)
-    if result is not missing:
+_MISSING_RESULT = object()
+
+
+def tool_result_data(content: Any, default: Any = None) -> Any:
+    """Read a chat-log result without accessing HA's deprecated compatibility property.
+
+    The fallback must be lazy: newer HA still exposes ``tool_result``, but reading
+    it reports deprecated usage. Return the original data, not a copy, so existing
+    result projections can continue to compact their owned payload in place.
+    """
+    result = getattr(content, "result", _MISSING_RESULT)
+    if result is not _MISSING_RESULT:
         return unwrap_tool_result(result)
-    return getattr(content, "tool_result", None)
+    return getattr(content, "tool_result", default)

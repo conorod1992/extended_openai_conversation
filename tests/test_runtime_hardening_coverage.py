@@ -11,12 +11,15 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    conversation,
     delayed_tools,
     guest_mode,
     runtime_hardening,
     skills,
 )
-from custom_components.extended_openai_conversation_responses import conversation
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 
 
 def test_install_runtime_hardening_is_one_shot(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -255,7 +258,7 @@ async def test_tool_result_guard_bounds_outermost_string_result(
     assert FakeEntity._execute_function_tool is guarded
 
     content = await FakeEntity()._execute_function_tool({}, {}, None, [])
-    result = content.tool_result["result"]
+    result = tool_result_data(content)["result"]
     assert len(result) <= runtime_hardening.MAX_MODEL_TOOL_RESULT_CHARACTERS
     assert runtime_hardening._TOOL_RESULT_TRUNCATION_LABEL in result
 

@@ -20,6 +20,9 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.memory import MemoryRecord
 from custom_components.extended_openai_conversation_responses.scope import user_scope
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
@@ -377,7 +380,7 @@ async def test_integration_tool_boundary_routes_and_serializes_results(
     handler.assert_awaited_once_with(*expected_args)
     assert result.tool_call_id == "call-1"
     assert result.tool_name == f"{function_type}_operation"
-    assert json.loads(result.tool_result["result"]) == {
+    assert json.loads(tool_result_data(result)["result"]) == {
         "status": "ok",
         "type": function_type,
     }
@@ -435,7 +438,7 @@ async def test_integration_tool_boundary_normalizes_expected_and_store_failures(
         [],
     )
 
-    assert json.loads(result.tool_result["result"]) == expected
+    assert json.loads(tool_result_data(result)["result"]) == expected
 
 
 async def test_conversation_lifecycle_tool_captures_active_session_ids() -> None:
@@ -471,7 +474,7 @@ async def test_conversation_lifecycle_tool_captures_active_session_ids() -> None
         conversation._ACTIVE_FUNCTION_GROUP_SESSION.reset(group_token)
         conversation.end_conversation_lifecycle(lifecycle_token)
 
-    assert json.loads(result.tool_result["result"])["status"] == "scheduled"
+    assert json.loads(tool_result_data(result)["result"])["status"] == "scheduled"
     assert reset is not None
     assert reset.state_session_id == "state-session"
     assert reset.memory_session_id == "memory-session"
