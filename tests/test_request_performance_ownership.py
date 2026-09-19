@@ -221,3 +221,67 @@ async def test_owned_model_timing_fires_on_error(monkeypatch):
     finally:
         debug._ACTIVE_DEBUG_TRACE.reset(token)
     assert "model_path_total" in trace.phases_ms
+
+
+def test_owned_preparation_records_payload_latency_diagnostics(monkeypatch):
+    from custom_components.extended_openai_conversation_responses.prompt import (
+        EffectivePrompt,
+        PromptSection,
+    )
+
+    trace = debug.DebugTrace(
+        debug_id="debug",
+        entry_id="entry",
+        subentry_id="agent",
+        started_at="now",
+        user_input={},
+        incoming_conversation_id=None,
+    )
+    agent = object.__new__(ExtendedOpenAIAgentEntity)
+    agent.hass = SimpleNamespace(data={})
+    agent.entry = SimpleNamespace(entry_id="entry")
+    agent.subentry = SimpleNamespace(
+        subentry_id="agent", data={"skills": [], "function_groups": []}
+    )
+    agent._knowledge = None
+    agent._temporary_memory = None
+    agent._archive = None
+    agent._function_groups_runtime = None
+    agent._effective_guest_policy = lambda: GuestCapabilityPolicy.unrestricted()
+    agent._current_memory_scope_id = lambda: None
+    agent._get_configured_function_tools = lambda: [_tool("lookup")]
+    prompt = EffectivePrompt(
+        text="owned prompt",
+        sections=(
+            PromptSection(
+                key="base", label="Base", text="owned prompt", volatility="stable"
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module, "render_effective_prompt", lambda *args, **kwargs: prompt
+    )
+    monkeypatch.setattr(
+        agent_module, "get_exposed_entities", lambda hass: [{"entity_id": "light.one"}]
+    )
+    token = debug._ACTIVE_DEBUG_TRACE.set(trace)
+    try:
+        entities = agent._get_exposed_entities()
+        assert (
+            agent._build_system_prompt(entities, SimpleNamespace(device_id=None), None)
+            == prompt.text
+        )
+        assert agent._get_function_tools()[0]["spec"]["name"] == "lookup"
+        result = trace.as_dict()
+    finally:
+        debug._ACTIVE_DEBUG_TRACE.reset(token)
+    preparation = result["payload_latency_diagnostics"]["preparation"]
+    for phase in (
+        "exposed_entity_context",
+        "prompt_render_core",
+        "function_tool_assembly",
+    ):
+        assert preparation[phase]["calls"] == 1
+    assert result["prompt_metrics"]["sections"][0]["key"] == "base"
+    assert result["system_prompt"] == "owned prompt"
+    assert "system_prompt_render" in result["phases_ms"]
