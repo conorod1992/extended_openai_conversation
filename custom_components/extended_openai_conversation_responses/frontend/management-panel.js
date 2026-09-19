@@ -51,6 +51,8 @@ const NAVIGATION_MARK_PREFIX = "extended-openai:navigation";
 const LOAD_MARK_PREFIX = "extended-openai:load-section";
 const RENDER_MARK_PREFIX = "extended-openai:render";
 const MAX_MEASURE_ENTRIES = 100;
+// Performance entries are global to the document, not to a panel instance.
+let performanceSequence = 0;
 const BUSY_STYLE = `
   [data-eoc-main].eoc-loading-in-background,
   main.eoc-loading-in-background {
@@ -84,30 +86,40 @@ function performanceApi() {
 function startMeasure(panel, prefix) {
   const api = performanceApi();
   if (!api) return null;
-  panel._eocPerformanceSequence = (panel._eocPerformanceSequence || 0) + 1;
-  const id = `${prefix}:${panel._eocPerformanceSequence}`;
+  const id = `${prefix}:${++performanceSequence}`;
   const start = `${id}:start`;
-  api.mark(start);
-  return {api, id, start, panel};
+  try {
+    api.mark(start);
+    return {api, id, start, panel};
+  } catch (_err) {
+    return null;
+  }
 }
 
 function finishMeasure(measure, detail = null) {
   if (!measure) return;
   const {api, id, start, panel} = measure;
   const end = `${id}:end`;
-  api.mark(end);
   try {
-    api.measure(id, {start, end, detail});
+    api.mark(end);
+    try {
+      api.measure(id, {start, end, detail});
+    } catch (_err) {
+      api.measure(id, start, end);
+    }
+    panel._eocPerformanceMeasureIds ||= [];
+    panel._eocPerformanceMeasureIds.push(id);
+    while (panel._eocPerformanceMeasureIds.length > MAX_MEASURE_ENTRIES) {
+      api.clearMeasures?.(panel._eocPerformanceMeasureIds.shift());
+    }
   } catch (_err) {
-    api.measure(id, start, end);
+    // Optional profiling must never turn a successful load into a UI error or
+    // replace the original failure, even if the host cleared an active mark.
+  } finally {
+    for (const name of [start, end]) {
+      try { api.clearMarks?.(name); } catch (_err) { /* Best-effort cleanup. */ }
+    }
   }
-  panel._eocPerformanceMeasureIds ||= [];
-  panel._eocPerformanceMeasureIds.push(id);
-  while (panel._eocPerformanceMeasureIds.length > MAX_MEASURE_ENTRIES) {
-    api.clearMeasures?.(panel._eocPerformanceMeasureIds.shift());
-  }
-  api.clearMarks(start);
-  api.clearMarks(end);
 }
 
 function trackAsync(panel, prefix, operation, navigation = false) {
