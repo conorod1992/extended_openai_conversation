@@ -12,38 +12,24 @@ from homeassistant.auth import EVENT_USER_REMOVED, EVENT_USER_UPDATED
 from homeassistant.core import Context, Event
 
 from custom_components.extended_openai_conversation_responses import ha_permissions
-from custom_components.extended_openai_conversation_responses.conversation import (
-    ExtendedOpenAIAgentEntity,
-)
 
 
-@pytest.mark.asyncio
-async def test_request_context_binding_wraps_once_and_restores_context(monkeypatch):
-    """The effective request entry point binds the caller Context exactly once."""
+async def test_request_owner_binds_and_restores_authenticated_context(
+    entry_agent, entry_input,
+):
     caller_context = Context(user_id="user-1")
     prior_context = Context(user_id="prior-user")
-    seen_contexts: list[Context | None] = []
-
-    async def original(_entity, _user_input):
+    seen_contexts = []
+    async def process(_request):
         seen_contexts.append(ha_permissions.get_active_ha_context())
         return "result"
-
-    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_process", original)
-    ha_permissions.set_active_ha_context(prior_context)
-
-    ha_permissions._install_request_context_binding()
-    wrapped = ExtendedOpenAIAgentEntity._async_process
-    ha_permissions._install_request_context_binding()
-
-    assert ExtendedOpenAIAgentEntity._async_process is wrapped
-    result = await wrapped(
-        object(),
-        SimpleNamespace(context=caller_context),
-    )
-
+    entry_agent._async_process_with_continuity = process
+    entry_input.context = caller_context
+    with ha_permissions.bind_active_ha_context(prior_context):
+        result = await entry_agent.async_process(entry_input)
+        assert ha_permissions.get_active_ha_context() is prior_context
     assert result == "result"
     assert seen_contexts == [caller_context]
-    assert ha_permissions.get_active_ha_context() is prior_context
 
 
 @pytest.mark.asyncio
@@ -51,7 +37,6 @@ async def test_setup_populates_cache_and_registers_auth_listeners(hass, monkeypa
     """Permission setup primes the cache and subscribes once to auth changes."""
     user_a = SimpleNamespace(id="user-a")
     user_b = SimpleNamespace(id="user-b")
-    monkeypatch.setattr(ha_permissions, "_install_request_context_binding", Mock())
     monkeypatch.setattr(
         hass.auth,
         "async_get_users",
