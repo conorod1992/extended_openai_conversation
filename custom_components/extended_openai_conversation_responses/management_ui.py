@@ -1955,7 +1955,7 @@ async def _async_temporary_memories_command(
     request: _ManagementRequest,
 ) -> dict[str, Any]:
     """Manage complete Personal/Shared Temporary Memory without changing runtime retrieval."""
-    from .temporary_memory_ownership import _valid_owner_scope_id
+    from .temporary_memory import _valid_owner_scope_id
 
     hass, user_id, is_admin, message = (
         request.hass,

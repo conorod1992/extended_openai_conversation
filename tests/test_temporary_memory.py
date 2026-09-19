@@ -19,13 +19,7 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
     MAX_INJECT_RECORDS,
     TemporaryMemory,
 )
-from custom_components.extended_openai_conversation_responses.temporary_memory_performance import (
-    install_temporary_memory_read_fast_path,
-)
 from homeassistant.util import dt as dt_util
-
-# Exercise the same effective method composition installed by integration startup.
-install_temporary_memory_read_fast_path()
 
 
 class Storage:
@@ -81,17 +75,18 @@ async def test_active_records_are_owned_persisted_and_bounded() -> None:
             "device:kitchen", owner_scope_id="user:alice"
         )
     ] == ["Cooking pasta"]
-    assert (
-        await memory.async_active("device:kitchen", owner_scope_id="user:bob") == []
-    )
+    assert await memory.async_active("device:kitchen", owner_scope_id="user:bob") == []
 
     restored = TemporaryMemory(Storage(storage.data))
     await restored.async_initialize()
-    assert len(
-        await restored.async_active(
-            "conversation:fresh", owner_scope_id="user:alice"
+    assert (
+        len(
+            await restored.async_active(
+                "conversation:fresh", owner_scope_id="user:alice"
+            )
         )
-    ) == 1
+        == 1
+    )
     assert (
         await restored.async_delete(
             "conversation:other",
@@ -209,9 +204,7 @@ async def test_expiry_pruned_at_startup_and_before_injection() -> None:
     expired["expires_at"] = (dt_util.utcnow() - timedelta(minutes=1)).isoformat()
     memory = TemporaryMemory(Storage({"records": [expired]}))
     await memory.async_initialize()
-    assert (
-        await memory.async_active("user:alice", owner_scope_id="user:alice") == []
-    )
+    assert await memory.async_active("user:alice", owner_scope_id="user:alice") == []
     assert memory.expired_pruned == 1
 
 

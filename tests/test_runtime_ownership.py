@@ -40,7 +40,7 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
 from custom_components.extended_openai_conversation_responses.lifecycle_optimizations import (
     _TEMPORARY_MEMORY_PREFETCH,
 )
-from custom_components.extended_openai_conversation_responses.temporary_memory_ownership import (
+from custom_components.extended_openai_conversation_responses.temporary_memory import (
     _ACTIVE_OWNER_SCOPE_ID,
 )
 from homeassistant.components import conversation

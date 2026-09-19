@@ -28,9 +28,6 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemory,
 )
-from custom_components.extended_openai_conversation_responses.temporary_memory_performance import (
-    install_temporary_memory_read_fast_path,
-)
 from custom_components.extended_openai_conversation_responses.usage import UsageManager
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "persistence"
@@ -108,9 +105,7 @@ async def test_memory_mixed_corruption_self_heals_without_losing_good_record() -
         ("memory-good", "units.temperature")
     ]
     assert storage.save_count == 1
-    assert [item["memory_id"] for item in storage.data["memories"]] == [
-        "memory-good"
-    ]
+    assert [item["memory_id"] for item in storage.data["memories"]] == ["memory-good"]
 
     second = PersistentMemory(storage)
     await second.async_initialize()
@@ -155,7 +150,7 @@ async def test_knowledge_mixed_corruption_preserves_unique_valid_source() -> Non
 
 async def test_temporary_memory_pre_owner_fixture_preserves_legacy_ownership() -> None:
     """Pre-owner records receive only the safe owner implied by their old scope."""
-    install_temporary_memory_read_fast_path()
+
     memory = TemporaryMemory(
         FixtureStorage(_fixture("temporary_memory_pre_owner.json"))
     )
@@ -283,7 +278,9 @@ async def test_archive_container_shapes_are_isolated(malformed: Any) -> None:
 
 
 @pytest.mark.parametrize("malformed", [None, 7, "broken", ["broken"]])
-async def test_usage_container_shapes_preserve_independent_stores(malformed: Any) -> None:
+async def test_usage_container_shapes_preserve_independent_stores(
+    malformed: Any,
+) -> None:
     fixture = _fixture("usage_compatibility_cases.json")
     manager = UsageManager(
         FixtureStorage(fixture["legacy_totals"]),

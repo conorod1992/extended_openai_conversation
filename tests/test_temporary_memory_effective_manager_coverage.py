@@ -11,18 +11,7 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
     MAX_DELETE_RECORDS,
     TemporaryMemory,
 )
-from custom_components.extended_openai_conversation_responses.temporary_memory_ownership import (
-    install_temporary_memory_ownership,
-)
-from custom_components.extended_openai_conversation_responses.temporary_memory_performance import (
-    install_temporary_memory_read_fast_path,
-)
 from homeassistant.util import dt as dt_util
-
-
-# Exercise the same effective method composition used by integration startup.
-install_temporary_memory_read_fast_path()
-install_temporary_memory_ownership()
 
 
 class Storage:
@@ -116,7 +105,8 @@ async def test_owned_management_mutations_cannot_cross_owner_boundary() -> None:
         await memory.async_delete_owned("user:alice", [])
     with pytest.raises(ValueError, match="memory_ids must contain"):
         await memory.async_delete_owned(
-            "user:alice", [f"missing-{index}" for index in range(MAX_DELETE_RECORDS + 1)]
+            "user:alice",
+            [f"missing-{index}" for index in range(MAX_DELETE_RECORDS + 1)],
         )
 
 
@@ -124,9 +114,7 @@ async def test_owner_counts_include_only_active_owned_records() -> None:
     active_alice = stored_record(1, owner="user:alice")
     active_bob = stored_record(2, owner="user:bob")
     expired_alice = stored_record(3, owner="user:alice")
-    expired_alice["expires_at"] = (
-        dt_util.utcnow() - timedelta(minutes=1)
-    ).isoformat()
+    expired_alice["expires_at"] = (dt_util.utcnow() - timedelta(minutes=1)).isoformat()
 
     memory = TemporaryMemory(
         Storage({"records": [active_alice, active_bob, expired_alice]})
@@ -145,8 +133,7 @@ async def test_backup_restore_enforces_global_record_ceiling_and_keeps_newest() 
     with pytest.raises(ValueError, match="temporary memory count is invalid"):
         TemporaryMemory.validate_backup_data({"records": raw})
     validated = [
-        TemporaryMemory.validate_backup_data({"records": [record]})[0]
-        for record in raw
+        TemporaryMemory.validate_backup_data({"records": [record]})[0] for record in raw
     ]
 
     storage = Storage()

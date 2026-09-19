@@ -17,6 +17,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     TEMPORARY_MEMORY_BALANCED,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
+    TemporaryMemory,
     async_read_temporary_memory_snapshot,
 )
 from homeassistant.components import conversation
@@ -24,11 +25,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
-from tests_real_ha.test_provider_wire_e2e import (
-    _chat_sse_text,
-    _install_wire,
-    _speech,
-)
+from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
 from tests_real_ha.test_temporary_memory_lifecycle import (
     _MEMORY_TEXT,
     _OWNER_ID,
@@ -48,6 +45,15 @@ async def test_temporary_memory_survives_real_entry_unload_reload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Stored temporary context survives reload and remains mutable afterward."""
+    method_names = (
+        "async_initialize",
+        "async_active",
+        "async_active_snapshot",
+        "_async_save_locked",
+    )
+    owners_before_setup = {
+        name: getattr(TemporaryMemory, name) for name in method_names
+    }
     MockUser(id=_OWNER_ID, name="Temporary Memory Owner").add_to_hass(hass)
     entry = _make_entry(
         "Temporary Memory Reload",
@@ -181,3 +187,32 @@ async def test_temporary_memory_survives_real_entry_unload_reload(
     prompt = _system_prompt(healthy_wire.requests[0]["body"])
     assert _MEMORY_TEXT in prompt
     assert _SECOND_MEMORY_TEXT in prompt
+
+    # Real setup/unload/reload must not assemble or reinstall manager behavior.
+    for name, method in owners_before_setup.items():
+        assert getattr(TemporaryMemory, name) is method
+        assert method.__qualname__ == f"TemporaryMemory.{name}"
+        assert not hasattr(method, "__wrapped__")
+    from custom_components.extended_openai_conversation_responses import management_ui
+
+    assert (
+        management_ui.async_read_temporary_memory_snapshot
+        is async_read_temporary_memory_snapshot
+    )
+    assert (
+        await async_read_temporary_memory_snapshot(
+            hass,
+            entry.entry_id,
+            conversation_subentry.subentry_id,
+            _OWNER_SCOPE,
+            "user:foreign-owner",
+        )
+        == []
+    )
+    assert (
+        await reloaded_agent._temporary_memory.async_active_snapshot(
+            _OWNER_SCOPE,
+            "user:foreign-owner",
+        )
+        == []
+    )

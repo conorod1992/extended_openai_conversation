@@ -9,8 +9,6 @@ from typing import Any
 
 import pytest
 
-from homeassistant.util import dt as dt_util
-
 from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeLibrary,
 )
@@ -22,7 +20,6 @@ from custom_components.extended_openai_conversation_responses.persistence_harden
     _snapshot_knowledge,
     _snapshot_memory,
     _snapshot_request_rules,
-    _snapshot_temporary_memory,
     install_persistence_transactions,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
@@ -31,6 +28,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemory,
 )
+from homeassistant.util import dt as dt_util
 
 _MANAGER_TYPES = ("memory", "temporary_memory", "knowledge", "request_rules")
 
@@ -89,7 +87,10 @@ def _snapshot(kind: str, manager: Any) -> Any:
     if kind == "memory":
         value = _snapshot_memory(manager)
     elif kind == "temporary_memory":
-        value = _snapshot_temporary_memory(manager)
+        value = {
+            "records": dict(manager._records),
+            "expired_pruned": manager.expired_pruned,
+        }
     elif kind == "knowledge":
         value = _snapshot_knowledge(manager)
     elif kind == "request_rules":
@@ -97,6 +98,13 @@ def _snapshot(kind: str, manager: Any) -> Any:
     else:  # pragma: no cover - protected by parametrization
         raise AssertionError(kind)
     return deepcopy(value)
+
+
+def _committed_snapshot(kind, manager):
+    if kind == "temporary_memory":
+        records, expired_pruned = manager._committed_state
+        return deepcopy({"records": records, "expired_pruned": expired_pruned})
+    return deepcopy(getattr(manager, _COMMITTED_STATE))
 
 
 async def _mutate(kind: str, manager: Any, marker: str) -> None:
@@ -175,7 +183,7 @@ async def test_cancellation_waits_for_successful_commit_and_advances_snapshot(
     committed = _snapshot(kind, manager)
     assert committed != baseline
     assert storage.data != baseline_storage
-    assert deepcopy(getattr(manager, _COMMITTED_STATE)) == committed
+    assert _committed_snapshot(kind, manager) == committed
 
     # Prove the cancellation-success snapshot became the rollback baseline rather
     # than merely leaving the newer live state in RAM accidentally.
@@ -209,4 +217,4 @@ async def test_cancellation_waits_for_failed_commit_then_rolls_back(kind: str) -
     assert isinstance(cancelled.value.__cause__, RuntimeError)
     assert _snapshot(kind, manager) == baseline
     assert storage.data == baseline_storage
-    assert deepcopy(getattr(manager, _COMMITTED_STATE)) == baseline
+    assert _committed_snapshot(kind, manager) == baseline

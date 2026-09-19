@@ -47,7 +47,7 @@ async def test_memory_prefetch_overlaps_and_is_consumed_once(
 
     async def _temporary(_agent: Any) -> list[str]:
         from custom_components.extended_openai_conversation_responses import (
-            temporary_memory_ownership as ownership,
+            temporary_memory as ownership,
         )
 
         observed_owner.append(ownership._ACTIVE_OWNER_SCOPE_ID.get())

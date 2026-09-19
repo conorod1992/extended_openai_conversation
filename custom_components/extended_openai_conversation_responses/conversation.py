@@ -202,14 +202,12 @@ from .scope import (
 from .skills import Skill, SkillManager
 from .speech import has_custom_speech_replacements, process_speech_text
 from .temporary_memory import (
+    _ACTIVE_OWNER_SCOPE_ID,
     TemporaryMemory,
     TemporaryMemoryRecord,
+    _owner_from_resolved_scope,
     async_get_temporary_memory,
     temporary_memory_as_dict,
-)
-from .temporary_memory_ownership import (
-    _ACTIVE_OWNER_SCOPE_ID,
-    _owner_from_resolved_scope,
 )
 from .usage import async_get_usage
 from .voice_identity_runtime import voice_identity_scope

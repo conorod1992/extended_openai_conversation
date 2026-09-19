@@ -22,8 +22,6 @@ from .request_rules import DEFAULT_MATCHING, DEFAULT_WORDING_GROUPS, RequestRule
 from .runtime_failure_hardening import install_runtime_failure_hardening
 from .runtime_hardening import install_runtime_hardening
 from .safety_hardening import install_safety_hardening
-from .temporary_memory import TemporaryMemory
-from .temporary_memory_performance import install_temporary_memory_read_fast_path
 
 _COMMITTED_STATE = "_extended_openai_committed_state"
 _INSTALLED: set[type[Any]] = set()
@@ -50,12 +48,6 @@ def install_persistence_transactions() -> None:
         _reset_knowledge,
     )
     _install_manager_guard(
-        TemporaryMemory,
-        _snapshot_temporary_memory,
-        _restore_temporary_memory,
-        _reset_temporary_memory,
-    )
-    _install_manager_guard(
         RequestRules,
         _snapshot_request_rules,
         _restore_request_rules,
@@ -67,7 +59,6 @@ def install_persistence_transactions() -> None:
     install_safety_hardening()
     install_lifecycle_optimizations()
     install_hot_path_cleanup()
-    install_temporary_memory_read_fast_path()
     install_context_usage_hardening()
 
 
@@ -266,26 +257,6 @@ def _reset_knowledge(manager: Any) -> None:
     manager._sources.clear()
     manager._chunks.clear()
     manager._token_index = defaultdict(set)
-    manager._initialized = False
-    if hasattr(manager, _COMMITTED_STATE):
-        delattr(manager, _COMMITTED_STATE)
-
-
-def _snapshot_temporary_memory(manager: Any) -> dict[str, Any]:
-    return {
-        "records": dict(manager._records),
-        "expired_pruned": manager.expired_pruned,
-    }
-
-
-def _restore_temporary_memory(manager: Any, snapshot: dict[str, Any]) -> None:
-    manager._records = dict(snapshot["records"])
-    manager.expired_pruned = int(snapshot["expired_pruned"])
-
-
-def _reset_temporary_memory(manager: Any) -> None:
-    manager._records.clear()
-    manager.expired_pruned = 0
     manager._initialized = False
     if hasattr(manager, _COMMITTED_STATE):
         delattr(manager, _COMMITTED_STATE)
