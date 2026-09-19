@@ -585,7 +585,9 @@ class DebugOpenAIClientProxy:
 
 
 @contextmanager
-def conversation_debug_trace(agent: Any, user_input: Any) -> Iterator[DebugTrace | None]:
+def conversation_debug_trace(
+    agent: Any, user_input: Any
+) -> Iterator[DebugTrace | None]:
     """Capture one opt-in request, preserving caller trace state on every exit.
 
     The conversation owner assigns the completed result to the yielded trace.
