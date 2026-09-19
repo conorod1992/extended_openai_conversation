@@ -809,3 +809,17 @@ async def test_websocket_and_setup_wiring(monkeypatch) -> None:
     hass.http.async_register_static_paths.assert_awaited_once()
     register_command.assert_called_once_with(hass, management_ui.websocket_management)
     register_panel.assert_awaited_once()
+    assert register_panel.await_args.kwargs["frontend_url_path"] == "extended-openai"
+    registered_assets = {
+        asset.url_path
+        for asset in hass.http.async_register_static_paths.await_args.args[0]
+    }
+    assert f"/{DOMAIN}/management-panel.js" in registered_assets
+    assert not registered_assets & {
+        f"/{DOMAIN}/{asset}"
+        for asset in (
+            "memory-panel.js",
+            "memory-management-panel.js",
+            "knowledge-panel.js",
+        )
+    }

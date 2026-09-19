@@ -563,7 +563,7 @@ async def test_options_flow_management_and_agent_test_round_trip(
         assert result["type"] is FlowResultType.FORM
         assert result["step_id"] == "manage_memory"
         result = await hass.config_entries.options.async_configure(
-            result["flow_id"], {"panel_path": "/extended-openai-memory"}
+            result["flow_id"], {"panel_path": "/extended-openai/data-memory/memories"}
         )
         assert result["type"] is FlowResultType.MENU
 
@@ -598,7 +598,7 @@ async def test_options_flow_management_and_agent_test_round_trip(
         assert result["type"] is FlowResultType.FORM
         assert result["step_id"] == "manage_knowledge"
         result = await hass.config_entries.options.async_configure(
-            result["flow_id"], {"panel_path": "/extended-openai-knowledge"}
+            result["flow_id"], {"panel_path": "/extended-openai/data-memory/knowledge"}
         )
         assert result["type"] is FlowResultType.MENU
     finally:

@@ -29,8 +29,8 @@ from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeStore,
     knowledge_tools,
 )
-from custom_components.extended_openai_conversation_responses.knowledge_ui import (
-    async_manage_knowledge_command,
+from custom_components.extended_openai_conversation_responses.management_ui import (
+    async_management_command,
 )
 from homeassistant.exceptions import HomeAssistantError
 
@@ -150,9 +150,9 @@ async def test_malformed_stored_record_does_not_poison_siblings_or_future_writes
     loaded_ids = {item["source_id"] for item in await library.async_list()}
     assert loaded_ids == {"valid-a", "valid-c"}
     assert "corrupt-b" not in loaded_ids
-    assert {result.source_id for result in await library.async_search("tea towels")} == {
-        "valid-a"
-    }
+    assert {
+        result.source_id for result in await library.async_search("tea towels")
+    } == {"valid-a"}
     assert {
         result.source_id for result in await library.async_search("masonry drill")
     } == {"valid-c"}
@@ -477,13 +477,15 @@ def _management_hass():
 async def test_management_api_crud_and_list_omits_content() -> None:
     hass = _management_hass()
     library = await _library()
-    base = {"entry_id": "entry-1", "subentry_id": "agent-1"}
+    base = {"section": "knowledge", "entry_id": "entry-1", "subentry_id": "agent-1"}
     with patch(
-        "custom_components.extended_openai_conversation_responses.knowledge_ui.async_get_knowledge",
+        "custom_components.extended_openai_conversation_responses.management_ui.async_get_knowledge",
         AsyncMock(return_value=library),
     ):
-        created = await async_manage_knowledge_command(
+        created = await async_management_command(
             hass,
+            "admin",
+            True,
             {
                 **base,
                 "action": "create",
@@ -493,14 +495,19 @@ async def test_management_api_crud_and_list_omits_content() -> None:
             },
         )
         source_id = created["source"]["source_id"]
-        listed = await async_manage_knowledge_command(hass, {**base, "action": "list"})
+        listed = await async_management_command(
+            hass, "admin", True, {**base, "action": "list"}
+        )
         assert "content" not in listed["sources"][0]
-        fetched = await async_manage_knowledge_command(
-            hass, {**base, "action": "get", "source_id": source_id}
+        assert listed["stats"]["knowledge_source_count"] == 1
+        fetched = await async_management_command(
+            hass, "admin", True, {**base, "action": "get", "source_id": source_id}
         )
         assert fetched["source"]["content"] == "Tea towels beside oven"
-        await async_manage_knowledge_command(
+        await async_management_command(
             hass,
+            "admin",
+            True,
             {
                 **base,
                 "action": "update",
@@ -509,11 +516,17 @@ async def test_management_api_crud_and_list_omits_content() -> None:
             },
         )
         with pytest.raises(HomeAssistantError, match="confirmation"):
-            await async_manage_knowledge_command(
-                hass, {**base, "action": "delete", "source_id": source_id}
+            await async_management_command(
+                hass,
+                "admin",
+                True,
+                {**base, "action": "delete", "source_id": source_id},
             )
-        assert await async_manage_knowledge_command(
-            hass, {**base, "action": "delete", "source_id": source_id, "confirm": True}
+        assert await async_management_command(
+            hass,
+            "admin",
+            True,
+            {**base, "action": "delete", "source_id": source_id, "confirm": True},
         ) == {"deleted": 1}
 
 
@@ -521,8 +534,16 @@ async def test_management_api_rejects_invalid_entry_and_subentry() -> None:
     hass = _management_hass()
     hass.config_entries.async_get_entry.return_value = None
     with pytest.raises(HomeAssistantError, match="Integration entry"):
-        await async_manage_knowledge_command(
-            hass, {"action": "list", "entry_id": "bad", "subentry_id": "bad"}
+        await async_management_command(
+            hass,
+            "admin",
+            True,
+            {
+                "section": "knowledge",
+                "action": "list",
+                "entry_id": "bad",
+                "subentry_id": "bad",
+            },
         )
 
 

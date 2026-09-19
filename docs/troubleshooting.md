@@ -77,7 +77,7 @@ Then start a separate conversation and ask for the fact.
 
 If **Automatically retrieved memories** is `0`, the model must use memory tools to retrieve stored information rather than receiving local matches automatically.
 
-You can inspect stored records from the **OpenAI memories** sidebar panel.
+You can inspect stored records from **Extended OpenAI > Data & memory > Memories**.
 
 ## A custom function fails
 

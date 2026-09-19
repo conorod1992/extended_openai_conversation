@@ -92,12 +92,12 @@ async def test_options_flow_covers_menu_guidance_and_agent_test() -> None:
         (
             ExtendedOpenAIOptionsFlow.async_step_manage_memory,
             "manage_memory",
-            "/extended-openai-memory",
+            "/extended-openai/data-memory/memories",
         ),
         (
             ExtendedOpenAIOptionsFlow.async_step_manage_knowledge,
             "manage_knowledge",
-            "/extended-openai-knowledge",
+            "/extended-openai/data-memory/knowledge",
         ),
     ):
         shown = await method(flow)

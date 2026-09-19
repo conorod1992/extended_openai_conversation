@@ -16,9 +16,6 @@ from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeLibrary,
     KnowledgeStore,
 )
-from custom_components.extended_openai_conversation_responses.knowledge_ui import (
-    async_manage_knowledge_command,
-)
 
 
 class FakeStorage:
@@ -95,9 +92,9 @@ async def test_disable_reenable_updates_model_index_but_preserves_source() -> No
 
     assert enabled.enabled is True
     assert library.source_count == 1
-    assert [result.source_id for result in await library.async_search("tea towels")] == [
-        source.source_id
-    ]
+    assert [
+        result.source_id for result in await library.async_search("tea towels")
+    ] == [source.source_id]
 
 
 async def test_disabled_requested_source_does_not_expand_search_filter() -> None:
@@ -159,58 +156,6 @@ async def test_backup_preserves_state_and_legacy_backup_defaults_enabled() -> No
     assert legacy_sources[0].enabled is True
 
 
-async def test_management_api_can_create_and_toggle_disabled_sources() -> None:
-    subentry = SimpleNamespace(
-        subentry_id="agent-1",
-        subentry_type="conversation",
-        title="Assistant",
-        data={CONF_KNOWLEDGE_ENABLED: True},
-    )
-    entry = SimpleNamespace(
-        entry_id="entry-1",
-        domain="extended_openai_conversation_responses",
-        title="OpenAI",
-        subentries={"agent-1": subentry},
-    )
-    hass = MagicMock()
-    hass.config_entries.async_get_entry.return_value = entry
-    library = await _library()
-    base = {"entry_id": "entry-1", "subentry_id": "agent-1"}
-
-    with patch(
-        "custom_components.extended_openai_conversation_responses.knowledge_ui.async_get_knowledge",
-        AsyncMock(return_value=library),
-    ):
-        created = await async_manage_knowledge_command(
-            hass,
-            {
-                **base,
-                "action": "create",
-                "title": "Manual",
-                "description": "Reference",
-                "content": "Service procedure",
-                "enabled": False,
-            },
-        )
-        source_id = created["source"]["source_id"]
-        assert created["source"]["enabled"] is False
-
-        listed = await async_manage_knowledge_command(hass, {**base, "action": "list"})
-        assert listed["sources"][0]["enabled"] is False
-
-        updated = await async_manage_knowledge_command(
-            hass,
-            {
-                **base,
-                "action": "update",
-                "source_id": source_id,
-                "enabled": True,
-            },
-        )
-        assert updated["source"]["enabled"] is True
-        assert library.source_count == 1
-
-
 async def test_unified_management_preserves_knowledge_availability() -> None:
     subentry = SimpleNamespace(
         subentry_id="agent-1",
@@ -254,6 +199,12 @@ async def test_unified_management_preserves_knowledge_availability() -> None:
         source_id = created["source"]["source_id"]
         assert created["source"]["enabled"] is False
         assert library.source_count == 0
+
+        listed = await management_ui.async_management_command(
+            hass, "admin-user", True, {**base, "action": "list"}
+        )
+        assert listed["sources"][0]["enabled"] is False
+        assert "content" not in listed["sources"][0]
 
         updated = await management_ui.async_management_command(
             hass,
