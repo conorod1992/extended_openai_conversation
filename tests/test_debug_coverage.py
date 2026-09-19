@@ -572,15 +572,9 @@ async def test_owned_request_records_failure_and_resets_context(monkeypatch, ent
 
     debug.install_debug_instrumentation()
     wrapped = ExtendedOpenAIAgentEntity._async_process
-    hass = SimpleNamespace(data={})
+    hass = entry_agent.hass
     manager = debug.get_debug_manager(hass, "entry", "agent")
     manager.configure(enabled=True)
-    entity = SimpleNamespace(
-        hass=hass,
-        entry=SimpleNamespace(entry_id="entry"),
-        subentry=SimpleNamespace(subentry_id="agent"),
-    )
-
     with pytest.raises(RuntimeError, match="pipeline failed"):
         await entry_agent.async_process(entry_input)
 
