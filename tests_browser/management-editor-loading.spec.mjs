@@ -4,6 +4,7 @@ import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers
 async function openFunctions(page) {
   await page.goto(fixtureUrl("capabilities/functions"));
   const panel = page.locator("extended-openai-management-panel");
+  await panel.locator('.function-group-card[data-group-id="baseline-group"] summary').click();
   await expect(panel.locator(".edit-tool").first()).toBeVisible();
   await page.evaluate(() => {
     const {hass} = window.browserHarness;
@@ -48,7 +49,14 @@ test("Function Tool editing waits for delayed YAML and persists the user's edit"
   await editor.fill(editedYaml);
   await panel.locator("#tool-save").click();
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
-  await page.reload();
+  const sentYaml = await page.evaluate(() => window.browserHarness.calls
+    .filter((call) => call.section === "tools" && call.action === "validate_yaml")
+    .at(-1)?.yaml);
+  expect(sentYaml).toBe(editedYaml);
+  // The harness rewrites the URL to the application route; re-enter its fixture
+  // while retaining the mock backend persisted in localStorage.
+  await page.goto(fixtureUrl("capabilities/functions"));
+  await panel.locator('.function-group-card[data-group-id="baseline-group"] summary').click();
   await expect(panel.locator(".tool-card").filter({hasText: "baseline_tool"})).toContainText("Edited after loading");
   await expectHarnessClean(page, errors);
 });
@@ -67,9 +75,16 @@ test("cancelled editor loads cannot overwrite a reopened dialog", async ({page})
   await page.evaluate(() => window.toolEditorLoads[0].resolve());
   await expect.poll(() => page.evaluate(() => window.toolEditorSettled)).toBe(2);
   await expect(editor).toHaveValue(editedYaml);
-  await panel.locator("#tool-save").click();
+  await panel.locator("#tool-save")).click();
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
-  await page.reload();
+  const sentYaml = await page.evaluate(() => window.browserHarness.calls
+    .filter((call) => call.section === "tools" && call.action === "validate_yaml")
+    .at(-1)?.yaml);
+  expect(sentYaml).toBe(editedYaml);
+  // The harness rewrites the URL to the application route; re-enter its fixture
+  // while retaining the mock backend persisted in localStorage.
+  await page.goto(fixtureUrl("capabilities/functions"));
+  await panel.locator('.function-group-card[data-group-id="baseline-group"] summary').click();
   await expect(panel.locator(".tool-card").filter({hasText: "baseline_tool"})).toContainText("Edited after loading");
   await expectHarnessClean(page, errors);
 });
