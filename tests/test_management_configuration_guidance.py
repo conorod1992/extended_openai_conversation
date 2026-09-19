@@ -1,5 +1,7 @@
 """Tests for side-effect-free management configuration guidance."""
 
+from pathlib import Path
+
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
 )
@@ -10,9 +12,6 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from custom_components.extended_openai_conversation_responses.management_configuration_guidance import (
     configuration_guidance_snapshot,
-)
-from custom_components.extended_openai_conversation_responses.management_ui import (
-    MANAGEMENT_FRONTEND_MODULES,
 )
 
 
@@ -42,10 +41,19 @@ def test_web_search_guidance_reuses_runtime_compatibility_rules() -> None:
     assert "direct OpenAI Responses API" in custom_endpoint["web_search"]["message"]
 
 
-def test_configuration_guidance_frontend_modules_are_registered() -> None:
-    assert "management-configuration-clarity.js" in MANAGEMENT_FRONTEND_MODULES
-    assert "management-configuration-guidance.js" in MANAGEMENT_FRONTEND_MODULES
-    assert "management-decision-guidance.js" in MANAGEMENT_FRONTEND_MODULES
+def test_configuration_guidance_frontend_modules_are_build_inputs() -> None:
+    frontend = (
+        Path(__file__).parents[1]
+        / "custom_components"
+        / "extended_openai_conversation_responses"
+        / "frontend"
+    )
+    for name in (
+        "management-configuration-clarity.js",
+        "management-configuration-guidance.js",
+        "management-decision-guidance.js",
+    ):
+        assert (frontend / name).is_file()
 
 
 async def test_management_adds_guidance_to_successful_config(hass, management_agent):

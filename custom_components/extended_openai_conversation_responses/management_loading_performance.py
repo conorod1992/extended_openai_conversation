@@ -6,14 +6,12 @@ import asyncio
 from contextvars import ContextVar
 from copy import deepcopy
 import logging
-from pathlib import Path
 import sys
 from typing import Any
 
 import yaml
 
 from homeassistant.components import panel_custom, websocket_api
-from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
@@ -40,7 +38,7 @@ from .const import (
 )
 from .conversation_archive import async_get_archive
 from .feature_status import management_feature_status
-from .frontend_version import FRONTEND_VERSION
+from .frontend_assets import async_register_frontend_assets, frontend_entry_url
 from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
 from .knowledge import async_get_knowledge, get_loaded_knowledge
 from .management_function_repair import (
@@ -61,11 +59,6 @@ _RUNTIME_QUARANTINED_FUNCTION_NAMES: ContextVar[frozenset[str]] = ContextVar(
 _RUNTIME_QUARANTINE_ALL_FUNCTIONS: ContextVar[bool] = ContextVar(
     "extended_openai_runtime_quarantine_all_functions", default=False
 )
-
-
-def _asset_url(module_name: str) -> str:
-    """Return an immutable, release-versioned frontend module URL."""
-    return f"/{DOMAIN}/assets/{FRONTEND_VERSION}/{module_name}"
 
 
 def _guest_has_ha_exclusions(options: dict[str, Any]) -> bool:
@@ -366,43 +359,24 @@ def _snapshot_normalized_configuration(config: dict[str, Any]) -> dict[str, Any]
     return snapshot
 
 
-def _static_paths(
-    frontend_dir: Path, module_names: tuple[str, ...]
-) -> list[StaticPathConfig]:
-    """Keep legacy no-cache aliases while adding immutable versioned URLs."""
-    paths: list[StaticPathConfig] = []
-    for module_name in module_names:
-        file_path = str(frontend_dir / module_name)
-        paths.append(
-            StaticPathConfig(f"/{DOMAIN}/{module_name}", file_path, cache_headers=False)
-        )
-        paths.append(
-            StaticPathConfig(_asset_url(module_name), file_path, cache_headers=True)
-        )
-    return paths
-
-
 def _setup_step_key(setup_key: str, step: str) -> str:
     """Return a durable-in-process marker for one completed registration step."""
     return f"{setup_key}.{step}"
 
 
 async def async_setup_cached_management_ui(hass: HomeAssistant) -> None:
-    """Register the management panel with retry-safe versioned assets."""
+    """Register the bundled Management panel through the shared production assets."""
     management_ui = _management_ui()
     setup_key = management_ui._UI_SETUP
     if hass.data.get(setup_key):
         return
 
-    frontend_dir = Path(management_ui.__file__).parent / "frontend"
     static_key = _setup_step_key(setup_key, "static_paths")
     websocket_key = _setup_step_key(setup_key, "websocket")
     panel_key = _setup_step_key(setup_key, "panel")
 
     if not hass.data.get(static_key):
-        await hass.http.async_register_static_paths(
-            _static_paths(frontend_dir, management_ui.MANAGEMENT_FRONTEND_MODULES)
-        )
+        await async_register_frontend_assets(hass)
         hass.data[static_key] = True
     if not hass.data.get(websocket_key):
         websocket_api.async_register_command(hass, management_ui.websocket_management)
@@ -412,7 +386,7 @@ async def async_setup_cached_management_ui(hass: HomeAssistant) -> None:
             hass,
             webcomponent_name="extended-openai-management-panel",
             frontend_url_path=MANAGEMENT_PANEL_URL,
-            module_url=_asset_url("management-panel.js"),
+            module_url=frontend_entry_url("management"),
             sidebar_title=MANAGEMENT_PANEL_TITLE,
             sidebar_icon="mdi:robot-outline",
             require_admin=False,
@@ -423,20 +397,17 @@ async def async_setup_cached_management_ui(hass: HomeAssistant) -> None:
 
 
 async def async_setup_cached_debug_ui(hass: HomeAssistant) -> None:
-    """Register debug modules with retry-safe versioned asset URLs."""
+    """Register Request Debug against the shared bundled production assets."""
     debug_ui = _debug_ui()
     setup_key = debug_ui._DEBUG_UI_SETUP
     if hass.data.get(setup_key):
         return
 
-    frontend_dir = Path(debug_ui.__file__).parent / "frontend"
     static_key = _setup_step_key(setup_key, "static_paths")
     websocket_key = _setup_step_key(setup_key, "websocket")
 
     if not hass.data.get(static_key):
-        await hass.http.async_register_static_paths(
-            _static_paths(frontend_dir, ("debug-panel.js", "debug-management.js"))
-        )
+        await async_register_frontend_assets(hass)
         hass.data[static_key] = True
     if not hass.data.get(websocket_key):
         websocket_api.async_register_command(hass, debug_ui.websocket_request_debug)
