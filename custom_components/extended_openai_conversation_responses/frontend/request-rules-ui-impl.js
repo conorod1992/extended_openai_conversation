@@ -1,3 +1,4 @@
+import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys} from "./keyed-collection.js";
 import {requestRuleSummary, renderLiveRequestTester} from "./management-decision-guidance.js";
 import {renderRequestRuleMatchTester} from "./request-rules-match-test-ui.js";
 export const fuzzyThresholdValue = (value) => {
@@ -103,16 +104,80 @@ const wordingEditor = (panel, groups) => `<details class="wording-editor"><summa
 
 const ROUTING_HELP = '<section class="notice"><strong>AI routing command behavior</strong><p><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> routing rules are complete commands by default: they are acknowledged locally and apply to the rest of the current conversation. Enable <strong>Continue to AI</strong> to send the original request to the provider unchanged after applying the route. <strong>Starts with</strong>, <strong>Ends with</strong>, and <strong>Contains</strong> continue to the provider by default; matched words are not stripped.</p><p>A request-only reset bypasses a conversation override for that one provider request; it does not clear the saved conversation route. Rule order is only the final tie-breaker after match type and phrase specificity.</p></section>';
 
+function requestRuleCard(panel, rule, index) {
+  const result = panel._result || {};
+  const rules = result.rules || [];
+  const summary = requestRuleSummary(rule, result.defaults || {});
+  return `<article data-rule-key="${panel._e(rule.id)}" class="request-rule-card ${rule.enabled ? "" : "disabled"}"><div class="rule-card-heading"><div><span class="type-badge ${rule.action_type === "local_action" ? "local" : "routing"}">${rule.action_type === "local_action" ? "Local command" : "AI routing"}</span><h2>${panel._e(rule.name)}</h2></div><label class="switch-label"><span class="sr-only">Enable ${panel._e(rule.name)}</span><input class="rule-enabled" data-id="${panel._e(rule.id)}" type="checkbox" ${rule.enabled ? "checked" : ""}></label></div><div class="phrase-chips">${rule.phrases.slice(0,4).map((phrase) => `<span><b>${matchLabel(rule.match_type)}</b> ${panel._e(phrase)}</span>`).join("")}${summary.hiddenPhrases ? `<span class="eoc-more-phrases">+${summary.hiddenPhrases} more</span>` : ""}</div><p>${panel._e(summary.action)}</p><p class="meta">${panel._e(summary.matching)}</p>${rule.sensitive_matching_warning && rule.match_type !== "sentence_pattern" ? `<p class="sensitive-warning">Review tolerant matching carefully: this rule controls a potentially sensitive Home Assistant domain.</p>` : ""}<div class="actions">${result.diagnostics?.[rule.id] ? `<p class="sensitive-warning"><strong>Rule inactive:</strong> ${panel._e(result.diagnostics[rule.id])} Edit and save this rule to use the current sentence-pattern syntax.</p>` : ""}<button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="up" ${index === 0 ? "disabled" : ""}>Move up</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="down" ${index === rules.length - 1 ? "disabled" : ""}>Move down</button><button type="button" class="secondary rule-edit" data-id="${panel._e(rule.id)}">Edit</button><button type="button" class="secondary rule-duplicate" data-id="${panel._e(rule.id)}">Duplicate</button><button type="button" class="danger secondary-danger rule-delete" data-id="${panel._e(rule.id)}">Delete</button></div></article>`;
+}
+
 function renderRulesPage(panel, {query = panel._query || "", inPlaceSearch = false} = {}) {
   const result = panel._result || {}, rules = result.rules || [];
   const defaults = {...{word_forms:true,wording_alternatives:true,fuzzy:false,fuzzy_threshold:90}, ...((panel._rulesSettingsDraft || result).defaults || {})};
   const search = inPlaceSearch ? "" : String(query).trim().toLowerCase();
   const filtered = rules.map((rule, index) => ({rule, index})).filter(({rule}) => !search || `${rule.name} ${rule.phrases.join(" ")} ${rule.action_type}`.toLowerCase().includes(search));
-  return `<section class="page-intro"><div><h1>Request Rules</h1><p>Create fast voice shortcuts and route AI requests before they reach OpenAI.</p></div><button type="button" id="rule-add">Create rule</button></section><section class="notice on"><strong>Local commands skip the AI/API call</strong><p>They normally respond faster. AI routing rules keep using the AI but can change the model or reasoning for one request or the active conversation.</p></section>${ROUTING_HELP}<section class="content-card rule-settings"><details><summary>Default matching settings</summary><p class="help">These settings apply to rules unless a rule has its own custom matching settings. Normal matches are always preferred before fuzzy matching is tried.</p>${matchingControls("rules-default", defaults)}</details>${wordingEditor(panel, (panel._rulesSettingsDraft || result).wording_groups || [])}</section><div class="search-row"><input id="rule-search" type="search" value="${panel._e(query)}" placeholder="Search rules" aria-label="Search Request Rules"><span class="count">${rules.length} rule${rules.length === 1 ? "" : "s"}</span></div><section class="rule-list">${filtered.map(({rule, index}) => { const summary = requestRuleSummary(rule, result.defaults || {}); return `<article class="request-rule-card ${rule.enabled ? "" : "disabled"}"><div class="rule-card-heading"><div><span class="type-badge ${rule.action_type === "local_action" ? "local" : "routing"}">${rule.action_type === "local_action" ? "Local command" : "AI routing"}</span><h2>${panel._e(rule.name)}</h2></div><label class="switch-label"><span class="sr-only">Enable ${panel._e(rule.name)}</span><input class="rule-enabled" data-id="${panel._e(rule.id)}" type="checkbox" ${rule.enabled ? "checked" : ""}></label></div><div class="phrase-chips">${rule.phrases.slice(0,4).map((phrase) => `<span><b>${matchLabel(rule.match_type)}</b> ${panel._e(phrase)}</span>`).join("")}${summary.hiddenPhrases ? `<span class="eoc-more-phrases">+${summary.hiddenPhrases} more</span>` : ""}</div><p>${panel._e(summary.action)}</p><p class="meta">${panel._e(summary.matching)}</p>${rule.sensitive_matching_warning && rule.match_type !== "sentence_pattern" ? `<p class="sensitive-warning">Review tolerant matching carefully: this rule controls a potentially sensitive Home Assistant domain.</p>` : ""}<div class="actions">${result.diagnostics?.[rule.id] ? `<p class="sensitive-warning"><strong>Rule inactive:</strong> ${panel._e(result.diagnostics[rule.id])} Edit and save this rule to use the current sentence-pattern syntax.</p>` : ""}<button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="up" ${index === 0 ? "disabled" : ""}>Move up</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="down" ${index === rules.length - 1 ? "disabled" : ""}>Move down</button><button type="button" class="secondary rule-edit" data-id="${panel._e(rule.id)}">Edit</button><button type="button" class="secondary rule-duplicate" data-id="${panel._e(rule.id)}">Duplicate</button><button type="button" class="danger secondary-danger rule-delete" data-id="${panel._e(rule.id)}">Delete</button></div></article>`; }).join("") || `<section class="content-card empty-state"><h2>${rules.length ? "No rules match your search" : "Create your first Request Rule"}</h2><p>${rules.length ? "Try a different phrase or rule name." : "Add a fast local command such as “good night”."}</p>${rules.length ? "" : `<button type="button" id="rule-empty-add">Create rule</button>`}</section>`}</section>`;
+  return `<section class="page-intro"><div><h1>Request Rules</h1><p>Create fast voice shortcuts and route AI requests before they reach OpenAI.</p></div><button type="button" id="rule-add">Create rule</button></section><section class="notice on"><strong>Local commands skip the AI/API call</strong><p>They normally respond faster. AI routing rules keep using the AI but can change the model or reasoning for one request or the active conversation.</p></section>${ROUTING_HELP}<section class="content-card rule-settings"><details><summary>Default matching settings</summary><p class="help">These settings apply to rules unless a rule has its own custom matching settings. Normal matches are always preferred before fuzzy matching is tried.</p>${matchingControls("rules-default", defaults)}</details>${wordingEditor(panel, (panel._rulesSettingsDraft || result).wording_groups || [])}</section><div class="search-row"><input id="rule-search" type="search" value="${panel._e(query)}" placeholder="Search rules" aria-label="Search Request Rules"><span class="count">${rules.length} rule${rules.length === 1 ? "" : "s"}</span></div><section class="rule-list">${filtered.map(({rule, index}) => requestRuleCard(panel, rule, index)).join("") || `<section class="content-card empty-state"><h2>${rules.length ? "No rules match your search" : "Create your first Request Rule"}</h2><p>${rules.length ? "Try a different phrase or rule name." : "Add a fast local command such as “good night”."}</p>${rules.length ? "" : `<button type="button" id="rule-empty-add">Create rule</button>`}</section>`}</section>`;
 }
 
 export function renderRequestRules(panel, presentation) {
   return `${renderRulesPage(panel, presentation)}${renderRequestRuleMatchTester()}${renderLiveRequestTester()}`;
+}
+
+const ruleCollections = new WeakMap();
+const pendingRuleButtons = new WeakSet();
+const moveDisabled = (index, length, direction) => index < 0 || (direction === "up" ? index === 0 : index === length - 1);
+const ruleSettingsSignature = panel => JSON.stringify([
+  (panel._rulesSettingsDraft || panel._result)?.defaults,
+  (panel._rulesSettingsDraft || panel._result)?.wording_groups,
+]);
+
+function prepareRequestRulesCollection(panel) {
+  const list = panel.shadowRoot.querySelector(".rule-list");
+  if (!list || ruleCollections.has(list)) return;
+  ruleCollections.set(list, {
+    cards: adoptKeyedElements(list, "[data-rule-key]", "ruleKey"),
+    settings: ruleSettingsSignature(panel),
+    empty: list.querySelector(".empty-state"),
+  });
+  reconcileRequestRules(panel);
+}
+
+export function reconcileRequestRules(panel) {
+  const list = panel.shadowRoot.querySelector(".rule-list");
+  const state = ruleCollections.get(list);
+  // Matching-settings/wording editors retain their existing rendering lifecycle.
+  // This fast path owns the rule collection, not those independent settings.
+  if (!state || state.settings !== ruleSettingsSignature(panel)) return false;
+  const result = panel._result || {};
+  const rules = result.rules || [];
+  const nodes = rules.map((rule, index) => {
+    // Renumbering/reordering is not a change to the card's contents. Only the
+    // two move-button boundaries depend on its current collection position.
+    const presentation = {...rule};
+    delete presentation.order;
+    const record = keyedElement(
+      state.cards, rule.id,
+      JSON.stringify([presentation, result.defaults, result.diagnostics?.[rule.id]]),
+      () => requestRuleCard(panel, rule, index),
+    );
+    record.moves ||= [...record.node.querySelectorAll(".rule-move")];
+    for (const button of record.moves) {
+      const disabled = pendingRuleButtons.has(button) || moveDisabled(index, rules.length, button.dataset.direction);
+      if (button.disabled !== disabled) button.disabled = disabled;
+    }
+    return record.node;
+  });
+  if (!rules.length) {
+    state.empty ||= elementFromMarkup('<section class="content-card empty-state"><h2>Create your first Request Rule</h2><p>Add a fast local command such as “good night”.</p><button type="button" id="rule-empty-add">Create rule</button></section>');
+    nodes.push(state.empty);
+  }
+  // Search owns its notice and visibility. Preserve that node for the existing
+  // in-place filter pass, which runs after this collection update.
+  const searchEmpty = list.querySelector("[data-eoc-rule-search-empty]");
+  if (searchEmpty) nodes.push(searchEmpty);
+  placeChildren(list, nodes);
+  pruneKeys(state.cards, new Set(rules.map(rule => rule.id)));
+  return true;
 }
 
 export function requestRulesDialog() {
@@ -248,11 +313,12 @@ export function bindRequestRules(panel) {
   const root = panel.shadowRoot;
   const q = (selector) => root.querySelector(selector);
   const result = panel._result || {};
-  const rules = result.rules || [];
+  const rules = () => panel._result?.rules || [];
   let editorRevision = result.revision;
   const actionSelectorHost = q("#rule-action-sequence-host");
   if (!actionSelectorHost) return;
   const actionSelector = createRequestRuleActionSelector(panel, actionSelectorHost);
+  prepareRequestRulesCollection(panel);
 
   const refresh = () => {
     const local = q("#rule-action-type").value === "local_action";
@@ -280,7 +346,7 @@ export function bindRequestRules(panel) {
 
   const open = (id = null) => {
     editorRevision = panel._result?.revision;
-    const rule = rules.find((item) => item.id === id);
+    const rule = rules().find((item) => item.id === id);
     panel._editingRuleId = id;
     q("#rule-dialog-title").textContent = rule ? "Edit Request Rule" : "Create Request Rule";
     q("#rule-name").value = rule?.name || "";
@@ -312,26 +378,46 @@ export function bindRequestRules(panel) {
   };
 
   q("#rule-add")?.addEventListener("click", () => open());
-  q("#rule-empty-add")?.addEventListener("click", () => open());
   q("#rule-search")?.addEventListener("input", (event) => { panel._query = event.target.value; panel._render(); });
-  root.querySelectorAll(".rule-edit").forEach((button) => button.addEventListener("click", () => open(button.dataset.id)));
-  root.querySelectorAll(".rule-duplicate").forEach((button) => button.addEventListener("click", async () => {
-    try { await panel._call("request_rules", "duplicate", {rule_id:button.dataset.id,revision: panel._result?.revision}); await panel._loadSection(); }
-    catch (err) { await recoverRequestRuleMutation(panel, err, "Unable to duplicate Request Rule"); }
-  }));
-  root.querySelectorAll(".rule-delete").forEach((button) => button.addEventListener("click", async () => {
-    if (!await panel._confirm("Delete Request Rule?", "This cannot be undone.", "Delete")) return;
-    try { await panel._call("request_rules", "delete", {rule_id:button.dataset.id,confirm:true,revision: panel._result?.revision}); await panel._loadSection(); }
-    catch (err) { await recoverRequestRuleMutation(panel, err, "Unable to delete Request Rule"); }
-  }));
-  root.querySelectorAll(".rule-enabled").forEach((input) => input.addEventListener("change", async () => {
-    if (input.disabled) return;
+  const list = q(".rule-list");
+  list?.addEventListener("click", async event => {
+    const button = event.target.closest?.("button");
+    if (!button || button.disabled) return;
+    if (button.id === "rule-empty-add") return open();
+    if (button.matches(".rule-edit")) return open(button.dataset.id);
+    if (!button.matches(".rule-duplicate,.rule-delete,.rule-move")) return;
+    const action = button.matches(".rule-delete") ? "delete" : button.matches(".rule-move") ? "move" : "duplicate";
+    if (action === "delete" && !await panel._confirm("Delete Request Rule?", "This cannot be undone.", "Delete")) return;
+    pendingRuleButtons.add(button);
+    button.disabled = true;
+    try {
+      if (action === "delete") await panel._call("request_rules", "delete", {rule_id: button.dataset.id, confirm: true, revision: panel._result?.revision});
+      else if (action === "move") await panel._call("request_rules", "move", {rule_id: button.dataset.id, direction: button.dataset.direction, revision: panel._result?.revision});
+      else await panel._call("request_rules", "duplicate", {rule_id: button.dataset.id, revision: panel._result?.revision});
+      await panel._loadSection(true);
+    } catch (err) {
+      if (action === "delete") await recoverRequestRuleMutation(panel, err, "Unable to delete Request Rule");
+      else if (action === "duplicate") await recoverRequestRuleMutation(panel, err, "Unable to duplicate Request Rule");
+      else await recoverRequestRuleMutation(panel, err, "Unable to move Request Rule");
+    }
+    finally {
+      pendingRuleButtons.delete(button);
+      const current = rules();
+      button.disabled = action === "move" && moveDisabled(current.findIndex(rule => rule.id === button.dataset.id), current.length, button.dataset.direction);
+    }
+  });
+  list?.addEventListener("change", async event => {
+    const input = event.target;
+    if (!input.matches?.(".rule-enabled") || input.disabled) return;
+    const rule = rules().find(item => item.id === input.dataset.id);
+    if (!rule) return;
     input.disabled = true;
-    const rule = rules.find((item) => item.id === input.dataset.id);
-    try { await panel._call("request_rules", "update", {rule_id:rule.id,rule:{...rule,enabled:input.checked,sensitive_matching_warning:undefined},revision: panel._result?.revision}); await panel._loadSection(true); }
-    catch (err) { input.checked = Boolean(rule.enabled); await recoverRequestRuleMutation(panel, err, "Unable to update Request Rule"); }
+    try {
+      await panel._call("request_rules", "update", {rule_id: rule.id, rule: {...rule, enabled: input.checked, sensitive_matching_warning: undefined}, revision: panel._result?.revision});
+      await panel._loadSection(true);
+    } catch (err) { input.checked = Boolean(rule.enabled); await recoverRequestRuleMutation(panel, err, "Unable to update Request Rule"); }
     finally { input.disabled = false; }
-  }));
+  });
   q("#rules-default-fuzzy")?.addEventListener("change", () => setFuzzyState(root, "rules-default"));
   q("#rule-fuzzy")?.addEventListener("change", () => setFuzzyState(root, "rule"));
   setFuzzyState(root, "rules-default");
@@ -363,10 +449,10 @@ export function bindRequestRules(panel) {
     try {
       const actionType = q("#rule-action-type").value;
       const actions = readRequestRuleActions(actionSelector);
-      const rule = {name:q("#rule-name").value, enabled:q("#rule-enabled-edit").checked, phrases:q("#rule-phrases").value.split("\n").map((item) => item.trim()).filter(Boolean), match_type:q("#rule-match").value, action_type:actionType, action:actionType === "local_action" ? {actions, success_response:q("#rule-success").value, failure_response:q("#rule-failure").value} : {model:q("#rule-model").value, reasoning_effort:q("#rule-reasoning").value, scope:q("#rule-scope").value, reset:q("#rule-reset").checked, continue_to_ai:q("#rule-continue-to-ai").checked, success_response:q("#rule-routing-success").value}, matching_behavior:q("#rule-matching-behavior").value, matching:{word_forms:q("#rule-word-forms").checked, wording_alternatives:q("#rule-wording").checked, fuzzy:q("#rule-fuzzy").checked, fuzzy_threshold:fuzzyThresholdValue(q("#rule-threshold").value)}, order:rules.find((item) => item.id === panel._editingRuleId)?.order ?? rules.length};
+      const rule = {name:q("#rule-name").value, enabled:q("#rule-enabled-edit").checked, phrases:q("#rule-phrases").value.split("\n").map((item) => item.trim()).filter(Boolean), match_type:q("#rule-match").value, action_type:actionType, action:actionType === "local_action" ? {actions, success_response:q("#rule-success").value, failure_response:q("#rule-failure").value} : {model:q("#rule-model").value, reasoning_effort:q("#rule-reasoning").value, scope:q("#rule-scope").value, reset:q("#rule-reset").checked, continue_to_ai:q("#rule-continue-to-ai").checked, success_response:q("#rule-routing-success").value}, matching_behavior:q("#rule-matching-behavior").value, matching:{word_forms:q("#rule-word-forms").checked, wording_alternatives:q("#rule-wording").checked, fuzzy:q("#rule-fuzzy").checked, fuzzy_threshold:fuzzyThresholdValue(q("#rule-threshold").value)}, order:rules().find((item) => item.id === panel._editingRuleId)?.order ?? rules().length};
       await panel._call("request_rules", panel._editingRuleId ? "update" : "create", {...(panel._editingRuleId ? {rule_id:panel._editingRuleId} : {}),rule,revision: editorRevision});
       q("#rule-dialog").close();
-      await panel._loadSection();
+      await panel._loadSection(true);
     } catch (err) { q("#rule-error").textContent = err.message || String(err); }
     finally { panel._setSaving(save, false); }
   });

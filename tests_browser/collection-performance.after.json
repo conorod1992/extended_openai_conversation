@@ -1,0 +1,37 @@
+{
+  "size": 40,
+  "results": {
+    "functions": {
+      "records": 6,
+      "elementChanges": 49,
+      "mainChildReplacements": 0,
+      "retainedCards": 39,
+      "retainedGroups": 5,
+      "renders": 1
+    },
+    "functionsSearch": {
+      "records": 1,
+      "elementChanges": 0,
+      "mainChildReplacements": 0,
+      "retainedCards": 40,
+      "retainedGroups": 5,
+      "renders": 0
+    },
+    "rules": {
+      "records": 8,
+      "elementChanges": 38,
+      "mainChildReplacements": 0,
+      "retainedCards": 39,
+      "retainedGroups": 0,
+      "renders": 1
+    },
+    "rulesSearch": {
+      "records": 2,
+      "elementChanges": 0,
+      "mainChildReplacements": 0,
+      "retainedCards": 40,
+      "retainedGroups": 0,
+      "renders": 0
+    }
+  }
+}

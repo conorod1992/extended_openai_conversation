@@ -869,6 +869,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     });
   }
 
+  _reconcileCollectionView() {
+    const view = this._viewKey();
+    if (view === "capabilities/request-rules") return getRouteFeature(view)?.reconcileRequestRules?.(this) || false;
+    if (view !== "capabilities/functions") return false;
+    const repair = getRouteFeature(view);
+    if (repair?.repairIssue(this) && repair.repairMetadata(this)?.isolatable === false) return false;
+    return getConfigurationEditor()?.reconcileTools?.(this, {repairCards: repair?.renderFunctionRepairCards(this) || ""}) || false;
+  }
+
   _content(agent) {
     const view = this._viewKey();
     if (!routeFeaturesReady(view)) return this._loading();

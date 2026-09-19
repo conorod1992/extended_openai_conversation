@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {bindTools} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js";
+import {bindTools, openTool} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js";
 
 function deferred() {
   let resolve, reject;
@@ -45,6 +45,10 @@ function harness() {
     },
   };
   bindTools(panel);
+  // Exercise the editor lifecycle directly; real-browser collection tests cover
+  // delegated dispatch from cards (including current keys after deletions).
+  edit.addEventListener("click", () => openTool(panel, 0));
+  controls["add-tool"].addEventListener("click", () => openTool(panel));
   return {panel, controls, edit, calls, loads};
 }
 

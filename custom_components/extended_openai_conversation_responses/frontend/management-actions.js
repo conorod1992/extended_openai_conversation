@@ -155,7 +155,7 @@ export function bindFrontendCorrectness(panel) {
         const saved = await runFrontendMutation(panel, button, "duplicate Request Rule", () =>
           panel._call("request_rules", "duplicate", {rule_id: button.dataset.id, revision: panel._result?.revision})
         );
-        if (saved) { await panel._loadSection(); panel._toast("Request Rule duplicated"); }
+        if (saved) { await panel._loadSection(true); panel._toast("Request Rule duplicated"); }
       })();
       return;
     }
@@ -168,7 +168,7 @@ export function bindFrontendCorrectness(panel) {
         const saved = await runFrontendMutation(panel, button, "delete Request Rule", () =>
           panel._call("request_rules", "delete", {rule_id: button.dataset.id, confirm: true, revision: panel._result?.revision})
         );
-        if (saved) { await panel._loadSection(); panel._toast("Request Rule deleted"); }
+        if (saved) { await panel._loadSection(true); panel._toast("Request Rule deleted"); }
       })();
       return;
     }

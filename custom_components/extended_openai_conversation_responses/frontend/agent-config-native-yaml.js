@@ -127,7 +127,8 @@ async function assignToolToGroup(panel, select) {
   const config = panel?._draft || panel?._result?.config || {};
   const tools = config.functions || [];
   const groups = config.function_groups || [];
-  const index = Number(select.dataset.index);
+  const key = select.closest?.("[data-tool-key]")?.dataset.toolKey;
+  const index = key === undefined ? Number(select.dataset.index) : tools.findIndex(tool => tool.spec?.name === key);
   const tool = tools[index];
   const name = tool?.spec?.name;
   if (!name) return;
@@ -171,7 +172,7 @@ async function assignToolToGroup(panel, select) {
     select.value = current?.id || "";
     select.disabled = false;
     panel._toast(`Unable to change Function Group: ${err.message || String(err)}`, true);
-  }
+  } finally { select.disabled = false; }
 }
 
 export function bindNativeToolYaml(panel) {
@@ -300,10 +301,12 @@ export function bindNativeToolYaml(panel) {
 }
 
 export function bindTools(panel) {
-  const result = base.bindTools(panel);
+  base.bindTools(panel);
   bindNativeToolYaml(panel);
-  panel?.shadowRoot?.querySelectorAll(".function-group-assignment").forEach((select) => {
-    select.addEventListener("change", () => void assignToolToGroup(panel, select));
+  const host = panel?.shadowRoot?.querySelector(".tools-surface");
+  if (!host || host.__eocAssignmentBound) return;
+  host.__eocAssignmentBound = true;
+  host.addEventListener("change", event => {
+    if (event.target.matches?.(".function-group-assignment") && !event.target.disabled) void assignToolToGroup(panel, event.target);
   });
-  return result;
 }
