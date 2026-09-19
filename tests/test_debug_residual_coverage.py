@@ -180,7 +180,6 @@ async def test_instrumentation_helpers_are_transparent_without_trace(monkeypatch
     ):
         return resolved
 
-    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_process", process)
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_handle_message", handle)
     monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_retrieve_memories", retrieve)
     monkeypatch.setattr(
