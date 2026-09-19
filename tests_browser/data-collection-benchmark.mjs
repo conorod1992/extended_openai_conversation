@@ -8,31 +8,30 @@ import {acceptConfirmation} from "./browser-helpers.mjs";
 const browser = await chromium.launch({headless: true, ...(process.env.CHROMIUM_EXECUTABLE_PATH ? {executablePath: process.env.CHROMIUM_EXECUTABLE_PATH} : {})});
 const results = {};
 try {
-  for (const kind of ["knowledge", "persistent", "temporary", "standalone"]) {
+  for (const kind of ["knowledge", "persistent", "temporary"]) {
     const page = await browser.newPage({baseURL: process.env.BENCHMARK_BASE_URL || "http://127.0.0.1:4173"});
     const panel = await openDataCollection(page, kind, kind === "knowledge" ? 60 : 100);
-    const standalone = kind === "standalone", knowledge = kind === "knowledge", temporary = kind === "temporary";
-    const list = panel.locator(standalone ? "#memories" : knowledge ? ".knowledge-list" : ".memory-list");
+    const knowledge = kind === "knowledge", temporary = kind === "temporary";
+    const list = panel.locator(knowledge ? ".knowledge-list" : ".memory-list");
     const card = list.locator("article").first();
     if (!temporary) {
-      await card.locator(standalone ? '[aria-label="Edit memory"]' : knowledge ? ".source-edit-button" : ".memory-edit-button").click();
-      const field = panel.locator(standalone ? "#memoryContent" : knowledge ? "#knowledge-title" : "#memory-content");
+      await card.locator(knowledge ? ".source-edit-button" : ".memory-edit-button").click();
+      const field = panel.locator(knowledge ? "#knowledge-title" : "#memory-content");
       await expect(field).toBeEnabled();
       await field.fill("Edited fixture record");
       await beginDataMeasure(page);
-      await panel.locator(standalone ? "#dialogSave" : knowledge ? "#knowledge-save" : "#memory-save").click();
+      await panel.locator(knowledge ? "#knowledge-save" : "#memory-save").click();
       await expect(list.getByText("Edited fixture record", {exact: true})).toBeVisible();
       results[`${kind}Edit`] = await finishDataMeasure(page);
     }
-    await card.locator(standalone ? '[aria-label="Delete memory"]' : knowledge ? ".delete-source" : temporary ? ".delete-temporary" : ".delete-memory").click();
+    await card.locator(knowledge ? ".delete-source" : temporary ? ".delete-temporary" : ".delete-memory").click();
     await beginDataMeasure(page);
-    if (standalone) await panel.locator("#confirmAccept").click();
-    else await acceptConfirmation(panel);
+    await acceptConfirmation(panel);
     await expect(list.locator("article")).toHaveCount(temporary ? 11 : knowledge ? 59 : 99);
     results[`${kind}Delete`] = await finishDataMeasure(page);
     if (!temporary) {
       await beginDataMeasure(page);
-      await panel.locator(standalone ? "#search" : "#list-search").fill(knowledge ? "Source 1" : "Memory 1");
+      await panel.locator("#list-search").fill(knowledge ? "Source 1" : "Memory 1");
       if (kind === "persistent") {
         await page.waitForFunction(() => dataCollectionBackend.calls.some(call => call.action === "search"));
         // This is an async completion barrier, not an elapsed-time measurement.
@@ -70,19 +69,6 @@ try {
     if (temporary) {
       await beginDataMeasure(page); await panel.locator("#list-search").fill("Temporary 1");
       results.temporarySearch = await finishDataMeasure(page);
-    }
-    if (standalone) {
-      await panel.locator("#search").fill("");
-      await beginDataMeasure(page);
-      await panel.locator("#categories button").filter({hasText: "category-2"}).click();
-      results.standaloneCategoryFilter = await finishDataMeasure(page);
-      await panel.locator("#categories button").first().click();
-      await list.locator("article").first().locator('[aria-label="Edit memory"]').click();
-      await panel.locator("#memoryCategory").fill("moved-category");
-      await beginDataMeasure(page);
-      await panel.locator("#dialogSave").click();
-      await expect(panel.locator("#categories")).toContainText("moved-category 1");
-      results.standaloneCategoryMove = await finishDataMeasure(page);
     }
     await page.close();
   }

@@ -1,6 +1,7 @@
 """Unified Management parity and shared Memory store safety regressions."""
 
 from copy import deepcopy
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -305,3 +306,57 @@ async def test_persistent_blank_update_is_rejected_without_mutation() -> None:
     current = (await memory.async_list("user-7"))[0]
     assert current.content == "Driving lessons are one hour."
     assert memory_revision(current) == revision
+
+
+def test_websocket_schema_accepts_rich_edit_controls():
+    payload = {
+        "id": 1,
+        "type": management_ui.WS_COMMAND,
+        "section": "memories",
+        "action": "update",
+        "entry_id": "entry-1",
+        "subentry_id": "agent-1",
+        "scope_id": "user:user-7",
+        "target_scope_id": "shared:household",
+        "memory_id": "m",
+        "importance": "high",
+        "subject": "Bins",
+        "key": "bins.day",
+        "valid_from": "2026-09-01T00:00:00Z",
+        "clear_fields": [],
+        "expected_revision": "a" * 64,
+        "refresh_confirmation": False,
+    }
+    assert management_ui.websocket_management._ws_schema(payload) == payload
+
+
+async def test_explicit_confirmation_refresh_preserves_substantive_revision(
+    store, monkeypatch
+):
+    await command("add", content="Fact remains true")
+    original = (await command("list"))["memories"][0]
+    from homeassistant.util import dt as dt_util
+
+    confirmed = datetime.fromisoformat(original["last_confirmed_at"]) + timedelta(
+        hours=1
+    )
+    monkeypatch.setattr(dt_util, "utcnow", lambda: confirmed)
+    result = await command(
+        "update",
+        memory_id=original["memory_id"],
+        expected_revision=original["revision"],
+        refresh_confirmation=True,
+    )
+    assert result["memory"]["revision"] == original["revision"]
+    assert result["memory"]["last_confirmed_at"] == confirmed.isoformat()
+
+
+@pytest.mark.parametrize(
+    "scope", ["device:kitchen", "conversation:session", "__anonymous__"]
+)
+async def test_temporary_clear_rejects_non_owner_scopes(monkeypatch, scope):
+    get = AsyncMock()
+    monkeypatch.setattr(management_ui, "async_get_temporary_memory", get)
+    with pytest.raises(HomeAssistantError):
+        await command("temporary_clear", admin=True, scope_id=scope, confirm=True)
+    get.assert_not_awaited()

@@ -93,7 +93,10 @@ test("Memory moves use one update, preserve ID, and reconcile both directions", 
 
 test("Temporary clear requires confirmation, ignores search and preserves foreign scope and persistent data", async ({page}) => {
   const panel = await openDataCollection(page, "temporary");
-  await page.evaluate(() => dataCollectionBackend.state.temporary.push({...dataCollectionBackend.state.temporary[0], memory_id: "foreign", scope_id: "shared:household"}));
+  await page.evaluate(() => dataCollectionBackend.state.temporary.push(
+    {...dataCollectionBackend.state.temporary[0], memory_id: "foreign", scope_id: "shared:household"},
+    {...dataCollectionBackend.state.temporary[0], memory_id: "other-agent", subentry_id: "agent-2"},
+  ));
   await panel.locator("#list-search").fill("Temporary 1");
   await panel.locator("#clear-temporary").click();
   await panel.locator("#confirm-cancel").click();
@@ -107,7 +110,17 @@ test("Temporary clear requires confirmation, ignores search and preserves foreig
   const result = await page.evaluate(() => ({calls: dataCollectionBackend.calls.filter(c => c.action === "temporary_clear"), temporary: dataCollectionBackend.state.temporary, persistent: dataCollectionBackend.state.memories.length}));
   expect(result.calls).toHaveLength(1);
   expect(result.calls[0]).toMatchObject({scope_id: "user:test-user", subentry_id: "agent-1", confirm: true});
-  expect(result.temporary.map(m => m.memory_id)).toEqual(["foreign"]);
+  expect(result.temporary.map(m => m.memory_id)).toEqual(["foreign", "other-agent"]);
   expect(result.persistent).toBe(100);
 });
 
+
+
+test("Temporary clear cannot follow a scope or agent change while confirmation is pending", async ({page}) => {
+  const panel = await openDataCollection(page, "temporary");
+  await panel.locator("#clear-temporary").click();
+  await panel.evaluate(host => { host._agentId = "agent-2"; });
+  await acceptConfirmation(panel);
+  expect(await page.evaluate(() => dataCollectionBackend.calls.filter(c => c.action === "temporary_clear"))).toHaveLength(0);
+  await expect(panel.locator(".memory-list article")).toHaveCount(12);
+});

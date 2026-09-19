@@ -558,8 +558,6 @@ SERVICE_GUEST_MODE_DISABLE = "guest_mode_disable"
 SERVICE_PROCESS = "process"
 
 # Integration-owned UI and storage
-MEMORY_PANEL_URL = "extended-openai-memory"
-MEMORY_PANEL_TITLE = "OpenAI memories"
 MANAGEMENT_PANEL_URL = "extended-openai"
 MANAGEMENT_PANEL_TITLE = "Extended OpenAI"
 

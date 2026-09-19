@@ -27,6 +27,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.management_ui import (
     WS_COMMAND,
 )
+from homeassistant.components.frontend import DATA_PANELS
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
@@ -44,6 +45,14 @@ async def test_only_unified_memory_and_knowledge_commands_are_registered(
     await _setup_entry(hass, entry)
     client = await _admin_client(hass, hass_ws_client)
 
+    assert "extended-openai-memory" not in hass.data[DATA_PANELS]
+    assert "extended-openai" in hass.data[DATA_PANELS]
+    registered_routes = "\n".join(
+        str(resource) for resource in hass.http.app.router.resources()
+    )
+    assert "memory-panel.js" not in registered_routes
+    assert "memory-management-panel.js" not in registered_routes
+
     for legacy_command in ("manage", "knowledge"):
         await client.send_json_auto_id(
             {"type": f"{DOMAIN}/{legacy_command}", "action": "agents"}
@@ -56,6 +65,48 @@ async def test_only_unified_memory_and_knowledge_commands_are_registered(
         client, entry=entry, section="memories", action="list"
     )
     assert memories["memories"] == []
+    await _management_call(
+        client,
+        entry=entry,
+        section="memories",
+        action="add",
+        content="Bins go out Friday",
+        category="home",
+        importance="high",
+        subject="Bins",
+        key="bins.day",
+        valid_from="2026-09-01T00:00:00Z",
+    )
+    listed_memory = (
+        await _management_call(client, entry=entry, section="memories", action="list")
+    )["memories"][0]
+    updated_memory = await _management_call(
+        client,
+        entry=entry,
+        section="memories",
+        action="update",
+        memory_id=listed_memory["memory_id"],
+        content="Bins go out Thursday",
+        expected_revision=listed_memory["revision"],
+        refresh_confirmation=False,
+        clear_fields=["subject"],
+    )
+    assert updated_memory["memory"]["subject"] is None
+    assert (
+        updated_memory["memory"]["last_confirmed_at"]
+        == listed_memory["last_confirmed_at"]
+    )
+    conflict = await _management_response(
+        client,
+        entry=entry,
+        section="memories",
+        action="update",
+        memory_id=listed_memory["memory_id"],
+        content="Stale edit",
+        expected_revision=listed_memory["revision"],
+    )
+    assert conflict["success"] is False
+    assert "changed since it was loaded" in conflict["error"]["message"]
     created = await _management_call(
         client,
         entry=entry,
