@@ -1,0 +1,52 @@
+name: Publish validated PR3 frontend
+
+on:
+  push:
+    branches: [perf/persistent-knowledge-memory-pr3]
+    paths: [.github/workflows/pr3-publish.yml]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr3-validated-source-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: perf/persistent-knowledge-memory-pr3
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Import locally validated source commits
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          cat .pr3-publish/part-*.xz > /tmp/pr3-source.patch.xz
+          echo '40497e524741a85307402b365ff9645055ffbd7f481434d2a9cf19fe923dac44  /tmp/pr3-source.patch.xz' | sha256sum -c -
+          xz -dc /tmp/pr3-source.patch.xz > /tmp/pr3-source.patch
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git am /tmp/pr3-source.patch
+      - name: Verify source and regenerate production assets
+        run: |
+          npm ci --prefix frontend --no-audit --no-fund
+          npm run check --prefix frontend
+          npm test --prefix frontend
+          find custom_components/extended_openai_conversation_responses/frontend -maxdepth 1 -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+          find tests -maxdepth 1 -type f -name '*.test.mjs' -print0 | sort -z | xargs -0 -n1 node
+          npm run build --prefix frontend
+      - name: Verify exact tested tree and publish only to the PR3 branch
+        run: |
+          git add custom_components/extended_openai_conversation_responses/frontend/dist
+          git rm -r -- .pr3-publish .github/workflows/pr3-workspace.yml .github/workflows/pr3-browser.yml .github/workflows/pr3-publish.yml
+          git diff --cached --check
+          test "$(git write-tree)" = 'f45c232e4acf33cca4cfedae9f78facfdf33e037'
+          git commit -m 'build: regenerate PR3 production assets and remove validation transport'
+          git push origin HEAD:refs/heads/perf/persistent-knowledge-memory-pr3
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
