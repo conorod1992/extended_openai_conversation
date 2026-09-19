@@ -1,7 +1,7 @@
+"""Tests for provider credential rotation and its dedicated WebSocket boundary."""
+
 import json
 from pathlib import Path
-
-"""Tests for provider credential rotation and its dedicated WebSocket boundary."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
