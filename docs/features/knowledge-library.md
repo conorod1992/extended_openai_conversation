@@ -25,7 +25,7 @@ The setting defaults to Off. Stored sources are retained while it is Off, which 
 
 ## Manage Knowledge sources
 
-Open the integration's **Configure** menu and choose **Manage knowledge**, then open the displayed `/extended-openai-knowledge` path. The authenticated Home Assistant panel is also available from the sidebar.
+Open **Extended OpenAI** from the Home Assistant sidebar, then **Data & memory > Knowledge** (`/extended-openai/data-memory/knowledge`). The integration's **Configure > Manage knowledge** form also displays this path. Knowledge management requires an administrator.
 
 Select a conversation agent, then use the panel to:
 

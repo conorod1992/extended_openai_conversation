@@ -552,8 +552,6 @@ SERVICE_PROCESS = "process"
 # Integration-owned UI and storage
 MEMORY_PANEL_URL = "extended-openai-memory"
 MEMORY_PANEL_TITLE = "OpenAI memories"
-KNOWLEDGE_PANEL_URL = "extended-openai-knowledge"
-KNOWLEDGE_PANEL_TITLE = "Knowledge Library"
 MANAGEMENT_PANEL_URL = "extended-openai"
 MANAGEMENT_PANEL_TITLE = "Extended OpenAI"
 

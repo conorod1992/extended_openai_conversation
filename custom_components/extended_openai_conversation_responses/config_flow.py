@@ -144,7 +144,7 @@ class ExtendedOpenAIOptionsFlow(OptionsFlow):
             data_schema=vol.Schema(
                 {
                     vol.Optional(
-                        "panel_path", default="/extended-openai-memory"
+                        "panel_path", default="/extended-openai/data-memory/memories"
                     ): TextSelector(TextSelectorConfig(read_only=True))
                 }
             ),
@@ -161,7 +161,7 @@ class ExtendedOpenAIOptionsFlow(OptionsFlow):
             data_schema=vol.Schema(
                 {
                     vol.Optional(
-                        "panel_path", default="/extended-openai-knowledge"
+                        "panel_path", default="/extended-openai/data-memory/knowledge"
                     ): TextSelector(TextSelectorConfig(read_only=True))
                 }
             ),

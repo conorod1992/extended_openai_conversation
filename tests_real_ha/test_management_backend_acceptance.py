@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_API_KEY
-from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import CLIENT_ID, MockConfigEntry, MockUser
+from pytest_homeassistant_custom_component.common import (
+    CLIENT_ID,
+    MockConfigEntry,
+    MockUser,
+)
 
 from custom_components.extended_openai_conversation_responses import (
     memory as memory_module,
@@ -27,9 +27,107 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.management_ui import (
     WS_COMMAND,
 )
-
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import CONF_API_KEY
+from homeassistant.core import HomeAssistant
 
 ADMIN_ID = "management-acceptance-admin"
+
+
+@pytest.mark.asyncio
+async def test_only_unified_memory_and_knowledge_commands_are_registered(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+) -> None:
+    """Real startup leaves legacy APIs unreachable and preserves Knowledge CRUD."""
+    entry = _entry("Unified Data Acceptance")
+    await _setup_entry(hass, entry)
+    client = await _admin_client(hass, hass_ws_client)
+
+    for legacy_command in ("manage", "knowledge"):
+        await client.send_json_auto_id(
+            {"type": f"{DOMAIN}/{legacy_command}", "action": "agents"}
+        )
+        response = await client.receive_json()
+        assert response["success"] is False
+        assert response["error"]["code"] == "unknown_command"
+
+    memories = await _management_call(
+        client, entry=entry, section="memories", action="list"
+    )
+    assert memories["memories"] == []
+    created = await _management_call(
+        client,
+        entry=entry,
+        section="knowledge",
+        action="create",
+        title="Manual",
+        content="Original content",
+        enabled=False,
+    )
+    source_id = created["source"]["source_id"]
+    listed = await _management_call(
+        client, entry=entry, section="knowledge", action="list"
+    )
+    assert listed["stats"]["knowledge_source_count"] == 1
+    assert listed["stats"]["knowledge_enabled_source_count"] == 0
+    assert listed["sources"][0]["enabled"] is False
+    assert "content" not in listed["sources"][0]
+    await _management_call(
+        client,
+        entry=entry,
+        section="knowledge",
+        action="update",
+        source_id=source_id,
+        content="Updated content",
+        enabled=True,
+    )
+    fetched = await _management_call(
+        client,
+        entry=entry,
+        section="knowledge",
+        action="get",
+        source_id=source_id,
+    )
+    assert fetched["source"]["content"] == "Updated content"
+    assert fetched["source"]["enabled"] is True
+
+    normal_user = MockUser(id="knowledge-non-admin", is_owner=False, is_admin=False)
+    normal_user.add_to_hass(hass)
+    token = await hass.auth.async_create_refresh_token(normal_user, CLIENT_ID)
+    normal_client = await hass_ws_client(
+        hass, hass.auth.async_create_access_token(token)
+    )
+    for action in ("list", "get", "create", "update", "delete"):
+        response = await _management_response(
+            normal_client,
+            entry=entry,
+            section="knowledge",
+            action=action,
+            source_id=source_id,
+            confirm=True,
+        )
+        assert response["success"] is False
+        assert "Administrator permission" in response["error"]["message"]
+
+    unconfirmed = await _management_response(
+        client,
+        entry=entry,
+        section="knowledge",
+        action="delete",
+        source_id=source_id,
+    )
+    assert unconfirmed["success"] is False
+    assert "confirmation" in unconfirmed["error"]["message"]
+    deleted = await _management_call(
+        client,
+        entry=entry,
+        section="knowledge",
+        action="delete",
+        source_id=source_id,
+        confirm=True,
+    )
+    assert deleted == {"deleted": 1}
 
 
 def _entry(title: str = "Management Backend Acceptance") -> MockConfigEntry:
@@ -426,6 +524,6 @@ async def test_memories_round_trip_through_management_websocket(
         client, entry=entry, section="memories", action="list"
     )
     assert reloaded["scope_id"] == f"user:{ADMIN_ID}"
-    assert [
-        (item["content"], item["category"]) for item in reloaded["memories"]
-    ] == [("Management WebSocket persistence acceptance marker.", "acceptance")]
+    assert [(item["content"], item["category"]) for item in reloaded["memories"]] == [
+        ("Management WebSocket persistence acceptance marker.", "acceptance")
+    ]
