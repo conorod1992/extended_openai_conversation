@@ -261,10 +261,14 @@ function bindSearch(panel, search) {
 export function enhanceNavigationSearch(panel) {
   const root = panel.shadowRoot;
   if (!root) return;
-  // Active search owns its asynchronous result updates. Keep those live; an
-  // empty search only depends on navigation and permission state.
-  const changed = enhancementChanged(panel, "navigation-search", [panel._page, panel._subsection, panel._data?.is_admin, panel._settingsSearchQuery || ""]);
-  if (!changed && !panel._settingsSearchQuery) return;
+  // Only values displayed by the current search can invalidate its results.
+  // The input/debounce and asynchronous fetch paths still update independently.
+  const searchState = panel._settingsSearchQuery ? JSON.stringify([
+    visibleSettings(panel).map((item) => [item.target, settingCurrentState(item, panel)]),
+    panel._settingsSearchConfigLoading, panel._settingsSearchConfigError,
+    panel._settingsSearchConfigErrorAgentId,
+  ]) : "";
+  if (!enhancementChanged(panel, "navigation-search", [panel._page, panel._subsection, panel._agentId, panel._data?.is_admin, panel._settingsSearchQuery || "", searchState])) return;
   if (!root.querySelector("style[data-eoc-navigation-search]")) {
     const style = document.createElement("style");
     style.dataset.eocNavigationSearch = "";

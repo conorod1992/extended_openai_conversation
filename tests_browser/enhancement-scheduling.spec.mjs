@@ -37,11 +37,12 @@ test("guidance responds to its dependencies without rescanning for unrelated dra
   expect(counts).toEqual({unrelated:0, runtime:1, repeated:1, capabilities:2, search:3});
 });
 
-test("unchanged renders skip enhancement queries and content replacement invalidates them", async ({page}) => {
+for (const query of ["", "conversation timeout"]) test(`unchanged renders skip enhancement queries and content replacement invalidates them (query: ${query})`, async ({page}) => {
   await page.goto(fixtureUrl("assistant/basics"));
   await expect(page.locator('extended-openai-management-panel [data-config="chat_model"]')).toBeVisible();
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate((query) => {
     const {panel} = window.browserHarness;
+    panel._settingsSearchQuery = query;
     panel._render();
     const root = panel.shadowRoot;
     const queries = [];
@@ -67,7 +68,7 @@ test("unchanged renders skip enhancement queries and content replacement invalid
       panel._render();
       return {unchanged, replaced:count(), restored:Boolean(root.querySelector('[data-config="chat_model"]'))};
     } finally { root.querySelector = original; }
-  });
+  }, query);
   console.log("Enhancement query counts", result);
   expect(result.unchanged).toEqual({toolbar:0, guidance:0, clarity:0, search:0, polish:0});
   expect(result.replaced.toolbar).toBe(2);
