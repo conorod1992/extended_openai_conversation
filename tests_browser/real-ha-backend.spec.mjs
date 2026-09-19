@@ -144,6 +144,8 @@ test("real browser manages a Function Tool and dependent Group through genuine H
   await tool.locator(".edit-tool").click();
   await panel.locator("#tool-yaml").fill(browserToolYaml("Real HA browser tool edited"));
   await panel.locator("#tool-save").click();
+  await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+  await expect(tool).toContainText("Real HA browser tool edited");
   await group.locator(".edit-group").click();
   await panel.locator("#group-name").fill("Real HA browser group edited");
   await panel.locator("#group-description").fill("Real HA browser group description edited");

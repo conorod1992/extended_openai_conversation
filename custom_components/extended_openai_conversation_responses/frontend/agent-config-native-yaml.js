@@ -413,6 +413,8 @@ export function bindNativeToolYaml(panel) {
   });
 
   textarea.addEventListener?.("input", () => {
+    // A user edit supersedes any outstanding YAML-to-native hydration reply.
+    ++syncGeneration;
     rawYaml = String(valueDescriptor.get.call(textarea) ?? "");
   });
 

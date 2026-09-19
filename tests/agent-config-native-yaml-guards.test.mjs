@@ -269,6 +269,20 @@ try {
     globalThis.HTMLTextAreaElement = GuardTextArea;
   }
 
+  // Delayed native hydration must not replace newer typing in the active editor.
+  {
+    const harness = makeRoot({textarea: new GuardTextArea("stored YAML")});
+    const hydration = deferred();
+    globalThis.customElements = {get: () => GuardEditor, whenDefined: () => Promise.resolve()};
+    bindNativeToolYaml({shadowRoot: harness.root, _call: () => hydration.promise});
+    harness.editor.yaml = "newer user YAML";
+    harness.editor.emit("value-changed", {isValid: true});
+    hydration.resolve({valid: true, config: {spec: {name: "stale"}}});
+    await flush();
+    assert.equal(harness.textarea.value, "newer user YAML");
+    assert.deepEqual(harness.editor.values, [], "a stale hydration response must not call setValue");
+  }
+
   console.log("Native Function Tool YAML guard/error tests passed");
 } finally {
   if (originalDocument === undefined) delete globalThis.document;
