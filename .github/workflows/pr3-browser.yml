@@ -1,0 +1,24 @@
+name: PR3 browser runtime
+on:
+  push:
+    branches: [perf/persistent-knowledge-memory-pr3]
+    paths: [.github/workflows/pr3-browser.yml]
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - run: |
+          npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+          npx playwright install chromium --only-shell
+          tar -czf /tmp/pr3-browser.tar.gz -C "$HOME/.cache/ms-playwright" .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr3-browser-runtime
+          path: /tmp/pr3-browser.tar.gz
+          retention-days: 1
