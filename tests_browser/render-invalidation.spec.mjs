@@ -142,3 +142,15 @@ test("capability configuration routes share the editor markup cache", async ({pa
   expect(result.dirtyCalls).toBeGreaterThan(0);
   expect(result.changed).toBe(true);
 });
+
+test("same-page search navigation focuses the setting without rebuilding the page", async ({page}) => {
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  const title = panel.locator('[data-config="__title"]');
+  await expect(title).toBeVisible();
+  await page.evaluate(() => { window.originalTitle = window.browserHarness.panel.shadowRoot.querySelector('[data-config="__title"]'); });
+  await panel.locator("#settings-search").pressSequentially("assistant name");
+  await panel.locator(".settings-result").first().click();
+  await expect(title).toBeFocused();
+  expect(await title.evaluate((node) => node === window.originalTitle)).toBe(true);
+});

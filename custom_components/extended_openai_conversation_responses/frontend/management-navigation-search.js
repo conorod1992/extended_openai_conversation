@@ -241,6 +241,18 @@ function bindSearch(panel, search) {
     input.value = "";
     updateSettingsResults(panel);
     await panel._navigate(button.dataset.page, button.dataset.subsection);
+    // Cached same-page navigation does not rebind main content. Complete the
+    // focus handoff here when the normal page binding did not consume it.
+    const target = button.dataset.target;
+    if (target && panel._pendingSettingFocus === target
+        && panel._page === button.dataset.page && panel._subsection === button.dataset.subsection) {
+      const element = panel.shadowRoot.getElementById(target);
+      if (element) {
+        panel._pendingSettingFocus = null;
+        element.scrollIntoView({behavior:"smooth", block:"start"});
+        (element.querySelector("input,select,textarea,button") || element).focus?.();
+      }
+    }
   });
 }
 
