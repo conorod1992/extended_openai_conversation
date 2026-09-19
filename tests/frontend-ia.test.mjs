@@ -9,6 +9,7 @@ import {MODEL_RESET_FIELDS} from "../custom_components/extended_openai_conversat
 import {settingCurrentState} from "../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
 import {renderMemorySettings} from "../custom_components/extended_openai_conversation_responses/frontend/memory-settings-ui.js";
 import {renderOverview} from "../custom_components/extended_openai_conversation_responses/frontend/overview-page.js";
+import {renderConfiguration} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
@@ -251,13 +252,17 @@ assert.match(navigation, /"assistant\/advanced": \["capabilities", "web-skills"\
 assert.doesNotMatch(navigation, /LEGACY_NESTED_ROUTES/);
 assert.match(memoryManagement, /data-memory\/memory-settings/);
 assert.match(memoryManagement, /assistant\/model-responses/);
-assert.match(memoryManagement, /stripMovedMemoryControls/);
+const configurationOwner = {_e:escape,_titleCase:String,_result:{config:{},options:{}},_configSections:["model"],_viewKey:() => "assistant/model-responses"};
+assert.doesNotMatch(renderConfiguration(configurationOwner), /data-field="memory_auto_retrieve_limit"/);
+assert.match(renderConfiguration(configurationOwner), /id="reset-model-parameters"/);
 assert.doesNotMatch(memoryManagement, /assistant\/advanced/);
 assert.match(panel, /subsection: "memory-settings", label: "Configure memory"/);
 assert.doesNotMatch(featureStatus, /assistant.*advanced/);
 assert.match(capabilitiesIA, /capabilities\/home-assistant/);
 assert.match(capabilitiesIA, /capabilities\/web-skills/);
-assert.match(capabilitiesIA, /stripLocalHandlingConfiguration/);
+configurationOwner._viewKey = () => "assistant/conversation";
+configurationOwner._configSections = ["conversation"];
+assert.doesNotMatch(renderConfiguration(configurationOwner), /id="config-local"/);
 assert.match(capabilitiesIA, /knowledge_enabled = desired/);
 assert.match(capabilitiesIA, /configuration", "validate"/);
 assert.doesNotMatch(capabilitiesIA, /from "\.\/agent-config-editor\.js"/);

@@ -1,7 +1,5 @@
 import {getAgentConfigModule} from "./agent-config-loader.js";
 
-const WEB_SKILLS_FIELDS = new Set(["web_search", "web_search_context", "skills"]);
-
 function renderConfiguration(panel) {
   const module = getAgentConfigModule();
   if (!module) return panel._loading?.() || '<div class="loading">Loading configuration…</div>';
@@ -10,30 +8,6 @@ function renderConfiguration(panel) {
 
 function bindConfiguration(panel) {
   return getAgentConfigModule()?.bindConfiguration(panel);
-}
-
-function transformConfiguration(html, transform, documentRef = globalThis.document) {
-  if (!documentRef?.createElement) return html;
-  const template = documentRef.createElement("template");
-  template.innerHTML = html;
-  transform(template.content);
-  return template.innerHTML;
-}
-
-function stripWebSkillsConfiguration(html, documentRef = globalThis.document) {
-  return transformConfiguration(html, (root) => {
-    const section = root.querySelector("#config-capabilities");
-    if (!section) return;
-    section.querySelectorAll("[data-field]").forEach((field) => {
-      if (!WEB_SKILLS_FIELDS.has(field.dataset.field)) field.remove();
-    });
-    const heading = section.querySelector(".config-section-heading");
-    if (heading) heading.innerHTML = "<p class=\"eyebrow\">Web search & Skills</p><p>Choose optional online information and installed instruction sets the assistant may load when needed.</p>";
-  }, documentRef);
-}
-
-function stripLocalHandlingConfiguration(html, documentRef = globalThis.document) {
-  return transformConfiguration(html, (root) => root.querySelector("#config-local")?.remove(), documentRef);
 }
 
 function knowledgeAvailabilityMarkup(panel) {
@@ -94,6 +68,4 @@ export {
   renderConfiguration,
   knowledgeAvailabilityMarkup,
   knowledgeSourceAvailabilityBadge,
-  stripLocalHandlingConfiguration,
-  stripWebSkillsConfiguration,
 };

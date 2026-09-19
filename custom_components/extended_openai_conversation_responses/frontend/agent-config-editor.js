@@ -19,27 +19,29 @@ function configRenderCacheKey(panel) {
   if (panel?._configDirty) return null;
   const sections = Array.isArray(panel?._configSections) ? panel._configSections : [];
   if (!sections.length || sections.some((section) => !CACHEABLE_CONFIG_SECTIONS.has(section))) return null;
-  return sections.join("|");
+  return `${panel._viewKey?.() || ""}|${sections.join("|")}`;
 }
 
-function getCachedConfigurationMarkup(panel, key) {
+function getCachedConfigurationMarkup(panel, key, voiceIdentity) {
   const state = panel?._eocConfigRenderCache;
-  if (!key || !configRenderCacheMatches(panel, state)) return null;
+  if (!key || !configRenderCacheMatches(panel, state, voiceIdentity)) return null;
   return state.entries.get(key) ?? null;
 }
 
-function configRenderCacheMatches(panel, state) {
+function configRenderCacheMatches(panel, state, voiceIdentity) {
   return state && state.result === panel._result && state.draft === panel._draft
     && state.agentId === panel._agentId && state.modelData === panel._modelCatalogData
-    && state.capabilities === panel._result?.model_capabilities;
+    && state.capabilities === panel._result?.model_capabilities
+    && state.scopes === panel._baseScopes && state.dataScopes === panel._data?.scopes
+    && state.voiceIdentity === voiceIdentity;
 }
 
-function rememberConfigurationMarkup(panel, key, html) {
+function rememberConfigurationMarkup(panel, key, html, voiceIdentity) {
   if (!key) return html;
   let state = panel._eocConfigRenderCache;
-  if (!configRenderCacheMatches(panel, state)) {
+  if (!configRenderCacheMatches(panel, state, voiceIdentity)) {
     state = {result: panel._result, draft: panel._draft, agentId: panel._agentId,
-      modelData: panel._modelCatalogData, capabilities: panel._result?.model_capabilities, entries: new Map()};
+      modelData: panel._modelCatalogData, capabilities: panel._result?.model_capabilities, scopes: panel._baseScopes, dataScopes: panel._data?.scopes, voiceIdentity, entries: new Map()};
     panel._eocConfigRenderCache = state;
   }
   if (state.entries.has(key)) state.entries.delete(key);
@@ -66,16 +68,16 @@ function queueRender(panel) {
     });
 }
 
-export function renderConfiguration(panel) {
+export function renderConfiguration(panel, presentation) {
   const module = getAgentConfigModule();
   if (!module) {
     queueRender(panel);
     return panel._loading?.() || '<div class="loading">Loading configuration…</div>';
   }
   const cacheKey = configRenderCacheKey(panel);
-  const cached = getCachedConfigurationMarkup(panel, cacheKey);
+  const cached = getCachedConfigurationMarkup(panel, cacheKey, presentation?.voiceIdentity);
   if (cached !== null) return cached;
-  return rememberConfigurationMarkup(panel, cacheKey, module.renderConfiguration(panel));
+  return rememberConfigurationMarkup(panel, cacheKey, module.renderConfiguration(panel, presentation), presentation?.voiceIdentity);
 }
 
 export function bindConfiguration(panel) {
@@ -87,13 +89,13 @@ export function bindConfiguration(panel) {
   return result;
 }
 
-export function renderTools(panel) {
+export function renderTools(panel, presentation) {
   const module = getAgentConfigModule();
   if (!module) {
     queueRender(panel);
     return panel._loading?.() || '<div class="loading">Loading Functions…</div>';
   }
-  return module.renderTools(panel);
+  return module.renderTools(panel, presentation);
 }
 
 export function bindTools(panel) {

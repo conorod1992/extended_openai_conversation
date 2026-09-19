@@ -71,7 +71,7 @@ describe("native management rendering", () => {
     for (const section of ["general", "conversation", "prompt", "capabilities", "archive", "voice", "speech", "context", "model", "retention", "backup"]) {
       expect(source).toContain(`section(panel,"${section}"`);
       const start = source.indexOf(`section(panel,"${section}"`);
-      expect(source.slice(start, start + 320)).toContain(",() => ");
+      expect(source.slice(start, source.indexOf("\n", start))).toContain(",() => ");
     }
     expect(source).toContain('section(panel,"local","Local handling"');
     expect(source).toContain('() => renderLocalHandling(panel,config)');

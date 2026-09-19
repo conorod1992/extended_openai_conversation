@@ -1,27 +1,6 @@
 import {getRouteFeature} from "./management-route.js";
 
-const MEMORY_FIELDS = [
-  "memory_mode",
-  "temporary_memory",
-  "memory_auto_retrieve_limit",
-  "memory_retrieval_mode",
-  "memory_embedding_model",
-  "shared_memory_mode",
-];
 const MODEL_RESET_FIELDS = ["temperature", "top_p", "reasoning_effort", "service_tier", "shorten_tool_call_id"];
-
-function stripMovedMemoryControls(html, view, documentRef = globalThis.document) {
-  if (!documentRef?.createElement) return html;
-  const template = documentRef.createElement("template");
-  template.innerHTML = html;
-  for (const key of MEMORY_FIELDS) template.content.querySelector(`[data-field="${key}"]`)?.remove();
-
-  if (view === "assistant/model-responses") {
-    const reset = template.content.querySelector("#reset-advanced");
-    if (reset) reset.id = "reset-model-parameters";
-  }
-  return template.innerHTML;
-}
 
 function bindModelReset(panel) {
   panel.shadowRoot.querySelector("#reset-model-parameters")?.addEventListener("click", () => {
@@ -44,4 +23,4 @@ export function bindMemorySettings(panel) {
   if (view === "assistant/model-responses") bindModelReset(panel);
 }
 
-export {MODEL_RESET_FIELDS, stripMovedMemoryControls};
+export {MODEL_RESET_FIELDS};

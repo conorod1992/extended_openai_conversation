@@ -64,13 +64,16 @@ test("configuration emits the shipped local, exposed-attribute, group and transf
     panel._configDirty = true;
     panel._draft.local_intents_enabled = false;
     panel._draft.local_intent_delayed_commands_to_ai = true;
+    panel._draft.exposed_entity_attributes = {"registry:lamp":["brightness"]};
+    panel._exposedAttributeEntityId = "light.lamp";
+    panel._result.exposed_attribute_catalog = {entities:[{entity_id:"light.lamp",reference:"registry:lamp",name:"<Lamp>",attributes:["brightness","color_mode"],durable_selection_available:true}]};
     panel._result.local_handling = {intents:[{intent:"HassTurnOn", label:"Turn on"}]};
     panel._draft.function_groups = [{id:"group",name:"Group <one>",description:"Keep & show",enabled:false,loading_mode:"on_demand",functions:[]}];
     const root = document.createElement("template");
     root.innerHTML = editor.renderConfiguration(panel);
     const delayed = root.content.querySelector('[data-config="local_intent_delayed_commands_to_ai"]');
     const exposed = root.content.querySelector(".context-toggles");
-    const configuration = {delayed:[delayed.checked, delayed.disabled, delayed.closest("#local-intent-list") !== null], jumps:root.content.querySelectorAll(".config-jumps").length, local:root.content.querySelectorAll(".local-handling-explainer").length, exposed:exposed.innerHTML, transfer:root.content.querySelector(".transfer-panel").textContent, dialog:editor.restoreDialog(panel)};
+    const configuration = {delayed:[delayed.checked, delayed.disabled, delayed.closest("#local-intent-list") !== null], jumps:root.content.querySelectorAll(".config-jumps").length, local:root.content.querySelectorAll(".local-handling-explainer").length, exposed:exposed.innerHTML, exposedPosition:exposed.querySelector('[data-field="exposed_entities_enabled"]').nextElementSibling.className, attributes:[...exposed.querySelectorAll("[data-exposed-attribute]")].map((input) => [input.dataset.attribute,input.checked]), transfer:root.content.querySelector(".transfer-panel").textContent, dialog:editor.restoreDialog(panel)};
     root.innerHTML = editor.renderTools(panel);
     const group = root.content.querySelector('[data-group-id="group"]');
     return {...configuration, group:{disabled:group.classList.contains("is-disabled"), badge:group.querySelector(".group-disabled-badge").textContent, edit:group.querySelector(".edit-group").disabled, checked:group.querySelector(".group-enabled").checked, name:group.querySelector("h3").textContent}};
@@ -79,6 +82,9 @@ test("configuration emits the shipped local, exposed-attribute, group and transf
   expect(result.jumps).toBe(0);
   expect(result.local).toBe(1);
   expect(result.exposed).toContain("exposed-attribute");
+  expect(result.exposed).toContain("&lt;Lamp&gt;");
+  expect(result.exposedPosition).toBe("exposed-attribute-settings");
+  expect(result.attributes).toEqual([["brightness",true],["color_mode",false]]);
   expect(result.transfer).toContain("Secret-looking values");
   expect(result.dialog).toContain("Your unsaved configuration changes will be discarded");
   expect(result.dialog).toContain("Sections to replace");
@@ -137,4 +143,33 @@ test("Function Group switches save once and preserve individually disabled membe
   const calls = await page.evaluate(() => window.browserHarness.calls.filter((call) => call.section === "tools" && call.action === "save_group"));
   expect(calls).toHaveLength(2);
   expect(calls.map((call) => call.group.enabled)).toEqual([false,true]);
+});
+
+test("live configuration routes select their final sections without reparsing", async ({page}) => {
+  for (const route of ["capabilities/home-assistant", "capabilities/web-skills", "assistant/conversation", "assistant/model-responses", "assistant/voice"]) {
+    await page.goto(fixtureUrl(route));
+    await expect(page.locator("extended-openai-management-panel .config-section").first()).toBeVisible();
+    const result = await page.evaluate(() => {
+      const {panel} = window.browserHarness;
+      const create = document.createElement;
+      let html;
+      try {
+        document.createElement = function(tag, ...args) {
+          if (tag === "template") throw new Error("Route reparsed configuration HTML");
+          return create.call(this, tag, ...args);
+        };
+        html = panel._content(panel._selectedAgent());
+      } finally { document.createElement = create; }
+      const host = document.createElement("template");
+      host.innerHTML = html;
+      return {html, heading:host.content.querySelector(".config-section-heading .eyebrow")?.textContent, local:host.content.querySelectorAll("#config-local").length, memory:host.content.querySelectorAll('[data-config="memory_auto_retrieve_limit"],[data-config="shared_memory_mode"],[data-config="memory_mode"],[data-config="temporary_memory"]').length, voice:host.content.querySelectorAll(".voice-identity-flow").length};
+    });
+    expect(result.memory).toBe(0);
+    expect(result.local).toBe(route === "capabilities/home-assistant" ? 1 : 0);
+    expect(result.voice).toBe(route === "assistant/voice" ? 1 : 0);
+    if (route === "capabilities/web-skills") {
+      expect(result.heading).toBe("Web search & Skills");
+      expect(result.html).not.toContain('data-config="knowledge_enabled"');
+    }
+  }
 });

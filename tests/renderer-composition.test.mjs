@@ -99,4 +99,16 @@ for (const change of [() => {cached._agentId="b";}, () => {cached._result={...ca
   renderConfiguration(cached);
   assert.notEqual(cached._eocConfigRenderCache,previous);
 }
+cached._configSections = ["voice"];
+cached._viewKey = () => "assistant/voice";
+const voiceIdentity = (owner) => `<p>${owner._baseScopes?.[0]?.display_name || "No scope"}</p>`;
+assert.match(renderConfiguration(cached, {voiceIdentity}), /No scope/);
+cached._baseScopes = [{display_name:"Second assistant scope"}];
+assert.match(renderConfiguration(cached, {voiceIdentity}), /Second assistant scope/);
+assert.match(renderConfiguration(cached, {voiceIdentity:() => "<p>Updated voice renderer</p>"}), /Updated voice renderer/);
+cached._configSections = ["capabilities"];
+cached._viewKey = () => "capabilities/web-skills";
+assert.doesNotMatch(renderConfiguration(cached), /data-config="knowledge_enabled"/);
+cached._viewKey = () => "generic";
+assert.match(renderConfiguration(cached), /data-config="knowledge_enabled"/);
 console.log("Renderer composition state and no-reparse checks passed");
