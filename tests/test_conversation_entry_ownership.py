@@ -170,7 +170,7 @@ async def test_explicit_order_is_shared_by_assist_and_direct(
     if direct:
         result, metadata = await entry_agent.async_process_direct(entry_input)
         assert result == "done"
-        assert metadata == {}
+        assert metadata == {"handled_locally": False}
     else:
         assert await entry_agent.async_process(entry_input) == "done"
 
