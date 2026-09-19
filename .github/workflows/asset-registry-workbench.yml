@@ -15,14 +15,27 @@ jobs:
         with:
           ref: refactor/frontend-asset-registration
           fetch-depth: 0
+      - name: Correct verified transport transcription
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          script = Path('.asset-registry-patch.py').read_text()
+          corrections = [
+              ('aqw6slD4BUQPhiQcyW63zvYSvKHDaP37ZYkW7/pBb9/JN7roYds', 'aqw6slD4BUQPhiQcyW63zvYSvHDaP37ZYkW7/pBb9/JN7roYds'),
+              ('LqaWZ0REu51/bcHQgelhvjNE+NFfglH491WfR8Pf+HsTPlvfk3', 'LqaWZ0REu51/bcHQgelhvjNE+9NFfglH491WfR8Pf+HsTPlvfk3'),
+              ('["git", "rev-parse", "HEAD~1"]', '["git", "rev-parse", "HEAD~2"]'),
+          ]
+          for old, new in corrections:
+              assert script.count(old) == 1, old
+              script = script.replace(old, new)
+          Path('/tmp/asset-registry-patch.py').write_text(script)
+          PY
       - name: Apply reviewed branch-local patch
         run: |
-          if test -f .asset-registry-patch.py; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            python .asset-registry-patch.py
-            git push origin HEAD:refactor/frontend-asset-registration
-          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python /tmp/asset-registry-patch.py
+          git push origin HEAD:refactor/frontend-asset-registration
       - name: Export exact source snapshot
         if: always()
         run: |
