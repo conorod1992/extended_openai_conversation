@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
 import json
@@ -115,6 +116,16 @@ def render_maintained_entity_context(
     return "\n".join(lines) + "\n"
 
 
+@contextmanager
+def formatted_tool_cache() -> Iterator[None]:
+    """Give one conversation request a fresh cache without disturbing its caller."""
+    token = _FORMATTED_TOOLS.set({})
+    try:
+        yield
+    finally:
+        _FORMATTED_TOOLS.reset(token)
+
+
 def install_request_static_caching() -> None:
     """Install request-scoped tool caching and skill-availability guards."""
     global _INSTALLED
@@ -124,7 +135,6 @@ def install_request_static_caching() -> None:
 
     from . import conversation, entity, prompt
 
-    original_process = conversation.ExtendedOpenAIAgentEntity._async_process
     original_format_tools = entity._format_tools
     original_render_template = prompt._render_template
     original_get_function_tools = (
@@ -135,16 +145,6 @@ def install_request_static_caching() -> None:
     )
     original_assemble_function_tools = conversation.assemble_function_tools
     original_load_function_groups = conversation.load_function_groups
-
-    @wraps(original_process)
-    async def process_with_fresh_formatted_tool_cache(
-        self: Any, user_input: Any
-    ) -> Any:
-        token = _FORMATTED_TOOLS.set({})
-        try:
-            return await original_process(self, user_input)
-        finally:
-            _FORMATTED_TOOLS.reset(token)
 
     def format_tools_cached(
         function_tools: list[dict[str, Any]], api_mode: str
@@ -231,9 +231,6 @@ def install_request_static_caching() -> None:
             tool_available=tool_available,
         )
 
-    conversation.ExtendedOpenAIAgentEntity._async_process = (  # type: ignore[method-assign]
-        process_with_fresh_formatted_tool_cache
-    )
     entity._format_tools = format_tools_cached
     prompt._render_template = render_template_fast  # type: ignore[attr-defined]
     conversation.ExtendedOpenAIAgentEntity._get_function_tools = (  # type: ignore[method-assign]
