@@ -2,14 +2,14 @@ import {expect} from "@playwright/test";
 import {fixtureUrl} from "./browser-helpers.mjs";
 export const frontend = "/custom_components/extended_openai_conversation_responses/frontend/";
 
-export async function openDataCollection(page, kind, size = 100) {
+export async function openDataCollection(page, kind, size = 100, bundled = false) {
   if (kind === "standalone") {
     await page.goto(`/tests_browser/memory-collections-fixture.html?size=${size}`);
     const panel = page.locator("extended-openai-memory-management-panel");
     await expect(panel.locator("#memories .memory-card")).toHaveCount(size);
     return panel;
   }
-  await page.goto(fixtureUrl("guide"));
+  await page.goto(fixtureUrl("guide", bundled ? "&bundle=1" : ""));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".guide-search")).toBeVisible();
   await page.evaluate(async ({kind, size}) => {
@@ -27,7 +27,7 @@ export async function openDataCollection(page, kind, size = 100) {
     if (kind === "temporary") browserHarness.panel._memoryKind = "temporary";
     await browserHarness.panel._navigate("data-memory", kind === "knowledge" ? "knowledge" : "memories");
   }, {kind, size});
-  await expect(panel.locator(kind === "knowledge" ? ".knowledge-list .list-card" : ".memory-list .list-card")).toHaveCount(kind === "temporary" ? 12 : size);
+  await expect(panel.locator(kind === "knowledge" ? ".knowledge-list .list-card" : ".memory-list .list-card")).toHaveCount(kind === "temporary" ? 12 : kind === "persistent" ? Math.min(size, 100) : size);
   return panel;
 }
 

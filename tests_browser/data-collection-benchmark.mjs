@@ -48,6 +48,28 @@ try {
         await host._loadSection(true);
       });
       results.knowledgeCachedRefresh = await finishDataMeasure(page);
+      await page.evaluate(() => {
+        const sources = dataCollectionBackend.state.sources;
+        sources[1].title = "Changed by background refresh"; sources[1].enabled = false;
+        sources.splice(2, 1);
+        sources.splice(1, 0, {...sources[0], source_id: "new-background-source", title: "New background source"});
+      });
+      await beginDataMeasure(page);
+      await panel.evaluate(async host => { host._eocSectionCacheTimes.set(host._sectionCacheKey(), 1); await host._loadSection(true); });
+      results.knowledgeChangedRefresh = await finishDataMeasure(page);
+    }
+    if (kind === "persistent") {
+      await panel.locator("#list-search").fill("");
+      await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "");
+      await list.locator("article").nth(20).locator(".memory-edit-button").click();
+      await panel.locator("#memory-category").fill("Moved category");
+      await beginDataMeasure(page); await panel.locator("#memory-save").click();
+      await expect(list.getByText(/Moved category/)).toBeVisible();
+      results.persistentCategoryMove = await finishDataMeasure(page);
+    }
+    if (temporary) {
+      await beginDataMeasure(page); await panel.locator("#list-search").fill("Temporary 1");
+      results.temporarySearch = await finishDataMeasure(page);
     }
     if (standalone) {
       await panel.locator("#search").fill("");

@@ -36,9 +36,10 @@ export function createDataCollectionBackend(size = 100) {
       let items = scoped(state.memories, message);
       if (message.subentry_id === "second-agent") items = [{...state.memories[0], content: "Second agent memory"}];
       if (action === "search") items = items.filter(item => `${item.content} ${item.category} ${item.source}`.toLowerCase().includes(message.query.toLowerCase()));
+      items = [...items].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
       const offset = message.offset || 0, limit = message.limit || 100;
       const next = offset + limit < items.length ? offset + limit : null;
-      return {memories: clone(items.slice(offset, offset + limit)), total: items.length, has_more: next !== null, next_offset: next, ...(standalone ? {temporary_memories: clone(state.temporary)} : {})};
+      return {memories: clone(items.slice(offset, offset + limit)), total: items.length, has_more: next !== null, next_offset: next, ...(standalone ? {temporary_memories: clone(message.subentry_id === "second-agent" ? [{...state.temporary[0], content: "Second agent temporary memory"}] : state.temporary)} : {})};
     }
     if (action === "temporary_list") return {memories: clone(scoped(state.temporary, message)), stats: {}};
     if (action === "temporary_delete") { state.temporary = state.temporary.filter(item => item.memory_id !== message.memory_id); return {}; }

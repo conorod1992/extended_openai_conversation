@@ -855,7 +855,7 @@ class ExtendedOpenAIMemoryPanel extends HTMLElement {
   }
 
   _memoryKey(memory) {
-    return JSON.stringify([memory.owner_scope_id || memory.scope || "Personal", memory.memory_id]);
+    return JSON.stringify([memory.scope || "Personal", memory.memory_id]);
   }
 
   _collectionEmpty(container) {
