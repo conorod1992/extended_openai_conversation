@@ -8,13 +8,13 @@ from contextlib import suppress
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
-    temporary_memory_performance as performance,
+    temporary_memory as performance,
 )
 
 
-class Manager:
+class Manager(performance.TemporaryMemory):
     def __init__(self, save) -> None:
-        self._lock = asyncio.Lock()
+        super().__init__(None)
         self._async_save_locked = save
 
 
@@ -28,15 +28,15 @@ async def test_pruned_state_save_runs_once_and_clears_completed_task() -> None:
 
     manager = Manager(save)
 
-    performance._schedule_pruned_state_save(manager)
-    task = getattr(manager, performance._PRUNE_SAVE_TASK)
+    manager._schedule_pruned_state_save()
+    task = manager._prune_save_task
     assert isinstance(task, asyncio.Task)
 
     await task
     await asyncio.sleep(0)
 
     assert calls == 1
-    assert getattr(manager, performance._PRUNE_SAVE_TASK) is None
+    assert manager._prune_save_task is None
 
 
 @pytest.mark.asyncio
@@ -53,12 +53,12 @@ async def test_pruned_state_save_coalesces_while_existing_task_is_pending() -> N
 
     manager = Manager(save)
 
-    performance._schedule_pruned_state_save(manager)
-    first = getattr(manager, performance._PRUNE_SAVE_TASK)
+    manager._schedule_pruned_state_save()
+    first = manager._prune_save_task
     await started.wait()
 
-    performance._schedule_pruned_state_save(manager)
-    assert getattr(manager, performance._PRUNE_SAVE_TASK) is first
+    manager._schedule_pruned_state_save()
+    assert manager._prune_save_task is first
     assert calls == 1
 
     release.set()
@@ -66,24 +66,26 @@ async def test_pruned_state_save_coalesces_while_existing_task_is_pending() -> N
     await asyncio.sleep(0)
 
     assert calls == 1
-    assert getattr(manager, performance._PRUNE_SAVE_TASK) is None
+    assert manager._prune_save_task is None
 
 
 @pytest.mark.asyncio
-async def test_pruned_state_save_failure_is_contained_and_task_is_released(caplog) -> None:
+async def test_pruned_state_save_failure_is_contained_and_task_is_released(
+    caplog,
+) -> None:
     async def save() -> None:
         raise OSError("store unavailable")
 
     manager = Manager(save)
 
-    performance._schedule_pruned_state_save(manager)
-    task = getattr(manager, performance._PRUNE_SAVE_TASK)
+    manager._schedule_pruned_state_save()
+    task = manager._prune_save_task
 
     await task
     await asyncio.sleep(0)
 
     assert "Unable to persist pruned temporary memories" in caplog.text
-    assert getattr(manager, performance._PRUNE_SAVE_TASK) is None
+    assert manager._prune_save_task is None
 
 
 @pytest.mark.asyncio
@@ -97,18 +99,18 @@ async def test_completed_save_does_not_clear_a_replacement_task() -> None:
         await release.wait()
 
     manager = Manager(save)
-    performance._schedule_pruned_state_save(manager)
-    original = getattr(manager, performance._PRUNE_SAVE_TASK)
+    manager._schedule_pruned_state_save()
+    original = manager._prune_save_task
     await started.wait()
 
     replacement = asyncio.create_task(replacement_release.wait())
-    setattr(manager, performance._PRUNE_SAVE_TASK, replacement)
+    manager._prune_save_task = replacement
 
     release.set()
     await original
     await asyncio.sleep(0)
 
-    assert getattr(manager, performance._PRUNE_SAVE_TASK) is replacement
+    assert manager._prune_save_task is replacement
 
     replacement.cancel()
     with suppress(asyncio.CancelledError):
@@ -125,16 +127,16 @@ async def test_scheduler_starts_new_save_after_previous_task_finished() -> None:
 
     manager = Manager(save)
 
-    performance._schedule_pruned_state_save(manager)
-    first = getattr(manager, performance._PRUNE_SAVE_TASK)
+    manager._schedule_pruned_state_save()
+    first = manager._prune_save_task
     await first
     await asyncio.sleep(0)
 
-    performance._schedule_pruned_state_save(manager)
-    second = getattr(manager, performance._PRUNE_SAVE_TASK)
+    manager._schedule_pruned_state_save()
+    second = manager._prune_save_task
     assert second is not first
     await second
     await asyncio.sleep(0)
 
     assert calls == 2
-    assert getattr(manager, performance._PRUNE_SAVE_TASK) is None
+    assert manager._prune_save_task is None
