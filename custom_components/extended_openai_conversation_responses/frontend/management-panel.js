@@ -26,7 +26,7 @@ import {NAVIGATION, pageMetadata, routeFromPath, routePath, searchSettings, shou
 import {prepareMemoryBrowser, finishMemoryBrowserLoad, renderPersistentMemories, decorateConversations, decorateGuestPolicy, filterPersistentMemories, bindMemoryBrowser, formatManagementTimestamp, freshGuestPolicyDraft} from "./guest-mode-ui.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview} from "./overview-page.js";
-import {formatUsageNumber, formatUsageTimestamp, tokenBreakdown} from "./usage-format.js";
+import {formatUsageNumber, tokenBreakdown} from "./usage-format.js";
 import {bindRequestRules, renderRequestRules, requestRulesDialog} from "./request-rules-ui.js";
 import {isAgentMutation, syncAgentPicker} from "./management-action-safety.js";
 import {REQUEST_RULE_CACHE_KEY, TOOL_MUTATIONS} from "./management-function-dependencies.js";
