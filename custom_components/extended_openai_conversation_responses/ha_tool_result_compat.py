@@ -33,3 +33,10 @@ def unwrap_tool_result(value: Any) -> Any:
     if tool_result_type is not None and isinstance(value, tool_result_type):
         return value.data
     return value
+
+
+def tool_result_data(content: Any) -> Any:
+    """Return raw ToolResultContent data without touching HA's deprecated property."""
+    if "result" in signature(type(content)).parameters:
+        return unwrap_tool_result(content.result)
+    return content.tool_result
