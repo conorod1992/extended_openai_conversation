@@ -1,0 +1,38 @@
+name: Asset registry workbench
+on:
+  push:
+    branches: [refactor/frontend-asset-registration]
+    paths:
+      - .github/workflows/asset-registry-workbench.yml
+      - .asset-registry-patch.py
+permissions:
+  contents: write
+jobs:
+  workbench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: refactor/frontend-asset-registration
+          fetch-depth: 0
+      - name: Apply reviewed branch-local patch
+        run: |
+          if test -f .asset-registry-patch.py; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            python .asset-registry-patch.py
+            git push origin HEAD:refactor/frontend-asset-registration
+          fi
+      - name: Export exact source snapshot
+        if: always()
+        run: |
+          git rev-parse HEAD > /tmp/asset-registry-head.txt
+          git archive --format=tar.gz --output=/tmp/asset-registry-source.tar.gz HEAD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: asset-registry-source
+          path: |
+            /tmp/asset-registry-head.txt
+            /tmp/asset-registry-source.tar.gz
+          retention-days: 1
