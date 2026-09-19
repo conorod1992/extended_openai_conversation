@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
 import logging
 import math
 import re
@@ -10,6 +13,7 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import llm
 
 from .exceptions import FunctionValidationInfrastructureError
 
@@ -721,3 +725,37 @@ def _validate_value(name: str, value: Any, schema: Mapping[str, Any]) -> Any:
         )
 
     return value
+
+
+_VALIDATED_CALL: ContextVar[
+    tuple[llm.ToolInput, dict[str, Any], dict[str, Any]] | None
+] = ContextVar("extended_openai_validated_function_call", default=None)
+
+
+@contextmanager
+def validated_function_call(
+    tool_input: llm.ToolInput, spec: dict[str, Any]
+) -> Iterator[None]:
+    """Carry one recovery-validated call across dispatch without validating twice."""
+    token = _VALIDATED_CALL.set(
+        (tool_input, deepcopy(spec), deepcopy(tool_input.tool_args))
+    )
+    try:
+        yield
+    finally:
+        _VALIDATED_CALL.reset(token)
+
+
+async def async_execution_arguments(
+    hass: HomeAssistant, spec: dict[str, Any], tool_input: llm.ToolInput
+) -> dict[str, Any]:
+    """Reuse this exact prepared call; direct or changed calls validate locally."""
+    prepared = _VALIDATED_CALL.get()
+    if (
+        prepared is not None
+        and prepared[0] is tool_input
+        and prepared[1] == spec
+        and prepared[2] == tool_input.tool_args
+    ):
+        return tool_input.tool_args
+    return await async_validate_function_arguments(hass, spec, tool_input.tool_args)

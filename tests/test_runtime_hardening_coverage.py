@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -12,7 +11,6 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     conversation,
-    delayed_tools,
     guest_mode,
     runtime_hardening,
     skills,
@@ -23,11 +21,12 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
 
 
 def test_install_runtime_hardening_is_one_shot(monkeypatch: pytest.MonkeyPatch) -> None:
-    installers = [Mock() for _ in range(3)]
+    installers = [Mock() for _ in range(2)]
     monkeypatch.setattr(runtime_hardening, "_INSTALLED", False)
     monkeypatch.setattr(runtime_hardening, "_install_skill_hardening", installers[0])
-    monkeypatch.setattr(runtime_hardening, "_install_guest_mode_hardening", installers[1])
-    monkeypatch.setattr(runtime_hardening, "_install_tool_result_hardening", installers[2])
+    monkeypatch.setattr(
+        runtime_hardening, "_install_guest_mode_hardening", installers[1]
+    )
 
     runtime_hardening.install_runtime_hardening()
     runtime_hardening.install_runtime_hardening()
@@ -68,7 +67,9 @@ async def test_skill_load_publishes_complete_result_and_skips_bad_skill(
             raise AssertionError("installer should replace this method")
 
         @classmethod
-        async def async_get_instance(cls, hass: Any, user_skills_dir: str | None = None):
+        async def async_get_instance(
+            cls, hass: Any, user_skills_dir: str | None = None
+        ):
             raise AssertionError("installer should replace this method")
 
         @classmethod
@@ -124,7 +125,9 @@ async def test_skill_first_load_failure_clears_singleton_and_retry_succeeds(
             raise AssertionError("installer should replace this method")
 
         @classmethod
-        async def async_get_instance(cls, hass: Any, user_skills_dir: str | None = None):
+        async def async_get_instance(
+            cls, hass: Any, user_skills_dir: str | None = None
+        ):
             raise AssertionError("installer should replace this method")
 
         @classmethod
@@ -217,7 +220,9 @@ async def test_guest_mode_malformed_state_is_ignored_but_initialized(
     manager.hass = SimpleNamespace()
     manager._store = SimpleNamespace(
         async_load=AsyncMock(
-            return_value={"schedule": {"active_from": "not-a-date", "active_until": None}}
+            return_value={
+                "schedule": {"active_from": "not-a-date", "active_until": None}
+            }
         )
     )
     manager._initialized = False
@@ -242,46 +247,16 @@ async def test_guest_mode_malformed_state_is_ignored_but_initialized(
 async def test_tool_result_guard_bounds_outermost_string_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeEntity:
-        async def _execute_function_tool(self, *_args: Any) -> Any:
+    class FakeEntity(conversation.ExtendedOpenAIAgentEntity):
+        async def _async_dispatch_function_tool(self, *_args: Any) -> Any:
             return SimpleNamespace(
                 tool_result={
-                    "result": "x" * (runtime_hardening.MAX_MODEL_TOOL_RESULT_CHARACTERS + 100)
+                    "result": "x"
+                    * (runtime_hardening.MAX_MODEL_TOOL_RESULT_CHARACTERS + 100)
                 }
             )
 
-    monkeypatch.setattr(conversation, "ExtendedOpenAIAgentEntity", FakeEntity)
-
-    runtime_hardening._wrap_conversation_tool_results()
-    guarded = FakeEntity._execute_function_tool
-    runtime_hardening._wrap_conversation_tool_results()
-    assert FakeEntity._execute_function_tool is guarded
-
-    content = await FakeEntity()._execute_function_tool({}, {}, None, [])
+    content = await object.__new__(FakeEntity)._execute_function_tool({}, {}, None, [])
     result = tool_result_data(content)["result"]
     assert len(result) <= runtime_hardening.MAX_MODEL_TOOL_RESULT_CHARACTERS
     assert runtime_hardening._TOOL_RESULT_TRUNCATION_LABEL in result
-
-
-@pytest.mark.asyncio
-async def test_tool_result_install_wraps_delayed_hook_and_existing_conversation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[str] = []
-
-    def original_install() -> None:
-        calls.append("delayed")
-
-    monkeypatch.setattr(delayed_tools, "_install_execution_hook", original_install)
-    wrap = Mock()
-    monkeypatch.setattr(runtime_hardening, "_wrap_conversation_tool_results", wrap)
-
-    runtime_hardening._install_tool_result_hardening()
-    installed = delayed_tools._install_execution_hook
-    assert installed is not original_install
-    wrap.assert_called_once_with()
-
-    wrap.reset_mock()
-    installed()
-    assert calls == ["delayed"]
-    wrap.assert_called_once_with()

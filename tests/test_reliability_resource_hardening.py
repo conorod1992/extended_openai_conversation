@@ -12,10 +12,9 @@ from typing import Any
 
 import pytest
 
-from homeassistant.helpers.storage import Store
-from homeassistant.util import dt as dt_util
-
-from custom_components.extended_openai_conversation_responses import usage as usage_module
+from custom_components.extended_openai_conversation_responses import (
+    usage as usage_module,
+)
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestModeManager,
     GuestModeSchedule,
@@ -38,6 +37,8 @@ from custom_components.extended_openai_conversation_responses.usage import (
     UsageRequest,
     UsageRun,
 )
+from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 
 
 class ToggleStorage:
@@ -309,17 +310,13 @@ async def test_request_rule_save_failure_rolls_back_live_configuration() -> None
 def test_model_facing_tool_results_are_bounded_after_delayed_hook() -> None:
     """The outer conversation seam remains bounded even after delay wrapping."""
     install_runtime_hardening()
-    from custom_components.extended_openai_conversation_responses import delayed_tools
     from custom_components.extended_openai_conversation_responses.conversation import (
         ExtendedOpenAIAgentEntity,
     )
 
-    delayed_tools._install_execution_hook()
-    assert getattr(
-        ExtendedOpenAIAgentEntity._execute_function_tool,
-        "_extended_openai_tool_result_guard",
-        False,
-    )
+    method = ExtendedOpenAIAgentEntity._execute_function_tool
+    assert method.__module__.endswith(".conversation")
+    assert not hasattr(method, "__wrapped__")
 
     value = "x" * (MAX_MODEL_TOOL_RESULT_CHARACTERS + 5_000)
     bounded = bounded_tool_result_text(value)

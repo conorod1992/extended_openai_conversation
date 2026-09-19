@@ -74,7 +74,9 @@ class Echo(llm.Tool):
             "user": llm_context.context.user_id,
         }
         tool_result_type = getattr(llm, "ToolResult", None)
-        return tool_result_type(data=payload) if tool_result_type is not None else payload
+        return (
+            tool_result_type(data=payload) if tool_result_type is not None else payload
+        )
 
 
 class TestAPI(llm.API):
@@ -536,24 +538,40 @@ async def test_removed_user_is_not_authorized_by_management_preview(hass):
     assert api.contexts[-1].context.user_id == "removed"
 
 
-async def test_delayed_hook_does_not_interpret_external_delay_schema(hass, monkeypatch):
-    from custom_components.extended_openai_conversation_responses import delayed_tools
+async def test_executor_does_not_interpret_external_delay_schema(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import entity as base
 
-    original = AsyncMock(return_value="external result")
-    original._extended_openai_delayed_hook = False
-    monkeypatch.setattr(ExtendedOpenAIBaseLLMEntity, "_execute_function_tool", original)
-    delayed_tools._install_execution_hook()
     saved = new_reference_tool(reference(), set())
     saved["spec"]["parameters"] = {"anyOf": [{"type": "object"}]}
+    live = SimpleNamespace(async_call=AsyncMock(return_value="external result"))
+    snapshot = SimpleNamespace(caller_provided=True, tools={"reference": live})
+    monkeypatch.setattr(base, "current_snapshot", lambda: snapshot)
+    monkeypatch.setattr(base, "reference_key", lambda _ref: "reference")
+    from custom_components.extended_openai_conversation_responses import (
+        function_tool_resolution,
+    )
+
+    monkeypatch.setattr(
+        function_tool_resolution,
+        "latest_function_tool_for_execution",
+        lambda *_args: saved,
+    )
+    monkeypatch.setattr(
+        base,
+        "async_execution_arguments",
+        AsyncMock(
+            side_effect=AssertionError("HA schema entered configured validation")
+        ),
+    )
     entity = object.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.hass = hass
+    entity.entity_id = "conversation.external"
     call = llm.ToolInput(
         tool_name=saved["spec"]["name"], tool_args={"delay": {"seconds": 10}}
     )
-    assert (
-        await entity._execute_function_tool(saved, call, context(), [])
-        == "external result"
-    )
-    original.assert_awaited_once()
+    result = await entity._execute_function_tool(saved, call, context(), [])
+    assert tool_result_data(result) == {"result": "external result"}
+    live.async_call.assert_awaited_once_with(call)
 
 
 async def test_merged_display_names_are_not_discovered_for_persistence(hass):

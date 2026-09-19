@@ -18,7 +18,6 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
     DelayedToolCall,
     DelayedToolManager,
     _delay_as_timedelta,
-    _install_execution_hook,
     async_setup_delayed_tools,
 )
 from custom_components.extended_openai_conversation_responses.entity import (
@@ -69,9 +68,7 @@ def _valid_tool(*, function_type: str = "native") -> dict[str, Any]:
 def _live_entry() -> SimpleNamespace:
     return SimpleNamespace(
         disabled_by=None,
-        subentries={
-            "agent": SimpleNamespace(subentry_type="conversation", data={})
-        },
+        subentries={"agent": SimpleNamespace(subentry_type="conversation", data={})},
     )
 
 
@@ -309,7 +306,9 @@ async def test_due_call_discards_when_live_agent_configuration_disappears(
     discard.assert_awaited_once_with(record.call_id, reason)
 
 
-async def test_due_call_discards_invalid_live_tool_configuration(hass, monkeypatch) -> None:
+async def test_due_call_discards_invalid_live_tool_configuration(
+    hass, monkeypatch
+) -> None:
     """A now-invalid Function Tool config cannot execute stale persisted arguments."""
     manager = DelayedToolManager(hass)
     record = _record()
@@ -372,7 +371,9 @@ async def test_due_call_discards_inactive_originating_user(hass, monkeypatch) ->
     resolve_agent.assert_not_called()
 
 
-async def test_due_call_retries_when_agent_is_temporarily_missing(hass, monkeypatch) -> None:
+async def test_due_call_retries_when_agent_is_temporarily_missing(
+    hass, monkeypatch
+) -> None:
     """A transient entity reload persists a retry count instead of losing the call."""
     manager = DelayedToolManager(hass)
     record = _record(user_id=None)
@@ -410,7 +411,9 @@ async def test_retry_limit_discards_and_retry_save_failure_still_retries(
     replace_record.assert_awaited_once()
 
 
-async def test_due_call_discards_when_live_tool_resolution_fails(hass, monkeypatch) -> None:
+async def test_due_call_discards_when_live_tool_resolution_fails(
+    hass, monkeypatch
+) -> None:
     """Runtime tool-resolution errors cancel stale work instead of executing it."""
     manager = DelayedToolManager(hass)
     record = _record(user_id=None)
@@ -434,7 +437,9 @@ async def test_due_call_discards_when_live_tool_resolution_fails(hass, monkeypat
     )
 
 
-def test_resolve_agent_filters_registry_and_returns_live_agent(hass, monkeypatch) -> None:
+def test_resolve_agent_filters_registry_and_returns_live_agent(
+    hass, monkeypatch
+) -> None:
     """Agent lookup ignores unrelated registry entries and returns only the live match."""
     manager = DelayedToolManager(hass)
     unrelated = SimpleNamespace(
@@ -493,85 +498,63 @@ async def test_record_storage_helpers_preserve_durability_on_failures(hass) -> N
     assert record.call_id not in manager._records
 
 
-async def test_shared_setup_creates_or_reuses_manager_and_installs_hook(
+async def test_shared_setup_reuses_manager_without_replacing_executor(
     hass, monkeypatch
 ) -> None:
-    """Integration-global setup owns one manager and always ensures the hook exists."""
+    """Integration setup owns one manager and preserves the source-owned executor."""
     setup = AsyncMock()
     monkeypatch.setattr(DelayedToolManager, "async_setup", setup)
-    install = MagicMock()
-    monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.delayed_tools._install_execution_hook",
-        install,
-    )
-
+    original_method = ExtendedOpenAIBaseLLMEntity._execute_function_tool
     hass.data.setdefault(DOMAIN, {}).pop(DATA_DELAYED_TOOL_MANAGER, None)
     created = await async_setup_delayed_tools(hass)
     assert hass.data[DOMAIN][DATA_DELAYED_TOOL_MANAGER] is created
     setup.assert_awaited_once_with()
-    install.assert_called_once_with()
+    assert ExtendedOpenAIBaseLLMEntity._execute_function_tool is original_method
 
     setup.reset_mock()
-    install.reset_mock()
     reused = await async_setup_delayed_tools(hass)
     assert reused is created
     setup.assert_awaited_once_with()
-    install.assert_called_once_with()
+    assert ExtendedOpenAIBaseLLMEntity._execute_function_tool is original_method
 
 
-async def test_delayed_hook_blocks_ha_llm_replay_and_delegates_live_ha_llm(
+async def test_owned_executor_blocks_ha_llm_replay_and_delegates_live_ha_llm(
     hass, monkeypatch
 ) -> None:
     """HA-owned tools delegate normally but are forbidden inside delayed replay."""
-    original_spy = AsyncMock(return_value="delegated")
-
-    async def original(*args):
-        return await original_spy(*args)
-
-    monkeypatch.setattr(ExtendedOpenAIBaseLLMEntity, "_execute_function_tool", original)
-    _install_execution_hook()
-    wrapper = ExtendedOpenAIBaseLLMEntity._execute_function_tool
-    _install_execution_hook()
-    assert ExtendedOpenAIBaseLLMEntity._execute_function_tool is wrapper
+    executor = ExtendedOpenAIBaseLLMEntity._execute_function_tool
+    assert ExtendedOpenAIBaseLLMEntity._execute_function_tool is executor
 
     entity = SimpleNamespace(hass=hass)
     function_tool = {"function": {"type": "ha_llm"}, "spec": {"name": "ha"}}
-    tool_input = llm.ToolInput(
-        id="call", tool_name="ha", tool_args={}, external=True
-    )
-
-    assert await wrapper(entity, function_tool, tool_input, None, []) == "delegated"
-    original_spy.assert_awaited_once()
+    tool_input = llm.ToolInput(id="call", tool_name="ha", tool_args={}, external=True)
 
     delayed_context = SimpleNamespace(**{_DELAYED_EXECUTION_MARKER: True})
-    with pytest.raises(HomeAssistantError, match="cannot execute in the delayed scheduler"):
-        await wrapper(entity, function_tool, tool_input, delayed_context, [])
+    with pytest.raises(
+        HomeAssistantError, match="cannot execute in the delayed scheduler"
+    ):
+        await executor(entity, function_tool, tool_input, delayed_context, [])
 
 
-async def test_delayed_hook_executes_native_replay_directly(hass, monkeypatch) -> None:
+async def test_owned_executor_executes_native_replay_directly(
+    hass, monkeypatch
+) -> None:
     """A replay-marked native call executes once without scheduling itself again."""
-    original_spy = AsyncMock()
-
-    async def original(*args):
-        return await original_spy(*args)
-
-    monkeypatch.setattr(ExtendedOpenAIBaseLLMEntity, "_execute_function_tool", original)
     validate = AsyncMock(return_value={"delay": {"seconds": 10}, "value": 7})
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.delayed_tools.async_validate_function_arguments",
+        "custom_components.extended_openai_conversation_responses.entity.async_execution_arguments",
         validate,
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.delayed_tools.split_legacy_execution_delay",
+        "custom_components.extended_openai_conversation_responses.entity.split_legacy_execution_delay",
         lambda _spec, _args: ({"value": 7}, timedelta(seconds=10)),
     )
     function = SimpleNamespace(execute=AsyncMock(return_value="done"))
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.delayed_tools.get_function",
+        "custom_components.extended_openai_conversation_responses.entity.get_function",
         lambda _type: function,
     )
-    _install_execution_hook()
-    wrapper = ExtendedOpenAIBaseLLMEntity._execute_function_tool
+    executor = ExtendedOpenAIBaseLLMEntity._execute_function_tool
     entity = SimpleNamespace(hass=hass, entity_id="conversation.agent")
     tool = {
         "spec": {"name": "control_light"},
@@ -582,9 +565,8 @@ async def test_delayed_hook_executes_native_replay_directly(hass, monkeypatch) -
     )
     context = SimpleNamespace(**{_DELAYED_EXECUTION_MARKER: True})
 
-    result = await wrapper(entity, tool, tool_input, context, [])
+    result = await executor(entity, tool, tool_input, context, [])
 
-    original_spy.assert_not_awaited()
     function.execute.assert_awaited_once_with(
         hass,
         tool["function"],
@@ -595,26 +577,19 @@ async def test_delayed_hook_executes_native_replay_directly(hass, monkeypatch) -
     assert tool_result_data(result) == {"result": "done"}
 
 
-async def test_delayed_hook_requires_scheduler_for_background_call(
+async def test_owned_executor_requires_scheduler_for_background_call(
     hass, monkeypatch
 ) -> None:
     """A background-eligible call fails closed if the durable manager is absent."""
-    original_spy = AsyncMock()
-
-    async def original(*args):
-        return await original_spy(*args)
-
-    monkeypatch.setattr(ExtendedOpenAIBaseLLMEntity, "_execute_function_tool", original)
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.delayed_tools.async_validate_function_arguments",
+        "custom_components.extended_openai_conversation_responses.entity.async_execution_arguments",
         AsyncMock(return_value={"delay": {"seconds": 10}}),
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.delayed_tools.split_legacy_execution_delay",
+        "custom_components.extended_openai_conversation_responses.entity.split_legacy_execution_delay",
         lambda _spec, _args: ({}, timedelta(seconds=10)),
     )
-    _install_execution_hook()
-    wrapper = ExtendedOpenAIBaseLLMEntity._execute_function_tool
+    executor = ExtendedOpenAIBaseLLMEntity._execute_function_tool
     hass.data.setdefault(DOMAIN, {}).pop(DATA_DELAYED_TOOL_MANAGER, None)
     entity = SimpleNamespace(
         hass=hass,
@@ -630,31 +605,23 @@ async def test_delayed_hook_requires_scheduler_for_background_call(
     )
 
     with pytest.raises(HomeAssistantError, match="scheduler is unavailable"):
-        await wrapper(entity, tool, tool_input, None, [])
-    original_spy.assert_not_awaited()
+        await executor(entity, tool, tool_input, None, [])
 
 
-async def test_delayed_hook_schedules_background_call_and_returns_receipt(
+async def test_owned_executor_schedules_background_call_and_returns_receipt(
     hass, monkeypatch
 ) -> None:
     """Background routing persists the validated call and returns a scheduled receipt."""
-    original_spy = AsyncMock()
-
-    async def original(*args):
-        return await original_spy(*args)
-
-    monkeypatch.setattr(ExtendedOpenAIBaseLLMEntity, "_execute_function_tool", original)
     arguments = {"delay": {"seconds": 10}, "value": 7}
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.delayed_tools.async_validate_function_arguments",
+        "custom_components.extended_openai_conversation_responses.entity.async_execution_arguments",
         AsyncMock(return_value=arguments),
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.delayed_tools.split_legacy_execution_delay",
+        "custom_components.extended_openai_conversation_responses.entity.split_legacy_execution_delay",
         lambda _spec, _args: ({"value": 7}, timedelta(seconds=10)),
     )
-    _install_execution_hook()
-    wrapper = ExtendedOpenAIBaseLLMEntity._execute_function_tool
+    executor = ExtendedOpenAIBaseLLMEntity._execute_function_tool
     manager = DelayedToolManager(hass)
     manager.async_schedule = AsyncMock(return_value=_record())
     hass.data.setdefault(DOMAIN, {})[DATA_DELAYED_TOOL_MANAGER] = manager
@@ -672,10 +639,9 @@ async def test_delayed_hook_schedules_background_call_and_returns_receipt(
     )
     context = SimpleNamespace(context=Context(user_id="user-1"), device_id="device-1")
 
-    result = await wrapper(entity, tool, tool_input, context, [])
+    result = await executor(entity, tool, tool_input, context, [])
 
     manager.async_schedule.assert_awaited_once_with(
         entity, "control_light", arguments, context
     )
-    original_spy.assert_not_awaited()
     assert tool_result_data(result) == {"result": "Scheduled"}

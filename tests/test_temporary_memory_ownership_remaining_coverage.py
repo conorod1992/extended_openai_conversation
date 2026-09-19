@@ -259,30 +259,22 @@ async def test_conversation_contract_binds_and_resets_owner_context(
 
     seen: list[tuple[str, str | None]] = []
 
-    async def original_retrieve(_entity: Any) -> list[TemporaryMemoryRecord]:
+    async def active(_scope):
         seen.append(("retrieve", ownership._ACTIVE_OWNER_SCOPE_ID.get()))
         return [_record("one", owner=ownership._ACTIVE_OWNER_SCOPE_ID.get())]
 
-    async def original_tool(
-        _entity: Any, operation: str, _arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        seen.append((operation, ownership._ACTIVE_OWNER_SCOPE_ID.get()))
+    async def add(*_args):
+        seen.append(("add", ownership._ACTIVE_OWNER_SCOPE_ID.get()))
         return {"ok": True}
 
     entity_cls = conversation.ExtendedOpenAIAgentEntity
-    monkeypatch.setattr(
-        entity_cls, "_async_retrieve_temporary_memories", original_retrieve
-    )
-    monkeypatch.setattr(
-        entity_cls, "_async_execute_temporary_memory_tool", original_tool
-    )
-
-    ownership._install_conversation_contract()
-
-    entity = object()
-    assert await entity_cls._async_retrieve_temporary_memories(entity) == []
+    entity = object.__new__(entity_cls)
+    entity.subentry = SimpleNamespace(data={"temporary_memory": "enabled"})
+    entity._effective_guest_policy = lambda: SimpleNamespace(temporary_memory=True)
+    entity._temporary_memory = SimpleNamespace(async_active=active, async_add=add)
+    assert await entity._async_retrieve_temporary_memories() == []
     with pytest.raises(RuntimeError, match="temporary memory is unavailable"):
-        await entity_cls._async_execute_temporary_memory_tool(entity, "add", {})
+        await entity._async_execute_temporary_memory_tool("add", {})
 
     scope_token = conversation._ACTIVE_SCOPE.set(
         SimpleNamespace(scope_type="user", user_id="alice")
@@ -291,7 +283,7 @@ async def test_conversation_contract_binds_and_resets_owner_context(
     try:
         records = await entity_cls._async_retrieve_temporary_memories(entity)
         result = await entity_cls._async_execute_temporary_memory_tool(
-            entity, "add", {}
+            entity, "add", {"content": "fact", "expires_at": "later"}
         )
     finally:
         conversation._ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
@@ -496,7 +488,6 @@ def test_public_installer_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None
     for name in (
         "_install_manager_contract",
         "_install_snapshot_contract",
-        "_install_conversation_contract",
     ):
         monkeypatch.setattr(
             ownership,

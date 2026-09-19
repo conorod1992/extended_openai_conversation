@@ -42,6 +42,10 @@ class FakeConversationEntity:
 
 
 class FakeArchiveEntity:
+    _async_dispatch_function_tool = (
+        ExtendedOpenAIAgentEntity._async_dispatch_function_tool
+    )
+
     def _effective_guest_policy(self):
         return SimpleNamespace(guest_active=False)
 

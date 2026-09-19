@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from contextlib import suppress
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 import json
 import logging
 from pathlib import Path
+import time
 from types import SimpleNamespace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from openai import OpenAIError
 
@@ -38,6 +40,7 @@ from .agent_config import (
     validate_function_groups,
 )
 from .agent_configuration import (
+    _archive_runtime_required,
     async_reconcile_runtime_configuration,
     sync_memory_embedding_provider,
 )
@@ -105,7 +108,12 @@ from .conversation_lifecycle import (
     request_fresh_conversation,
     requested_conversation_reset,
 )
-from .debug import conversation_debug_trace, record_current_provider_failure
+from .debug import (
+    conversation_debug_trace,
+    current_debug_trace,
+    record_current_provider_failure,
+    record_memory_retrieval,
+)
 from .entity import ExtendedOpenAIBaseLLMEntity
 from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
 from .function_groups import (
@@ -148,15 +156,23 @@ from .ha_permissions import bind_active_ha_context
 from .ha_tool_result_compat import make_tool_result_content, tool_result_data
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
+from .lifecycle_optimizations import _TEMPORARY_MEMORY_PREFETCH
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
 from .memory import (
     MemoryRecord,
     PersistentMemory,
     async_get_memory,
     automatic_memory_enabled,
-    memory_as_dict,
     memory_enabled,
     memory_user_id,
+)
+from .model_search_hardening import _require_nonblank_query
+from .model_tool_results import (
+    _compact_json_result_content,
+    _compact_memory_result,
+    knowledge_search_payload,
+    model_memory_as_dict,
+    omit_null_paging_cursor,
 )
 from .prompt import render_effective_prompt
 from .prompt_cache import _PROMPT_CACHE_CONTEXT, prompt_cache_context
@@ -166,6 +182,7 @@ from .provider_errors import (
     request_reauthentication,
 )
 from .request import assemble_integration_function_tools
+from .request_diagnostics import record_tool_execution
 from .request_rules import (
     RequestRuleRuntime,
     RequestRules,
@@ -175,6 +192,7 @@ from .request_rules import (
     request_rule_session_id,
 )
 from .request_static_cache import formatted_tool_cache
+from .runtime_hardening import bounded_tool_result_text
 from .scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
     ResolvedDataScope,
@@ -188,6 +206,10 @@ from .temporary_memory import (
     TemporaryMemoryRecord,
     async_get_temporary_memory,
     temporary_memory_as_dict,
+)
+from .temporary_memory_ownership import (
+    _ACTIVE_OWNER_SCOPE_ID,
+    _owner_from_resolved_scope,
 )
 from .usage import async_get_usage
 from .voice_identity_runtime import voice_identity_scope
@@ -1198,6 +1220,31 @@ class ExtendedOpenAIAgentEntity(
     async def _async_retrieve_memories(
         self, llm_context: llm.LLMContext, query: str
     ) -> list[MemoryRecord]:
+        """Retrieve live-enabled memory while overlapping temporary retrieval."""
+        existing = _TEMPORARY_MEMORY_PREFETCH.get()
+        task = existing
+        if task is None and self._temporary_memory is not None:
+            task = asyncio.create_task(self._async_load_temporary_memories())
+            _TEMPORARY_MEMORY_PREFETCH.set(task)
+        try:
+            if not memory_enabled(self.subentry.data):
+                return []
+            sync_memory_embedding_provider(self)
+            started = time.monotonic()
+            records = await self._async_select_memories(llm_context, query)
+            record_memory_retrieval("persistent", started, records)
+            return records
+        except BaseException:
+            if existing is None and task is not None:
+                task.cancel()
+                with suppress(BaseException):
+                    await task
+                _TEMPORARY_MEMORY_PREFETCH.set(None)
+            raise
+
+    async def _async_select_memories(
+        self, llm_context: llm.LLMContext, query: str
+    ) -> list[MemoryRecord]:
         """Select once, then resolve the same bundle without automatic reranking."""
         if self._memory is None:
             return []
@@ -1239,6 +1286,8 @@ class ExtendedOpenAIAgentEntity(
     async def _async_rank_memories(
         self, readable_scope_ids: list[str], query: str, limit: int
     ) -> list[MemoryRecord]:
+        if not query.strip():
+            return []
         return await self._async_search_memories(readable_scope_ids, query, limit)
 
     async def _async_search_memories(
@@ -1287,20 +1336,50 @@ class ExtendedOpenAIAgentEntity(
         )
         return [list(item.embedding) for item in response.data]
 
-    async def _async_retrieve_temporary_memories(
-        self,
-    ) -> list[TemporaryMemoryRecord]:
-        """Inject all active bounded facts for the safe continuity scope."""
-        if not self._effective_guest_policy().temporary_memory:
+    async def _async_retrieve_temporary_memories(self) -> list[TemporaryMemoryRecord]:
+        """Consume one prefetch, checking live capability before exposing records."""
+        task = _TEMPORARY_MEMORY_PREFETCH.get()
+        _TEMPORARY_MEMORY_PREFETCH.set(None)
+        if (
+            self.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
+            == TEMPORARY_MEMORY_OFF
+            or _ACTIVE_TEMPORARY_SCOPE.get() is None
+            or _owner_from_resolved_scope(_ACTIVE_SCOPE.get()) is None
+            or not self._effective_guest_policy().temporary_memory
+        ):
+            if task is not None:
+                task.cancel()
+                with suppress(BaseException):
+                    await task
+            return []
+        if task is not None:
+            return cast(list[TemporaryMemoryRecord], await task)
+        return await self._async_load_temporary_memories()
+
+    async def _async_load_temporary_memories(self) -> list[TemporaryMemoryRecord]:
+        """Load active facts under the resolved retained owner, including prefetch."""
+        if (
+            self.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
+            == TEMPORARY_MEMORY_OFF
+            or not self._effective_guest_policy().temporary_memory
+        ):
             return []
         scope_id = _ACTIVE_TEMPORARY_SCOPE.get()
-        if self._temporary_memory is None or scope_id is None:
+        owner = _owner_from_resolved_scope(_ACTIVE_SCOPE.get())
+        if self._temporary_memory is None or scope_id is None or owner is None:
             return []
+        token = _ACTIVE_OWNER_SCOPE_ID.set(owner)
+        started = time.monotonic()
         try:
-            return await self._temporary_memory.async_active(scope_id)
-        except Exception:
-            _LOGGER.exception("Temporary-memory retrieval failed; continuing")
-            return []
+            try:
+                records = await self._temporary_memory.async_active(scope_id)
+            except Exception:
+                _LOGGER.exception("Temporary-memory retrieval failed; continuing")
+                records = []
+            record_memory_retrieval("temporary", started, records)
+            return records
+        finally:
+            _ACTIVE_OWNER_SCOPE_ID.reset(token)
 
     def _get_enabled_skills(self) -> list[Skill]:
         """Get enabled skills as list for template rendering."""
@@ -1474,6 +1553,33 @@ class ExtendedOpenAIAgentEntity(
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> conversation.ToolResultContent:
+        """Own tool dispatch, bounded model projection, and attempt diagnostics."""
+        trace = current_debug_trace()
+        started = time.monotonic()
+        successful = False
+        content: Any = None
+        try:
+            content = await self._async_dispatch_function_tool(
+                function_tool, tool_input, llm_context, exposed_entities
+            )
+            payload = tool_result_data(content)
+            if isinstance(payload, dict) and isinstance(payload.get("result"), str):
+                payload["result"] = bounded_tool_result_text(payload["result"])
+            content = _compact_json_result_content(content)
+            successful = True
+            return cast(conversation.ToolResultContent, content)
+        finally:
+            record_tool_execution(
+                trace, function_tool, tool_input, started, successful, content
+            )
+
+    async def _async_dispatch_function_tool(
+        self,
+        function_tool: dict[str, Any],
+        tool_input: llm.ToolInput,
+        llm_context: llm.LLMContext | None,
+        exposed_entities: list[dict[str, Any]],
+    ) -> conversation.ToolResultContent:
         """Execute an integration-owned tool or a configured tool."""
         function_type = function_tool.get("function", {}).get("type")
         policy = self._effective_guest_policy()
@@ -1615,6 +1721,12 @@ class ExtendedOpenAIAgentEntity(
                     "status": "unavailable",
                     "error": "Memory is temporarily unavailable",
                 }
+            elif function_type == "archive":
+                _LOGGER.exception("Conversation Archive tool failed")
+                result = {
+                    "status": "unavailable",
+                    "error": "Conversation Archive is temporarily unavailable",
+                }
             else:
                 _LOGGER.exception("Knowledge Library tool failed")
                 result = {
@@ -1622,12 +1734,7 @@ class ExtendedOpenAIAgentEntity(
                     "error": "Knowledge Library is temporarily unavailable",
                 }
 
-        return make_tool_result_content(
-            agent_id=self.entity_id,
-            tool_call_id=tool_input.id,
-            tool_name=tool_input.tool_name,
-            tool_result={"result": json.dumps(result, ensure_ascii=False)},
-        )
+        return self._tool_result(tool_input, result)
 
     def _tool_result(
         self, tool_input: llm.ToolInput, result: dict[str, Any]
@@ -1750,6 +1857,8 @@ class ExtendedOpenAIAgentEntity(
         self, operation: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         """Execute a read-only Knowledge Library operation."""
+        if operation == "search":
+            _require_nonblank_query(arguments)
         if not self._knowledge_available or self._knowledge is None:
             raise RuntimeError("Knowledge Library is unavailable")
         if operation == "search":
@@ -1796,15 +1905,19 @@ class ExtendedOpenAIAgentEntity(
                 query, sorted(allowed_ids) if allowed_ids else None, limit
             )
             filter_requested = bool(source_ids)
-            return {
-                "results": [search_result_as_dict(result) for result in results],
-                "source_filter": {
-                    "applied_source_ids": sorted(allowed_ids or []),
-                    "ignored_source_ids": ignored_ids,
-                    "fell_back_to_all_sources": filter_requested
-                    and allowed_ids is None,
+            return knowledge_search_payload(
+                {
+                    "results": [search_result_as_dict(result) for result in results],
+                    "source_filter": {
+                        "applied_source_ids": sorted(allowed_ids or []),
+                        "ignored_source_ids": ignored_ids,
+                        "fell_back_to_all_sources": filter_requested
+                        and allowed_ids is None,
+                    },
                 },
-            }
+                filter_requested=filter_requested,
+                policy_filter_applied=policy_ids is not None,
+            )
         if operation == "list":
             query = arguments.get("query")
             limit = arguments.get("limit", 20)
@@ -1817,11 +1930,14 @@ class ExtendedOpenAIAgentEntity(
                 or isinstance(offset, bool)
             ):
                 raise ValueError("query, limit, or offset has an invalid type")
-            return await self._knowledge.async_catalog(
-                query,
-                limit,
-                offset,
-                self._effective_guest_policy().knowledge_source_ids,
+            return omit_null_paging_cursor(
+                await self._knowledge.async_catalog(
+                    query,
+                    limit,
+                    offset,
+                    self._effective_guest_policy().knowledge_source_ids,
+                ),
+                "next_offset",
             )
         if operation == "get":
             source_id = arguments.get("source_id")
@@ -1840,7 +1956,10 @@ class ExtendedOpenAIAgentEntity(
             allowed_sources = self._effective_guest_policy().knowledge_source_ids
             if allowed_sources is not None and source_id not in allowed_sources:
                 raise RuntimeError(GUEST_MODE_UNAVAILABLE)
-            return await self._knowledge.async_get_section(source_id, start, maximum)
+            return omit_null_paging_cursor(
+                await self._knowledge.async_get_section(source_id, start, maximum),
+                "next_start_character",
+            )
         raise ValueError("unknown knowledge operation")
 
     async def _async_execute_memory_tool(
@@ -1850,6 +1969,10 @@ class ExtendedOpenAIAgentEntity(
         llm_context: llm.LLMContext | None,
     ) -> dict[str, Any]:
         """Execute a scoped persistent-memory operation."""
+        if operation == "search":
+            _require_nonblank_query(arguments)
+        if not memory_enabled(self.subentry.data):
+            raise RuntimeError("persistent memory is disabled")
         if self._memory is None:
             raise RuntimeError("persistent memory is unavailable")
         readable_scope_ids = self._current_readable_memory_scope_ids(llm_context)
@@ -1894,7 +2017,9 @@ class ExtendedOpenAIAgentEntity(
                 for name in ("importance", "subject", "key", "valid_from")
                 if name in arguments
             }
-            return await method(write_scope_id, content, category, source, **metadata)
+            return _compact_memory_result(
+                await method(write_scope_id, content, category, source, **metadata)
+            )
         if operation == "search":
             query = arguments.get("query")
             category = arguments.get("category")
@@ -1919,7 +2044,7 @@ class ExtendedOpenAIAgentEntity(
             personal_id = self._personal_memory_scope_id(llm_context)
             return {
                 "memories": [
-                    memory_as_dict(
+                    model_memory_as_dict(
                         memory, include_scope=True, personal_scope_id=personal_id
                     )
                     for memory in memories
@@ -1949,7 +2074,7 @@ class ExtendedOpenAIAgentEntity(
             personal_id = self._personal_memory_scope_id(llm_context)
             return {
                 "memories": [
-                    memory_as_dict(
+                    model_memory_as_dict(
                         memory, include_scope=True, personal_scope_id=personal_id
                     )
                     for memory in memories
@@ -1995,7 +2120,7 @@ class ExtendedOpenAIAgentEntity(
             )
             return {
                 "status": "updated",
-                "memory": memory_as_dict(
+                "memory": model_memory_as_dict(
                     memory,
                     include_scope=True,
                     personal_scope_id=self._personal_memory_scope_id(llm_context),
@@ -2141,140 +2266,173 @@ class ExtendedOpenAIAgentEntity(
         self, operation: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         """Execute a narrow operation within the request-derived scope."""
-        if not self._effective_guest_policy().temporary_memory:
-            raise RuntimeError(GUEST_MODE_UNAVAILABLE)
-        if self._temporary_memory is None:
-            raise RuntimeError("temporary memory is unavailable")
-        scope_id = _ACTIVE_TEMPORARY_SCOPE.get()
-        if scope_id is None:
-            raise RuntimeError("temporary memory is unavailable for this request")
-        if operation == "add":
-            content = arguments.get("content")
-            expires_at = arguments.get("expires_at")
-            category = arguments.get("category", "general")
-            if (
-                not isinstance(content, str)
-                or not isinstance(expires_at, str)
-                or not isinstance(category, str)
-            ):
-                raise ValueError("content, expires_at, and category must be strings")
-            return await self._temporary_memory.async_add(
-                scope_id, content, expires_at, category
+        owner = (
+            _owner_from_resolved_scope(_ACTIVE_SCOPE.get())
+            if _ACTIVE_TEMPORARY_SCOPE.get() is not None
+            else None
+        )
+        if owner is None:
+            raise RuntimeError(
+                "temporary memory is unavailable for this retained-data scope"
             )
-        if operation == "update":
-            memory_id = arguments.get("memory_id")
-            if not isinstance(memory_id, str):
-                raise ValueError("memory_id is required")
-            record = await self._temporary_memory.async_update(
-                scope_id,
-                memory_id,
-                arguments.get("content"),
-                arguments.get("expires_at"),
-                arguments.get("category"),
-            )
-            return {
-                "status": "updated",
-                "memory": temporary_memory_as_dict(record),
-            }
-        if operation == "delete":
-            memory_ids = arguments.get("memory_ids")
-            if not isinstance(memory_ids, list) or not all(
-                isinstance(memory_id, str) for memory_id in memory_ids
-            ):
-                raise ValueError("memory_ids must be a list of strings")
-            return {
-                "status": "deleted",
-                "deleted": await self._temporary_memory.async_delete(
-                    scope_id, memory_ids
-                ),
-            }
-        raise ValueError("unknown temporary-memory operation")
+        if (
+            self.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
+            == TEMPORARY_MEMORY_OFF
+        ):
+            raise RuntimeError("temporary memory is disabled")
+        token = _ACTIVE_OWNER_SCOPE_ID.set(owner)
+        try:
+            if not self._effective_guest_policy().temporary_memory:
+                raise RuntimeError(GUEST_MODE_UNAVAILABLE)
+            if self._temporary_memory is None:
+                raise RuntimeError("temporary memory is unavailable")
+            scope_id = _ACTIVE_TEMPORARY_SCOPE.get()
+            if scope_id is None:
+                raise RuntimeError("temporary memory is unavailable for this request")
+            if operation == "add":
+                content = arguments.get("content")
+                expires_at = arguments.get("expires_at")
+                category = arguments.get("category", "general")
+                if (
+                    not isinstance(content, str)
+                    or not isinstance(expires_at, str)
+                    or not isinstance(category, str)
+                ):
+                    raise ValueError(
+                        "content, expires_at, and category must be strings"
+                    )
+                return await self._temporary_memory.async_add(
+                    scope_id, content, expires_at, category
+                )
+            if operation == "update":
+                memory_id = arguments.get("memory_id")
+                if not isinstance(memory_id, str):
+                    raise ValueError("memory_id is required")
+                record = await self._temporary_memory.async_update(
+                    scope_id,
+                    memory_id,
+                    arguments.get("content"),
+                    arguments.get("expires_at"),
+                    arguments.get("category"),
+                )
+                return {
+                    "status": "updated",
+                    "memory": temporary_memory_as_dict(record),
+                }
+            if operation == "delete":
+                memory_ids = arguments.get("memory_ids")
+                if not isinstance(memory_ids, list) or not all(
+                    isinstance(memory_id, str) for memory_id in memory_ids
+                ):
+                    raise ValueError("memory_ids must be a list of strings")
+                return {
+                    "status": "deleted",
+                    "deleted": await self._temporary_memory.async_delete(
+                        scope_id, memory_ids
+                    ),
+                }
+            raise ValueError("unknown temporary-memory operation")
+        finally:
+            _ACTIVE_OWNER_SCOPE_ID.reset(token)
 
     async def _async_execute_archive_tool(
         self, operation: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         """Execute scoped archive, privacy, and exact-session deletion actions."""
-        if self._archive is None:
-            raise RuntimeError("conversation archive is unavailable")
-        scope = _ACTIVE_SCOPE.get()
-        active = _ACTIVE_ARCHIVE.get()
-        if scope is None or active is None:
-            raise RuntimeError("active conversation session is unavailable")
-        session_key, session_id = active
         if operation == "search":
-            if not self.subentry.data.get(
-                CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
-                DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
-            ):
-                raise RuntimeError("model archive search is disabled")
-            query = arguments.get("query")
-            if not isinstance(query, str):
-                raise ValueError("query is required")
-            return await self._archive.async_search(
-                scope.scope_id,
-                query,
-                start_date=arguments.get("start_date"),
-                end_date=arguments.get("end_date"),
-                limit=int(arguments.get("limit", 5)),
-            )
-        if operation == "get":
-            requested = arguments.get("session_id")
-            if not isinstance(requested, str):
-                raise ValueError("session_id is required")
-            return await self._archive.async_get(
-                scope.scope_id,
-                requested,
-                int(arguments.get("start_turn", 0)),
-                int(arguments.get("limit", 6)),
-            )
-        if operation == "private":
-            return await self._archive.async_make_private(session_id)
-        if operation == "resume":
-            session = await self._archive.async_resume_saving(
-                session_key,
-                session_id,
-                scope,
-                shared_archive_enabled=bool(
-                    self.subentry.data.get(
-                        CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED
-                    )
-                ),
-            )
-            _ACTIVE_ARCHIVE.set((session_key, session.session_id))
+            _require_nonblank_query(arguments)
+        try:
+            if not _archive_runtime_required(self.subentry.data):
+                raise RuntimeError("conversation archive is disabled")
+            if self._archive is None:
+                raise RuntimeError("conversation archive is unavailable")
+            scope = _ACTIVE_SCOPE.get()
+            active = _ACTIVE_ARCHIVE.get()
+            if scope is None or active is None:
+                raise RuntimeError("active conversation session is unavailable")
+            session_key, session_id = active
+            if operation == "search":
+                if not self.subentry.data.get(
+                    CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+                    DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+                ):
+                    raise RuntimeError("model archive search is disabled")
+                query = arguments.get("query")
+                if not isinstance(query, str):
+                    raise ValueError("query is required")
+                return await self._archive.async_search(
+                    scope.scope_id,
+                    query,
+                    start_date=arguments.get("start_date"),
+                    end_date=arguments.get("end_date"),
+                    limit=int(arguments.get("limit", 5)),
+                )
+            if operation == "get":
+                requested = arguments.get("session_id")
+                if not isinstance(requested, str):
+                    raise ValueError("session_id is required")
+                return await self._archive.async_get(
+                    scope.scope_id,
+                    requested,
+                    int(arguments.get("start_turn", 0)),
+                    int(arguments.get("limit", 6)),
+                )
+            if operation == "private":
+                return await self._archive.async_make_private(session_id)
+            if operation == "resume":
+                session = await self._archive.async_resume_saving(
+                    session_key,
+                    session_id,
+                    scope,
+                    shared_archive_enabled=bool(
+                        self.subentry.data.get(
+                            CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED
+                        )
+                    ),
+                )
+                _ACTIVE_ARCHIVE.set((session_key, session.session_id))
+                return {
+                    "private_mode_enabled": False,
+                    "session_id": session.session_id,
+                    "future_turns_retained": session.retention_state == "retained",
+                    "private_content_restored": False,
+                }
+            if operation == "delete_current":
+                result = await self._archive.async_delete_session(
+                    scope.scope_id, session_id
+                )
+                return {"session_id": session_id, **result}
+            if operation == "delete_selected":
+                session_ids = arguments.get("session_ids")
+                if not isinstance(session_ids, list) or not all(
+                    isinstance(value, str) for value in session_ids
+                ):
+                    raise ValueError("session_ids must be a list of strings")
+                return await self._archive.async_delete_selected(
+                    scope.scope_id,
+                    session_ids,
+                    confirm=arguments.get("confirm") is True,
+                )
+            if operation == "delete_range":
+                start_date = arguments.get("start_date")
+                end_date = arguments.get("end_date")
+                if not isinstance(start_date, str) or not isinstance(end_date, str):
+                    raise ValueError("start_date and end_date are required")
+                return await self._archive.async_delete_date_range(
+                    scope.scope_id,
+                    start_date,
+                    end_date,
+                    confirm=arguments.get("confirm") is True,
+                )
+            raise ValueError("unknown archive operation")
+        except RuntimeError, ValueError:
+            raise
+        except Exception:
+            _LOGGER.exception("Conversation Archive tool failed")
             return {
-                "private_mode_enabled": False,
-                "session_id": session.session_id,
-                "future_turns_retained": session.retention_state == "retained",
-                "private_content_restored": False,
+                "status": "unavailable",
+                "error": "Conversation Archive is temporarily unavailable",
             }
-        if operation == "delete_current":
-            result = await self._archive.async_delete_session(
-                scope.scope_id, session_id
-            )
-            return {"session_id": session_id, **result}
-        if operation == "delete_selected":
-            session_ids = arguments.get("session_ids")
-            if not isinstance(session_ids, list) or not all(
-                isinstance(value, str) for value in session_ids
-            ):
-                raise ValueError("session_ids must be a list of strings")
-            return await self._archive.async_delete_selected(
-                scope.scope_id,
-                session_ids,
-                confirm=arguments.get("confirm") is True,
-            )
-        if operation == "delete_range":
-            start_date = arguments.get("start_date")
-            end_date = arguments.get("end_date")
-            if not isinstance(start_date, str) or not isinstance(end_date, str):
-                raise ValueError("start_date and end_date are required")
-            return await self._archive.async_delete_date_range(
-                scope.scope_id,
-                start_date,
-                end_date,
-                confirm=arguments.get("confirm") is True,
-            )
-        raise ValueError("unknown archive operation")
 
 
 def _resolve_continue_conversation(

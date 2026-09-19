@@ -13,13 +13,11 @@ from typing import Any
 
 from homeassistant.helpers.storage import Store
 
-from .configuration_lifecycle_hardening import install_configuration_lifecycle_hardening
 from .context_usage_hardening import install_context_usage_hardening
 from .hot_path_cleanup import install_hot_path_cleanup
 from .knowledge import KnowledgeLibrary
 from .lifecycle_optimizations import install_lifecycle_optimizations
 from .memory import PersistentMemory
-from .model_tool_results import install_model_tool_result_compaction
 from .request_rules import DEFAULT_MATCHING, DEFAULT_WORDING_GROUPS, RequestRules
 from .runtime_failure_hardening import install_runtime_failure_hardening
 from .runtime_hardening import install_runtime_hardening
@@ -64,14 +62,12 @@ def install_persistence_transactions() -> None:
         _reset_request_rules,
     )
     _install_delayed_tool_store_guard()
-    install_configuration_lifecycle_hardening()
     install_runtime_failure_hardening()
     install_runtime_hardening()
     install_safety_hardening()
     install_lifecycle_optimizations()
     install_hot_path_cleanup()
     install_temporary_memory_read_fast_path()
-    install_model_tool_result_compaction()
     install_context_usage_hardening()
 
 

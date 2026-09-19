@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from types import ModuleType, SimpleNamespace
 import sys
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
-from custom_components.extended_openai_conversation_responses import ha_llm_tools as tools
+from custom_components.extended_openai_conversation_responses import (
+    ha_llm_tools as tools,
+)
 
 
 def test_serializer_compat_install_is_idempotent(monkeypatch) -> None:
@@ -16,7 +18,7 @@ def test_serializer_compat_install_is_idempotent(monkeypatch) -> None:
         return {}
 
     existing._extended_openai_serializer_compat = True  # type: ignore[attr-defined]
-    monkeypatch.setattr(tools.llm, "to_openapi", existing)
+    monkeypatch.setattr(tools.llm, "to_openapi", existing, raising=False)
 
     tools._install_openapi_serializer_compat()
 
@@ -76,12 +78,16 @@ def test_serializer_compat_selects_converter_and_translates_unsupported(
     tools._install_openapi_serializer_compat()
     converter = tools.llm.to_openapi
 
-    assert converter(
-        ProbatioSchema(), custom_serializer=lambda _value: voluptuous_unsupported
-    ) is probatio_unsupported
-    assert converter(
-        object(), custom_serializer=lambda _value: probatio_unsupported
-    ) is voluptuous_unsupported
+    assert (
+        converter(
+            ProbatioSchema(), custom_serializer=lambda _value: voluptuous_unsupported
+        )
+        is probatio_unsupported
+    )
+    assert (
+        converter(object(), custom_serializer=lambda _value: probatio_unsupported)
+        is voluptuous_unsupported
+    )
     assert calls == ["probatio", "voluptuous"]
 
 

@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from typing import Any, cast
+from typing import Any
 
 from .ha_tool_result_compat import tool_result_data
 from .memory import MemoryRecord, memory_as_dict
 
-_INSTALLED = False
 _OPTIONAL_MEMORY_FIELDS = {
     "subject",
     "key",
@@ -106,61 +105,3 @@ def _compact_json_result_content(result: Any) -> Any:
         return result
     tool_result["result"] = compacted
     return result
-
-
-def install_model_tool_result_compaction() -> None:
-    """Install model-only result projections without changing backend/admin shapes."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-
-    from .conversation import ExtendedOpenAIAgentEntity
-
-    agent_type: Any = ExtendedOpenAIAgentEntity
-    original_execute = agent_type._execute_function_tool
-    original_knowledge = agent_type._async_execute_knowledge_tool
-    original_memory = agent_type._async_execute_memory_tool
-
-    async def execute_function_tool(
-        agent: Any, function_tool: Any, tool_input: Any, llm_context: Any, entities: Any
-    ) -> Any:
-        result = await original_execute(
-            agent, function_tool, tool_input, llm_context, entities
-        )
-        return _compact_json_result_content(result)
-
-    async def execute_knowledge(
-        agent: Any, operation: str, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        result = cast(
-            dict[str, Any], await original_knowledge(agent, operation, arguments)
-        )
-        if operation == "search":
-            policy_ids = agent._effective_guest_policy().knowledge_source_ids
-            return knowledge_search_payload(
-                result,
-                filter_requested=bool(arguments.get("source_ids")),
-                policy_filter_applied=policy_ids is not None,
-            )
-        if operation == "list":
-            return omit_null_paging_cursor(result, "next_offset")
-        if operation == "get":
-            return omit_null_paging_cursor(result, "next_start_character")
-        return result
-
-    async def execute_memory(
-        agent: Any,
-        operation: str,
-        arguments: dict[str, Any],
-        llm_context: Any,
-    ) -> dict[str, Any]:
-        result = cast(
-            dict[str, Any],
-            await original_memory(agent, operation, arguments, llm_context),
-        )
-        return _compact_memory_result(result)
-
-    agent_type._execute_function_tool = execute_function_tool
-    agent_type._async_execute_knowledge_tool = execute_knowledge
-    agent_type._async_execute_memory_tool = execute_memory
-    _INSTALLED = True

@@ -304,7 +304,6 @@ def test_install_is_idempotent(monkeypatch) -> None:
     for name in (
         "_install_manager_contract",
         "_install_snapshot_contract",
-        "_install_conversation_contract",
     ):
         monkeypatch.setattr(ownership, name, lambda n=name: calls.append(n))
 
@@ -314,5 +313,4 @@ def test_install_is_idempotent(monkeypatch) -> None:
     assert calls == [
         "_install_manager_contract",
         "_install_snapshot_contract",
-        "_install_conversation_contract",
     ]

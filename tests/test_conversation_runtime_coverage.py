@@ -16,14 +16,11 @@ from custom_components.extended_openai_conversation_responses.const import (
     MEMORY_RETRIEVAL_HYBRID,
 )
 
-
 Agent = conversation_module.ExtendedOpenAIAgentEntity
 
 
-class _MemoryRetrievalHarness:
+class _MemoryRetrievalHarness(Agent):
     """Bind the production retrieval method to a minimal realistic agent surface."""
-
-    _async_retrieve_memories = Agent._async_retrieve_memories
 
     def __init__(
         self,
@@ -39,7 +36,10 @@ class _MemoryRetrievalHarness:
         self._scopes = scopes
         self._rank = rank
         self.subentry = SimpleNamespace(
-            data={CONF_MEMORY_AUTO_RETRIEVE_LIMIT: retrieve_limit}
+            data={
+                CONF_MEMORY_AUTO_RETRIEVE_LIMIT: retrieve_limit,
+                "memory_mode": "automatic",
+            }
         )
 
     def _current_readable_memory_scope_ids(self, _context: object) -> list[str]:
@@ -85,9 +85,7 @@ async def test_memory_retrieval_selects_and_pins_continuity_bundle() -> None:
     continuity.async_set_memory_bundle.assert_awaited_once_with(
         "session-1", references, 30
     )
-    memory.async_get_many.assert_awaited_once_with(
-        references, ["user-1", "household"]
-    )
+    memory.async_get_many.assert_awaited_once_with(references, ["user-1", "household"])
 
 
 @pytest.mark.asyncio
@@ -133,7 +131,7 @@ async def test_memory_retrieval_failure_is_isolated() -> None:
     )
     token = conversation_module._ACTIVE_MEMORY_SESSION.set(("session-1", 30))
     try:
-        result = await Agent._async_retrieve_memories(agent, object(), "hello")
+        result = await Agent._async_select_memories(agent, object(), "hello")
     finally:
         conversation_module._ACTIVE_MEMORY_SESSION.reset(token)
 
@@ -315,8 +313,9 @@ def test_guest_argument_filter_is_recursive_and_fail_closed(
 ) -> None:
     """Nested/broad selectors and entity lists must obey the correct guest capability."""
     policy = SimpleNamespace(
-        allows_entity_read=lambda entity_id: entity_id
-        in {"light.allowed", "sensor.allowed"},
+        allows_entity_read=lambda entity_id: (
+            entity_id in {"light.allowed", "sensor.allowed"}
+        ),
         allows_entity_control=lambda entity_id: entity_id == "light.allowed",
     )
 

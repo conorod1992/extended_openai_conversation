@@ -11,7 +11,10 @@ from homeassistant.helpers import llm
 
 from .exceptions import FunctionNotFound
 from .function_call_budget import FunctionCallBudget
-from .function_execution import async_validate_function_arguments
+from .function_execution import (
+    async_validate_function_arguments,
+    validated_function_call,
+)
 from .function_tool_recovery import (
     CorrectableToolFailure,
     ToolRecoveryState,
@@ -227,7 +230,10 @@ async def _execute_bound(
     recovery_state: ToolRecoveryState,
 ) -> conversation.ToolResultContent:
     """Execute one prepared call with strict runtime-failure semantics bound."""
-    with bind_tool_recovery_state(recovery_state):
+    with (
+        bind_tool_recovery_state(recovery_state),
+        validated_function_call(tool_input, function_tool.get("spec", {})),
+    ):
         return cast(
             conversation.ToolResultContent,
             await entity._execute_function_tool(
@@ -410,13 +416,14 @@ async def _async_execute_with_recovery(
                 ):
                     continue
                 raise outcome.original
-            with bind_tool_recovery_state(recovery_state):
-                tool_result_content = await entity._execute_function_tool(
-                    function_tool,
-                    outcome,
-                    llm_context,
-                    exposed_entities,
-                )
+            tool_result_content = await _execute_bound(
+                entity,
+                function_tool,
+                outcome,
+                llm_context,
+                exposed_entities,
+                recovery_state,
+            )
         except BaseException as err:
             append_unresolved_tool_results(
                 chat_log,

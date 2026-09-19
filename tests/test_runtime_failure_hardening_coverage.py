@@ -7,8 +7,6 @@ from unittest.mock import AsyncMock, Mock
 
 from openai import OpenAIError
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses import (
     runtime_failure_hardening as hardening,
 )
@@ -18,6 +16,7 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 class _Usage:
@@ -42,6 +41,10 @@ class _ConversationEntity:
 
 
 class _ArchiveEntity:
+    _async_dispatch_function_tool = (
+        ExtendedOpenAIAgentEntity._async_dispatch_function_tool
+    )
+
     def __init__(self, *, guest_active: bool = False, allowed: bool = True) -> None:
         self.guest_active = guest_active
         self.allowed = allowed
@@ -96,7 +99,9 @@ async def test_request_preparation_boundary_catches_supported_errors_and_is_idem
         calls += 1
         raise HomeAssistantError("bad preparation")
 
-    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_handle_message", failing_handle)
+    monkeypatch.setattr(
+        ExtendedOpenAIAgentEntity, "_async_handle_message", failing_handle
+    )
     monkeypatch.setattr(
         hardening,
         "_conversation_error_result",
@@ -121,18 +126,12 @@ async def test_archive_wrapper_delegates_non_archive_and_blocks_disallowed_guest
 ) -> None:
     original = AsyncMock(return_value="delegated")
     original._extended_openai_archive_failure_label = False
-    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_execute_function_tool", original)
-    hardening._install_archive_failure_label()
     installed = ExtendedOpenAIAgentEntity._execute_function_tool
-    hardening._install_archive_failure_label()
     assert ExtendedOpenAIAgentEntity._execute_function_tool is installed
 
     entity = _ArchiveEntity(guest_active=True, allowed=False)
     tool_input = SimpleNamespace(tool_args={"query": "hello"})
 
-    delegated = await installed(
-        entity, {"function": {"type": "native"}}, tool_input, None, []
-    )
     blocked = await installed(
         entity,
         {"function": {"type": "archive", "operation": "search"}},
@@ -141,10 +140,11 @@ async def test_archive_wrapper_delegates_non_archive_and_blocks_disallowed_guest
         [],
     )
 
-    assert delegated == "delegated"
-    assert blocked == {"status": "error", "error": hardening.GUEST_MODE_UNAVAILABLE}
+    assert blocked == {
+        "status": "error",
+        "error": "This capability is unavailable in Guest Mode.",
+    }
     assert entity.archive_calls == []
-    original.assert_awaited_once()
 
 
 async def test_archive_wrapper_maps_value_error_without_mislabeling_as_unavailable(
@@ -152,8 +152,6 @@ async def test_archive_wrapper_maps_value_error_without_mislabeling_as_unavailab
 ) -> None:
     original = AsyncMock(return_value="unused")
     original._extended_openai_archive_failure_label = False
-    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_execute_function_tool", original)
-    hardening._install_archive_failure_label()
 
     entity = _ArchiveEntity()
 
@@ -179,13 +177,17 @@ async def _chunks(*tool_deltas):
         )
 
 
-async def test_late_tool_id_repair_falls_back_for_non_dataclass_tool_inputs(monkeypatch) -> None:
+async def test_late_tool_id_repair_falls_back_for_non_dataclass_tool_inputs(
+    monkeypatch,
+) -> None:
     async def original(_entity, _chat_log, result, _request_usage=None):
         async for _chunk in result:
             pass
         yield {
             "tool_calls": [
-                SimpleNamespace(tool_name="search", tool_args={"q": "x"}, external=False)
+                SimpleNamespace(
+                    tool_name="search", tool_args={"q": "x"}, external=False
+                )
             ]
         }
 
@@ -212,7 +214,9 @@ async def test_late_tool_id_repair_falls_back_for_non_dataclass_tool_inputs(monk
     assert repaired.external is False
 
 
-async def test_late_tool_id_repair_leaves_unrepairable_calls_unchanged(monkeypatch) -> None:
+async def test_late_tool_id_repair_leaves_unrepairable_calls_unchanged(
+    monkeypatch,
+) -> None:
     existing = SimpleNamespace(id="already-present", tool_name="one", tool_args={})
     missing = SimpleNamespace(id=None, tool_name="two", tool_args={})
     payload = {"tool_calls": [existing, missing]}
@@ -247,10 +251,9 @@ def test_top_level_install_is_idempotent(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(hardening, "_INSTALLED", False)
     monkeypatch.setattr(
-        hardening, "_install_request_preparation_boundary", lambda: calls.append("request")
-    )
-    monkeypatch.setattr(
-        hardening, "_install_archive_failure_label", lambda: calls.append("archive")
+        hardening,
+        "_install_request_preparation_boundary",
+        lambda: calls.append("request"),
     )
     monkeypatch.setattr(
         hardening,
@@ -261,4 +264,4 @@ def test_top_level_install_is_idempotent(monkeypatch) -> None:
     hardening.install_runtime_failure_hardening()
     hardening.install_runtime_failure_hardening()
 
-    assert calls == ["request", "archive", "tool-id"]
+    assert calls == ["request", "tool-id"]

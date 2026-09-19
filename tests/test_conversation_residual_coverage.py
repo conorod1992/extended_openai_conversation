@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from inspect import unwrap
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -35,9 +34,6 @@ from custom_components.extended_openai_conversation_responses.function_groups im
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
 )
-from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
-    tool_result_data,
-)
 from custom_components.extended_openai_conversation_responses.scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
     shared_scope,
@@ -49,8 +45,8 @@ Agent = conversation_module.ExtendedOpenAIAgentEntity
 
 
 def _agent(*, data: dict | None = None) -> SimpleNamespace:
-    return SimpleNamespace(
-        subentry=SimpleNamespace(data=data or {}),
+    agent = SimpleNamespace(
+        subentry=SimpleNamespace(data={"temporary_memory": "enabled", **(data or {})}),
         _memory=None,
         _temporary_memory=None,
         _archive=None,
@@ -58,16 +54,23 @@ def _agent(*, data: dict | None = None) -> SimpleNamespace:
         _knowledge=None,
         _effective_guest_policy=lambda: GuestCapabilityPolicy.unrestricted(),
     )
+    agent._async_dispatch_function_tool = lambda *args: (
+        Agent._async_dispatch_function_tool(agent, *args)
+    )
+    agent._async_load_temporary_memories = lambda: Agent._async_load_temporary_memories(
+        agent
+    )
+    return agent
 
 
 async def _retrieve_temporary_direct(agent: SimpleNamespace):
-    """Exercise the conversation retrieval path without suite-installed wrappers."""
+    """Exercise the owned retrieval path with an explicit retained scope."""
     prefetch_token = lifecycle._TEMPORARY_MEMORY_PREFETCH.set(None)
     scope_token = conversation_module._ACTIVE_SCOPE.set(
         user_scope("test", source="coverage")
     )
     try:
-        return await unwrap(Agent._async_retrieve_temporary_memories)(agent)
+        return await Agent._async_retrieve_temporary_memories(agent)
     finally:
         conversation_module._ACTIVE_SCOPE.reset(scope_token)
         lifecycle._TEMPORARY_MEMORY_PREFETCH.reset(prefetch_token)
@@ -92,7 +95,11 @@ async def test_startup_resolves_an_absolute_skills_directory(
         conversation_module.ConversationEntity, "async_added_to_hass", AsyncMock()
     )
     monkeypatch.setattr(conversation_module.conversation, "async_set_agent", Mock())
-    monkeypatch.setattr(conversation_module, "async_track_time_interval", Mock(return_value=lambda: None))
+    monkeypatch.setattr(
+        conversation_module,
+        "async_track_time_interval",
+        Mock(return_value=lambda: None),
+    )
     absolute_dir = tmp_path / "absolute-agent-data"
     monkeypatch.setattr(
         conversation_module, "DEFAULT_WORKING_DIRECTORY", str(absolute_dir)
@@ -471,8 +478,7 @@ async def test_dispatch_converts_guest_mode_errors_and_denials_to_results(
         None,
         [],
     )
-    decoded = json.loads(tool_result_data(result)["result"])
-    assert decoded == {
+    assert result == {
         "status": "error",
         "error": conversation_module.GUEST_MODE_UNAVAILABLE,
     }
@@ -482,7 +488,7 @@ async def test_dispatch_converts_guest_mode_errors_and_denials_to_results(
 @pytest.mark.parametrize(
     ("operation", "arguments", "message"),
     [
-        ("search", {"query": 3}, "query, source_ids, or limit"),
+        ("search", {"query": 3}, "query is required"),
         ("list", {"limit": True}, "query, limit, or offset"),
         ("get", {"source_id": 3}, "source_id, start_character, or max_characters"),
         ("unknown", {}, "unknown knowledge operation"),
@@ -621,17 +627,23 @@ def test_memory_scope_resolution_covers_guest_shared_and_unretained_paths() -> N
 
 @pytest.mark.asyncio
 async def test_temporary_and_archive_argument_validation() -> None:
-    agent = _agent(data={CONF_ARCHIVE_MODEL_SEARCH_ENABLED: False})
+    agent = _agent(
+        data={CONF_ARCHIVE_MODEL_SEARCH_ENABLED: False, "archive_enabled": True}
+    )
     agent._temporary_memory = SimpleNamespace()
     execute_temporary = unwrap(Agent._async_execute_temporary_memory_tool)
-    with pytest.raises(RuntimeError, match="unavailable for this request"):
+    with pytest.raises(RuntimeError, match="unavailable for this retained-data scope"):
         await execute_temporary(agent, "update", {})
+    owner_token = conversation_module._ACTIVE_SCOPE.set(
+        user_scope("one", source="test")
+    )
     token = conversation_module._ACTIVE_TEMPORARY_SCOPE.set("request:one")
     try:
         with pytest.raises(ValueError, match="memory_id is required"):
             await execute_temporary(agent, "update", {})
     finally:
         conversation_module._ACTIVE_TEMPORARY_SCOPE.reset(token)
+        conversation_module._ACTIVE_SCOPE.reset(owner_token)
 
     agent._archive = SimpleNamespace()
     execute_archive = unwrap(Agent._async_execute_archive_tool)

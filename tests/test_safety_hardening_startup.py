@@ -50,13 +50,11 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
     for name in (
         "_install_manager_guard",
         "_install_delayed_tool_store_guard",
-        "install_configuration_lifecycle_hardening",
         "install_runtime_failure_hardening",
         "install_runtime_hardening",
         "install_lifecycle_optimizations",
         "install_hot_path_cleanup",
         "install_temporary_memory_read_fast_path",
-        "install_model_tool_result_compaction",
         "install_context_usage_hardening",
     ):
         monkeypatch.setattr(persistence_hardening, name, MagicMock())

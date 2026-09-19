@@ -15,7 +15,6 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import intent
 
 from .debug import record_current_provider_failure
-from .guest_mode import GUEST_MODE_UNAVAILABLE
 from .provider_errors import (
     log_provider_failure,
     provider_user_message,
@@ -79,55 +78,6 @@ def _install_request_preparation_boundary() -> None:
     async_handle_message._extended_openai_preparation_boundary = True  # type: ignore[attr-defined]
     setattr(  # noqa: B010
         ExtendedOpenAIAgentEntity, "_async_handle_message", async_handle_message
-    )
-
-
-def _install_archive_failure_label() -> None:
-    """Report unexpected Archive failures as Archive failures, not Knowledge failures."""
-    from .conversation import ExtendedOpenAIAgentEntity
-
-    current = ExtendedOpenAIAgentEntity._execute_function_tool
-    if getattr(current, "_extended_openai_archive_failure_label", False):
-        return
-    original = current
-
-    @wraps(original)
-    async def execute_function_tool(
-        entity: Any,
-        function_tool: dict[str, Any],
-        tool_input: Any,
-        llm_context: Any,
-        exposed_entities: list[dict[str, Any]],
-    ) -> Any:
-        function_type = function_tool.get("function", {}).get("type")
-        if function_type != "archive":
-            return await original(
-                entity, function_tool, tool_input, llm_context, exposed_entities
-            )
-
-        operation = function_tool.get("function", {}).get("operation", "")
-        policy = entity._effective_guest_policy()
-        try:
-            if policy.guest_active and not entity._guest_integration_allowed(
-                "archive", operation
-            ):
-                raise RuntimeError(GUEST_MODE_UNAVAILABLE)
-            result = await entity._async_execute_archive_tool(
-                operation, tool_input.tool_args
-            )
-        except (RuntimeError, ValueError) as err:
-            result = {"status": "error", "error": str(err)}
-        except Exception:
-            _LOGGER.exception("Conversation Archive tool failed")
-            result = {
-                "status": "unavailable",
-                "error": "Conversation Archive is temporarily unavailable",
-            }
-        return entity._tool_result(tool_input, result)
-
-    execute_function_tool._extended_openai_archive_failure_label = True  # type: ignore[attr-defined]
-    setattr(  # noqa: B010
-        ExtendedOpenAIAgentEntity, "_execute_function_tool", execute_function_tool
     )
 
 
@@ -211,6 +161,5 @@ def install_runtime_failure_hardening() -> None:
     if _INSTALLED:
         return
     _install_request_preparation_boundary()
-    _install_archive_failure_label()
     _install_late_chat_tool_call_id_repair()
     _INSTALLED = True
