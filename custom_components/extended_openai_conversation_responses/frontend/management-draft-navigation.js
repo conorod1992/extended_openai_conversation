@@ -1,4 +1,5 @@
 import {dirtyConfigurationDestinations, refreshSettingEffects} from "./management-setting-metadata.js";
+import {enhancementChanged} from "./management-enhancement-state.js";
 
 function ensureStyles(panel) {
   const root = panel.shadowRoot;
@@ -81,8 +82,11 @@ function enhanceDirtyNavigation(panel, destinations) {
 
 export function enhanceConfigurationClarity(panel) {
   if (!panel.shadowRoot) return;
-  ensureStyles(panel);
   const destinations = dirtyConfigurationDestinations(panel);
+  const agent = panel._selectedAgent?.();
+  const model = panel._draft && panel._draftAgentId === panel._agentId ? panel._draft.chat_model || agent?.model : agent?.model;
+  if (!enhancementChanged(panel, "configuration-clarity", [panel._agentId, panel._page, panel._subsection, agent?.provider, model, [...destinations].sort().join("|"), panel._eocNavigationRevision])) return;
+  ensureStyles(panel);
   enhanceAgentContext(panel, destinations);
   enhanceDirtyNavigation(panel, destinations);
 }

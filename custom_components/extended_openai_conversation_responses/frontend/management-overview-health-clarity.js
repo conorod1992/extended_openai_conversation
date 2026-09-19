@@ -1,4 +1,5 @@
 import {lookupModelData} from "./model-catalog.js";
+import {enhancementChanged} from "./management-enhancement-state.js";
 
 const count = (root, state) => root?.querySelectorAll?.(`.setup-health-check-${state}`)?.length || 0;
 
@@ -145,6 +146,8 @@ function ensureOverviewModelData(panel) {
 }
 
 export function enhanceOverviewHealthClarity(panel) {
+  if (panel._page !== "overview" || !panel.shadowRoot) return;
+  if (!enhancementChanged(panel, "overview-health", [panel._agentId, panel._data?.is_admin, JSON.stringify(panel._modelCatalogData), panel._eocOverviewModelDataError])) return;
   clarifySetupHealthSummary(panel);
   renderOverviewModelDataCard(panel);
   ensureOverviewModelData(panel);

@@ -1,4 +1,5 @@
 import {saveConfiguration} from "./management-actions.js";
+import {enhancementChanged} from "./management-enhancement-state.js";
 import {UnsavedState, clone, same, draftScope, saveBarMarkup} from "./unsaved-state.js";
 
 const GUEST = "capabilities/guest-mode";
@@ -103,8 +104,10 @@ export function readRuleSettings(panel) {
 export function refreshPageSaveBar(panel) {
   const scope = currentPageScope(panel), root = panel.shadowRoot;
   if (!scope || !root?.querySelector) return;
+  const dirty = scope.dirty();
+  if (!enhancementChanged(panel, "page-save-bar", [scope, dirty, scope.pending])) return;
   let bar = root.querySelector(".save-bar");
-  if (!scope.dirty()) { bar?.remove(); root.dispatchEvent?.(new Event("eoc-config-dirty-changed")); return; }
+  if (!dirty) { bar?.remove(); root.dispatchEvent?.(new Event("eoc-config-dirty-changed")); return; }
   if (!bar) {
     root.querySelector("main")?.insertAdjacentHTML("beforeend", saveBarMarkup(scope));
     bar = root.querySelector(".save-bar");

@@ -1,4 +1,5 @@
 import {friendlySettingLabel, settingEffectBadges} from "./management-setting-metadata.js";
+import {enhancementChanged} from "./management-enhancement-state.js";
 
 const MODEL_PARAMETERS = Object.freeze([
   Object.freeze({
@@ -386,6 +387,10 @@ export {storeRuntimeGuidance} from "./management-runtime-guidance.js";
 
 export function enhanceConfigurationGuidance(panel) {
   if (!panel.shadowRoot) return;
+  const config = activeConfig(panel);
+  const keys = ["conversation_continuity", "web_search", "archive_enabled", "speech_processing_enabled", "local_intents_enabled", "memory_retrieval_mode", "api_mode", "web_search_context", ...MODEL_PARAMETERS.map((spec) => spec.key)];
+  const signature = JSON.stringify([keys.map((key) => config[key]), activeCapabilities(panel), activeRuntimeGuidance(panel), panel._result?.local_handling || panel._configData?.local_handling, panel._result?.options || panel._configData?.options]);
+  if (!enhancementChanged(panel, "configuration-guidance", [panel._agentId, signature, panel._eocSearchResultsRevision])) return;
   ensureStyles(panel);
   const desiredGuidance = new Set();
   guidanceKeys.set(panel, desiredGuidance);
