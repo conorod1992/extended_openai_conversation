@@ -266,6 +266,7 @@ function renderDynamicRegions(panel) {
   panel._eocDeferredEditorRender = false;
   if (main && changed) {
     main.innerHTML = markup;
+    panel._eocMainRevision = (panel._eocMainRevision || 0) + 1;
     panel._eocMainMarkup = markup;
     panel._eocRenderedRoute = route;
     // Page bindings include feature dialog handlers, so refresh those editors here.
@@ -302,6 +303,7 @@ export function showInitialLoading(panel) {
   const main = panel.shadowRoot?.querySelector?.("main");
   if (!main) return false;
   main.innerHTML = panel._loading?.() || '<div class="loading" role="status">Loading…</div>';
+  panel._eocMainRevision = (panel._eocMainRevision || 0) + 1;
   main.setAttribute("aria-busy", "true");
   main.dataset.eocInitialLoading = "";
   return true;

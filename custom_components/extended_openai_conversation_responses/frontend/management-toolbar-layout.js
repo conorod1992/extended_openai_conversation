@@ -1,3 +1,5 @@
+import {enhancementChanged} from "./management-enhancement-state.js";
+
 const TOOLBAR_STYLE = `
   header .global-search.eoc-global-search{
     width:min(380px,100%);
@@ -104,6 +106,7 @@ const TOOLBAR_STYLE = `
 export function applyManagementToolbarLayout(panel) {
   const root = panel?.shadowRoot;
   if (!root) return false;
+  if (!enhancementChanged(panel, "toolbar", [panel._page, panel._subsection])) return false;
 
   if (!root.querySelector("style[data-eoc-management-toolbar]")) {
     const style = document.createElement("style");

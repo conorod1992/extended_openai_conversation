@@ -1,3 +1,5 @@
+import {enhancementChanged} from "./management-enhancement-state.js";
+
 function ensureStyles(panel) {
   const root = panel?.shadowRoot;
   if (!root || root.querySelector("style[data-eoc-settings-polish]")) return;
@@ -49,6 +51,7 @@ function applyGuideLayout(panel) {
 }
 
 export function polishSettingsLayout(panel) {
+  if (!panel.shadowRoot || !enhancementChanged(panel, "settings-layout")) return;
   ensureStyles(panel);
   applyGuideLayout(panel);
 }

@@ -1,3 +1,4 @@
+import {enhancementChanged} from "./management-enhancement-state.js";
 import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
 import {SETTINGS_INDEX, pageMetadata} from "./frontend-navigation.js";
 
@@ -167,6 +168,7 @@ export function updateSettingsResults(panel) {
   if (results._eocMarkup !== markup) {
     results.innerHTML = markup;
     results._eocMarkup = markup;
+    panel._eocSearchResultsRevision = (panel._eocSearchResultsRevision || 0) + 1;
   }
   const hidden = !panel._settingsSearchQuery;
   if (results.hidden !== hidden) results.hidden = hidden;
@@ -259,6 +261,10 @@ function bindSearch(panel, search) {
 export function enhanceNavigationSearch(panel) {
   const root = panel.shadowRoot;
   if (!root) return;
+  // Active search owns its asynchronous result updates. Keep those live; an
+  // empty search only depends on navigation and permission state.
+  const changed = enhancementChanged(panel, "navigation-search", [panel._page, panel._subsection, panel._data?.is_admin, panel._settingsSearchQuery || ""]);
+  if (!changed && !panel._settingsSearchQuery) return;
   if (!root.querySelector("style[data-eoc-navigation-search]")) {
     const style = document.createElement("style");
     style.dataset.eocNavigationSearch = "";
@@ -292,6 +298,7 @@ export function enhanceNavigationSearch(panel) {
   if (nav && nav._eocMarkup !== markup) {
     nav.innerHTML = markup;
     nav._eocMarkup = markup;
+    panel._eocNavigationRevision = (panel._eocNavigationRevision || 0) + 1;
     nav.hidden = !markup;
     nav.setAttribute("aria-label", `${pageMetadata(panel._page).label} sections`);
   }
