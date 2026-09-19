@@ -82,9 +82,10 @@ def append_unresolved_tool_results(
         for tool_call in content.tool_calls
     }
     completed_ids = {
-        content.tool_call_id
+        tool_call_id
         for content in chat_log.content
         if is_tool_result_content(content)
+        and isinstance((tool_call_id := getattr(content, "tool_call_id", None)), str)
     }
     unresolved = [
         tool_call
