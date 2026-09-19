@@ -48,6 +48,7 @@ def is_tool_result_content(content: Any) -> bool:
         return False
     return hasattr(content, "result") or hasattr(content, "tool_result")
 
+
 def tool_result_data(content: Any, default: Any = None) -> Any:
     """Read a chat-log result without accessing HA's deprecated compatibility property.
 
