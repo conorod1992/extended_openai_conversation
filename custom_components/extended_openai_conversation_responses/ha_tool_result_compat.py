@@ -39,18 +39,14 @@ _MISSING_RESULT = object()
 
 
 def is_tool_result_content(content: Any) -> bool:
-    """Return whether content is a Home Assistant tool result across API versions.
+    """Recognize tool-result content without relying on runtime class identity.
 
-    Genuine-HA reloads can leave semantically valid ToolResultContent instances that
-    do not satisfy an exact runtime class identity check. The role/call-id contract is
-    stable across supported Home Assistant versions and is what provider serializers
-    actually require.
+    Supported HA versions expose either ``result`` or legacy ``tool_result``.
+    Test doubles use the same stable call-id/payload contract.
     """
-    return (
-        getattr(content, "role", None) == "tool_result"
-        and isinstance(getattr(content, "tool_call_id", None), str)
-    )
-
+    if not isinstance(getattr(content, "tool_call_id", None), str):
+        return False
+    return hasattr(content, "result") or hasattr(content, "tool_result")
 
 def tool_result_data(content: Any, default: Any = None) -> Any:
     """Read a chat-log result without accessing HA's deprecated compatibility property.
