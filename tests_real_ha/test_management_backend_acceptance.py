@@ -92,7 +92,8 @@ async def test_only_unified_memory_and_knowledge_commands_are_registered(
     assert fetched["source"]["content"] == "Updated content"
     assert fetched["source"]["enabled"] is True
 
-    normal_user = MockUser(id="knowledge-non-admin", is_owner=False, is_admin=False)
+    normal_user = MockUser(id="knowledge-non-admin", is_owner=False)
+    assert normal_user.is_admin is False
     normal_user.add_to_hass(hass)
     token = await hass.auth.async_create_refresh_token(normal_user, CLIENT_ID)
     normal_client = await hass_ws_client(
