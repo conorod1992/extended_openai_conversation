@@ -20,6 +20,7 @@ from tests_real_ha.test_management_backend_acceptance import _entry, _setup_entr
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("socket_enabled")  # The HTTP client starts a real loopback server.
 async def test_startup_serves_all_assets_without_mutating_registry(
     hass: HomeAssistant, aiohttp_client: Any
 ) -> None:
