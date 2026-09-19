@@ -3,35 +3,14 @@
 from __future__ import annotations
 
 import time
-from types import SimpleNamespace
-from unittest.mock import Mock
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import (
+    debug,
+    hot_path_cleanup,
+)
 from homeassistant.util import dt as dt_util
-
-from custom_components.extended_openai_conversation_responses import debug, hot_path_cleanup, local_intents
-
-
-def test_install_hot_path_cleanup_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
-    monkeypatch.setattr(hot_path_cleanup, "_INSTALLED", False)
-    monkeypatch.setattr(
-        hot_path_cleanup,
-        "_install_debug_single_conversion",
-        lambda: calls.append("debug"),
-    )
-    monkeypatch.setattr(
-        hot_path_cleanup,
-        "_install_broadcast_cold_path_guard",
-        lambda: calls.append("broadcast"),
-    )
-
-    hot_path_cleanup.install_hot_path_cleanup()
-    hot_path_cleanup.install_hot_path_cleanup()
-
-    assert calls == ["debug", "broadcast"]
-    assert hot_path_cleanup._INSTALLED is True
 
 
 @pytest.mark.parametrize(
@@ -123,7 +102,6 @@ def _debug_request() -> debug.DebugProviderRequest:
 
 
 def test_debug_add_event_stops_after_already_truncated() -> None:
-    hot_path_cleanup._install_debug_single_conversion()
     request = _debug_request()
     request.response_events_truncated = True
     request.response_events = [{"existing": True}]
@@ -138,7 +116,6 @@ def test_debug_add_event_stops_after_already_truncated() -> None:
 def test_debug_add_event_marks_size_overflow_without_retaining_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    hot_path_cleanup._install_debug_single_conversion()
     request = _debug_request()
     monkeypatch.setattr(debug, "DEBUG_MAX_EVENT_BYTES", 1)
 
@@ -147,53 +124,3 @@ def test_debug_add_event_marks_size_overflow_without_retaining_event(
     assert request.response_events_truncated is True
     assert request.response_events == []
     assert request._event_bytes == 0
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("text", [None, "", "   ", "turn on the kitchen light"])
-async def test_broadcast_guard_rejects_non_targeted_inputs_without_original_call(
-    monkeypatch: pytest.MonkeyPatch, text: object
-) -> None:
-    calls = 0
-
-    async def original(_hass: object, _user_input: object) -> str:
-        nonlocal calls
-        calls += 1
-        return "called"
-
-    monkeypatch.setattr(local_intents, "_async_try_targeted_broadcast", original)
-    monkeypatch.setattr(
-        local_intents,
-        "is_targeted_broadcast_request",
-        lambda value: value.startswith("broadcast"),
-    )
-    hot_path_cleanup._install_broadcast_cold_path_guard()
-
-    result = await local_intents._async_try_targeted_broadcast(
-        object(), SimpleNamespace(text=text)
-    )
-
-    assert result is None
-    assert calls == 0
-
-
-@pytest.mark.asyncio
-async def test_broadcast_guard_delegates_targeted_request(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    original = Mock()
-
-    async def original_call(hass: object, user_input: object) -> str:
-        original(hass, user_input)
-        return "sent"
-
-    monkeypatch.setattr(local_intents, "_async_try_targeted_broadcast", original_call)
-    monkeypatch.setattr(
-        local_intents, "is_targeted_broadcast_request", lambda _value: True
-    )
-    hot_path_cleanup._install_broadcast_cold_path_guard()
-    hass = object()
-    user_input = SimpleNamespace(text="broadcast to kitchen hello")
-
-    assert await local_intents._async_try_targeted_broadcast(hass, user_input) == "sent"
-    original.assert_called_once_with(hass, user_input)

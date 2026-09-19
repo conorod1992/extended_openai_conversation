@@ -35,7 +35,12 @@ from .const import (
     TEMPORARY_MEMORY_EAGER,
     TEMPORARY_MEMORY_OFF,
 )
-from .entity_context_cache import get_entity_prompt_metadata
+from .exposed_attributes import (
+    _has_selected_values,
+    _render_grouped_default,
+    _render_legacy_default,
+    enrich_exposed_entities,
+)
 from .guest_mode import GuestCapabilityPolicy
 from .memory import MemoryRecord, automatic_memory_enabled
 from .model_payload import (
@@ -91,7 +96,11 @@ def _render_template(
     if not _template_requires_render(raw):
         return raw
     if raw == DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE:
-        return _render_default_exposed_entities(hass, exposed_entities)
+        return _render_legacy_default(
+            hass,
+            exposed_entities,
+            include_attributes=_has_selected_values(exposed_entities),
+        )
 
     key = (id(hass), raw)
     rendered_template = _TEMPLATE_CACHE.get(key)
@@ -146,26 +155,11 @@ def _default_exposed_entities_context(
     exposed_entities: list[dict[str, Any]],
 ) -> str:
     """Render the maintained device context once per area without losing entity data."""
-    grouped: dict[str | None, list[dict[str, Any]]] = {}
-    for entity in _default_prompt_entities(exposed_entities):
-        entity_id = entity.get("entity_id")
-        area_id = (
-            get_entity_prompt_metadata(hass, entity_id).area_id
-            if isinstance(entity_id, str)
-            else None
-        )
-        grouped.setdefault(area_id, []).append(entity)
-
-    lines = ["## Available Devices", "entity_id,name,state,aliases"]
-    for area_id, entities in grouped.items():
-        lines.append(f"area_id={area_id or ''}")
-        for entity in entities:
-            aliases = entity.get("aliases") or []
-            lines.append(
-                f"{entity.get('entity_id', '')},{entity.get('prompt_name', '')},"
-                f"{entity.get('state', '')},{'/'.join(str(alias) for alias in aliases)}"
-            )
-    return "\n".join(lines) + "\n"
+    return _render_grouped_default(
+        hass,
+        exposed_entities,
+        include_attributes=_has_selected_values(exposed_entities),
+    )
 
 
 def _persistent_memory_instructions(options: Any) -> str:
@@ -288,6 +282,7 @@ def render_effective_prompt(
     memory_scope_available: bool | None = None,
 ) -> EffectivePrompt:
     """Render and assemble the production system prompt in deterministic order."""
+    exposed_entities = enrich_exposed_entities(hass, options, exposed_entities)
     raw_prompt: str = options.get(CONF_PROMPT, DEFAULT_PROMPT)
     rendered_prompt = _render_template(
         hass,

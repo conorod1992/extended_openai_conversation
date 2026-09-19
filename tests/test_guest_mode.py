@@ -420,6 +420,7 @@ def test_mid_request_activation_is_pinned_until_turn_ends(monkeypatch) -> None:
         readable_entity_ids=frozenset(),
         controllable_entity_ids=frozenset(),
     )
+    entity._guest_mode = SimpleNamespace(is_active=lambda: True)
     live = iter([active, GuestCapabilityPolicy.unrestricted()])
     monkeypatch.setattr(entity, "_resolve_live_guest_policy", lambda: next(live))
     token = _ACTIVE_GUEST_POLICY.set(GuestCapabilityPolicy.unrestricted())

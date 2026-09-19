@@ -18,7 +18,7 @@ from homeassistant.helpers.typing import ConfigType
 # Register exposed-attribute agent configuration before modules import snapshots of
 # the authoritative config field set or normalizer. Keep Management initialized
 # before the remaining runtime installers import it (explicit re-export).
-from . import exposed_attributes as _exposed_attributes, management_ui as management_ui
+from . import exposed_attributes as exposed_attributes, management_ui as management_ui
 from .backup_transfer import setup_backup_transfer_websocket
 from .const import (
     CONF_API_PROVIDER,
@@ -90,19 +90,15 @@ from .const import (
     MEMORY_MODE_AUTOMATIC,
     MEMORY_MODE_OFF,
 )
-from .context_summary_performance import install_deferred_context_summary
-from .context_usage_hardening import install_context_usage_hardening
-from .debug import DebugOpenAIClientProxy, install_debug_instrumentation
+from .debug import DebugOpenAIClientProxy
 from .debug_ui import async_setup_debug_ui
 from .delayed_tools import async_setup_delayed_tools
 from .function_dependency_integrity import install_function_dependency_integrity
-from .guest_performance import install_guest_policy_fast_path
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import get_authenticated_client, supports_openai_hosted_tools
-from .hot_path_cleanup import install_hot_path_cleanup
-from .input_footprint import install_input_footprint
 from .intercom_services import async_setup_intercom_services
 from .lifecycle_optimizations import install_lifecycle_optimizations
+from .management_loading_performance import install_management_loading_optimizations
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
 from .model_catalog_manager import async_setup_model_catalog
@@ -115,11 +111,9 @@ from .persistence_hardening import install_delayed_tool_store_guard
 from .prompt_cache import PerformanceOpenAIClientProxy
 from .provider_credentials import setup_provider_credentials_websocket
 from .quiet_hours import async_get_quiet_hours
-from .regex_execution import install_configurable_regex_isolation
 from .restore_recovery import async_recover_pending_restores
 from .runtime_failure_hardening import install_runtime_failure_hardening
 from .services import async_setup_services
-from .skill_runtime_availability import install_skill_runtime_availability
 from .template import async_setup_templates, async_unload_templates
 
 _LOGGER = logging.getLogger(__name__)
@@ -142,21 +136,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_setup_model_catalog(hass)
     await async_get_quiet_hours(hass)
     apply_openai_compatibility()
+    install_management_loading_optimizations()
     install_delayed_tool_store_guard()
     install_runtime_failure_hardening()
     install_lifecycle_optimizations()
-    install_hot_path_cleanup()
-    install_context_usage_hardening()
-    install_skill_runtime_availability()
-    install_guest_policy_fast_path()
-    install_deferred_context_summary()
-    install_debug_instrumentation()
     # Install the remaining conversation/runtime enhancements. Management routes
     # and result projections are owned directly by management_ui.
-    _exposed_attributes.install_exposed_attribute_runtime()
-    install_input_footprint()
     install_function_dependency_integrity()
-    install_configurable_regex_isolation()
     # Activate the durable delayed-tool scheduler after entity hardening so its
     # execution hook wraps the final configured Function Tool seam.
     await async_setup_delayed_tools(hass)

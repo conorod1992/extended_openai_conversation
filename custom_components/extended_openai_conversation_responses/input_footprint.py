@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import math
 from typing import Any
 
@@ -14,7 +13,6 @@ from .payload_diagnostics import APPROX_TOKEN_METHOD, approximate_tokens
 from .usage import async_get_usage
 
 _LATEST_FOOTPRINTS = f"{DOMAIN}.input_footprints"
-_INSTALLED = False
 
 
 def _serialized_footprint(input_value: Any, tools: Any = None) -> tuple[int, int, int]:
@@ -54,16 +52,9 @@ def input_footprint_metrics(input_value: Any, tools: Any = None) -> dict[str, An
     }
 
 
-def _capture_live_footprint(input_value: Any, tools: Any = None) -> int:
+def capture_live_footprint(entity: Any, input_value: Any, tools: Any = None) -> int:
     """Replace the existing context estimate while also retaining only its size."""
-    from . import context_usage_hardening
-
-    state = context_usage_hardening._CURRENT_ESTIMATE_STATE.get()
-    if state is None:
-        return _ORIGINAL_ESTIMATE(input_value, tools)
-
     metrics = input_footprint_metrics(input_value, tools)
-    entity = state.entity
     footprints = entity.hass.data.setdefault(_LATEST_FOOTPRINTS, {})
     footprints[(entity.entry.entry_id, entity.subentry.subentry_id)] = {
         **{
@@ -144,19 +135,3 @@ async def async_input_footprint(
             "usage remains authoritative."
         ),
     }
-
-
-def install_input_footprint() -> None:
-    """Install footprint capture and the content-free management read once."""
-    global _INSTALLED, _ORIGINAL_ESTIMATE
-    if _INSTALLED:
-        return
-
-    from . import context_usage_hardening
-
-    _ORIGINAL_ESTIMATE = context_usage_hardening.estimate_provider_input_tokens
-    context_usage_hardening.estimate_provider_input_tokens = _capture_live_footprint
-    _INSTALLED = True
-
-
-_ORIGINAL_ESTIMATE: Callable[[Any, Any], int]

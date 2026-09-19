@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from functools import wraps
 from typing import Any, cast
 
 from .const import (
@@ -16,7 +17,6 @@ from .const import (
 )
 from .context_summary import ContextSummaryResult, DeferredContextSummaryManager
 
-_INSTALLED = False
 _DEFER_CONTEXT_SUMMARY: ContextVar[bool] = ContextVar(
     "extended_openai_defer_context_summary", default=False
 )
@@ -45,88 +45,65 @@ async def _summarize_detached(
             run_context.reset(token)
 
 
-def install_deferred_context_summary() -> None:
-    """Install summary deferral once while keeping direct truncation synchronous."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
+@asynccontextmanager
+async def context_summary_request(entity: Any, chat_log: Any) -> AsyncIterator[None]:
+    """Apply a completed summary and scope deferral to one owned request."""
+    conversation_id = str(getattr(chat_log, "conversation_id", "") or "")
+    if conversation_id:
+        await _manager(entity).async_apply(conversation_id, chat_log.content)
+    token = _DEFER_CONTEXT_SUMMARY.set(True)
+    try:
+        yield
+    finally:
+        _DEFER_CONTEXT_SUMMARY.reset(token)
 
-    from . import entity as entity_module
 
-    base = entity_module.ExtendedOpenAIBaseLLMEntity
-    original_handle = base._async_handle_chat_log
-    original_truncate = base._truncate_message_history
-
-    @wraps(original_handle)
-    async def handle_with_pending_summary(
-        self: Any, chat_log: Any, *args: Any, **kwargs: Any
-    ) -> Any:
-        conversation_id = str(getattr(chat_log, "conversation_id", "") or "")
-        if conversation_id:
-            await _manager(self).async_apply(conversation_id, chat_log.content)
-
-        token = _DEFER_CONTEXT_SUMMARY.set(True)
-        try:
-            return await original_handle(self, chat_log, *args, **kwargs)
-        finally:
-            _DEFER_CONTEXT_SUMMARY.reset(token)
-
-    @wraps(original_truncate)
-    async def truncate_with_deferred_summary(
-        self: Any,
-        chat_log: Any,
-        *,
-        observed_input_tokens: int | None = None,
-        model: str | None = None,
-        api_mode: str | None = None,
-    ) -> None:
-        options = self.subentry.data
-        strategy = options.get(
-            CONF_CONTEXT_TRUNCATE_STRATEGY, LEGACY_CONTEXT_TRUNCATE_STRATEGY
+def schedule_context_summary(
+    self: Any,
+    chat_log: Any,
+    *,
+    observed_input_tokens: int | None = None,
+    model: str | None = None,
+    api_mode: str | None = None,
+) -> bool:
+    """Schedule eligible optional maintenance, leaving direct truncation synchronous."""
+    options = self.subentry.data
+    strategy = options.get(
+        CONF_CONTEXT_TRUNCATE_STRATEGY, LEGACY_CONTEXT_TRUNCATE_STRATEGY
+    )
+    conversation_id = str(getattr(chat_log, "conversation_id", "") or "")
+    if (
+        _DEFER_CONTEXT_SUMMARY.get()
+        and strategy == CONTEXT_TRUNCATE_SUMMARIZE
+        and conversation_id
+        and model is not None
+        and api_mode is not None
+    ):
+        target_tokens = int(
+            options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD)
         )
-        conversation_id = str(getattr(chat_log, "conversation_id", "") or "")
-        if (
-            _DEFER_CONTEXT_SUMMARY.get()
-            and strategy == CONTEXT_TRUNCATE_SUMMARIZE
-            and conversation_id
-            and model is not None
-            and api_mode is not None
-        ):
-            target_tokens = int(
-                options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD)
+        observed = observed_input_tokens or target_tokens + 1
+
+        def schedule(
+            coroutine: Any,
+        ) -> asyncio.Future[ContextSummaryResult]:
+            return cast(
+                asyncio.Future[ContextSummaryResult],
+                self.entry.async_create_task(self.hass, coroutine),
             )
-            observed = observed_input_tokens or target_tokens + 1
 
-            def schedule(
-                coroutine: Any,
-            ) -> asyncio.Future[ContextSummaryResult]:
-                return cast(
-                    asyncio.Future[ContextSummaryResult],
-                    self.entry.async_create_task(self.hass, coroutine),
-                )
-
-            if _manager(self).schedule(
-                conversation_id,
-                chat_log.content,
-                observed_input_tokens=observed,
-                target_tokens=target_tokens,
-                model=model,
-                api_mode=api_mode,
-                summarize=lambda older, summary_model, summary_api_mode: (
-                    _summarize_detached(self, older, summary_model, summary_api_mode)
-                ),
-                scheduler=schedule,
-            ):
-                return
-
-        await original_truncate(
-            self,
-            chat_log,
-            observed_input_tokens=observed_input_tokens,
+        if _manager(self).schedule(
+            conversation_id,
+            chat_log.content,
+            observed_input_tokens=observed,
+            target_tokens=target_tokens,
             model=model,
             api_mode=api_mode,
-        )
+            summarize=lambda older, summary_model, summary_api_mode: (
+                _summarize_detached(self, older, summary_model, summary_api_mode)
+            ),
+            scheduler=schedule,
+        ):
+            return True
 
-    base._async_handle_chat_log = handle_with_pending_summary  # type: ignore[method-assign]
-    base._truncate_message_history = truncate_with_deferred_summary  # type: ignore[method-assign]
+    return False

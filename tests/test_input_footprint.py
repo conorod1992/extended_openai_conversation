@@ -127,13 +127,6 @@ def test_provider_usage_is_only_labeled_exact_when_input_tokens_exist() -> None:
     }
 
 
-def test_capture_without_request_state_delegates_to_original(monkeypatch) -> None:
-    original = lambda input_value, tools=None: 73
-    monkeypatch.setattr(footprint, "_ORIGINAL_ESTIMATE", original, raising=False)
-
-    assert footprint._capture_live_footprint([{"role": "user"}], []) == 73
-
-
 def test_live_capture_stores_only_content_free_metrics(monkeypatch) -> None:
     hass = SimpleNamespace(data={})
     entity = SimpleNamespace(
@@ -141,27 +134,17 @@ def test_live_capture_stores_only_content_free_metrics(monkeypatch) -> None:
         entry=SimpleNamespace(entry_id="entry-1"),
         subentry=SimpleNamespace(subentry_id="agent-1"),
     )
-    state = context_usage_hardening._EstimateState(
-        entity=entity,
-        function_tools=[],
-        function_tools_factory=None,
-        conditional_continue=False,
-        options={},
-    )
     monkeypatch.setattr(
         footprint.dt_util,
         "utcnow",
         lambda: SimpleNamespace(isoformat=lambda: "2026-09-13T10:00:00+00:00"),
     )
 
-    token = context_usage_hardening._CURRENT_ESTIMATE_STATE.set(state)
-    try:
-        result = footprint._capture_live_footprint(
-            [{"role": "user", "content": "private request text"}],
-            [{"type": "function", "name": "tool"}],
-        )
-    finally:
-        context_usage_hardening._CURRENT_ESTIMATE_STATE.reset(token)
+    result = footprint.capture_live_footprint(
+        entity,
+        [{"role": "user", "content": "private request text"}],
+        [{"type": "function", "name": "tool"}],
+    )
 
     stored = hass.data[footprint._LATEST_FOOTPRINTS][("entry-1", "agent-1")]
     assert result > 0
@@ -265,36 +248,6 @@ async def test_management_routes_only_footprint_action(
             hass, "user-1", True, {**message, "action": "list"}
         )
     assert footprint_read.await_count == 1
-
-
-def test_install_input_footprint_is_idempotent(monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses import management_ui
-
-    original_estimate = context_usage_hardening.estimate_provider_input_tokens
-
-    async def original_command(*_args, **_kwargs):
-        return {"ok": True}
-
-    monkeypatch.setattr(footprint, "_INSTALLED", False)
-    monkeypatch.setattr(management_ui, "async_management_command", original_command)
-
-    footprint.install_input_footprint()
-    wrapped_command = management_ui.async_management_command
-
-    assert (
-        context_usage_hardening.estimate_provider_input_tokens
-        is footprint._capture_live_footprint
-    )
-    assert footprint._ORIGINAL_ESTIMATE is original_estimate
-    assert wrapped_command is original_command
-    assert footprint._INSTALLED is True
-
-    footprint.install_input_footprint()
-    assert management_ui.async_management_command is wrapped_command
-    assert (
-        context_usage_hardening.estimate_provider_input_tokens
-        is footprint._capture_live_footprint
-    )
 
 
 @pytest.mark.asyncio

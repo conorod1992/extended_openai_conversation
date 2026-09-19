@@ -18,11 +18,7 @@ def _manifest() -> dict[str, dict]:
 
 
 def test_manifest_has_one_public_management_entry() -> None:
-    entries = [
-        entry
-        for entry in _manifest().values()
-        if entry.get("isEntry") is True
-    ]
+    entries = [entry for entry in _manifest().values() if entry.get("isEntry") is True]
     assert [entry.get("name") for entry in entries] == ["management"]
     assert entries[0]["file"].startswith("assets/management-")
     assert (DIST / entries[0]["file"]).is_file()
@@ -38,7 +34,7 @@ def test_manifest_dynamic_chunks_all_exist() -> None:
 
 
 def test_runtime_registration_uses_one_cacheable_bundled_root() -> None:
-    assert frontend_assets._ASSET_URL_PREFIX == f"/{DOMAIN}/frontend"
+    assert f"/{DOMAIN}/frontend" == frontend_assets._ASSET_URL_PREFIX
     assert frontend_assets._PRODUCTION_DIR == DIST
     assert frontend_assets.frontend_entry_url("management").startswith(
         f"/{DOMAIN}/frontend/assets/management-"

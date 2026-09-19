@@ -7,10 +7,7 @@ from datetime import UTC, datetime
 from enum import Enum
 import json
 
-import pytest
-
 from custom_components.extended_openai_conversation_responses import (
-    conversation as conversation_module,
     debug,
     request_diagnostics,
 )
@@ -31,36 +28,7 @@ def _trace() -> debug.DebugTrace:
     )
 
 
-@pytest.fixture(autouse=True)
-def restore_request_diagnostics_wrappers():
-    """Keep process-wide monkeypatch installation isolated to each test."""
-    agent_type = conversation_module.ExtendedOpenAIAgentEntity
-    originals = {
-        "render": conversation_module.render_effective_prompt,
-        "exposed": agent_type._get_exposed_entities,
-        "tools": agent_type._get_function_tools,
-        "start_provider": debug.DebugTrace.start_provider_request,
-        "provider_as_dict": debug.DebugProviderRequest.as_dict,
-        "trace_as_dict": debug.DebugTrace.as_dict,
-        "summary": debug.DebugTrace.summary,
-        "installed": request_diagnostics._INSTALLED,
-    }
-    request_diagnostics._INSTALLED = False
-    try:
-        yield
-    finally:
-        conversation_module.render_effective_prompt = originals["render"]
-        agent_type._get_exposed_entities = originals["exposed"]
-        agent_type._get_function_tools = originals["tools"]
-        debug.DebugTrace.start_provider_request = originals["start_provider"]
-        debug.DebugProviderRequest.as_dict = originals["provider_as_dict"]
-        debug.DebugTrace.as_dict = originals["trace_as_dict"]
-        debug.DebugTrace.summary = originals["summary"]
-        request_diagnostics._INSTALLED = originals["installed"]
-
-
 def test_trace_as_dict_with_diagnostics_empty_trace() -> None:
-    request_diagnostics.install_payload_latency_diagnostics()
     trace = _trace()
 
     result = trace.as_dict()
@@ -79,7 +47,6 @@ def test_trace_as_dict_with_diagnostics_empty_trace() -> None:
 
 
 def test_trace_as_dict_with_diagnostics_populated_payloads() -> None:
-    request_diagnostics.install_payload_latency_diagnostics()
     trace = _trace()
     trace.phases_ms = {"provider": 25, "prompt": 5}
     trace.memory = {
@@ -142,11 +109,10 @@ def test_trace_as_dict_with_diagnostics_populated_payloads() -> None:
 
 
 def test_trace_as_dict_falls_back_when_trace_serialization_raises(monkeypatch) -> None:
-    def broken_as_dict(_trace: debug.DebugTrace) -> dict[str, object]:
+    def broken_as_dict(_value, **_kwargs) -> dict[str, object]:
         raise RuntimeError("serializer failed with SECRET_RAW_PAYLOAD")
 
-    monkeypatch.setattr(debug.DebugTrace, "as_dict", broken_as_dict)
-    request_diagnostics.install_payload_latency_diagnostics()
+    monkeypatch.setattr(debug, "_jsonable", broken_as_dict)
 
     result = _trace().as_dict()
 
@@ -160,7 +126,6 @@ def test_trace_as_dict_falls_back_when_trace_serialization_raises(monkeypatch) -
 def test_trace_as_dict_diagnostics_failure_uses_safe_serialized_base(
     monkeypatch,
 ) -> None:
-    request_diagnostics.install_payload_latency_diagnostics()
     trace = _trace()
     trace.memory = {"api_key": "CANARY_SECRET", "ordinary": "safe"}
 
@@ -182,7 +147,6 @@ def test_trace_as_dict_diagnostics_failure_uses_safe_serialized_base(
 
 
 def test_trace_as_dict_never_leaks_nested_secrets() -> None:
-    request_diagnostics.install_payload_latency_diagnostics()
     trace = _trace()
     secrets = {
         "authorization": "CANARY_AUTHORIZATION",
@@ -227,7 +191,6 @@ def test_trace_as_dict_never_leaks_nested_secrets() -> None:
 
 
 def test_trace_as_dict_handles_non_json_native_values() -> None:
-    request_diagnostics.install_payload_latency_diagnostics()
     trace = _trace()
     value = datetime(2026, 9, 11, 12, 30, tzinfo=UTC)
     trace.memory = {"when": value, "marker": _Marker.VALUE}
@@ -239,25 +202,9 @@ def test_trace_as_dict_handles_non_json_native_values() -> None:
     json.dumps(result)
 
 
-def test_install_payload_latency_diagnostics_is_idempotent() -> None:
-    request_diagnostics.install_payload_latency_diagnostics()
-    first_start_provider = debug.DebugTrace.start_provider_request
-    first_trace_as_dict = debug.DebugTrace.as_dict
-
-    request_diagnostics.install_payload_latency_diagnostics()
-
-    assert debug.DebugTrace.start_provider_request is first_start_provider
-    assert debug.DebugTrace.as_dict is first_trace_as_dict
-
-    trace = _trace()
-    trace.start_provider_request("responses", (), {"input": []})
-    assert len(trace.provider_requests) == 1
-
-
 def test_request_diagnostics_metric_failure_does_not_break_recording(
     monkeypatch,
 ) -> None:
-    request_diagnostics.install_payload_latency_diagnostics()
     trace = _trace()
 
     def broken_metrics(_input, _tools):

@@ -5,53 +5,18 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import custom_components.extended_openai_conversation_responses as integration
-from custom_components.extended_openai_conversation_responses import (
-    conversation,
-    guest_performance,
-    management_loading_performance,
-    request_static_cache,
-)
 
 
 async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
-    """Production setup must execute the real Guest installer chain successfully."""
-    for name in (
-        "apply_openai_compatibility",
-        "install_deferred_context_summary",
-        "install_debug_instrumentation",
-    ):
+    """Repeated setup preserves safety and performance method ownership."""
+    for name in ("apply_openai_compatibility",):
         monkeypatch.setattr(integration, name, MagicMock())
-
-    # Keep the Guest installer itself real while isolating its existing downstream
-    # installers. This catches missing internal imports in the production startup
-    # chain without globally re-wrapping unrelated runtime entry points in the test.
-    monkeypatch.setattr(guest_performance, "_INSTALLED", False)
-    monkeypatch.setattr(
-        request_static_cache,
-        "install_request_static_caching",
-        MagicMock(),
-    )
-    monkeypatch.setattr(
-        management_loading_performance,
-        "install_management_loading_optimizations",
-        MagicMock(),
-    )
-
-    def base_effective_guest_policy(_self):
-        return None
-
-    monkeypatch.setattr(
-        conversation.ExtendedOpenAIAgentEntity,
-        "_effective_guest_policy",
-        base_effective_guest_policy,
-    )
 
     for name in (
         "install_delayed_tool_store_guard",
+        "install_management_loading_optimizations",
         "install_runtime_failure_hardening",
         "install_lifecycle_optimizations",
-        "install_hot_path_cleanup",
-        "install_context_usage_hardening",
     ):
         monkeypatch.setattr(integration, name, MagicMock())
 
@@ -67,9 +32,13 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
 
     from custom_components.extended_openai_conversation_responses import (
         backup,
+        conversation,
+        debug,
         delayed_tools,
+        entity,
         intercom,
         memory_ui,
+        prompt,
         services,
     )
     from custom_components.extended_openai_conversation_responses.functions.native import (
@@ -77,6 +46,18 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
     )
 
     owners = [
+        (conversation.ExtendedOpenAIAgentEntity, "_async_handle_message"),
+        (conversation.ExtendedOpenAIAgentEntity, "_get_function_tools"),
+        (conversation.ExtendedOpenAIAgentEntity, "_load_function_groups"),
+        (conversation.ExtendedOpenAIAgentEntity, "_effective_guest_policy"),
+        (conversation.ExtendedOpenAIAgentEntity, "_build_system_prompt"),
+        (entity.ExtendedOpenAIBaseLLMEntity, "_async_handle_chat_log"),
+        (entity.ExtendedOpenAIBaseLLMEntity, "_truncate_message_history"),
+        (entity.ExtendedOpenAIBaseLLMEntity, "_transform_chat_stream"),
+        (entity, "_format_tools"),
+        (debug.DebugProviderRequest, "add_event"),
+        (debug.DebugTrace, "as_dict"),
+        (prompt, "render_effective_prompt"),
         (delayed_tools.DelayedToolManager, "_async_execute_due"),
         (NativeFunction, "execute_service"),
         (NativeFunction, "add_automation"),
@@ -96,9 +77,3 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
     assert await integration.async_setup(hass, {}) is True
     assert [getattr(owner, name) for owner, name in owners] == methods
     assert not hasattr(integration, "install_safety_hardening")
-    assert guest_performance._INSTALLED is True
-    assert getattr(
-        conversation.ExtendedOpenAIAgentEntity._effective_guest_policy,
-        "_extended_openai_guest_policy_fast_path",
-        False,
-    )

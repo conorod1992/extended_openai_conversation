@@ -27,33 +27,6 @@ def _trace() -> debug.DebugTrace:
     )
 
 
-@pytest.fixture(autouse=True)
-def restore_wrappers():
-    agent_type = conversation_module.ExtendedOpenAIAgentEntity
-    originals = {
-        "render": conversation_module.render_effective_prompt,
-        "exposed": agent_type._get_exposed_entities,
-        "tools": agent_type._get_function_tools,
-        "start_provider": debug.DebugTrace.start_provider_request,
-        "provider_as_dict": debug.DebugProviderRequest.as_dict,
-        "trace_as_dict": debug.DebugTrace.as_dict,
-        "summary": debug.DebugTrace.summary,
-        "installed": request_diagnostics._INSTALLED,
-    }
-    request_diagnostics._INSTALLED = False
-    try:
-        yield
-    finally:
-        conversation_module.render_effective_prompt = originals["render"]
-        agent_type._get_exposed_entities = originals["exposed"]
-        agent_type._get_function_tools = originals["tools"]
-        debug.DebugTrace.start_provider_request = originals["start_provider"]
-        debug.DebugProviderRequest.as_dict = originals["provider_as_dict"]
-        debug.DebugTrace.as_dict = originals["trace_as_dict"]
-        debug.DebugTrace.summary = originals["summary"]
-        request_diagnostics._INSTALLED = originals["installed"]
-
-
 def test_helper_aggregation_filters_and_orders_values() -> None:
     trace = _trace()
     request_diagnostics._record_preparation(trace, "prompt", 4)
@@ -83,57 +56,6 @@ def test_helper_aggregation_filters_and_orders_values() -> None:
     ) == [{"name": "slow", "duration_ms": 20}]
 
 
-def test_prompt_entity_and_tool_preparation_wrappers_record_debug_metrics(
-    monkeypatch,
-) -> None:
-    trace = _trace()
-    agent_type = conversation_module.ExtendedOpenAIAgentEntity
-    prompt = SimpleNamespace(text="Rendered prompt text", sections=[])
-
-    monkeypatch.setattr(request_diagnostics, "_debug_trace", lambda: trace)
-    monkeypatch.setattr(conversation_module, "current_debug_trace", lambda: trace)
-    monkeypatch.setattr(
-        conversation_module,
-        "render_effective_prompt",
-        lambda *_args, **_kwargs: prompt,
-    )
-    monkeypatch.setattr(
-        agent_type,
-        "_get_exposed_entities",
-        lambda _agent, *_args, **_kwargs: [{"entity_id": "light.kitchen"}],
-    )
-    monkeypatch.setattr(
-        agent_type,
-        "_get_function_tools",
-        lambda _agent, *_args, **_kwargs: [{"spec": {"name": "demo"}}],
-    )
-    monkeypatch.setattr(
-        request_diagnostics,
-        "get_function_group_runtime",
-        lambda *_args: SimpleNamespace(stats=lambda: {"loaded_groups": 2}),
-    )
-
-    request_diagnostics.install_payload_latency_diagnostics()
-
-    agent = SimpleNamespace(
-        hass=object(),
-        entry=SimpleNamespace(entry_id="entry-1"),
-        subentry=SimpleNamespace(subentry_id="agent-1"),
-    )
-    assert conversation_module.render_effective_prompt() is prompt
-    assert agent_type._get_exposed_entities(agent) == [{"entity_id": "light.kitchen"}]
-    assert agent_type._get_function_tools(agent) == [{"spec": {"name": "demo"}}]
-
-    preparation = trace.memory[request_diagnostics._INTERNAL_PREPARATION]
-    assert preparation["prompt_render_core"]["calls"] == 1
-    assert preparation["exposed_entity_context"]["last_count"] == 1
-    assert preparation["function_tool_assembly"]["last_count"] == 1
-    assert preparation["function_groups"] == {"loaded_groups": 2}
-    assert trace.memory[request_diagnostics._INTERNAL_PROMPT_METRICS][
-        "characters"
-    ] == len(prompt.text)
-
-
 @pytest.mark.asyncio
 async def test_tool_execution_records_success_and_failure_without_changing_semantics(
     monkeypatch,
@@ -151,7 +73,6 @@ async def test_tool_execution_records_success_and_failure_without_changing_seman
     monkeypatch.setattr(request_diagnostics, "_debug_trace", lambda: trace)
     monkeypatch.setattr(conversation_module, "current_debug_trace", lambda: trace)
     monkeypatch.setattr(agent_type, "_async_dispatch_function_tool", original_execute)
-    request_diagnostics.install_payload_latency_diagnostics()
 
     agent = object.__new__(agent_type)
     tool = {"spec": {"name": "demo"}, "function": {"type": "native"}}
@@ -183,7 +104,6 @@ async def test_tool_execution_records_success_and_failure_without_changing_seman
 
 
 def test_provider_request_metrics_compare_rounds_and_serialize_cache_usage() -> None:
-    request_diagnostics.install_payload_latency_diagnostics()
     trace = _trace()
     tools = [{"type": "function", "name": "demo", "parameters": {"type": "object"}}]
 
@@ -222,7 +142,6 @@ def test_provider_request_metrics_compare_rounds_and_serialize_cache_usage() -> 
 
 
 def test_trace_and_summary_expose_aggregated_model_diagnostics() -> None:
-    request_diagnostics.install_payload_latency_diagnostics()
     trace = _trace()
     trace.phases_ms = {"prepare": 7, "provider": 30}
     trace.memory[request_diagnostics._INTERNAL_PROMPT_METRICS] = {
@@ -266,26 +185,3 @@ def test_trace_and_summary_expose_aggregated_model_diagnostics() -> None:
     )
     assert summary["provider_reported_model_cache_ratio"] == pytest.approx(0.3333)
     assert summary["slowest_phase"] == {"name": "provider", "duration_ms": 30}
-
-
-def test_wrappers_fall_back_to_original_behavior_when_no_debug_trace(
-    monkeypatch,
-) -> None:
-    agent_type = conversation_module.ExtendedOpenAIAgentEntity
-    render_calls: list[str] = []
-
-    def original_render(*_args, **_kwargs):
-        render_calls.append("render")
-        return "plain"
-
-    monkeypatch.setattr(request_diagnostics, "_debug_trace", lambda: None)
-    monkeypatch.setattr(conversation_module, "render_effective_prompt", original_render)
-    monkeypatch.setattr(agent_type, "_get_exposed_entities", lambda _agent: ["entity"])
-    monkeypatch.setattr(agent_type, "_get_function_tools", lambda _agent: ["tool"])
-    request_diagnostics.install_payload_latency_diagnostics()
-
-    agent = object.__new__(agent_type)
-    assert conversation_module.render_effective_prompt() == "plain"
-    assert agent_type._get_exposed_entities(agent) == ["entity"]
-    assert agent_type._get_function_tools(agent) == ["tool"]
-    assert render_calls == ["render"]

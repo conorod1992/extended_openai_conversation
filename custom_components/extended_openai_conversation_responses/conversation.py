@@ -111,8 +111,10 @@ from .conversation_lifecycle import (
 from .debug import (
     conversation_debug_trace,
     current_debug_trace,
+    model_path_timing,
     record_current_provider_failure,
     record_memory_retrieval,
+    record_system_prompt,
 )
 from .entity import ExtendedOpenAIBaseLLMEntity
 from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
@@ -145,6 +147,7 @@ from .guest_mode import (
     guest_mode_denial_result,
     resolve_guest_policy,
 )
+from .guest_performance import can_reuse_request_policy
 from .ha_llm_tools import (
     ToolSnapshot,
     async_discover,
@@ -181,8 +184,14 @@ from .provider_errors import (
     provider_user_message,
     request_reauthentication,
 )
+from .regex_execution import async_process_speech_text
 from .request import assemble_integration_function_tools
-from .request_diagnostics import record_tool_execution
+from .request_diagnostics import (
+    record_exposed_entities,
+    record_prompt_render,
+    record_tool_assembly,
+    record_tool_execution,
+)
 from .request_rules import (
     RequestRuleRuntime,
     RequestRules,
@@ -191,7 +200,7 @@ from .request_rules import (
     get_request_rule_runtime,
     request_rule_session_id,
 )
-from .request_static_cache import formatted_tool_cache
+from .request_static_cache import formatted_tool_cache, tools_for_available_skills
 from .runtime_hardening import bounded_tool_result_text
 from .scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
@@ -199,6 +208,7 @@ from .scope import (
     memory_scope_id,
     resolve_data_scope,
 )
+from .skill_runtime_availability import effective_tool_runtime_scope
 from .skills import Skill, SkillManager
 from .speech import has_custom_speech_replacements, process_speech_text
 from .temporary_memory import (
@@ -875,15 +885,36 @@ class ExtendedOpenAIAgentEntity(
         chat_log: ChatLog,
         request_options: Mapping[str, Any] | None = None,
     ) -> ConversationResult:
+        """Own model timings and completed-response isolated speech processing."""
+        deferred_speech: list[tuple[str, Mapping[str, Any]]] = []
+        with model_path_timing(self):
+            result = await ExtendedOpenAIAgentEntity._async_generate_message(
+                self,
+                user_input,
+                chat_log,
+                request_options,
+                deferred_speech=deferred_speech,
+            )
+        if deferred_speech:
+            result.response.async_set_speech(
+                await async_process_speech_text(self.hass, *deferred_speech[0])
+            )
+        return result
+
+    async def _async_generate_message(
+        self,
+        user_input: ConversationInput,
+        chat_log: ChatLog,
+        request_options: Mapping[str, Any] | None = None,
+        *,
+        deferred_speech: list[tuple[str, Mapping[str, Any]]],
+    ) -> ConversationResult:
         """Call the API."""
         # Create LLM context
         llm_context = user_input.as_llm_context(DOMAIN)
 
         # Get exposed entities for function tools
         exposed_entities = self._get_exposed_entities()
-
-        # Get function tools
-        function_tools = self._get_function_tools()
 
         retrieved_memories = await self._async_retrieve_memories(
             llm_context, user_input.text
@@ -908,7 +939,7 @@ class ExtendedOpenAIAgentEntity(
             continue_mode = _get_continue_conversation_mode(self.subentry.data)
             conditional_decision = await self._async_handle_chat_log(
                 chat_log,
-                function_tools=function_tools,
+                function_tools=[],
                 exposed_entities=exposed_entities,
                 llm_context=llm_context,
                 conditional_continue=(
@@ -975,7 +1006,11 @@ class ExtendedOpenAIAgentEntity(
         last_content = chat_log.content[-1]
         if isinstance(last_content, conversation.AssistantContent):
             original_text = last_content.content or ""
-            speech_text = process_speech_text(original_text, self.subentry.data)
+            if has_custom_speech_replacements(self.subentry.data):
+                deferred_speech.append((original_text, self.subentry.data))
+                speech_text = original_text
+            else:
+                speech_text = process_speech_text(original_text, self.subentry.data)
             intent_response.async_set_speech(speech_text)
         else:
             intent_response.async_set_speech("")
@@ -1199,7 +1234,9 @@ class ExtendedOpenAIAgentEntity(
         temporary_memories: list[TemporaryMemoryRecord] | None = None,
     ) -> str:
         """Build system prompt with exposed entities and skills."""
+        started = time.monotonic()
         policy = self._effective_guest_policy()
+        render_started = time.monotonic()
         effective = render_effective_prompt(
             self.hass,
             self.subentry.data,
@@ -1212,7 +1249,9 @@ class ExtendedOpenAIAgentEntity(
             knowledge_available=self._knowledge_available,
             guest_policy=policy,
         )
+        record_prompt_render(effective, render_started)
         _PROMPT_CACHE_CONTEXT.set(prompt_cache_context(effective, self.subentry.data))
+        record_system_prompt(effective.text, started)
         return effective.text
 
     async def _async_retrieve_memories(
@@ -1391,12 +1430,17 @@ class ExtendedOpenAIAgentEntity(
         if not self._effective_guest_policy().skills:
             return []
         enabled_skill_names = self.skills
+        if not enabled_skill_names:
+            return []
         all_skills = self.skill_manager.get_all_skills()
 
         return [s for s in all_skills if s.name in enabled_skill_names]
 
     def _get_exposed_entities(self) -> list[dict[str, Any]]:
-        return self._filter_guest_entities(get_exposed_entities(self.hass))
+        started = time.monotonic()
+        result = self._filter_guest_entities(get_exposed_entities(self.hass))
+        record_exposed_entities(result, started)
+        return result
 
     def _resolve_live_guest_policy(self) -> GuestCapabilityPolicy:
         """Resolve policy from current state without expanding a request policy."""
@@ -1411,6 +1455,10 @@ class ExtendedOpenAIAgentEntity(
     def _effective_guest_policy(self) -> GuestCapabilityPolicy:
         """Hold request permissions stable while allowing mid-request tightening."""
         request_policy = _ACTIVE_GUEST_POLICY.get()
+        if request_policy is not None and can_reuse_request_policy(
+            request_policy, getattr(self, "_guest_mode", None)
+        ):
+            return request_policy
         if request_policy is not None and request_policy.guest_active:
             return request_policy
         live_policy = self._resolve_live_guest_policy()
@@ -1437,6 +1485,7 @@ class ExtendedOpenAIAgentEntity(
 
     def _get_function_tools(self) -> list[dict[str, Any]]:
         """Get the effective configured and integration-owned function tools."""
+        assembly_started = time.monotonic()
         try:
             configured_tools = self._get_configured_function_tools()
             policy = self._effective_guest_policy()
@@ -1446,38 +1495,49 @@ class ExtendedOpenAIAgentEntity(
                 ),
                 configured_tools,
             )
-            configured_tools, groups = self._filter_guest_tools_and_groups(
-                configured_tools, groups, policy
-            )
-            session = _ACTIVE_FUNCTION_GROUP_SESSION.get()
-            assembly = assemble_function_tools(
-                configured_tools,
-                groups,
-                session.loaded_group_ids if session is not None else set(),
-            )
-            if self._function_groups_runtime is not None:
-                self._function_groups_runtime.record_request(assembly)
-            result = list(assembly.tools)
-            configured_names = {
-                tool.get("spec", {}).get("name")
-                for tool in configured_tools
-                if isinstance(tool, dict)
-            }
-            result.extend(
-                assemble_integration_function_tools(
-                    self.subentry.data,
-                    configured_names,
-                    memory_scope_available=self._current_memory_scope_id() is not None,
-                    temporary_scope_available=(
-                        self._temporary_memory is not None
-                        and _ACTIVE_TEMPORARY_SCOPE.get() is not None
-                    ),
-                    knowledge_available=self._knowledge_available,
-                    archive_available=self._archive is not None,
-                    guest_policy=policy,
+            manager = getattr(self, "skill_manager", None)
+            if not isinstance(manager, SkillManager):
+                manager = SkillManager.get_loaded_instance()
+            with effective_tool_runtime_scope(
+                self.subentry.data, configured_tools, manager, groups
+            ):
+                configured_tools, groups = self._filter_guest_tools_and_groups(
+                    configured_tools, groups, policy
                 )
-            )
-            return result
+                session = _ACTIVE_FUNCTION_GROUP_SESSION.get()
+                assembly = assemble_function_tools(
+                    tools_for_available_skills(
+                        configured_tools,
+                        policy.skills,
+                    ),
+                    groups,
+                    session.loaded_group_ids if session is not None else set(),
+                )
+                if self._function_groups_runtime is not None:
+                    self._function_groups_runtime.record_request(assembly)
+                result = list(assembly.tools)
+                configured_names = {
+                    tool.get("spec", {}).get("name")
+                    for tool in configured_tools
+                    if isinstance(tool, dict)
+                }
+                result.extend(
+                    assemble_integration_function_tools(
+                        self.subentry.data,
+                        configured_names,
+                        memory_scope_available=self._current_memory_scope_id()
+                        is not None,
+                        temporary_scope_available=(
+                            self._temporary_memory is not None
+                            and _ACTIVE_TEMPORARY_SCOPE.get() is not None
+                        ),
+                        knowledge_available=self._knowledge_available,
+                        archive_available=self._archive is not None,
+                        guest_policy=policy,
+                    )
+                )
+                record_tool_assembly(self, result, assembly_started)
+                return result
         except (InvalidFunction, FunctionNotFound) as e:
             raise e
         except Exception as e:
@@ -1507,10 +1567,24 @@ class ExtendedOpenAIAgentEntity(
             self.subentry.data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
             configured_tools,
         )
-        configured_tools, groups = self._filter_guest_tools_and_groups(
-            configured_tools, groups, policy
-        )
-        return load_function_groups(session, requested, groups, configured_tools)
+        manager = getattr(self, "skill_manager", None)
+        if not isinstance(manager, SkillManager):
+            manager = SkillManager.get_loaded_instance()
+        with effective_tool_runtime_scope(
+            self.subentry.data, configured_tools, manager, groups
+        ):
+            configured_tools, groups = self._filter_guest_tools_and_groups(
+                configured_tools, groups, policy
+            )
+            return load_function_groups(
+                session,
+                requested,
+                groups,
+                tools_for_available_skills(
+                    configured_tools,
+                    policy.skills,
+                ),
+            )
 
     @staticmethod
     def _filter_guest_tools_and_groups(

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-_INSTALLED = False
-
 
 def can_reuse_request_policy(request_policy: Any, guest_mode: Any) -> bool:
     """Return whether the request-stable unrestricted policy is still sufficient.
@@ -20,52 +18,3 @@ def can_reuse_request_policy(request_policy: Any, guest_mode: Any) -> bool:
         and not request_policy.guest_active
         and (guest_mode is None or not guest_mode.is_active())
     )
-
-
-def install_guest_policy_fast_path() -> None:
-    """Avoid rebuilding the complete Guest capability policy on every helper call."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-
-    from . import conversation
-
-    current_effective_guest_policy = (
-        conversation.ExtendedOpenAIAgentEntity._effective_guest_policy
-    )
-    if not getattr(
-        current_effective_guest_policy,
-        "_extended_openai_guest_policy_fast_path",
-        False,
-    ):
-        original_effective_guest_policy = current_effective_guest_policy
-
-        def effective_guest_policy_fast(self: Any) -> Any:
-            request_policy = conversation._ACTIVE_GUEST_POLICY.get()
-            if can_reuse_request_policy(request_policy, self._guest_mode):
-                return request_policy
-            return original_effective_guest_policy(self)
-
-        effective_guest_policy_fast._extended_openai_guest_policy_fast_path = True  # type: ignore[attr-defined]
-        conversation.ExtendedOpenAIAgentEntity._effective_guest_policy = (  # type: ignore[method-assign]
-            effective_guest_policy_fast
-        )
-
-    # Static request caching intentionally wraps the final runtime tool snapshot so
-    # policy/group changes remain authoritative invalidation boundaries.
-    from .request_static_cache import install_request_static_caching
-
-    install_request_static_caching()
-
-    # Management loading optimizations also need to be installed before the panel
-    # and websocket endpoints are registered. Reuse this existing startup
-    # performance hook rather than adding another integration lifecycle callback.
-    from .management_loading_performance import install_management_loading_optimizations
-
-    install_management_loading_optimizations()
-
-    # Publish installation only after the complete chain succeeds. If a later hook
-    # raises, a same-process retry resumes installation rather than silently skipping
-    # an unfinished startup sequence; the method wrapper above is independently
-    # idempotent so such a retry cannot double-wrap it.
-    _INSTALLED = True

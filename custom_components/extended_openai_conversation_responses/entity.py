@@ -64,6 +64,15 @@ from .context import (
     partition_history,
     select_summary_history,
 )
+from .context_summary_performance import (
+    context_summary_request,
+    schedule_context_summary,
+)
+from .context_usage_hardening import (
+    estimate_prepared_request,
+    normalized_chat_stream,
+    normalized_responses_stream,
+)
 from .delayed_tools import (
     _DELAYED_EXECUTION_MARKER,
     DATA_DELAYED_TOOL_MANAGER,
@@ -97,6 +106,7 @@ from .request import (
     build_web_search_tool,
     format_function_tools,
 )
+from .request_static_cache import cached_format_tools
 from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
 from .speech import async_streaming_speech_cleanup
 from .tool_exchange import (
@@ -402,7 +412,7 @@ def _format_tools(
     function_tools: list[dict[str, Any]], api_mode: str
 ) -> list[dict[str, Any]]:
     """Format function definitions for the selected OpenAI API."""
-    return format_function_tools(function_tools, api_mode)
+    return cached_format_tools(function_tools, api_mode, format_function_tools)
 
 
 def _index_function_tools(
@@ -465,245 +475,235 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         request_options: Mapping[str, Any] | None = None,
     ) -> bool | None:
         """Generate an answer for the chat log with streaming support."""
-        if self._usage is not None:
-            current_run = getattr(self._usage, "current_run", None)
-            if current_run is None or current_run() is None:
-                # Direct callers from older integrations/tests do not establish
-                # the new run context. Preserve the lifetime counter without
-                # double-counting live conversation runs.
-                await self._usage.async_record_conversation()
-        options = request_options or self.subentry.data
-        provider_snapshot = build_provider_request_snapshot(
-            options, getattr(self.entry, "data", {})
-        )
-        api_kwargs = dict(provider_snapshot.api_kwargs)
-        model = str(api_kwargs["model"])
-        api_mode = provider_snapshot.api_mode
-        max_function_calls = options.get(
-            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-            DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-        )
-        function_call_budget = FunctionCallBudget(int(max_function_calls))
-        recovery_state = ToolRecoveryState(
-            enabled=options.get(
-                CONF_FUNCTION_TOOL_ERROR_RECOVERY,
-                DEFAULT_FUNCTION_TOOL_ERROR_RECOVERY,
+        async with context_summary_request(self, chat_log):
+            if self._usage is not None:
+                current_run = getattr(self._usage, "current_run", None)
+                if current_run is None or current_run() is None:
+                    # Direct callers from older integrations/tests do not establish
+                    # the new run context. Preserve the lifetime counter without
+                    # double-counting live conversation runs.
+                    await self._usage.async_record_conversation()
+            options = request_options or self.subentry.data
+            provider_snapshot = build_provider_request_snapshot(
+                options, getattr(self.entry, "data", {})
             )
-            is True
-        )
-        shorten_tool_call_id = options.get(
-            CONF_SHORTEN_TOOL_CALL_ID,
-            DEFAULT_SHORTEN_TOOL_CALL_ID,
-        )
+            api_kwargs = dict(provider_snapshot.api_kwargs)
+            model = str(api_kwargs["model"])
+            api_mode = provider_snapshot.api_mode
+            max_function_calls = options.get(
+                CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+            )
+            function_call_budget = FunctionCallBudget(int(max_function_calls))
+            recovery_state = ToolRecoveryState(
+                enabled=options.get(
+                    CONF_FUNCTION_TOOL_ERROR_RECOVERY,
+                    DEFAULT_FUNCTION_TOOL_ERROR_RECOVERY,
+                )
+                is True
+            )
+            shorten_tool_call_id = options.get(
+                CONF_SHORTEN_TOOL_CALL_ID,
+                DEFAULT_SHORTEN_TOOL_CALL_ID,
+            )
 
-        messages: Any
-        if api_mode == API_MODE_RESPONSES:
-            messages = _convert_content_to_responses_param(chat_log.content)
-        else:
-            messages = _convert_content_to_param(chat_log.content, shorten_tool_call_id)
-
-        await self._async_add_attachments(chat_log, messages, api_mode)
-
-        web_search_tool = (
-            provider_snapshot.provider_tools[0]
-            if provider_snapshot.provider_tools
-            else None
-        )
-        continuation_decision: bool | None = None
-
-        if structure is not None:
-            output_format = {
-                "type": "json_schema",
-                "name": slugify(structure_name),
-                "strict": True,
-                "schema": _format_structured_output(structure, chat_log.llm_api),
-            }
+            messages: Any
             if api_mode == API_MODE_RESPONSES:
-                api_kwargs["text"] = {"format": output_format}
+                messages = _convert_content_to_responses_param(chat_log.content)
             else:
-                api_kwargs["response_format"] = {
+                messages = _convert_content_to_param(
+                    chat_log.content, shorten_tool_call_id
+                )
+
+            await self._async_add_attachments(chat_log, messages, api_mode)
+
+            web_search_tool = (
+                provider_snapshot.provider_tools[0]
+                if provider_snapshot.provider_tools
+                else None
+            )
+            continuation_decision: bool | None = None
+
+            if structure is not None:
+                output_format = {
                     "type": "json_schema",
-                    "json_schema": {
-                        "name": slugify(structure_name),
-                        "strict": True,
-                        "schema": _format_structured_output(
-                            structure, chat_log.llm_api
-                        ),
-                    },
+                    "name": slugify(structure_name),
+                    "strict": True,
+                    "schema": _format_structured_output(structure, chat_log.llm_api),
                 }
-
-        finalization_retry_attempted = False
-        base_system_prompt = (
-            cast(conversation.SystemContent, chat_log.content[0]).content
-            if chat_log.content
-            else ""
-        )
-        ha_prompt_applied = False
-        draft_content_ids: set[int] = set()
-        observed_input_tokens = 0
-        loader_rounds = 0
-        integration_loader_seen = False
-        force_finalizer_only = False
-
-        for n_requests in range(MAX_TOOL_ITERATIONS):
-            request_function_tools = (
-                function_tools_factory()
-                if function_tools_factory is not None
-                else function_tools
-            )
-            integration_loader_seen = integration_loader_seen or any(
-                tool.get("function", {}).get("type") == "function_group_loader"
-                for tool in request_function_tools
-            )
-            if loader_rounds >= MAX_FUNCTION_GROUP_LOAD_ROUNDS:
-                request_function_tools = [
-                    tool
-                    for tool in request_function_tools
-                    if tool.get("function", {}).get("type") != "function_group_loader"
-                ]
-            if function_call_budget.exhausted:
-                # The Function Group loader and Conditional finalizer are control
-                # operations, not model-requested Function Tool executions. Keep the
-                # loader available while suppressing ordinary functions; the
-                # finalizer is appended separately below.
-                request_function_tools = [
-                    tool
-                    for tool in request_function_tools
-                    if tool.get("function", {}).get("type") == "function_group_loader"
-                ]
-            if conditional_continue and any(
-                tool["spec"]["name"] == CONTINUE_CONVERSATION_TOOL_NAME
-                for tool in request_function_tools
-            ):
-                raise HomeAssistantError(
-                    f"Function tool name `{CONTINUE_CONVERSATION_TOOL_NAME}` is "
-                    "reserved for Conditional continue conversation mode"
-                )
-            formatted_function_tools = _format_tools(
-                [
-                    *request_function_tools,
-                    *([CONTINUE_CONVERSATION_TOOL] if conditional_continue else []),
-                ],
-                api_mode,
-            )
-            tools = [
-                *(
-                    [web_search_tool]
-                    if web_search_tool and self._provider_tool_allowed("web_search")
-                    else []
-                ),
-                *formatted_function_tools,
-            ]
-            tool_kwargs: dict[str, Any] = {}
-            if tools:
-                tool_kwargs["tools"] = tools
-                tool_kwargs["tool_choice"] = (
-                    "required" if conditional_continue else "auto"
-                )
-            if force_finalizer_only:
-                tool_kwargs["tools"] = _format_tools(
-                    [CONTINUE_CONVERSATION_TOOL], api_mode
-                )
-                tool_kwargs["tool_choice"] = "required"
-
-            ha_prompt = current_snapshot().prompt_for(
-                [] if force_finalizer_only else request_function_tools
-            )
-            if ha_prompt or ha_prompt_applied:
-                ha_prompt_applied = bool(ha_prompt)
-                effective_prompt = "\n".join(
-                    part for part in (base_system_prompt, ha_prompt) if part
-                )
-                chat_log.content[0] = conversation.SystemContent(
-                    content=effective_prompt
-                )
-                # Keep attachments/history intact while updating the system item in
-                # both provider formats. This is the actual diagnostic input too.
-                messages[0] = (
-                    _convert_content_to_responses_param([chat_log.content[0]])
-                    if api_mode == API_MODE_RESPONSES
-                    else _convert_content_to_param(
-                        [chat_log.content[0]], shorten_tool_call_id
-                    )
-                )[0]
-
-            _LOGGER.info(
-                "Sending provider request for %s using %s with %d input items",
-                model,
-                api_mode,
-                len(messages),
-            )
-
-            request_usage = RequestUsage()
-            request_started = time.monotonic()
-            existing_content_ids = {id(content) for content in chat_log.content}
-            pending_tool_calls: list[llm.ToolInput] = []
-            try:
                 if api_mode == API_MODE_RESPONSES:
-                    responses_stream = cast(
-                        AsyncStream[Any],
-                        await self._client.responses.create(
-                            input=messages,
-                            **api_kwargs,
-                            **tool_kwargs,
-                        ),
-                    )
-                    transformed_stream = self._transform_responses_stream(
-                        chat_log, responses_stream, request_usage
-                    )
+                    api_kwargs["text"] = {"format": output_format}
                 else:
-                    chat_stream = cast(
-                        AsyncStream[ChatCompletionChunk],
-                        await self._client.chat.completions.create(
-                            messages=messages,
-                            **api_kwargs,
-                            **tool_kwargs,
-                        ),
-                    )
-                    transformed_stream = self._transform_chat_stream(
-                        chat_log, chat_stream, request_usage
-                    )
+                    api_kwargs["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": slugify(structure_name),
+                            "strict": True,
+                            "schema": _format_structured_output(
+                                structure, chat_log.llm_api
+                            ),
+                        },
+                    }
 
-                with (
-                    bind_tool_recovery_state(recovery_state),
-                    async_streaming_speech_cleanup(chat_log, options),
-                ):
-                    async for content in chat_log.async_add_delta_content_stream(
-                        self.entity_id, transformed_stream
-                    ):
-                        if (
-                            isinstance(content, conversation.AssistantContent)
-                            and content.tool_calls
-                        ):
-                            pending_tool_calls.extend(content.tool_calls)
-            except BaseException as err:
-                append_unresolved_tool_results(
-                    chat_log,
-                    self.entity_id,
-                    retained_tool_calls_since(chat_log, existing_content_ids),
-                    error=err,
+            finalization_retry_attempted = False
+            base_system_prompt = (
+                cast(conversation.SystemContent, chat_log.content[0]).content
+                if chat_log.content
+                else ""
+            )
+            ha_prompt_applied = False
+            draft_content_ids: set[int] = set()
+            observed_input_tokens = 0
+            loader_rounds = 0
+            integration_loader_seen = False
+            force_finalizer_only = False
+
+            for n_requests in range(MAX_TOOL_ITERATIONS):
+                request_function_tools = (
+                    function_tools_factory()
+                    if function_tools_factory is not None
+                    else function_tools
                 )
-                if self._usage is not None:
-                    await self._usage.async_record_request(
-                        successful=False,
-                        usage=request_usage,
-                        provider=getattr(self.entry, "data", {}).get(
-                            CONF_API_PROVIDER, DEFAULT_API_PROVIDER
-                        ),
-                        model=model,
-                        api_mode=api_mode,
-                        duration_ms=int((time.monotonic() - request_started) * 1000),
-                        request_stage="initial" if n_requests == 0 else "after_tool",
-                        error_type=type(err).__name__,
+                integration_loader_seen = integration_loader_seen or any(
+                    tool.get("function", {}).get("type") == "function_group_loader"
+                    for tool in request_function_tools
+                )
+                if loader_rounds >= MAX_FUNCTION_GROUP_LOAD_ROUNDS:
+                    request_function_tools = [
+                        tool
+                        for tool in request_function_tools
+                        if tool.get("function", {}).get("type")
+                        != "function_group_loader"
+                    ]
+                if function_call_budget.exhausted:
+                    # The Function Group loader and Conditional finalizer are control
+                    # operations, not model-requested Function Tool executions. Keep the
+                    # loader available while suppressing ordinary functions; the
+                    # finalizer is appended separately below.
+                    request_function_tools = [
+                        tool
+                        for tool in request_function_tools
+                        if tool.get("function", {}).get("type")
+                        == "function_group_loader"
+                    ]
+                if conditional_continue and any(
+                    tool["spec"]["name"] == CONTINUE_CONVERSATION_TOOL_NAME
+                    for tool in request_function_tools
+                ):
+                    raise HomeAssistantError(
+                        f"Function tool name `{CONTINUE_CONVERSATION_TOOL_NAME}` is "
+                        "reserved for Conditional continue conversation mode"
                     )
-                if isinstance(err, (TimeoutError, ConnectionError)):
-                    raise provider_transport_error(err) from err
-                raise
-            else:
+                formatted_function_tools = _format_tools(
+                    [
+                        *request_function_tools,
+                        *([CONTINUE_CONVERSATION_TOOL] if conditional_continue else []),
+                    ],
+                    api_mode,
+                )
+                tools = [
+                    *(
+                        [web_search_tool]
+                        if web_search_tool and self._provider_tool_allowed("web_search")
+                        else []
+                    ),
+                    *formatted_function_tools,
+                ]
+                tool_kwargs: dict[str, Any] = {}
+                if tools:
+                    tool_kwargs["tools"] = tools
+                    tool_kwargs["tool_choice"] = (
+                        "required" if conditional_continue else "auto"
+                    )
+                if force_finalizer_only:
+                    tool_kwargs["tools"] = _format_tools(
+                        [CONTINUE_CONVERSATION_TOOL], api_mode
+                    )
+                    tool_kwargs["tool_choice"] = "required"
+
+                ha_prompt = current_snapshot().prompt_for(
+                    [] if force_finalizer_only else request_function_tools
+                )
+                if ha_prompt or ha_prompt_applied:
+                    ha_prompt_applied = bool(ha_prompt)
+                    effective_prompt = "\n".join(
+                        part for part in (base_system_prompt, ha_prompt) if part
+                    )
+                    chat_log.content[0] = conversation.SystemContent(
+                        content=effective_prompt
+                    )
+                    # Keep attachments/history intact while updating the system item in
+                    # both provider formats. This is the actual diagnostic input too.
+                    messages[0] = (
+                        _convert_content_to_responses_param([chat_log.content[0]])
+                        if api_mode == API_MODE_RESPONSES
+                        else _convert_content_to_param(
+                            [chat_log.content[0]], shorten_tool_call_id
+                        )
+                    )[0]
+
+                _LOGGER.info(
+                    "Sending provider request for %s using %s with %d input items",
+                    model,
+                    api_mode,
+                    len(messages),
+                )
+
+                request_usage = RequestUsage()
+                estimate_prepared_request(
+                    self, request_usage, messages, tool_kwargs.get("tools")
+                )
+                request_started = time.monotonic()
+                existing_content_ids = {id(content) for content in chat_log.content}
+                pending_tool_calls: list[llm.ToolInput] = []
                 try:
+                    if api_mode == API_MODE_RESPONSES:
+                        responses_stream = cast(
+                            AsyncStream[Any],
+                            await self._client.responses.create(
+                                input=messages,
+                                **api_kwargs,
+                                **tool_kwargs,
+                            ),
+                        )
+                        transformed_stream = self._transform_responses_stream(
+                            chat_log, responses_stream, request_usage
+                        )
+                    else:
+                        chat_stream = cast(
+                            AsyncStream[ChatCompletionChunk],
+                            await self._client.chat.completions.create(
+                                messages=messages,
+                                **api_kwargs,
+                                **tool_kwargs,
+                            ),
+                        )
+                        transformed_stream = self._transform_chat_stream(
+                            chat_log, chat_stream, request_usage
+                        )
+
+                    with (
+                        bind_tool_recovery_state(recovery_state),
+                        async_streaming_speech_cleanup(chat_log, options),
+                    ):
+                        async for content in chat_log.async_add_delta_content_stream(
+                            self.entity_id, transformed_stream
+                        ):
+                            if (
+                                isinstance(content, conversation.AssistantContent)
+                                and content.tool_calls
+                            ):
+                                pending_tool_calls.extend(content.tool_calls)
+                except BaseException as err:
+                    append_unresolved_tool_results(
+                        chat_log,
+                        self.entity_id,
+                        retained_tool_calls_since(chat_log, existing_content_ids),
+                        error=err,
+                    )
                     if self._usage is not None:
                         await self._usage.async_record_request(
-                            successful=True,
+                            successful=False,
                             usage=request_usage,
                             provider=getattr(self.entry, "data", {}).get(
                                 CONF_API_PROVIDER, DEFAULT_API_PROVIDER
@@ -713,131 +713,219 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             duration_ms=int(
                                 (time.monotonic() - request_started) * 1000
                             ),
-                            request_stage=(
-                                "initial" if n_requests == 0 else "after_tool"
-                            ),
-                            tool_calls_requested=len(pending_tool_calls),
-                            web_search_used=any(
-                                getattr(content, "native", None) is not None
-                                and getattr(
-                                    getattr(content, "native", None), "type", ""
-                                )
-                                == "web_search_call"
-                                for content in chat_log.content
-                                if id(content) not in existing_content_ids
-                            ),
+                            request_stage="initial"
+                            if n_requests == 0
+                            else "after_tool",
+                            error_type=type(err).__name__,
                         )
-                except BaseException as err:
-                    append_unresolved_tool_results(
-                        chat_log,
-                        self.entity_id,
-                        pending_tool_calls,
-                        error=err,
-                    )
+                    if isinstance(err, (TimeoutError, ConnectionError)):
+                        raise provider_transport_error(err) from err
                     raise
-                observed_input_tokens = max(
-                    observed_input_tokens,
-                    request_usage.input_tokens or request_usage.total_tokens,
-                )
-
-            if pending_tool_calls:
-                _LOGGER.info(
-                    "Provider requested %d tool calls: %s",
-                    len(pending_tool_calls),
-                    ", ".join(call.tool_name for call in pending_tool_calls),
-                )
-            round_tool_calls = list(pending_tool_calls)
-
-            control_calls = [
-                tool_input
-                for tool_input in pending_tool_calls
-                if tool_input.tool_name == CONTINUE_CONVERSATION_TOOL_NAME
-            ]
-            pending_tool_calls = [
-                tool_input
-                for tool_input in pending_tool_calls
-                if tool_input.tool_name != CONTINUE_CONVERSATION_TOOL_NAME
-            ]
-            loader_calls = [
-                tool_input
-                for tool_input in pending_tool_calls
-                if integration_loader_seen
-                and tool_input.tool_name == FUNCTION_GROUP_LOADER_TOOL_NAME
-            ]
-            pending_tool_calls = [
-                tool_input
-                for tool_input in pending_tool_calls
-                if not (
-                    integration_loader_seen
-                    and tool_input.tool_name == FUNCTION_GROUP_LOADER_TOOL_NAME
-                )
-            ]
-
-            if loader_calls:
-                loader_rounds += 1
-                for loader_call in loader_calls:
+                else:
                     try:
-                        if function_group_loader is None:
-                            loader_result = {
-                                "status": "error",
-                                "error": "Function-group loading is unavailable",
-                            }
-                        elif loader_rounds > MAX_FUNCTION_GROUP_LOAD_ROUNDS:
-                            loader_result = {
-                                "status": "error",
-                                "error": "Function-group loader safety limit reached",
-                            }
-                        else:
-                            loader_result = function_group_loader(
-                                loader_call.tool_args.get("groups")
+                        if self._usage is not None:
+                            await self._usage.async_record_request(
+                                successful=True,
+                                usage=request_usage,
+                                provider=getattr(self.entry, "data", {}).get(
+                                    CONF_API_PROVIDER, DEFAULT_API_PROVIDER
+                                ),
+                                model=model,
+                                api_mode=api_mode,
+                                duration_ms=int(
+                                    (time.monotonic() - request_started) * 1000
+                                ),
+                                request_stage=(
+                                    "initial" if n_requests == 0 else "after_tool"
+                                ),
+                                tool_calls_requested=len(pending_tool_calls),
+                                web_search_used=any(
+                                    getattr(content, "native", None) is not None
+                                    and getattr(
+                                        getattr(content, "native", None), "type", ""
+                                    )
+                                    == "web_search_call"
+                                    for content in chat_log.content
+                                    if id(content) not in existing_content_ids
+                                ),
                             )
                     except BaseException as err:
                         append_unresolved_tool_results(
                             chat_log,
                             self.entity_id,
-                            round_tool_calls,
-                            failed_call_id=loader_call.id,
+                            pending_tool_calls,
                             error=err,
                         )
                         raise
-                    chat_log.async_add_assistant_content_without_tools(
-                        make_tool_result_content(
-                            agent_id=self.entity_id,
-                            tool_call_id=loader_call.id,
-                            tool_name=loader_call.tool_name,
-                            tool_result={
-                                "result": json.dumps(loader_result, ensure_ascii=False)
-                            },
+                    observed_input_tokens = max(
+                        observed_input_tokens,
+                        request_usage.input_tokens or request_usage.total_tokens,
+                    )
+
+                if pending_tool_calls:
+                    _LOGGER.info(
+                        "Provider requested %d tool calls: %s",
+                        len(pending_tool_calls),
+                        ", ".join(call.tool_name for call in pending_tool_calls),
+                    )
+                round_tool_calls = list(pending_tool_calls)
+
+                control_calls = [
+                    tool_input
+                    for tool_input in pending_tool_calls
+                    if tool_input.tool_name == CONTINUE_CONVERSATION_TOOL_NAME
+                ]
+                pending_tool_calls = [
+                    tool_input
+                    for tool_input in pending_tool_calls
+                    if tool_input.tool_name != CONTINUE_CONVERSATION_TOOL_NAME
+                ]
+                loader_calls = [
+                    tool_input
+                    for tool_input in pending_tool_calls
+                    if integration_loader_seen
+                    and tool_input.tool_name == FUNCTION_GROUP_LOADER_TOOL_NAME
+                ]
+                pending_tool_calls = [
+                    tool_input
+                    for tool_input in pending_tool_calls
+                    if not (
+                        integration_loader_seen
+                        and tool_input.tool_name == FUNCTION_GROUP_LOADER_TOOL_NAME
+                    )
+                ]
+
+                if loader_calls:
+                    loader_rounds += 1
+                    for loader_call in loader_calls:
+                        try:
+                            if function_group_loader is None:
+                                loader_result = {
+                                    "status": "error",
+                                    "error": "Function-group loading is unavailable",
+                                }
+                            elif loader_rounds > MAX_FUNCTION_GROUP_LOAD_ROUNDS:
+                                loader_result = {
+                                    "status": "error",
+                                    "error": "Function-group loader safety limit reached",
+                                }
+                            else:
+                                loader_result = function_group_loader(
+                                    loader_call.tool_args.get("groups")
+                                )
+                        except BaseException as err:
+                            append_unresolved_tool_results(
+                                chat_log,
+                                self.entity_id,
+                                round_tool_calls,
+                                failed_call_id=loader_call.id,
+                                error=err,
+                            )
+                            raise
+                        chat_log.async_add_assistant_content_without_tools(
+                            make_tool_result_content(
+                                agent_id=self.entity_id,
+                                tool_call_id=loader_call.id,
+                                tool_name=loader_call.tool_name,
+                                tool_result={
+                                    "result": json.dumps(
+                                        loader_result, ensure_ascii=False
+                                    )
+                                },
+                            )
+                        )
+
+                if control_calls:
+                    control_call = control_calls[-1]
+                    response_text = control_call.tool_args.get("response")
+                    decision = control_call.tool_args.get("continue_conversation")
+                    if not isinstance(response_text, str) or not isinstance(
+                        decision, bool
+                    ):
+                        parse_error = ParseArgumentsFailed(
+                            json.dumps(control_call.tool_args)
+                        )
+                        append_unresolved_tool_results(
+                            chat_log,
+                            self.entity_id,
+                            round_tool_calls,
+                            failed_call_id=control_call.id,
+                            error=parse_error,
+                        )
+                        raise parse_error
+
+                    # A finalizer emitted beside an action tool is premature. Remove it
+                    # from history and wait for the post-tool response to decide.
+                    is_final = not pending_tool_calls and not loader_calls
+                    self._consume_continue_conversation_tool(
+                        chat_log,
+                        existing_content_ids,
+                        response_text if is_final else None,
+                    )
+                    if is_final:
+                        continuation_decision = decision
+                        if draft_content_ids:
+                            chat_log.content[:] = [
+                                content
+                                for content in chat_log.content
+                                if id(content) not in draft_content_ids
+                            ]
+
+                await async_execute_tool_exchange(
+                    self,
+                    chat_log,
+                    pending_tool_calls,
+                    request_function_tools,
+                    function_call_budget,
+                    llm_context,
+                    exposed_entities,
+                    function_tools_factory=function_tools_factory,
+                    recovery_state=recovery_state,
+                )
+
+                if api_mode == API_MODE_RESPONSES:
+                    messages.extend(
+                        _convert_content_to_responses_param(
+                            content
+                            for content in chat_log.content
+                            if id(content) not in existing_content_ids
                         )
                     )
-
-            if control_calls:
-                control_call = control_calls[-1]
-                response_text = control_call.tool_args.get("response")
-                decision = control_call.tool_args.get("continue_conversation")
-                if not isinstance(response_text, str) or not isinstance(decision, bool):
-                    parse_error = ParseArgumentsFailed(
-                        json.dumps(control_call.tool_args)
+                else:
+                    messages = _convert_content_to_param(
+                        chat_log.content, shorten_tool_call_id
                     )
-                    append_unresolved_tool_results(
-                        chat_log,
-                        self.entity_id,
-                        round_tool_calls,
-                        failed_call_id=control_call.id,
-                        error=parse_error,
-                    )
-                    raise parse_error
 
-                # A finalizer emitted beside an action tool is premature. Remove it
-                # from history and wait for the post-tool response to decide.
-                is_final = not pending_tool_calls and not loader_calls
-                self._consume_continue_conversation_tool(
-                    chat_log,
-                    existing_content_ids,
-                    response_text if is_final else None,
-                )
-                if is_final:
-                    continuation_decision = decision
+                if (
+                    conditional_continue
+                    and continuation_decision is None
+                    and not pending_tool_calls
+                    and not control_calls
+                    and not loader_calls
+                ):
+                    if not finalization_retry_attempted:
+                        draft_content_ids.update(
+                            id(content)
+                            for content in chat_log.content
+                            if id(content) not in existing_content_ids
+                            and isinstance(content, conversation.AssistantContent)
+                            and bool(content.content)
+                            and not content.tool_calls
+                        )
+                        finalization_retry_attempted = True
+                        force_finalizer_only = True
+                        _LOGGER.warning(
+                            "Conditional response omitted %s; retrying once with only "
+                            "the finalizer available",
+                            CONTINUE_CONVERSATION_TOOL_NAME,
+                        )
+                        continue
+
+                    _LOGGER.error(
+                        "Conditional response omitted %s after the finalization retry; "
+                        "using the assistant text with continuation disabled",
+                        CONTINUE_CONVERSATION_TOOL_NAME,
+                    )
                     if draft_content_ids:
                         chat_log.content[:] = [
                             content
@@ -845,83 +933,23 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             if id(content) not in draft_content_ids
                         ]
 
-            await async_execute_tool_exchange(
-                self,
-                chat_log,
-                pending_tool_calls,
-                request_function_tools,
-                function_call_budget,
-                llm_context,
-                exposed_entities,
-                function_tools_factory=function_tools_factory,
-                recovery_state=recovery_state,
+                if not chat_log.unresponded_tool_results:
+                    break
+
+            assert_provider_loop_completed(chat_log, MAX_TOOL_ITERATIONS)
+
+            threshold = int(
+                options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD)
             )
-
-            if api_mode == API_MODE_RESPONSES:
-                messages.extend(
-                    _convert_content_to_responses_param(
-                        content
-                        for content in chat_log.content
-                        if id(content) not in existing_content_ids
-                    )
-                )
-            else:
-                messages = _convert_content_to_param(
-                    chat_log.content, shorten_tool_call_id
+            if observed_input_tokens > threshold:
+                await self._truncate_message_history(
+                    chat_log,
+                    observed_input_tokens=observed_input_tokens,
+                    model=model,
+                    api_mode=api_mode,
                 )
 
-            if (
-                conditional_continue
-                and continuation_decision is None
-                and not pending_tool_calls
-                and not control_calls
-                and not loader_calls
-            ):
-                if not finalization_retry_attempted:
-                    draft_content_ids.update(
-                        id(content)
-                        for content in chat_log.content
-                        if id(content) not in existing_content_ids
-                        and isinstance(content, conversation.AssistantContent)
-                        and bool(content.content)
-                        and not content.tool_calls
-                    )
-                    finalization_retry_attempted = True
-                    force_finalizer_only = True
-                    _LOGGER.warning(
-                        "Conditional response omitted %s; retrying once with only "
-                        "the finalizer available",
-                        CONTINUE_CONVERSATION_TOOL_NAME,
-                    )
-                    continue
-
-                _LOGGER.error(
-                    "Conditional response omitted %s after the finalization retry; "
-                    "using the assistant text with continuation disabled",
-                    CONTINUE_CONVERSATION_TOOL_NAME,
-                )
-                if draft_content_ids:
-                    chat_log.content[:] = [
-                        content
-                        for content in chat_log.content
-                        if id(content) not in draft_content_ids
-                    ]
-
-            if not chat_log.unresponded_tool_results:
-                break
-
-        assert_provider_loop_completed(chat_log, MAX_TOOL_ITERATIONS)
-
-        threshold = int(options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD))
-        if observed_input_tokens > threshold:
-            await self._truncate_message_history(
-                chat_log,
-                observed_input_tokens=observed_input_tokens,
-                model=model,
-                api_mode=api_mode,
-            )
-
-        return continuation_decision
+            return continuation_decision
 
     @staticmethod
     def _consume_continue_conversation_tool(
@@ -1087,7 +1115,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         refusal_seen = False
         terminal_finish_seen = False
 
-        async for chunk in result:
+        async for chunk in normalized_chat_stream(chat_log, result, request_usage):
             _LOGGER.debug("Received chunk: %s", chunk)
             # Signal new assistant message on first chunk
             if first_chunk:
@@ -1224,7 +1252,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         response_refusal_lengths: dict[tuple[int | None, int | None], int] = {}
         url_citations: dict[tuple[int | None, int | None], list[dict[str, Any]]] = {}
         terminal_event_seen = False
-        async for event in result:
+        async for event in normalized_responses_stream(chat_log, result, request_usage):
             _LOGGER.debug("Received Responses event: %s", event)
             event_type = getattr(event, "type", "")
 
@@ -1506,6 +1534,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         api_mode: str | None = None,
     ) -> None:
         """Truncate message history based on strategy."""
+        if schedule_context_summary(
+            self,
+            chat_log,
+            observed_input_tokens=observed_input_tokens,
+            model=model,
+            api_mode=api_mode,
+        ):
+            return
         options = self.subentry.data
         strategy = options.get(
             CONF_CONTEXT_TRUNCATE_STRATEGY, LEGACY_CONTEXT_TRUNCATE_STRATEGY

@@ -5,15 +5,14 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, cast
 
-import pytest
 from openai import OpenAIError
-
-from homeassistant.components import ai_task, conversation
-from homeassistant.exceptions import HomeAssistantError
+import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     ai_task as ai_task_platform,
 )
+from homeassistant.components import ai_task, conversation
+from homeassistant.exceptions import HomeAssistantError
 
 
 def _subentry(
@@ -29,7 +28,8 @@ def _subentry(
 
 def _entity() -> ai_task_platform.ExtendedOpenAITaskEntity:
     return ai_task_platform.ExtendedOpenAITaskEntity(
-        cast(Any, SimpleNamespace(data={}, runtime_data=object())), cast(Any, _subentry())
+        cast(Any, SimpleNamespace(data={}, runtime_data=object())),
+        cast(Any, _subentry()),
     )
 
 
@@ -63,7 +63,7 @@ async def test_setup_entry_adds_only_ai_task_subentries(
     assert created == ["task"]
     assert len(added) == 1
     assert added[0][1] == "task"
-    assert getattr(added[0][0][0], "subentry_id") == "task"
+    assert added[0][0][0].subentry_id == "task"
 
 
 def test_entity_advertises_generate_data_and_attachment_features() -> None:
@@ -129,9 +129,7 @@ async def test_generate_structured_data_preserves_caller_api_and_serializer(
     async def fake_handle(_chat_log: object, **kwargs: Any) -> None:
         handled.update(kwargs)
         chat_log.content.append(
-            conversation.AssistantContent(
-                agent_id="agent", content='{"answer": "ok"}'
-            )
+            conversation.AssistantContent(agent_id="agent", content='{"answer": "ok"}')
         )
 
     chat_log = SimpleNamespace(
@@ -149,9 +147,9 @@ async def test_generate_structured_data_preserves_caller_api_and_serializer(
     monkeypatch.setattr(
         ai_task_platform,
         "tool_snapshot_scope",
-        lambda current: pytest.MonkeyPatch.context()
-        if current is snapshot
-        else AssertionError(),
+        lambda current: (
+            pytest.MonkeyPatch.context() if current is snapshot else AssertionError()
+        ),
     )
 
     task = SimpleNamespace(name="structured", structure={"type": "object"})

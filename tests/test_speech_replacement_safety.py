@@ -7,8 +7,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses import regex_execution
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.regex_execution import (
@@ -16,8 +14,8 @@ from custom_components.extended_openai_conversation_responses.regex_execution im
     _async_apply_speech_replacements,
     _async_run_regex_worker,
     async_process_speech_text,
-    install_configurable_regex_isolation,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 class _ExecutorHass:
@@ -60,32 +58,43 @@ async def test_invalid_later_rule_fails_open_without_partial_replacement() -> No
 
 async def test_invalid_replacement_expression_fails_open() -> None:
     original = "HA is ready"
-    assert await _async_apply_speech_replacements(
-        original,
-        [{"pattern": "HA", "replacement": r"\9"}],
-    ) == original
+    assert (
+        await _async_apply_speech_replacements(
+            original,
+            [{"pattern": "HA", "replacement": r"\9"}],
+        )
+        == original
+    )
 
 
 async def test_malformed_stored_rules_fail_open() -> None:
     original = "Keep this unchanged"
-    assert await _async_apply_speech_replacements(original, [{"pattern": "x"}]) == original
+    assert (
+        await _async_apply_speech_replacements(original, [{"pattern": "x"}]) == original
+    )
     assert await _async_apply_speech_replacements(original, "not-a-list") == original
 
 
 async def test_output_growth_limit_fails_open() -> None:
     original = "x" * 10
-    assert await _async_apply_speech_replacements(
-        original,
-        [{"pattern": "x", "replacement": "y" * 500}],
-    ) == original
+    assert (
+        await _async_apply_speech_replacements(
+            original,
+            [{"pattern": "x", "replacement": "y" * 500}],
+        )
+        == original
+    )
 
 
 async def test_oversized_input_skips_custom_replacements() -> None:
     original = "x" * (MAX_SPEECH_REPLACEMENT_INPUT_CHARS + 1)
-    assert await _async_apply_speech_replacements(
-        original,
-        [{"pattern": "x", "replacement": "y"}],
-    ) == original
+    assert (
+        await _async_apply_speech_replacements(
+            original,
+            [{"pattern": "x", "replacement": "y"}],
+        )
+        == original
+    )
 
 
 async def test_worker_failure_fails_open(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,10 +103,13 @@ async def test_worker_failure_fails_open(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(regex_execution, "_async_run_regex_worker", fail)
     original = "HA is ready"
-    assert await _async_apply_speech_replacements(
-        original,
-        [{"pattern": "HA", "replacement": "Home Assistant"}],
-    ) == original
+    assert (
+        await _async_apply_speech_replacements(
+            original,
+            [{"pattern": "HA", "replacement": "Home Assistant"}],
+        )
+        == original
+    )
 
 
 async def test_unexpected_worker_failure_fails_open(
@@ -108,10 +120,13 @@ async def test_unexpected_worker_failure_fails_open(
 
     monkeypatch.setattr(regex_execution, "_async_run_regex_worker", fail)
     original = "HA is ready"
-    assert await _async_apply_speech_replacements(
-        original,
-        [{"pattern": "HA", "replacement": "Home Assistant"}],
-    ) == original
+    assert (
+        await _async_apply_speech_replacements(
+            original,
+            [{"pattern": "HA", "replacement": "Home Assistant"}],
+        )
+        == original
+    )
 
 
 async def test_pathological_replacement_times_out_without_blocking_loop(
@@ -132,7 +147,9 @@ async def test_pathological_replacement_times_out_without_blocking_loop(
     assert await asyncio.wait_for(task, timeout=1) == original
 
 
-async def test_async_pipeline_preserves_builtin_cleanup_when_custom_stage_fails() -> None:
+async def test_async_pipeline_preserves_builtin_cleanup_when_custom_stage_fails() -> (
+    None
+):
     hass = _ExecutorHass()
     result = await async_process_speech_text(
         hass,
@@ -222,14 +239,13 @@ async def test_worker_exit_race_does_not_mask_parent_cancellation(
 
 
 async def test_live_and_preview_async_isolation_are_installed() -> None:
-    install_configurable_regex_isolation()
 
     from custom_components.extended_openai_conversation_responses import management_ui
     from custom_components.extended_openai_conversation_responses.conversation import (
         ExtendedOpenAIAgentEntity,
     )
 
-    assert getattr(
+    assert not getattr(
         ExtendedOpenAIAgentEntity._async_handle_message,
         "_extended_openai_configurable_regex_executor",
         False,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -207,7 +207,6 @@ async def test_repeated_startup_keeps_manager_method_identity(hass, monkeypatch)
     before = owner_methods()
     # Its downstream tool-assembly cache is outside manager ownership and would
     # otherwise leak into unrelated tests constructing incomplete conversation entities.
-    monkeypatch.setattr(integration, "install_guest_policy_fast_path", Mock())
     hass.http.async_register_static_paths = AsyncMock()
     # Exercise real synchronous startup installers; isolate external setup I/O.
     for name in (

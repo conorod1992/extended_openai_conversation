@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 import csv
-from functools import wraps
 from io import StringIO
 import json
 from types import MappingProxyType
@@ -14,10 +13,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.template.helpers import resolve_area_id
 
 from . import agent_config
-from .const import (
-    CONF_EXPOSED_ENTITIES_ENABLED,
-    DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE,
-)
+from .const import CONF_EXPOSED_ENTITIES_ENABLED
 from .entity_context_cache import get_entity_prompt_metadata
 from .helpers import get_exposed_entities
 
@@ -28,7 +24,6 @@ MAX_ATTRIBUTES_PER_ENTITY = 64
 MAX_ATTRIBUTE_NAME_LENGTH = 255
 MAX_ATTRIBUTE_VALUE_CHARACTERS = 4096
 MAX_TOTAL_ATTRIBUTE_CONTEXT_CHARACTERS = 32768
-_INSTALLED = False
 
 _ORIGINAL_NORMALIZE_AGENT_CONFIG = agent_config.normalize_agent_config
 
@@ -423,73 +418,3 @@ def _render_legacy_default_with_attributes(
 
 def _has_selected_values(exposed_entities: list[dict[str, Any]]) -> bool:
     return any(bool(entity.get("attributes")) for entity in exposed_entities)
-
-
-def _wrap_effective_prompt_renderer(original: Callable[..., Any]) -> Callable[..., Any]:
-    @wraps(original)
-    def wrapped(hass: Any, options: Any, *args: Any, **kwargs: Any) -> Any:
-        exposed = kwargs.get("exposed_entities")
-        if isinstance(exposed, list):
-            kwargs = dict(kwargs)
-            kwargs["exposed_entities"] = enrich_exposed_entities(hass, options, exposed)
-        return original(hass, options, *args, **kwargs)
-
-    return wrapped
-
-
-def install_exposed_attribute_runtime() -> None:
-    """Install selected-attribute prompt rendering for runtime and request previews."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
-
-    from . import conversation, management_ui, prompt
-
-    original_default_renderer = prompt._default_exposed_entities_context
-    original_template_renderer = prompt._render_template
-
-    @wraps(original_default_renderer)
-    def default_renderer(hass: Any, exposed_entities: list[dict[str, Any]]) -> str:
-        return _render_grouped_default(
-            hass,
-            exposed_entities,
-            include_attributes=_has_selected_values(exposed_entities),
-        )
-
-    @wraps(original_template_renderer)
-    def template_renderer(
-        hass: Any,
-        raw: str,
-        *,
-        exposed_entities: list[dict[str, Any]],
-        current_device_id: str | None,
-        user_input: Any,
-        skills: list[Any],
-    ) -> str:
-        if raw == DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE:
-            return _render_legacy_default(
-                hass,
-                exposed_entities,
-                include_attributes=_has_selected_values(exposed_entities),
-            )
-        return original_template_renderer(
-            hass,
-            raw,
-            exposed_entities=exposed_entities,
-            current_device_id=current_device_id,
-            user_input=user_input,
-            skills=skills,
-        )
-
-    prompt._default_exposed_entities_context = default_renderer
-    prompt._render_template = template_renderer
-    prompt.render_effective_prompt = _wrap_effective_prompt_renderer(
-        prompt.render_effective_prompt
-    )
-    conversation.render_effective_prompt = _wrap_effective_prompt_renderer(
-        conversation.render_effective_prompt
-    )
-    management_ui.render_effective_prompt = _wrap_effective_prompt_renderer(
-        management_ui.render_effective_prompt
-    )

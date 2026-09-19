@@ -17,7 +17,6 @@ from custom_components.extended_openai_conversation_responses import (
     entity as base,
     function_execution,
     persistence_hardening,
-    request_diagnostics,
     tool_exchange,
 )
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
@@ -156,8 +155,6 @@ async def test_repeated_setup_preserves_runtime_identity(hass, monkeypatch):
     monkeypatch.setattr(DelayedToolManager, "async_setup", AsyncMock())
     for _ in range(2):
         persistence_hardening.install_delayed_tool_store_guard()
-        debug.install_debug_instrumentation()
-        request_diagnostics.install_payload_latency_diagnostics()
         await async_setup_delayed_tools(hass)
         assert methods == {name: getattr(cls, name) for name in methods}
         assert base.ExtendedOpenAIBaseLLMEntity._execute_function_tool is executor
