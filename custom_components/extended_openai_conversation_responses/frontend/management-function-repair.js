@@ -66,12 +66,10 @@ function renderFallbackRepair(panel, issue) {
   </section>`;
 }
 
-function decorateFunctionsContent(panel, html) {
+function renderFunctionRepairCards(panel) {
   const repair = repairMetadata(panel);
-  if (!repair?.isolatable || !Array.isArray(repair.invalid_tools) || !repair.invalid_tools.length) return html;
-  const cards = invalidToolCards(panel, repair);
-  const marker = '<div class="function-groups">';
-  return html.includes(marker) ? html.replace(marker, `${marker}${cards}`) : `${cards}${html}`;
+  if (!repair?.isolatable || !Array.isArray(repair.invalid_tools) || !repair.invalid_tools.length) return "";
+  return invalidToolCards(panel, repair);
 }
 
 function openInvalidToolEditor(panel, item) {
@@ -224,7 +222,7 @@ function bindFallbackRepair(panel) {
 export {
   bindFallbackRepair,
   bindIsolatedRepair,
-  decorateFunctionsContent,
+  renderFunctionRepairCards,
   editableToolsText,
   functionRepairView,
   invalidToolCards,

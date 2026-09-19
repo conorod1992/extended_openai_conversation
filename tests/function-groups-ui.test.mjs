@@ -11,6 +11,7 @@ import {
   isFunctionGroupEnabled,
   isFunctionToolEnabled,
   matchesFunctionSearch,
+  renderTools,
   saveBar,
   synchronizePersistedFunctions,
 } from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
@@ -108,7 +109,8 @@ assert.doesNotMatch(editorSource, /Save tools and groups|Keep in draft|unsaved t
 assert.match(editorSource, /id="tool-save">Save<\/button>/);
 assert.match(editorSource, /id="group-save">Save<\/button>/);
 assert.match(editorSource, /class=\"group-enabled\"/, "groups should expose an independent enabled switch");
-assert.match(editorSource, /editButton\.disabled = !enabled/, "disabled groups should not silently re-enable through the legacy editor");
+const disabledMarkup = renderTools({_e:String, _empty:String, _draft:{...config, function_groups:config.function_groups.map((group) => ({...group, enabled:false}))}});
+assert.match(disabledMarkup, /class="secondary edit-group"[^>]*disabled[^>]*Enable this Function Group before editing it/, "disabled groups must render a disabled edit button immediately");
 assert.match(editorSource, /member Function Tool settings were kept/, "group state changes should explain that member states are retained");
 for (const action of ["save","set_enabled","delete","save_group","delete_group"]) {
   assert.match(editorSource,new RegExp(`panel\\._call\\(\"tools\",\\s*\"${action}\"`));

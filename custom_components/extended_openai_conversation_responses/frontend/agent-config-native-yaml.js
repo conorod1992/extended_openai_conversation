@@ -51,74 +51,7 @@ const NATIVE_STYLE = `
   #${NATIVE_EDITOR_ID}[hidden] { display: none; }
   #tool-yaml[hidden] { display: none !important; }
 `;
-const FUNCTION_GROUP_ASSIGNMENT_STYLE = `
-  .function-group-assignment-control {
-    display: inline-flex;
-    align-items: center;
-    gap: 0;
-    width: fit-content;
-    max-width: min(300px, 100%);
-    min-height: 32px;
-    margin-top: 9px;
-    border: 1px solid var(--divider-color, rgba(127, 127, 127, .35));
-    border-radius: 999px;
-    background: var(--card-background-color, transparent);
-    color: var(--primary-text-color);
-    transition: border-color 120ms ease, background 120ms ease;
-  }
-  .function-group-assignment-control:hover,
-  .function-group-assignment-control:focus-within {
-    border-color: var(--primary-color);
-    background: var(--secondary-background-color, transparent);
-  }
-  .function-group-assignment-control.is-disabled-group { opacity: .72; }
-  .function-group-assignment-icon {
-    --mdc-icon-size: 16px;
-    display: inline-flex;
-    align-items: center;
-    flex: 0 0 auto;
-    padding-inline-start: 10px;
-    color: var(--secondary-text-color);
-  }
-  .function-group-assignment {
-    width: auto;
-    min-width: 0;
-    max-width: 250px;
-    min-height: 30px;
-    border: 0;
-    border-radius: 999px;
-    outline: 0;
-    background: transparent;
-    color: inherit;
-    font: inherit;
-    font-size: 13px;
-    font-weight: 500;
-    padding: 4px 10px 4px 6px;
-    cursor: pointer;
-  }
-  .function-group-assignment:disabled { cursor: progress; }
-  .function-group-card[data-group-id],
-  .function-group-card.always-card {
-    background: var(--secondary-background-color, var(--card-background-color));
-    background: color-mix(in srgb, var(--primary-color) 5%, var(--card-background-color));
-    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--primary-color) 28%, transparent);
-  }
-  .function-group-card.function-repair-attention {
-    background: color-mix(in srgb, var(--warning-color, #ff9800) 8%, var(--card-background-color));
-    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--warning-color, #ff9800) 45%, transparent);
-  }
-  .function-group-card > details .tool-card {
-    background: var(--card-background-color);
-  }
-  .function-group-card[data-group-id] + .function-group-card[data-group-id] {
-    margin-top: 16px;
-  }
-  .group-enabled-control { flex: 0 0 auto; }
-  @media (max-width: 700px) {
-    .function-group-assignment-control { max-width: 100%; }
-    .function-group-assignment { max-width: 210px; }
-  }
-`;
+
 
 export async function ensureNativeYamlEditor(
   registry = globalThis.customElements,
@@ -178,25 +111,6 @@ export function repairToolConfig(panel) {
   return tool;
 }
 
-export function decorateToolYamlEditor(html) {
-  if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
-  const template = document.createElement("template");
-  template.innerHTML = html;
-  const textarea = template.content.querySelector("#tool-yaml");
-  if (!textarea || template.content.querySelector(`#${NATIVE_EDITOR_ID}`)) return template.innerHTML;
-
-  textarea.dataset.nativeYamlFallback = "";
-  const editor = document.createElement(NATIVE_EDITOR_TAG);
-  editor.id = NATIVE_EDITOR_ID;
-  editor.className = "tool-yaml-native-editor";
-  editor.hidden = true;
-  editor.setAttribute("in-dialog", "");
-  editor.setAttribute("aria-label", "Function Tool YAML");
-  editor.setAttribute("aria-describedby", "tool-error");
-  textarea.insertAdjacentElement("afterend", editor);
-  return template.innerHTML;
-}
-
 function installNativeStyle(root) {
   if (!root || root.querySelector("style[data-native-tool-yaml]")) return;
   const style = document.createElement("style");
@@ -207,84 +121,6 @@ function installNativeStyle(root) {
 
 function currentGroupForTool(groups, name) {
   return (groups || []).find((group) => (group.functions || []).includes(name)) || null;
-}
-
-function assignmentOptions(panel, groups, currentId) {
-  return [
-    `<option value="" ${currentId ? "" : "selected"}>Available on every request</option>`,
-    ...(groups || []).map((group) => {
-      const disabled = group.enabled === false ? " (disabled)" : "";
-      return `<option value="${panel._e(group.id)}" ${group.id === currentId ? "selected" : ""}>${panel._e(group.name)}${disabled}</option>`;
-    }),
-  ].join("");
-}
-
-function decorateFunctionGroupCards(panel, root, groups) {
-  for (const card of root.querySelectorAll(".function-group-card[data-group-id]")) {
-    const group = groups.find((item) => item.id === card.dataset.groupId);
-    if (!group) continue;
-    const enabled = group.enabled !== false;
-    card.classList.toggle("is-disabled", !enabled);
-    const title = card.querySelector(".tool-title");
-    if (!enabled && title && !title.querySelector(".group-disabled-badge")) {
-      title.insertAdjacentHTML("beforeend", '<span class="availability-badge group-disabled-badge">Disabled</span>');
-    }
-    const editButton = card.querySelector(".edit-group");
-    if (editButton) {
-      editButton.textContent = "Edit";
-      editButton.disabled = !enabled;
-      editButton.setAttribute("aria-label", `Edit Function Group ${group.name}`);
-      editButton.title = enabled ? `Edit Function Group ${group.name}` : "Enable this Function Group before editing it";
-    }
-    const deleteButton = card.querySelector(".delete-group");
-    if (deleteButton) {
-      deleteButton.textContent = "Delete";
-      deleteButton.setAttribute("aria-label", `Delete Function Group ${group.name}`);
-      deleteButton.title = `Delete Function Group ${group.name}`;
-    }
-    const actions = card.querySelector(".function-group-heading .actions");
-    if (actions && !actions.querySelector(".group-enabled")) {
-      actions.insertAdjacentHTML("afterbegin", `<label class="tool-enabled-control group-enabled-control" title="Disable the group without changing the enabled state of its member Function Tools"><span>Enabled</span><span class="switch-control"><input type="checkbox" role="switch" class="group-enabled" data-group-id="${panel._e(group.id)}" aria-label="Enable Function Group ${panel._e(group.name)}" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></span></label>`);
-    }
-  }
-}
-
-export function decorateFunctionGroupAssignments(panel, html) {
-  if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
-  const template = document.createElement("template");
-  template.innerHTML = html;
-  const config = panel?._draft || panel?._result?.config || {};
-  const tools = config.functions || [];
-  const groups = config.function_groups || [];
-
-  decorateFunctionGroupCards(panel, template.content, groups);
-
-  for (const card of template.content.querySelectorAll(".tool-card[data-tool-index]")) {
-    const index = Number(card.dataset.toolIndex);
-    const tool = tools[index];
-    const name = tool?.spec?.name;
-    if (!name || card.querySelector(".function-group-assignment")) continue;
-    const current = currentGroupForTool(groups, name);
-    const main = card.querySelector(".card-main");
-    if (!main) continue;
-
-    const label = document.createElement("label");
-    label.className = `function-group-assignment-control${current?.enabled === false ? " is-disabled-group" : ""}`;
-    label.title = current?.enabled === false
-      ? `Function group: ${current.name}. This group is currently disabled.`
-      : `Function group: ${current?.name || "Available on every request"}`;
-    label.innerHTML = `<span class="sr-only">Function group for ${panel._e(name)}</span><ha-icon class="function-group-assignment-icon" icon="mdi:folder-outline" aria-hidden="true"></ha-icon><select class="function-group-assignment" data-index="${index}" aria-label="Function group for ${panel._e(name)}">${assignmentOptions(panel, groups, current?.id || "")}</select>`;
-    main.insertAdjacentElement("beforeend", label);
-  }
-
-  if (!template.content.querySelector("style[data-function-group-assignment]")) {
-    const style = document.createElement("style");
-    style.dataset.functionGroupAssignment = "";
-    style.dataset.functionGroupsDecorated = "";
-    style.textContent = FUNCTION_GROUP_ASSIGNMENT_STYLE;
-    template.content.prepend(style);
-  }
-  return template.innerHTML;
 }
 
 async function assignToolToGroup(panel, select) {
@@ -461,14 +297,6 @@ export function bindNativeToolYaml(panel) {
       .then((ready) => { if (ready) activate(); else showFallback(); })
       .catch(showFallback);
   }
-}
-
-export function configurationDialogs(panel) {
-  return decorateToolYamlEditor(base.configurationDialogs(panel));
-}
-
-export function renderTools(panel) {
-  return decorateFunctionGroupAssignments(panel, base.renderTools(panel));
 }
 
 export function bindTools(panel) {

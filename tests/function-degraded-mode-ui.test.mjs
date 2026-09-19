@@ -3,9 +3,10 @@ import test from "node:test";
 
 import {buildSetupHealth} from "../custom_components/extended_openai_conversation_responses/frontend/overview-health.js";
 import {
-  decorateFunctionsContent,
+  renderFunctionRepairCards,
   invalidToolCards,
 } from "../custom_components/extended_openai_conversation_responses/frontend/management-function-repair.js";
+import {renderTools} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
 
 const panel = {
   _e(value) {
@@ -48,11 +49,11 @@ test("invalid Function Tools render in a Needs attention group with repair-only 
 });
 
 test("Needs attention group is inserted before normal Function Groups", () => {
-  const normal = '<section><div class="function-groups"><article id="normal">Normal</article></div></section>';
-  const decoratedPanel = {...panel, _result: {function_repair: repair}};
-  const html = decorateFunctionsContent(decoratedPanel, normal);
+  const decoratedPanel = {...panel, _empty:String, _result: {function_repair: repair}};
+  const html = renderTools(decoratedPanel, {repairCards:renderFunctionRepairCards(decoratedPanel)});
 
-  assert.ok(html.indexOf("Needs attention") < html.indexOf('id="normal"'));
+  assert.ok(html.indexOf("Needs attention") < html.indexOf('class="function-group-card always-card"'));
+  assert.match(html, /<div class="function-groups"><article class="function-group-card function-repair-attention"/);
 });
 
 test("Overview reports quarantined Function Tools without treating valid siblings as unavailable", () => {

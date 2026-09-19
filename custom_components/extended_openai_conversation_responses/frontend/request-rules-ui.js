@@ -24,43 +24,6 @@ function queueRender(panel) {
     });
 }
 
-function renderAllRulesForInPlaceSearch(panel, module) {
-  const query = String(panel._query || "");
-  if (!panel._eocInPlaceRequestRuleSearch || !query) return module.renderRequestRules(panel);
-
-  panel._query = "";
-  let html;
-  try {
-    html = module.renderRequestRules(panel);
-  } finally {
-    panel._query = query;
-  }
-  return html.replace(
-    /(<input id="rule-search" type="search" value=")[^"]*(")/,
-    (_match, prefix, suffix) => `${prefix}${panel._e(query)}${suffix}`,
-  );
-}
-
-function addRequestRuleManagementClarity(panel, html) {
-  const rules = panel._result?.rules || [];
-  const diagnostics = panel._result?.diagnostics || {};
-  const routingHelp = '<section class="notice"><strong>AI routing command behavior</strong><p><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> routing rules are complete commands by default: they are acknowledged locally and apply to the rest of the current conversation. Enable <strong>Continue to AI</strong> to send the original request to the provider unchanged after applying the route. <strong>Starts with</strong>, <strong>Ends with</strong>, and <strong>Contains</strong> continue to the provider by default; matched words are not stripped.</p><p>A request-only reset bypasses a conversation override for that one provider request; it does not clear the saved conversation route. Rule order is only the final tie-breaker after match type and phrase specificity.</p></section>';
-  let transformed = html.replace(
-    '<section class="content-card rule-settings">',
-    `${routingHelp}<section class="content-card rule-settings">`,
-  );
-  for (const [index, rule] of rules.entries()) {
-    const id = panel._e(rule.id);
-    const edit = `<button type="button" class="secondary rule-edit" data-id="${id}">Edit</button>`;
-    const diagnostic = diagnostics?.[rule.id]
-      ? `<p class="sensitive-warning"><strong>Rule inactive:</strong> ${panel._e(diagnostics[rule.id])} Edit and save this rule to use the current sentence-pattern syntax.</p>`
-      : "";
-    const controls = `${diagnostic}<button type="button" class="secondary rule-move" data-id="${id}" data-direction="up" ${index === 0 ? "disabled" : ""}>Move up</button><button type="button" class="secondary rule-move" data-id="${id}" data-direction="down" ${index === rules.length - 1 ? "disabled" : ""}>Move down</button>${edit}`;
-    transformed = transformed.replace(edit, controls);
-  }
-  return transformed;
-}
-
 function setReasoningOptions(root, efforts, selected = "") {
   const select = root?.querySelector("#rule-reasoning");
   if (!select) return;
@@ -115,11 +78,7 @@ export function renderRequestRules(panel) {
     queueRender(panel);
     return panel._loading?.() || '<div class="loading">Loading Request Rules…</div>';
   }
-  const html = addRequestRuleManagementClarity(
-    panel,
-    renderAllRulesForInPlaceSearch(panel, module),
-  );
-  return html;
+  return module.renderRequestRules(panel, {query: panel._query || "", inPlaceSearch: Boolean(panel._eocInPlaceRequestRuleSearch)});
 }
 
 export function bindRequestRules(panel) {
@@ -167,11 +126,7 @@ export function bindRequestRules(panel) {
 }
 
 export function requestRulesDialog(...args) {
-  const dialog = getRequestRulesModule()?.requestRulesDialog(...args) || "";
-  return dialog.replace(
-    '<div id="rule-routing-config" hidden>',
-    '<div id="rule-routing-config" hidden><p class="help"><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> are complete commands by default. Enable <strong>Continue to AI</strong> to send the original request to the provider unchanged after applying the route. Broader Starts/Ends/Contains matches continue to the provider by default.</p><p class="help" id="rule-routing-scope-help"></p>',
-  );
+  return getRequestRulesModule()?.requestRulesDialog(...args) || "";
 }
 
 export function friendlyFieldChange(...args) {

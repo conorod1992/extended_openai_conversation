@@ -6,8 +6,8 @@ import {bindConfigurationClarity, configurationDestinations, enhanceConfiguratio
 import {bindConfigurationGuidance, enhanceConfigurationGuidance} from "./management-configuration-guidance.js";
 import {polishSettingsLayout} from "./management-settings-polish.js";
 import {enhanceOverviewHealthClarity} from "./management-overview-health-clarity.js";
-import {bindMemorySettings, stripMovedMemoryControls} from "./management-memory-settings.js";
-import {bindCapabilities, renderConfiguration, stripWebSkillsConfiguration, stripLocalHandlingConfiguration, knowledgeAvailabilityMarkup, knowledgeSourceAvailabilityBadge, knowledgeSourceAvailabilityControl} from "./management-capabilities-ia.js";
+import {bindMemorySettings} from "./management-memory-settings.js";
+import {bindCapabilities, renderConfiguration, knowledgeAvailabilityMarkup, knowledgeSourceAvailabilityBadge, knowledgeSourceAvailabilityControl} from "./management-capabilities-ia.js";
 import {featureStatusMarkup, selectedFeatureStatus, diagnosticsMarkup, testAgent, FEATURE_STATUS_STYLES} from "./management-feature-status.js";
 import {ensureTemporaryScope, renderTemporaryMemories, renderTemporaryScopePicker, temporaryDialog, openTemporaryMemory, temporaryMemoryDirty, closeTemporaryMemory, saveTemporaryMemory, deleteTemporaryMemory, bindTemporaryMemory} from "./management-temporary-memory.js";
 import {
@@ -884,26 +884,23 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     if (view === "capabilities/web-skills") {
       this._configSections = ["capabilities"];
-      return stripWebSkillsConfiguration(renderConfiguration(this));
+      return renderConfiguration(this);
     }
     if (!this._canAccessView(this._page, this._subsection)) return this._empty("Administrator permission is required for this section.");
     if (view === "overview") return renderOverview(this, agent);
     if (view === "guide") return renderGuide(this);
     if (this._page === "assistant") {
       this._configSections = this._configSectionsForView();
-      let content = getConfigurationEditor()?.renderConfiguration(this) || this._loading();
-      if (["assistant/model-responses", "assistant/voice"].includes(view)) content = stripMovedMemoryControls(content, view);
-      if (view === "assistant/conversation") content = stripLocalHandlingConfiguration(content);
-      if (view === "assistant/voice") return getRouteFeature(view)?.transformVoiceIdentity(this, content) || this._loading();
-      return content;
+      const voiceIdentity = view === "assistant/voice" ? getRouteFeature(view)?.renderVoiceIdentity : null;
+      return getConfigurationEditor()?.renderConfiguration(this, {voiceIdentity}) || this._loading();
     }
     if (view === "capabilities/request-rules") return renderRequestRules(this);
     if (view === "capabilities/functions") {
       const repair = getRouteFeature(view);
       const issue = repair?.repairIssue(this);
       if (issue && repair.repairMetadata(this)?.isolatable === false) return repair.renderFallbackRepair(this, issue);
-      const content = `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${(getConfigurationEditor()?.renderTools(this) || this._loading())}`;
-      return issue ? repair.decorateFunctionsContent(this, content) : content;
+      const repairCards = issue ? repair.renderFunctionRepairCards(this) : "";
+      return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${(getConfigurationEditor()?.renderTools(this, {repairCards}) || this._loading())}`;
     }
     if (view === "capabilities/quiet-hours") return getRouteFeature(view)?.renderQuietHours(this) || this._loading();
     if (view === "usage-maintenance/request-debug") return getRouteFeature(view)?.renderManagementDebug(this) || this._loading();

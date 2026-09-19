@@ -33,6 +33,9 @@ test("the canonical registry covers every static and lazy frontend import", () =
   assert.equal(modules.length, new Set(modules).size, "duplicate static routes");
   assertImportsServed(modules);
   assert.equal(fs.existsSync(path.join(FRONTEND, "management-bootstrap.js")), false);
+  assert.equal(fs.existsSync(path.join(FRONTEND, "guide-page-base.js")), false);
+  assert.equal(modules.includes("guide-page-base.js"), false);
+  assert.equal(modules.includes("agent-config-model-presentation.js"), true);
 });
 
 test("missing direct or lazy assets cannot be hidden by unrelated Python strings", () => {

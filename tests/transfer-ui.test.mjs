@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
-  decorateRestoreDialog,
+  renderRestoreTransferDialog,
   downloadCustomBackup,
   downloadSetupExport,
   TRANSFER_SECTIONS,
@@ -84,7 +84,7 @@ await assert.rejects(
 );
 
 {
-  const dialog = decorateRestoreDialog("unsaved configuration changes");
+  const dialog = renderRestoreTransferDialog({_configDirty:true});
   assert.match(dialog, /Import \/ Restore/);
   assert.match(dialog, /Replacement, not merge/);
   assert.match(dialog, /Sections to replace/);

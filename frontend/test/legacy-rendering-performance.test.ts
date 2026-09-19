@@ -3,6 +3,9 @@ import {describe, expect, it} from "vitest";
 import {readFile} from "node:fs/promises";
 
 import {applyIncrementalDraftUpdate, settingsResultsMarkup} from "../../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js";
+import {renderConfiguration, renderTools} from "../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
+
+const owner = () => ({_e:(value) => String(value ?? ""), _titleCase:String, _empty:String, _draft:{}, _result:{options:{}}});
 
 describe("native management rendering", () => {
   it("updates one draft field without scanning the whole form", () => {
@@ -68,46 +71,76 @@ describe("native management rendering", () => {
     for (const section of ["general", "conversation", "prompt", "capabilities", "archive", "voice", "speech", "context", "model", "retention", "backup"]) {
       expect(source).toContain(`section(panel,"${section}"`);
       const start = source.indexOf(`section(panel,"${section}"`);
-      expect(source.slice(start, start + 320)).toContain(",() => `");
+      expect(source.slice(start, source.indexOf("\n", start))).toContain(",() => ");
     }
     expect(source).toContain('section(panel,"local","Local handling"');
     expect(source).toContain('() => renderLocalHandling(panel,config)');
+    const panel = owner();
+    panel._configSections = ["general"];
+    Object.defineProperty(panel._draft, "prompt", {get() {throw new Error("Unselected prompt body evaluated");}});
+    expect(renderConfiguration(panel)).toContain('id="config-general"');
   });
 
-  it("runs model DOM decoration only where model-aware controls exist", async () => {
+  it("renders model decisions directly and only loads catalog data for model controls", async () => {
     const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-model-v2.js", import.meta.url), "utf8");
-    const guard = "if (!source.includes('id=\"config-general\"') && !source.includes('id=\"config-model\"')) return html;";
-    expect(source).toContain(guard);
-    expect(source.indexOf(guard)).toBeLessThan(source.indexOf('document.createElement("template")'));
     expect(source).toContain("const hasModelAwareControls = Boolean(");
     expect(source).toContain("if (hasModelAwareControls) void ensureCatalogData(panel);");
+    const panel = owner();
+    panel._configSections = ["model"];
+    panel._draft.reasoning_effort = "high";
+    panel._result.model_capabilities = {supports_reasoning_effort:true, reasoning:{supported:true,efforts:["low","high"]}};
+    expect(renderConfiguration(panel)).toMatch(/value="high"[^>]*selected>High/);
+    panel._result.model_capabilities.reasoning.supported = false;
+    expect(renderConfiguration(panel)).not.toContain('data-config="reasoning_effort"');
   });
 
-  it("skips unrelated configuration decorator parse passes", async () => {
-    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
-    expect(source).toContain("if (!stripped.includes('id=\"config-local\"')) return stripped;");
-    expect(source).toContain('.replace("Maximum tool calls per conversation", "Maximum tool calls per request")');
-    expect(source).toContain("if (!String(html || \"\").includes('id=\"config-prompt\"')) return html;");
-    expect(source).toContain("html.includes('id=\"config-backup\"') ? decorateBackupMarkup(html) : html");
+  it("renders local, prompt and backup content without DOM parsing", () => {
+    const previous = globalThis.document;
+    globalThis.document = {createElement() {throw new Error("Unexpected render parsing");}};
+    try {
+      const panel = owner();
+      panel._configSections = ["local","prompt","backup"];
+      const html = renderConfiguration(panel);
+      expect(html).toContain("local-handling-explainer");
+      expect(html).toContain("exposed-attribute");
+      expect(html).toContain("transfer-panel");
+      expect(html).not.toContain("config-jumps");
+    } finally { globalThis.document = previous; }
   });
 
-  it("caches only clean stable configuration subsections", async () => {
-    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
-    expect(source).toContain('const CACHEABLE_CONFIG_SECTIONS = new Set(["capabilities", "archive", "voice", "speech", "context", "retention", "backup"]);');
-    expect(source).toContain("if (panel?._configDirty) return null;");
-    expect(source).toContain("state.result !== panel._result");
-    expect(source).toContain("MAX_CONFIG_RENDER_CACHE_ENTRIES = 8");
-    expect(source).toContain("const cached = getCachedConfigurationMarkup(panel, cacheKey);");
-    expect(source).toContain("if (cached !== null) return cached;");
+  it("caches only clean stable configuration subsections", () => {
+    const panel = owner();
+    panel._configSections = ["speech"];
+    let escapes = 0;
+    panel._e = (value) => {escapes += 1; return String(value ?? "");};
+    renderConfiguration(panel);
+    escapes = 0;
+    renderConfiguration(panel);
+    expect(escapes).toBe(0);
+    panel._configDirty = true;
+    renderConfiguration(panel);
+    expect(escapes).toBeGreaterThan(0);
+    panel._configDirty = false;
+    panel._result = {...panel._result};
+    escapes = 0;
+    renderConfiguration(panel);
+    expect(escapes).toBeGreaterThan(0);
+    panel._configSections = ["model"];
+    renderConfiguration(panel);
+    escapes = 0;
+    renderConfiguration(panel);
+    expect(escapes).toBeGreaterThan(0);
   });
 
-  it("decorates Function Groups in the existing assignment DOM pass", async () => {
-    const nativeSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-native-yaml.js", import.meta.url), "utf8");
-    const editorSource = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
-    expect(nativeSource).toContain("decorateFunctionGroupCards(panel, template.content, groups);");
-    expect(nativeSource).toContain("style.dataset.functionGroupsDecorated = \"\";");
-    expect(editorSource).toContain('includes("data-function-groups-decorated")');
-    expect(editorSource.indexOf('includes("data-function-groups-decorated")')).toBeLessThan(editorSource.indexOf('const template = document.createElement("template")', editorSource.indexOf("function decorateFunctionGroups")));
+  it("renders Function Group state and member assignment together", () => {
+    const panel = owner();
+    panel._draft = {functions:[{spec:{name:"one"}}],function_groups:[{id:"g",name:"Group",enabled:false,functions:["one"]}]};
+    const html = renderTools(panel);
+    expect(html).toContain("group-disabled-badge");
+    expect(html).toMatch(/class="secondary edit-group"[^>]*disabled/);
+    expect(html).toContain('class="function-group-assignment"');
+    expect(html).toContain('Group (disabled)</option>');
+    expect(html.match(/class="group-enabled"/g)).toHaveLength(1);
   });
 
   it("starts lazy view data loads alongside their frontend assets", async () => {

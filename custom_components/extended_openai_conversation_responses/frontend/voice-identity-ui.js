@@ -136,15 +136,6 @@ export function renderVoiceIdentity(panel) {
     <section id="voice-mappings" class="voice-mappings-card" data-voice-mappings-card data-setting><div class="section-heading"><div><h3>Voice device assignments</h3><p>Assign an Assist satellite to one Home Assistant user, the shared household, or no retained personal data.</p></div><button type="button" class="secondary" id="add-voice-mapping">+ Add assignment</button></div><div id="voice-mapping-list" class="voice-mapping-list">${entries.length ? entries.map(([deviceId,owner]) => mappingRow(panel,deviceId,owner)).join("") : '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the unmapped-device fallback will be used.</div>'}</div><span class="field-error" data-error="voice_device_mappings"></span><small>Choose friendly Assist satellite entities here; EOAI continues to store and match Home Assistant device IDs internally.</small></section>`;
 }
 
-export function transformVoiceIdentity(panel,html,documentRef=globalThis.document) {
-  if (!documentRef?.createElement) return html;
-  const template = documentRef.createElement("template");
-  template.innerHTML = html;
-  const section = template.content.querySelector("#config-voice");
-  if (section) section.innerHTML = renderVoiceIdentity(panel);
-  return template.innerHTML;
-}
-
 function setWarning(element,message="") {
   if (!element) return;
   element.textContent = message;

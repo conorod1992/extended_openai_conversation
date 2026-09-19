@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import {
   base64ToBytes,
   bytesToBase64,
-  decorateBackupMarkup,
-  decorateRestoreDialog,
+  renderBackupTransferPanel,
+  renderRestoreTransferDialog,
   downloadFullBackup,
   openBackupPicker,
   uploadFullBackup,
@@ -133,14 +133,14 @@ assert.deepEqual([...base64ToBytes(bytesToBase64(new Uint8Array([0, 1, 127, 128,
 }
 
 {
-  const markup = decorateBackupMarkup('<button id="create-backup"></button><button id="restore-backup"></button><input id="backup-file" type="file" accept="application/json,.json" hidden>');
+  const markup = renderBackupTransferPanel();
   assert.doesNotMatch(markup, /id="create-backup"/);
   assert.doesNotMatch(markup, /id="restore-backup"/);
   assert.match(markup, /id="create-backup-transfer"/);
   assert.match(markup, /id="restore-backup-transfer"/);
   assert.match(markup, /application\/zip/);
 
-  const dialog = decorateRestoreDialog('<button id="restore-cancel"></button><button id="restore-apply"></button>');
+  const dialog = renderRestoreTransferDialog();
   assert.match(dialog, /restore-transfer-cancel/);
   assert.match(dialog, /restore-transfer-apply/);
   assert.doesNotMatch(dialog, /id="restore-apply"/);
