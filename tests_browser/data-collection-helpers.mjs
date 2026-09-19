@@ -3,12 +3,6 @@ import {fixtureUrl} from "./browser-helpers.mjs";
 export const frontend = "/custom_components/extended_openai_conversation_responses/frontend/";
 
 export async function openDataCollection(page, kind, size = 100, bundled = false) {
-  if (kind === "standalone") {
-    await page.goto(`/tests_browser/memory-collections-fixture.html?size=${size}`);
-    const panel = page.locator("extended-openai-memory-management-panel");
-    await expect(panel.locator("#memories .memory-card")).toHaveCount(size);
-    return panel;
-  }
   await page.goto(fixtureUrl("guide", bundled ? "&bundle=1" : ""));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".guide-search")).toBeVisible();

@@ -30,11 +30,11 @@ from custom_components.extended_openai_conversation_responses.const import (
     MEMORY_MODE_MANUAL,
     MEMORY_MODE_OFF,
 )
+from custom_components.extended_openai_conversation_responses.management_ui import (
+    async_management_command,
+)
 from custom_components.extended_openai_conversation_responses.memory import (
     get_memory_mode,
-)
-from custom_components.extended_openai_conversation_responses.memory_ui import (
-    async_manage_command,
 )
 from homeassistant.exceptions import HomeAssistantError
 
@@ -162,16 +162,19 @@ async def test_ui_backend_memory_crud_uses_authenticated_user_scope() -> None:
         async_delete=AsyncMock(return_value=1),
         async_clear=AsyncMock(return_value=1),
     )
-    base = {"entry_id": "entry-1", "subentry_id": "agent-1"}
+    base = {"section": "memories", "entry_id": "entry-1", "subentry_id": "agent-1"}
 
     with patch(
-        "custom_components.extended_openai_conversation_responses.memory_ui.async_get_memory",
+        "custom_components.extended_openai_conversation_responses.management_ui.async_get_memory",
         AsyncMock(return_value=memory),
     ):
-        listed = await async_manage_command(hass, "user-7", {**base, "action": "list"})
-        await async_manage_command(
+        listed = await async_management_command(
+            hass, "user-7", False, {**base, "action": "list"}
+        )
+        await async_management_command(
             hass,
             "user-7",
+            False,
             {
                 **base,
                 "action": "add",
@@ -179,9 +182,10 @@ async def test_ui_backend_memory_crud_uses_authenticated_user_scope() -> None:
                 "category": record.category,
             },
         )
-        await async_manage_command(
+        await async_management_command(
             hass,
             "user-7",
+            False,
             {
                 **base,
                 "action": "update",
@@ -190,28 +194,24 @@ async def test_ui_backend_memory_crud_uses_authenticated_user_scope() -> None:
                 "category": "preferences",
             },
         )
-        await async_manage_command(
+        await async_management_command(
             hass,
             "user-7",
+            False,
             {**base, "action": "delete", "memory_id": "memory-1"},
         )
 
     assert listed["memories"][0]["content"] == record.content
-    assert listed["next_offset"] is None
+    assert listed["has_more"] is False
     memory.async_list.assert_awaited_once_with("user-7", None, 100, 0)
     memory.async_add.assert_awaited_once_with(
         "user-7", record.content, "preferences", "explicit"
     )
-    assert memory.async_get_many.await_count == 2
     memory.async_update.assert_awaited_once_with(
         "user-7",
         "memory-1",
-        content="User prefers Fahrenheit.",
-        category="preferences",
-        importance=None,
-        subject=None,
-        key=None,
-        valid_from=None,
+        "User prefers Fahrenheit.",
+        "preferences",
         refresh_confirmation=False,
         target_user_id="user-7",
         clear_fields=None,
@@ -224,19 +224,20 @@ async def test_ui_backend_broad_clear_requires_confirmation() -> None:
     hass, _, _ = _hass_and_agent()
     memory = SimpleNamespace(async_clear=AsyncMock(return_value=2))
     message = {
+        "section": "memories",
         "entry_id": "entry-1",
         "subentry_id": "agent-1",
         "action": "clear",
         "category": "preferences",
     }
     with patch(
-        "custom_components.extended_openai_conversation_responses.memory_ui.async_get_memory",
+        "custom_components.extended_openai_conversation_responses.management_ui.async_get_memory",
         AsyncMock(return_value=memory),
     ):
         with pytest.raises(HomeAssistantError, match="confirmation"):
-            await async_manage_command(hass, "user-7", message)
-        result = await async_manage_command(
-            hass, "user-7", {**message, "confirm": True}
+            await async_management_command(hass, "user-7", False, message)
+        result = await async_management_command(
+            hass, "user-7", False, {**message, "confirm": True}
         )
 
     assert result == {"deleted": 2}

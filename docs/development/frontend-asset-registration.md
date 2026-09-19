@@ -19,8 +19,8 @@ Temporary Memory, configuration guidance, Function Tool quarantine, history,
 loading optimizations, permission setup and setup health.
 
 No backend dispatcher/runtime wrappers, authorization checks, retry markers,
-cache behavior or browser rendering are changed. The standalone Memory files
-remain retained but unregistered, as documented in the standalone-panel audit.
+cache behavior or browser rendering are changed. The standalone Memory files have since been removed after unified parity, as
+documented in the standalone-panel retirement audit.
 The Knowledge panel is not reintroduced.
 
 ## Registration boundaries

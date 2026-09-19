@@ -1,117 +1,92 @@
-# Standalone Memory and Knowledge panel audit
+# Standalone Memory and Knowledge panel retirement
 
-Audited `develop` at `7232aee041ebda074809c39ebb47132e794c4404` for the
-second post-PR5 simplification PR. This is a **partial retirement**: Knowledge
-can be removed; Memory needs a separate parity decision before removal.
+Memory parity is complete in unified Management. The dormant Memory stack is now
+removed, following the earlier Knowledge retirement. The prior reachability audit
+still applies: normal startup already registered only unified Management and Debug;
+this change does not remove a reachable production endpoint or add a redirect.
 
-The Temporary Memory row below was updated by the subsequent direct-owner
-cleanup. The original panel-retirement scope and parity decisions are unchanged.
+## Memory parity delivered
 
-## Production reachability
+- Persistent editing supports content, category, importance, subject, key and
+  valid-from, including explicit clearing of optional metadata. Source, creation
+  timestamps and raw confirmation timestamps remain read-only.
+- Personal/shared moves use `PersistentMemory.async_update(target_user_id=...)`.
+  Both scopes pass current Management authorization. Shared scopes remain admin-only;
+  moving into disabled shared memory is rejected. The same Memory ID survives the
+  atomic move. Failed persistence rolls back through the existing store boundary.
+- Management list/search/update projections expose `memory_revision`; editors retain
+  their original token and send `expected_revision`. Conflicts leave the draft open
+  and the store unchanged. Cancel, refresh the list, and reopen to use fresh data.
+- Ordinary edits explicitly preserve confirmation age. The deliberate "Refresh
+  confirmation on save" checkbox opts into the store's existing refresh operation.
+  Confirmation-only changes retain the existing substantive revision semantics.
+- Temporary bulk clear confirms first and clears all records in the selected
+  Personal/Shared owner scope and agent, regardless of search. It uses owned delete
+  batches of at most 50. Persistent records are unaffected.
 
-- `__init__.py:async_setup` registers Debug and unified Management UI only.
-  Neither `async_setup_memory_ui` nor `async_setup_knowledge_ui` has a production
-  caller. Their WebSocket commands, static assets and sidebar panels are not
-  registered by normal startup.
-- `knowledge_ui.py` has no production importer or command caller. Its only
-  callers are `test_knowledge_ui.py`, `test_knowledge.py` and
-  `test_knowledge_availability.py`.
-- `memory_ui.py` is imported by
-  `agent_maintenance._install_legacy_memory_guard`, called during startup. This
-  wraps `async_manage_command` but does not register it or invoke it. All actual
-  command calls are in tests. Keep this guard while retaining Memory; unrelated
-  maintenance wrappers are outside this retirement.
-- The three standalone frontend files are referenced only by their own setup
-  functions, the Memory subclass import, and legacy tests. No unified frontend
-  import or static registration consumes them. Their custom elements are not
-  used by Management.
-- The four standalone URL/title constants are used only by their respective
-  legacy modules. Their `WS_COMMAND` and `_UI_SETUP` values are module-local.
-- Options-flow discovery still contains literal links to the unregistered
-  standalone paths. Point these forms to the existing unified subsections.
-  This repairs discovery; it does not add a redirect or register an old route.
+Only the Management adapter, its WebSocket schema and projection were extended.
+No shared store/model-tool/service API or storage format was removed or redesigned.
+Existing optional-revision compatibility remains for other API callers; the unified
+editor refuses an existing-record save without its captured revision.
 
-## Feature comparison
+## PR3 preservation
 
-| Capability | Current unified Management | Decision |
+The existing lazy Memory route owns metadata helpers and clear actions. Mutations
+use the existing authoritative refresh and keyed reconciliation. Browser assertions
+cover unrelated card identity, no main replacement, retained search, one delegated
+handler, open drafts and stale responses across scope/agent/kind boundaries. The
+Memory metadata fields mount inside the existing persistent dialog on first use.
+There is no global render invalidation change and no measured latency claim.
+
+## Regression classification and migration
+
+| Original tests | Classification | Disposition |
 | --- | --- | --- |
-| Agent enumeration and Memory mode | `agents`, including mode/count; scope catalog | Retained |
-| Persistent list/search/pagination | `management_browser` wraps the Memory list/search actions, with bounded pages and `has_more` | Parity |
-| Persistent add/update/delete/clear | `management_ui`, selected scope authorization, confirmation for clear | Basic CRUD parity |
-| Personal/shared/legacy scopes | `_selected_scope`, `_memory_scope`, scope catalog; admin-only legacy reassignment | Retained; authorization differs deliberately |
-| Persistent metadata edits and scope moves | Unified editor sends content/category only; legacy supports importance, subject, key, valid-from, clear-fields and moving ownership | **Gap: retain Memory** |
-| Revision and confirmation semantics | Legacy serializes revisions and passes `expected_revision` and `refresh_confirmation=False`; unified list/editor/update do not | **Gap: retain Memory** |
-| Temporary list/update/delete | Unified Management calls `TemporaryMemory.async_list_owned`, `async_update_owned` and `async_delete_owned` with validated owner scopes | Retained; unified adds editing |
-| Temporary bulk clear | Legacy confirms and deletes the authenticated user's records in batches; no unified `temporary_clear` action/control | **Gap: retain Memory** |
-| Agent testing | Unified diagnostics `test_agent`, plus native options flow | Parity; current admin restriction retained |
-| Knowledge list/get/create/update/delete | Unified `knowledge` section calls the same core library | Parity |
-| Knowledge source enabled state | Unified create/update, list/get, editor and existing availability tests | Parity |
-| Knowledge stats/source count | List returns `stats`; agents/overview expose source count | Parity |
-| Knowledge permissions | Legacy accepts authenticated users; current `management_permissions` intentionally requires admin for the entire section | Preserve current boundary; do not revive the weaker endpoint |
+| `test_memory_ui.py`: legacy owner lookup, agents/test dispatch, setup and transport/schema shape | Standalone-surface-only | Removed with the module. Live entry/agent resolution, dispatcher, WebSocket and setup coverage remains in Management tests. New schema and retirement assertions cover the live surface. |
+| `test_memory_ui.py`: metadata forwarding, control validation, household permission, scoped delete/clear, paging | Parity/safety | Migrated to `test_memory_management_parity.py`; complete paging/search remains in `test_management_browser.py` and its coverage companion; CRUD/confirmed clear remains in `test_memory_ui_and_modes.py`. Current Management authorization is preserved rather than the dormant endpoint's weaker shared permissions. |
+| `test_memory_ui_and_modes.py`: mode normalization, config flow, version migration | Shared backend regression | Preserved unchanged. The two CRUD/confirmation tests now call unified Management. |
+| `test_memory_management_parity.py`: stale revision and blank update | Shared backend regression | Retained against the real `PersistentMemory` store. |
+| `test_memory_management_parity.py`: temporary isolation/clear, metadata and owner resolution | Parity/safety | Replaced legacy adapter fixtures with live Management/store tests for authorized source/target, both move directions, failed durable moves, conflicts, metadata clearing and confirmed batched clear. |
+| `test_memory_management_parity.py`: legacy agent response and standalone source assertion | Standalone-surface-only | Removed; live catalog and temporary owner validation have dedicated tests. |
+| `test_memory_management_confirmation.py` | Parity/safety | Same ordinary-edit assertion migrated to unified dispatch; explicit refresh and substantive revision tests added. |
+| `test_safety_hardening_startup.py` | Startup/non-registration | Retained; stable method ownership now targets `async_memories_command`. |
+| `memory-management-parity-ui.test.mjs` | Parity/safety | Migrated to executable unified payload checks and revision-snapshot assertions. |
+| Standalone cases in `persistent-data-collections.spec.mjs` | Parity/safety and standalone-only controls | Metadata, ownership, clear, revision/editor and identity assertions migrated to `memory-management-parity.spec.mjs`; unified search, stale pagination/agent/scope and delete assertions retained. Removed only standalone chip/layout/filter/setup fixtures. |
+| Genuine-HA old `/manage` acceptance | Startup/non-registration | Retained; adds absent old panel/static registrations and rich Memory WebSocket edit/conflict coverage. |
+| `test_memory_retirement.py` | Startup/non-registration | New explicit file/build/reference and idempotent live-registration guards. |
 
-The Memory gaps are useful data-editing and stale-write safeguards, not merely
-historical payload differences. Moving them would require changes to the live
-editor, list serialization and backend contract. Retain `memory_ui.py`, both
-Memory frontend files, their constants, maintenance guard and all their tests
-for a separate bounded parity change. This PR does not claim complete Memory
-retirement or fix these pre-existing gaps.
+## Removed surface and packaging
 
-## Compatibility audit
+Removed `memory_ui.py`, `frontend/memory-panel.js`, and
+`frontend/memory-management-panel.js`, including their local registration/setup
+helpers, `/manage` command schema, and both standalone custom elements. Removed
+`MEMORY_PANEL_URL` and `MEMORY_PANEL_TITLE`, the standalone browser fixture, and
+its helper/benchmark branches. No maintenance importer remains on current develop.
 
-Repository docs, tests, comments, published GitHub release notes and public issue/
-PR search were checked. No external WebSocket API stability commitment was found
-for `/manage` or `/knowledge` under the integration domain. The old UI methods
-describe integration-owned authenticated management surfaces. The original
-Knowledge PR (#12) describes a management API/panel, without an external API or
-route compatibility guarantee.
+Release staging enumerates tracked integration files with `git ls-files`; removed
+files are no longer in that payload. No Vite entry, static registration or dynamic
+import references the standalone files. Production assets are regenerated using
+`frontend`'s normal Vite build, never edited by hand. Historical PR3 measurement
+JSON remains as evidence of that earlier run; it is not a shipped surface.
 
-Stale usage guidance does exist: Knowledge docs advertise
-`/extended-openai-knowledge`, configuration docs name a Knowledge sidebar panel,
-and troubleshooting names an OpenAI memories sidebar panel. Update these to the
-unified Management UI. The documented `/knowledge` and `/memories` aliases *inside*
-`/extended-openai` are different routes and remain supported and unchanged.
-No evidence of external consumers was found; this cannot prove absence of private
-custom clients. Normal startup already leaves both old WebSocket types and old
-sidebar URLs unregistered before this PR.
+Genuine Home Assistant acceptance requires Linux CI. Local mock-backed Python
+checks can run on Windows with pytest plugin autoload disabled and the asyncio
+plugin explicitly enabled; that is not a substitute for the genuine-HA jobs.
 
-## Removal and coverage
+## Validation for the Memory retirement
 
-Delete `knowledge_ui.py`, `frontend/knowledge-panel.js`, the Knowledge URL/title
-constants, and `tests/test_knowledge_ui.py` (legacy-only dispatch, schema, setup
-and transport tests). Their registration functions, local setup flag and
-WebSocket constant disappear with the module.
-
-Migrate the real-library CRUD/content-omission/confirmation tests in
-`test_knowledge.py` to Management. Consolidate the duplicate old availability
-test into the existing unified availability test, retaining disabled-source list
-coverage. Existing Management tests cover entry resolution, enumeration, dispatch,
-WebSocket errors and idempotent registration. Add genuine-HA acceptance that old
-command types are unregistered, unified Memory/Knowledge calls work, Knowledge
-CRUD survives, and normal users cannot access Knowledge.
-
-Keep `test_memory_ui_and_modes.py` intact: it covers core mode normalization,
-migration and UI behavior. Keep all other Memory tests, including the core stale
-revision and blank-update regressions in `test_memory_management_parity.py`.
-Core stores, model tools, backups, Guest Mode, runtime, services and diagnostics
-are not changed.
-
-## Temporary Memory direct-owner follow-up
-
-`temporary_memory.py` now owns the retained Personal/Shared owner contract,
-startup migration and overflow recovery, owned Management operations, backup
-normalization, read-only snapshots and coalesced expiry persistence directly.
-Continuity identifiers are metadata, never authorization for retained records.
-Management listing returns all active records for the selected owner; model
-injection retains its separate record and character limits.
-
-The class also owns its transactional save boundary: failed writes roll back,
-caller cancellation is deferred until the Store write settles, and failed
-initialization remains retryable. Other managers and unrelated maintenance
-installers are outside this change. No storage format or panel-parity decision
-changes, and no runtime installer or imported-alias repair is needed for
-Temporary Memory.
-
-`test_temporary_memory_direct_ownership.py` covers structural ownership, startup
-failure recovery, cancelled/failed persistence and concurrent owner contexts.
-The genuine-HA unload/reload regression also verifies stable method identities
-and foreign-owner exclusion after reload.
+- Frontend TypeScript check, 31 Vitest tests, all 77 standalone JS tests, and the
+  normal Vite production build passed.
+- 67 distinct Chromium checks passed across parity, persistent collections, lazy
+  ownership, CRUD and unified saving suites (66-test run plus the final added
+  confirmation-boundary test; the changed collection suites were rerun together).
+- 462 Memory/Management/Temporary Memory/frontend-registration/startup Python tests
+  passed with Windows-compatible plugin selection. The final focused parity and
+  retirement rerun also passed (21 tests). Native full-plugin collection fails on
+  Linux-only `fcntl`; no Linux distribution is installed locally. Genuine-HA tests
+  remain for Linux CI, including the extended WebSocket/registration acceptance.
+- Ruff, Python compilation, JS syntax, and diff checks passed. A release ZIP staged
+  from the tracked integration inventory contains 255 files and no retired assets.
+- Removed standalone source: 1,832 lines / 67,581 bytes across three files, including
+  two raw frontend assets (52,553 bytes). Including replacement code and the two
+  constants, production source shrinks by 1,683 lines, excluding generated bundles.

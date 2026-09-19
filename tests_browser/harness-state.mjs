@@ -28,7 +28,7 @@ function freshState() {
       },
       defaults: {}, model_capabilities: {}, local_handling: {supported: true, intents: [], pipeline_conflicts: []},
     },
-    memories: [{memory_id: "memory-1", scope_id: "user:test-user", content: "Baseline browser fixture memory", category: "general", source: "manual", created_at: "2026-09-01T12:00:00Z", updated_at: "2026-09-01T12:00:00Z"}],
+    memories: [{revision: 1, memory_id: "memory-1", scope_id: "user:test-user", content: "Baseline browser fixture memory", category: "general", source: "manual", created_at: "2026-09-01T12:00:00Z", updated_at: "2026-09-01T12:00:00Z"}],
     guest: {config: {guest_mode_enabled: false, guest_web_search: false}, revision: "guest-1", legacy_policy: false},
     quiet: {config: {enabled: false, start: "22:00", end: "07:00", max_volume: 0.2, wake_sound: "off", overrides: {}}, active: false, satellites: []},
     requestRules: {
@@ -108,7 +108,7 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
 
     if (key === "memories/list") return {memories: clone(state.memories.filter((m) => !message.scope_id || m.scope_id === message.scope_id)), total: state.memories.length};
     if (key === "memories/add") {
-      const memory = {memory_id: `memory-${state.nextMemoryId++}`, scope_id: message.scope_id, content: message.content, category: message.category || "general", source: "manual", created_at: now(), updated_at: now()};
+      const memory = {revision: 1, memory_id: `memory-${state.nextMemoryId++}`, scope_id: message.scope_id, content: message.content, category: message.category || "general", source: "manual", created_at: now(), updated_at: now()};
       state.memories.push(memory); counts(); save(); return {memory: clone(memory)};
     }
     if (key === "memories/update") {

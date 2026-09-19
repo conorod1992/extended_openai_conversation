@@ -90,6 +90,7 @@ from .const import (
     MANAGEMENT_PANEL_TITLE,
     MANAGEMENT_PANEL_URL,
     SERVICE_CALL_FUNCTION,
+    SHARED_MEMORY_DISABLED,
     TEMPORARY_MEMORY_OFF,
 )
 from .continuity import ConversationContinuity, async_get_continuity
@@ -150,7 +151,7 @@ from .management_permissions import (
     async_quiet_hours_command,
     require_management_permission,
 )
-from .memory import ANONYMOUS_USER_ID, async_get_memory, memory_as_dict, memory_enabled
+from .memory import ANONYMOUS_USER_ID, async_get_memory, memory_enabled
 from .prompt import render_effective_prompt
 from .regex_execution import async_process_speech_text
 from .request import (
@@ -1928,6 +1929,16 @@ async def _async_temporary_memories_command(
             "scope_id": owner,
             "stats": manager.stats(),
         }
+    if action == "temporary_clear":
+        if message.get("confirm") is not True:
+            raise HomeAssistantError("Explicit confirmation is required")
+        records = await manager_any.async_list_owned(owner)
+        deleted = 0
+        for offset in range(0, len(records), 50):
+            deleted += await manager_any.async_delete_owned(
+                owner, [record.memory_id for record in records[offset : offset + 50]]
+            )
+        return {"deleted": deleted}
     memory_id = message.get("memory_id")
     if not isinstance(memory_id, str) or not memory_id:
         raise HomeAssistantError("memory_id is required")
@@ -1968,7 +1979,12 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
     entry_id = request.entry_id
     subentry_id = request.subentry_id
     action = request.message["action"]
-    if action in {"temporary_list", "temporary_update", "temporary_delete"}:
+    if action in {
+        "temporary_list",
+        "temporary_update",
+        "temporary_delete",
+        "temporary_clear",
+    }:
         return await _async_temporary_memories_command(request)
     scope_id = _selected_scope(
         request.user_id, request.is_admin, request.message.get("scope_id")
@@ -1982,23 +1998,64 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
         return await async_browse_memories(
             memory, owner, scope_id, message, include_scope=is_admin
         )
-    if action == "add":
-        return await memory.async_add(
-            owner,
-            str(message.get("content", "")),
-            str(message.get("category", "general")),
-            "explicit",
-        )
-    if action == "update":
+    if action in {"add", "update"}:
+        from .management_browser import management_memory_dict
+
+        metadata = {
+            field: message[field]
+            for field in ("importance", "subject", "key", "valid_from")
+            if field in message
+        }
+        target = scope_id
+        if "target_scope_id" in message:
+            target = _selected_scope(user_id, is_admin, message["target_scope_id"])
+            if target != scope_id:
+                if not (
+                    (
+                        scope_id.startswith("user:")
+                        and target == SHARED_HOUSEHOLD_SCOPE_ID
+                    )
+                    or (
+                        scope_id == SHARED_HOUSEHOLD_SCOPE_ID
+                        and target.startswith("user:")
+                    )
+                ):
+                    raise HomeAssistantError(
+                        "Memory moves require Personal and Shared scopes"
+                    )
+                if (
+                    target == SHARED_HOUSEHOLD_SCOPE_ID
+                    and request.subentry.data.get(
+                        CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE
+                    )
+                    == SHARED_MEMORY_DISABLED
+                ):
+                    raise HomeAssistantError("Shared household memory is disabled")
+        if action == "add":
+            return await memory.async_add(
+                _memory_scope(target),
+                str(message.get("content", "")),
+                str(message.get("category", "general")),
+                "explicit",
+                **metadata,
+            )
+        refresh_confirmation = message.get("refresh_confirmation", False)
+        if not isinstance(refresh_confirmation, bool):
+            raise HomeAssistantError("refresh_confirmation must be true or false")
         record = await memory.async_update(
             owner,
             str(message.get("memory_id", "")),
             message.get("content"),
             message.get("category"),
+            **metadata,
+            target_user_id=_memory_scope(target),
+            expected_revision=message.get("expected_revision"),
+            clear_fields=message.get("clear_fields"),
+            refresh_confirmation=refresh_confirmation,
         )
         return {
             "status": "updated",
-            "memory": memory_as_dict(record, include_scope=is_admin),
+            "memory": management_memory_dict(record, include_scope=is_admin),
         }
     if action == "delete":
         return {
@@ -2195,6 +2252,7 @@ async def _async_management_request(
         "temporary_list",
         "temporary_update",
         "temporary_delete",
+        "temporary_clear",
     }:
         # Keep the Temporary Memory API's existing per-field validation errors.
         for key in ("entry_id", "subentry_id"):
@@ -2308,6 +2366,13 @@ def asdict_or_none(value: Any) -> dict[str, Any] | None:
         vol.Optional("document"): vol.Any(str, dict),
         vol.Optional("sample_text"): str,
         vol.Optional("mode"): str,
+        vol.Optional("importance"): vol.In(["low", "normal", "high"]),
+        vol.Optional("subject"): str,
+        vol.Optional("key"): str,
+        vol.Optional("valid_from"): str,
+        vol.Optional("clear_fields"): [vol.In(["subject", "key", "valid_from"])],
+        vol.Optional("expected_revision"): str,
+        vol.Optional("refresh_confirmation"): bool,
         vol.Optional("memory_ids"): list,
         vol.Optional("memory_id"): str,
         vol.Optional("session_id"): str,

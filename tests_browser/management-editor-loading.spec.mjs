@@ -105,3 +105,36 @@ test("failed editor loading is visible and can be retried without saving a blank
   await panel.locator("#tool-cancel").click();
   await expectHarnessClean(page, errors);
 });
+
+
+for (const kind of ["knowledge", "memory"]) {
+  for (const bundled of [false, true]) {
+    test(`${kind} initial focus cannot steal input on a later frame (${bundled ? "bundle" : "source"})`, async ({page}) => {
+      const errors = trackPageErrors(page);
+      await page.goto(fixtureUrl(`data-memory/${kind === "knowledge" ? "knowledge" : "memories"}`, bundled ? "&bundle=1" : ""));
+      const panel = page.locator("extended-openai-management-panel");
+      await expect(panel.locator(kind === "knowledge" ? "#add-source" : "#add-memory")).toBeVisible();
+      // Hold only callbacks scheduled by opening the editor, reproducing the CI
+      // ordering without relying on machine speed or adding arbitrary sleeps.
+      await panel.evaluate(async (host, kind) => {
+        const original = window.requestAnimationFrame;
+        window.editorOpeningFrames = [];
+        window.requestAnimationFrame = callback => window.editorOpeningFrames.push(callback);
+        try {
+          if (kind === "knowledge") await host._openKnowledge();
+          else await host._openMemory();
+        } finally { window.requestAnimationFrame = original; }
+      }, kind);
+      const first = panel.locator(kind === "knowledge" ? "#knowledge-title" : "#memory-content");
+      const next = panel.locator(kind === "knowledge" ? "#knowledge-content" : "#memory-subject");
+      await first.fill("First field");
+      await next.focus();
+      await page.evaluate(() => { for (const callback of window.editorOpeningFrames) callback(performance.now()); });
+      await expect(next).toBeFocused();
+      await page.keyboard.insertText("Second field");
+      await expect(first).toHaveValue("First field");
+      await expect(next).toHaveValue("Second field");
+      await expectHarnessClean(page, errors);
+    });
+  }
+}
