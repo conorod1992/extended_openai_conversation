@@ -19,7 +19,7 @@ export default defineConfig({
     emptyOutDir: true,
     manifest: "manifest.json",
     target: "es2022",
-    minify: "esbuild",
+    minify: "oxc",
     sourcemap: false,
   },
 });
