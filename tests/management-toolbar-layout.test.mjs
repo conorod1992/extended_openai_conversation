@@ -11,16 +11,8 @@ const source = await readFile(
   "utf8",
 );
 
-assert.match(
-  source,
-  /if \(settingsSearch\) header\.append\(settingsSearch\)/,
-  "settings search should live in the page header",
-);
-assert.match(
-  source,
-  /contextRow\.append\(agentPicker\);[\s\S]*?contextRow\.append\(actionGroup\);[\s\S]*?topNav\.before\(contextRow\)/,
-  "assistant context row should contain the picker and assistant actions before primary navigation",
-);
+// Layout and node identity are exercised against the shipped browser fixture in
+// management-panel.spec.mjs and render-invalidation.spec.mjs.
 assert.doesNotMatch(
   source,
   /toolbar\.append\(agentPicker\)|toolbar\.append\(settingsSearch\)/,

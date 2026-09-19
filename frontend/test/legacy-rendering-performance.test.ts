@@ -2,7 +2,8 @@
 import {describe, expect, it} from "vitest";
 import {readFile} from "node:fs/promises";
 
-import {applyIncrementalDraftUpdate, settingsResultsMarkup} from "../../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js";
+import {applyIncrementalDraftUpdate} from "../../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js";
+import {settingsResultsMarkup, SEARCH_DEBOUNCE_MS} from "../../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
 import {renderConfiguration, renderTools} from "../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
 
 const owner = () => ({_e:(value) => String(value ?? ""), _titleCase:String, _empty:String, _draft:{}, _result:{options:{}}});
@@ -41,7 +42,7 @@ describe("native management rendering", () => {
     expect(source).toContain("main.innerHTML =");
     expect(source).not.toContain("shadowRoot.innerHTML =");
     expect(source).toContain("event.stopImmediatePropagation()");
-    expect(source).toContain("SEARCH_DEBOUNCE_MS = 80");
+    expect(SEARCH_DEBOUNCE_MS).toBe(80);
   });
 
   it("keeps loaded main content mounted only during navigation busy renders", async () => {

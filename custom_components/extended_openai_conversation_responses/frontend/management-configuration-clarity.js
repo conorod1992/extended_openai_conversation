@@ -150,6 +150,10 @@ function ensureStyles(panel) {
   root.append(style);
 }
 
+function setText(node, text) {
+  if (node && node.textContent !== text) node.textContent = text;
+}
+
 function enhanceAgentContext(panel, destinations) {
   const root = panel.shadowRoot;
   const picker = root?.querySelector(".agent-picker");
@@ -158,14 +162,14 @@ function enhanceAgentContext(panel, destinations) {
   picker.classList.add("eoc-agent-context");
   picker.classList.toggle("eoc-has-unsaved", destinations.size > 0);
   const heading = picker.querySelector(":scope > span");
-  if (heading) heading.textContent = "Editing assistant";
+  setText(heading, "Editing assistant");
   const select = picker.querySelector("#agent");
   if (select) select.setAttribute("aria-label", "Editing assistant");
   const draftActive = panel._draft && panel._draftAgentId === panel._agentId;
   const detail = picker.querySelector("small");
   if (detail && agent) {
     const model = draftActive ? panel._draft.chat_model || agent.model : agent.model;
-    detail.textContent = `${agent.provider} · ${model}${destinations.size ? " · Unsaved changes" : ""}`;
+    setText(detail, `${agent.provider} · ${model}${destinations.size ? " · Unsaved changes" : ""}`);
   }
 }
 
@@ -197,12 +201,12 @@ function enhanceDirtyNavigation(panel, destinations) {
   const topMobile = root.querySelector("#top-section-mobile");
   topMobile?.querySelectorAll("option").forEach((option) => {
     const base = optionBaseLabel(option);
-    option.textContent = dirtyPages.has(option.value) ? `${base} •` : base;
+    setText(option, dirtyPages.has(option.value) ? `${base} •` : base);
   });
   const local = root.querySelector("#local-section");
   local?.querySelectorAll("option").forEach((option) => {
     const base = optionBaseLabel(option);
-    option.textContent = destinations.has(`${panel._page}/${option.value}`) ? `${base} •` : base;
+    setText(option, destinations.has(`${panel._page}/${option.value}`) ? `${base} •` : base);
   });
 }
 

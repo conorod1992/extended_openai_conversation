@@ -22,7 +22,7 @@ import {renderManagement} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending} from "./management-actions.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch} from "./management-route.js";
 import {getConfigurationEditor, getRouteFeature, routeAssetKind} from "./management-route.js";
-import {NAVIGATION, pageMetadata, routeFromPath, routePath, searchSettings, shouldShowGlobalSettingsSearch} from "./frontend-navigation.js";
+import {NAVIGATION, pageMetadata, routeFromPath, routePath} from "./frontend-navigation.js";
 import {prepareMemoryBrowser, finishMemoryBrowserLoad, renderPersistentMemories, decorateConversations, decorateGuestPolicy, filterPersistentMemories, bindMemoryBrowser, formatManagementTimestamp, freshGuestPolicyDraft} from "./guest-mode-ui.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview} from "./overview-page.js";
@@ -827,25 +827,27 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const navigation = NAVIGATION.filter((item) => this._canAccessView(item.id));
     const local = this._visibleSubsections();
     const currentSection = local.find((item) => item.id === this._subsection);
-    const settingsView = shouldShowGlobalSettingsSearch(this._page, this._subsection);
-    const settingsResults = searchSettings(this._settingsSearchQuery).filter((item) => this._canAccessView(item.page, item.section));
+    this._eocMainMarkup = !agent ? this._empty("No conversation agents configured.") : this._busy ? this._loading() : this._error ? `<div class="error" role="alert">${this._e(this._error)}</div>` : this._content(agent);
+    this._eocDialogMarkup = this._dialogs();
+    this._eocRenderedRoute = `${this._agentId}|${this._viewKey()}`;
     this.shadowRoot.innerHTML = `
       <style>${this._styles()}</style>
       <div class="page-shell">
         <header>
           <div class="page-heading"><h1>Extended OpenAI</h1><p>Configure your assistant, capabilities, retained data, and maintenance.</p></div>
-          <label class="agent-picker"><span>Conversation agent</span><select id="agent">${(this._data?.agents || []).map((a) => `<option value="${this._e(a.subentry_id)}" ${a.subentry_id === this._agentId ? "selected" : ""}>${this._e(a.title)}</option>`).join("")}</select>${agent ? `<small>${this._e(agent.provider)} · ${this._e(agent.model)}</small>` : ""}</label>
         </header>
         <label class="mobile-nav"><span>Page</span><select id="top-section-mobile">${navigation.map((item) => `<option value="${item.id}" ${item.id === this._page ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
+        <div class="eoc-agent-context-row" aria-label="Assistant context">
+          <label class="agent-picker"><span>Conversation agent</span><select id="agent">${(this._data?.agents || []).map((a) => `<option value="${this._e(a.subentry_id)}" ${a.subentry_id === this._agentId ? "selected" : ""}>${this._e(a.title)}</option>`).join("")}</select>${agent ? `<small>${this._e(agent.provider)} · ${this._e(agent.model)}</small>` : ""}</label>
+        </div>
         <nav class="top-nav" aria-label="Management sections">${navigation.map((item) => `<button type="button" data-page="${item.id}" class="${item.id === this._page ? "active" : ""}" ${item.id === this._page ? 'aria-current="page"' : ""}>${item.label}</button>`).join("")}</nav>
-        ${settingsView ? `<div class="global-search"><label><span class="sr-only">Search all settings</span><input id="settings-search" type="search" value="${this._e(this._settingsSearchQuery)}" placeholder="Search all settings" aria-label="Search all settings"></label>${this._settingsSearchQuery ? `<div class="search-results" role="listbox" aria-label="Settings search results">${settingsResults.map((item) => `<button type="button" class="settings-result" role="option" data-page="${item.page}" data-subsection="${item.section}" data-target="${item.target || ""}"><strong>${this._e(item.label)}</strong><span>${this._e(pageMetadata(item.page).label)} › ${this._e(pageMetadata(item.page).sections.find((section) => section.id === item.section)?.label || "")}</span><small>${this._e(item.description)}</small></button>`).join("") || `<p class="empty">No settings match.</p>`}</div>` : ""}</div>` : ""}
         ${["data-memory/conversations", "data-memory/memories"].includes(this._viewKey()) ? this._scopePicker() : ""}
         ${local.length > 1 ? `<div class="section-selector"><label><span>${this._e(pageMetadata(this._page).label)} section</span><select id="local-section">${local.map((item) => `<option value="${item.id}" ${item.id === this._subsection ? "selected" : ""}>${item.label}</option>`).join("")}</select></label><p>${this._e(currentSection?.description || "")}</p></div>` : ""}
         <div class="section-layout">
-          <main>${!agent ? this._empty("No conversation agents configured.") : this._busy ? this._loading() : this._error ? `<div class="error" role="alert">${this._e(this._error)}</div>` : this._content(agent)}</main>
+          <main>${this._eocMainMarkup}</main>
         </div>
       </div>
-      ${this._dialogs()}
+      ${this._eocDialogMarkup}
       <div id="toast" class="toast" role="status" aria-live="polite"></div>`;
     this._bindBase();
     this._bindActions();
@@ -855,8 +857,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const root = this.shadowRoot;
     root.querySelectorAll(".top-nav button").forEach((button) => button.addEventListener("click", () => this._navigate(button.dataset.page)));
     root.querySelector("#top-section-mobile")?.addEventListener("change", (event) => this._navigate(event.target.value));
-    root.querySelector("#settings-search")?.addEventListener("input", (event) => { this._settingsSearchQuery = event.target.value; this._render(); requestAnimationFrame(() => { const input = this.shadowRoot.querySelector("#settings-search"); input?.focus(); input?.setSelectionRange(input.value.length, input.value.length); }); });
-    root.querySelectorAll(".settings-result").forEach((button) => button.addEventListener("click", async () => { this._pendingSettingFocus = button.dataset.target; this._settingsSearchQuery = ""; await this._navigate(button.dataset.page, button.dataset.subsection); }));
     root.querySelectorAll(".inline-route").forEach((button) => button.addEventListener("click", () => this._navigate(button.dataset.page, button.dataset.subsection)));
     root.querySelectorAll(".guide-topic-link").forEach((button) => button.addEventListener("click", () => { this._guideTopic = button.dataset.guideTopic; this._navigate("guide"); }));
     root.querySelector("#agent")?.addEventListener("change", async (event) => {
@@ -892,7 +892,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._page === "assistant") {
       this._configSections = this._configSectionsForView();
       const voiceIdentity = view === "assistant/voice" ? getRouteFeature(view)?.renderVoiceIdentity : null;
-      return getConfigurationEditor()?.renderConfiguration(this, {voiceIdentity}) || this._loading();
+      return renderConfiguration(this, {voiceIdentity});
     }
     if (view === "capabilities/request-rules") return renderRequestRules(this);
     if (view === "capabilities/functions") {
@@ -907,10 +907,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
     if (view === "data-memory/knowledge") return `${knowledgeAvailabilityMarkup(this)}<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
-    if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? (getConfigurationEditor()?.renderConfiguration(this) || this._loading()) : ""}`; }
+    if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? (renderConfiguration(this)) : ""}`; }
     if (view === "usage-maintenance/usage") return this._usage();
     if (view === "usage-maintenance/diagnostics") return this._diagnostics(agent);
-    if (["usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) { this._configSections = this._configSectionsForView(); return (getConfigurationEditor()?.renderConfiguration(this) || this._loading()); }
+    if (["usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) { this._configSections = this._configSectionsForView(); return (renderConfiguration(this)); }
     return this._empty("This section is not available.");
   }
 

@@ -1,9 +1,10 @@
+import {getConfigurationEditor} from "./management-route.js";
 import {getAgentConfigModule} from "./agent-config-loader.js";
 
-function renderConfiguration(panel) {
-  const module = getAgentConfigModule();
+function renderConfiguration(panel, presentation) {
+  const module = getConfigurationEditor();
   if (!module) return panel._loading?.() || '<div class="loading">Loading configuration…</div>';
-  return module.renderConfiguration(panel);
+  return module.renderConfiguration(panel, presentation);
 }
 
 function bindConfiguration(panel) {

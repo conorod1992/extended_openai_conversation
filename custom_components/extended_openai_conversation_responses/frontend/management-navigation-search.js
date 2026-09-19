@@ -47,6 +47,7 @@ const SEARCH_STYLE = `
   .eoc-global-search .settings-loading{color:var(--secondary-text-color)}
   .eoc-global-search .settings-load-error{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px;margin:2px;border-radius:8px;background:var(--secondary-background-color);color:var(--secondary-text-color);font-size:13px}
   .eoc-global-search .settings-load-error button{min-height:32px;padding:5px 10px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color)}
+  .eoc-global-search .search-results[hidden],.subsection-nav[hidden]{display:none}
   .eoc-global-search .empty{margin:8px 10px}
   .subsection-nav{display:flex;gap:8px;flex-wrap:wrap;overflow:visible;border:0;margin:0 0 12px;padding:0}
   .subsection-nav button{min-height:38px;padding:8px 13px;border:1px solid var(--divider-color);border-radius:999px;background:var(--card-background-color);color:var(--secondary-text-color)}
@@ -127,7 +128,9 @@ function pathLabel(item) {
   return `${page.label}${section ? ` › ${section.label}` : ""}`;
 }
 
-function searchMarkup(panel) {
+export const SEARCH_DEBOUNCE_MS = 80;
+
+function settingsResultsMarkup(panel) {
   const query = String(panel._settingsSearchQuery || "");
   const results = visibleSettings(panel);
   const configUnavailable = Boolean(
@@ -141,13 +144,32 @@ function searchMarkup(panel) {
   const loadError = configUnavailable
     ? '<div class="settings-load-error" role="status"><span>Current setting values couldn’t be loaded.</span><button id="settings-search-retry" type="button">Retry</button></div>'
     : "";
-  return `<div class="global-search eoc-global-search"><label><span class="search-label">Find a setting</span><input id="settings-search" type="search" value="${panel._e(query)}" placeholder="Search settings by name or purpose" aria-label="Search all settings" autocomplete="off"></label>${query ? `<div class="search-results" role="listbox" aria-label="Settings search results">${loadError}${results.map((item) => {
+  return query ? `${loadError}${results.map((item) => {
     const state = settingCurrentState(item, panel);
+    if (state?.value === "Not supported by current model" && ["temperature", "top_p", "reasoning_effort", "service_tier"].includes(item.configKey)) {
+      state.value = "Not used for current model";
+    }
     const current = state
       ? `<span class="settings-current">${panel._e(state.label)}: ${panel._e(state.value)}</span>`
       : item.configKey && configLoading ? '<span class="settings-current settings-loading">Current value loading…</span>' : "";
     return `<button type="button" class="settings-result" role="option" data-page="${panel._e(item.page)}" data-subsection="${panel._e(item.section)}" data-target="${panel._e(item.target || "")}"><strong>${panel._e(friendlySettingLabel(item.configKey) || item.label)}</strong><span class="setting-path">${panel._e(pathLabel(item))}</span><small>${panel._e(item.description)}</small>${current}</button>`;
-  }).join("") || '<p class="empty">No settings match.</p>'}</div>` : ""}</div>`;
+  }).join("") || '<p class="empty">No settings match.</p>'}` : "";
+}
+
+function searchMarkup(panel) {
+  return `<div class="global-search eoc-global-search"><label><span class="search-label">Find a setting</span><input id="settings-search" type="search" value="${panel._e(panel._settingsSearchQuery || "")}" placeholder="Search settings by name or purpose" aria-label="Search all settings" autocomplete="off"></label><div class="search-results" role="listbox" aria-label="Settings search results" ${panel._settingsSearchQuery ? "" : "hidden"}>${settingsResultsMarkup(panel)}</div></div>`;
+}
+
+export function updateSettingsResults(panel) {
+  const results = panel.shadowRoot?.querySelector(".eoc-global-search .search-results");
+  if (!results) return;
+  const markup = settingsResultsMarkup(panel);
+  if (results._eocMarkup !== markup) {
+    results.innerHTML = markup;
+    results._eocMarkup = markup;
+  }
+  const hidden = !panel._settingsSearchQuery;
+  if (results.hidden !== hidden) results.hidden = hidden;
 }
 
 async function ensureSearchConfiguration(panel, {retry = false} = {}) {
@@ -187,75 +209,81 @@ async function ensureSearchConfiguration(panel, {retry = false} = {}) {
         panel._settingsSearchConfigPromise = null;
         panel._settingsSearchConfigPromiseAgentId = null;
         if (panel._settingsSearchQuery) {
-          panel._settingsSearchShouldFocus = true;
-          panel._render();
+          updateSettingsResults(panel);
         }
       }
     });
   if (panel._settingsSearchQuery) {
-    panel._settingsSearchShouldFocus = true;
-    panel._render();
+    updateSettingsResults(panel);
   }
   return panel._settingsSearchConfigPromise;
 }
 
-function bindSearch(panel) {
-  const root = panel.shadowRoot;
-  const input = root.querySelector("#settings-search");
-  input?.addEventListener("input", (event) => {
-    panel._settingsSearchQuery = event.target.value;
-    panel._settingsSearchShouldFocus = true;
-    panel._render();
-    void ensureSearchConfiguration(panel);
+function bindSearch(panel, search) {
+  const input = search.querySelector("#settings-search");
+  input.addEventListener("input", () => {
+    panel._settingsSearchQuery = input.value;
+    clearTimeout(panel._eocSettingsSearchTimer);
+    panel._eocSettingsSearchTimer = setTimeout(() => {
+      updateSettingsResults(panel);
+      void ensureSearchConfiguration(panel);
+    }, SEARCH_DEBOUNCE_MS);
   });
-  root.querySelector("#settings-search-retry")?.addEventListener("click", () => {
-    panel._settingsSearchShouldFocus = true;
-    void ensureSearchConfiguration(panel, {retry:true});
-  });
-  root.querySelectorAll(".settings-result").forEach((button) => button.addEventListener("click", async () => {
+  search.addEventListener("click", async (event) => {
+    if (event.target.closest("#settings-search-retry")) {
+      void ensureSearchConfiguration(panel, {retry:true});
+      return;
+    }
+    const button = event.target.closest(".settings-result");
+    if (!button) return;
     panel._pendingSettingFocus = button.dataset.target;
     panel._settingsSearchQuery = "";
+    input.value = "";
+    updateSettingsResults(panel);
     await panel._navigate(button.dataset.page, button.dataset.subsection);
-  }));
-  if (panel._settingsSearchShouldFocus) {
-    panel._settingsSearchShouldFocus = false;
-    requestAnimationFrame(() => {
-      const next = panel.shadowRoot.querySelector("#settings-search");
-      next?.focus({preventScroll:true});
-      next?.setSelectionRange(next.value.length, next.value.length);
-    });
-  }
-}
-
-function bindSubsectionNavigation(panel) {
-  panel.shadowRoot.querySelectorAll(".subsection-nav button").forEach((button) => button.addEventListener("click", () => {
-    void panel._navigate(panel._page, button.dataset.subsection);
-  }));
+  });
 }
 
 export function enhanceNavigationSearch(panel) {
   const root = panel.shadowRoot;
   if (!root) return;
-  root.querySelector("style[data-eoc-navigation-search]")?.remove();
-  const style = document.createElement("style");
-  style.dataset.eocNavigationSearch = "";
-  style.textContent = SEARCH_STYLE;
-  root.append(style);
-
-  root.querySelectorAll(".global-search").forEach((search) => search.remove());
-  const topNav = root.querySelector(".top-nav");
-  if (topNav) topNav.insertAdjacentHTML("afterend", searchMarkup(panel));
-
-  root.querySelector(".subsection-nav")?.remove();
-  const local = panel._visibleSubsections();
-  const selector = root.querySelector(".section-selector");
-  if (selector && local.length > 1) {
-    selector.insertAdjacentHTML("beforebegin", `<nav class="subsection-nav" aria-label="${panel._e(pageMetadata(panel._page).label)} sections">${local.map((item) => `<button type="button" data-subsection="${panel._e(item.id)}" class="${item.id === panel._subsection ? "active" : ""}" ${item.id === panel._subsection ? 'aria-current="page"' : ""}>${panel._e(item.label)}</button>`).join("")}</nav>`);
+  if (!root.querySelector("style[data-eoc-navigation-search]")) {
+    const style = document.createElement("style");
+    style.dataset.eocNavigationSearch = "";
+    style.textContent = SEARCH_STYLE;
+    root.append(style);
   }
+  let search = root.querySelector(".eoc-global-search");
+  const header = root.querySelector("header");
+  if (!search && header) {
+    header.insertAdjacentHTML("beforeend", searchMarkup(panel));
+    search = header.querySelector(".eoc-global-search");
+    bindSearch(panel, search);
+  }
+  const input = search?.querySelector("#settings-search");
+  if (input && input.value !== (panel._settingsSearchQuery || "")) input.value = panel._settingsSearchQuery || "";
+  updateSettingsResults(panel);
 
-  bindSearch(panel);
-  bindSubsectionNavigation(panel);
+  const local = panel._visibleSubsections();
+  const topNav = root.querySelector(".top-nav");
+  let nav = root.querySelector(".subsection-nav");
+  const markup = local.length > 1 ? local.map((item) => `<button type="button" data-subsection="${panel._e(item.id)}" class="${item.id === panel._subsection ? "active" : ""}" ${item.id === panel._subsection ? 'aria-current="page"' : ""}>${panel._e(item.label)}</button>`).join("") : "";
+  if (!nav && topNav) {
+    nav = document.createElement("nav");
+    nav.className = "subsection-nav";
+    topNav.after(nav);
+    nav.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-subsection]");
+      if (button) void panel._navigate(panel._page, button.dataset.subsection);
+    });
+  }
+  if (nav && nav._eocMarkup !== markup) {
+    nav.innerHTML = markup;
+    nav._eocMarkup = markup;
+    nav.hidden = !markup;
+    nav.setAttribute("aria-label", `${pageMetadata(panel._page).label} sections`);
+  }
   if (panel._settingsSearchQuery) void ensureSearchConfiguration(panel);
 }
 
-export {ensureSearchConfiguration, searchMarkup};
+export {ensureSearchConfiguration, searchMarkup, settingsResultsMarkup};
