@@ -21,6 +21,22 @@ _CONFIG_DIR = "ACTIVE_REQUEST_SHUTDOWN_CONFIG_DIR"
 _STATE_FILE = "active-request-shutdown-state.json"
 
 
+def _stage_component(source: Path, destination: Path) -> None:
+    """Stage the integration without unrelated heavyweight HA dependencies."""
+    shutil.copytree(source, destination)
+    manifest_path = destination / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    excluded = {"energy", "history", "recorder"}
+    manifest["dependencies"] = [
+        dependency
+        for dependency in manifest.get("dependencies", [])
+        if dependency not in excluded
+    ]
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def _raw_client(agent: Any) -> Any:
     """Unwrap integration instrumentation while leaving the real OpenAI SDK intact."""
     client = agent._client
@@ -279,22 +295,13 @@ async def _recovery_phase(hass: Any, config_dir: Path) -> None:
 async def _child_main() -> None:
     """Run one independent Home Assistant process for one acceptance phase."""
     from homeassistant import bootstrap, runner
-    from homeassistant.helpers import recorder as recorder_helper
-
     config_dir = Path(os.environ[_CONFIG_DIR]).resolve()
     phase = os.environ[_CHILD_PHASE]
     sys.path.insert(0, str(config_dir))
     hass = await bootstrap.async_setup_hass(
-        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
+        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=True)
     )
     assert hass is not None
-
-    # bootstrap.async_setup_hass() is being used directly rather than via HA's
-    # normal runner. Mirror the runner's recorder initialization contract before
-    # the config flow loads this integration and its recorder/history/energy
-    # dependencies.
-    if recorder_helper.DATA_RECORDER not in hass.data:
-        recorder_helper.async_initialize_recorder(hass)
 
     await hass.async_start()
 
@@ -345,7 +352,7 @@ def test_shutdown_cancels_inflight_provider_request_and_next_boot_is_healthy(
     config_dir = tmp_path / "ha-config"
     destination = config_dir / "custom_components" / DOMAIN
     destination.parent.mkdir(parents=True)
-    shutil.copytree(source, destination)
+    _stage_component(source, destination)
     (config_dir / "configuration.yaml").write_text(
         "homeassistant:\n  name: Active Request Shutdown Acceptance\n",
         encoding="utf-8",

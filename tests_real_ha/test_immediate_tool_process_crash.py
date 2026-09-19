@@ -182,7 +182,7 @@ async def _crash_phase(config_dir: Path) -> None:
     from homeassistant import bootstrap, runner
 
     hass = await bootstrap.async_setup_hass(
-        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
+        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=True)
     )
     assert hass is not None
 
@@ -201,8 +201,10 @@ async def _crash_phase(config_dir: Path) -> None:
 
     # Ensure config-entry/auth writes are durable before the intentional crash.
     await hass.async_block_till_done()
-    await asyncio.sleep(2)
-    assert (config_dir / ".storage" / "core.config_entries").exists()
+    config_entries_path = config_dir / ".storage" / "core.config_entries"
+    async with asyncio.timeout(2):
+        while not config_entries_path.exists():
+            await asyncio.sleep(0.02)
 
     await _execute_tool(hass, agent, _FIRST_MARKER)
     raise AssertionError("immediate tool unexpectedly returned past crash boundary")
@@ -215,7 +217,7 @@ async def _recovery_phase(config_dir: Path) -> None:
     from homeassistant.config_entries import ConfigEntryState
 
     hass = await bootstrap.async_setup_hass(
-        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
+        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=True)
     )
     assert hass is not None
 
