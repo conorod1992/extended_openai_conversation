@@ -393,7 +393,7 @@ async def test_management_contract_validates_and_enriches_owner_operations(
 
     ownership._install_management_contract()
 
-    assert ownership._FRONTEND_MODULE in management_ui.MANAGEMENT_FRONTEND_MODULES
+    assert "management-temporary-memory.js" in management_ui.MANAGEMENT_FRONTEND_MODULES
     assert await management_ui._async_preview_effective_request(
         object(), entry, subentry, {}, "alice"
     ) == {"preview": True}

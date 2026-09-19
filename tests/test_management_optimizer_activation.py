@@ -19,8 +19,8 @@ from custom_components.extended_openai_conversation_responses.management_loading
 )
 
 
-def test_management_bootstrap_dependencies_are_registered() -> None:
-    """Every eager bootstrap dependency must have a management static route."""
+def test_management_panel_dependencies_are_registered() -> None:
+    """Every direct panel dependency must have a management static route."""
     required = {
         "management-feature-status.js",
         "management-memory-settings.js",
@@ -44,7 +44,7 @@ def test_single_pass_save_snapshot_keeps_frontend_function_shape() -> None:
 async def test_debug_assets_are_registered_before_management_panel(
     hass, monkeypatch
 ) -> None:
-    """The panel bootstrap must not race its debug-management dependency."""
+    """The management panel must not race its lazy Request Debug assets."""
     for name in (
         "apply_openai_compatibility",
         "install_persistence_transactions",
@@ -81,10 +81,6 @@ async def test_debug_assets_are_registered_before_management_panel(
 
 def test_native_management_lifecycle_assets_are_registered() -> None:
     """Direct imports must be available from the versioned HA asset routes."""
-    from custom_components.extended_openai_conversation_responses.management_loading_performance import (
-        _EXTRA_FRONTEND_MODULES,
-    )
-
     required = {
         "management-actions.js",
         "management-cache.js",
@@ -94,4 +90,7 @@ def test_native_management_lifecycle_assets_are_registered() -> None:
     }
     assert required <= set(management_ui.MANAGEMENT_FRONTEND_MODULES)
     frontend = Path(management_ui.__file__).parent / "frontend"
-    assert all((frontend / name).is_file() for name in (*_EXTRA_FRONTEND_MODULES, *required))
+    assert all(
+        (frontend / name).is_file()
+        for name in management_ui.MANAGEMENT_FRONTEND_MODULES
+    )

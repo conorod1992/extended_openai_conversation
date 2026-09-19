@@ -156,7 +156,7 @@ def test_installed_snapshot_enriches_from_loaded_knowledge(monkeypatch) -> None:
     assert result["feature_status"]["memory"]["label"] == "Manual"
     assert result["feature_status"]["knowledge"]["state"] == "available"
     assert result["feature_status"]["knowledge"]["source_count"] == 3
-    assert feature_status_module._FRONTEND_MODULE in management_ui.MANAGEMENT_FRONTEND_MODULES
+    assert "management-feature-status.js" in management_ui.MANAGEMENT_FRONTEND_MODULES
 
 
 @pytest.mark.asyncio

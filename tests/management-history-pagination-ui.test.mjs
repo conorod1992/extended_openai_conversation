@@ -36,11 +36,12 @@ assert.deepEqual(
   }],
 );
 
-const [source, bootstrap, runtime, permissions] = await Promise.all([
+const [source, bootstrap, runtime, permissions, management] = await Promise.all([
   readFile(frontend("management-history-pagination.js"), "utf8"),
   readFile(frontend("management-route.js"), "utf8"),
   readFile(new URL("../custom_components/extended_openai_conversation_responses/management_history_runtime.py", import.meta.url), "utf8"),
   readFile(new URL("../custom_components/extended_openai_conversation_responses/management_permissions.py", import.meta.url), "utf8"),
+  readFile(new URL("../custom_components/extended_openai_conversation_responses/management_ui.py", import.meta.url), "utf8"),
 ]);
 
 assert.match(source, /next_offset/);
@@ -50,7 +51,7 @@ assert.match(source, /start_turn:/);
 assert.match(source, /limit: TURN_PAGE_LIMIT/);
 assert.match(source, /Clear search/);
 assert.match(bootstrap, /"data-memory\/conversations": \(\) => import\(".\/management-history-pagination\.js"\)/);
-assert.match(runtime, /_FRONTEND_MODULE = "management-history-pagination\.js"/);
+assert.match(management, /"management-history-pagination\.js"/);
 assert.match(runtime, /section not in \{"overview", "usage", "conversations"\}/);
 assert.match(runtime, /result = \{\*\*result, "usage": usage_summary\(usage\)\}/);
 assert.match(permissions, /install_management_history_bounds\(\)/);
