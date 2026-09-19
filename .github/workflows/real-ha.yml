@@ -55,21 +55,21 @@ jobs:
           cache: pip
           cache-dependency-path: requirements_test.txt
 
-      - name: Install stable Home Assistant test harness
-        if: matrix.home-assistant == 'stable'
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements_test.txt
-          pip install homeassistant
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
 
-      - name: Install upcoming Home Assistant test harness
+      - name: Install Home Assistant test requirements
+        run: pip install -r requirements_test.txt
+
+      - name: Install stable Home Assistant
+        if: matrix.home-assistant == 'stable'
+        run: pip install homeassistant
+
+      - name: Install upcoming Home Assistant Core
         if: matrix.home-assistant == 'upcoming'
         run: |
-          python -m pip install --upgrade pip
-          # Install the normal test harness first so pytest-homeassistant-custom-component
-          # and its helper dependencies are present, then deliberately replace the
-          # stable HA package it pins with current Home Assistant Core dev.
-          pip install -r requirements_test.txt
+          # pytest-homeassistant-custom-component installs a released HA build.
+          # Deliberately replace it with current Home Assistant Core dev.
           pip install --upgrade --force-reinstall \
             "git+https://github.com/${{ env.HA_CORE_REPO }}.git@${{ env.HA_CORE_BRANCH }}"
 
@@ -156,6 +156,7 @@ jobs:
             -v \
             --asyncio-mode=auto \
             --timeout=60 \
+            --durations=30 \
             --junitxml=real-ha-junit.xml \
             --cov=custom_components.extended_openai_conversation_responses.config_flow \
             --cov-branch \
