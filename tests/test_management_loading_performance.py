@@ -14,17 +14,12 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
     agent_config_snapshot,
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
-from custom_components.extended_openai_conversation_responses.frontend_version import (
-    FRONTEND_VERSION,
-)
 from custom_components.extended_openai_conversation_responses.management_function_repair import (
     async_function_repair as _async_function_repair,
 )
 import custom_components.extended_openai_conversation_responses.management_loading_performance as loading
 from custom_components.extended_openai_conversation_responses.management_loading_performance import (
     _agent_snapshot,
-    _asset_url,
-    _static_paths,
     async_agent_catalog,
     async_overview_summary,
     async_setup_cached_debug_ui,
@@ -161,28 +156,10 @@ def test_runtime_group_quarantine_drops_only_quarantined_references(
     loading._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
 
 
-def test_frontend_asset_version_matches_manifest() -> None:
-    manifest = json.loads(
-        (
-            Path(__file__).parents[1]
-            / "custom_components"
-            / "extended_openai_conversation_responses"
-            / "manifest.json"
-        ).read_text(encoding="utf-8")
+def test_cached_setup_uses_shared_production_asset_boundary() -> None:
+    assert loading.frontend_entry_url("management").startswith(
+        f"/{DOMAIN}/frontend/assets/management-"
     )
-    assert FRONTEND_VERSION == manifest["version"]
-    assert _asset_url("management-panel.js").endswith(
-        f"/assets/{FRONTEND_VERSION}/management-panel.js"
-    )
-
-
-def test_static_paths_keep_legacy_alias_and_cache_versioned_asset() -> None:
-    paths = _static_paths(Path("/integration/frontend"), ("management-panel.js",))
-    assert len(paths) == 2
-    assert paths[0].url_path == f"/{DOMAIN}/management-panel.js"
-    assert paths[0].cache_headers is False
-    assert paths[1].url_path == _asset_url("management-panel.js")
-    assert paths[1].cache_headers is True
 
 
 def test_agent_snapshot_accepts_frontend_normalized_function_tools() -> None:
@@ -474,18 +451,17 @@ async def test_management_setup_retry_resumes_after_panel_failure(monkeypatch) -
     setup_key = "test.management_ui_setup"
     fake_ui = SimpleNamespace(
         _UI_SETUP=setup_key,
-        __file__="/integration/management_ui.py",
-        MANAGEMENT_FRONTEND_MODULES=("management-panel.js",),
         websocket_management=object(),
     )
-    static_paths = AsyncMock()
-    hass = SimpleNamespace(
-        data={},
-        http=SimpleNamespace(async_register_static_paths=static_paths),
-    )
+    hass = SimpleNamespace(data={})
+    asset_register = AsyncMock()
     websocket_register = MagicMock()
     panel_register = AsyncMock(side_effect=[RuntimeError("panel unavailable"), None])
     monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
+    monkeypatch.setattr(loading, "async_register_frontend_assets", asset_register)
+    monkeypatch.setattr(
+        loading, "frontend_entry_url", lambda name: f"/built/{name}.js"
+    )
     monkeypatch.setattr(
         loading.websocket_api, "async_register_command", websocket_register
     )
@@ -498,26 +474,24 @@ async def test_management_setup_retry_resumes_after_panel_failure(monkeypatch) -
     await async_setup_cached_management_ui(hass)
 
     assert hass.data[setup_key] is True
-    assert static_paths.await_count == 1
+    assert asset_register.await_count == 1
     assert websocket_register.call_count == 1
     assert panel_register.await_count == 2
+    assert panel_register.await_args_list[0].kwargs["module_url"] == "/built/management.js"
 
 
 async def test_debug_setup_retry_resumes_after_websocket_failure(monkeypatch) -> None:
-    """A failed debug websocket registration retries without duplicating static paths."""
+    """A failed debug websocket registration retries without duplicating assets."""
     setup_key = "test.debug_ui_setup"
     fake_ui = SimpleNamespace(
         _DEBUG_UI_SETUP=setup_key,
-        __file__="/integration/debug_ui.py",
         websocket_request_debug=object(),
     )
-    static_paths = AsyncMock()
-    hass = SimpleNamespace(
-        data={},
-        http=SimpleNamespace(async_register_static_paths=static_paths),
-    )
+    hass = SimpleNamespace(data={})
+    asset_register = AsyncMock()
     websocket_register = MagicMock(side_effect=[RuntimeError("ws unavailable"), None])
     monkeypatch.setattr(loading, "_debug_ui", lambda: fake_ui)
+    monkeypatch.setattr(loading, "async_register_frontend_assets", asset_register)
     monkeypatch.setattr(
         loading.websocket_api, "async_register_command", websocket_register
     )
@@ -529,5 +503,5 @@ async def test_debug_setup_retry_resumes_after_websocket_failure(monkeypatch) ->
     await async_setup_cached_debug_ui(hass)
 
     assert hass.data[setup_key] is True
-    assert static_paths.await_count == 1
+    assert asset_register.await_count == 1
     assert websocket_register.call_count == 2
