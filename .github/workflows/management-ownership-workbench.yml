@@ -1,0 +1,21 @@
+name: Management ownership workbench
+on:
+  push:
+    branches: [refactor/management-api-ownership]
+    paths:
+      - .github/workflows/management-ownership-workbench.yml
+      - scripts/management_ownership_workbench.py
+permissions:
+  contents: read
+jobs:
+  checkout-export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export reviewed checkout
+        run: git archive --format=tar.gz HEAD > /tmp/management-ownership-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: management-ownership-source
+          path: /tmp/management-ownership-source.tar.gz
+          retention-days: 2
