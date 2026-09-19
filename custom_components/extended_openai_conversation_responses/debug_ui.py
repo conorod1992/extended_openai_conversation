@@ -12,8 +12,8 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .debug import get_debug_manager
-from .frontend_assets import async_register_frontend_assets
 from .debug_management_projection import debug_run_summaries, debug_trace_page
+from .frontend_assets import async_register_frontend_assets
 from .management_result_limits import (
     MANAGEMENT_DEBUG_PROVIDER_PAGE_DEFAULT,
     MANAGEMENT_DEBUG_PROVIDER_PAGE_MAX,
