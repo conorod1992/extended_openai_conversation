@@ -1,6 +1,6 @@
-from pathlib import Path
-
 """Tests for side-effect-free management configuration guidance."""
+
+from pathlib import Path
 
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
@@ -13,6 +13,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.management_configuration_guidance import (
     configuration_guidance_snapshot,
 )
+
 
 def test_web_search_guidance_reuses_runtime_compatibility_rules() -> None:
     config = agent_config_defaults()
