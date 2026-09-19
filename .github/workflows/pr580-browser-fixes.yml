@@ -44,11 +44,11 @@ jobs:
           path = frontend / 'agent-config-editor-base.js'
           source = path.read_text()
           before = '''  root.querySelector("#tool-dialog")?.addEventListener("close", () => {
-            // A queued close event from the previous session must not unlock a new load.
-            if (root.querySelector("#tool-dialog")?.open) return;'''
+              // A queued close event from the previous session must not unlock a new load.
+              if (root.querySelector("#tool-dialog")?.open) return;'''
           after = '''  root.querySelector("#tool-dialog")?.addEventListener("close", (event) => {
-            // Ignore queued close events after navigation, DOM replacement or reopening.
-            if (event.target !== root.querySelector("#tool-dialog") || event.target.open) return;'''
+              // Ignore queued close events after navigation, DOM replacement or reopening.
+              if (event.target !== root.querySelector("#tool-dialog") || event.target.open) return;'''
           assert before in source
           path.write_text(source.replace(before, after))
           path = Path('tests/function-tool-editor-loading.test.mjs')
