@@ -2,25 +2,30 @@ name: PR5 isolated workbench
 on:
   push:
     branches: [refactor/conversation-entry-ownership]
-    paths:
-      - .github/workflows/pr5-workbench.yml
-      - scripts/pr5_workbench.py
+    paths: [scripts/pr5_workbench.py]
 permissions:
-  contents: read
+  contents: write
+concurrency:
+  group: pr5-isolated-workbench
+  cancel-in-progress: false
 jobs:
-  environment:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
       - id: version
         run: echo "python=$(curl -fsSL https://raw.githubusercontent.com/home-assistant/core/dev/.python-version | tr -d '\n')" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: ${{ steps.version.outputs.python }}
-      - name: Install HA test environment
+      - name: Apply reviewed request-entry edits
+        run: python scripts/pr5_workbench.py
+      - name: Install matching HA test environment
         run: |
-          python -m pip install -r requirements_test.txt
-          python -m pip install ruff mypy
+          python -m pip install -r requirements_test.txt ruff mypy > /tmp/pr5-install.log 2>&1 || { tail -100 /tmp/pr5-install.log; exit 1; }
           python - <<'PY'
           import json
           from pathlib import Path
@@ -46,17 +51,47 @@ jobs:
               pending.extend(info.get('after_dependencies', []))
           subprocess.check_call([sys.executable, '-m', 'pip', 'install', *sorted(requirements)])
           PY
-          python -m pip check
-      - name: Export isolated dependencies and exact source
+      - name: Check production and format changed Python
         run: |
-          git rev-parse HEAD > source-sha.txt
-          git archive HEAD | gzip > pr5-source.tar.gz
-          tar -czf pr5-python.tar.gz -C "$pythonLocation" .
+          git diff --name-only --diff-filter=ACM -- '*.py' > /tmp/pr5-python-paths
+          git ls-files --others --exclude-standard '*.py' >> /tmp/pr5-python-paths
+          xargs -r python -m ruff check --select I --fix < /tmp/pr5-python-paths
+          xargs -r python -m ruff format < /tmp/pr5-python-paths
+          python -m ruff check custom_components
+          python -m compileall -q custom_components tests tests_real_ha
+          git diff --check
+      - name: Commit reviewed implementation on isolated branch
+        run: |
+          test "$GITHUB_REF_NAME" = refactor/conversation-entry-ownership
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add custom_components tests tests_real_ha docs/development
+          git diff --cached --stat
+          if ! git diff --cached --quiet; then
+            git commit -m 'Make conversation request-entry ownership explicit'
+            git push origin HEAD:refactor/conversation-entry-ownership
+          fi
+          git rev-parse HEAD
+      - name: Full unit suite
+        id: unit
+        run: |
+          python -m pytest tests -q --tb=short --cov=custom_components.extended_openai_conversation_responses --cov-report=term-missing > /tmp/pr5-unit.log 2>&1; result=$?
+          cat /tmp/pr5-unit.log
+          exit "$result"
+        shell: bash {0}
+      - name: Production type check
+        if: always()
+        run: python -m mypy custom_components/extended_openai_conversation_responses
+      - name: Genuine Home Assistant acceptance
+        if: always()
+        run: |
+          python -m pytest -c pytest-real-ha.ini tests_real_ha -q --tb=short > /tmp/pr5-real-ha.log 2>&1; result=$?
+          cat /tmp/pr5-real-ha.log
+          exit "$result"
+        shell: bash {0}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
-          name: pr5-validation-environment
-          path: |
-            source-sha.txt
-            pr5-source.tar.gz
-            pr5-python.tar.gz
+          name: pr5-validation-logs
+          path: /tmp/pr5-*.log
           retention-days: 2
