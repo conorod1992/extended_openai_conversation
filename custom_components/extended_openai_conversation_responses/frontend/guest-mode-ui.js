@@ -1,3 +1,6 @@
+import {formatManagementTimestamp, browserState} from "./management-data-state.js";
+export {prepareMemoryBrowser} from "./management-data-state.js";
+export {formatManagementTimestamp} from "./management-data-state.js";
 export const GUEST_EXCLUSION_KEYS = [
   "guest_excluded_labels", "guest_excluded_areas", "guest_excluded_domains", "guest_excluded_entities",
   "guest_control_excluded_labels", "guest_control_excluded_areas", "guest_control_excluded_domains", "guest_control_excluded_entities",
@@ -25,29 +28,9 @@ export function renderGuestWebSearchSetting(config = {}) {
   return `<section class="content-card guest-hosted-capabilities"><div class="section-heading"><div><h2>Hosted capabilities</h2><p>Provider-hosted capabilities remain unavailable to guests unless you explicitly allow them.</p></div></div><label class="toggle"><span>Allow hosted Web Search</span><input id="guest-web-search" type="checkbox" ${config.guest_web_search ? "checked" : ""}></label><p class="help">Off by default. When enabled, Guest Mode may expose hosted Web Search only when this agent's provider, API mode, and Web Search configuration support it.</p></section>`;
 }
 
-export function formatManagementTimestamp(value, timeZone) {
-  if (!value) return "Unknown date";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  try { return date.toLocaleString(undefined, timeZone ? {timeZone} : undefined); }
-  catch (_) { return date.toLocaleString(); }
-}
 
 export function memorySearchProjection(memory) {
   return `${memory?.content ?? ""} ${memory?.category ?? ""} ${memory?.source ?? ""}`.toLocaleLowerCase();
-}
-
-function browserState(panel) {
-  if (!panel._managementBrowserState) {
-    panel._managementBrowserState = {
-      archiveQuery: "",
-      memoryQuery: "",
-      memorySearchTimer: null,
-      memorySearchSequence: 0,
-      projections: new Map(),
-    };
-  }
-  return panel._managementBrowserState;
 }
 
 function resultTarget(panel) {
@@ -147,15 +130,6 @@ async function loadMoreConversations(panel, button) {
   } finally {
     panel._setSaving(button, false);
   }
-}
-
-export function prepareMemoryBrowser(panel) {
-  const state = browserState(panel);
-  clearTimeout(state.memorySearchTimer);
-  state.memorySearchSequence += 1;
-  const view = panel._viewKey();
-  if (view === "data-memory/memories" && panel._memoryKind === "persistent") state.memoryQuery = "";
-  if (view === "data-memory/conversations") state.archiveQuery = "";
 }
 
 export async function finishMemoryBrowserLoad(panel) {

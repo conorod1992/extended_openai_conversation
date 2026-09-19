@@ -1,4 +1,4 @@
-import {refreshSettingEffects} from "./management-configuration-clarity.js";
+import {refreshSettingEffects} from "./management-setting-metadata.js";
 import {updateDialogs} from "./management-dialogs.js";
 import {NAVIGATION, pageMetadata} from "./frontend-navigation.js";
 

@@ -43,6 +43,13 @@ const DATA_FEATURES = new Set([
   "usage-maintenance/usage", "usage-maintenance/request-debug",
 ]);
 const featureLoaders = {
+  "status": () => import("./management-feature-status.js"),
+  "capabilities": () => import("./management-capabilities-ia.js"),
+  "configuration": () => import("./management-configuration-feature.js"),
+  "memory-browser": () => import("./guest-mode-ui.js"),
+  "data-memory/memories": () => import("./management-memory-feature.js"),
+  "capabilities/guest-mode": () => import("./management-guest-feature.js"),
+  "capabilities/request-rules": () => import("./request-rules-ui.js"),
   "capabilities/quiet-hours": () => import("./quiet-hours-ui.js"),
   "capabilities/functions": () => import("./management-function-repair.js"),
   "data-memory/conversations": () => import("./management-history-pagination.js"),
@@ -59,6 +66,27 @@ const featureLoaders = {
 };
 export function getRouteFeature(view) { return featureModules.get(view); }
 
+function routeFeatureKeys(view) {
+  const keys = [view];
+  if (routeAssetKind(view) === "agent-config" || view === "data-memory/memory-settings") keys.push("configuration");
+  if (["data-memory/memories", "data-memory/conversations", "capabilities/guest-mode"].includes(view)) keys.push("memory-browser");
+  if (["capabilities/home-assistant", "capabilities/web-skills", "data-memory/knowledge"].includes(view)) keys.push("capabilities");
+  if (["data-memory/memories", "data-memory/knowledge", "usage-maintenance/diagnostics"].includes(view)) keys.push("status");
+  return keys;
+}
+
+export function routeFeaturesReady(view) {
+  const kind = routeAssetKind(view);
+  if (kind === "agent-config" && !configurationEditor) return false;
+  if (kind === "request-rules" && !getRequestRulesModule()) return false;
+  return routeFeatureKeys(view).every((key) => !featureLoaders[key] || featureModules.has(key));
+}
+
+function routeFeaturePromise(view) {
+  const pending = routeFeatureKeys(view).map(featureAssetPromise).filter(Boolean);
+  return pending.length ? Promise.all(pending) : null;
+}
+
 function featureAssetPromise(view) {
   if (!featureLoaders[view] || featureModules.has(view)) return null;
   if (!featurePromises.has(view)) {
@@ -71,7 +99,7 @@ function featureAssetPromise(view) {
 }
 
 export function routeAssetPromise(view, panel) {
-  const feature = featureAssetPromise(view);
+  const feature = routeFeaturePromise(view);
   const core = coreAssetPromise(view);
   return feature ? Promise.all([feature, core]) : core;
 }
@@ -210,7 +238,7 @@ export function loadRoute(panel, silent = false) {
   const view = panel._viewKey();
   const token = (panel._eocViewAssetToken || 0) + 1;
   panel._eocViewAssetToken = token;
-  const feature = featureAssetPromise(view);
+  const feature = routeFeaturePromise(view);
   const asset = coreAssetPromise(view);
   if (!feature && !asset) return loadRouteData(panel, silent, view, token);
   let loadData = () => loadRouteData(panel, silent, view, token);

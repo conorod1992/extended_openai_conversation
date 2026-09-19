@@ -1,0 +1,1 @@
+function e(e,t,n=e._agentId){t?.configuration_guidance&&e._agentId===n&&(e._configurationGuidance=t.configuration_guidance,e._configurationGuidanceAgentId=n,e._result&&typeof e._result==`object`&&(e._result.configuration_guidance=t.configuration_guidance))}export{e as t};

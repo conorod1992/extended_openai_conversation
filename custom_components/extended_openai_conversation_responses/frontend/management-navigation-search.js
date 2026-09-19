@@ -1,4 +1,4 @@
-import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-configuration-clarity.js";
+import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
 import {SETTINGS_INDEX, pageMetadata} from "./frontend-navigation.js";
 
 export function buildSettingsSearchProjection(settings = SETTINGS_INDEX) {

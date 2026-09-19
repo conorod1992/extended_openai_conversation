@@ -1,4 +1,4 @@
-import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-configuration-clarity.js";
+import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
 import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {saveBarMarkup} from "./unsaved-state.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));

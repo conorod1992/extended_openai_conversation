@@ -16,9 +16,10 @@ async function ensureCatalogData(panel) {
   const config = currentConfig(panel);
   const model = String(config.chat_model || "");
   if (currentCatalogData(panel, model)) return;
+  const searchTarget = panel._pendingSettingFocus;
   try {
     await lookupModelData(panel, model);
-    panel._configRestoreFocus = '[data-config="chat_model"]';
+    panel._configRestoreFocus = searchTarget ? `#${CSS.escape(searchTarget)}` : '[data-config="chat_model"]';
     panel._render();
   } catch (err) {
     panel._toast?.(`Unable to inspect model capabilities: ${err.message || String(err)}`, true);

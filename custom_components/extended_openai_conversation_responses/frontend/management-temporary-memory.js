@@ -1,3 +1,4 @@
+import {ensureTemporaryScope} from "./management-data-state.js";
 const CONTENT_LIMIT = 500;
 const CATEGORY_LIMIT = 64;
 
@@ -12,12 +13,6 @@ function ownerLabel(panel, ownerScopeId) {
   return String(ownerScopeId || "").startsWith("user:") ? "Personal" : "Unavailable";
 }
 
-function ensureTemporaryScope(panel) {
-  const scopes = (panel._data?.scopes || []).filter(validOwnerScope);
-  if (scopes.some((scope) => scope.scope_id === panel._scopeId)) return;
-  const current = scopes.find((scope) => scope.is_current_user) || scopes[0];
-  if (current) panel._scopeId = current.scope_id;
-}
 
 function temporaryScopeOptions(panel) {
   return (panel._data?.scopes || [])

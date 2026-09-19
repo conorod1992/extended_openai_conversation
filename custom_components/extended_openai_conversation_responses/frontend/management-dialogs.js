@@ -100,3 +100,8 @@ export function updateDialogs(panel, markup, {preserveEditors = false} = {}) {
     }
   }
 }
+
+export function knowledgeSourceAvailabilityControl() {
+  return `<div class="config-toggle setting knowledge-source-availability-setting"><span class="setting-copy"><span class="setting-label-row"><label for="knowledge-source-enabled"><strong>Available to the assistant</strong></label></span><small>Turn this off to keep the source stored locally without including it in Knowledge retrieval.</small></span><label class="switch-control" for="knowledge-source-enabled"><input id="knowledge-source-enabled" type="checkbox" role="switch" checked><span class="switch-track" aria-hidden="true"></span></label></div>`;
+}
+
