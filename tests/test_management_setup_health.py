@@ -1,7 +1,6 @@
-from pathlib import Path
-
 """Tests for the cheap Overview setup-health facts."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -16,6 +15,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.management_setup_health import (
     build_setup_health_facts,
 )
+
 
 def _entry(*, runtime_loaded: bool = True):
     return SimpleNamespace(
