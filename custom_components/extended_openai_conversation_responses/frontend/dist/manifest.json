@@ -35,21 +35,21 @@
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/debug-management.js": {
-    "file": "assets/debug-management-D522N2KF.js",
+    "file": "assets/debug-management-mJspnx5k.js",
     "name": "debug-management",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/debug-management.js",
     "isDynamicEntry": true,
     "imports": [
-      "_debug-management-CVwWjaOX.js"
+      "_debug-management-Dh5VmiOF.js"
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/debug-panel.js": {
-    "file": "assets/debug-CIGCAFpB.js",
-    "name": "debug",
+    "file": "assets/debug-panel-CBeOqYpc.js",
+    "name": "debug-panel",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/debug-panel.js",
-    "isEntry": true,
+    "isDynamicEntry": true,
     "imports": [
-      "_debug-management-CVwWjaOX.js"
+      "_debug-management-Dh5VmiOF.js"
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/guide-page-impl.js": {
@@ -71,7 +71,7 @@
     "isDynamicEntry": true
   },
   "../custom_components/extended_openai_conversation_responses/frontend/management-panel.js": {
-    "file": "assets/management-AalbEwSk.js",
+    "file": "assets/management-_cUZpAw0.js",
     "name": "management",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/management-panel.js",
     "isEntry": true,
@@ -188,8 +188,8 @@
       "_model-catalog-BOjmYqHr.js"
     ]
   },
-  "_debug-management-CVwWjaOX.js": {
-    "file": "assets/debug-management-CVwWjaOX.js",
+  "_debug-management-Dh5VmiOF.js": {
+    "file": "assets/debug-management-Dh5VmiOF.js",
     "name": "debug-management",
     "imports": [
       "_preload-helper-Czpn1I53.js"
