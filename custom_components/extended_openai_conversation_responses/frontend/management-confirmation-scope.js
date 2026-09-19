@@ -43,6 +43,3 @@ export function enhanceConfirmationScope(panel, subject = "") {
   const body = dialog?.querySelector(".dialog-body");
   addScopeNode(body, "eoc-confirm-scope", assistantScopeLabel(panel._selectedAgent?.()), subject);
 }
-
-
-

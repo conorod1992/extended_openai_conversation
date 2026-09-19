@@ -129,5 +129,3 @@ export function controlValue(control) {
   if (control.type === "checkbox" || control.dataset?.type === "boolean") return Boolean(control.checked);
   return control.value;
 }
-
-

@@ -6,4 +6,3 @@ export function storeRuntimeGuidance(panel, result, agentId = panel._agentId) {
     panel._result.configuration_guidance = result.configuration_guidance;
   }
 }
-
