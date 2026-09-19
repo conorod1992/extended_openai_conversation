@@ -88,7 +88,12 @@ async def test_unexpected_archive_failure_is_labeled_as_archive() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_repairs_tool_call_id_received_in_later_delta() -> None:
+@pytest.mark.parametrize(
+    "initial_id,expected_id", [(None, "call_late_123"), ("original", "original")]
+)
+async def test_chat_stream_repairs_tool_call_id_received_in_later_delta(
+    initial_id, expected_id
+) -> None:
     entity = SimpleNamespace(subentry=SimpleNamespace(data={}))
     chat_log = SimpleNamespace(async_trace=lambda _trace: None)
 
@@ -101,7 +106,7 @@ async def test_chat_stream_repairs_tool_call_id_received_in_later_delta() -> Non
                         tool_calls=[
                             SimpleNamespace(
                                 index=0,
-                                id=None,
+                                id=initial_id,
                                 function=SimpleNamespace(
                                     name="late_id_tool", arguments='{"value":'
                                 ),
@@ -139,6 +144,6 @@ async def test_chat_stream_repairs_tool_call_id_received_in_later_delta() -> Non
     tool_payload = next(item for item in output if item.get("tool_calls"))
     tool_call = tool_payload["tool_calls"][0]
 
-    assert tool_call.id == "call_late_123"
+    assert tool_call.id == expected_id
     assert tool_call.tool_name == "late_id_tool"
     assert tool_call.tool_args == json.loads('{"value":1}')

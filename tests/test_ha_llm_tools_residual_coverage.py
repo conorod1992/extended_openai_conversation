@@ -11,8 +11,8 @@ from custom_components.extended_openai_conversation_responses import (
 )
 
 
-def test_serializer_compat_install_is_idempotent(monkeypatch) -> None:
-    """Do not wrap an already-installed compatibility serializer again."""
+def test_serializer_compat_preserves_ha_function_identity(monkeypatch) -> None:
+    """Calling the local compatibility helper never replaces HA functions."""
 
     def existing(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         return {}
@@ -24,7 +24,7 @@ def test_serializer_compat_install_is_idempotent(monkeypatch) -> None:
     assert tools.llm.to_openapi is existing
 
 
-def test_serializer_compat_skips_when_optional_converter_is_unavailable(
+def test_serializer_compat_falls_back_when_probatio_is_unavailable(
     monkeypatch,
 ) -> None:
     """Keep HA untouched if the compatibility dependencies cannot be imported."""

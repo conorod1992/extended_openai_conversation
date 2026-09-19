@@ -1182,7 +1182,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             "arguments": "",
                         }
 
-                    if tool_call_delta.id:
+                    if tool_call_delta.id and not current_tool_calls[idx]["id"]:
                         current_tool_calls[idx]["id"] = tool_call_delta.id
 
                     if tool_call_delta.function:
