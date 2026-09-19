@@ -7,9 +7,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import (
-    runtime_failure_hardening as hardening,
-)
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
@@ -58,7 +55,6 @@ class FakeArchiveEntity:
 
 @pytest.mark.asyncio
 async def test_request_preparation_home_assistant_error_returns_assist_error() -> None:
-    hardening.install_runtime_failure_hardening()
     entity = FakeConversationEntity()
     user_input = SimpleNamespace(
         language="en",
@@ -77,7 +73,6 @@ async def test_request_preparation_home_assistant_error_returns_assist_error() -
 
 @pytest.mark.asyncio
 async def test_unexpected_archive_failure_is_labeled_as_archive() -> None:
-    hardening.install_runtime_failure_hardening()
     entity = FakeArchiveEntity()
     tool = {"function": {"type": "archive", "operation": "search"}}
     tool_input = SimpleNamespace(id="call", tool_name="archive_search", tool_args={})
@@ -94,7 +89,6 @@ async def test_unexpected_archive_failure_is_labeled_as_archive() -> None:
 
 @pytest.mark.asyncio
 async def test_chat_stream_repairs_tool_call_id_received_in_later_delta() -> None:
-    hardening.install_runtime_failure_hardening()
     entity = SimpleNamespace(subentry=SimpleNamespace(data={}))
     chat_log = SimpleNamespace(async_trace=lambda _trace: None)
 

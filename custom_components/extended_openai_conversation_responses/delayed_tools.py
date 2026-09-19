@@ -27,6 +27,7 @@ from .const import DOMAIN
 from .function_tool_resolution import latest_function_tool_for_execution
 from .ha_permissions import bind_active_ha_context
 from .helpers import get_exposed_entities
+from .persistence_hardening import _async_prepare_private_store
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -140,6 +141,7 @@ class DelayedToolManager:
 
     async def async_setup(self) -> None:
         """Load persisted calls and arm recovery once Home Assistant is running."""
+        await _async_prepare_private_store(self._store)
         if self._setup_complete:
             return
         async with self._setup_lock:
@@ -412,6 +414,14 @@ class DelayedToolManager:
                 "Unable to persist retry state for delayed Function Tool `%s`",
                 record.tool_name,
             )
+        # Advance the live safety budget even if its durable update failed.
+        current_record = self._records.get(record.call_id)
+        if (
+            current_record is not None
+            and current_record.status == record.status
+            and current_record.retry_count == record.retry_count
+        ):
+            self._records[record.call_id] = updated
         return True
 
     def _resolve_agent(self, entry_id: str, subentry_id: str) -> Any | None:

@@ -21,7 +21,6 @@ from openai.types.chat import (
 )
 import orjson
 import voluptuous as vol
-from voluptuous_openapi import convert  # type: ignore[import-untyped]
 
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigSubentry
@@ -257,8 +256,9 @@ def _format_structured_output(
     schema: vol.Schema, llm_api: llm.APIInstance | None
 ) -> dict[str, Any]:
     """Format the schema to be compatible with OpenAI API."""
-    converter = getattr(llm, "to_openapi", convert)
-    result: dict[str, Any] = converter(
+    from .ha_llm_tools import compatible_to_openapi
+
+    result: dict[str, Any] = compatible_to_openapi(
         schema,
         custom_serializer=(
             llm_api.custom_serializer if llm_api else llm.selector_serializer
@@ -1181,6 +1181,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             "name": "",
                             "arguments": "",
                         }
+
+                    if tool_call_delta.id:
+                        current_tool_calls[idx]["id"] = tool_call_delta.id
 
                     if tool_call_delta.function:
                         if tool_call_delta.function.name:

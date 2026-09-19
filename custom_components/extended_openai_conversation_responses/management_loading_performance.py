@@ -1,19 +1,12 @@
-"""Low-risk loading and network optimizations for the management frontend."""
+"""Management navigation catalogs, bounded Overview data and config snapshots."""
 
 from __future__ import annotations
 
 import asyncio
-from contextvars import ContextVar
 from copy import deepcopy
-import logging
-import sys
 from typing import Any
 
-import yaml
-
-from homeassistant.components import panel_custom, websocket_api
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
@@ -33,32 +26,16 @@ from .const import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_FUNCTION_GROUPS,
     DOMAIN,
-    MANAGEMENT_PANEL_TITLE,
-    MANAGEMENT_PANEL_URL,
 )
 from .conversation_archive import async_get_archive
 from .feature_status import management_feature_status
-from .frontend_assets import async_register_frontend_assets, frontend_entry_url
 from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
 from .knowledge import async_get_knowledge, get_loaded_knowledge
-from .management_function_repair import (
-    function_tools_issue as _function_tools_issue,
-    isolated_function_tools as _isolated_function_tools,
-)
+from .management_function_repair import function_tools_issue as _function_tools_issue
 from .management_history_queries import usage_summary
 from .management_setup_health import add_setup_health
 from .memory import async_get_memory, get_memory_mode
 from .usage import async_get_usage
-
-_LOGGER = logging.getLogger(__name__)
-
-_INSTALLED = False
-_RUNTIME_QUARANTINED_FUNCTION_NAMES: ContextVar[frozenset[str]] = ContextVar(
-    "extended_openai_runtime_quarantined_function_names", default=frozenset()
-)
-_RUNTIME_QUARANTINE_ALL_FUNCTIONS: ContextVar[bool] = ContextVar(
-    "extended_openai_runtime_quarantine_all_functions", default=False
-)
 
 
 def _guest_has_ha_exclusions(options: dict[str, Any]) -> bool:
@@ -71,81 +48,6 @@ def _guest_has_ha_exclusions(options: dict[str, Any]) -> bool:
             "guest_excluded_entities",
         )
     )
-
-
-def _runtime_configured_function_tools(data: Any) -> list[dict[str, Any]]:
-    """Return valid runtime tools while quarantining persisted invalid siblings."""
-    from .agent_config import configured_function_tools_from_data
-
-    try:
-        tools = configured_function_tools_from_data(data)
-    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
-        valid, invalid, issue = _isolated_function_tools(dict(data))
-        if issue is None:
-            raise
-        quarantine_all = not invalid
-        quarantined_names = frozenset(
-            str(item["name"])
-            for item in invalid
-            if isinstance(item.get("name"), str) and item["name"]
-        )
-        _RUNTIME_QUARANTINED_FUNCTION_NAMES.set(quarantined_names)
-        _RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(quarantine_all)
-        safe = dict(data)
-        safe[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-            valid, sort_keys=False, allow_unicode=True
-        )
-        tools = configured_function_tools_from_data(safe)
-        detail = issue or str(err) or type(err).__name__
-        if quarantine_all:
-            _LOGGER.warning(
-                "Quarantining all persisted Function Tools from this runtime request: %s",
-                detail,
-            )
-        else:
-            _LOGGER.warning(
-                "Quarantining invalid persisted Function Tools from this runtime request "
-                "(%s): %s",
-                ", ".join(sorted(quarantined_names)) or "unnamed tool",
-                detail,
-            )
-        return tools
-
-    _RUNTIME_QUARANTINED_FUNCTION_NAMES.set(frozenset())
-    _RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
-    return tools
-
-
-def _runtime_validate_function_groups(
-    value: Any, function_tools: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Ignore only group references to Function Tools quarantined for this request."""
-    from .agent_config import validate_function_groups
-
-    quarantined_names = _RUNTIME_QUARANTINED_FUNCTION_NAMES.get()
-    quarantine_all = _RUNTIME_QUARANTINE_ALL_FUNCTIONS.get()
-    if not quarantine_all and not quarantined_names:
-        return validate_function_groups(value, function_tools)
-
-    safe = deepcopy(value)
-    if isinstance(safe, list):
-        for group in safe:
-            if not isinstance(group, dict):
-                continue
-            functions = group.get("functions")
-            if not isinstance(functions, list):
-                continue
-            if quarantine_all:
-                group["functions"] = [
-                    name for name in functions if not isinstance(name, str)
-                ]
-            else:
-                group["functions"] = [
-                    name
-                    for name in functions
-                    if not isinstance(name, str) or name not in quarantined_names
-                ]
-    return validate_function_groups(safe, function_tools)
 
 
 def _agent_snapshot(
@@ -218,12 +120,6 @@ def _management_ui():
     from . import management_ui
 
     return management_ui
-
-
-def _debug_ui():
-    from . import debug_ui
-
-    return debug_ui
 
 
 async def async_agent_catalog(
@@ -357,93 +253,3 @@ def _snapshot_normalized_configuration(config: dict[str, Any]) -> dict[str, Any]
         snapshot[CONF_FUNCTION_GROUPS], function_tools
     )
     return snapshot
-
-
-def _setup_step_key(setup_key: str, step: str) -> str:
-    """Return a durable-in-process marker for one completed registration step."""
-    return f"{setup_key}.{step}"
-
-
-async def async_setup_cached_management_ui(hass: HomeAssistant) -> None:
-    """Register the bundled Management panel through the shared production assets."""
-    management_ui = _management_ui()
-    setup_key = management_ui._UI_SETUP
-    if hass.data.get(setup_key):
-        return
-
-    static_key = _setup_step_key(setup_key, "static_paths")
-    websocket_key = _setup_step_key(setup_key, "websocket")
-    panel_key = _setup_step_key(setup_key, "panel")
-
-    if not hass.data.get(static_key):
-        await async_register_frontend_assets(hass)
-        hass.data[static_key] = True
-    if not hass.data.get(websocket_key):
-        websocket_api.async_register_command(hass, management_ui.websocket_management)
-        hass.data[websocket_key] = True
-    if not hass.data.get(panel_key):
-        await panel_custom.async_register_panel(
-            hass,
-            webcomponent_name="extended-openai-management-panel",
-            frontend_url_path=MANAGEMENT_PANEL_URL,
-            module_url=frontend_entry_url("management"),
-            sidebar_title=MANAGEMENT_PANEL_TITLE,
-            sidebar_icon="mdi:robot-outline",
-            require_admin=False,
-        )
-        hass.data[panel_key] = True
-
-    hass.data[setup_key] = True
-
-
-async def async_setup_cached_debug_ui(hass: HomeAssistant) -> None:
-    """Register Request Debug against the shared bundled production assets."""
-    debug_ui = _debug_ui()
-    setup_key = debug_ui._DEBUG_UI_SETUP
-    if hass.data.get(setup_key):
-        return
-
-    static_key = _setup_step_key(setup_key, "static_paths")
-    websocket_key = _setup_step_key(setup_key, "websocket")
-
-    if not hass.data.get(static_key):
-        await async_register_frontend_assets(hass)
-        hass.data[static_key] = True
-    if not hass.data.get(websocket_key):
-        websocket_api.async_register_command(hass, debug_ui.websocket_request_debug)
-        hass.data[websocket_key] = True
-
-    hass.data[setup_key] = True
-
-
-def install_management_loading_optimizations() -> None:
-    """Install frontend loading optimizations and runtime Function Tool quarantine."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
-
-    from . import conversation, function_tool_resolution
-
-    management_ui = _management_ui()
-    debug_ui = _debug_ui()
-
-    # agent_config owns strict cached validation. Keep configuration boundaries
-    # strict while quarantining persisted invalid siblings at request assembly.
-    conversation.configured_function_tools_from_data = (
-        _runtime_configured_function_tools  # type: ignore[assignment]
-    )
-    conversation.validate_function_groups = _runtime_validate_function_groups  # type: ignore[assignment]
-    function_tool_resolution.validate_function_groups = (
-        _runtime_validate_function_groups  # type: ignore[assignment]
-    )
-
-    management_ui.async_setup_management_ui = async_setup_cached_management_ui  # type: ignore[assignment]
-    debug_ui.async_setup_debug_ui = async_setup_cached_debug_ui  # type: ignore[assignment]
-
-    package = sys.modules.get(__package__)
-    if package is not None:
-        setattr(  # noqa: B010
-            package, "async_setup_management_ui", async_setup_cached_management_ui
-        )
-        setattr(package, "async_setup_debug_ui", async_setup_cached_debug_ui)  # noqa: B010

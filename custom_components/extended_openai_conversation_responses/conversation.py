@@ -34,11 +34,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 
 from . import ExtendedOpenAIConfigEntry
-from .agent_config import (
-    configured_function_tools_from_data,
-    function_tool_enabled,
-    validate_function_groups,
-)
+from .agent_config import function_tool_enabled
 from .agent_configuration import (
     _archive_runtime_required,
     async_reconcile_runtime_configuration,
@@ -126,6 +122,10 @@ from .function_groups import (
     remove_function_group_runtime,
     reset_function_group_runtime,
 )
+from .function_tool_quarantine import (
+    _runtime_configured_function_tools as configured_function_tools_from_data,
+    _runtime_validate_function_groups as validate_function_groups,
+)
 from .function_tool_resolution import (
     configured_function_tool_for_execution,
     latest_function_tool_for_execution,
@@ -159,7 +159,6 @@ from .ha_permissions import bind_active_ha_context
 from .ha_tool_result_compat import make_tool_result_content, tool_result_data
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
-from .lifecycle_optimizations import _TEMPORARY_MEMORY_PREFETCH
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
 from .memory import (
     MemoryRecord,
@@ -201,6 +200,7 @@ from .request_rules import (
     request_rule_session_id,
 )
 from .request_static_cache import formatted_tool_cache, tools_for_available_skills
+from .runtime_failure_hardening import _conversation_error_result
 from .runtime_hardening import bounded_tool_result_text
 from .scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
@@ -221,6 +221,10 @@ from .temporary_memory import (
 )
 from .usage import async_get_usage
 from .voice_identity_runtime import voice_identity_scope
+
+_TEMPORARY_MEMORY_PREFETCH: ContextVar[asyncio.Task[Any] | None] = ContextVar(
+    "extended_openai_temporary_memory_prefetch", default=None
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -886,20 +890,23 @@ class ExtendedOpenAIAgentEntity(
         request_options: Mapping[str, Any] | None = None,
     ) -> ConversationResult:
         """Own model timings and completed-response isolated speech processing."""
-        deferred_speech: list[tuple[str, Mapping[str, Any]]] = []
-        with model_path_timing(self):
-            result = await ExtendedOpenAIAgentEntity._async_generate_message(
-                self,
-                user_input,
-                chat_log,
-                request_options,
-                deferred_speech=deferred_speech,
-            )
-        if deferred_speech:
-            result.response.async_set_speech(
-                await async_process_speech_text(self.hass, *deferred_speech[0])
-            )
-        return result
+        try:
+            deferred_speech: list[tuple[str, Mapping[str, Any]]] = []
+            with model_path_timing(self):
+                result = await ExtendedOpenAIAgentEntity._async_generate_message(
+                    self,
+                    user_input,
+                    chat_log,
+                    request_options,
+                    deferred_speech=deferred_speech,
+                )
+            if deferred_speech:
+                result.response.async_set_speech(
+                    await async_process_speech_text(self.hass, *deferred_speech[0])
+                )
+            return result
+        except (OpenAIError, HomeAssistantError) as err:
+            return _conversation_error_result(self, user_input, chat_log, err)
 
     async def _async_generate_message(
         self,

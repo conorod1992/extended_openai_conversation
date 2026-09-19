@@ -140,7 +140,9 @@ def test_yaml_migration_rejects_invalid_and_non_tool_inputs_without_rewriting() 
         assert migrated == value
 
 
-def test_yaml_noop_preserves_original_formatting_but_real_migration_serializes() -> None:
+def test_yaml_noop_preserves_original_formatting_but_real_migration_serializes() -> (
+    None
+):
     custom_yaml = "- function: {type: native, name: custom}\n  spec: {parameters: {}}\n"
     unchanged, changed = migration.migrate_legacy_stock_native_function_tools_yaml(
         custom_yaml
@@ -161,27 +163,8 @@ def test_yaml_noop_preserves_original_formatting_but_real_migration_serializes()
     parsed = yaml.safe_load(migrated_yaml)
     assert parsed[0]["spec"]["strict"] is False
     assert (
-        parsed[0]["spec"]["parameters"]["properties"]["service_data"]
-        ["additionalProperties"]
+        parsed[0]["spec"]["parameters"]["properties"]["service_data"][
+            "additionalProperties"
+        ]
         is True
     )
-
-
-def test_install_current_defaults_is_noop_when_defaults_are_already_current(
-    monkeypatch,
-) -> None:
-    from custom_components.extended_openai_conversation_responses import agent_config, const
-
-    already_current = [
-        {
-            "function": {"type": "native", "name": "custom"},
-            "spec": {"parameters": {}},
-        }
-    ]
-    monkeypatch.setattr(const, "DEFAULT_CONF_FUNCTION_TOOLS", already_current)
-    defaults_before = agent_config.AGENT_CONFIG_DEFAULTS
-
-    migration.install_current_default_native_function_schemas()
-
-    assert const.DEFAULT_CONF_FUNCTION_TOOLS is already_current
-    assert agent_config.AGENT_CONFIG_DEFAULTS is defaults_before

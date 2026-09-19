@@ -13,10 +13,6 @@ from custom_components.extended_openai_conversation_responses import (
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
-from custom_components.extended_openai_conversation_responses.entity import (
-    ExtendedOpenAIBaseLLMEntity,
-)
-from homeassistant.exceptions import HomeAssistantError
 
 
 class _Usage:
@@ -89,38 +85,6 @@ def test_openai_conversation_error_uses_provider_failure_path(monkeypatch) -> No
     log.assert_called_once()
 
 
-async def test_request_preparation_boundary_catches_supported_errors_and_is_idempotent(
-    monkeypatch,
-) -> None:
-    calls = 0
-
-    async def failing_handle(_entity, _user_input, _chat_log, _request_options=None):
-        nonlocal calls
-        calls += 1
-        raise HomeAssistantError("bad preparation")
-
-    monkeypatch.setattr(
-        ExtendedOpenAIAgentEntity, "_async_handle_message", failing_handle
-    )
-    monkeypatch.setattr(
-        hardening,
-        "_conversation_error_result",
-        lambda _entity, _input, _log, err: ("contained", type(err).__name__),
-    )
-
-    hardening._install_request_preparation_boundary()
-    installed = ExtendedOpenAIAgentEntity._async_handle_message
-    hardening._install_request_preparation_boundary()
-
-    result = await ExtendedOpenAIAgentEntity._async_handle_message(
-        object(), object(), object(), {"temperature": 0}
-    )
-
-    assert result == ("contained", "HomeAssistantError")
-    assert calls == 1
-    assert ExtendedOpenAIAgentEntity._async_handle_message is installed
-
-
 async def test_archive_wrapper_delegates_non_archive_and_blocks_disallowed_guest(
     monkeypatch,
 ) -> None:
@@ -168,100 +132,3 @@ async def test_archive_wrapper_maps_value_error_without_mislabeling_as_unavailab
     )
 
     assert result == {"status": "error", "error": "bad archive arguments"}
-
-
-async def _chunks(*tool_deltas):
-    for tool_calls in tool_deltas:
-        yield SimpleNamespace(
-            choices=[SimpleNamespace(delta=SimpleNamespace(tool_calls=tool_calls))]
-        )
-
-
-async def test_late_tool_id_repair_falls_back_for_non_dataclass_tool_inputs(
-    monkeypatch,
-) -> None:
-    async def original(_entity, _chat_log, result, _request_usage=None):
-        async for _chunk in result:
-            pass
-        yield {
-            "tool_calls": [
-                SimpleNamespace(
-                    tool_name="search", tool_args={"q": "x"}, external=False
-                )
-            ]
-        }
-
-    monkeypatch.setattr(ExtendedOpenAIBaseLLMEntity, "_transform_chat_stream", original)
-    hardening._install_late_chat_tool_call_id_repair()
-
-    output = [
-        item
-        async for item in ExtendedOpenAIBaseLLMEntity._transform_chat_stream(
-            object(),
-            object(),
-            _chunks(
-                [SimpleNamespace(index="bad", id="ignored")],
-                [SimpleNamespace(index=0, id=None)],
-                [SimpleNamespace(index=0, id="call-late")],
-            ),
-        )
-    ]
-
-    repaired = output[0]["tool_calls"][0]
-    assert repaired.id == "call-late"
-    assert repaired.tool_name == "search"
-    assert repaired.tool_args == {"q": "x"}
-    assert repaired.external is False
-
-
-async def test_late_tool_id_repair_leaves_unrepairable_calls_unchanged(
-    monkeypatch,
-) -> None:
-    existing = SimpleNamespace(id="already-present", tool_name="one", tool_args={})
-    missing = SimpleNamespace(id=None, tool_name="two", tool_args={})
-    payload = {"tool_calls": [existing, missing]}
-
-    async def original(_entity, _chat_log, result, _request_usage=None):
-        async for _chunk in result:
-            pass
-        yield payload
-        yield {"content": "done"}
-
-    monkeypatch.setattr(ExtendedOpenAIBaseLLMEntity, "_transform_chat_stream", original)
-    hardening._install_late_chat_tool_call_id_repair()
-    installed = ExtendedOpenAIBaseLLMEntity._transform_chat_stream
-    hardening._install_late_chat_tool_call_id_repair()
-    assert ExtendedOpenAIBaseLLMEntity._transform_chat_stream is installed
-
-    output = [
-        item
-        async for item in installed(
-            object(),
-            object(),
-            _chunks([SimpleNamespace(index=0, id="late-but-not-needed")]),
-        )
-    ]
-
-    assert output[0] is payload
-    assert output[0]["tool_calls"] == [existing, missing]
-    assert output[1] == {"content": "done"}
-
-
-def test_top_level_install_is_idempotent(monkeypatch) -> None:
-    calls: list[str] = []
-    monkeypatch.setattr(hardening, "_INSTALLED", False)
-    monkeypatch.setattr(
-        hardening,
-        "_install_request_preparation_boundary",
-        lambda: calls.append("request"),
-    )
-    monkeypatch.setattr(
-        hardening,
-        "_install_late_chat_tool_call_id_repair",
-        lambda: calls.append("tool-id"),
-    )
-
-    hardening.install_runtime_failure_hardening()
-    hardening.install_runtime_failure_hardening()
-
-    assert calls == ["request", "tool-id"]

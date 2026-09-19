@@ -34,60 +34,48 @@ _REFERENCE_FIELDS = frozenset(
 )
 
 
-def _install_openapi_serializer_compat() -> None:
-    """Bridge legacy and Probatio OpenAPI schema/serializer contracts."""
-    existing = getattr(llm, "to_openapi", None)
-    if existing is not None and getattr(
-        existing, "_extended_openai_serializer_compat", False
-    ):
-        return
+def compatible_to_openapi(
+    schema: Any,
+    *args: Any,
+    custom_serializer: Callable[[Any], Any] | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Bridge HA schema converters and serializer sentinels without patching HA."""
+    from voluptuous_openapi import (
+        UNSUPPORTED as voluptuous_unsupported,
+        convert as voluptuous_convert,
+    )
 
+    existing = getattr(llm, "to_openapi", None)
     try:
         import probatio
-        from voluptuous_openapi import (
-            UNSUPPORTED as voluptuous_unsupported,
-            convert as voluptuous_convert,
-        )
     except ImportError:
-        return
+        converter = existing or voluptuous_convert
+        return converter(schema, *args, custom_serializer=custom_serializer, **kwargs)
 
-    def compatible_to_openapi(
-        schema: Any,
-        *args: Any,
-        custom_serializer: Callable[[Any], Any] | None = None,
-        **kwargs: Any,
-    ) -> Any:
-        if existing is not None:
-            converter = existing
-            target_unsupported = probatio.UNSUPPORTED
-            foreign_unsupported = voluptuous_unsupported
-        elif isinstance(schema, probatio.Schema):
-            converter = probatio.to_openapi
-            target_unsupported = probatio.UNSUPPORTED
-            foreign_unsupported = voluptuous_unsupported
-        else:
-            converter = voluptuous_convert
-            target_unsupported = voluptuous_unsupported
-            foreign_unsupported = probatio.UNSUPPORTED
+    if existing is not None:
+        converter = existing
+        target_unsupported = probatio.UNSUPPORTED
+        foreign_unsupported = voluptuous_unsupported
+    elif isinstance(schema, probatio.Schema):
+        converter = probatio.to_openapi
+        target_unsupported = probatio.UNSUPPORTED
+        foreign_unsupported = voluptuous_unsupported
+    else:
+        converter = voluptuous_convert
+        target_unsupported = voluptuous_unsupported
+        foreign_unsupported = probatio.UNSUPPORTED
 
-        if custom_serializer is None:
-            return converter(schema, *args, custom_serializer=None, **kwargs)
+    if custom_serializer is None:
+        return converter(schema, *args, custom_serializer=None, **kwargs)
 
-        def compatible_serializer(value: Any) -> Any:
-            result = custom_serializer(value)
-            if result is foreign_unsupported:
-                return target_unsupported
-            return result
+    def compatible_serializer(value: Any) -> Any:
+        result = custom_serializer(value)
+        if result is foreign_unsupported:
+            return target_unsupported
+        return result
 
-        return converter(
-            schema, *args, custom_serializer=compatible_serializer, **kwargs
-        )
-
-    compatible_to_openapi._extended_openai_serializer_compat = True  # type: ignore[attr-defined]
-    llm.to_openapi = compatible_to_openapi  # type: ignore[attr-defined]
-
-
-_install_openapi_serializer_compat()
+    return converter(schema, *args, custom_serializer=compatible_serializer, **kwargs)
 
 
 def is_ha_tool(tool: Mapping[str, Any]) -> bool:
@@ -145,12 +133,7 @@ def _implementation(tool: llm.Tool) -> str:
 def _schema(tool: llm.Tool, serializer: Callable[[Any], Any] | None) -> dict[str, Any]:
     # Core migrated from voluptuous-openapi to probatio in 2026. Both converters
     # must receive the source serializer (not a separately reconstructed schema).
-    converter = getattr(llm, "to_openapi", None)
-    if converter is None:
-        from voluptuous_openapi import convert
-
-        converter = convert
-    return dict(converter(tool.parameters, custom_serializer=serializer))
+    return dict(compatible_to_openapi(tool.parameters, custom_serializer=serializer))
 
 
 @dataclass(slots=True)

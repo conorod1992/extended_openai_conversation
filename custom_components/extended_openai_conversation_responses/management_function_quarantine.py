@@ -24,7 +24,7 @@ from .agent_test import (
     AgentTestResult,
     TestCheck,
     _overall,
-    async_test_agent as _ORIGINAL_AGENT_TEST,
+    async_test_agent as async_test_configured_agent,
 )
 from .const import CONF_FUNCTION_GROUPS, CONF_FUNCTION_TOOLS, DEFAULT_FUNCTION_GROUPS
 from .management_function_repair import (
@@ -236,14 +236,14 @@ async def _tolerant_agent_test(
     raw = dict(subentry.data)
     _valid, invalid, issue = isolated_function_tools(raw)
     if issue is None:
-        return await _ORIGINAL_AGENT_TEST(hass, entry, subentry)
+        return await async_test_configured_agent(hass, entry, subentry)
 
     safe_subentry = SimpleNamespace(
         data=_safe_function_configuration(raw),
         subentry_id=subentry.subentry_id,
         title=getattr(subentry, "title", ""),
     )
-    result = await _ORIGINAL_AGENT_TEST(hass, entry, cast(Any, safe_subentry))
+    result = await async_test_configured_agent(hass, entry, cast(Any, safe_subentry))
     if invalid:
         names = [
             str(item.get("name") or f"tool {int(item.get('index', 0)) + 1}")

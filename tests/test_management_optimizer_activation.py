@@ -46,11 +46,7 @@ async def test_debug_assets_are_registered_before_management_panel(
     hass, monkeypatch
 ) -> None:
     """The management panel must not race its lazy Request Debug assets."""
-    for name in (
-        "apply_openai_compatibility",
-        "install_management_loading_optimizations",
-        "install_delayed_tool_store_guard",
-    ):
+    for name in ("apply_openai_compatibility",):
         monkeypatch.setattr(integration, name, MagicMock())
 
     for name in (

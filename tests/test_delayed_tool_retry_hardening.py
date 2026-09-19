@@ -11,9 +11,6 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
     DelayedToolCall,
     DelayedToolManager,
 )
-from custom_components.extended_openai_conversation_responses.persistence_hardening import (
-    install_delayed_tool_store_guard,
-)
 from homeassistant.util import dt as dt_util
 
 
@@ -33,7 +30,6 @@ def _record(*, retry_count: int = 0) -> DelayedToolCall:
 
 async def test_retry_budget_advances_when_retry_state_persistence_fails(hass) -> None:
     """A Store outage must not make agent-resolution retries unbounded."""
-    install_delayed_tool_store_guard()
     manager = DelayedToolManager(hass)
     record = _record()
     manager._records = {record.call_id: record}
@@ -63,7 +59,6 @@ async def test_retry_budget_advances_when_retry_state_persistence_fails(hass) ->
 
 async def test_successful_retry_write_catches_up_after_previous_failure(hass) -> None:
     """A later healthy Store write persists the advanced in-memory retry count."""
-    install_delayed_tool_store_guard()
     manager = DelayedToolManager(hass)
     record = _record()
     manager._records = {record.call_id: record}

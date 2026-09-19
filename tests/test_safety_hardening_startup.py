@@ -13,14 +13,6 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
         monkeypatch.setattr(integration, name, MagicMock())
 
     for name in (
-        "install_delayed_tool_store_guard",
-        "install_management_loading_optimizations",
-        "install_runtime_failure_hardening",
-        "install_lifecycle_optimizations",
-    ):
-        monkeypatch.setattr(integration, name, MagicMock())
-
-    for name in (
         "async_migrate_integration",
         "async_setup_ha_permissions",
         "async_setup_services",
@@ -34,11 +26,14 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
         backup,
         conversation,
         debug,
+        debug_ui,
         delayed_tools,
         entity,
         intercom,
+        management_ui,
         memory_ui,
         prompt,
+        request_rules,
         services,
     )
     from custom_components.extended_openai_conversation_responses.functions.native import (
@@ -46,6 +41,15 @@ async def test_async_setup_installs_safety_hardening(hass, monkeypatch) -> None:
     )
 
     owners = [
+        (integration, "async_setup_management_ui"),
+        (integration, "async_setup_debug_ui"),
+        (management_ui, "async_setup_management_ui"),
+        (debug_ui, "async_setup_debug_ui"),
+        (debug.DebugTrace, "summary"),
+        (delayed_tools.DelayedToolManager, "async_setup"),
+        (delayed_tools.DelayedToolManager, "_async_retry_agent"),
+        (request_rules.RequestRules, "function_references"),
+        (request_rules.RequestRules, "async_rename_function_reference"),
         (conversation.ExtendedOpenAIAgentEntity, "_async_handle_message"),
         (conversation.ExtendedOpenAIAgentEntity, "_get_function_tools"),
         (conversation.ExtendedOpenAIAgentEntity, "_load_function_groups"),

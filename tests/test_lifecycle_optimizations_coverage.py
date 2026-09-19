@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
-    lifecycle_optimizations as lifecycle,
+    conversation as lifecycle,
 )
 
 
