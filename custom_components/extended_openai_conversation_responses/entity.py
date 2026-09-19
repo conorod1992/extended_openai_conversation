@@ -345,16 +345,18 @@ def _convert_content_to_responses_param(
 
     for content in chat_content:
         if is_tool_result_content(content):
-            items.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": content.tool_call_id,
-                    "output": orjson.dumps(
-                        tool_result_data(content), option=orjson.OPT_SORT_KEYS
-                    ).decode(),
-                }
-            )
-            continue
+            call_id = getattr(content, "tool_call_id", None)
+            if isinstance(call_id, str):
+                items.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": orjson.dumps(
+                            tool_result_data(content), option=orjson.OPT_SORT_KEYS
+                        ).decode(),
+                    }
+                )
+                continue
 
         native_type = ""
         if isinstance(content, conversation.AssistantContent):
@@ -366,12 +368,13 @@ def _convert_content_to_responses_param(
         has_attachments = isinstance(content, conversation.UserContent) and bool(
             getattr(content, "attachments", None)
         )
-        if (content.content or has_attachments) and native_type != "message":
+        text_content = getattr(content, "content", None)
+        if (text_content or has_attachments) and native_type != "message":
             items.append(
                 {
                     "type": "message",
                     "role": content.role,
-                    "content": content.content or "",
+                    "content": text_content or "",
                 }
             )
 
