@@ -94,7 +94,11 @@ async def _async_try_targeted_broadcast(
 ) -> LocalIntentResult | None:
     """Handle explicit targeted broadcast wording before HA's whole-home intent."""
     text = getattr(user_input, "text", None)
-    if not isinstance(text, str) or not text.strip():
+    if (
+        not isinstance(text, str)
+        or not text.strip()
+        or not is_targeted_broadcast_request(text)
+    ):
         return None
     manager = await async_get_intercom(hass)
     if not manager.enabled:

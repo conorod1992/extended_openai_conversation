@@ -106,6 +106,42 @@ class ConversationContinuity:
         *,
         namespace: str | None = None,
     ) -> ContinuityResolution:
+        """Resolve the owned session and record opt-in latency diagnostics."""
+        import time
+
+        from .debug import record_continuity_resolution
+
+        started = time.monotonic()
+        result = await self._async_resolve(
+            mode,
+            scope,
+            device_id,
+            incoming_conversation_id,
+            timeout_minutes,
+            namespace=namespace,
+        )
+        record_continuity_resolution(
+            result,
+            started,
+            mode,
+            scope,
+            device_id,
+            incoming_conversation_id,
+            timeout_minutes,
+            namespace,
+        )
+        return result
+
+    async def _async_resolve(
+        self,
+        mode: str,
+        scope: ResolvedDataScope,
+        device_id: str | None,
+        incoming_conversation_id: str | None,
+        timeout_minutes: int,
+        *,
+        namespace: str | None = None,
+    ) -> ContinuityResolution:
         """Resolve one request using a small lock and no network I/O."""
         if incoming_conversation_id is not None:
             async with self._lock:

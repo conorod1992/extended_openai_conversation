@@ -7,7 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import exposed_attributes
+from custom_components.extended_openai_conversation_responses import (
+    exposed_attributes,
+    management_ui,
+    prompt,
+)
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
     agent_config_defaults,
@@ -26,7 +30,6 @@ from custom_components.extended_openai_conversation_responses.exposed_attributes
     _render_legacy_default_with_attributes,
     _safe_attribute_value,
     _validate_preferences,
-    _wrap_effective_prompt_renderer,
     enrich_exposed_entities,
     exposed_attribute_catalog,
 )
@@ -35,8 +38,6 @@ from custom_components.extended_openai_conversation_responses.management_ui impo
     _export_agent,
     _parse_import_document,
 )
-from custom_components.extended_openai_conversation_responses import management_ui
-from custom_components.extended_openai_conversation_responses import prompt
 from homeassistant.helpers import entity_registry as er
 
 
@@ -183,7 +184,9 @@ def test_saved_preference_cannot_re_expose_an_entity(hass) -> None:
     assert "attributes" not in result[0]
 
 
-def test_missing_attribute_is_temporarily_omitted_without_clearing_selection(hass) -> None:
+def test_missing_attribute_is_temporarily_omitted_without_clearing_selection(
+    hass,
+) -> None:
     _install_registry(hass, _entry("stable", "light.kitchen"))
     hass.states.get.return_value = _state({"supported_color_modes": ["brightness"]})
     options = {
@@ -278,9 +281,13 @@ def test_catalog_separates_current_registryless_and_inactive_preferences(
             }
         },
     )
-    current = next(item for item in catalog["entities"] if item["entity_id"] == "light.current")
+    current = next(
+        item for item in catalog["entities"] if item["entity_id"] == "light.current"
+    )
     registryless = next(
-        item for item in catalog["entities"] if item["entity_id"] == "sensor.registryless"
+        item
+        for item in catalog["entities"]
+        if item["entity_id"] == "sensor.registryless"
     )
     inactive = {item["reference"]: item for item in catalog["saved_unexposed"]}
 
@@ -320,7 +327,9 @@ def test_maintained_default_formats_include_only_live_selected_values(
 def test_custom_template_receives_selected_attribute_mapping(hass, monkeypatch) -> None:
     _install_registry(hass, _entry("stable", "light.kitchen"))
     hass.states.get.return_value = _state({"brightness": 177})
-    monkeypatch.setattr(prompt, "get_entity_prompt_metadata", _empty_prompt_metadata)
+    monkeypatch.setattr(
+        exposed_attributes, "get_entity_prompt_metadata", _empty_prompt_metadata
+    )
     monkeypatch.setattr(
         exposed_attributes, "get_entity_prompt_metadata", _empty_prompt_metadata
     )
@@ -330,12 +339,10 @@ def test_custom_template_receives_selected_attribute_mapping(hass, monkeypatch) 
             CONF_PROMPT: "Brightness={{ exposed_entities[0].attributes.brightness }}",
             CONF_CURRENT_DATETIME_ENABLED: False,
             CONF_EXPOSED_ENTITIES_ENABLED: True,
-            CONF_EXPOSED_ENTITY_ATTRIBUTES: {
-                "registry:stable": ["brightness"]
-            },
+            CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:stable": ["brightness"]},
         }
     )
-    renderer = _wrap_effective_prompt_renderer(prompt.render_effective_prompt)
+    renderer = prompt.render_effective_prompt
 
     result = renderer(
         hass,
@@ -353,7 +360,9 @@ def test_custom_template_receives_selected_attribute_mapping(hass, monkeypatch) 
 async def test_preview_counts_rendered_attribute_context(hass, monkeypatch) -> None:
     _install_registry(hass, _entry("stable", "light.kitchen"))
     hass.states.get.return_value = _state({"brightness": 188})
-    monkeypatch.setattr(prompt, "get_entity_prompt_metadata", _empty_prompt_metadata)
+    monkeypatch.setattr(
+        exposed_attributes, "get_entity_prompt_metadata", _empty_prompt_metadata
+    )
     monkeypatch.setattr(
         exposed_attributes, "get_entity_prompt_metadata", _empty_prompt_metadata
     )
@@ -363,9 +372,7 @@ async def test_preview_counts_rendered_attribute_context(hass, monkeypatch) -> N
             CONF_PROMPT: "Brightness={{ exposed_entities[0].attributes.brightness }}",
             CONF_CURRENT_DATETIME_ENABLED: False,
             CONF_EXPOSED_ENTITIES_ENABLED: True,
-            CONF_EXPOSED_ENTITY_ATTRIBUTES: {
-                "registry:stable": ["brightness"]
-            },
+            CONF_EXPOSED_ENTITY_ATTRIBUTES: {"registry:stable": ["brightness"]},
         }
     )
     monkeypatch.setattr(
@@ -376,7 +383,7 @@ async def test_preview_counts_rendered_attribute_context(hass, monkeypatch) -> N
     monkeypatch.setattr(
         management_ui,
         "render_effective_prompt",
-        _wrap_effective_prompt_renderer(prompt.render_effective_prompt),
+        prompt.render_effective_prompt,
     )
 
     result = await _async_preview_effective_prompt(
@@ -393,32 +400,3 @@ async def test_preview_counts_rendered_attribute_context(hass, monkeypatch) -> N
     assert "Brightness=188" in result["prompt"]
     assert system["character_count"] == len(system["content"])
     assert result["total_character_count"] >= system["character_count"]
-
-
-def test_runtime_installer_wraps_every_copied_effective_renderer_reference() -> None:
-    from custom_components.extended_openai_conversation_responses import conversation
-
-    saved = {
-        "installed": exposed_attributes._INSTALLED,
-        "default": prompt._default_exposed_entities_context,
-        "template": prompt._render_template,
-        "prompt": prompt.render_effective_prompt,
-        "conversation": conversation.render_effective_prompt,
-        "management": management_ui.render_effective_prompt,
-        "command": management_ui.async_management_command,
-    }
-    try:
-        exposed_attributes._INSTALLED = False
-        exposed_attributes.install_exposed_attribute_runtime()
-
-        assert prompt.render_effective_prompt is not saved["prompt"]
-        assert conversation.render_effective_prompt is not saved["conversation"]
-        assert management_ui.render_effective_prompt is not saved["management"]
-    finally:
-        prompt._default_exposed_entities_context = saved["default"]
-        prompt._render_template = saved["template"]
-        prompt.render_effective_prompt = saved["prompt"]
-        conversation.render_effective_prompt = saved["conversation"]
-        management_ui.render_effective_prompt = saved["management"]
-        management_ui.async_management_command = saved["command"]
-        exposed_attributes._INSTALLED = saved["installed"]

@@ -25,33 +25,6 @@ def _trace() -> debug.DebugTrace:
     )
 
 
-@pytest.fixture(autouse=True)
-def restore_wrappers():
-    agent_type = conversation_module.ExtendedOpenAIAgentEntity
-    originals = {
-        "render": conversation_module.render_effective_prompt,
-        "exposed": agent_type._get_exposed_entities,
-        "tools": agent_type._get_function_tools,
-        "start_provider": debug.DebugTrace.start_provider_request,
-        "provider_as_dict": debug.DebugProviderRequest.as_dict,
-        "trace_as_dict": debug.DebugTrace.as_dict,
-        "summary": debug.DebugTrace.summary,
-        "installed": request_diagnostics._INSTALLED,
-    }
-    request_diagnostics._INSTALLED = False
-    try:
-        yield
-    finally:
-        conversation_module.render_effective_prompt = originals["render"]
-        agent_type._get_exposed_entities = originals["exposed"]
-        agent_type._get_function_tools = originals["tools"]
-        debug.DebugTrace.start_provider_request = originals["start_provider"]
-        debug.DebugProviderRequest.as_dict = originals["provider_as_dict"]
-        debug.DebugTrace.as_dict = originals["trace_as_dict"]
-        debug.DebugTrace.summary = originals["summary"]
-        request_diagnostics._INSTALLED = originals["installed"]
-
-
 def test_debug_trace_helper_tracks_current_context() -> None:
     assert request_diagnostics._debug_trace() is None
     trace = _trace()
@@ -62,64 +35,12 @@ def test_debug_trace_helper_tracks_current_context() -> None:
         debug._ACTIVE_DEBUG_TRACE.reset(token)
 
 
-def test_render_metric_failure_is_transparent(monkeypatch) -> None:
-    rendered = {"prompt": "effective"}
-    monkeypatch.setattr(
-        conversation_module, "render_effective_prompt", Mock(return_value=rendered)
-    )
-    request_diagnostics.install_payload_latency_diagnostics()
-    monkeypatch.setattr(
-        request_diagnostics,
-        "prompt_metrics",
-        Mock(side_effect=RuntimeError("diagnostics failed")),
-    )
-    trace = _trace()
-    token = debug._ACTIVE_DEBUG_TRACE.set(trace)
-    try:
-        result = conversation_module.render_effective_prompt("input")
-    finally:
-        debug._ACTIVE_DEBUG_TRACE.reset(token)
-
-    assert result is rendered
-    assert request_diagnostics._INTERNAL_PROMPT_METRICS not in trace.memory
-
-
-def test_tool_assembly_records_function_group_stats(monkeypatch) -> None:
-    agent_type = conversation_module.ExtendedOpenAIAgentEntity
-    original_tools = Mock(return_value=[{"spec": {"name": "demo"}}])
-    monkeypatch.setattr(agent_type, "_get_function_tools", original_tools)
-    runtime = SimpleNamespace(stats=Mock(return_value={"groups": 2}))
-    monkeypatch.setattr(
-        request_diagnostics, "get_function_group_runtime", Mock(return_value=runtime)
-    )
-    request_diagnostics.install_payload_latency_diagnostics()
-
-    agent = SimpleNamespace(
-        hass=object(),
-        entry=SimpleNamespace(entry_id="entry-1"),
-        subentry=SimpleNamespace(subentry_id="agent-1"),
-    )
-    trace = _trace()
-    token = debug._ACTIVE_DEBUG_TRACE.set(trace)
-    try:
-        result = agent_type._get_function_tools(agent)
-    finally:
-        debug._ACTIVE_DEBUG_TRACE.reset(token)
-
-    assert result == [{"spec": {"name": "demo"}}]
-    preparation = trace.memory[request_diagnostics._INTERNAL_PREPARATION]
-    assert preparation["function_tool_assembly"]["last_count"] == 1
-    assert preparation["function_groups"] == {"groups": 2}
-    runtime.stats.assert_called_once_with()
-
-
 @pytest.mark.asyncio
 async def test_execute_wrapper_passthrough_without_trace(monkeypatch) -> None:
     agent_type = conversation_module.ExtendedOpenAIAgentEntity
     expected = SimpleNamespace(tool_result={"result": "ok"})
     original_execute = AsyncMock(return_value=expected)
     monkeypatch.setattr(agent_type, "_async_dispatch_function_tool", original_execute)
-    request_diagnostics.install_payload_latency_diagnostics()
 
     result = await agent_type._execute_function_tool(
         object.__new__(agent_type), {}, SimpleNamespace(tool_name="demo"), object(), {}
@@ -136,7 +57,6 @@ async def test_execute_diagnostic_failure_never_masks_tool_result(monkeypatch) -
     monkeypatch.setattr(
         agent_type, "_async_dispatch_function_tool", AsyncMock(return_value=expected)
     )
-    request_diagnostics.install_payload_latency_diagnostics()
     monkeypatch.setattr(
         request_diagnostics,
         "_result_characters",
@@ -163,7 +83,6 @@ async def test_execute_diagnostic_failure_never_masks_tool_result(monkeypatch) -
 def test_provider_serialization_cache_metric_failure_is_transparent(
     monkeypatch,
 ) -> None:
-    request_diagnostics.install_payload_latency_diagnostics()
     trace = _trace()
     request = trace.start_provider_request(
         "responses", (), {"input": [{"role": "user", "content": "hello"}]}
@@ -185,7 +104,6 @@ def test_summary_metric_failure_keeps_original_summary(monkeypatch) -> None:
     monkeypatch.setattr(
         debug.DebugTrace, "summary", Mock(return_value=base_summary.copy())
     )
-    request_diagnostics.install_payload_latency_diagnostics()
     monkeypatch.setattr(
         request_diagnostics,
         "_model_requests",

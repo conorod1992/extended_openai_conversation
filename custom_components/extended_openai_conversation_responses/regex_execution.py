@@ -5,13 +5,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from contextlib import suppress
-from contextvars import ContextVar
 from functools import partial
 import json
 import logging
 import subprocess
 import sys
-from typing import Any, cast
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -27,11 +26,7 @@ from .const import (
     MAX_SPEECH_REGEX_REPLACEMENT_LENGTH,
     MAX_SPEECH_REGEX_RULES,
 )
-from .speech import (
-    _built_in_cleanup,
-    _final_whitespace_cleanup,
-    has_custom_speech_replacements,
-)
+from .speech import _built_in_cleanup, _final_whitespace_cleanup
 
 _LOGGER = logging.getLogger(__name__)
 _CONFIGURED_REGEX_TIMEOUT_SECONDS = 1.0
@@ -88,15 +83,6 @@ else:
     raise SystemExit("unsupported regex worker operation")
 json.dump(output, sys.stdout)
 """
-
-_DEFER_SPEECH_PROCESSING: ContextVar[bool] = ContextVar(
-    "extended_openai_defer_speech_processing", default=False
-)
-_DEFERRED_SPEECH_INPUT: ContextVar[tuple[str, Mapping[str, Any]] | None] = ContextVar(
-    "extended_openai_deferred_speech_input", default=None
-)
-
-_INSTALLED = False
 
 
 def _decode_regex_worker_result(
@@ -349,72 +335,3 @@ async def async_process_speech_text(
         ),
     )
     return await hass.async_add_executor_job(_final_whitespace_cleanup, text)
-
-
-def _deferred_process_speech_text_factory(original_process_speech_text: Any):
-    """Create the synchronous shim that only records custom-regex speech input."""
-
-    def deferred_process_speech_text(
-        original_text: str, agent_config: Mapping[str, Any]
-    ) -> str:
-        if _DEFER_SPEECH_PROCESSING.get() and has_custom_speech_replacements(
-            agent_config
-        ):
-            _DEFERRED_SPEECH_INPUT.set((original_text, agent_config))
-            return original_text
-        return cast(str, original_process_speech_text(original_text, agent_config))
-
-    return deferred_process_speech_text
-
-
-def _install_speech_regex_isolation() -> None:
-    """Defer live custom regex until after ChatLog has retained original content."""
-    from . import conversation as conversation_module
-    from .conversation import ExtendedOpenAIAgentEntity
-
-    current = ExtendedOpenAIAgentEntity._async_handle_message
-    if getattr(current, "_extended_openai_configurable_regex_executor", False):
-        return
-
-    original_handle_message = current
-    original_process_speech_text = conversation_module.process_speech_text
-    conversation_module.process_speech_text = _deferred_process_speech_text_factory(
-        original_process_speech_text
-    )
-
-    async def async_handle_message(
-        agent: Any,
-        user_input: Any,
-        chat_log: Any,
-        request_options: Mapping[str, Any] | None = None,
-    ) -> Any:
-        subentry_data = getattr(getattr(agent, "subentry", None), "data", None)
-        defer = bool(subentry_data and has_custom_speech_replacements(subentry_data))
-        defer_token = _DEFER_SPEECH_PROCESSING.set(defer)
-        input_token = _DEFERRED_SPEECH_INPUT.set(None)
-        deferred_input: tuple[str, Mapping[str, Any]] | None = None
-        try:
-            result = await original_handle_message(
-                agent, user_input, chat_log, request_options
-            )
-            deferred_input = _DEFERRED_SPEECH_INPUT.get()
-        finally:
-            _DEFERRED_SPEECH_INPUT.reset(input_token)
-            _DEFER_SPEECH_PROCESSING.reset(defer_token)
-
-        if deferred_input is not None:
-            speech_text = await async_process_speech_text(agent.hass, *deferred_input)
-            result.response.async_set_speech(speech_text)
-        return result
-
-    async_handle_message._extended_openai_configurable_regex_executor = True  # type: ignore[attr-defined]
-    ExtendedOpenAIAgentEntity._async_handle_message = async_handle_message  # type: ignore[method-assign,assignment]
-
-
-def install_configurable_regex_isolation() -> None:
-    """Install process-isolated handling for administrator-configured speech regex."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _install_speech_regex_isolation()
-    _INSTALLED = True

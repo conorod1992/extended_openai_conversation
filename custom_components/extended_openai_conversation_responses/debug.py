@@ -14,7 +14,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import datetime
-from functools import wraps
 import hashlib
 import json
 import time
@@ -25,7 +24,18 @@ from homeassistant.helpers.template import Template
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .hot_path_cleanup import (
+    _debug_event_has_action,
+    _debug_event_has_text,
+    _debug_usage,
+)
 from .provider_errors import provider_error_metadata
+from .request_diagnostics import (
+    provider_diagnostics,
+    record_provider_metrics,
+    summary_diagnostics,
+    trace_diagnostics,
+)
 
 DEBUG_DEFAULT_LIMIT = 10
 DEBUG_ALLOWED_LIMITS = (5, 10, 25, 50)
@@ -36,7 +46,7 @@ _DEBUG_MANAGERS = f"{DOMAIN}.request_debug_managers"
 _ACTIVE_DEBUG_TRACE: ContextVar[DebugTrace | None] = ContextVar(
     "extended_openai_request_debug_trace", default=None
 )
-_INSTRUMENTATION_INSTALLED = False
+
 
 _SENSITIVE_KEYS = {
     "api_key",
@@ -233,16 +243,20 @@ class DebugProviderRequest:
         now_ms = int((time.monotonic() - self._started_monotonic) * 1000)
         if self.first_event_ms is None:
             self.first_event_ms = now_ms
-        if self.first_text_ms is None and _event_has_text(event):
+        serialized = _jsonable(event)
+        if self.first_text_ms is None and _debug_event_has_text(serialized):
             self.first_text_ms = now_ms
-        if self.first_action_ms is None and _event_has_action(event):
+        if self.first_action_ms is None and _debug_event_has_action(serialized):
             self.first_action_ms = now_ms
-        if usage := _extract_usage(event):
+        if usage := _debug_usage(serialized):
             self.usage = usage
         if self.response_events_truncated:
             return
-        serialized = _jsonable(event)
-        event_size = _json_characters(serialized)
+        event_size = len(
+            json.dumps(
+                serialized, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+        )
         if self._event_bytes + event_size > DEBUG_MAX_EVENT_BYTES:
             self.response_events_truncated = True
             return
@@ -257,11 +271,12 @@ class DebugProviderRequest:
         self.error = provider_error_metadata(error) if error is not None else {}
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             item.name: _jsonable(getattr(self, item.name))
             for item in fields(self)
             if not item.name.startswith("_")
         }
+        return provider_diagnostics(self, data)
 
 
 @dataclass(slots=True)
@@ -315,31 +330,41 @@ class DebugTrace:
             _started_monotonic=time.monotonic(),
         )
         self.provider_requests.append(provider_request)
+        record_provider_metrics(self, provider_request, api_surface)
         return provider_request
 
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "debug_id": self.debug_id,
-            "entry_id": self.entry_id,
-            "subentry_id": self.subentry_id,
-            "started_at": self.started_at,
-            "completed_at": self.completed_at,
-            "duration_ms": self.duration_ms,
-            "successful": self.successful,
-            "error_type": self.error_type,
-            "error": _jsonable(self.error),
-            "usage_run_id": self.usage_run_id,
-            "user_input": _jsonable(self.user_input),
-            "incoming_conversation_id": self.incoming_conversation_id,
-            "continuity": _jsonable(self.continuity),
-            "phases_ms": _jsonable(self.phases_ms),
-            "system_prompt": self.system_prompt,
-            "prompt_metrics": _jsonable(self.prompt_metrics),
-            "memory": _jsonable(self.memory),
-            "provider_requests": [item.as_dict() for item in self.provider_requests],
-            "result": _jsonable(self.result),
-            "notes": list(self.notes),
-        }
+        try:
+            data = {
+                "debug_id": self.debug_id,
+                "entry_id": self.entry_id,
+                "subentry_id": self.subentry_id,
+                "started_at": self.started_at,
+                "completed_at": self.completed_at,
+                "duration_ms": self.duration_ms,
+                "successful": self.successful,
+                "error_type": self.error_type,
+                "error": _jsonable(self.error),
+                "usage_run_id": self.usage_run_id,
+                "user_input": _jsonable(self.user_input),
+                "incoming_conversation_id": self.incoming_conversation_id,
+                "continuity": _jsonable(self.continuity),
+                "phases_ms": _jsonable(self.phases_ms),
+                "system_prompt": self.system_prompt,
+                "prompt_metrics": _jsonable(self.prompt_metrics),
+                "memory": _jsonable(self.memory),
+                "provider_requests": [
+                    item.as_dict() for item in self.provider_requests
+                ],
+                "result": _jsonable(self.result),
+                "notes": list(self.notes),
+            }
+            return trace_diagnostics(self, data)
+        except Exception:
+            return {
+                "debug_id": str(getattr(self, "debug_id", "")),
+                "diagnostics_error": "trace_serialization_failed",
+            }
 
     def summary(self) -> dict[str, Any]:
         usage = {
@@ -353,7 +378,7 @@ class DebugTrace:
             for key in usage:
                 usage[key] += int(request.usage.get(key, 0))
         first_request = self.provider_requests[0] if self.provider_requests else None
-        return {
+        data = {
             "debug_id": self.debug_id,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
@@ -371,6 +396,7 @@ class DebugTrace:
             ),
             **usage,
         }
+        return summary_diagnostics(self, data)
 
 
 class DebugManager:
@@ -617,97 +643,6 @@ def conversation_debug_trace(
         _ACTIVE_DEBUG_TRACE.reset(token)
 
 
-def install_debug_instrumentation() -> None:
-    """Instrument inner runtime phases; request capture belongs to its entry owner."""
-    global _INSTRUMENTATION_INSTALLED
-    if _INSTRUMENTATION_INSTALLED:
-        return
-    _INSTRUMENTATION_INSTALLED = True
-
-    from .continuity import ConversationContinuity
-    from .conversation import ExtendedOpenAIAgentEntity
-
-    original_handle_message = ExtendedOpenAIAgentEntity._async_handle_message
-    original_build_prompt = ExtendedOpenAIAgentEntity._build_system_prompt
-    original_resolve = ConversationContinuity.async_resolve
-
-    @wraps(original_handle_message)
-    async def traced_handle_message(self: Any, *args: Any, **kwargs: Any) -> Any:
-        trace = current_debug_trace()
-        started = time.monotonic()
-        if trace is not None and self._usage is not None:
-            run = self._usage.current_run()
-            if run is not None:
-                trace.usage_run_id = run.run_id
-        try:
-            return await original_handle_message(self, *args, **kwargs)
-        finally:
-            if trace is not None:
-                trace.phases_ms["model_path_total"] = int(
-                    (time.monotonic() - started) * 1000
-                )
-
-    @wraps(original_build_prompt)
-    def traced_build_prompt(self: Any, *args: Any, **kwargs: Any) -> str:
-        trace = current_debug_trace()
-        started = time.monotonic()
-        prompt = original_build_prompt(self, *args, **kwargs)
-        if trace is not None:
-            trace.phases_ms["system_prompt_render"] = int(
-                (time.monotonic() - started) * 1000
-            )
-            trace.system_prompt = prompt
-            trace.prompt_metrics = {
-                "characters": len(prompt),
-                "sha256": hashlib.sha256(prompt.encode()).hexdigest(),
-            }
-        return prompt
-
-    @wraps(original_resolve)
-    async def traced_resolve(
-        self: Any,
-        mode: str,
-        scope: Any,
-        device_id: str | None,
-        incoming_conversation_id: str | None,
-        timeout_minutes: int,
-        *,
-        namespace: str | None = None,
-    ) -> Any:
-        trace = current_debug_trace()
-        started = time.monotonic()
-        result = await original_resolve(
-            self,
-            mode,
-            scope,
-            device_id,
-            incoming_conversation_id,
-            timeout_minutes,
-            namespace=namespace,
-        )
-        if trace is not None:
-            trace.phases_ms["continuity_resolution"] = int(
-                (time.monotonic() - started) * 1000
-            )
-            trace.continuity = {
-                "mode": mode,
-                "incoming_conversation_id": incoming_conversation_id,
-                "resolved_conversation_id": result.conversation_id,
-                "key": result.key,
-                "resumed": result.resumed,
-                "restored_history_items": len(result.history),
-                "timeout_minutes": timeout_minutes,
-                "namespace": namespace,
-                "device_id": device_id,
-                "scope": _jsonable(scope),
-            }
-        return result
-
-    ExtendedOpenAIAgentEntity._async_handle_message = traced_handle_message  # type: ignore[method-assign]
-    ExtendedOpenAIAgentEntity._build_system_prompt = traced_build_prompt  # type: ignore[method-assign]
-    ConversationContinuity.async_resolve = traced_resolve  # type: ignore[method-assign]
-
-
 def record_memory_retrieval(kind: str, started: float, records: list[Any]) -> None:
     """Record the completed retrieval at its explicit runtime boundary."""
     trace = current_debug_trace()
@@ -717,3 +652,63 @@ def record_memory_retrieval(kind: str, started: float, records: list[Any]) -> No
         )
         trace.memory[f"{kind}_count"] = len(records)
         trace.memory[f"{kind}_records"] = _jsonable(records)
+
+
+@contextmanager
+def model_path_timing(entity: Any) -> Iterator[None]:
+    """Measure the owning model operation, excluding deferred speech regex."""
+    trace = current_debug_trace()
+    started = time.monotonic()
+    if trace is not None and entity._usage is not None:
+        run = entity._usage.current_run()
+        if run is not None:
+            trace.usage_run_id = run.run_id
+    try:
+        yield
+    finally:
+        if trace is not None:
+            trace.phases_ms["model_path_total"] = int(
+                (time.monotonic() - started) * 1000
+            )
+
+
+def record_system_prompt(prompt: str, started: float) -> None:
+    trace = current_debug_trace()
+    if trace is not None:
+        trace.phases_ms["system_prompt_render"] = int(
+            (time.monotonic() - started) * 1000
+        )
+        trace.system_prompt = prompt
+        trace.prompt_metrics = {
+            "characters": len(prompt),
+            "sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        }
+
+
+def record_continuity_resolution(
+    result: Any,
+    started: float,
+    mode: str,
+    scope: Any,
+    device_id: str | None,
+    incoming_conversation_id: str | None,
+    timeout_minutes: int,
+    namespace: str | None,
+) -> None:
+    trace = current_debug_trace()
+    if trace is not None:
+        trace.phases_ms["continuity_resolution"] = int(
+            (time.monotonic() - started) * 1000
+        )
+        trace.continuity = {
+            "mode": mode,
+            "incoming_conversation_id": incoming_conversation_id,
+            "resolved_conversation_id": result.conversation_id,
+            "key": result.key,
+            "resumed": result.resumed,
+            "restored_history_items": len(result.history),
+            "timeout_minutes": timeout_minutes,
+            "namespace": namespace,
+            "device_id": device_id,
+            "scope": _jsonable(scope),
+        }

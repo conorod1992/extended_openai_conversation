@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -126,9 +126,7 @@ def _run(index: int) -> UsageRun:
 
 
 def _timestamp(index: int) -> str:
-    return (
-        datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=index)
-    ).isoformat()
+    return (datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=index)).isoformat()
 
 
 def _session(index: int, *, turn_count: int = 0) -> ArchiveSession:

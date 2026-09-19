@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import suppress
 from copy import deepcopy
 import time
-from typing import Any, cast
+from typing import Any
 
 from .function_groups import get_function_group_runtime
 from .ha_tool_result_compat import tool_result_data
@@ -17,7 +17,6 @@ from .payload_diagnostics import (
     provider_payload_metrics,
 )
 
-_INSTALLED = False
 _INTERNAL_PROMPT_METRICS = "_payload_prompt_metrics"
 _INTERNAL_PREPARATION = "_payload_preparation"
 _INTERNAL_TOOL_CALLS = "_payload_tool_calls"
@@ -69,238 +68,6 @@ def _model_requests(trace: Any) -> list[Any]:
     ]
 
 
-def install_payload_latency_diagnostics() -> None:
-    """Install debug-only measurements without changing model/request semantics."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-
-    from . import conversation as conversation_module, debug
-
-    agent_type: Any = conversation_module.ExtendedOpenAIAgentEntity
-    trace_type: Any = debug.DebugTrace
-    provider_request_type: Any = debug.DebugProviderRequest
-
-    original_render = conversation_module.render_effective_prompt
-    original_exposed = agent_type._get_exposed_entities
-    original_tools = agent_type._get_function_tools
-    original_start_provider = trace_type.start_provider_request
-    original_provider_as_dict = provider_request_type.as_dict
-    original_trace_as_dict = trace_type.as_dict
-    original_summary = trace_type.summary
-
-    def render_with_metrics(*args: Any, **kwargs: Any) -> Any:
-        trace = _debug_trace()
-        if trace is None:
-            return original_render(*args, **kwargs)
-        started = time.monotonic()
-        effective = original_render(*args, **kwargs)
-        try:
-            render_ms = int((time.monotonic() - started) * 1000)
-            trace.memory[_INTERNAL_PROMPT_METRICS] = prompt_metrics(effective)
-            _record_preparation(trace, "prompt_render_core", render_ms)
-        except Exception:
-            pass
-        return effective
-
-    def exposed_with_timing(agent: Any, *args: Any, **kwargs: Any) -> Any:
-        trace = _debug_trace()
-        if trace is None:
-            return original_exposed(agent, *args, **kwargs)
-        started = time.monotonic()
-        result = original_exposed(agent, *args, **kwargs)
-        with suppress(Exception):
-            _record_preparation(
-                trace,
-                "exposed_entity_context",
-                int((time.monotonic() - started) * 1000),
-                count=len(result) if isinstance(result, list) else None,
-            )
-        return result
-
-    def tools_with_timing(agent: Any, *args: Any, **kwargs: Any) -> Any:
-        trace = _debug_trace()
-        if trace is None:
-            return original_tools(agent, *args, **kwargs)
-        started = time.monotonic()
-        result = original_tools(agent, *args, **kwargs)
-        try:
-            _record_preparation(
-                trace,
-                "function_tool_assembly",
-                int((time.monotonic() - started) * 1000),
-                count=len(result) if isinstance(result, list) else None,
-            )
-            runtime = get_function_group_runtime(
-                agent.hass, agent.entry.entry_id, agent.subentry.subentry_id
-            )
-            if runtime is not None:
-                trace.memory[_INTERNAL_PREPARATION]["function_groups"] = runtime.stats()
-        except Exception:
-            pass
-        return result
-
-    def start_provider_with_metrics(
-        trace: Any, api_surface: str, args: tuple[Any, ...], kwargs: dict[str, Any]
-    ) -> Any:
-        request = original_start_provider(trace, api_surface, args, kwargs)
-        try:
-            safe_kwargs = request.request.get("kwargs", {})
-            input_value = safe_kwargs.get("input", safe_kwargs.get("messages"))
-            tools = safe_kwargs.get("tools")
-            request.metrics.update(provider_payload_metrics(input_value, tools))
-            request.metrics["request_index"] = len(trace.provider_requests)
-            request.metrics["approx_request_tokens"] = approximate_tokens(
-                int(request.metrics.get("request_characters", 0))
-            )
-            is_model = api_surface in _MODEL_API_SURFACES
-            request.metrics["model_request"] = is_model
-            request.metrics["explicit_prompt_cache"]["request_cache_key_present"] = (
-                bool(safe_kwargs.get("prompt_cache_key"))
-            )
-            previous = next(
-                (
-                    candidate
-                    for candidate in reversed(trace.provider_requests[:-1])
-                    if candidate.api_surface == api_surface
-                ),
-                None,
-            )
-            request.metrics["tools_same_as_previous_request"] = (
-                request.metrics.get("tools_sha256")
-                == previous.metrics.get("tools_sha256")
-                if previous is not None and is_model
-                else None
-            )
-            request.metrics["model_request_index"] = (
-                len(_model_requests(trace)) if is_model else None
-            )
-        except Exception:
-            pass
-        return request
-
-    def provider_as_dict_with_cache(request: Any) -> dict[str, Any]:
-        data = cast(dict[str, Any], original_provider_as_dict(request))
-        try:
-            metrics = dict(data.get("metrics", {}))
-            metrics["cache_usage"] = cache_usage_metrics(request.usage)
-            data["metrics"] = metrics
-        except Exception:
-            pass
-        return data
-
-    def trace_as_dict_with_diagnostics(trace: Any) -> dict[str, Any]:
-        try:
-            data = cast(dict[str, Any], original_trace_as_dict(trace))
-        except Exception:
-            return {
-                "debug_id": str(getattr(trace, "debug_id", "")),
-                "diagnostics_error": "trace_serialization_failed",
-            }
-        try:
-            memory = dict(data.get("memory", {}))
-            rich_prompt = memory.pop(_INTERNAL_PROMPT_METRICS, None)
-            preparation = memory.pop(_INTERNAL_PREPARATION, {})
-            tool_calls = memory.pop(_INTERNAL_TOOL_CALLS, [])
-            data["memory"] = memory
-            if isinstance(rich_prompt, dict):
-                data["prompt_metrics"] = {
-                    **data.get("prompt_metrics", {}),
-                    **rich_prompt,
-                }
-
-            model_requests = [
-                item
-                for item in data.get("provider_requests", [])
-                if isinstance(item, dict)
-                and item.get("api_surface") in _MODEL_API_SURFACES
-            ]
-            first_model = model_requests[0] if model_requests else {}
-            first_metrics = first_model.get("metrics", {})
-            input_breakdown = first_metrics.get("input_breakdown", {})
-            input_kinds = (
-                input_breakdown.get("by_kind", {})
-                if isinstance(input_breakdown, dict)
-                else {}
-            )
-            non_prompt_input_kinds = {
-                key: value
-                for key, value in input_kinds.items()
-                if key not in {"system", "developer"}
-            }
-            data["payload_latency_diagnostics"] = {
-                "approximation_notice": (
-                    "Approximate token counts use characters / 4 and are not provider "
-                    "billing tokens. Cache ratios use provider-reported token counts only."
-                ),
-                "model_request_count": len(model_requests),
-                "embedding_request_count": sum(
-                    1
-                    for item in data.get("provider_requests", [])
-                    if isinstance(item, dict)
-                    and item.get("api_surface") == "embeddings"
-                ),
-                "preparation": deepcopy(preparation),
-                "function_tool_calls": deepcopy(tool_calls),
-                "slowest_phases": _slowest_phases(data.get("phases_ms", {})),
-                "largest_first_model_request_contributors": largest_contributors(
-                    prompt_sections=(
-                        data.get("prompt_metrics", {}).get("sections") or []
-                    ),
-                    tools=(first_metrics.get("tool_breakdown") or []),
-                    input_kinds=non_prompt_input_kinds,
-                ),
-            }
-        except Exception:
-            data["payload_latency_diagnostics"] = {
-                "diagnostics_error": "payload_diagnostics_failed"
-            }
-        return data
-
-    def summary_with_diagnostics(trace: Any) -> dict[str, Any]:
-        data = cast(dict[str, Any], original_summary(trace))
-        try:
-            model_requests = _model_requests(trace)
-            first_model = model_requests[0] if model_requests else None
-            data["model_request_count"] = len(model_requests)
-            data["first_model_request_characters"] = (
-                first_model.metrics.get("request_characters")
-                if first_model is not None
-                else None
-            )
-            data["first_model_request_approx_input_tokens"] = (
-                first_model.metrics.get("approx_input_tokens")
-                if first_model is not None
-                else None
-            )
-            model_input_tokens = sum(
-                int(request.usage.get("input_tokens", 0)) for request in model_requests
-            )
-            model_cached_tokens = sum(
-                int(request.usage.get("cached_input_tokens", 0))
-                for request in model_requests
-            )
-            data["provider_reported_model_cache_ratio"] = (
-                round(model_cached_tokens / model_input_tokens, 4)
-                if model_input_tokens
-                else None
-            )
-            slowest = _slowest_phases(trace.phases_ms, limit=1)
-            data["slowest_phase"] = slowest[0] if slowest else None
-        except Exception:
-            pass
-        return data
-
-    conversation_module.render_effective_prompt = render_with_metrics
-    agent_type._get_exposed_entities = exposed_with_timing
-    agent_type._get_function_tools = tools_with_timing
-    trace_type.start_provider_request = start_provider_with_metrics
-    provider_request_type.as_dict = provider_as_dict_with_cache
-    trace_type.as_dict = trace_as_dict_with_diagnostics
-    trace_type.summary = summary_with_diagnostics
-    _INSTALLED = True
-
-
 def record_tool_execution(
     trace: Any,
     function_tool: Any,
@@ -330,3 +97,180 @@ def record_tool_execution(
         )
     except Exception:
         pass
+
+
+def record_provider_metrics(trace: Any, request: Any, api_surface: str) -> Any:
+    try:
+        safe_kwargs = request.request.get("kwargs", {})
+        input_value = safe_kwargs.get("input", safe_kwargs.get("messages"))
+        tools = safe_kwargs.get("tools")
+        request.metrics.update(provider_payload_metrics(input_value, tools))
+        request.metrics["request_index"] = len(trace.provider_requests)
+        request.metrics["approx_request_tokens"] = approximate_tokens(
+            int(request.metrics.get("request_characters", 0))
+        )
+        is_model = api_surface in _MODEL_API_SURFACES
+        request.metrics["model_request"] = is_model
+        request.metrics["explicit_prompt_cache"]["request_cache_key_present"] = bool(
+            safe_kwargs.get("prompt_cache_key")
+        )
+        previous = next(
+            (
+                candidate
+                for candidate in reversed(trace.provider_requests[:-1])
+                if candidate.api_surface == api_surface
+            ),
+            None,
+        )
+        request.metrics["tools_same_as_previous_request"] = (
+            request.metrics.get("tools_sha256") == previous.metrics.get("tools_sha256")
+            if previous is not None and is_model
+            else None
+        )
+        request.metrics["model_request_index"] = (
+            len(_model_requests(trace)) if is_model else None
+        )
+    except Exception:
+        pass
+    return request
+
+
+def provider_diagnostics(request: Any, data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        metrics = dict(data.get("metrics", {}))
+        metrics["cache_usage"] = cache_usage_metrics(request.usage)
+        data["metrics"] = metrics
+    except Exception:
+        pass
+    return data
+
+
+def trace_diagnostics(trace: Any, data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        memory = dict(data.get("memory", {}))
+        rich_prompt = memory.pop(_INTERNAL_PROMPT_METRICS, None)
+        preparation = memory.pop(_INTERNAL_PREPARATION, {})
+        tool_calls = memory.pop(_INTERNAL_TOOL_CALLS, [])
+        data["memory"] = memory
+        if isinstance(rich_prompt, dict):
+            data["prompt_metrics"] = {
+                **data.get("prompt_metrics", {}),
+                **rich_prompt,
+            }
+
+        model_requests = [
+            item
+            for item in data.get("provider_requests", [])
+            if isinstance(item, dict) and item.get("api_surface") in _MODEL_API_SURFACES
+        ]
+        first_model = model_requests[0] if model_requests else {}
+        first_metrics = first_model.get("metrics", {})
+        input_breakdown = first_metrics.get("input_breakdown", {})
+        input_kinds = (
+            input_breakdown.get("by_kind", {})
+            if isinstance(input_breakdown, dict)
+            else {}
+        )
+        non_prompt_input_kinds = {
+            key: value
+            for key, value in input_kinds.items()
+            if key not in {"system", "developer"}
+        }
+        data["payload_latency_diagnostics"] = {
+            "approximation_notice": (
+                "Approximate token counts use characters / 4 and are not provider "
+                "billing tokens. Cache ratios use provider-reported token counts only."
+            ),
+            "model_request_count": len(model_requests),
+            "embedding_request_count": sum(
+                1
+                for item in data.get("provider_requests", [])
+                if isinstance(item, dict) and item.get("api_surface") == "embeddings"
+            ),
+            "preparation": deepcopy(preparation),
+            "function_tool_calls": deepcopy(tool_calls),
+            "slowest_phases": _slowest_phases(data.get("phases_ms", {})),
+            "largest_first_model_request_contributors": largest_contributors(
+                prompt_sections=(data.get("prompt_metrics", {}).get("sections") or []),
+                tools=(first_metrics.get("tool_breakdown") or []),
+                input_kinds=non_prompt_input_kinds,
+            ),
+        }
+    except Exception:
+        data["payload_latency_diagnostics"] = {
+            "diagnostics_error": "payload_diagnostics_failed"
+        }
+    return data
+
+
+def summary_diagnostics(trace: Any, data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        model_requests = _model_requests(trace)
+        first_model = model_requests[0] if model_requests else None
+        data["model_request_count"] = len(model_requests)
+        data["first_model_request_characters"] = (
+            first_model.metrics.get("request_characters")
+            if first_model is not None
+            else None
+        )
+        data["first_model_request_approx_input_tokens"] = (
+            first_model.metrics.get("approx_input_tokens")
+            if first_model is not None
+            else None
+        )
+        model_input_tokens = sum(
+            int(request.usage.get("input_tokens", 0)) for request in model_requests
+        )
+        model_cached_tokens = sum(
+            int(request.usage.get("cached_input_tokens", 0))
+            for request in model_requests
+        )
+        data["provider_reported_model_cache_ratio"] = (
+            round(model_cached_tokens / model_input_tokens, 4)
+            if model_input_tokens
+            else None
+        )
+        slowest = _slowest_phases(trace.phases_ms, limit=1)
+        data["slowest_phase"] = slowest[0] if slowest else None
+    except Exception:
+        pass
+    return data
+
+
+def record_prompt_render(effective: Any, started: float) -> None:
+    trace = _debug_trace()
+    if trace is not None:
+        with suppress(Exception):
+            trace.memory[_INTERNAL_PROMPT_METRICS] = prompt_metrics(effective)
+            _record_preparation(
+                trace, "prompt_render_core", int((time.monotonic() - started) * 1000)
+            )
+
+
+def record_exposed_entities(result: Any, started: float) -> None:
+    trace = _debug_trace()
+    if trace is not None:
+        with suppress(Exception):
+            _record_preparation(
+                trace,
+                "exposed_entity_context",
+                int((time.monotonic() - started) * 1000),
+                count=len(result) if isinstance(result, list) else None,
+            )
+
+
+def record_tool_assembly(agent: Any, result: Any, started: float) -> None:
+    trace = _debug_trace()
+    if trace is not None:
+        with suppress(Exception):
+            _record_preparation(
+                trace,
+                "function_tool_assembly",
+                int((time.monotonic() - started) * 1000),
+                count=len(result) if isinstance(result, list) else None,
+            )
+            runtime = get_function_group_runtime(
+                agent.hass, agent.entry.entry_id, agent.subentry.subentry_id
+            )
+            if runtime is not None:
+                trace.memory[_INTERNAL_PREPARATION]["function_groups"] = runtime.stats()

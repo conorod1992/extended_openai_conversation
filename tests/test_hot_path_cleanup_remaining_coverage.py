@@ -6,20 +6,17 @@ import time
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import debug
 from homeassistant.util import dt as dt_util
-
-from custom_components.extended_openai_conversation_responses import (
-    debug,
-    hot_path_cleanup,
-)
 
 
 def test_debug_event_records_first_action_latency_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Action latency is captured on the first tool/search event and remains stable."""
-    monkeypatch.setattr(debug.DebugProviderRequest, "add_event", debug.DebugProviderRequest.add_event)
-    hot_path_cleanup._install_debug_single_conversion()
+    monkeypatch.setattr(
+        debug.DebugProviderRequest, "add_event", debug.DebugProviderRequest.add_event
+    )
     request = debug.DebugProviderRequest(
         request_id="request",
         api_surface="responses",
@@ -37,4 +34,6 @@ def test_debug_event_records_first_action_latency_once(
     assert first_action_ms is not None
     assert request.first_action_ms == first_action_ms
     assert len(request.response_events) == 2
-    assert request.response_events[0]["type"] == "response.function_call.arguments.delta"
+    assert (
+        request.response_events[0]["type"] == "response.function_call.arguments.delta"
+    )

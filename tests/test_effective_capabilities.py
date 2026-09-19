@@ -84,9 +84,7 @@ def test_memory_scope_availability_respects_retention_and_shared_mode() -> None:
         disabled, user_scope("admin", source="test")
     )
     assert not persistent_memory_scope_available(disabled, unretained_scope())
-    assert not persistent_memory_scope_available(
-        disabled, shared_scope(source="test")
-    )
+    assert not persistent_memory_scope_available(disabled, shared_scope(source="test"))
     assert persistent_memory_scope_available(explicit, shared_scope(source="test"))
 
 
@@ -143,7 +141,7 @@ def test_shared_voice_with_shared_memory_enabled_keeps_prompt_and_tools(hass) ->
     assert "persistent_memory_instructions" in {
         section.key for section in prompt.sections
     }
-    assert MEMORY_TOOL_NAMES <= _tool_names(options, scope_available)
+    assert _tool_names(options, scope_available) >= MEMORY_TOOL_NAMES
 
 
 def test_explicit_scope_capability_overrides_identityless_preview(hass) -> None:

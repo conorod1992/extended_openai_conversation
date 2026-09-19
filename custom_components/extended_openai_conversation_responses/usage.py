@@ -371,6 +371,9 @@ class UsageManager:
         error_type: str | None = None,
     ) -> None:
         """Count exactly one completed provider request."""
+        from .context_usage_hardening import usage_for_accounting
+
+        usage = usage_for_accounting(usage)
         usage = usage or RequestUsage()
         completed_at = dt_util.utcnow()
         async with self._lock:

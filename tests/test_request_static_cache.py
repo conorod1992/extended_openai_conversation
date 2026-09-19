@@ -6,8 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from custom_components.extended_openai_conversation_responses.entity_context_cache import (
-    EntityPromptMetadata,
     _CACHE_KEY,
+    EntityPromptMetadata,
     get_entity_prompt_metadata,
 )
 from custom_components.extended_openai_conversation_responses.request_static_cache import (
@@ -93,33 +93,6 @@ def test_provider_format_cache_invalidates_in_place_schema_changes() -> None:
         assert cached_format_tools(tools, "responses", formatter) == [{"name": "one"}]
         tools[0]["spec"]["name"] = "two"
         assert cached_format_tools(tools, "responses", formatter) == [{"name": "two"}]
-    finally:
-        _FORMATTED_TOOLS.reset(token)
-
-    assert calls == 2
-
-
-def test_provider_format_cache_rejects_identity_key_collision() -> None:
-    calls = 0
-    old_tool = {"spec": {"name": "old"}, "function": {"type": "template"}}
-    new_tool = {"spec": {"name": "new"}, "function": {"type": "template"}}
-
-    def formatter(value, _api_mode):
-        nonlocal calls
-        calls += 1
-        return [{"name": value[0]["spec"]["name"]}]
-
-    token = _FORMATTED_TOOLS.set({})
-    try:
-        cached_format_tools([new_tool], "responses", formatter)
-        cache = _FORMATTED_TOOLS.get()
-        assert cache is not None
-        key = ("responses", (id(new_tool),))
-        _, signatures, _ = cache[key]
-        cache[key] = ((old_tool,), signatures, ({"name": "old"},))
-        assert cached_format_tools([new_tool], "responses", formatter) == [
-            {"name": "new"}
-        ]
     finally:
         _FORMATTED_TOOLS.reset(token)
 

@@ -7,8 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses.function_execution import (
     async_validate_function_arguments,
 )
@@ -17,8 +15,8 @@ from custom_components.extended_openai_conversation_responses.functions.bash imp
 )
 from custom_components.extended_openai_conversation_responses.regex_execution import (
     async_search_configured_patterns,
-    install_configurable_regex_isolation,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 class _ExecutorHass:
@@ -43,9 +41,7 @@ async def test_pathological_function_pattern_is_bounded_without_stalling_loop() 
     spec = {
         "parameters": {
             "type": "object",
-            "properties": {
-                "value": {"type": "string", "pattern": r"^(a+)+$"}
-            },
+            "properties": {"value": {"type": "string", "pattern": r"^(a+)+$"}},
             "required": ["value"],
         }
     }
@@ -82,7 +78,9 @@ async def test_function_pattern_validation_preserves_valid_result() -> None:
     }
 
 
-async def test_bash_allow_pattern_is_bounded_without_stalling_loop(tmp_path: Path) -> None:
+async def test_bash_allow_pattern_is_bounded_without_stalling_loop(
+    tmp_path: Path,
+) -> None:
     """Bash's administrator allowlist uses the same killable regex boundary."""
     hass = _ExecutorHass()
     function = BashFunction()
@@ -106,8 +104,7 @@ async def test_bash_allow_pattern_is_bounded_without_stalling_loop(tmp_path: Pat
 
 
 def test_runtime_regex_paths_are_installed() -> None:
-    """Only completed-response speech still needs a runtime monkey patch."""
-    install_configurable_regex_isolation()
+    """Speech and tool execution are owned without runtime replacement."""
 
     from custom_components.extended_openai_conversation_responses.conversation import (
         ExtendedOpenAIAgentEntity,
@@ -116,7 +113,7 @@ def test_runtime_regex_paths_are_installed() -> None:
         ExtendedOpenAIBaseLLMEntity,
     )
 
-    assert getattr(
+    assert not getattr(
         ExtendedOpenAIAgentEntity._async_handle_message,
         "_extended_openai_configurable_regex_executor",
         False,
@@ -129,6 +126,5 @@ def test_runtime_regex_paths_are_installed() -> None:
 
     speech_handler = ExtendedOpenAIAgentEntity._async_handle_message
     tool_handler = ExtendedOpenAIBaseLLMEntity._execute_function_tool
-    install_configurable_regex_isolation()
     assert ExtendedOpenAIAgentEntity._async_handle_message is speech_handler
     assert ExtendedOpenAIBaseLLMEntity._execute_function_tool is tool_handler

@@ -34,7 +34,6 @@ from custom_components.extended_openai_conversation_responses.skill_availability
 )
 from custom_components.extended_openai_conversation_responses.skill_runtime_availability import (
     effective_tool_runtime_scope,
-    install_skill_runtime_availability,
 )
 from custom_components.extended_openai_conversation_responses.skills import SkillManager
 
@@ -91,9 +90,7 @@ def test_selected_skills_require_canonical_enabled_loader() -> None:
     assert disabled.available is False
     assert "disabled" in str(disabled.reason)
 
-    available = skill_loader_status(
-        ["calendar"], [_loader()], [], max_function_calls=1
-    )
+    available = skill_loader_status(["calendar"], [_loader()], [], max_function_calls=1)
     assert available.available is True
 
 
@@ -110,9 +107,7 @@ def test_selected_skills_require_reachable_enabled_group_and_tool_budget() -> No
     assert on_demand.available is True
     assert on_demand.on_demand is True
 
-    no_budget = skill_loader_status(
-        ["calendar"], [_loader()], [], max_function_calls=0
-    )
+    no_budget = skill_loader_status(["calendar"], [_loader()], [], max_function_calls=0)
     assert no_budget.available is False
     assert "per request" in str(no_budget.reason)
 
@@ -227,15 +222,13 @@ def test_effective_runtime_scope_preserves_on_demand_skill_loader_semantics() ->
     with effective_tool_runtime_scope(
         options, [loader], _installed_manager("calendar")
     ):
-        initial = assemble_function_tools(
-            [loader], [group], session.loaded_group_ids
-        )
+        initial = assemble_function_tools([loader], [group], session.loaded_group_ids)
         assert [tool["spec"]["name"] for tool in initial.tools] == [
             "load_function_groups"
         ]
-        assert load_function_groups(
-            session, ["skills"], [group], [loader]
-        )["loaded"] == ["skills"]
+        assert load_function_groups(session, ["skills"], [group], [loader])[
+            "loaded"
+        ] == ["skills"]
         loaded = assemble_function_tools([loader], [group], session.loaded_group_ids)
 
     assert [tool["spec"]["name"] for tool in loaded.tools] == ["load_skill"]
@@ -245,7 +238,6 @@ def test_live_entity_assembly_uses_effective_skill_availability(
     hass, monkeypatch
 ) -> None:
     """The installed runtime wrapper must affect the real agent assembly path."""
-    install_skill_runtime_availability()
     loader = _loader()
     other = _other_tool()
     options = {
@@ -278,16 +270,12 @@ def test_live_entity_assembly_uses_effective_skill_availability(
         ExtendedOpenAIAgentEntity, "_current_memory_scope_id", lambda _self: None
     )
 
-    missing_names = {
-        tool["spec"]["name"] for tool in entity._get_function_tools()
-    }
+    missing_names = {tool["spec"]["name"] for tool in entity._get_function_tools()}
     assert "other_tool" in missing_names
     assert "load_skill" not in missing_names
 
     manager._skills["calendar"] = SimpleNamespace(name="calendar")
-    installed_names = {
-        tool["spec"]["name"] for tool in entity._get_function_tools()
-    }
+    installed_names = {tool["spec"]["name"] for tool in entity._get_function_tools()}
     assert "other_tool" in installed_names
     assert "load_skill" in installed_names
 

@@ -8,8 +8,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from homeassistant.components import conversation
-
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -26,11 +24,11 @@ from custom_components.extended_openai_conversation_responses.context_summary im
 )
 from custom_components.extended_openai_conversation_responses.context_summary_performance import (
     _DEFER_CONTEXT_SUMMARY,
-    install_deferred_context_summary,
 )
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
 )
+from homeassistant.components import conversation
 
 
 def _history(turns: int = 5) -> list[conversation.Content]:
@@ -176,7 +174,6 @@ async def test_manager_does_not_overwrite_changed_history() -> None:
 
 
 async def test_live_truncation_hook_returns_before_summary_provider_finishes() -> None:
-    install_deferred_context_summary()
     started = asyncio.Event()
     release = asyncio.Event()
 

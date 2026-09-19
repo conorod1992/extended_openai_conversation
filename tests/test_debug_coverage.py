@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -77,7 +76,7 @@ def test_jsonable_bounds_and_redacts_arbitrary_sdk_values(monkeypatch) -> None:
         "x-api-key": "secret",
         "text": "abcdefgh",
         "binary": b"abc",
-        "when": datetime(2026, 1, 2, tzinfo=timezone.utc),
+        "when": datetime(2026, 1, 2, tzinfo=UTC),
         "items": (1, {2, 3}),
         "data": _Payload("ok", "secret"),
         "model": _ModelDump(),
@@ -414,152 +413,6 @@ def test_openai_client_proxy_wraps_supported_resources_and_delegates_other_attrs
     assert proxy.api_key == "secret"
 
 
-async def test_install_debug_instrumentation_covers_lifecycle_and_phase_wrappers(
-    monkeypatch,
-    entry_agent,
-    entry_input,
-) -> None:
-    from custom_components.extended_openai_conversation_responses.continuity import (
-        ConversationContinuity,
-    )
-    from custom_components.extended_openai_conversation_responses.conversation import (
-        ExtendedOpenAIAgentEntity,
-    )
-
-    async def process(_self, _user_input):
-        return {"response": "ok"}
-
-    async def handle(_self, *_args, **_kwargs):
-        return "handled"
-
-    async def retrieve(_self, *_args, **_kwargs):
-        return [{"id": "persistent"}]
-
-    async def retrieve_temporary(_self, *_args, **_kwargs):
-        return [{"id": "temporary"}, {"id": "two"}]
-
-    def build_prompt(_self, *_args, **_kwargs):
-        return "system prompt"
-
-    resolve_result = SimpleNamespace(
-        conversation_id="resolved",
-        key="scope-key",
-        resumed=True,
-        history=[1, 2],
-    )
-
-    async def resolve(
-        _self,
-        _mode,
-        _scope,
-        _device_id,
-        _incoming_conversation_id,
-        _timeout_minutes,
-        *,
-        namespace=None,
-    ):
-        assert namespace == "ns"
-        return resolve_result
-
-    entry_agent._async_process_with_continuity = lambda request: process(
-        entry_agent, request
-    )
-    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_handle_message", handle)
-    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_async_select_memories", retrieve)
-    monkeypatch.setattr(ExtendedOpenAIAgentEntity, "_build_system_prompt", build_prompt)
-    monkeypatch.setattr(ConversationContinuity, "async_resolve", resolve)
-    monkeypatch.setattr(debug, "_INSTRUMENTATION_INSTALLED", False)
-
-    debug.install_debug_instrumentation()
-    wrapped_process = ExtendedOpenAIAgentEntity._async_process
-    wrapped_handle = ExtendedOpenAIAgentEntity._async_handle_message
-    wrapped_retrieve = ExtendedOpenAIAgentEntity._async_retrieve_memories
-    wrapped_temporary = ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories
-    wrapped_prompt = ExtendedOpenAIAgentEntity._build_system_prompt
-    wrapped_resolve = ConversationContinuity.async_resolve
-
-    debug.install_debug_instrumentation()
-    assert ExtendedOpenAIAgentEntity._async_process is wrapped_process
-
-    hass = entry_agent.hass
-    manager = debug.get_debug_manager(hass, "entry", "agent")
-    entity = object.__new__(ExtendedOpenAIAgentEntity)
-    entity.__dict__.update(
-        hass=hass,
-        entry=SimpleNamespace(entry_id="entry"),
-        subentry=SimpleNamespace(
-            subentry_id="agent",
-            data={"memory_mode": "automatic", "temporary_memory": "enabled"},
-        ),
-        _usage=SimpleNamespace(current_run=lambda: SimpleNamespace(run_id="usage-run")),
-    )
-
-    assert await entry_agent.async_process(entry_input) == {"response": "ok"}
-    assert manager.status()["count"] == 0
-
-    manager.configure(enabled=True)
-    assert await entry_agent.async_process(entry_input) == {"response": "ok"}
-    assert manager.status()["count"] == 1
-    assert manager.summaries()[0]["successful"] is True
-
-    trace = _trace()
-    token = debug._ACTIVE_DEBUG_TRACE.set(trace)
-    try:
-        assert await wrapped_handle(entity) == "handled"
-        assert await wrapped_retrieve(entity, None, "query") == [{"id": "persistent"}]
-        from custom_components.extended_openai_conversation_responses import (
-            conversation as owner,
-        )
-        from custom_components.extended_openai_conversation_responses.guest_mode import (
-            GuestCapabilityPolicy,
-        )
-
-        entity._effective_guest_policy = GuestCapabilityPolicy.unrestricted
-        entity._temporary_memory = SimpleNamespace(
-            async_active=AsyncMock(return_value=[{"id": "temporary"}, {"id": "two"}])
-        )
-        monkeypatch.setattr(
-            owner,
-            "_ACTIVE_SCOPE",
-            SimpleNamespace(
-                get=lambda: SimpleNamespace(scope_type="user", user_id="alice")
-            ),
-        )
-        monkeypatch.setattr(
-            owner, "_ACTIVE_TEMPORARY_SCOPE", SimpleNamespace(get=lambda: "session")
-        )
-        assert await wrapped_temporary(entity) == [
-            {"id": "temporary"},
-            {"id": "two"},
-        ]
-        assert wrapped_prompt(entity) == "system prompt"
-        continuity = SimpleNamespace()
-        assert (
-            await wrapped_resolve(
-                continuity,
-                "automatic",
-                SimpleNamespace(scope_type="user"),
-                "device-1",
-                "incoming",
-                30,
-                namespace="ns",
-            )
-            is resolve_result
-        )
-    finally:
-        debug._ACTIVE_DEBUG_TRACE.reset(token)
-
-    assert trace.usage_run_id == "usage-run"
-    assert trace.memory["persistent_count"] == 1
-    assert trace.memory["temporary_count"] == 2
-    assert trace.system_prompt == "system prompt"
-    assert trace.prompt_metrics["characters"] == len("system prompt")
-    assert trace.continuity["resolved_conversation_id"] == "resolved"
-    assert trace.continuity["restored_history_items"] == 2
-    assert "model_path_total" in trace.phases_ms
-    assert "continuity_resolution" in trace.phases_ms
-
-
 async def test_owned_request_records_failure_and_resets_context(
     monkeypatch, entry_agent, entry_input
 ) -> None:
@@ -608,9 +461,7 @@ async def test_owned_request_records_failure_and_resets_context(
     monkeypatch.setattr(
         debug, "provider_error_metadata", lambda err: {"message": str(err)}
     )
-    monkeypatch.setattr(debug, "_INSTRUMENTATION_INSTALLED", False)
 
-    debug.install_debug_instrumentation()
     hass = entry_agent.hass
     manager = debug.get_debug_manager(hass, "entry", "agent")
     manager.configure(enabled=True)

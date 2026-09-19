@@ -5,24 +5,15 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from functools import wraps
+from copy import deepcopy
 import json
 from typing import Any
 
 from .entity_context_cache import get_entity_prompt_metadata
 from .skill_availability import is_canonical_skill_loader
 
-_INSTALLED = False
-_SKILLS_AVAILABLE: ContextVar[bool | None] = ContextVar(
-    "extended_openai_skills_available", default=None
-)
-type _FormattedToolCacheEntry = tuple[
-    tuple[dict[str, Any], ...],
-    tuple[str, ...],
-    tuple[dict[str, Any], ...],
-]
 _FORMATTED_TOOLS: ContextVar[
-    dict[tuple[str, tuple[int, ...]], _FormattedToolCacheEntry] | None
+    dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]] | None
 ] = ContextVar("extended_openai_formatted_tool_cache", default=None)
 
 
@@ -65,38 +56,20 @@ def cached_format_tools(
     api_mode: str,
     formatter: Callable[[list[dict[str, Any]], str], list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    """Reuse provider-formatted schemas only for the exact unchanged tool objects."""
+    """Reuse equal model schemas within a request, with isolated returned values."""
     cache = _FORMATTED_TOOLS.get()
     if cache is None:
         return formatter(function_tools, api_mode)
-
     signatures = tuple(_tool_format_signature(tool) for tool in function_tools)
     if any(signature is None for signature in signatures):
         return formatter(function_tools, api_mode)
-    stable_signatures = tuple(
-        signature for signature in signatures if signature is not None
+    key = (
+        api_mode,
+        tuple(signature for signature in signatures if signature is not None),
     )
-    key = (api_mode, tuple(id(tool) for tool in function_tools))
-    cached = cache.get(key)
-    if cached is not None:
-        original_tools, original_signatures, formatted = cached
-        if (
-            len(original_tools) == len(function_tools)
-            and all(
-                original is current
-                for original, current in zip(
-                    original_tools, function_tools, strict=True
-                )
-            )
-            and original_signatures == stable_signatures
-        ):
-            return list(formatted)
-
-    formatted = tuple(formatter(function_tools, api_mode))
-    # Keep strong references to the original containers. Their ids therefore cannot
-    # be recycled into a false cache hit while this request-local entry exists.
-    cache[key] = (tuple(function_tools), stable_signatures, formatted)
-    return list(formatted)
+    if key not in cache:
+        cache[key] = deepcopy(formatter(function_tools, api_mode))
+    return deepcopy(cache[key])
 
 
 def render_maintained_entity_context(
@@ -124,120 +97,3 @@ def formatted_tool_cache() -> Iterator[None]:
         yield
     finally:
         _FORMATTED_TOOLS.reset(token)
-
-
-def install_request_static_caching() -> None:
-    """Install request-scoped tool caching and skill-availability guards."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
-
-    from . import conversation, entity, prompt
-
-    original_format_tools = entity._format_tools
-    original_render_template = prompt._render_template
-    original_get_function_tools = (
-        conversation.ExtendedOpenAIAgentEntity._get_function_tools
-    )
-    original_load_function_groups_method = (
-        conversation.ExtendedOpenAIAgentEntity._load_function_groups
-    )
-    original_assemble_function_tools = conversation.assemble_function_tools
-    original_load_function_groups = conversation.load_function_groups
-
-    def format_tools_cached(
-        function_tools: list[dict[str, Any]], api_mode: str
-    ) -> list[dict[str, Any]]:
-        return cached_format_tools(function_tools, api_mode, original_format_tools)
-
-    def render_template_fast(
-        hass: Any,
-        raw: str,
-        *,
-        exposed_entities: list[dict[str, Any]],
-        current_device_id: str | None,
-        user_input: Any,
-        skills: list[Any],
-    ) -> str:
-        maintained_default = getattr(prompt, "_DEFAULT_EXPOSED_ENTITIES_CONTEXT", None)
-        if maintained_default is not None and raw == maintained_default:
-            return render_maintained_entity_context(hass, exposed_entities)
-        return original_render_template(
-            hass,
-            raw,
-            exposed_entities=exposed_entities,
-            current_device_id=current_device_id,
-            user_input=user_input,
-            skills=skills,
-        )
-
-    @wraps(original_get_function_tools)
-    def get_function_tools_for_skills(self: Any) -> list[dict[str, Any]]:
-        token = _SKILLS_AVAILABLE.set(bool(self._get_enabled_skills()))
-        try:
-            return original_get_function_tools(self)
-        finally:
-            _SKILLS_AVAILABLE.reset(token)
-
-    @wraps(original_load_function_groups_method)
-    def load_function_groups_for_skills(self: Any, requested: Any) -> dict[str, Any]:
-        token = _SKILLS_AVAILABLE.set(bool(self._get_enabled_skills()))
-        try:
-            return original_load_function_groups_method(self, requested)
-        finally:
-            _SKILLS_AVAILABLE.reset(token)
-
-    def assemble_function_tools_for_skills(
-        configured_tools: list[dict[str, Any]],
-        groups: list[dict[str, Any]],
-        loaded_group_ids: set[str],
-        *,
-        function_tools_supported: bool = True,
-        group_loader_supported: bool = True,
-        tool_available: Callable[[dict[str, Any]], bool] | None = None,
-    ) -> Any:
-        return original_assemble_function_tools(
-            tools_for_available_skills(configured_tools, _SKILLS_AVAILABLE.get()),
-            groups,
-            loaded_group_ids,
-            function_tools_supported=function_tools_supported,
-            group_loader_supported=group_loader_supported,
-            tool_available=tool_available,
-        )
-
-    def load_function_groups_projected(
-        session: Any,
-        requested: Any,
-        groups: list[dict[str, Any]],
-        configured_tools: list[dict[str, Any]] | None = None,
-        *,
-        function_tools_supported: bool = True,
-        group_loader_supported: bool = True,
-        tool_available: Callable[[dict[str, Any]], bool] | None = None,
-    ) -> dict[str, Any]:
-        projected = (
-            None
-            if configured_tools is None
-            else tools_for_available_skills(configured_tools, _SKILLS_AVAILABLE.get())
-        )
-        return original_load_function_groups(
-            session,
-            requested,
-            groups,
-            projected,
-            function_tools_supported=function_tools_supported,
-            group_loader_supported=group_loader_supported,
-            tool_available=tool_available,
-        )
-
-    entity._format_tools = format_tools_cached
-    prompt._render_template = render_template_fast  # type: ignore[attr-defined]
-    conversation.ExtendedOpenAIAgentEntity._get_function_tools = (  # type: ignore[method-assign]
-        get_function_tools_for_skills
-    )
-    conversation.ExtendedOpenAIAgentEntity._load_function_groups = (  # type: ignore[method-assign]
-        load_function_groups_for_skills
-    )
-    conversation.assemble_function_tools = assemble_function_tools_for_skills
-    conversation.load_function_groups = load_function_groups_projected

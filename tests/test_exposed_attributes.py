@@ -308,31 +308,6 @@ def test_attribute_helpers_and_renderers_cover_empty_and_non_string_entities(
     assert '"{""brightness"":1}"' in rendered
 
 
-def test_effective_prompt_wrapper_enriches_only_explicit_entity_lists(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[Any] = []
-
-    def original(_hass: Any, _options: Any, *args: Any, **kwargs: Any) -> Any:
-        calls.append(kwargs.get("exposed_entities"))
-        return "rendered"
-
-    monkeypatch.setattr(
-        ea,
-        "enrich_exposed_entities",
-        lambda _hass, _options, entities: [*entities, {"entity_id": "sensor.extra"}],
-    )
-    wrapped = ea._wrap_effective_prompt_renderer(original)
-
-    assert (
-        wrapped(object(), {}, exposed_entities=[{"entity_id": "light.one"}])
-        == "rendered"
-    )
-    assert calls[-1][-1]["entity_id"] == "sensor.extra"
-    assert wrapped(object(), {}, exposed_entities="not-a-list") == "rendered"
-    assert calls[-1] == "not-a-list"
-
-
 def test_configuration_projection_preserves_shape_and_exposed_catalog(monkeypatch):
     from custom_components.extended_openai_conversation_responses import (
         management_configuration_guidance as guidance,
@@ -353,5 +328,3 @@ def test_configuration_projection_preserves_shape_and_exposed_catalog(monkeypatc
     assert result["other"] is True
     assert result["exposed_attribute_catalog"] == {"seen": {"x": 1}}
     assert "configuration_guidance" in result
-    monkeypatch.setattr(ea, "_INSTALLED", True)
-    ea.install_exposed_attribute_runtime()

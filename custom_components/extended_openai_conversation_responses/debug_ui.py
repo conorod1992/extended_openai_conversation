@@ -18,7 +18,6 @@ from .management_result_limits import (
     MANAGEMENT_DEBUG_PROVIDER_PAGE_DEFAULT,
     MANAGEMENT_DEBUG_PROVIDER_PAGE_MAX,
 )
-from .request_diagnostics import install_payload_latency_diagnostics
 
 DEBUG_WS_COMMAND = f"{DOMAIN}/request_debug"
 _DEBUG_UI_SETUP = f"{DOMAIN}.request_debug_ui_setup"
@@ -134,7 +133,6 @@ async def websocket_request_debug(
 
 async def async_setup_debug_ui(hass: HomeAssistant) -> None:
     """Register request-debug API/modules used by Usage & Maintenance."""
-    install_payload_latency_diagnostics()
     if hass.data.get(_DEBUG_UI_SETUP):
         return
     await async_register_frontend_assets(hass)

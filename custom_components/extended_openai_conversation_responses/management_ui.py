@@ -169,6 +169,7 @@ from .request_rules import (
 )
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID, user_scope
 from .secret_redaction import redact_secrets, restore_redacted_secrets
+from .skill_runtime_availability import effective_tool_runtime_scope
 from .skills import SkillManager
 from .temporary_memory import (
     async_get_temporary_memory,
@@ -315,6 +316,8 @@ async def _async_preview_effective_request(
             options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
             configured_tools,
         )
+        availability_groups = groups
+        availability_tools = configured_tools
         if guest_policy.guest_active:
             membership = {
                 name: group for group in groups for name in group.get("functions", [])
@@ -340,7 +343,10 @@ async def _async_preview_effective_request(
                 for group in groups
                 if group.get("guest_allowed") is True
             ]
-        grouped = assemble_function_tools(configured_tools, groups, set())
+        with effective_tool_runtime_scope(
+            options, availability_tools, skill_manager, availability_groups
+        ):
+            grouped = assemble_function_tools(configured_tools, groups, set())
         provider = build_provider_request_snapshot(options, getattr(entry, "data", {}))
         custom_tools = [
             tool

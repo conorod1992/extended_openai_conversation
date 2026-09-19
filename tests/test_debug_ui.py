@@ -89,7 +89,9 @@ def test_agents_filters_non_conversation_subentries_and_sorts_titles() -> None:
         _entry("entry-2", _subentry("alpha", title="Alpha")),
     ]
     hass = SimpleNamespace(
-        config_entries=SimpleNamespace(async_entries=lambda domain: entries if domain == DOMAIN else [])
+        config_entries=SimpleNamespace(
+            async_entries=lambda domain: entries if domain == DOMAIN else []
+        )
     )
 
     assert debug_ui._agents(cast(Any, hass)) == [
@@ -117,10 +119,14 @@ def test_manager_validates_entry_and_conversation_subentry(
         wrong_type.entry_id: wrong_type,
     }
     hass = SimpleNamespace(
-        config_entries=SimpleNamespace(async_get_entry=lambda entry_id: entries.get(entry_id))
+        config_entries=SimpleNamespace(
+            async_get_entry=lambda entry_id: entries.get(entry_id)
+        )
     )
 
-    with pytest.raises(HomeAssistantError, match="entry_id and subentry_id are required"):
+    with pytest.raises(
+        HomeAssistantError, match="entry_id and subentry_id are required"
+    ):
         debug_ui._manager(cast(Any, hass), {"entry_id": "entry"})
 
     for entry_id in ("missing", "wrong-domain"):
@@ -318,9 +324,7 @@ async def test_websocket_translates_request_errors(
     monkeypatch.setattr(debug_ui, "_manager", lambda hass, current: _Manager())
     connection = _Connection()
 
-    await _call_websocket(
-        cast(Any, SimpleNamespace()), cast(Any, connection), msg
-    )
+    await _call_websocket(cast(Any, SimpleNamespace()), cast(Any, connection), msg)
 
     assert connection.results == []
     assert connection.errors == [(msg["id"], "invalid_request", message)]
@@ -362,21 +366,13 @@ async def test_websocket_translates_runtime_and_value_errors(
 async def test_setup_debug_ui_registers_assets_and_command_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    diagnostics_calls = 0
     asset_calls = 0
     command_calls: list[object] = []
-
-    def install_diagnostics() -> None:
-        nonlocal diagnostics_calls
-        diagnostics_calls += 1
 
     async def register_frontend_assets(hass: Any) -> None:
         nonlocal asset_calls
         asset_calls += 1
 
-    monkeypatch.setattr(
-        debug_ui, "install_payload_latency_diagnostics", install_diagnostics
-    )
     monkeypatch.setattr(
         debug_ui, "async_register_frontend_assets", register_frontend_assets
     )
@@ -390,6 +386,5 @@ async def test_setup_debug_ui_registers_assets_and_command_once(
     await debug_ui.async_setup_debug_ui(cast(Any, hass))
     await debug_ui.async_setup_debug_ui(cast(Any, hass))
 
-    assert diagnostics_calls == 2
     assert asset_calls == 1
     assert command_calls == [debug_ui.websocket_request_debug]

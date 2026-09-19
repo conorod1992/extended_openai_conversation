@@ -13,9 +13,6 @@ from custom_components.extended_openai_conversation_responses import (
     local_intents,
     request_rules,
 )
-from custom_components.extended_openai_conversation_responses.hot_path_cleanup import (
-    install_hot_path_cleanup,
-)
 from custom_components.extended_openai_conversation_responses.request_rules import (
     RequestRules,
 )
@@ -98,7 +95,6 @@ class DumpCountingEvent:
 
 def test_debug_stream_event_is_converted_once() -> None:
     """Debug instrumentation should not repeatedly model-dump one stream event."""
-    install_hot_path_cleanup()
     event = DumpCountingEvent()
     request = debug.DebugProviderRequest(
         request_id="request",
@@ -122,7 +118,6 @@ async def test_non_broadcast_local_intent_does_not_initialize_intercom(
     monkeypatch,
 ) -> None:
     """Ordinary local intents should not pay the Broadcast Store cold-load cost."""
-    install_hot_path_cleanup()
 
     async def unexpected_intercom(_hass):
         raise AssertionError("Intercom should not be initialized")
@@ -164,7 +159,6 @@ def _compiled_manager() -> RequestRules:
 
 def test_request_rule_deterministic_match_never_runs_fuzzy_scoring(monkeypatch) -> None:
     """Existing deterministic precedence should short-circuit fuzzy work entirely."""
-    install_hot_path_cleanup()
     manager = _compiled_manager()
 
     def unexpected_fuzzy(*_args):
@@ -180,7 +174,6 @@ def test_request_rule_deterministic_match_never_runs_fuzzy_scoring(monkeypatch) 
 
 def test_request_rule_fuzzy_matching_still_runs_as_fallback(monkeypatch) -> None:
     """Fuzzy behavior remains available when no deterministic candidate matches."""
-    install_hot_path_cleanup()
     manager = _compiled_manager()
     calls = 0
 

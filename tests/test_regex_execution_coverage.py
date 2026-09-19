@@ -252,29 +252,6 @@ async def test_speech_replacements_rejects_output_beyond_parent_limit(monkeypatc
     )
 
 
-def test_deferred_speech_shim_records_only_when_enabled(monkeypatch):
-    """The sync shim defers custom rules but preserves the ordinary sync path."""
-    original = MagicMock(return_value="sync-cleaned")
-    monkeypatch.setattr(
-        regex_execution, "has_custom_speech_replacements", lambda cfg: True
-    )
-    shim = regex_execution._deferred_process_speech_text_factory(original)
-    config = {CONF_SPEECH_REGEX_REPLACEMENTS: _rules()}
-
-    defer_token = regex_execution._DEFER_SPEECH_PROCESSING.set(True)
-    input_token = regex_execution._DEFERRED_SPEECH_INPUT.set(None)
-    try:
-        assert shim("original", config) == "original"
-        assert regex_execution._DEFERRED_SPEECH_INPUT.get() == ("original", config)
-        original.assert_not_called()
-    finally:
-        regex_execution._DEFERRED_SPEECH_INPUT.reset(input_token)
-        regex_execution._DEFER_SPEECH_PROCESSING.reset(defer_token)
-
-    assert shim("original", config) == "sync-cleaned"
-    original.assert_called_once_with("original", config)
-
-
 @pytest.mark.parametrize("custom", [False, True])
 async def test_management_speech_preview_calls_isolated_regex_engine(
     hass, management_message, monkeypatch, custom
@@ -296,62 +273,3 @@ async def test_management_speech_preview_calls_isolated_regex_engine(
     )
     assert result["speech_text"] == "processed"
     process.assert_awaited_once()
-
-
-async def test_live_isolation_defers_custom_regex_and_is_idempotent(monkeypatch):
-    """Live speech is post-processed after the original handler returns."""
-    from custom_components.extended_openai_conversation_responses import conversation
-    from custom_components.extended_openai_conversation_responses.conversation import (
-        ExtendedOpenAIAgentEntity,
-    )
-
-    def sync_process(text, config):
-        return f"sync:{text}"
-
-    responses = []
-
-    async def original_handle(agent, user_input, chat_log, request_options=None):
-        config = getattr(getattr(agent, "subentry", None), "data", {})
-        conversation.process_speech_text("hello", config)
-        response = SimpleNamespace(async_set_speech=MagicMock())
-        result = SimpleNamespace(response=response)
-        responses.append(result)
-        return result
-
-    monkeypatch.setattr(conversation, "process_speech_text", sync_process)
-    monkeypatch.setattr(
-        ExtendedOpenAIAgentEntity, "_async_handle_message", original_handle
-    )
-    monkeypatch.setattr(
-        regex_execution, "has_custom_speech_replacements", lambda cfg: True
-    )
-    processed = AsyncMock(return_value="async:hello")
-    monkeypatch.setattr(regex_execution, "async_process_speech_text", processed)
-
-    regex_execution._install_speech_regex_isolation()
-    command = ExtendedOpenAIAgentEntity._async_handle_message
-    agent = SimpleNamespace(
-        hass=object(),
-        subentry=SimpleNamespace(data={CONF_SPEECH_REGEX_REPLACEMENTS: _rules()}),
-    )
-
-    result = await command(agent, object(), object())
-
-    processed.assert_awaited_once()
-    result.response.async_set_speech.assert_called_once_with("async:hello")
-
-    regex_execution._install_speech_regex_isolation()
-    assert ExtendedOpenAIAgentEntity._async_handle_message is command
-
-
-def test_install_configurable_regex_isolation_runs_once(monkeypatch):
-    """Top-level installation remains idempotent."""
-    live = MagicMock()
-    monkeypatch.setattr(regex_execution, "_INSTALLED", False)
-    monkeypatch.setattr(regex_execution, "_install_speech_regex_isolation", live)
-
-    regex_execution.install_configurable_regex_isolation()
-    regex_execution.install_configurable_regex_isolation()
-
-    live.assert_called_once_with()
-    assert regex_execution._INSTALLED is True
