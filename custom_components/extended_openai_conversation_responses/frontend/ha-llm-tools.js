@@ -11,14 +11,14 @@ export function filterHATools(tools, query = "", sources = []) {
     terms.every(term => `${tool.name} ${tool.description} ${tool.source}`.toLocaleLowerCase().includes(term)));
 }
 
-export function renderHAToolCard(panel, tool, index) {
+export function renderHAToolCard(panel, tool, index, assignment = "") {
   const info = panel._haCatalogAgent === panel._agentId ? panel._haCatalog?.saved?.[tool.spec.name] : undefined;
   const name = haToolName(tool);
   const source = info?.source || `${tool.function.source_id} · ${tool.function.api_id}`;
   const enabled = tool.enabled !== false;
   return `<article class="list-card tool-card ${enabled ? "" : "is-disabled"}" data-tool-index="${index}" data-tool-search="${panel._e(`${name} ${source} ${info?.description || ""} ${enabled ? "enabled" : "disabled"} ${info?.available === false ? "unavailable" : ""}`.toLowerCase())}">
     <div class="card-main"><div class="tool-title"><h4>${panel._e(name)}</h4><span class="type-badge">HA LLM Tool</span>${info?.available === false ? '<span class="disabled-badge">Unavailable</span>' : ""}</div>
-    <p>${panel._e(source)}</p><p class="description">${panel._e(info?.description || "Live capability supplied by Home Assistant or an installed service.")}</p></div>
+    <p>${panel._e(source)}</p><p class="description">${panel._e(info?.description || "Live capability supplied by Home Assistant or an installed service.")}</p>${assignment}</div>
     <div class="actions tool-card-actions"><label class="tool-enabled-control"><span>Enabled</span><span class="switch-control"><input class="tool-enabled" data-index="${index}" type="checkbox" role="switch" aria-label="Enable ${panel._e(name)}" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></span></label>
     <button type="button" class="danger delete-tool" data-index="${index}">Remove</button></div></article>`;
 }

@@ -199,7 +199,7 @@ function sectionChoices(panel, {className, checked = true, available = null} = {
     .join("");
 }
 
-function unifiedTransferPanel(disabled = false) {
+export function renderBackupTransferPanel(disabled = false) {
   return `<div class="backup-panel transfer-panel" data-setting data-search="export backup import restore share setup custom memories knowledge usage archive request rules">
     <div class="subheading"><h3>Export / Backup</h3><p>Choose a shareable setup, a complete disaster-recovery backup, or only the sections you need.</p></div>
     <label class="setting"><span class="setting-copy"><strong>Export type</strong><small><strong>Shareable Setup</strong> includes reusable configuration, Function Tools and Request Rules but excludes private histories and real secret values. <strong>Full Backup</strong> includes all durable agent data. <strong>Custom</strong> lets you choose sections.</small></span><select id="${EXPORT_MODE_ID}" ${disabled ? "disabled" : ""}><option value="setup">Shareable Setup</option><option value="full">Full Backup</option><option value="custom">Custom</option></select></label>
@@ -214,37 +214,8 @@ function unifiedTransferPanel(disabled = false) {
   </div>`;
 }
 
-function decorateBackupMarkupDom(html) {
-  const template = document.createElement("template");
-  template.innerHTML = html;
-  const root = template.content;
-  const oldCreate = root.querySelector("#create-backup");
-  const disabled = Boolean(oldCreate?.disabled);
-  const panel = root.querySelector("#config-backup .backup-panel");
-  if (panel) panel.outerHTML = unifiedTransferPanel(disabled);
-  const heading = root.querySelector("#config-backup .config-section-heading .eyebrow");
-  const description = root.querySelector("#config-backup .config-section-heading p:last-child");
-  if (heading) heading.textContent = "Export, Backup, Import & Restore";
-  if (description) description.textContent = "Move reusable setup or durable agent data safely between agents and installations.";
-
-  // The old toolbar actions are superseded by the unified workflow. Keeping the
-  // backend commands means older clients remain compatible without presenting two
-  // competing import/export interfaces to current users.
-  root.querySelector("#import-agent")?.remove();
-  root.querySelector("#export-agent")?.remove();
-  return template.innerHTML;
-}
-
-export function decorateBackupMarkup(html) {
-  if (typeof document !== "undefined" && typeof document.createElement === "function") return decorateBackupMarkupDom(html);
-  return String(html)
-    .replace('id="create-backup"', `id="${CREATE_ID}"`)
-    .replace('id="restore-backup"', `id="${RESTORE_ID}"`)
-    .replace('id="backup-file" type="file" accept="application/json,.json"', `id="${FILE_ID}" type="file" accept="application/zip,.zip,application/json,.json"`);
-}
-
-export function decorateRestoreDialog(html, panel) {
-  const dirtyWarning = /unsaved configuration changes/i.test(String(html))
+export function renderRestoreTransferDialog(panel) {
+  const dirtyWarning = panel?._configDirty
     ? '<p class="inline-error">Your unsaved configuration changes will be discarded if configuration is one of the restored sections.</p>'
     : "";
   return `<dialog id="restore-dialog" class="editor-dialog" aria-labelledby="restore-dialog-title"><div class="dialog-header"><h2 id="restore-dialog-title">Import / Restore</h2></div><div class="dialog-body">${restoreScopeMarkup(panel)}<div><strong id="restore-backup-name"></strong><p id="restore-backup-meta" class="meta"></p></div><ul id="restore-summary" class="restore-summary"></ul><fieldset class="setting-group"><legend><strong>Sections to replace</strong></legend><p class="help">Only sections contained in this file are shown. Unselected destination sections remain unchanged.</p><div id="${RESTORE_SECTIONS_ID}" class="group-function-choices"></div></fieldset><div id="${RESTORE_STATUS_ID}" class="validation" role="status" aria-live="polite"></div><div class="notice"><strong>Replacement, not merge</strong><p>Every selected section replaces that section on the current agent. The combined target is validated first, including Request Rule references to Function Tools. A final confirmation is required before applying it.</p></div>${dirtyWarning}</div><div class="dialog-actions"><button type="button" class="secondary" id="${CANCEL_ID}">Cancel</button><button type="button" class="danger" id="${APPLY_ID}" disabled>Restore selected sections</button></div></dialog>`;

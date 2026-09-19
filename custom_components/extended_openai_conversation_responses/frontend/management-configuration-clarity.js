@@ -7,6 +7,9 @@ const EXTRA_CONFIG_OWNERS = Object.freeze({
 
 const FRIENDLY_LABEL_OVERRIDES = Object.freeze({
   memory_retrieval_mode: "Relevance matching",
+  max_function_calls_per_conversation: "Tool-call limit per conversation",
+  speech_processing_enabled: "Clean responses for speech",
+  speech_strip_markdown: "Remove Markdown formatting",
 });
 
 const TECHNICAL_SEARCH_ALIASES = Object.freeze({

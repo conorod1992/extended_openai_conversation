@@ -1,33 +1,18 @@
-import { bindBackupTransfer, decorateBackupMarkup, decorateRestoreDialog } from "./backup-transfer-ui.js";
-import { bindExposedAttributeSettings, renderExposedAttributeSettings } from "./exposed-attributes-ui.js";
+import { bindBackupTransfer } from "./backup-transfer-ui.js";
+import { bindExposedAttributeSettings } from "./exposed-attributes-ui.js";
 const {ensureAgentConfigModule, getAgentConfigModule} = await import("./agent-config-loader.js");
 
 if (typeof document === "undefined") await ensureAgentConfigModule();
 
-const DELAYED_CHOICE = (panel, enabled, checked) => `<label class="group-function-choice" data-local-intent-choice data-choice-search="delayed device commands scheduled deferred actions turn off later"><input type="checkbox" data-config="local_intent_delayed_commands_to_ai" data-type="boolean" ${checked ? "checked" : ""} ${enabled ? "" : "disabled"}><span><strong>Delayed device commands</strong><small>For example, “turn off the lights in 20 minutes”. Normal timers such as “set a 20 minute timer” can still stay local.</small></span></label>`;
 
 export const BACKUP_CREDENTIAL_WARNING = "Recognised API keys, tokens, passwords, authorization headers and other common secrets are redacted from full backups. Re-enter any required credentials after restore. Redaction is best-effort, so review backup files before sharing them.";
-const BACKUP_CREDENTIAL_NOTICE = `<p class="privacy-warning credential-redaction-warning"><strong>Credentials are not backed up:</strong> ${BACKUP_CREDENTIAL_WARNING}</p>`;
-const CONFIG_JUMPS_PATTERN = /\s*<nav class="config-jumps"[^>]*>[\s\S]*?<\/nav>\s*/;
 const CACHEABLE_CONFIG_SECTIONS = new Set(["capabilities", "archive", "voice", "speech", "context", "retention", "backup"]);
 const MAX_CONFIG_RENDER_CACHE_ENTRIES = 8;
 
-export function reasoningEffortOptionsForResult(result = {}) {
-  const values = result?.model_capabilities?.reasoning_effort_options;
-  const supported = Array.isArray(values) ? values : [];
-  return supported.map((value) => ({value, label: String(value).charAt(0).toUpperCase() + String(value).slice(1)}));
-}
+export {reasoningEffortOptionsForResult} from "./agent-config-model-presentation.js";
 
-export function isFunctionGroupEnabled(group = {}) {
-  return group?.enabled !== false;
-}
-
-function applyModelAwareReasoningOptions(panel) {
-  if (!panel?._result?.options) return;
-  panel._result.options = {
-    ...panel._result.options,
-    reasoning_effort: reasoningEffortOptionsForResult(panel._result),
-  };
+export function isFunctionGroupEnabled(...args) {
+  return requiredImplementation("isFunctionGroupEnabled").isFunctionGroupEnabled(...args);
 }
 
 function configRenderCacheKey(panel) {
@@ -39,15 +24,22 @@ function configRenderCacheKey(panel) {
 
 function getCachedConfigurationMarkup(panel, key) {
   const state = panel?._eocConfigRenderCache;
-  if (!key || !state || state.result !== panel._result) return null;
+  if (!key || !configRenderCacheMatches(panel, state)) return null;
   return state.entries.get(key) ?? null;
+}
+
+function configRenderCacheMatches(panel, state) {
+  return state && state.result === panel._result && state.draft === panel._draft
+    && state.agentId === panel._agentId && state.modelData === panel._modelCatalogData
+    && state.capabilities === panel._result?.model_capabilities;
 }
 
 function rememberConfigurationMarkup(panel, key, html) {
   if (!key) return html;
   let state = panel._eocConfigRenderCache;
-  if (!state || state.result !== panel._result) {
-    state = {result: panel._result, entries: new Map()};
+  if (!configRenderCacheMatches(panel, state)) {
+    state = {result: panel._result, draft: panel._draft, agentId: panel._agentId,
+      modelData: panel._modelCatalogData, capabilities: panel._result?.model_capabilities, entries: new Map()};
     panel._eocConfigRenderCache = state;
   }
   if (state.entries.has(key)) state.entries.delete(key);
@@ -56,107 +48,6 @@ function rememberConfigurationMarkup(panel, key, html) {
     state.entries.delete(state.entries.keys().next().value);
   }
   return html;
-}
-
-function simplifyConfigurationMarkupLegacy(panel, html) {
-  const config = panel._draft || panel._result?.config || {};
-  const localEnabled = Boolean(config.local_intents_enabled);
-  let result = html;
-  result = result.replace(CONFIG_JUMPS_PATTERN, "\n    ");
-  result = result.replace(/(<section id="config-local"[^>]*><div class="config-section-heading"><p class="eyebrow">Local handling<\/p><p>)[^<]*(<\/p><\/div>)/, "$1Let Extended OpenAI try Home Assistant's built-in commands after Request Rules, before using AI.$2");
-  const localHeading = /(<section id="config-local"[^>]*><div class="config-section-heading">[\s\S]*?<\/div>)/;
-  result = result.replace(localHeading, `$1
-    <div class="notice local-handling-explainer">
-      <strong>How this differs from Home Assistant's “Prefer local handling”</strong>
-      <p>Home Assistant's own option runs before a request reaches Extended OpenAI. That is simple and fast, but it means Extended OpenAI cannot apply Request Rules or choose that particular command for a Function Tool instead.</p>
-      <p><strong>Extended OpenAI local handling</strong> runs after Request Rules. It can still use Home Assistant's fast built-in commands, while letting you send selected command types on to your Function Tools or AI model.</p>
-      <p><strong>Example:</strong> “Turn on the kitchen light” can stay local, while “turn off the kitchen light in 20 minutes” can be sent to a deferred-action Function Tool.</p>
-    </div>`);
-  result = result
-    .replace("Try Home Assistant before AI", "Use Extended OpenAI local handling")
-    .replace("After Request Rules, simple commands Home Assistant already understands can run locally without an AI request. If Home Assistant cannot handle the request, Extended OpenAI continues as normal.", "After Request Rules, try Home Assistant's built-in commands first. Requests that do not match locally, or that you exclude below, continue to your Function Tools or AI model.")
-    .replace(/\s*<div class="config-toggle setting" data-field="local_intent_delayed_commands_to_ai"[\s\S]*?<span class="switch-track" aria-hidden="true"><\/span><\/label><\/div>/, "")
-    .replace("Always send these command types to AI", "Send these command types to AI")
-    .replace("Select any Home Assistant command types that should skip local handling and continue to your Function Tools or AI model.", "Choose any commands that should skip local handling and continue to your Function Tools or AI model.")
-    .replace("Maximum tool calls per conversation", "Maximum tool calls per request")
-    .replace("Stops the assistant after this many tool calls in one conversation to prevent runaway actions.", "Stops the assistant after this many model-requested tool calls while producing one response to a user request.");
-  result = result.replace(/(<div class="backup-panel"[^>]*>[\s\S]*?<p class="privacy-warning">[\s\S]*?<\/p>)/, `$1${BACKUP_CREDENTIAL_NOTICE}`);
-  return result.replace('<div id="local-intent-list" class="group-function-choices">', `<div id="local-intent-list" class="group-function-choices">${DELAYED_CHOICE(panel, localEnabled, Boolean(config.local_intent_delayed_commands_to_ai))}`);
-}
-
-function simplifyConfigurationMarkup(panel, html) {
-  if (typeof document === "undefined" || typeof document.createElement !== "function") return simplifyConfigurationMarkupLegacy(panel, html);
-  const stripped = String(html || "")
-    .replace(CONFIG_JUMPS_PATTERN, "\n    ")
-    .replace("Maximum tool calls per conversation", "Maximum tool calls per request")
-    .replace("Stops the assistant after this many tool calls in one conversation to prevent runaway actions.", "Stops the assistant after this many model-requested tool calls while producing one response to a user request.");
-  if (!stripped.includes('id="config-local"')) return stripped;
-
-  const config = panel._draft || panel._result?.config || {};
-  const template = document.createElement("template");
-  template.innerHTML = stripped;
-  const root = template.content;
-  const local = root.querySelector("#config-local");
-  if (local) {
-    const heading = local.querySelector(".config-section-heading");
-    const description = heading?.querySelector("p:last-child");
-    if (description) description.textContent = "Let Extended OpenAI try Home Assistant's built-in commands after Request Rules, before using AI.";
-    heading?.insertAdjacentHTML("afterend", `<div class="notice local-handling-explainer"><strong>How this differs from Home Assistant's “Prefer local handling”</strong><p>Home Assistant's own option runs before a request reaches Extended OpenAI. That is simple and fast, but it means Extended OpenAI cannot apply Request Rules or choose that particular command for a Function Tool instead.</p><p><strong>Extended OpenAI local handling</strong> runs after Request Rules. It can still use Home Assistant's fast built-in commands, while letting you send selected command types on to your Function Tools or AI model.</p><p><strong>Example:</strong> “Turn on the kitchen light” can stay local, while “turn off the kitchen light in 20 minutes” can be sent to a deferred-action Function Tool.</p></div>`);
-
-    const enabledSetting = local.querySelector('[data-field="local_intents_enabled"]');
-    const enabledLabel = enabledSetting?.querySelector("strong");
-    const enabledDescription = enabledSetting?.querySelector("small");
-    if (enabledLabel) enabledLabel.textContent = "Use Extended OpenAI local handling";
-    if (enabledDescription) enabledDescription.textContent = "After Request Rules, try Home Assistant's built-in commands first. Requests that do not match locally, or that you exclude below, continue to your Function Tools or AI model.";
-    local.querySelector('[data-field="local_intent_delayed_commands_to_ai"]')?.remove();
-
-    const exceptions = local.querySelector('[data-search*="local handling exceptions"] .subheading');
-    const exceptionsHeading = exceptions?.querySelector("h3");
-    const exceptionsDescription = exceptions?.querySelector("p");
-    if (exceptionsHeading) exceptionsHeading.textContent = "Send these command types to AI";
-    if (exceptionsDescription) exceptionsDescription.textContent = "Choose any commands that should skip local handling and continue to your Function Tools or AI model.";
-
-    local.querySelector("#local-intent-list")?.insertAdjacentHTML("afterbegin", DELAYED_CHOICE(panel, Boolean(config.local_intents_enabled), Boolean(config.local_intent_delayed_commands_to_ai)));
-  }
-  return template.innerHTML;
-}
-
-function decorateExposedAttributesMarkup(panel, html) {
-  if (!String(html || "").includes('id="config-prompt"')) return html;
-  const markup = renderExposedAttributeSettings(panel);
-  if (typeof document === "undefined" || typeof document.createElement !== "function") {
-    return html.replace('<details class="advanced-context-formatting"', `${markup}<details class="advanced-context-formatting"`);
-  }
-  const template = document.createElement("template");
-  template.innerHTML = html;
-  const prompt = template.content.querySelector("#config-prompt");
-  const exposedToggle = prompt?.querySelector('[data-field="exposed_entities_enabled"]');
-  exposedToggle?.insertAdjacentHTML("afterend", markup);
-  return template.innerHTML;
-}
-
-function decorateFunctionGroups(panel, html) {
-  if (String(html || "").includes("data-function-groups-decorated")) return html;
-  if (typeof document === "undefined" || typeof document.createElement !== "function") return html;
-  const template = document.createElement("template");
-  template.innerHTML = html;
-  const groups = panel?._draft?.function_groups || panel?._result?.config?.function_groups || [];
-  for (const card of template.content.querySelectorAll(".function-group-card[data-group-id]")) {
-    const group = groups.find((item) => item.id === card.dataset.groupId);
-    if (!group) continue;
-    const enabled = isFunctionGroupEnabled(group);
-    card.classList.toggle("is-disabled", !enabled);
-    const title = card.querySelector(".tool-title");
-    if (!enabled && title && !title.querySelector(".group-disabled-badge")) title.insertAdjacentHTML("beforeend", '<span class="availability-badge group-disabled-badge">Disabled</span>');
-    const editButton = card.querySelector(".edit-group");
-    if (editButton) {
-      editButton.disabled = !enabled;
-      editButton.title = enabled ? "" : "Enable this Function Group before editing it";
-    }
-    const actions = card.querySelector(".function-group-heading .actions");
-    if (actions && !actions.querySelector(".group-enabled")) actions.insertAdjacentHTML("afterbegin", `<label class="compact-toggle" title="Disable the group without changing the enabled state of its member Function Tools"><input type="checkbox" class="group-enabled" data-group-id="${panel._e(group.id)}" ${enabled ? "checked" : ""}><span>Enabled</span></label>`);
-  }
-  return template.innerHTML;
 }
 
 function requiredImplementation(name) {
@@ -175,23 +66,16 @@ function queueRender(panel) {
     });
 }
 
-function buildConfigurationMarkup(panel, module) {
-  let html = simplifyConfigurationMarkup(panel, module.renderConfiguration(panel));
-  html = decorateExposedAttributesMarkup(panel, html);
-  return html.includes('id="config-backup"') ? decorateBackupMarkup(html) : html;
-}
-
 export function renderConfiguration(panel) {
   const module = getAgentConfigModule();
   if (!module) {
     queueRender(panel);
     return panel._loading?.() || '<div class="loading">Loading configuration…</div>';
   }
-  applyModelAwareReasoningOptions(panel);
   const cacheKey = configRenderCacheKey(panel);
   const cached = getCachedConfigurationMarkup(panel, cacheKey);
   if (cached !== null) return cached;
-  return rememberConfigurationMarkup(panel, cacheKey, buildConfigurationMarkup(panel, module));
+  return rememberConfigurationMarkup(panel, cacheKey, module.renderConfiguration(panel));
 }
 
 export function bindConfiguration(panel) {
@@ -209,7 +93,7 @@ export function renderTools(panel) {
     queueRender(panel);
     return panel._loading?.() || '<div class="loading">Loading Functions…</div>';
   }
-  return decorateFunctionGroups(panel, module.renderTools(panel));
+  return module.renderTools(panel);
 }
 
 export function bindTools(panel) {
@@ -239,7 +123,7 @@ export function configurationDialogs(...args) {
 }
 
 export function restoreDialog(...args) {
-  return decorateRestoreDialog(getAgentConfigModule()?.restoreDialog(...args) || "", args[0]);
+  return getAgentConfigModule()?.restoreDialog(...args) || "";
 }
 
 export function configurationChoiceLabel(...args) {

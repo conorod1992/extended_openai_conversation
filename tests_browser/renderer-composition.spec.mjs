@@ -84,3 +84,57 @@ test("configuration emits the shipped local, exposed-attribute, group and transf
   expect(result.dialog).toContain("Sections to replace");
   expect(result.group).toEqual({disabled:true, badge:"Disabled", edit:true, checked:false, name:"Group <one>"});
 });
+
+test("render owners emit final markup without creating a template in a browser", async ({page}) => {
+  await page.goto(fixtureUrl("assistant/basics"));
+  await expect(page.locator('extended-openai-management-panel [data-config="chat_model"]')).toBeVisible();
+  const result = await page.evaluate(async (path) => {
+    const editor = await import(`${path}agent-config-editor.js`);
+    const guide = await import(`${path}guide-page.js`);
+    const rules = await import(`${path}request-rules-ui.js`);
+    await guide.ensureGuideModule();
+    const {ensureRequestRulesModule} = await import(`${path}request-rules-loader.js`);
+    await ensureRequestRulesModule();
+    const {panel} = window.browserHarness;
+    panel._configSections = ["general", "model", "local", "prompt", "backup"];
+    const create = document.createElement;
+    let html;
+    try {
+      document.createElement = function(tag, ...args) {
+        if (tag === "template") throw new Error("Production renderer reparsed its output");
+        return create.call(this, tag, ...args);
+      };
+      html = editor.renderConfiguration(panel) + editor.renderTools(panel)
+        + editor.configurationDialogs({_e:panel._e.bind(panel), _viewKey:() => "capabilities/functions"}) + editor.restoreDialog(panel)
+        + rules.renderRequestRules(panel) + rules.requestRulesDialog()
+        + guide.renderGuide(panel);
+    } finally { document.createElement = create; }
+    const root = document.createElement("template");
+    root.innerHTML = html;
+    return {groups:root.content.querySelectorAll(".group-enabled").length, native:root.content.querySelectorAll("#tool-yaml-native").length, backup:root.content.querySelectorAll(".transfer-panel").length, scopes:root.content.querySelectorAll("#restore-transfer-sections").length};
+  }, frontend);
+  expect(result).toEqual({groups:1, native:1, backup:1, scopes:1});
+});
+
+test("Function Group switches save once and preserve individually disabled members", async ({page}) => {
+  await page.goto(fixtureUrl("capabilities/functions"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('.group-enabled[data-group-id="baseline-group"]')).toBeVisible();
+  await page.evaluate(() => { window.browserHarness.panel._render(); window.browserHarness.panel._render(); });
+  const group = panel.locator('.function-group-card[data-group-id="baseline-group"]');
+  await group.locator(".group-enabled").uncheck();
+  await expect(group.locator(".edit-group")).toBeDisabled();
+  await expect(group.locator(".group-disabled-badge")).toHaveCount(1);
+  await expect(group.locator(".group-enabled")).toHaveAttribute("role", "switch");
+  await group.locator("summary").click();
+  const tool = group.locator('.tool-card').filter({hasText:"baseline_tool"});
+  await tool.locator(".tool-enabled").uncheck();
+  await group.locator(".group-enabled").check();
+  await expect(group.locator(".edit-group")).toBeEnabled();
+  await expect(group.locator(".group-disabled-badge")).toHaveCount(0);
+  await group.locator("summary").click();
+  await expect(tool.locator(".tool-enabled")).not.toBeChecked();
+  const calls = await page.evaluate(() => window.browserHarness.calls.filter((call) => call.section === "tools" && call.action === "save_group"));
+  expect(calls).toHaveLength(2);
+  expect(calls.map((call) => call.group.enabled)).toEqual([false,true]);
+});

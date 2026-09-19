@@ -8,6 +8,8 @@ const source = await readFile(
   ),
   "utf8",
 );
+const renderer = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js", import.meta.url), "utf8");
+const {renderTools} = await import("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js");
 
 assert.match(
   source,
@@ -26,24 +28,23 @@ assert.match(
 );
 
 assert.match(
-  source,
+  renderer,
   /\.function-group-card\.always-card[\s\S]*color-mix\(in srgb, var\(--primary-color\) 5%/,
   "Available on every request should share the normal Function Group tint",
 );
 assert.match(
-  source,
+  renderer,
   /\.function-group-card\.function-repair-attention[\s\S]*var\(--warning-color, #ff9800\)/,
   "Needs attention should use a distinct light warning treatment",
 );
 assert.match(
-  source,
+  renderer,
   /\.function-group-card > details \.tool-card[\s\S]*background:\s*var\(--card-background-color\)/,
   "member Function Tool cards should remain visually distinct from their collection",
 );
 
-assert.match(source, /editButton\.textContent = "Edit"/);
-assert.match(source, /deleteButton\.textContent = "Delete"/);
-assert.match(source, /Edit Function Group \$\{group\.name\}/);
-assert.match(source, /Delete Function Group \$\{group\.name\}/);
+const markup = renderTools({_e:String, _empty:String, _draft:{function_groups:[{id:"one",name:"One",functions:[]}]}});
+assert.match(markup, /aria-label="Edit Function Group One"[^>]*>Edit<\/button>/);
+assert.match(markup, /aria-label="Delete Function Group One"[^>]*>Delete<\/button>/);
 
 console.log("Function Tools UI polish guards passed");

@@ -113,12 +113,14 @@ try {
     "../custom_components/extended_openai_conversation_responses/frontend/agent-config-native-yaml.js",
     import.meta.url,
   );
-  const {bindNativeToolYaml, decorateToolYamlEditor, ensureNativeYamlEditor} = await import(moduleUrl);
+  const {bindNativeToolYaml, configurationDialogs, ensureNativeYamlEditor} = await import(moduleUrl);
 
   {
-    const html = '<textarea id="tool-yaml"></textarea>';
     delete globalThis.document;
-    assert.equal(decorateToolYamlEditor(html), html, "SSR/no-DOM rendering must leave the base dialog unchanged");
+    const html = configurationDialogs({_e:String, _viewKey:() => "capabilities/functions"});
+    assert.match(html, /<textarea data-native-yaml-fallback id="tool-yaml"/);
+    assert.match(html, /<ha-yaml-editor id="tool-yaml-native"[^>]*hidden in-dialog/,
+      "the owner must emit the fallback and initially hidden native editor without a DOM");
     globalThis.document = {
       createElement(tag) {
         if (tag === "style") return {dataset: {}, textContent: ""};
