@@ -360,6 +360,11 @@ async def async_setup_memory_ui(hass: HomeAssistant) -> None:
                 cache_headers=False,
             ),
             StaticPathConfig(
+                f"/{DOMAIN}/keyed-collection.js",
+                str(frontend_dir / "keyed-collection.js"),
+                cache_headers=False,
+            ),
+            StaticPathConfig(
                 f"/{DOMAIN}/memory-management-panel.js",
                 str(management_panel_file),
                 cache_headers=False,

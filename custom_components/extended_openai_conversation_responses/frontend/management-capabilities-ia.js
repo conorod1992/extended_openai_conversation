@@ -53,6 +53,9 @@ async function saveKnowledgeAvailability(panel, input) {
     input.checked = !desired;
     input.disabled = false;
     panel._toast(`Unable to update Knowledge: ${err.message || String(err)}`, true);
+  } finally {
+    // Reconciliation can retain this control after a successful save.
+    input.disabled = false;
   }
 }
 
@@ -60,7 +63,10 @@ export function bindCapabilities(panel) {
   const view = panel._viewKey();
   if (["capabilities/home-assistant", "capabilities/web-skills"].includes(view)) bindConfiguration(panel);
   const knowledgeToggle = panel.shadowRoot.querySelector("#knowledge-enabled-toggle");
-  knowledgeToggle?.addEventListener("change", () => saveKnowledgeAvailability(panel, knowledgeToggle));
+  if (knowledgeToggle && !knowledgeToggle.__eocKnowledgeBound) {
+    knowledgeToggle.__eocKnowledgeBound = true;
+    knowledgeToggle.addEventListener("change", () => saveKnowledgeAvailability(panel, knowledgeToggle));
+  }
 }
 
 export {

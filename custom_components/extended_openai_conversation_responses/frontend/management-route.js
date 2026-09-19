@@ -48,6 +48,7 @@ const featureLoaders = {
   "configuration": () => import("./management-configuration-feature.js"),
   "memory-browser": () => import("./guest-mode-ui.js"),
   "data-memory/memories": () => import("./management-memory-feature.js"),
+  "data-memory/knowledge": () => import("./management-knowledge-feature.js"),
   "capabilities/guest-mode": () => import("./management-guest-feature.js"),
   "capabilities/request-rules": () => import("./request-rules-ui.js"),
   "capabilities/quiet-hours": () => import("./quiet-hours-ui.js"),

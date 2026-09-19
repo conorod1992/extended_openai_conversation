@@ -1,4 +1,5 @@
-import {ensureTemporaryScope} from "./management-data-state.js";
+import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, setText} from "./keyed-collection.js";
+import {ensureTemporaryScope, memoryCollectionIdentity} from "./management-data-state.js";
 const CONTENT_LIMIT = 500;
 const CATEGORY_LIMIT = 64;
 
@@ -21,31 +22,71 @@ function temporaryScopeOptions(panel) {
     .join("");
 }
 
-function renderTemporaryMemories(panel) {
-  const items = panel._filtered(
-    panel._result?.memories || [],
-    (item) => `${item.content} ${item.category} ${item.owner_scope_id || ""}`,
-  );
+const collections = new WeakMap();
+
+function temporaryMemoryCard(panel, memory) {
+  return `<article class="list-card" data-memory-id="${panel._e(memory.memory_id)}">
+    <div class="card-main clickable edit-temporary-memory" tabindex="0" role="button" data-id="${panel._e(memory.memory_id)}">
+      <p class="primary-copy">${panel._e(memory.content)}</p>
+      <p class="meta">${panel._e(memory.category)} · ${panel._e(ownerLabel(panel, memory.owner_scope_id))} · Expires ${panel._e(panel._formatDate(memory.expires_at))}</p>
+    </div>
+    <div class="actions"><button type="button" class="secondary edit-temporary-memory" data-id="${panel._e(memory.memory_id)}">Edit</button><button type="button" class="danger delete-temporary" data-id="${panel._e(memory.memory_id)}">Delete</button></div>
+  </article>`;
+}
+
+function temporaryDiagnostics(panel) {
   const stats = panel._result?.stats || {};
   const pruned = Number(stats.invalid_owner_records_pruned || 0);
   const overflow = Number(stats.startup_overflow_records_pruned || 0);
-  const diagnostics = pruned || overflow
-    ? `<p class="help">Startup cleanup removed ${panel._e(String(pruned))} record(s) with invalid legacy ownership and ${panel._e(String(overflow))} record(s) above the 100-record ceiling.</p>`
-    : "";
-  return `<section class="content-card">
+  return pruned || overflow
+    ? `<p class="help">Startup cleanup removed ${panel._e(String(pruned))} record(s) with invalid legacy ownership and ${panel._e(String(overflow))} record(s) above the 100-record ceiling.</p>` : "";
+}
+
+function renderTemporaryMemories(panel) {
+  const items = panel._result?.memories || [];
+  return `<section class="content-card" data-temporary-memories data-collection-identity="${panel._e(memoryCollectionIdentity(panel))}">
     <div class="section-heading"><div><h2>Memories</h2><p>Short-term details that are removed automatically at their expiry time.</p></div></div>
     <div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent">Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary" disabled>Short-term</button></div>
     <p class="help">Short-term memories belong to a Personal or Shared scope. Conversation and device continuity do not determine ownership. Existing records remain manageable until they expire even when Temporary Memory is turned off.</p>
-    ${diagnostics}
+    <div data-temporary-diagnostics>${temporaryDiagnostics(panel)}</div>
     <input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Search memories" aria-label="Search memories">
-    <div class="list memory-list">${items.map((memory) => `<article class="list-card">
-      <div class="card-main clickable edit-temporary-memory" tabindex="0" role="button" data-id="${panel._e(memory.memory_id)}">
-        <p class="primary-copy">${panel._e(memory.content)}</p>
-        <p class="meta">${panel._e(memory.category)} · ${panel._e(ownerLabel(panel, memory.owner_scope_id))} · Expires ${panel._e(panel._formatDate(memory.expires_at))}</p>
-      </div>
-      <div class="actions"><button type="button" class="secondary edit-temporary-memory" data-id="${panel._e(memory.memory_id)}">Edit</button><button type="button" class="danger delete-temporary" data-id="${panel._e(memory.memory_id)}">Delete</button></div>
-    </article>`).join("") || panel._empty(panel._query ? "No short-term memories match this filter." : "No short-term memories in this scope.")}</div>
+    <div class="list memory-list">${items.map(memory => temporaryMemoryCard(panel, memory)).join("")}<div data-temporary-empty>${panel._empty("No short-term memories in this scope.")}</div></div>
   </section>`;
+}
+
+export function filterTemporaryMemories(panel) {
+  const state = collections.get(panel);
+  if (!state?.host.isConnected || state.identity !== memoryCollectionIdentity(panel)) return;
+  const query = panel._query.trim().toLocaleLowerCase();
+  let visible = 0;
+  for (const memory of panel._result?.memories || []) {
+    const node = state.cards.get(String(memory.memory_id))?.node;
+    if (!node) continue;
+    const show = `${memory.content || ""} ${memory.category || ""} ${memory.owner_scope_id || ""}`.toLocaleLowerCase().includes(query);
+    if (node.hidden === show) node.hidden = !show;
+    if (show) visible++;
+  }
+  state.empty.hidden = visible > 0;
+  const message = query ? "No short-term memories match this filter." : "No short-term memories in this scope.";
+  setText(state.empty.firstElementChild || state.empty, message);
+}
+
+export function hasTemporaryMemoryCollection(panel) {
+  const state = collections.get(panel);
+  return Boolean(state?.identity === memoryCollectionIdentity(panel) && state.host?.isConnected
+    && state.host === panel.shadowRoot.querySelector("[data-temporary-memories]"));
+}
+
+export function reconcileTemporaryMemories(panel) {
+  const state = collections.get(panel);
+  if (!state || state.host !== panel.shadowRoot.querySelector("[data-temporary-memories]") || state.identity !== memoryCollectionIdentity(panel)) return false;
+  reconcileKeyedChildren(state.list, state.cards, panel._result?.memories || [], memory => memory.memory_id,
+    memory => JSON.stringify([memory.content, memory.category, memory.expires_at, ownerLabel(panel, memory.owner_scope_id)]),
+    memory => temporaryMemoryCard(panel, memory), [state.empty]);
+  const diagnostics = temporaryDiagnostics(panel);
+  if (state.diagnostics !== diagnostics) { state.host.querySelector("[data-temporary-diagnostics]").innerHTML = diagnostics; state.diagnostics = diagnostics; }
+  filterTemporaryMemories(panel);
+  return true;
 }
 
 function temporaryDialog(panel) {
@@ -155,19 +196,29 @@ export async function deleteTemporaryMemory(panel, memoryId) {
 
 export function bindTemporaryMemory(panel) {
   if (panel._viewKey?.() !== "data-memory/memories" || panel._memoryKind !== "temporary") return;
-  panel.shadowRoot.querySelectorAll(".edit-temporary-memory").forEach((element) => {
-    panel._activate(element, () => panel._openTemporaryMemory(element.dataset.id));
+  const host = panel.shadowRoot.querySelector("[data-temporary-memories]");
+  if (!host) return;
+  if (collections.get(panel)?.host !== host) {
+    const list = host.querySelector(".memory-list");
+    collections.set(panel, {host, list, identity: memoryCollectionIdentity(panel), cards: adoptKeyedElements(list, "[data-memory-id]", "memoryId"), empty: list.querySelector("[data-temporary-empty]"), diagnostics: temporaryDiagnostics(panel)});
+    reconcileTemporaryMemories(panel);
+    host.querySelector("#list-search").addEventListener("input", event => { panel._query = event.target.value; filterTemporaryMemories(panel); });
+  }
+  delegateCollectionActions(host, ".edit-temporary-memory,.delete-temporary,.memory-kind", control => {
+    if (control.matches(".delete-temporary")) void panel._deleteTemporaryMemory(control.dataset.id);
+    else if (control.matches(".memory-kind")) {
+      panel._memoryKind = control.dataset.kind; panel._query = "";
+      void panel._loadSection();
+    } else panel._openTemporaryMemory(control.dataset.id);
   });
-  panel.shadowRoot.querySelector("#temporary-memory-form")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    panel._saveTemporaryMemory();
-  });
-  panel.shadowRoot.querySelectorAll(".close-temporary-editor").forEach((button) => {
-    button.addEventListener("click", () => panel._closeTemporaryMemory(!button.classList.contains("icon")));
-  });
-  panel.shadowRoot.querySelector("#temporary-memory-delete")?.addEventListener("click", () => {
-    const id = panel._temporaryMemoryDraft?.memory_id;
-    if (id) panel._deleteTemporaryMemory(id);
+  const form = panel.shadowRoot.querySelector("#temporary-memory-form");
+  if (!form || form.__eocTemporaryBound) return;
+  form.__eocTemporaryBound = true;
+  form.addEventListener("submit", event => { event.preventDefault(); void panel._saveTemporaryMemory(); });
+  form.addEventListener("click", event => {
+    const control = event.target.closest("button");
+    if (control?.matches(".close-temporary-editor")) void panel._closeTemporaryMemory(!control.classList.contains("icon"));
+    if (control?.id === "temporary-memory-delete" && panel._temporaryMemoryDraft?.memory_id) void panel._deleteTemporaryMemory(panel._temporaryMemoryDraft.memory_id);
   });
 }
 

@@ -1,4 +1,6 @@
-import {formatManagementTimestamp, browserState} from "./management-data-state.js";
+import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, setText} from "./keyed-collection.js";
+import {featureStatusMarkup, selectedFeatureStatus} from "./management-feature-status.js";
+import {formatManagementTimestamp, browserState, memoryCollectionIdentity} from "./management-data-state.js";
 export {prepareMemoryBrowser} from "./management-data-state.js";
 export {formatManagementTimestamp} from "./management-data-state.js";
 export const GUEST_EXCLUSION_KEYS = [
@@ -37,64 +39,106 @@ function resultTarget(panel) {
   return panel._contentData || panel._result;
 }
 
+const memoryCollections = new WeakMap();
+
+function collectionState(panel) {
+  const identity = memoryCollectionIdentity(panel);
+  let state = memoryCollections.get(panel);
+  if (!state || state.identity !== identity) {
+    state = {identity, items: new Map(), result: null, host: null};
+    memoryCollections.set(panel, state);
+  }
+  if (state.result !== panel._result) {
+    // A route/mutation refresh is authoritative. Search pages, by contrast,
+    // merge into this collection so filtering alone never destroys cards.
+    state.items = new Map((panel._result?.memories || []).map(memory => [String(memory.memory_id), memory]));
+    state.result = panel._result;
+  }
+  return state;
+}
+
 function indexMemories(panel) {
-  const state = browserState(panel);
-  state.projections = new Map(
-    (panel._result?.memories || []).map((memory) => [memory.memory_id, memorySearchProjection(memory)]),
-  );
+  browserState(panel).projections = new Map([...collectionState(panel).items].map(([id, memory]) => [id, memorySearchProjection(memory)]));
+}
+
+export function findPersistentMemory(panel, id) {
+  return collectionState(panel).items.get(String(id));
 }
 
 function memoryCard(panel, memory) {
-  return `<article class="list-card" data-memory-id="${panel._e(memory.memory_id)}"><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${panel._e(memory.memory_id)}"><p class="primary-copy">${panel._e(memory.content)}</p><p class="meta">${panel._e(memory.category)} · ${panel._e(memory.source)} · Updated ${panel._e(panel._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${panel._e(memory.memory_id)}">Edit</button>${panel._data?.is_admin && panel._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${panel._e(memory.memory_id)}">Assign to user</button>` : ""}<button type="button" class="danger delete-memory" data-id="${panel._e(memory.memory_id)}">Delete</button></div></article>`;
+  return `<article class="list-card" data-memory-id="${panel._e(memory.memory_id)}" ${memorySearchProjection(memory).includes(panel._query.trim().toLocaleLowerCase()) ? "" : "hidden"}><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${panel._e(memory.memory_id)}"><p class="primary-copy">${panel._e(memory.content)}</p><p class="meta">${panel._e(memory.category)} · ${panel._e(memory.source)} · Updated ${panel._e(panel._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${panel._e(memory.memory_id)}">Edit</button>${panel._data?.is_admin && panel._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${panel._e(memory.memory_id)}">Assign to user</button>` : ""}<button type="button" class="danger delete-memory" data-id="${panel._e(memory.memory_id)}">Delete</button></div></article>`;
+}
+
+function currentSearch(panel, identity, sequence, query) {
+  return identity === memoryCollectionIdentity(panel)
+    && sequence === browserState(panel).memorySearchSequence
+    && panel._viewKey() === "data-memory/memories" && panel._memoryKind === "persistent"
+    && panel._query.trim() === query;
+}
+
+function applySearchResult(panel, result, query) {
+  const collection = collectionState(panel);
+  for (const memory of result.memories || []) collection.items.set(String(memory.memory_id), memory);
+  panel._result = result;
+  collection.result = result;
+  browserState(panel).memoryQuery = query.toLocaleLowerCase();
+  indexMemories(panel);
+  // Use the renderer's existing editor-deferral mechanism, not a second editor
+  // lifecycle. Search completion never enters the whole-route render path.
+  if (panel.shadowRoot.querySelector("dialog[open]")) panel._eocDeferredEditorRender = true;
+  else reconcilePersistentMemories(panel);
 }
 
 async function runMemorySearch(panel) {
   const state = browserState(panel);
   const query = panel._query.trim();
   const sequence = ++state.memorySearchSequence;
+  const identity = memoryCollectionIdentity(panel);
   const action = query ? "search" : "list";
   try {
     const result = await panel._call("memories", action, {
-      scope_id: panel._scopeId,
-      query,
-      limit: MEMORY_PAGE_SIZE,
-      offset: 0,
+      scope_id: panel._scopeId, query, limit: MEMORY_PAGE_SIZE, offset: 0,
     });
-    if (sequence !== state.memorySearchSequence || panel._viewKey() !== "data-memory/memories" || panel._memoryKind !== "persistent" || panel._query.trim() !== query) return;
-    panel._result = result;
-    state.memoryQuery = query.toLocaleLowerCase();
-    indexMemories(panel);
-    panel._render();
+    if (!currentSearch(panel, identity, sequence, query)) return;
+    applySearchResult(panel, result, query);
   } catch (err) {
-    if (sequence === state.memorySearchSequence) panel._toast(`Unable to search memories: ${err.message || String(err)}`, true);
+    if (currentSearch(panel, identity, sequence, query)) panel._toast(`Unable to search memories: ${err.message || String(err)}`, true);
   }
 }
 
 function scheduleMemorySearch(panel) {
   const state = browserState(panel);
   clearTimeout(state.memorySearchTimer);
-  state.memorySearchTimer = setTimeout(() => runMemorySearch(panel), MEMORY_SEARCH_DEBOUNCE_MS);
+  // Invalidate in-flight work immediately, including A -> B -> A typing.
+  state.memorySearchSequence++;
+  const identity = memoryCollectionIdentity(panel), query = panel._query.trim();
+  const sequence = state.memorySearchSequence;
+  if (query.toLocaleLowerCase() === state.memoryQuery) return;
+  state.memorySearchTimer = setTimeout(() => {
+    if (currentSearch(panel, identity, sequence, query)) void runMemorySearch(panel);
+  }, MEMORY_SEARCH_DEBOUNCE_MS);
 }
 
 async function loadMoreMemories(panel, button) {
+  if (button.disabled) return;
   const state = browserState(panel);
   const current = panel._result?.memories || [];
-  const query = state.memoryQuery ? panel._query.trim() : "";
+  const query = panel._query.trim();
+  if (query.toLocaleLowerCase() !== state.memoryQuery) return;
+  const sequence = state.memorySearchSequence, identity = memoryCollectionIdentity(panel);
   panel._setSaving(button, true, "Loading…");
   try {
     const result = await panel._call("memories", query ? "search" : "list", {
-      scope_id: panel._scopeId,
-      query,
-      limit: MEMORY_PAGE_SIZE,
-      offset: current.length,
+      scope_id: panel._scopeId, query, limit: MEMORY_PAGE_SIZE, offset: current.length,
     });
-    panel._result = {...result, memories: [...current, ...(result.memories || [])]};
-    indexMemories(panel);
-    panel._render();
+    if (!currentSearch(panel, identity, sequence, query)) return;
+    const memories = [...new Map([...current, ...(result.memories || [])].map(memory => [String(memory.memory_id), memory])).values()];
+    applySearchResult(panel, {...result, memories}, query);
   } catch (err) {
-    panel._toast(`Unable to load more memories: ${err.message || String(err)}`, true);
+    if (currentSearch(panel, identity, sequence, query)) panel._toast(`Unable to load more memories: ${err.message || String(err)}`, true);
   } finally {
     panel._setSaving(button, false);
+    if (hasPersistentMemoryCollection(panel)) applyMemoryFilter(panel);
   }
 }
 
@@ -133,20 +177,89 @@ async function loadMoreConversations(panel, button) {
 }
 
 export async function finishMemoryBrowserLoad(panel) {
-  if (panel._viewKey() === "data-memory/memories" && panel._memoryKind === "persistent") {
+  if (panel._viewKey() === "data-memory/memories" && panel._memoryKind === "persistent" && !panel._busy && !panel._error) {
     indexMemories(panel);
-    if (panel._query.trim()) await runMemorySearch(panel);
+    if (panel._query.trim() && panel._query.trim().toLocaleLowerCase() !== browserState(panel).memoryQuery) await runMemorySearch(panel);
   }
 }
 
+const memoryStatusMarkup = panel => featureStatusMarkup(panel, "Persistent memory", selectedFeatureStatus(panel, "memory"), {page: "data-memory", subsection: "memory-settings", label: "Configure memory"});
+
 export function renderPersistentMemories(panel) {
-  const state = browserState(panel);
+  const items = [...collectionState(panel).items.values()];
+  return `<div data-memory-feature-status>${memoryStatusMarkup(panel)}</div><section class="content-card" data-persistent-memories data-collection-identity="${panel._e(memoryCollectionIdentity(panel))}"><div class="section-heading"><div><h2>Memories</h2><p>Long-term facts the assistant can reuse in future conversations.</p></div><button type="button" id="add-memory">+ Add memory</button></div><div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent" disabled>Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary">Short-term</button></div><input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map(memory => memoryCard(panel, memory)).join("")}<div data-memory-empty>${panel._empty(panel._query.trim() ? "No memories match this search." : "No long-term memories yet.")}</div></div><div class="section-actions" data-memory-pagination ${panel._result?.has_more ? "" : "hidden"}><button type="button" class="secondary" id="load-more-memories">Load more ${browserState(panel).memoryQuery ? "matches" : "memories"}</button></div></section>`;
+}
+
+function applyMemoryFilter(panel) {
+  const collection = collectionState(panel);
+  if (!collection.host?.isConnected) return;
   const query = panel._query.trim().toLocaleLowerCase();
-  const all = panel._result?.memories || [];
-  const items = query && query !== state.memoryQuery
-    ? all.filter((memory) => (state.projections.get(memory.memory_id) || "").includes(query))
-    : all;
-  return `<section class="content-card"><div class="section-heading"><div><h2>Memories</h2><p>Long-term facts the assistant can reuse in future conversations.</p></div><button type="button" id="add-memory">+ Add memory</button></div><div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent" disabled>Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary">Short-term</button></div><input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map((memory) => memoryCard(panel, memory)).join("") || panel._empty(query ? "No memories match this search." : "No long-term memories yet.")}</div>${panel._result?.has_more ? `<div class="section-actions"><button type="button" class="secondary" id="load-more-memories">Load more ${state.memoryQuery ? "matches" : "memories"}</button></div>` : ""}</section>`;
+  const backendQuery = browserState(panel).memoryQuery;
+  const resultIds = new Set((panel._result?.memories || []).map(memory => String(memory.memory_id)));
+  let visible = 0;
+  for (const [id, record] of collection.cards) {
+    const memory = collection.items.get(id);
+    const show = query === backendQuery ? resultIds.has(id) : memorySearchProjection(memory).includes(query);
+    if (record.node.hidden === show) record.node.hidden = !show;
+    if (show) visible++;
+  }
+  collection.empty.hidden = visible > 0;
+  const message = query ? "No memories match this search." : "No long-term memories yet.";
+  setText(collection.empty.firstElementChild || collection.empty, message);
+  collection.host.querySelector("[data-memory-pagination]").hidden = !panel._result?.has_more || query !== backendQuery;
+  const button = collection.host.querySelector("#load-more-memories");
+  if (!button.disabled) setText(button, `Load more ${backendQuery ? "matches" : "memories"}`);
+}
+
+export function hasPersistentMemoryCollection(panel) {
+  const collection = memoryCollections.get(panel);
+  return Boolean(collection?.identity === memoryCollectionIdentity(panel) && collection.host?.isConnected
+    && collection.host === panel.shadowRoot.querySelector("[data-persistent-memories]"));
+}
+
+export function reconcilePersistentMemories(panel) {
+  const collection = collectionState(panel);
+  if (!collection.host || collection.host !== panel.shadowRoot.querySelector("[data-persistent-memories]")) return false;
+  const items = [...collection.items.values()];
+  indexMemories(panel);
+  reconcileKeyedChildren(collection.list, collection.cards, items, memory => memory.memory_id,
+    memory => JSON.stringify([memory.content, memory.category, memory.source, memory.updated_at, panel._data?.is_admin]),
+    memory => memoryCard(panel, memory), [collection.empty]);
+  // This small status region is independent of the large card collection.
+  const markup = memoryStatusMarkup(panel);
+  if (collection.statusMarkup !== markup) {
+    const statusHost = panel.shadowRoot.querySelector("[data-memory-feature-status]");
+    statusHost.innerHTML = markup;
+    statusHost.querySelector(".inline-route")?.addEventListener("click", () => panel._navigate("data-memory", "memory-settings"));
+    collection.statusMarkup = markup;
+  }
+  applyMemoryFilter(panel);
+  return true;
+}
+
+function bindPersistentMemories(panel) {
+  if (panel._viewKey() !== "data-memory/memories" || panel._memoryKind !== "persistent") return;
+  const host = panel.shadowRoot.querySelector("[data-persistent-memories]");
+  if (!host) return;
+  const collection = collectionState(panel);
+  if (collection.host !== host) {
+    collection.host = host;
+    collection.statusMarkup = memoryStatusMarkup(panel);
+    collection.list = host.querySelector(".memory-list");
+    collection.cards = adoptKeyedElements(collection.list, "[data-memory-id]", "memoryId");
+    collection.empty = collection.list.querySelector("[data-memory-empty]");
+    reconcilePersistentMemories(panel);
+    host.querySelector("#list-search").addEventListener("input", event => { panel._query = event.target.value; filterPersistentMemories(panel); });
+  }
+  delegateCollectionActions(host, "#add-memory,.edit-memory,.memory-edit-button,.delete-memory,.reassign-memory,.memory-kind,#load-more-memories", control => {
+    if (control.matches(".delete-memory")) void panel._deleteMemory(control.dataset.id);
+    else if (control.matches(".reassign-memory")) panel._openReassign(control.dataset.id);
+    else if (control.matches("#load-more-memories")) void loadMoreMemories(panel, control);
+    else if (control.matches(".memory-kind")) {
+      panel._memoryKind = control.dataset.kind; panel._query = "";
+      void panel._loadSection();
+    } else void panel._openMemory(control.dataset.id);
+  });
 }
 
 export function decorateConversations(panel, html) {
@@ -168,18 +281,22 @@ export function decorateGuestPolicy(panel, html) {
 }
 
 export function filterPersistentMemories(panel) {
-  const state = browserState(panel);
-  const query = panel._query.trim().toLocaleLowerCase();
-  panel.shadowRoot.querySelectorAll(".memory-list .list-card").forEach((card) => {
-    card.hidden = Boolean(query && !(state.projections.get(card.dataset.memoryId) || "").includes(query));
-  });
-  if (query !== state.memoryQuery) scheduleMemorySearch(panel);
+  applyMemoryFilter(panel);
+  scheduleMemorySearch(panel);
 }
 
 export function bindMemoryBrowser(panel) {
-  panel.shadowRoot.querySelector("#load-more-memories")?.addEventListener("click", (event) => loadMoreMemories(panel, event.currentTarget));
-  panel.shadowRoot.querySelector("#load-more-conversations")?.addEventListener("click", (event) => loadMoreConversations(panel, event.currentTarget));
-  panel.shadowRoot.querySelector("#guest-web-search")?.addEventListener("change", (event) => {
-    if (panel._guestDraft) panel._guestDraft.guest_web_search = Boolean(event.currentTarget.checked);
-  });
+  bindPersistentMemories(panel);
+  const more = panel.shadowRoot.querySelector("#load-more-conversations");
+  if (more && !more.__eocMemoryBrowserBound) {
+    more.__eocMemoryBrowserBound = true;
+    more.addEventListener("click", event => loadMoreConversations(panel, event.currentTarget));
+  }
+  const guest = panel.shadowRoot.querySelector("#guest-web-search");
+  if (guest && !guest.__eocMemoryBrowserBound) {
+    guest.__eocMemoryBrowserBound = true;
+    guest.addEventListener("change", event => {
+      if (panel._guestDraft) panel._guestDraft.guest_web_search = Boolean(event.currentTarget.checked);
+    });
+  }
 }
