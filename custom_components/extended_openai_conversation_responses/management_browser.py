@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .memory import MAX_LIST_LIMIT, memory_as_dict
+from .memory import MAX_LIST_LIMIT, memory_as_dict, memory_revision
 
 
 def _bounded_limit(message: dict[str, Any], default: int) -> int:
@@ -45,7 +45,8 @@ def _search_page(
     page = records[offset : offset + limit]
     return {
         "memories": [
-            memory_as_dict(record, include_scope=include_scope) for record in page
+            management_memory_dict(record, include_scope=include_scope)
+            for record in page
         ],
         "offset": offset,
         "limit": limit,
@@ -75,7 +76,8 @@ async def _list_page(
         )
     return {
         "memories": [
-            memory_as_dict(record, include_scope=include_scope) for record in records
+            management_memory_dict(record, include_scope=include_scope)
+            for record in records
         ],
         "scope_id": scope_id,
         "offset": offset,
@@ -106,3 +108,10 @@ async def async_browse_memories(
         offset=_bounded_offset(message),
         include_scope=include_scope,
     )
+
+
+def management_memory_dict(record: Any, *, include_scope: bool) -> dict[str, Any]:
+    """Expose the edit token only on the Management projection."""
+    return memory_as_dict(record, include_scope=include_scope) | {
+        "revision": memory_revision(record)
+    }

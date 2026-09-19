@@ -1065,7 +1065,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _dialogs() {
     const content = `<dialog id="knowledge-dialog" class="editor-dialog wide" aria-labelledby="knowledge-dialog-title"><form id="knowledge-form"><div class="dialog-header"><h2 id="knowledge-dialog-title">Add Knowledge source</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Title<input id="knowledge-title" maxlength="${KNOWLEDGE_TITLE_LIMIT}" required></label><label>Description<textarea id="knowledge-description" class="short-textarea" maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}" spellcheck="true"></textarea></label>${knowledgeSourceAvailabilityControl()}<label>Content<textarea id="knowledge-content" class="knowledge-editor" maxlength="${KNOWLEDGE_LIMIT}" required spellcheck="true"></textarea></label><div id="knowledge-counter" class="counter">0 / ${KNOWLEDGE_LIMIT.toLocaleString()} characters</div><div id="knowledge-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="knowledge-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="knowledge-save">Save</button></div></form></dialog>
-      <dialog id="memory-dialog" class="editor-dialog" aria-labelledby="memory-dialog-title"><form id="memory-form"><div class="dialog-header"><h2 id="memory-dialog-title">Add memory</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Memory<textarea id="memory-content" required spellcheck="true" placeholder="What should the agent remember?"></textarea></label><label>Category<input id="memory-category" value="general" required></label><p id="memory-meta" class="meta"></p><div id="memory-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="memory-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="memory-save">Save</button></div></form></dialog>
+      <dialog id="memory-dialog" class="editor-dialog" aria-labelledby="memory-dialog-title"><form id="memory-form"><div class="dialog-header"><h2 id="memory-dialog-title">Add memory</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Memory<textarea id="memory-content" required spellcheck="true" placeholder="What should the agent remember?"></textarea></label><label>Category<input id="memory-category" value="general" required></label><div id="memory-metadata"></div><p id="memory-meta" class="meta"></p><div id="memory-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="memory-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="memory-save">Save</button></div></form></dialog>
       <dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>
       <dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope">${this._scopeOptions("memories", true, true)}</select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>
       <dialog id="confirm-dialog" class="editor-dialog confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-header"><h2 id="confirm-title">Confirm</h2></div><div class="dialog-body"><p id="confirm-message"></p></div><div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">Cancel</button><button type="button" class="danger" id="confirm-accept">Confirm</button></div></dialog>
@@ -1187,11 +1187,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _openMemory(memoryId = null) {
     const root = this.shadowRoot;
     const memory = getRouteFeature("memory-browser")?.findPersistentMemory(this, memoryId) || null;
-    this._editingMemory = memory;
+    this._editingMemory = memory ? {...memory} : null;
+    this._memoryEditorScope = this._scopeId;
+    this._memoryEditorAgent = this._agentId;
     this._editorKind = "memory";
     root.querySelector("#memory-dialog-title").textContent = memory ? "Edit memory" : "Add memory";
     root.querySelector("#memory-content").value = memory?.content || "";
     root.querySelector("#memory-category").value = memory?.category || "general";
+    getRouteFeature("data-memory/memories").populateMemoryMetadata(this, memory);
     root.querySelector("#memory-delete").hidden = !memory;
     root.querySelector("#memory-meta").textContent = memory ? [memory.source, memory.created_at ? `Created ${this._formatDate(memory.created_at)}` : "", memory.updated_at ? `Updated ${this._formatDate(memory.updated_at)}` : ""].filter(Boolean).join(" · ") : "Categories help organise memories.";
     this._setDialogError("memory", "");
@@ -1220,7 +1223,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _memoryValues() {
     const root = this.shadowRoot;
-    return { content: root.querySelector("#memory-content").value, category: root.querySelector("#memory-category").value };
+    return { content: root.querySelector("#memory-content").value, category: root.querySelector("#memory-category").value, ...getRouteFeature("data-memory/memories").memoryMetadataValues(this) };
   }
 
   async _saveKnowledge() {
@@ -1245,7 +1248,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const values = this._memoryValues();
     this._setSaving(button, true);
     try {
-      await this._call("memories", this._editingMemory ? "update" : "add", { scope_id: this._scopeId, ...(this._editingMemory ? { memory_id: this._editingMemory.memory_id } : {}), content: values.content.trim(), category: values.category.trim() || "general" });
+      if (this._memoryEditorAgent !== this._agentId || this._memoryEditorScope !== this._scopeId) throw new Error("The selected agent or scope changed. Close and reopen this editor.");
+      if (this._editingMemory && !this._editingMemory.revision) throw new Error("Refresh the Memory list and reopen this editor before saving.");
+      await this._call("memories", this._editingMemory ? "update" : "add", {
+        scope_id: this._memoryEditorScope,
+        ...(this._editingMemory ? {memory_id: this._editingMemory.memory_id, expected_revision: this._editingMemory.revision} : {}),
+        ...getRouteFeature("data-memory/memories").memoryMutationValues(values, this._editingMemory),
+      });
       this.shadowRoot.querySelector("#memory-dialog").close();
       await this._refreshAfterMutation();
       this._toast(this._editingMemory ? "Memory updated" : "Memory added");

@@ -13,8 +13,7 @@ assert.match(route, /"data-memory\/knowledge": \(\) => import\("\.\/management-k
 assert.match(route, /"data-memory\/memories": \(\) => import\("\.\/management-memory-feature.js"\)/);
 assert.match(panel, /getRouteFeature\(view\)\?\.reconcileKnowledge\(this\)/);
 assert.match(panel, /getRouteFeature\(view\)\?\.reconcileMemories\(this\)/);
-for (const owner of [memory, temporary, knowledge, await read("frontend/memory-panel.js")]) assert.match(owner, /from "\.\/keyed-collection.js"/);
-assert.match(await read("memory_ui.py"), /f"\/{DOMAIN}\/keyed-collection.js"/);
+for (const owner of [memory, temporary, knowledge]) assert.match(owner, /from "\.\/keyed-collection.js"/);
 assert.match(knowledge, /source => source.source_id/);
 assert.match(memory, /memory => memory.memory_id/);
 assert.match(temporary, /memory => memory.memory_id/);

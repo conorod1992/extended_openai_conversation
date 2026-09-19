@@ -45,7 +45,7 @@ function temporaryDiagnostics(panel) {
 function renderTemporaryMemories(panel) {
   const items = panel._result?.memories || [];
   return `<section class="content-card" data-temporary-memories data-collection-identity="${panel._e(memoryCollectionIdentity(panel))}">
-    <div class="section-heading"><div><h2>Memories</h2><p>Short-term details that are removed automatically at their expiry time.</p></div></div>
+    <div class="section-heading"><div><h2>Memories</h2><p>Short-term details that are removed automatically at their expiry time.</p></div><button type="button" class="danger" id="clear-temporary">Clear short-term memories</button></div>
     <div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent">Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary" disabled>Short-term</button></div>
     <p class="help">Short-term memories belong to a Personal or Shared scope. Conversation and device continuity do not determine ownership. Existing records remain manageable until they expire even when Temporary Memory is turned off.</p>
     <div data-temporary-diagnostics>${temporaryDiagnostics(panel)}</div>
@@ -204,7 +204,8 @@ export function bindTemporaryMemory(panel) {
     reconcileTemporaryMemories(panel);
     host.querySelector("#list-search").addEventListener("input", event => { panel._query = event.target.value; filterTemporaryMemories(panel); });
   }
-  delegateCollectionActions(host, ".edit-temporary-memory,.delete-temporary,.memory-kind", control => {
+  delegateCollectionActions(host, ".edit-temporary-memory,.delete-temporary,.memory-kind,#clear-temporary", control => {
+    if (control.matches("#clear-temporary")) { void clearTemporaryMemories(panel); return; }
     if (control.matches(".delete-temporary")) void panel._deleteTemporaryMemory(control.dataset.id);
     else if (control.matches(".memory-kind")) {
       panel._memoryKind = control.dataset.kind; panel._query = "";
@@ -237,3 +238,14 @@ export {
   temporaryScopeOptions,
   validOwnerScope,
 };
+
+export async function clearTemporaryMemories(panel) {
+  const scope = panel._scopeId, agent = panel._agentId;
+  if (!await panel._confirm("Clear short-term memories?", `All short-term memories belonging to ${ownerLabel(panel, scope)} for the selected agent will be permanently removed. Search does not limit this action. Long-term memories are unchanged.`, "Clear memories")) return;
+  if (scope !== panel._scopeId || agent !== panel._agentId || panel._memoryKind !== "temporary") return;
+  try {
+    await panel._call("memories", "temporary_clear", {scope_id: scope, confirm: true});
+    await panel._refreshAfterMutation();
+    panel._toast("Short-term memories cleared");
+  } catch (err) { panel._toast(`Unable to clear short-term memories: ${err.message || String(err)}`, true); }
+}

@@ -12,8 +12,8 @@ from custom_components.extended_openai_conversation_responses.const import (
     SHARED_MEMORY_EXPLICIT,
     TEMPORARY_MEMORY_OFF,
 )
-from custom_components.extended_openai_conversation_responses.memory_ui import (
-    async_manage_command,
+from custom_components.extended_openai_conversation_responses.management_ui import (
+    async_management_command,
 )
 
 
@@ -58,13 +58,15 @@ async def test_manual_management_update_does_not_confirm_by_default() -> None:
     )
 
     with patch(
-        "custom_components.extended_openai_conversation_responses.memory_ui.async_get_memory",
+        "custom_components.extended_openai_conversation_responses.management_ui.async_get_memory",
         AsyncMock(return_value=persistent),
     ):
-        await async_manage_command(
+        await async_management_command(
             hass,
             "user-7",
+            False,
             {
+                "section": "memories",
                 "action": "update",
                 "entry_id": "entry-1",
                 "subentry_id": "agent-1",

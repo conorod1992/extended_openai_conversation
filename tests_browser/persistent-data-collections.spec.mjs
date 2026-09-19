@@ -228,97 +228,10 @@ test("Temporary Memory: delete, expiry refresh and clear touch only affected ite
   await page.evaluate(async () => { dataCollectionBackend.state.temporary.splice(0, 1); await browserHarness.panel._loadSection(true); });
   expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 10, initialCards: 11, mainChildReplacements: 0});
   await beginDataMeasure(page);
-  await panel.evaluate(async host => { await host._call("memories", "temporary_clear", {scope_id: host._scopeId, confirm: true}); await host._refreshAfterMutation(); });
+  await panel.locator("#clear-temporary").click();
+  await acceptConfirmation(panel);
   await expect(panel.locator(".memory-list article")).toHaveCount(0);
   expect(await finishDataMeasure(page)).toMatchObject({mainChildReplacements: 0, inputRetained: true});
-});
-
-test("Standalone Memory: search, category, importance and scope filter without removing any cards", async ({page}) => {
-  const panel = await openDataCollection(page, "standalone");
-  await beginDataMeasure(page); await panel.locator("#search").fill("Memory 1");
-  await expect(panel.locator("#memories article:visible")).toHaveCount(11);
-  expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 112, elementsAdded: 0, elementsRemoved: 0, inputRetained: true, inputFocused: true});
-  await panel.locator("#search").fill("");
-  await beginDataMeasure(page); await panel.locator('[data-category="category-1"]').click();
-  await expect(panel.locator("#memories article:visible")).toHaveCount(20);
-  await panel.locator("#importanceFilter").selectOption("high");
-  await panel.locator("#scopeFilter").selectOption("Personal");
-  const visible = await panel.locator("#memories article:visible").allTextContents();
-  expect(visible.length).toBeGreaterThan(0);
-  expect(visible.every(text => text.includes("category-1") && text.includes("high importance") && text.includes("Personal"))).toBe(true);
-  expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 112, elementsAdded: 0, elementsRemoved: 0});
-});
-
-test("Standalone Memory: move category, update metadata and add reconcile cards and counts", async ({page}) => {
-  const panel = await openDataCollection(page, "standalone");
-  await panel.locator('#memories [data-memory-id="memory-20"] [aria-label="Edit memory"]').click();
-  await panel.locator("#memoryCategory").fill("new-category");
-  await panel.locator("#memoryImportance").selectOption("high");
-  await panel.locator("#memoryScope").selectOption("household");
-  await panel.locator("#memoryDialog details summary").click();
-  await panel.locator("#memorySubject").fill("Oscar");
-  await panel.locator("#memoryKey").fill("pet.oscar.preference");
-  await beginDataMeasure(page); await panel.locator("#dialogSave").click();
-  await expect(panel.locator('[data-category="new-category"]')).toHaveText("new-category 1");
-  await expect(panel.locator('[data-category="category-0"]')).toHaveText("category-0 19");
-  await expect(panel.locator('#memories [data-memory-id="memory-20"]')).toContainText("Subject: Oscar");
-  expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 111, initialCards: 112});
-  await panel.locator("#addButton").click();
-  await panel.locator("#memoryContent").fill("New standalone memory");
-  await panel.locator("#memoryCategory").fill("new-category");
-  await beginDataMeasure(page); await panel.locator("#dialogSave").click();
-  await expect(panel.locator("#memories article")).toHaveCount(101);
-  await expect(panel.locator('[data-category="new-category"]')).toHaveText("new-category 2");
-  expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 112, initialCards: 112});
-});
-
-test("Standalone Memory: delete, category clear, clear all and temporary clear keep other collections", async ({page}) => {
-  const panel = await openDataCollection(page, "standalone");
-  await panel.evaluate(host => { host._bind(); host._bind(); host._renderMemories(); host._renderMemories(); });
-  await panel.locator('#memories [data-memory-id="memory-0"] [aria-label="Delete memory"]').click();
-  await beginDataMeasure(page); await panel.locator("#confirmAccept").click();
-  await expect(panel.locator("#memories article")).toHaveCount(99);
-  expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 111, initialCards: 112});
-  expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "delete").length)).toBe(1);
-  await panel.locator('[data-category="category-0"]').click();
-  await panel.locator("#toolsMenu summary").click(); await panel.locator("#clearCategoryButton").click();
-  await beginDataMeasure(page); await panel.locator("#confirmAccept").click();
-  await expect(panel.locator("#memories article")).toHaveCount(80);
-  await expect(panel.locator('[data-category="category-0"]')).toHaveCount(0);
-  expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 92, initialCards: 111});
-  await panel.locator("#toolsMenu summary").click(); await panel.locator("#clearAllButton").click();
-  await beginDataMeasure(page); await panel.locator("#confirmAccept").click();
-  await expect(panel.locator("#memories article")).toHaveCount(0);
-  await expect(panel.locator("#temporaryMemories article")).toHaveCount(12);
-  expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 12, inputRetained: true});
-  await panel.locator("#temporaryMemories article").first().locator("button").click();
-  await beginDataMeasure(page); await panel.locator("#confirmAccept").click();
-  await expect(panel.locator("#temporaryMemories article")).toHaveCount(11);
-  expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 11, initialCards: 12});
-  await panel.locator("#clearTemporaryButton").click(); await panel.locator("#confirmAccept").click();
-  await expect(panel.locator("#temporaryMemories article")).toHaveCount(0);
-});
-
-test("Standalone Memory: delayed pagination cannot overwrite a new agent", async ({page}) => {
-  const panel = await openDataCollection(page, "standalone", 230);
-  await page.evaluate(() => {
-    const original = browserHarness.hass.callWS;
-    browserHarness.hass.callWS = async message => {
-      const result = await original(message);
-      if (message.action === "list" && message.offset === 100 && message.subentry_id === "agent-browser") return new Promise(resolve => { window.releasePage = () => resolve(result); });
-      return result;
-    };
-    window.oldLoad = browserHarness.panel._loadMemories();
-  });
-  await page.waitForFunction(() => window.releasePage);
-  await panel.locator("#memories article").first().evaluate(node => { window.oldAgentCard = node; });
-  await panel.locator("#agent").selectOption({index: 1});
-  await expect(panel.locator("#memories article")).toHaveCount(1);
-  await expect(panel.locator("#memories article")).toContainText("Second agent memory");
-  await expect(panel.locator("#temporaryMemories article")).toHaveCount(1);
-  await page.evaluate(async () => { releasePage(); await oldLoad; });
-  await expect(panel.locator("#memories article")).toHaveCount(1);
-  expect(await page.evaluate(() => oldAgentCard.isConnected)).toBe(false);
 });
 
 for (const kind of ["persistent", "temporary"]) {
@@ -376,23 +289,6 @@ for (const kind of ["knowledge", "persistent"]) {
     await expect(card(panel, kind, 1)).toContainText("Confirmed change only");
   });
 }
-
-test("Standalone Memory: background data does not replace editor values or its revision baseline", async ({page}) => {
-  const panel = await openDataCollection(page, "standalone");
-  await panel.locator('#memories [data-memory-id="memory-1"] [aria-label="Edit memory"]').click();
-  await panel.locator("#memoryContent").fill("Unsaved standalone editor");
-  await panel.locator("#memoryContent").evaluate(node => { window.openEditor = node; });
-  await page.evaluate(async () => {
-    dataCollectionBackend.state.memories[1].content = "New authoritative content";
-    dataCollectionBackend.state.memories[1].revision = 2;
-    await browserHarness.panel._loadMemories();
-  });
-  expect(await panel.locator("#memoryContent").evaluate(node => node === window.openEditor)).toBe(true);
-  await expect(panel.locator("#memoryContent")).toHaveValue("Unsaved standalone editor");
-  expect(await panel.evaluate(host => host._editingMemory.revision)).toBe(1);
-  await panel.locator("#dialogCancel").click();
-  await expect(panel.locator('#memories [data-memory-id="memory-1"]')).toContainText("New authoritative content");
-});
 
 test("Knowledge: an old agent's background response cannot repopulate the new agent", async ({page}) => {
   const panel = await openDataCollection(page, "knowledge", 60);
