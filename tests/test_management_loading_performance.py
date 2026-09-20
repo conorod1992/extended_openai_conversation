@@ -13,7 +13,9 @@ from custom_components.extended_openai_conversation_responses import (
     debug_ui,
     management_ui,
 )
-import custom_components.extended_openai_conversation_responses.management_loading_performance as loading
+from custom_components.extended_openai_conversation_responses import (
+    management_loading_performance as loading,
+)
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
     agent_config_snapshot,
