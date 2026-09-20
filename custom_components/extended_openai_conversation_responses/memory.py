@@ -587,8 +587,11 @@ class PersistentMemory:
         document_terms = {
             memory.memory_id: _record_token_list(memory) for memory in corpus
         }
+        document_token_sets = {
+            memory_id: set(terms) for memory_id, terms in document_terms.items()
+        }
         document_frequency = {
-            token: sum(token in set(terms) for terms in document_terms.values())
+            token: sum(token in terms for terms in document_token_sets.values())
             for token in query_tokens
         }
         average_length = max(1.0, sum(map(len, document_terms.values())) / len(corpus))
@@ -610,7 +613,9 @@ class PersistentMemory:
             elif len(query_terms) > 1 and " ".join(query_terms) in " ".join(terms):
                 lexical += 0.18
             if lexical <= 0:
-                lexical = _fuzzy_relevance(query_tokens, set(terms))
+                lexical = _fuzzy_relevance(
+                    query_tokens, document_token_sets[memory.memory_id]
+                )
             semantic = (
                 _cosine_similarity(query_embedding, self._cached_embedding(memory))
                 if hybrid

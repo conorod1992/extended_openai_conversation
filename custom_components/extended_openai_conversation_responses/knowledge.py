@@ -339,23 +339,37 @@ class KnowledgeLibrary:
         for token in query_tokens:
             candidates.update(self._token_index.get(token, set()))
 
+        source_features: dict[str, tuple[set[str], set[str], str, str]] = {}
         best_by_source: dict[str, tuple[float, _Chunk]] = {}
         for chunk_key in candidates:
             chunk = self._chunks[chunk_key]
             if allowed is not None and chunk.source_id not in allowed:
                 continue
             source = self._sources[chunk.source_id]
-            title_tokens = _tokens(source.title)
-            description_tokens = _tokens(source.description)
+            features = source_features.get(chunk.source_id)
+            if features is None:
+                features = (
+                    _tokens(source.title),
+                    _tokens(source.description),
+                    _normalize(source.title),
+                    _normalize(source.description),
+                )
+                source_features[chunk.source_id] = features
+            (
+                title_tokens,
+                description_tokens,
+                normalized_title,
+                normalized_description,
+            ) = features
             overlap = len(query_tokens & chunk.tokens) / len(query_tokens)
             title_overlap = len(query_tokens & title_tokens) / len(query_tokens)
             description_overlap = len(query_tokens & description_tokens) / len(
                 query_tokens
             )
             score = overlap + title_overlap * 8 + description_overlap * 4
-            if normalized_query in _normalize(source.title):
+            if normalized_query in normalized_title:
                 score += 8
-            if normalized_query in _normalize(source.description):
+            if normalized_query in normalized_description:
                 score += 5
             if normalized_query in _normalize(chunk.text):
                 score += 4
