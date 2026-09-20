@@ -19,12 +19,21 @@ from .provider_errors import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_USE_INPUT_CONVERSATION_ID = object()
 
 
 def _conversation_error_result(
-    entity: Any, user_input: Any, chat_log: Any, err: OpenAIError | HomeAssistantError
+    entity: Any,
+    user_input: Any,
+    chat_log: Any,
+    err: OpenAIError | HomeAssistantError,
+    *,
+    logger: logging.Logger | None = None,
+    provider_log_message: str = "OpenAI request preparation failed",
+    conversation_id: Any = _USE_INPUT_CONVERSATION_ID,
 ) -> ConversationResult:
     """Build the same Assist error result for failures before or during provider prep."""
+    active_logger = logger or _LOGGER
     usage = getattr(entity, "_usage", None)
     if usage is not None:
         usage.mark_current_run_failed(type(err).__name__)
@@ -32,12 +41,12 @@ def _conversation_error_result(
     if isinstance(err, OpenAIError):
         request_reauthentication(entity.hass, getattr(entity, "entry", None), err)
         record_current_provider_failure(err)
-        log_provider_failure(_LOGGER, "OpenAI request preparation failed", err)
+        log_provider_failure(active_logger, provider_log_message, err)
         message = (
             f"Sorry, I had a problem talking to OpenAI: {provider_user_message(err)}"
         )
     else:
-        _LOGGER.error("Error during conversation: %s", err, exc_info=True)
+        active_logger.error("Error during conversation: %s", err, exc_info=True)
         message = f"Something went wrong: {err}"
 
     response = intent.IntentResponse(language=user_input.language)
@@ -46,5 +55,10 @@ def _conversation_error_result(
         user_input, chat_log, status="error", error_type=type(err).__name__
     )
     return ConversationResult(
-        response=response, conversation_id=user_input.conversation_id
+        response=response,
+        conversation_id=(
+            user_input.conversation_id
+            if conversation_id is _USE_INPUT_CONVERSATION_ID
+            else conversation_id
+        ),
     )
