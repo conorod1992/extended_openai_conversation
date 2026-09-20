@@ -1,11 +1,9 @@
-import * as base from "./agent-config-editor-model-v2.js";
+import {bindTools as bindBaseTools, synchronizePersistedFunctions} from "./agent-config-editor-base.js";
 import {
   getToolYamlEditor,
   installToolYamlEditor,
   toolYamlChangeHandler,
 } from "./tool-yaml-editor-adapter.js";
-
-export * from "./agent-config-editor-model-v2.js";
 
 const NATIVE_EDITOR_TAG = "ha-yaml-editor";
 const NATIVE_EDITOR_ID = "tool-yaml-native";
@@ -155,7 +153,7 @@ async function assignToolToGroup(panel, select) {
         },
         original_id: target.id,
       });
-      base.synchronizePersistedFunctions(panel, response);
+      synchronizePersistedFunctions(panel, response);
       panel._toast(`${name} moved to ${target.name}`);
     } else {
       if (!current) {
@@ -169,7 +167,7 @@ async function assignToolToGroup(panel, select) {
         },
         original_id: current.id,
       });
-      base.synchronizePersistedFunctions(panel, response);
+      synchronizePersistedFunctions(panel, response);
       panel._toast(`${name} is now available on every request`);
     }
     panel._render();
@@ -325,7 +323,7 @@ export function bindNativeToolYaml(panel) {
 }
 
 export function bindTools(panel) {
-  base.bindTools(panel);
+  bindBaseTools(panel);
   bindNativeToolYaml(panel);
   const host = panel?.shadowRoot?.querySelector(".tools-surface");
   if (!host || host.__eocAssignmentBound) return;

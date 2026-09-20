@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { copyTextToClipboard } from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
+import {copyTextToClipboard} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js";
 
 const editor = [
   "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js",

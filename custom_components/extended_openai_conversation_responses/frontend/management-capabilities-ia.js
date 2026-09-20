@@ -1,5 +1,4 @@
 import {getConfigurationEditor} from "./management-route.js";
-import {getAgentConfigModule} from "./agent-config-loader.js";
 
 function renderConfiguration(panel, presentation) {
   const module = getConfigurationEditor();
@@ -8,7 +7,7 @@ function renderConfiguration(panel, presentation) {
 }
 
 function bindConfiguration(panel) {
-  return getAgentConfigModule()?.bindConfiguration(panel);
+  return getConfigurationEditor()?.bindConfiguration(panel);
 }
 
 function knowledgeAvailabilityMarkup(panel) {

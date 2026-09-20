@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
-import {createRequestRuleActionSelector, friendlyFieldChange, friendlyFieldChangesForService, loadRequestRuleActions, mergeActionEditorValue, mergeFriendlyActionValue, parseAdvancedActionConfig, readRequestRuleActions, refreshRequestRuleSlotSelectors, renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
+import {renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
+import {createRequestRuleActionSelector, friendlyFieldChange, friendlyFieldChangesForService, loadRequestRuleActions, mergeActionEditorValue, mergeFriendlyActionValue, parseAdvancedActionConfig, readRequestRuleActions, refreshRequestRuleSlotSelectors} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const panel = {

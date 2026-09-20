@@ -1,20 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-import {
-  canReplaceToolYamlWithoutConfirmation,
-  categorizeFunctionTools,
-  configurationChoiceLabel,
-  deleteFunctionGroup,
-  functionGroupIdFromName,
-  functionToolCountLabel,
-  isFunctionGroupEnabled,
-  isFunctionToolEnabled,
-  matchesFunctionSearch,
-  renderTools,
-  saveBar,
-  synchronizePersistedFunctions,
-} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
+import {renderTools} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
+import {canReplaceToolYamlWithoutConfirmation, categorizeFunctionTools, configurationChoiceLabel, deleteFunctionGroup, functionGroupIdFromName, functionToolCountLabel, isFunctionGroupEnabled, isFunctionToolEnabled, matchesFunctionSearch, saveBar, synchronizePersistedFunctions} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js";
 
 const tool = (name) => ({spec: {name, description: name}, function: {type: "native"}});
 const config = {
