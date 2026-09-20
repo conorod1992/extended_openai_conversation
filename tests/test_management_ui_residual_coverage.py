@@ -8,7 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import management_ui
+from custom_components.extended_openai_conversation_responses import (
+    management_projections,
+    management_ui,
+)
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
     agent_config_defaults,
