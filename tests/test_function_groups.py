@@ -440,6 +440,19 @@ def test_request_and_caller_tool_predicates_are_both_enforced() -> None:
 
     assert [tool["spec"]["name"] for tool in assembly.tools] == ["available"]
 
+    with function_tool_runtime_scope():
+        caller_only = assemble_function_tools(
+            tools,
+            [],
+            set(),
+            tool_available=lambda tool: tool["spec"]["name"] != "blocked_by_caller",
+        )
+
+    assert [tool["spec"]["name"] for tool in caller_only.tools] == [
+        "available",
+        "blocked_by_request",
+    ]
+
 
 async def test_version_six_migration_adds_empty_groups_without_rewriting_tools(
     hass,
