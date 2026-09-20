@@ -126,7 +126,7 @@ _SCHEMA_COMPOSITION_KEYS = ("anyOf", "oneOf", "allOf")
 
 
 async def _async_close_provider_streams(
-    transformed_stream: AsyncGenerator[Any, None] | None,
+    transformed_stream: AsyncGenerator[Any] | None,
     provider_stream: AsyncStream[Any] | None,
 ) -> None:
     """Close both stream layers without letting cleanup mask request outcomes."""
@@ -682,7 +682,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 pending_tool_calls: list[llm.ToolInput] = []
                 web_search_used = False
                 provider_stream: AsyncStream[Any] | None = None
-                transformed_stream: AsyncGenerator[Any, None] | None = None
+                transformed_stream: AsyncGenerator[Any] | None = None
                 try:
                     if api_mode == API_MODE_RESPONSES:
                         provider_stream = cast(
