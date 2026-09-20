@@ -12,7 +12,6 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     debug,
-    hot_path_cleanup,
     local_intents,
     request_rules,
 )
@@ -206,7 +205,7 @@ def test_request_rule_fuzzy_matching_still_runs_as_fallback(monkeypatch) -> None
     ],
 )
 def test_debug_event_has_text_variants(payload: object, expected: bool) -> None:
-    assert hot_path_cleanup._debug_event_has_text(payload) is expected
+    assert debug._event_has_text(payload) is expected
 
 
 @pytest.mark.parametrize(
@@ -222,14 +221,14 @@ def test_debug_event_has_text_variants(payload: object, expected: bool) -> None:
     ],
 )
 def test_debug_event_has_action_variants(payload: object, expected: bool) -> None:
-    assert hot_path_cleanup._debug_event_has_action(payload) is expected
+    assert debug._event_has_action(payload) is expected
 
 
 def test_debug_usage_handles_chat_completions_names_and_invalid_values() -> None:
-    assert hot_path_cleanup._debug_usage(None) is None
-    assert hot_path_cleanup._debug_usage({"usage": "invalid"}) is None
+    assert debug._extract_usage(None) is None
+    assert debug._extract_usage({"usage": "invalid"}) is None
 
-    assert hot_path_cleanup._debug_usage(
+    assert debug._extract_usage(
         {
             "usage": {
                 "prompt_tokens": 7,
@@ -249,7 +248,7 @@ def test_debug_usage_handles_chat_completions_names_and_invalid_values() -> None
 
 
 def test_debug_usage_reads_nested_response_and_rejects_non_integer_counts() -> None:
-    assert hot_path_cleanup._debug_usage(
+    assert debug._extract_usage(
         {
             "response": {
                 "usage": {

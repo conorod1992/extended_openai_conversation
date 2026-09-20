@@ -24,11 +24,6 @@ from homeassistant.helpers.template import Template
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .hot_path_cleanup import (
-    _debug_event_has_action,
-    _debug_event_has_text,
-    _debug_usage,
-)
 from .provider_errors import provider_error_metadata
 from .request_diagnostics import (
     provider_diagnostics,
@@ -137,7 +132,8 @@ def _json_characters(value: Any) -> int:
 
 
 def _extract_usage(event: Any) -> dict[str, int] | None:
-    data = _jsonable(event)
+    """Extract usage while avoiding repeat normalization for hot-path dicts."""
+    data = event if isinstance(event, dict) else _jsonable(event)
     if not isinstance(data, dict):
         return None
     usage = data.get("usage")
@@ -183,7 +179,8 @@ def _extract_usage(event: Any) -> dict[str, int] | None:
 
 
 def _event_has_text(event: Any) -> bool:
-    data = _jsonable(event)
+    """Detect text while avoiding repeat normalization for hot-path dicts."""
+    data = event if isinstance(event, dict) else _jsonable(event)
     if not isinstance(data, dict):
         return False
     event_type = str(data.get("type", ""))
@@ -201,7 +198,8 @@ def _event_has_text(event: Any) -> bool:
 
 
 def _event_has_action(event: Any) -> bool:
-    data = _jsonable(event)
+    """Detect actions while avoiding repeat normalization for hot-path dicts."""
+    data = event if isinstance(event, dict) else _jsonable(event)
     if not isinstance(data, dict):
         return False
     event_type = str(data.get("type", ""))
@@ -244,11 +242,11 @@ class DebugProviderRequest:
         if self.first_event_ms is None:
             self.first_event_ms = now_ms
         serialized = _jsonable(event)
-        if self.first_text_ms is None and _debug_event_has_text(serialized):
+        if self.first_text_ms is None and _event_has_text(serialized):
             self.first_text_ms = now_ms
-        if self.first_action_ms is None and _debug_event_has_action(serialized):
+        if self.first_action_ms is None and _event_has_action(serialized):
             self.first_action_ms = now_ms
-        if usage := _debug_usage(serialized):
+        if usage := _extract_usage(serialized):
             self.usage = usage
         if self.response_events_truncated:
             return

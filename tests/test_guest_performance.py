@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from custom_components.extended_openai_conversation_responses.guest_performance import (
+from custom_components.extended_openai_conversation_responses.guest_mode import (
     can_reuse_request_policy,
 )
 
