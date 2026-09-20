@@ -6,6 +6,10 @@ const panel = await readFile(new URL("../custom_components/extended_openai_conve
   new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url),
   "utf8",
 );
+const managementStyles = await readFile(
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/management.css", import.meta.url),
+  "utf8",
+);
 const editor = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url),
   "utf8",
@@ -59,8 +63,8 @@ assert.match(panel, /The assistant can enable or extend Guest Mode, but cannot s
 assert.match(guide, /The assistant can enable or extend Guest Mode, but cannot shorten or disable it\. Administrators and Home Assistant automations can change or end Guest Mode\./);
 assert.doesNotMatch(guide, /trusted Home Assistant controls/i);
 assert.match(panel, /<summary>Advanced<\/summary><label class="toggle"><span>Allow the assistant to activate Guest Mode/);
-assert.match(panel, /top:50%/);
-assert.match(panel, /translateY\(-50%\)/);
+assert.match(managementStyles, /top:50%/);
+assert.match(managementStyles, /translateY\(-50%\)/);
 assert.doesNotMatch(editor, /Guest Mode policy/);
 assert.doesNotMatch(editor, /group-guest-allowed/);
 
@@ -87,7 +91,7 @@ assert.match(inactive, /id="guest-end"/);
 assert.match(inactive, /id="guest-now">Activate now/);
 assert.match(inactive, /class="secondary" id="guest-update">Update interval/);
 assert.doesNotMatch(inactive, /id="guest-disable"/);
-assert.doesNotMatch(guestPanel._styles(), /\.guest-intro\+\.content-card\{display:none\}/);
+assert.doesNotMatch(managementStyles, /\.guest-intro\+\.content-card\{display:none\}/);
 
 guestPanel._result = {config:{}, policy:{}, status:{state:"scheduled", currently_active:false, scheduled:true, active_from:"2026-08-26T10:00:00Z", active_until:null}};
 const scheduled = guestPanel._content({});

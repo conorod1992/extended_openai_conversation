@@ -1,6 +1,34 @@
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+for (const bundled of [false, true]) {
+  test(`management shell uses external stylesheet (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    const requested = [];
+    page.on("request", request => requested.push(new URL(request.url()).pathname));
+    await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator(".dashboard-grid")).toBeVisible();
+
+    const style = await panel.evaluate((host) => {
+      const root = host.shadowRoot;
+      const link = root.querySelector('link[data-eoc-persistent-styles]');
+      return {
+        href: link?.href || "",
+        inlineStyles: root.querySelectorAll("style[data-eoc-persistent-styles]").length,
+      };
+    });
+    expect(style.inlineStyles).toBe(0);
+    expect(style.href).toMatch(bundled
+      ? /\/frontend\/dist\/assets\/management-[^/]+\.css$/
+      : /\/frontend\/management\.css$/);
+    expect(requested.some(pathname => bundled
+      ? /\/frontend\/dist\/assets\/management-[^/]+\.css$/.test(pathname)
+      : pathname.endsWith("/frontend/management.css"))).toBe(true);
+    await expectHarnessClean(page, errors);
+  });
+}
+
 test("unchanged route retains controls and core dialog edits across updates and navigation", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("data-memory/knowledge"));
