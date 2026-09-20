@@ -167,7 +167,7 @@ def test_assemble_tools_covers_reserved_names_guest_filtering_and_schema_guard(
         {
             "spec": {
                 "name": "memory_search",
-                "parameters": {"properties": {"query": {"type": "string"}}},
+                "parameters": {"properties": {"query": {"type": "string", "minLength": 1}}},
             }
         },
         {
