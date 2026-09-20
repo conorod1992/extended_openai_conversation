@@ -39,7 +39,7 @@ from .guest_mode import (
 )
 from .helpers import get_model_config, get_reasoning_effort_options
 from .model_catalog import all_reasoning_efforts
-from .persistence_hardening import _async_prepare_private_store
+from .persistence_hardening import _async_repair_private_store_mode
 from .request_rule_patterns import (
     MAX_AGENT_PATTERN_STATES,
     CompiledSentencePattern,
@@ -162,6 +162,10 @@ class RuleEvaluation:
 class RequestRuleStore(Store[dict[str, Any]]):
     """Versioned private Home Assistant storage."""
 
+    def __init__(self, hass: HomeAssistant, version: int, key: str) -> None:
+        """Initialize private, atomic Request Rule storage."""
+        super().__init__(hass, version, key, private=True, atomic_writes=True)
+
     async def _async_migrate_func(
         self, old_major_version: int, old_minor_version: int, old_data: dict[str, Any]
     ) -> dict[str, Any]:
@@ -216,7 +220,7 @@ class RequestRules:
             if self._initialized:
                 return
             try:
-                await _async_prepare_private_store(self._store)
+                await _async_repair_private_store_mode(self._store)
                 stored = await self._store.async_load()
                 migrated = False
                 raw_rules: Sequence[Any] = ()
