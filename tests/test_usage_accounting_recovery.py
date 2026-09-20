@@ -417,7 +417,7 @@ async def test_effective_getter_serializes_durable_selection(monkeypatch) -> Non
 
 
 
-def _timestamp_timestamp_request(request_id: str, timestamp: object) -> dict:
+def _timestamp_request(request_id: str, timestamp: object) -> dict:
     return asdict(
         UsageRequest(
             request_id=request_id,
@@ -433,7 +433,7 @@ def _timestamp_timestamp_request(request_id: str, timestamp: object) -> dict:
     )
 
 
-def _timestamp_timestamp_run(run_id: str, started_at: object) -> dict:
+def _timestamp_run(run_id: str, started_at: object) -> dict:
     return asdict(
         UsageRun(
             run_id=run_id,
