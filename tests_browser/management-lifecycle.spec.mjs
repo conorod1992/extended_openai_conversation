@@ -1,6 +1,7 @@
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+// Reproduce the real HA cold-load case where HTTP/1.1 delays the full stylesheet.
 test("critical CSS prevents shell and route-title FOUC while full stylesheet is delayed", async ({page}) => {
   const errors = trackPageErrors(page);
   let releaseStylesheet;
