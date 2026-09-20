@@ -3,6 +3,66 @@ import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers
 
 const frontend = "/custom_components/extended_openai_conversation_responses/frontend/";
 
+test("Home Assistant route paints its intro while configuration assets are still pending", async ({page}) => {
+  const errors = trackPageErrors(page);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let requested = false;
+  await page.route("**/agent-config-editor.js", async route => {
+    requested = true;
+    await gate;
+    await route.continue();
+  });
+
+  await page.goto(fixtureUrl("capabilities/home-assistant"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect.poll(() => requested).toBe(true);
+  await expect(panel.getByRole("heading", {name:"Home Assistant access", exact:true})).toBeVisible();
+  await expect(panel.locator("main .loading")).toBeVisible();
+  await expect(panel.getByRole("button", {name:"Configure exposed entity context"})).toHaveCount(0);
+
+  release();
+  await expect(panel.getByRole("button", {name:"Configure exposed entity context"})).toBeVisible();
+  await expect(panel.locator("main .loading")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => {
+    const names = new Set(performance.getEntriesByType("mark").map(entry => entry.name));
+    return names.has("extended-openai:cold:route-title-present")
+      && names.has("extended-openai:cold:route-title-next-frame");
+  })).toBe(true);
+  await expectHarnessClean(page, errors);
+});
+
+test("cold Overview exposes stable shell, agent, asset, summary, and paint milestones", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  const required = [
+    "extended-openai:cold:module-evaluated",
+    "extended-openai:cold:constructed",
+    "extended-openai:cold:connected",
+    "extended-openai:cold:first-render-start",
+    "extended-openai:cold:first-render-complete",
+    "extended-openai:cold:shell-start",
+    "extended-openai:cold:shell-complete",
+    "extended-openai:cold:shell-title-present",
+    "extended-openai:cold:shell-next-frame",
+    "extended-openai:cold:agents-start",
+    "extended-openai:cold:agents-complete",
+    "extended-openai:cold:overview-asset-start",
+    "extended-openai:cold:overview-asset-complete",
+    "extended-openai:cold:overview-summary-start",
+    "extended-openai:cold:overview-summary-complete",
+    "extended-openai:cold:overview-content-present",
+    "extended-openai:cold:overview-content-next-frame",
+  ];
+  await expect.poll(() => page.evaluate((expected) => {
+    const names = new Set(performance.getEntriesByType("mark").map(entry => entry.name));
+    return expected.every(name => names.has(name));
+  }, required)).toBe(true);
+  await expectHarnessClean(page, errors);
+});
+
 const lazyJourneys = [
   ["assistant", "basics", "management-configuration-feature", '[data-config="__title"]'],
   ["capabilities", "guest-mode", "management-guest-feature", "#guest-now"],
