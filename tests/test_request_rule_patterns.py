@@ -4,14 +4,27 @@ from __future__ import annotations
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import request_rule_patterns as patterns
 from custom_components.extended_openai_conversation_responses.request_rule_patterns import (
     MAX_MATCH_INPUT_CHARS,
     MAX_MATCH_INPUT_WORDS,
     MAX_PATTERN_CAPTURES,
     MAX_PATTERN_NESTING,
+    CompiledSentencePattern,
     MatchBudget,
     SentenceMatchLimitError,
     SentencePatternError,
+    _Alternative,
+    _Compiler,
+    _Fragment,
+    _Literal,
+    _Optional,
+    _Parser,
+    _State,
+    _can_match_empty,
+    _contains_adjacent_free_captures,
+    _has_required_anchor,
+    _required_fragments,
     compile_sentence_pattern,
     validate_match_input,
 )
@@ -293,3 +306,260 @@ def test_captures_do_not_split_casefolded_display_characters() -> None:
 def test_whitespace_capture_histories_do_not_hide_valid_capture_splits() -> None:
     pattern = compile_sentence_pattern("do {first} to{second}")
     assert pattern.match("do a to to b").captures == {"first": "a", "second": "to b"}
+
+
+def test_validate_match_input_rejects_non_string() -> None:
+    with pytest.raises(patterns.SentenceMatchLimitError, match="must be a string"):
+        patterns.validate_match_input(123)  # type: ignore[arg-type]
+
+
+def test_sentence_capture_names_returns_validated_names() -> None:
+    assert patterns.sentence_capture_names(
+        "move {item} to {room=kitchen|study}"
+    ) == ("item", "room")
+
+
+@pytest.mark.parametrize("source", ["", "   ", None])
+def test_pattern_is_required(source: object) -> None:
+    with pytest.raises(patterns.SentencePatternError, match="pattern is required"):
+        patterns.compile_sentence_pattern(source)  # type: ignore[arg-type]
+
+
+def test_pattern_length_limit_is_enforced() -> None:
+    with pytest.raises(patterns.SentencePatternError, match="at most"):
+        patterns.compile_sentence_pattern("x" * (patterns.MAX_PATTERN_CHARS + 1))
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        ("say \\", "ends with an escape"),
+        ("say [hello", "missing closing"),
+        ("say (hello|)", "cannot be empty"),
+        ("say ]", "unexpected"),
+        ("say {", "missing closing"),
+        ("say {}", "name is required"),
+        ("say {1bad}", "must start with a letter"),
+        ("say {item} and {item}", "used more than once"),
+        ("say {item=}", "needs a constraint"),
+        ("say {item=10..1}", "minimum greater"),
+        ("say {item=a\\}", "missing closing"),
+        ("say {item=a||b}", "empty choice"),
+    ],
+)
+def test_parser_validation_edges(source: str, message: str) -> None:
+    patterns.compile_sentence_pattern.cache_clear()
+    with pytest.raises(patterns.SentencePatternError, match=message):
+        patterns.compile_sentence_pattern(source)
+
+
+def test_free_capture_limit_is_enforced() -> None:
+    source = "do " + " x ".join(
+        f"{{value{index}}}" for index in range(patterns.MAX_FREE_TEXT_CAPTURES + 1)
+    )
+    with pytest.raises(patterns.SentencePatternError, match="free-text captures"):
+        patterns.compile_sentence_pattern(source)
+
+
+def test_constrained_choice_limits_are_enforced() -> None:
+    too_many = "|".join(
+        f"v{index}" for index in range(patterns.MAX_CONSTRAINED_VALUES + 1)
+    )
+    with pytest.raises(patterns.SentencePatternError, match="supports at most"):
+        patterns.compile_sentence_pattern(f"set {{value={too_many}}}")
+
+    too_long = "x" * (patterns.MAX_CONSTRAINED_VALUE_CHARS + 1)
+    with pytest.raises(patterns.SentencePatternError, match="may be at most"):
+        patterns.compile_sentence_pattern(f"set {{value={too_long}|ok}}")
+
+
+def test_single_branch_groups_compile_normally() -> None:
+    grouped = patterns.compile_sentence_pattern("say (hello)")
+    assert grouped.match("say hello") is not None
+    optional = patterns.compile_sentence_pattern("say [please] hello")
+    assert optional.match("say hello") is not None
+
+
+def test_required_fragment_fast_rejection_and_numeric_nonmatch() -> None:
+    compiled = patterns.compile_sentence_pattern("turn {room=kitchen|study} light on")
+    prepared = patterns.prepare_match_text("switch kitchen fan on")
+    assert compiled.could_match(prepared) is False
+    assert compiled.match_prepared(prepared) is None
+
+    numeric = patterns.compile_sentence_pattern("set {level=-2..2}")
+    assert numeric.match("set nope") is None
+    assert numeric.match("set -9") is None
+
+
+def test_display_helpers_cover_empty_expansion_and_terminal_spans() -> None:
+    empty = patterns.prepare_match_text("")
+    assert patterns._display_span(empty, 0, 0) == (0, 0)
+
+    prepared = patterns.prepare_match_text("straße")
+    # ß expands to ss; the offset between those folded characters is not a
+    # display boundary.
+    assert patterns._display_boundary(prepared, 5) is False
+    assert patterns._display_boundary(prepared, 0) is True
+    assert patterns._display_boundary(prepared, len(prepared.folded)) is True
+    assert patterns._display_span(prepared, len(prepared.folded), len(prepared.folded)) == (
+        len(prepared.display),
+        len(prepared.display),
+    )
+
+
+def test_compiler_defensive_guards_reject_invalid_internal_shapes() -> None:
+    compiler = patterns._Compiler()
+    state = compiler.add(patterns._State("literal", value="x"))
+    with pytest.raises(patterns.SentencePatternError, match="invalid compiled patch field"):
+        compiler.patch(((state, "bogus"),), 0)
+
+    with pytest.raises(patterns.SentencePatternError, match="unsupported sentence-pattern expression"):
+        compiler.compile(object())
+
+    with pytest.raises(patterns.SentencePatternError, match="unsupported capture kind"):
+        compiler._compile_capture(patterns._Capture("value", "bogus"))
+
+
+def _compiled_with_states(
+    *states: patterns._State,
+    capture_names: tuple[str, ...] = (),
+) -> patterns.CompiledSentencePattern:
+    return patterns.CompiledSentencePattern(
+        source="synthetic",
+        states=states,
+        start_state=0,
+        capture_names=capture_names,
+        required_fragments=(),
+    )
+
+
+def test_matcher_defensive_guards_reject_invalid_compiled_states() -> None:
+    missing_out = _compiled_with_states(patterns._State("literal", value="x"))
+    with pytest.raises(patterns.SentenceMatchLimitError, match="invalid compiled sentence state"):
+        missing_out.match("x")
+
+    unknown = _compiled_with_states(patterns._State("mystery", out=0))
+    with pytest.raises(patterns.SentenceMatchLimitError, match="unknown compiled state"):
+        unknown.match("")
+
+    bad_capture = _compiled_with_states(
+        patterns._State("capture_end", out=1, name="value"),
+        patterns._State("match"),
+        capture_names=("value",),
+    )
+    with pytest.raises(patterns.SentenceMatchLimitError, match="invalid compiled capture state"):
+        bad_capture.match("x")
+
+
+def test_split_with_only_preferred_branch_and_space_boundaries_are_safe() -> None:
+    synthetic = _compiled_with_states(
+        patterns._State("split", out1=1),
+        patterns._State("space", out=2),
+        patterns._State("match"),
+    )
+    assert synthetic.match("") is not None
+    assert synthetic.match(" ") is not None
+
+
+def test_match_split_with_only_second_branch() -> None:
+    """A defensive split with only out2 populated must still be traversable."""
+    compiled = CompiledSentencePattern(
+        source="manual",
+        states=(
+            _State("split", out2=1),
+            _State("literal", value="hello", out=2),
+            _State("match"),
+        ),
+        start_state=0,
+        capture_names=(),
+        required_fragments=(),
+    )
+
+    match = compiled.match("hello")
+
+    assert match is not None
+    assert match.captures == {}
+
+
+def test_parser_rejects_unconsumed_trailing_character(monkeypatch: pytest.MonkeyPatch) -> None:
+    """parse() rejects a defensive partial parse that leaves source unconsumed."""
+    parser = _Parser("abc")
+    monkeypatch.setattr(parser, "_sequence", lambda _stops, _depth: _Literal("abc"))
+
+    with pytest.raises(SentencePatternError, match=r"unexpected 'a' at position 1"):
+        parser.parse()
+
+
+def test_parser_drops_literal_normalized_to_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """flush() must not append an empty literal after normalization."""
+    monkeypatch.setattr(patterns, "_normalize_literal", lambda _value: "")
+    parser = _Parser("x")
+
+    assert parser.parse() == _Literal("")
+
+
+def test_parser_collapses_repeated_whitespace() -> None:
+    """Mixed repeated whitespace is one logical sentence separator."""
+    compiled = compile_sentence_pattern("turn \t  \n lights on")
+
+    assert compiled.match("turn lights on") is not None
+    assert compiled.match("turn     lights on") is not None
+
+
+def test_group_rejects_unexpected_separator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_group() defends against a cursor on neither its close nor alternative token."""
+    parser = _Parser("x")
+    monkeypatch.setattr(parser, "_sequence", lambda _stops, _depth: _Literal("branch"))
+
+    with pytest.raises(SentencePatternError, match=r"unexpected 'x' in group"):
+        parser._group(")", 0)
+
+
+def test_pattern_requiring_no_text_is_rejected() -> None:
+    """An entirely optional pattern cannot become a match-everything rule."""
+    with pytest.raises(SentencePatternError, match="must require some text"):
+        compile_sentence_pattern("[please]")
+
+
+@pytest.mark.parametrize(
+    ("helper", "expected"),
+    [
+        (_has_required_anchor, False),
+        (_can_match_empty, False),
+        (_contains_adjacent_free_captures, False),
+    ],
+)
+def test_expression_helpers_reject_unknown_node_type(helper, expected: bool) -> None:
+    """Expression walkers fail closed for unsupported internal node shapes."""
+    assert helper(object()) is expected
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        (_Alternative(()), set()),
+        (object(), set()),
+    ],
+)
+def test_required_fragments_defensive_shapes(expression: object, expected: set[str]) -> None:
+    assert _required_fragments(expression) == expected
+
+
+def test_compiler_returns_single_alternative_fragment_directly() -> None:
+    """A defensive one-item Alternative compiles without adding a split."""
+    compiler = _Compiler()
+
+    fragment = compiler.compile(_Alternative((_Literal("hello"),)))
+
+    assert fragment == _Fragment(0, ((0, "out"),))
+    assert compiler.states == [_State("literal", value="hello")]
+
+
+def test_compiler_supports_empty_literal() -> None:
+    """The compiler can represent the parser's defensive empty literal node."""
+    compiler = _Compiler()
+
+    fragment = compiler._compile_literal("")
+
+    assert fragment == _Fragment(0, ((0, "out"),))
+    assert compiler.states == [_State("literal", value="")]
