@@ -339,15 +339,15 @@ class _CoverageCreate:
         return self.result
 
 
-def _coverage_coverage_entry(client: Any, **data: Any) -> SimpleNamespace:
+def _coverage_entry(client: Any, **data: Any) -> SimpleNamespace:
     return SimpleNamespace(entry_id="entry-1", runtime_data=client, data=data)
 
 
-def _coverage_coverage_subentry(**data: Any) -> SimpleNamespace:
+def _coverage_subentry(**data: Any) -> SimpleNamespace:
     return SimpleNamespace(subentry_id="agent-1", data=data)
 
 
-def _coverage_coverage_patch_common(monkeypatch: pytest.MonkeyPatch, usage: _CoverageUsage | None = None) -> _CoverageUsage:
+def _coverage_patch_common(monkeypatch: pytest.MonkeyPatch, usage: _CoverageUsage | None = None) -> _CoverageUsage:
     usage = usage or _CoverageUsage()
     monkeypatch.setattr(
         agent_test,
@@ -379,7 +379,7 @@ def _coverage_coverage_patch_common(monkeypatch: pytest.MonkeyPatch, usage: _Cov
     return usage
 
 
-def _coverage_coverage_checks(result: agent_test.AgentTestResult) -> dict[str, agent_test.TestCheck]:
+def _coverage_checks(result: agent_test.AgentTestResult) -> dict[str, agent_test.TestCheck]:
     return {check.name: check for check in result.checks}
 
 
@@ -701,7 +701,7 @@ class _ResidualCreate:
         return self.result
 
 
-def _residual_residual_subentry_with_tools(tools: list[dict[str, Any]]) -> Any:
+def _residual_subentry_with_tools(tools: list[dict[str, Any]]) -> Any:
     return SimpleNamespace(data={agent_test.CONF_FUNCTION_TOOLS: yaml.safe_dump(tools)})
 
 
@@ -749,7 +749,7 @@ def test_validate_function_schema_dispatches_custom_tool_by_type(
     validate.assert_called_once_with(function_config)
 
 
-async def _residual_residual_run_agent(
+async def _residual_run_agent(
     monkeypatch: pytest.MonkeyPatch,
     *,
     web_search: bool = False,
