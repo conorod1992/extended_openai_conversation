@@ -53,11 +53,8 @@ for (const query of ["", "conversation timeout"]) test(`unchanged renders skip e
       return original.call(this, selector);
     };
     const count = () => Object.fromEntries([
-      ["toolbar", 'style[data-eoc-management-toolbar]'],
       ["guidance", '#config-model .form-grid'],
       ["clarity", 'style[data-eoc-configuration-clarity]'],
-      ["search", 'style[data-eoc-navigation-search]'],
-      ["polish", 'style[data-eoc-settings-polish]'],
     ].map(([name, selector]) => [name, queries.filter((query) => query === selector).length]));
     try {
       for (let i = 0; i < 10; i++) panel._render();
@@ -71,8 +68,7 @@ for (const query of ["", "conversation timeout"]) test(`unchanged renders skip e
     } finally { root.querySelector = original; }
   }, query);
   console.log("Enhancement query counts", result);
-  expect(result.unchanged).toEqual({toolbar:0, guidance:0, clarity:0, search:0, polish:0});
-  expect(result.replaced.toolbar).toBe(2);
+  expect(result.unchanged).toEqual({guidance:0, clarity:0});
   expect(result.replaced.guidance).toBe(2);
   expect(result.restored).toBe(true);
 });

@@ -1,10 +1,10 @@
 import {bindConfigurationClarity, enhanceConfigurationClarity} from "./management-draft-navigation.js";
 import {formatManagementTimestamp, prepareMemoryBrowser, ensureTemporaryScope} from "./management-data-state.js";
 import {DECISION_GUIDANCE_STYLES, enhanceConfirmationScope} from "./management-confirmation-scope.js";
-import {enhanceNavigationSearch} from "./management-navigation-search.js";
-import {applyManagementToolbarLayout} from "./management-toolbar-layout.js";
+import {enhanceNavigationSearch, SEARCH_STYLE, searchMarkup} from "./management-navigation-search.js";
+import {TOOLBAR_STYLE} from "./management-toolbar-layout.js";
 import {configurationDestinations} from "./management-setting-metadata.js";
-import {polishSettingsLayout} from "./management-settings-polish.js";
+import {SETTINGS_POLISH_STYLE} from "./management-settings-polish.js";
 import {
   bindPageDrafts,
   initializePageDraft,
@@ -797,11 +797,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
     // Keep the former decorator ordering explicit without mutating class methods at runtime.
     enhanceNavigationSearch(this);
-    applyManagementToolbarLayout(this);
     bindConfigurationClarity(this);
     enhanceConfigurationClarity(this);
     getRouteFeature("configuration")?.enhanceConfigurationGuidance(this);
-    polishSettingsLayout(this);
     if (this._page === "overview") queueMicrotask(() => enhanceOverviewHealthClarity(this));
   }
 
@@ -815,48 +813,27 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._eocDialogMarkup = this._dialogs();
     this._eocRenderedRoute = `${this._agentId}|${this._viewKey()}`;
     this.shadowRoot.innerHTML = `
-      <style>${this._styles()}</style>
-      <div class="page-shell">
+      <style data-eoc-persistent-styles>${this._styles()}</style>
+      <div class="page-shell" data-eoc-persistent-shell>
         <header>
           <div class="page-heading"><h1>Extended OpenAI</h1><p>Configure your assistant, capabilities, retained data, and maintenance.</p></div>
+          ${searchMarkup(this)}
         </header>
         <label class="mobile-nav"><span>Page</span><select id="top-section-mobile">${navigation.map((item) => `<option value="${item.id}" ${item.id === this._page ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
         <div class="eoc-agent-context-row" aria-label="Assistant context">
           <label class="agent-picker"><span>Conversation agent</span><select id="agent">${(this._data?.agents || []).map((a) => `<option value="${this._e(a.subentry_id)}" ${a.subentry_id === this._agentId ? "selected" : ""}>${this._e(a.title)}</option>`).join("")}</select>${agent ? `<small>${this._e(agent.provider)} · ${this._e(agent.model)}</small>` : ""}</label>
         </div>
         <nav class="top-nav" aria-label="Management sections">${navigation.map((item) => `<button type="button" data-page="${item.id}" class="${item.id === this._page ? "active" : ""}" ${item.id === this._page ? 'aria-current="page"' : ""}>${item.label}</button>`).join("")}</nav>
-        ${["data-memory/conversations", "data-memory/memories"].includes(this._viewKey()) ? this._scopePicker() : ""}
-        ${local.length > 1 ? `<div class="section-selector"><label><span>${this._e(pageMetadata(this._page).label)} section</span><select id="local-section">${local.map((item) => `<option value="${item.id}" ${item.id === this._subsection ? "selected" : ""}>${item.label}</option>`).join("")}</select></label><p>${this._e(currentSection?.description || "")}</p></div>` : ""}
+        <nav class="subsection-nav" aria-label="${this._e(pageMetadata(this._page).label)} sections" ${local.length > 1 ? "" : "hidden"}>${local.length > 1 ? local.map((item) => `<button type="button" data-subsection="${this._e(item.id)}" class="${item.id === this._subsection ? "active" : ""}" ${item.id === this._subsection ? 'aria-current="page"' : ""}>${this._e(item.label)}</button>`).join("") : ""}</nav>
+        <div id="eoc-scope-host">${["data-memory/conversations", "data-memory/memories"].includes(this._viewKey()) ? this._scopePicker() : ""}</div>
+        <div id="eoc-section-host">${local.length > 1 ? `<div class="section-selector"><label><span>${this._e(pageMetadata(this._page).label)} section</span><select id="local-section">${local.map((item) => `<option value="${item.id}" ${item.id === this._subsection ? "selected" : ""}>${item.label}</option>`).join("")}</select></label><p>${this._e(currentSection?.description || "")}</p></div>` : ""}</div>
         <div class="section-layout">
-          <main>${this._eocMainMarkup}</main>
+          <main data-eoc-main ${this._page === "guide" ? 'data-eoc-guide-layout=""' : ""}>${this._eocMainMarkup}</main>
         </div>
       </div>
-      ${this._eocDialogMarkup}
+      <div id="eoc-dialog-host">${this._eocDialogMarkup}</div>
       <div id="toast" class="toast" role="status" aria-live="polite"></div>`;
-    this._bindBase();
     this._bindActions();
-  }
-
-  _bindBase() {
-    const root = this.shadowRoot;
-    root.querySelectorAll(".top-nav button").forEach((button) => button.addEventListener("click", () => this._navigate(button.dataset.page)));
-    root.querySelector("#top-section-mobile")?.addEventListener("change", (event) => this._navigate(event.target.value));
-    root.querySelectorAll(".inline-route").forEach((button) => button.addEventListener("click", () => this._navigate(button.dataset.page, button.dataset.subsection)));
-    root.querySelectorAll(".guide-topic-link").forEach((button) => button.addEventListener("click", () => { this._guideTopic = button.dataset.guideTopic; this._navigate("guide"); }));
-    root.querySelector("#agent")?.addEventListener("change", async (event) => {
-      const select = event.target;
-      const nextAgent = select.value;
-      select.value = this._agentId;
-      if (!await this._confirmUnsavedNavigation(null)) return;
-      select.value = nextAgent;
-      this._unsavedState?.scopes.clear();
-      this._agentId = nextAgent;
-      localStorage.setItem("extended-openai-agent", this._agentId);
-      this._clearConfigDraft();
-      this._scopeId = null;
-      this._applyScopes(this._scopeCatalogCache.get(this._scopeCatalogKey()) || this._baseScopes);
-      await this._loadSection();
-    });
   }
 
   _reconcileCollectionView() {
@@ -1381,6 +1358,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _e(value) { return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]); }
 
   _styles() { return `
+    ${SEARCH_STYLE}
+    ${TOOLBAR_STYLE}
+    ${SETTINGS_POLISH_STYLE}
     .guest-selector-grid{margin-top:18px}.guest-selector-grid ha-selector,.content-card>label>ha-selector,.guest-manager ha-selector{display:block;width:100%;min-width:0}.guest-managers{display:grid;border:1px solid var(--divider-color);border-radius:11px;overflow:hidden}.guest-manager{margin:0;padding:0 16px;border:0;border-bottom:1px solid var(--divider-color)}.guest-manager:last-child{border-bottom:0}.guest-manager summary{display:flex;align-items:center;justify-content:space-between;gap:18px;min-height:66px;list-style:none}.guest-manager summary::-webkit-details-marker{display:none}.guest-manager summary>span:first-child{display:grid;gap:4px}.guest-manager small{font-weight:400}.manage-label{color:var(--primary-color)}.guest-manager-body{padding:0 0 16px}.guest-advanced{margin-top:24px}.legacy-migration .section-actions{margin-top:16px}
     [hidden]{display:none!important}
     :host{display:block;min-height:100%;padding:28px;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);box-sizing:border-box;background:var(--primary-background-color)}*{box-sizing:border-box}.page-shell{max-width:1220px;margin:auto}header{display:flex;justify-content:space-between;gap:36px;align-items:end;margin-bottom:28px}.page-heading h1{margin:0;font-size:30px;font-weight:500}.page-heading p,.section-heading p,.notice p{margin:6px 0 0;color:var(--secondary-text-color);line-height:1.5}.agent-picker{width:min(390px,100%)}label{display:grid;gap:7px;font-size:13px;color:var(--secondary-text-color)}input,select,textarea,button{font:inherit}input,select,textarea{width:100%;min-height:42px;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:9px;padding:10px 12px}textarea{resize:vertical;line-height:1.55}button{min-height:42px;border:0;border-radius:9px;padding:9px 16px;cursor:pointer;background:var(--primary-color);color:var(--text-primary-color)}button.secondary{background:transparent;color:var(--primary-color);border:1px solid var(--primary-color)}button.danger{background:var(--error-color,#db4437);color:#fff}.secondary-danger{margin-left:auto}button.icon{min-width:42px;padding:4px;background:transparent;color:var(--secondary-text-color);font-size:25px}button:disabled{opacity:.6;cursor:wait}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible,summary:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}nav{display:flex;overflow:auto;border-bottom:1px solid var(--divider-color);margin-bottom:28px}nav button{background:transparent;color:var(--secondary-text-color);border-radius:0;padding:13px 18px;white-space:nowrap}nav button.active{color:var(--primary-color);border-bottom:3px solid var(--primary-color)}main{display:grid;gap:30px}.scope-bar,.content-card,.metric,.notice{background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:13px}.scope-bar{max-width:1220px;margin:0 auto 28px;padding:18px 22px;display:flex;align-items:end;gap:20px;flex-wrap:wrap}.scope-bar>label:first-child{min-width:min(420px,100%)}.scope-bar .show-empty{display:flex;grid-gap:8px;align-items:center;min-height:42px}.show-empty input{width:18px;min-height:18px}.scope-bar small{margin-left:auto}.content-card{padding:24px}.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:18px}.metric-grid.compact{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}.metric{padding:20px;display:grid;gap:7px}.metric span,.meta,small,.help,.counter{color:var(--secondary-text-color)}.metric strong{font-size:22px;font-weight:500}.section-heading{display:flex;align-items:start;justify-content:space-between;gap:24px;margin-bottom:20px}.section-heading h2,.content-card>h2{margin:0;font-size:20px}.search,.search-row{margin-bottom:20px}.search-row{display:flex;gap:12px}.search-row input{flex:1}.list{display:grid;gap:12px}.list-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:center;border:1px solid var(--divider-color);border-radius:11px;padding:17px}.card-main.clickable{cursor:pointer;border-radius:8px;padding:4px;margin:-4px}.card-main.clickable:hover{background:var(--secondary-background-color)}.list-card h3,.primary-copy{margin:0;font-size:16px;line-height:1.45;overflow-wrap:anywhere}.list-card .description{margin:5px 0;line-height:1.45;overflow-wrap:anywhere}.meta{margin:6px 0 0;font-size:12px;line-height:1.45}.actions,.section-actions,.dialog-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.actions button{min-height:38px;padding:7px 12px}.notice{padding:20px 22px;border-left:4px solid var(--warning-color,#f9ab00)}.notice.on{border-left-color:var(--success-color,#0f9d58)}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 22px}fieldset{border:0;border-top:1px solid var(--divider-color);padding:26px 0 4px;margin:24px 0 0}legend{padding-right:14px;font-size:16px;font-weight:600}.toggle{display:flex;align-items:center;justify-content:space-between;min-height:42px}.toggle input{width:42px;height:24px;min-height:24px;accent-color:var(--primary-color)}details{border-top:1px solid var(--divider-color);margin-top:28px;padding-top:20px}summary{cursor:pointer;font-weight:600;padding:8px 0}.advanced-body{display:grid;gap:12px;padding-top:12px}.json-editor{min-height:230px;font-family:var(--code-font-family,ui-monospace,monospace)}.validation{font-size:12px}.validation.valid{color:var(--success-color,#0f9d58)}.validation.invalid,.inline-error{color:var(--error-color,#db4437)}.section-actions{margin-top:24px}.chart-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap}.chart-heading h2{margin:0;font-size:20px}.chart-legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--secondary-text-color);font-size:12px}.chart-legend span{display:flex;align-items:center;gap:6px}.legend-swatch{width:11px;height:11px;border-radius:3px}.legend-swatch.uncached,.chart-segment.uncached{background:var(--primary-color)}.legend-swatch.cached,.chart-segment.cached{background:var(--accent-color,var(--warning-color,#f9ab00))}.chart{height:190px;display:flex;align-items:end;gap:5px;border-bottom:1px solid var(--divider-color);padding-top:32px}.chart-column{position:relative;display:flex;flex:1;flex-direction:column;justify-content:flex-end;min-width:4px;max-width:28px;border-radius:4px 4px 0 0;cursor:help}.chart-segment{display:block;width:100%;min-height:0}.chart-segment:first-child{border-radius:4px 4px 0 0}.chart-column:hover:after,.chart-column:focus-visible:after{content:attr(data-tooltip);position:absolute;z-index:5;left:50%;bottom:calc(100% + 8px);width:max-content;max-width:min(300px,80vw);transform:translateX(-50%);padding:7px 9px;border-radius:7px;background:var(--primary-text-color);color:var(--card-background-color);font-size:11px;line-height:1.35;white-space:normal;box-shadow:0 5px 16px rgba(0,0,0,.25);pointer-events:none}.chart-column:first-child:hover:after,.chart-column:first-child:focus-visible:after{left:0;transform:none}.chart-column:last-child:hover:after,.chart-column:last-child:focus-visible:after{right:0;left:auto;transform:none}.chart-note{margin:10px 0 0;color:var(--secondary-text-color);font-size:12px}.table{overflow:auto}table{border-collapse:collapse;width:100%;margin-top:12px}th,td{text-align:left;border-bottom:1px solid var(--divider-color);padding:11px;white-space:nowrap}.empty{text-align:center;color:var(--secondary-text-color);padding:34px 18px}.error{background:var(--error-color,#db4437);color:#fff;padding:15px;border-radius:9px}.loading{display:flex;align-items:center;justify-content:center;gap:10px;min-height:130px;color:var(--secondary-text-color)}.spinner{width:20px;height:20px;border:2px solid var(--divider-color);border-top-color:var(--primary-color);border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}dialog{color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:14px;padding:0;width:min(620px,calc(100vw - 28px));max-height:calc(100vh - 28px);box-shadow:0 16px 50px rgba(0,0,0,.35)}dialog.wide{width:min(900px,calc(100vw - 28px))}dialog::backdrop{background:rgba(0,0,0,.5)}dialog form{margin:0}.dialog-header{padding:18px 22px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--divider-color)}.dialog-header h2{margin:0;font-size:20px}.dialog-body{padding:22px;display:grid;gap:18px;overflow:auto;max-height:calc(100vh - 155px)}.dialog-actions{justify-content:flex-end;padding:14px 22px 18px;border-top:1px solid var(--divider-color)}.dialog-actions>.danger:first-child{margin-right:auto}.short-textarea{min-height:80px}.knowledge-editor{height:52vh;min-height:320px;max-height:65vh;font-family:var(--code-font-family,ui-monospace,monospace)}#memory-content{min-height:150px}.counter{text-align:right;font-size:12px;margin-top:-12px}.inline-error:empty{display:none}.session-body{gap:16px}.turn{display:grid;gap:9px;border-bottom:1px solid var(--divider-color);padding-bottom:18px}.message{padding:13px 15px;border-radius:10px;background:var(--secondary-background-color)}.message.assistant{border-left:3px solid var(--primary-color)}.message.user{border-left:3px solid var(--accent-color,var(--warning-color,#f9ab00))}.message p{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0;line-height:1.55}.toast{position:fixed;right:24px;bottom:24px;z-index:10000;max-width:min(460px,calc(100vw - 32px));padding:13px 17px;border-radius:9px;background:var(--success-color,#0f9d58);color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.25);opacity:0;transform:translateY(12px);pointer-events:none;transition:.2s}.toast.visible{opacity:1;transform:none}.toast.toast-error{background:var(--error-color,#db4437)}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--secondary-background-color);padding:14px;border-radius:9px}code{font-family:var(--code-font-family,ui-monospace,monospace)}

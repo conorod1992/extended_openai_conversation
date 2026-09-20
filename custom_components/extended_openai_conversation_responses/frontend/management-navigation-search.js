@@ -34,7 +34,7 @@ export function searchProjectedSettings(query, projection = SETTINGS_SEARCH_PROJ
     .map(({item}) => item);
 }
 
-const SEARCH_STYLE = `
+export const SEARCH_STYLE = `
   .global-search.eoc-global-search{margin:0 0 22px;position:relative}
   .eoc-global-search>label{display:grid;grid-template-columns:auto minmax(220px,520px);gap:12px;align-items:center}
   .eoc-global-search .search-label{font-weight:600;color:var(--primary-text-color)}
@@ -222,6 +222,8 @@ async function ensureSearchConfiguration(panel, {retry = false} = {}) {
 }
 
 function bindSearch(panel, search) {
+  if (!search || search.__eocSearchBound) return;
+  search.__eocSearchBound = true;
   const input = search.querySelector("#settings-search");
   input.addEventListener("input", () => {
     panel._settingsSearchQuery = input.value;
@@ -269,19 +271,13 @@ export function enhanceNavigationSearch(panel) {
     panel._settingsSearchConfigErrorAgentId,
   ]) : "";
   if (!enhancementChanged(panel, "navigation-search", [panel._page, panel._subsection, panel._agentId, panel._data?.is_admin, panel._settingsSearchQuery || "", searchState])) return;
-  if (!root.querySelector("style[data-eoc-navigation-search]")) {
-    const style = document.createElement("style");
-    style.dataset.eocNavigationSearch = "";
-    style.textContent = SEARCH_STYLE;
-    root.append(style);
-  }
   let search = root.querySelector(".eoc-global-search");
   const header = root.querySelector("header");
   if (!search && header) {
     header.insertAdjacentHTML("beforeend", searchMarkup(panel));
     search = header.querySelector(".eoc-global-search");
-    bindSearch(panel, search);
   }
+  bindSearch(panel, search);
   const input = search?.querySelector("#settings-search");
   if (input && input.value !== (panel._settingsSearchQuery || "")) input.value = panel._settingsSearchQuery || "";
   updateSettingsResults(panel);
@@ -294,10 +290,6 @@ export function enhanceNavigationSearch(panel) {
     nav = document.createElement("nav");
     nav.className = "subsection-nav";
     topNav.after(nav);
-    nav.addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-subsection]");
-      if (button) void panel._navigate(panel._page, button.dataset.subsection);
-    });
   }
   if (nav && nav._eocMarkup !== markup) {
     nav.innerHTML = markup;

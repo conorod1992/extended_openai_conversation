@@ -31,11 +31,9 @@ assert.match(panel, /enhanceConfirmationScope\(this, subject\)/u);
 
 const orderedCalls = [
   "enhanceNavigationSearch(this)",
-  "applyManagementToolbarLayout(this)",
   "bindConfigurationClarity(this)",
   "enhanceConfigurationClarity(this)",
   "enhanceConfigurationGuidance(this)",
-  "polishSettingsLayout(this)",
   "enhanceOverviewHealthClarity(this)",
 ];
 let previous = -1;
@@ -49,3 +47,9 @@ assert.doesNotMatch(panel, /polishRenderedCopy/u);
 assert.match(panel, /queueMicrotask\(\(\) => enhanceOverviewHealthClarity\(this\)\)/u);
 
 assert.doesNotMatch(panel, /bindConfigurationGuidance/, "configuration inputs must own guidance invalidation without another event listener layer");
+
+assert.doesNotMatch(panel, /applyManagementToolbarLayout|polishSettingsLayout/u,
+  "deterministic toolbar/settings layout belongs to the canonical renderer");
+assert.match(panel, /searchMarkup\(this\)/u);
+assert.match(panel, /data-eoc-persistent-shell/u);
+assert.match(panel, /data-eoc-main/u);

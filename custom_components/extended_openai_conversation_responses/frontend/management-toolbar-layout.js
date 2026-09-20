@@ -1,6 +1,4 @@
-import {enhancementChanged} from "./management-enhancement-state.js";
-
-const TOOLBAR_STYLE = `
+export const TOOLBAR_STYLE = `
   header .global-search.eoc-global-search{
     width:min(380px,100%);
     max-width:100%;
@@ -102,61 +100,3 @@ const TOOLBAR_STYLE = `
     }
   }
 `;
-
-export function applyManagementToolbarLayout(panel) {
-  const root = panel?.shadowRoot;
-  if (!root) return false;
-  if (!enhancementChanged(panel, "toolbar", [panel._page, panel._subsection])) return false;
-
-  if (!root.querySelector("style[data-eoc-management-toolbar]")) {
-    const style = document.createElement("style");
-    style.dataset.eocManagementToolbar = "";
-    style.textContent = TOOLBAR_STYLE;
-    root.append(style);
-  }
-
-  const header = root.querySelector("header");
-  const topNav = root.querySelector(".top-nav");
-  const agentPicker = root.querySelector(".agent-picker");
-  const settingsSearch = root.querySelector(".eoc-global-search");
-  const actionsMenu = root.querySelector("main .agent-actions-menu") || root.querySelector(".agent-actions-menu");
-  const actionHelp = root.querySelector("main .action-help") || root.querySelector(".action-help");
-  if (!header || !topNav || (!agentPicker && !settingsSearch)) return false;
-
-  if (settingsSearch && settingsSearch.parentElement !== header) header.append(settingsSearch);
-
-  if (agentPicker) {
-    let contextRow = root.querySelector(".eoc-agent-context-row");
-    if (!contextRow) {
-      contextRow = document.createElement("div");
-      contextRow.className = "eoc-agent-context-row";
-      contextRow.setAttribute("aria-label", "Assistant context");
-      topNav.before(contextRow);
-    }
-    if (agentPicker.parentElement !== contextRow) contextRow.prepend(agentPicker);
-
-    if (actionsMenu) {
-      const summary = actionsMenu.querySelector("summary");
-      if (summary && summary.textContent !== "Assistant actions") summary.textContent = "Assistant actions";
-      let actionGroup = contextRow.querySelector(".eoc-agent-actions");
-      if (!actionGroup) {
-        actionGroup = document.createElement("div");
-        actionGroup.className = "eoc-agent-actions";
-        contextRow.append(actionGroup);
-      }
-      if (actionsMenu.parentElement !== actionGroup) {
-        actionGroup.replaceChildren(actionsMenu);
-        if (actionHelp) actionGroup.append(actionHelp);
-      }
-      const configToolbar = root.querySelector(".config-toolbar");
-      if (configToolbar && !configToolbar.children.length) configToolbar.remove();
-    }
-
-  }
-
-  const subsectionNav = root.querySelector(".subsection-nav");
-  if (subsectionNav && topNav.nextElementSibling !== subsectionNav) topNav.after(subsectionNav);
-  return true;
-}
-
-export {TOOLBAR_STYLE};
