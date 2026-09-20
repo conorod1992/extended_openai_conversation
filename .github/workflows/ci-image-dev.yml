@@ -8,7 +8,6 @@ on:
       - "ci/install_ha_media_dependencies.py"
       - "ci/reconcile_ha_dev_environment.sh"
       - "ci/check_ha_dev_environment.py"
-      - "ci/check_ha_dev_environment.py"
       - "requirements_test.txt"
       - "custom_components/extended_openai_conversation_responses/manifest.json"
       - ".github/workflows/ci-image-dev.yml"
@@ -91,7 +90,7 @@ jobs:
         run: |
           docker pull "${IMAGE_NAME}:ha-dev"
           docker run --rm "${IMAGE_NAME}:ha-dev" bash -lc '
-            python /workspace/ci/check_ha_dev_environment.py
+            python /opt/eoai-ci/check_ha_dev_environment.py
             test "$(cat /opt/eoai-ci/ha-core-sha)" = "${{ steps.ha.outputs.sha }}"
             python -c "from importlib.metadata import version; print(\"homeassistant=\" + version(\"homeassistant\")); print(\"pytest-homeassistant-custom-component=\" + version(\"pytest-homeassistant-custom-component\"))"
           '
