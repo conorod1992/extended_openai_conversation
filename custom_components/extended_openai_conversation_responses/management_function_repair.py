@@ -13,12 +13,15 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import (
     agent_config_defaults,
+    agent_config_snapshot,
     configured_function_tools_from_data,
+    merge_agent_config as _strict_merge_agent_config,
     preserve_legacy_guest_policy,
     validate_function_groups,
     validate_function_tools,
 )
 from .const import CONF_FUNCTION_GROUPS, CONF_FUNCTION_TOOLS, DEFAULT_FUNCTION_GROUPS
+from .request import canonical_json
 
 _STALE_CONFIGURATION_ERROR = (
     "Agent configuration changed in another tab; reload before saving"
@@ -147,31 +150,78 @@ def effective_function_configuration(
     return safe, invalid, group_issues, raw_groups, issue
 
 
-def _safe_function_configuration(options: dict[str, Any]) -> dict[str, Any]:
-    """Build a management-only configuration with invalid tools excluded."""
+def safe_function_configuration(options: dict[str, Any]) -> dict[str, Any]:
+    """Build a management-safe configuration with invalid tools excluded."""
     safe, _invalid, _group_issues, _raw_groups, _issue = (
         effective_function_configuration(options)
     )
     return safe
 
 
-def _revision_for_data(management_ui: Any, title: str, data: dict[str, Any]) -> str:
-    """Hash raw persisted state without invoking strict agent normalization."""
-    document = management_ui.canonical_json({"title": title, "config": data})
+def agent_config_revision(data: Any, title: str) -> str:
+    """Hash normalized valid state or unchanged raw state while tools need repair."""
+    try:
+        config = agent_config_snapshot(dict(data))
+    except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
+        config = dict(data)
+        if function_tools_issue(config)[1] is None:
+            raise
+    document = canonical_json({"title": title, "config": config})
     return sha256(document.encode("utf-8")).hexdigest()
 
 
-def repair_revision(management_ui: Any, subentry: Any) -> str:
+def repair_revision(subentry: Any) -> str:
     """Return the optimistic-concurrency revision for a broken agent config."""
-    return _revision_for_data(management_ui, subentry.title, dict(subentry.data))
+    return agent_config_revision(subentry.data, subentry.title)
 
 
-def require_repair_revision(management_ui: Any, subentry: Any, revision: Any) -> None:
+def require_agent_config_revision(subentry: Any, expected_revision: Any) -> None:
+    """Reject a stale normal management writer before persistence."""
+    if expected_revision is None:
+        return
+    if not isinstance(expected_revision, str):
+        raise HomeAssistantError("revision must be a string")
+    if expected_revision != agent_config_revision(subentry.data, subentry.title):
+        raise HomeAssistantError(
+            "Configuration changed in another tab. Reload the latest saved settings before saving."
+        )
+
+
+def require_repair_revision(subentry: Any, revision: Any) -> None:
     """Reject stale repair writes without validating the broken configuration."""
-    if not isinstance(revision, str) or revision != repair_revision(
-        management_ui, subentry
-    ):
+    if not isinstance(revision, str) or revision != repair_revision(subentry):
         raise HomeAssistantError(_STALE_CONFIGURATION_ERROR)
+
+
+def persist_valid_function_configuration(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    tools: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+    *,
+    extra_updates: dict[str, Any] | None = None,
+    expected_revision: str | None = None,
+) -> dict[str, Any]:
+    """Persist a fully valid Function Tool transition behind one revision boundary."""
+    require_agent_config_revision(subentry, expected_revision)
+    updates: dict[str, Any] = {
+        CONF_FUNCTION_TOOLS: tools,
+        CONF_FUNCTION_GROUPS: groups,
+    }
+    if extra_updates:
+        updates.update(extra_updates)
+    normalized = preserve_legacy_guest_policy(
+        subentry.data,
+        _strict_merge_agent_config(subentry.data, updates),
+    )
+    hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
+    snapshot = agent_config_snapshot(normalized)
+    return {
+        "functions": snapshot[CONF_FUNCTION_TOOLS],
+        "function_groups": snapshot[CONF_FUNCTION_GROUPS],
+        "revision": agent_config_revision(normalized, subentry.title),
+    }
 
 
 def _safe_configuration_payload(
@@ -192,7 +242,7 @@ def _safe_configuration_payload(
     )
     return {
         "title": subentry.title,
-        "revision": repair_revision(management_ui, subentry),
+        "revision": repair_revision(subentry),
         "config": config,
         "defaults": defaults,
         "options": management_ui.agent_config_options(),
@@ -312,7 +362,7 @@ async def async_function_repair(
                     CONF_FUNCTION_TOOLS: "Repair invalid Function Tools before editing Function Tools or Function Groups"
                 },
             }
-        safe_base = _safe_function_configuration(dict(subentry.data))
+        safe_base = safe_function_configuration(dict(subentry.data))
         filtered = {
             key: value
             for key, value in updates.items()
@@ -348,7 +398,7 @@ async def async_function_repair(
             for key, value in updates.items()
             if key not in {CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS}
         }
-        safe_base = _safe_function_configuration(dict(subentry.data))
+        safe_base = safe_function_configuration(dict(subentry.data))
         validation = management_ui._validation_result(
             lambda: management_ui.merge_agent_config(safe_base, filtered)
         )
@@ -387,7 +437,7 @@ async def async_function_repair(
             data=persisted,
             **({"title": saved_title} if isinstance(requested_title, str) else {}),
         )
-        safe_after = _safe_function_configuration(persisted)
+        safe_after = safe_function_configuration(persisted)
         snapshot = management_loading_performance._snapshot_normalized_configuration(
             safe_after
         )
@@ -399,7 +449,7 @@ async def async_function_repair(
                 "valid": True,
                 "errors": {},
                 "title": saved_title,
-                "revision": _revision_for_data(management_ui, saved_title, persisted),
+                "revision": agent_config_revision(persisted, saved_title),
                 "config": snapshot,
                 "agent": management_loading_performance._agent_snapshot(
                     hass, entry, subentry, config=persisted, title=saved_title
@@ -422,7 +472,7 @@ async def async_function_repair(
         }
 
     if action in {"save_one", "delete_one"}:
-        require_repair_revision(management_ui, subentry, message.get("revision"))
+        require_repair_revision(subentry, message.get("revision"))
         editable = editable_function_tools(dict(subentry.data))
         index = message.get("index")
         if not isinstance(editable, list) or not isinstance(index, int):
@@ -480,7 +530,7 @@ async def async_function_repair(
     if action != "save":
         raise HomeAssistantError(f"Unknown Function Tool repair action: {action}")
 
-    require_repair_revision(management_ui, subentry, message.get("revision"))
+    require_repair_revision(subentry, message.get("revision"))
     candidate = message.get("tools")
     if not isinstance(candidate, list):
         raise HomeAssistantError("tools must be a JSON array")
@@ -498,7 +548,7 @@ async def async_function_repair(
     return {
         "valid": True,
         "tools": deepcopy(validated_tools),
-        "revision": _revision_for_data(management_ui, subentry.title, persisted),
+        "revision": agent_config_revision(persisted, subentry.title),
         "agent": management_loading_performance._agent_snapshot(
             hass, entry, subentry, config=persisted
         ),

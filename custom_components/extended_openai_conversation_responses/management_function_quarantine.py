@@ -14,10 +14,10 @@ import yaml
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from . import management_ui
 from .agent_config import (
     configured_function_tools_from_data as _STRICT_CONFIGURED_TOOLS,
     merge_agent_config as _STRICT_MERGE_AGENT_CONFIG,
+    preserve_legacy_guest_policy,
     validate_function_groups as _STRICT_VALIDATE_FUNCTION_GROUPS,
 )
 from .agent_test import (
@@ -29,10 +29,11 @@ from .agent_test import (
 from .const import CONF_FUNCTION_GROUPS, CONF_FUNCTION_TOOLS, DEFAULT_FUNCTION_GROUPS
 from .management_function_repair import (
     editable_function_tools,
-    effective_function_configuration,
     function_tools_issue,
     isolated_function_tools,
+    persist_valid_function_configuration,
     repair_revision,
+    safe_function_configuration as _safe_function_configuration,
 )
 
 _ALLOW_QUARANTINED_TOOLS: ContextVar[bool] = ContextVar(
@@ -41,14 +42,6 @@ _ALLOW_QUARANTINED_TOOLS: ContextVar[bool] = ContextVar(
 _QUARANTINED_FUNCTION_NAMES: ContextVar[frozenset[str]] = ContextVar(
     "extended_openai_management_quarantined_function_names", default=frozenset()
 )
-
-
-def _safe_function_configuration(data: dict[str, Any]) -> dict[str, Any]:
-    """Return a management-only copy with invalid Function Tools excluded."""
-    safe, _invalid, _group_issues, _raw_groups, _issue = (
-        effective_function_configuration(data)
-    )
-    return safe
 
 
 def _usable_function_tools(data: Any) -> list[dict[str, Any]]:
@@ -162,7 +155,7 @@ def _tolerant_persist_function_configuration(
     raw = dict(subentry.data)
     _valid, invalid, issue = isolated_function_tools(raw)
     if issue is None or not invalid:
-        return management_ui._persist_valid_function_configuration(
+        return persist_valid_function_configuration(
             hass,
             entry,
             subentry,
@@ -172,9 +165,7 @@ def _tolerant_persist_function_configuration(
             expected_revision=expected_revision,
         )
 
-    if expected_revision is not None and expected_revision != repair_revision(
-        management_ui, subentry
-    ):
+    if expected_revision is not None and expected_revision != repair_revision(subentry):
         raise HomeAssistantError(
             "Configuration changed in another tab. Reload the latest saved settings before saving."
         )
@@ -220,12 +211,12 @@ def _tolerant_persist_function_configuration(
     persisted[CONF_FUNCTION_GROUPS] = persisted_groups
     if extra_updates:
         persisted.update(deepcopy(extra_updates))
-    persisted = management_ui.preserve_legacy_guest_policy(raw, persisted)
+    persisted = preserve_legacy_guest_policy(raw, persisted)
     hass.config_entries.async_update_subentry(entry, subentry, data=persisted)
     return {
         "functions": deepcopy(tools),
         "function_groups": deepcopy(groups),
-        "revision": repair_revision(management_ui, subentry),
+        "revision": repair_revision(subentry),
     }
 
 
