@@ -1,5 +1,6 @@
 """Tests for content-free Usage input footprint telemetry."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -187,8 +188,6 @@ def test_live_capture_stores_only_content_free_metrics(monkeypatch) -> None:
 async def test_async_input_footprint_combines_preview_latest_and_provider_usage(
     monkeypatch,
 ) -> None:
-    from custom_components.extended_openai_conversation_responses import management_ui
-
     hass = SimpleNamespace(
         data={
             footprint._LATEST_FOOTPRINTS: {
@@ -203,7 +202,7 @@ async def test_async_input_footprint_combines_preview_latest_and_provider_usage(
     entry = SimpleNamespace(entry_id="entry-1")
     subentry = SimpleNamespace(subentry_id="agent-1", data={"chat_model": "gpt-5.6"})
     monkeypatch.setattr(
-        management_ui,
+        footprint,
         "entry_and_agent",
         lambda _hass, entry_id, subentry_id: (entry, subentry),
     )
@@ -213,7 +212,7 @@ async def test_async_input_footprint_combines_preview_latest_and_provider_usage(
         "notes": ["Fresh request baseline"],
     }
     preview_call = AsyncMock(return_value=preview)
-    monkeypatch.setattr(management_ui, "_async_preview_effective_request", preview_call)
+    monkeypatch.setattr(footprint, "async_preview_effective_request", preview_call)
     usage = SimpleNamespace(
         requests=[
             SimpleNamespace(
@@ -245,6 +244,13 @@ async def test_async_input_footprint_combines_preview_latest_and_provider_usage(
     assert "provider billing tokens" in result["notice"]
     preview_call.assert_awaited_once()
     get_usage.assert_awaited_once_with(hass, "entry-1", "agent-1")
+
+
+def test_input_footprint_has_no_management_ui_dependency() -> None:
+    """Usage telemetry depends on the lower-level preview owner, never management_ui."""
+    source = Path(footprint.__file__).read_text(encoding="utf-8")
+    assert "from . import management_ui" not in source
+    assert "management_ui." not in source
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     management_projections,
+    management_request_preview,
     management_ui,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -97,37 +98,37 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
     hass.config.language = "en"
     manager = SimpleNamespace(status=lambda: {"active": False})
     monkeypatch.setattr(
-        management_ui, "async_get_guest_mode", AsyncMock(return_value=manager)
+        management_request_preview, "async_get_guest_mode", AsyncMock(return_value=manager)
     )
-    monkeypatch.setattr(management_ui, "get_loaded_temporary_memory", lambda *_: None)
+    monkeypatch.setattr(management_request_preview, "get_loaded_temporary_memory", lambda *_: None)
     monkeypatch.setattr(
-        management_ui,
+        management_request_preview,
         "async_read_temporary_memory_snapshot",
         AsyncMock(return_value=[]),
     )
-    monkeypatch.setattr(management_ui.SkillManager, "get_loaded_instance", lambda: None)
-    monkeypatch.setattr(management_ui, "get_loaded_knowledge", lambda *_: None)
+    monkeypatch.setattr(management_request_preview.SkillManager, "get_loaded_instance", lambda: None)
+    monkeypatch.setattr(management_request_preview, "get_loaded_knowledge", lambda *_: None)
     monkeypatch.setattr(
-        management_ui,
+        management_request_preview,
         "render_effective_prompt",
         lambda *_args, **_kwargs: SimpleNamespace(text="prompt", sections=[]),
     )
     monkeypatch.setattr(
-        management_ui,
+        management_request_preview,
         "build_provider_request_snapshot",
         lambda *_args: SimpleNamespace(
             api_mode="responses", api_kwargs={}, provider_tools=[]
         ),
     )
     monkeypatch.setattr(
-        management_ui, "format_function_tools", lambda tools, _mode: tools
+        management_request_preview, "format_function_tools", lambda tools, _mode: tools
     )
     monkeypatch.setattr(
-        management_ui,
+        management_request_preview,
         "assemble_integration_function_tools",
         lambda *_args, **_kwargs: [],
     )
-    monkeypatch.setattr(management_ui, "memory_enabled", lambda _options: False)
+    monkeypatch.setattr(management_request_preview, "memory_enabled", lambda _options: False)
 
     ha_tool = {
         "spec": {"name": "ha_light"},
@@ -137,29 +138,29 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
     custom = _tool("allowed")
     options = {
         **agent_config_defaults(),
-        management_ui.CONF_TEMPORARY_MEMORY: "balanced",
-        management_ui.CONF_MEMORY_AUTO_RETRIEVE_LIMIT: 0,
+        management_request_preview.CONF_TEMPORARY_MEMORY: "balanced",
+        management_request_preview.CONF_MEMORY_AUTO_RETRIEVE_LIMIT: 0,
     }
     configured = [ha_tool, custom]
     monkeypatch.setattr(
-        management_ui, "configured_function_tools_from_data", lambda _data: configured
+        management_request_preview, "configured_function_tools_from_data", lambda _data: configured
     )
     discover = AsyncMock(return_value=ToolSnapshot())
-    monkeypatch.setattr(management_ui, "async_discover", discover)
+    monkeypatch.setattr(management_request_preview, "async_discover", discover)
     monkeypatch.setattr(
-        management_ui,
+        management_request_preview,
         "resolve_guest_policy",
         lambda *_: GuestCapabilityPolicy.unrestricted(),
     )
-    monkeypatch.setattr(management_ui, "validate_function_groups", lambda *_: [])
+    monkeypatch.setattr(management_request_preview, "validate_function_groups", lambda *_: [])
     monkeypatch.setattr(
-        management_ui,
+        management_request_preview,
         "assemble_function_tools",
         lambda tools, *_args: SimpleNamespace(tools=tools),
     )
-    monkeypatch.setattr(management_ui, "get_exposed_entities", lambda _hass: [])
+    monkeypatch.setattr(management_request_preview, "get_exposed_entities", lambda _hass: [])
 
-    trusted = await management_ui._async_preview_effective_request(
+    trusted = await management_request_preview.async_preview_effective_request(
         hass, entry, subentry, options, "user"
     )
     assert trusted["prompt"] == "prompt"
@@ -177,14 +178,14 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
     ]
     guest_tools = [custom, _tool("blocked"), _tool("private"), ha_tool]
     monkeypatch.setattr(
-        management_ui, "configured_function_tools_from_data", lambda _data: guest_tools
+        management_request_preview, "configured_function_tools_from_data", lambda _data: guest_tools
     )
-    monkeypatch.setattr(management_ui, "resolve_guest_policy", lambda *_: guest_policy)
+    monkeypatch.setattr(management_request_preview, "resolve_guest_policy", lambda *_: guest_policy)
     monkeypatch.setattr(
-        management_ui, "validate_function_groups", lambda *_: deepcopy(groups)
+        management_request_preview, "validate_function_groups", lambda *_: deepcopy(groups)
     )
     monkeypatch.setattr(
-        management_ui,
+        management_request_preview,
         "get_exposed_entities",
         lambda _hass: [
             {"entity_id": "sensor.allowed"},
@@ -192,22 +193,22 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
         ],
     )
     monkeypatch.setattr(
-        management_ui.ConversationContinuity,
+        management_request_preview.ConversationContinuity,
         "identity_key",
         lambda *_args: (None, "none"),
     )
 
-    guest = await management_ui._async_preview_effective_request(
+    guest = await management_request_preview.async_preview_effective_request(
         hass, entry, subentry, options, "user"
     )
     assert any("temporary memories are excluded" in note for note in guest["notes"])
     assert discover.await_count == 1
 
     monkeypatch.setattr(
-        management_ui, "configured_function_tools_from_data", lambda _data: []
+        management_request_preview, "configured_function_tools_from_data", lambda _data: []
     )
-    monkeypatch.setattr(management_ui, "validate_function_groups", lambda *_: [])
-    empty = await management_ui._async_preview_effective_request(
+    monkeypatch.setattr(management_request_preview, "validate_function_groups", lambda *_: [])
+    empty = await management_request_preview.async_preview_effective_request(
         hass, entry, subentry, options, "user"
     )
     request_settings = next(

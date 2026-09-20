@@ -193,10 +193,12 @@ async def test_temporary_memory_survives_real_entry_unload_reload(
         assert getattr(TemporaryMemory, name) is method
         assert method.__qualname__ == f"TemporaryMemory.{name}"
         assert not hasattr(method, "__wrapped__")
-    from custom_components.extended_openai_conversation_responses import management_ui
+    from custom_components.extended_openai_conversation_responses import (
+        management_request_preview,
+    )
 
     assert (
-        management_ui.async_read_temporary_memory_snapshot
+        management_request_preview.async_read_temporary_memory_snapshot
         is async_read_temporary_memory_snapshot
     )
     assert (
