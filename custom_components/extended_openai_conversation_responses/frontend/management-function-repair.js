@@ -1,3 +1,5 @@
+import {getToolYamlEditor} from "./tool-yaml-editor-adapter.js";
+
 function repairIssue(panel) {
   const issue = panel._selectedAgent?.()?.configuration_issue;
   return issue?.field === "functions" && issue?.repairable === true ? issue : null;
@@ -75,13 +77,13 @@ function renderFunctionRepairCards(panel) {
 function openInvalidToolEditor(panel, item) {
   const root = panel.shadowRoot;
   const dialog = root?.querySelector("#tool-dialog");
-  const editor = root?.querySelector("#tool-yaml");
+  const editor = getToolYamlEditor(panel);
   const status = root?.querySelector("#tool-error");
-  if (!dialog || !editor) return;
+  if (!dialog || !editor?.textarea) return;
   panel._repairToolIndex = Number(item.index);
   panel._repairToolRevision = panel._result?.revision;
   panel._toolOriginalName = null;
-  editor.value = item.yaml || JSON.stringify(item.tool || {}, null, 2);
+  editor.setYaml(item.yaml || JSON.stringify(item.tool || {}, null, 2));
   if (status) {
     status.className = "validation invalid";
     status.textContent = item.validation_error || "This Function Tool needs repair.";
@@ -102,8 +104,8 @@ async function refreshAfterRepair(panel, message) {
 async function saveInvalidTool(panel, button) {
   const index = panel._repairToolIndex;
   if (!Number.isInteger(index)) return false;
-  const editor = panel.shadowRoot?.querySelector("#tool-yaml");
-  const yaml = editor?.value || "";
+  const editor = getToolYamlEditor(panel);
+  const yaml = editor?.getYaml?.() || "";
   if (typeof panel._setSaving === "function") panel._setSaving(button, true);
   else button.disabled = true;
   try {
