@@ -297,18 +297,7 @@ jobs:
             -w /workspace \
             -e PYTHONPATH=/workspace \
             "$HA_DEV_IMAGE" \
-            bash -lc '
-              CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '"'"'{print $1}'"'"')"
-              BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
-              if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
-                echo "Dependency declarations changed since image build; reconciling without replacing HA dev."
-                bash ci/reconcile_ha_dev_environment.sh
-              fi
-              pip check
-              python -c "from importlib.metadata import version; print('''homeassistant=''' + version('''homeassistant'''))"
-              echo "home-assistant-core-sha=$(cat /opt/eoai-ci/ha-core-sha)"
-              bash ci/run_ha_dev_compat_tests.sh
-            '
+            bash ci/run_prebuilt_ha_dev.sh compat
 
       - name: Set up Python ${{ needs.prepare.outputs.python-version }}
         if: steps.dev-image.outputs.available != 'true'
