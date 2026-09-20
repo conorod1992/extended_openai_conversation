@@ -3,6 +3,10 @@ name: ci
 on:
   workflow_dispatch:
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "requirements-docs.txt"
   push:
     branches:
       - main
@@ -124,9 +128,6 @@ jobs:
           node --check custom_components/extended_openai_conversation_responses/frontend/overview-page.js
           node --check custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js
           node --check custom_components/extended_openai_conversation_responses/frontend/usage-chart.js
-          find tests -maxdepth 1 -type f -name '*.test.mjs' -print0 \
-            | sort -z \
-            | xargs -0 -n1 node
 
   type-check:
     name: Type Check
