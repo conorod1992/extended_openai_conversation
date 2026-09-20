@@ -15,7 +15,6 @@ function preparePersistentShell(panel) {
   const template = document.createElement("template");
   template.innerHTML = panel._eocDialogMarkup;
   panel._eocDialogTemplate = template.content;
-  panel._eocPersistentReady = true;
   bindDynamicBase(panel);
   syncManagementActions(panel);
   return true;
@@ -226,7 +225,7 @@ function renderDynamicRegions(panel) {
 // The host calls this directly; feature decorators cannot own shell lifetime.
 export function renderManagement(panel) {
   const navigation = navigationFor(panel);
-  if (!panel._eocPersistentReady || !panel.shadowRoot.querySelector("[data-eoc-persistent-shell]")
+  if (!panel.shadowRoot.querySelector("[data-eoc-persistent-shell]")
       || !navigationMatches(panel, navigation)) {
     panel._renderShell();
     preparePersistentShell(panel);

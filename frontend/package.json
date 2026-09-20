@@ -8,9 +8,6 @@
     "test": "vitest run",
     "verify": "npm run check && npm test && npm run build"
   },
-  "dependencies": {
-    "lit": "3.3.3"
-  },
   "devDependencies": {
     "typescript": "7.0.2",
     "vite": "8.2.2",
