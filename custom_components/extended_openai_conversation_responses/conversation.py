@@ -433,9 +433,7 @@ class ExtendedOpenAIAgentEntity(
                 self._set_subsystem_status("persistent_memory", True, err)
                 _LOGGER.exception("Unable to initialize persistent memory")
             else:
-                self._set_subsystem_status(
-                    "persistent_memory", True, healthy=True
-                )
+                self._set_subsystem_status("persistent_memory", True, healthy=True)
 
         await asyncio.gather(
             initialize_temporary_memory(),
