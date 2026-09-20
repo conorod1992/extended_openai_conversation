@@ -11,7 +11,7 @@ if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
   bash ci/reconcile_ha_dev_environment.sh
 fi
 
-python -m pip check
+python ci/check_ha_dev_environment.py
 python - <<'PY'
 from importlib.metadata import version
 
