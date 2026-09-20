@@ -129,7 +129,7 @@ test("genuine Home Assistant shell follows deep links and browser history", asyn
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel).toHaveCount(1);
   await expect(page).toHaveURL(`${baseUrl}/extended-openai/data-memory/knowledge`);
-  await expect(panel.getByRole("heading", {name: "Knowledge Library", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toBeVisible();
 
   // Build history through the shipped panel's own navigation handlers.
   await panel.getByRole("button", {name: "Assistant", exact: true}).click();
@@ -156,7 +156,7 @@ test("genuine Home Assistant shell follows deep links and browser history", asyn
 
   await page.goBack();
   await expect(page).toHaveURL(`${baseUrl}/extended-openai/data-memory/knowledge`);
-  await expect(panel.getByRole("heading", {name: "Knowledge Library", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toBeVisible();
 
   await page.goForward();
   await expect(page).toHaveURL(`${baseUrl}/extended-openai/assistant/basics`);
@@ -246,7 +246,7 @@ test("genuine HA native YAML editor saves with Ctrl+S and survives a fresh panel
   await panel.getByRole("button", {name: "Data & Memory", exact: true}).click();
   await panel.getByRole("button", {name: "Knowledge Library", exact: true}).click();
   await expect(page).toHaveURL(/\/extended-openai\/data-memory\/knowledge$/);
-  await expect(panel.getByRole("heading", {name: "Knowledge Library", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toBeVisible();
 
   // Clean up the acceptance tool so this test remains friendly to retries.
   panel = await openFunctionsFromOverview(page);

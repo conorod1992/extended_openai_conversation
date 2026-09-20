@@ -31,7 +31,7 @@ test("Knowledge Library opens a real editor and protects an unsaved draft", asyn
   await page.goto(fixtureUrl("data-memory/knowledge"));
 
   const panel = page.locator("extended-openai-management-panel");
-  await expect(panel.getByRole("heading", {name: "Knowledge Library", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toBeVisible();
   await expect(panel.getByText("No Knowledge sources yet. Add one to make reference information available on demand.", {exact: true})).toBeVisible();
 
   await panel.locator("#add-source").click();
@@ -69,10 +69,10 @@ test("Conversation history loads scoped archive state through the management UI"
 
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator("#scope")).toHaveValue("user:test-user");
-  await expect(panel.getByText("Conversation archive enabled", {exact: true})).toBeVisible();
+  await expect(panel.getByText("Conversation archive enabled", {exact: true})).toHaveCount(0);
   await expect(panel.getByRole("heading", {name: "Retained conversations", exact: true})).toBeVisible();
   await expect(panel.getByText("No retained conversations in this scope.", {exact: true})).toBeVisible();
-  await expect(panel.getByText("Continuity is recent context used for follow-ups. The archive is retained history; configure its behavior below.", {exact: true})).toBeVisible();
+  await expect(panel.getByText("Recent context lets conversations continue; saved history is the archive you can review or search.", {exact: true})).toBeVisible();
 
   const calls = await page.evaluate(() => window.browserHarness.calls.map(
     (call) => `${call.section || "root"}/${call.action}`,

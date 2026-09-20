@@ -32,9 +32,9 @@ function broadcastMarkup(panel, snapshot) {
   const canManage = snapshot.can_manage === true;
   const history = snapshot.history || [];
   return `
-    <div class="section-heading broadcast-heading"><div><span class="section-kicker"><ha-icon icon="mdi:bullhorn-outline"></ha-icon> Home messaging</span><h2>Broadcast</h2><p>Send a one-way spoken message to selected Assist satellites or the whole home. Busy satellites wait until they are idle instead of interrupting an active voice session.</p></div></div>
+    <div class="section-heading broadcast-heading"><div><span class="section-kicker"><ha-icon icon="mdi:bullhorn-outline"></ha-icon> Home messaging</span><h2>Broadcast</h2><p>Send a spoken message to selected Assist satellites or the whole home. Busy satellites wait until they are free.</p></div></div>
     <div class="broadcast-toggle-row">
-      <div><strong>Enable Broadcast</strong><p>${enabled ? "Broadcast is available to voice requests, Function Tools, automations, and this page." : "Broadcast is off. No Extended OpenAI broadcast will be sent until an administrator enables it."}</p></div>
+      <div><strong>Enable Broadcast</strong>${enabled ? "" : "<p>Broadcast is currently off.</p>"}</div>
       ${canManage ? `<label class="switch-control" for="broadcast-enabled"><input id="broadcast-enabled" type="checkbox" role="switch" aria-label="Enable Broadcast" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label>` : `<strong class="status-pill ${enabled ? "status-on" : "status-off"}">${enabled ? "On" : "Off"}</strong>`}
     </div>
     ${enabled ? `
@@ -164,9 +164,6 @@ function setupHealthMarkup(panel, health) {
   const summaryDetail = issueCount
     ? `${issueCount} item${issueCount === 1 ? "" : "s"} to review`
     : "Core setup looks ready";
-  const liveTestNote = health.can_manage
-    ? "Overview never sends a provider test request. Diagnostics can run a minimal live test when you choose to."
-    : "Overview never sends a provider test request. An administrator can run Diagnostics for a live connection test.";
   return `<section class="setup-health setup-health-${state}" aria-label="Setup and health">
     <div class="setup-health-heading">
       <div><span class="section-kicker"><ha-icon icon="mdi:heart-pulse"></ha-icon> Configuration</span><h2>Setup & health</h2><p>Quick checks for the selected assistant. Optional features that are off by choice are not treated as problems.</p></div>
@@ -181,7 +178,7 @@ function setupHealthMarkup(panel, health) {
         return `<article class="setup-health-check setup-health-check-${checkState}"><ha-icon class="setup-health-icon" icon="${HEALTH_ICONS[checkState]}" aria-hidden="true"></ha-icon><div class="setup-health-copy"><span>${panel._e(check.title)}</span><strong>${panel._e(check.value)}</strong><p>${panel._e(check.detail)}</p></div>${actionMarkup}</article>`;
       }).join("")}
     </div>
-    <p class="setup-health-footnote"><ha-icon icon="mdi:information-outline" aria-hidden="true"></ha-icon> ${panel._e(liveTestNote)}</p>
+    <p class="setup-health-footnote"><ha-icon icon="mdi:information-outline" aria-hidden="true"></ha-icon> Connection tests only run when you start one from Diagnostics.</p>
   </section>`;
 }
 

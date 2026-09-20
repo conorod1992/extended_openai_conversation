@@ -45,7 +45,7 @@ for (const call of orderedCalls) {
   previous = index;
 }
 
-assert.match(panel, /queueMicrotask\(\(\) => polishRenderedCopy\(this\)\)/u);
+assert.doesNotMatch(panel, /polishRenderedCopy/u);
 assert.match(panel, /queueMicrotask\(\(\) => enhanceOverviewHealthClarity\(this\)\)/u);
 
 assert.doesNotMatch(panel, /bindConfigurationGuidance/, "configuration inputs must own guidance invalidation without another event listener layer");

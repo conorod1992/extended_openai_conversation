@@ -25,6 +25,7 @@ for (const kind of ["knowledge", "persistent"]) {
       await card(panel, kind, 20).locator(action(kind, "delete")).click();
       await beginDataMeasure(page); await acceptConfirmation(panel);
       await expect(card(panel, kind, 20)).toHaveCount(0);
+      if (kind === "knowledge") await expect(panel.locator("[data-source-count]")).toHaveText("79 sources");
       expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 79, mainChildReplacements: 0});
       await panel.locator(kind === "knowledge" ? "#add-source" : "#add-memory").click();
       await panel.locator(field(kind)).fill("Brand new record");
@@ -32,6 +33,7 @@ for (const kind of ["knowledge", "persistent"]) {
       await beginDataMeasure(page);
       await panel.locator(`#${editor(kind)}-save`).click();
       await expect(list(panel, kind).getByText("Brand new record", {exact: true})).toBeVisible();
+      if (kind === "knowledge") await expect(panel.locator("[data-source-count]")).toHaveText("80 sources");
       expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 79, initialCards: 79, mainChildReplacements: 0});
     });
   }
