@@ -28,6 +28,7 @@ RUN python -m pip install --upgrade pip \
         requirements_test.txt \
         custom_components/extended_openai_conversation_responses/manifest.json \
         /opt/eoai-ci/media-dependencies.ready \
+    && cp ci/check_ha_dev_environment.py /opt/eoai-ci/check_ha_dev_environment.py \
     && printf '%s\n' "$HA_CORE_SHA" > /opt/eoai-ci/ha-core-sha \
     && cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json \
         | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256
@@ -48,7 +49,7 @@ COPY --from=ha-dev-builder /usr/local /usr/local
 COPY --from=ha-dev-builder /opt/eoai-ci /opt/eoai-ci
 
 WORKDIR /workspace
-RUN python ci/check_ha_dev_environment.py \
+RUN python /opt/eoai-ci/check_ha_dev_environment.py \
     && test -s /opt/eoai-ci/ha-core-sha \
     && test -s /opt/eoai-ci/environment.sha256
 
