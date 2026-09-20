@@ -11,6 +11,7 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     management_projections,
+    management_request_preview,
     management_ui,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -105,7 +106,7 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
         "async_read_temporary_memory_snapshot",
         AsyncMock(return_value=[]),
     )
-    monkeypatch.setattr(management_ui.SkillManager, "get_loaded_instance", lambda: None)
+    monkeypatch.setattr(management_request_preview.SkillManager, "get_loaded_instance", lambda: None)
     monkeypatch.setattr(management_ui, "get_loaded_knowledge", lambda *_: None)
     monkeypatch.setattr(
         management_ui,
@@ -137,8 +138,8 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
     custom = _tool("allowed")
     options = {
         **agent_config_defaults(),
-        management_ui.CONF_TEMPORARY_MEMORY: "balanced",
-        management_ui.CONF_MEMORY_AUTO_RETRIEVE_LIMIT: 0,
+        management_request_preview.CONF_TEMPORARY_MEMORY: "balanced",
+        management_request_preview.CONF_MEMORY_AUTO_RETRIEVE_LIMIT: 0,
     }
     configured = [ha_tool, custom]
     monkeypatch.setattr(
@@ -159,7 +160,7 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
     )
     monkeypatch.setattr(management_ui, "get_exposed_entities", lambda _hass: [])
 
-    trusted = await management_ui._async_preview_effective_request(
+    trusted = await management_request_preview._async_preview_effective_request(
         hass, entry, subentry, options, "user"
     )
     assert trusted["prompt"] == "prompt"
@@ -192,12 +193,12 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
         ],
     )
     monkeypatch.setattr(
-        management_ui.ConversationContinuity,
+        management_request_preview.ConversationContinuity,
         "identity_key",
         lambda *_args: (None, "none"),
     )
 
-    guest = await management_ui._async_preview_effective_request(
+    guest = await management_request_preview._async_preview_effective_request(
         hass, entry, subentry, options, "user"
     )
     assert any("temporary memories are excluded" in note for note in guest["notes"])
@@ -207,7 +208,7 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
         management_ui, "configured_function_tools_from_data", lambda _data: []
     )
     monkeypatch.setattr(management_ui, "validate_function_groups", lambda *_: [])
-    empty = await management_ui._async_preview_effective_request(
+    empty = await management_request_preview._async_preview_effective_request(
         hass, entry, subentry, options, "user"
     )
     request_settings = next(
