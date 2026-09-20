@@ -9,10 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .management_request_preview import (
-    async_preview_effective_request,
-    entry_and_agent,
-)
+from .management_request_preview import async_preview_effective_request, entry_and_agent
 from .payload_diagnostics import APPROX_TOKEN_METHOD, approximate_tokens
 from .usage import async_get_usage
 
