@@ -1216,14 +1216,14 @@ async def test_usage_dispatch_covers_all_read_routes(
     )
     monkeypatch.setattr(management_ui, "async_get_usage", AsyncMock(return_value=usage))
     summary = await management_ui.async_management_command(
-        hass, "user", False, management_residual_message("usage", "summary")
+        hass, "user", False, _residual_message("usage", "summary")
     )
     assert summary["latest"] is None
     daily = await management_ui.async_management_command(
         hass,
         "admin",
         True,
-        management_residual_message(
+        _residual_message(
             "usage", "daily", start_date="2026-01-01", end_date="2026-01-02"
         ),
     )
@@ -1233,27 +1233,27 @@ async def test_usage_dispatch_covers_all_read_routes(
             hass,
             "admin",
             True,
-            management_residual_message("usage", action, run_id="run-1", limit=2, offset=1),
+            _residual_message("usage", action, run_id="run-1", limit=2, offset=1),
         )
         assert page[action] == []
         assert page["limit"] == 2
         assert page["offset"] == 1
     with pytest.raises(HomeAssistantError, match="run_id is required"):
         await management_ui.async_management_command(
-            hass, "admin", True, management_residual_message("usage", "requests")
+            hass, "admin", True, _residual_message("usage", "requests")
         )
     assert await management_ui.async_management_command(
-        hass, "admin", True, management_residual_message("usage", "retention")
+        hass, "admin", True, _residual_message("usage", "retention")
     ) == {"request_days": 7, "run_days": 30}
     with pytest.raises(HomeAssistantError, match="Administrator"):
         await management_ui.async_management_command(
             hass,
             "user",
             False,
-            management_residual_message("usage", "clear_details", confirm=True),
+            _residual_message("usage", "clear_details", confirm=True),
         )
     result = await management_ui.async_management_command(
-        hass, "admin", True, management_residual_message("usage", "clear_details", confirm=True)
+        hass, "admin", True, _residual_message("usage", "clear_details", confirm=True)
     )
     assert result == {"cleared": 2}
     usage.async_clear_details.assert_awaited_once_with(confirm=True)
