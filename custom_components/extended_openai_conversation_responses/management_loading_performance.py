@@ -115,7 +115,6 @@ def _agent_snapshot(
     return snapshot
 
 
-
 async def async_agent_catalog(
     hass: HomeAssistant, user_id: str, is_admin: bool
 ) -> dict[str, Any]:
