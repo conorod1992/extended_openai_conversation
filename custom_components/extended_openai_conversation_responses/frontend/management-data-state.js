@@ -42,3 +42,13 @@ export function ensureTemporaryScope(panel) {
 export function memoryCollectionIdentity(panel) {
   return JSON.stringify([panel._selectedAgent?.()?.entry_id, panel._agentId, panel._hass?.user?.id, panel._scopeId, panel._memoryKind]);
 }
+
+
+export function storeRuntimeGuidance(panel, result, agentId = panel._agentId) {
+  if (!result?.configuration_guidance || panel._agentId !== agentId) return;
+  panel._configurationGuidance = result.configuration_guidance;
+  panel._configurationGuidanceAgentId = agentId;
+  if (panel._result && typeof panel._result === "object") {
+    panel._result.configuration_guidance = result.configuration_guidance;
+  }
+}
