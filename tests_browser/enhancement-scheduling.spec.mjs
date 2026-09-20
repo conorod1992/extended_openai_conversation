@@ -23,6 +23,7 @@ test("guidance responds to its dependencies without rescanning for unrelated dra
       panel._configurationGuidance = {effective_api_mode:"responses"};
       enhanceConfigurationGuidance(panel);
       const runtime = scans;
+      const runtimeUpdated = root.querySelector('[data-eoc-guidance-generated="api-mode-auto"]')?.textContent.includes("Responses API");
       enhanceConfigurationGuidance(panel);
       const repeated = scans;
       panel._configData.model_capabilities = {supports_temperature:false};
@@ -31,10 +32,10 @@ test("guidance responds to its dependencies without rescanning for unrelated dra
       const capabilities = scans;
       panel._eocSearchResultsRevision++;
       enhanceConfigurationGuidance(panel);
-      return {unrelated, runtime, repeated, capabilities, search:scans};
+      return {unrelated, runtime, repeated, capabilities, search:scans, runtimeUpdated};
     } finally { root.querySelector = original; }
   });
-  expect(counts).toEqual({unrelated:0, runtime:1, repeated:1, capabilities:2, search:3});
+  expect(counts).toEqual({unrelated:0, runtime:0, repeated:0, capabilities:1, search:1, runtimeUpdated:true});
 });
 
 for (const query of ["", "conversation timeout"]) test(`unchanged renders skip enhancement queries and content replacement invalidates them (query: ${query})`, async ({page}) => {

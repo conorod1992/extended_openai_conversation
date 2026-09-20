@@ -373,35 +373,43 @@ function decorateSearchAvailability(panel) {
 }
 
 function bindGuidanceRoutes(panel) {
-  panel.shadowRoot?.querySelectorAll(".eoc-guidance-route").forEach((button) => {
-    if (button.dataset.eocGuidanceBound) return;
-    button.dataset.eocGuidanceBound = "";
-    button.addEventListener("click", async () => {
-      panel._pendingSettingFocus = button.dataset.target || "";
-      await panel._navigate(button.dataset.page, button.dataset.subsection);
-    });
+  const root = panel.shadowRoot;
+  if (root.__eocGuidanceRoutesBound) return;
+  root.__eocGuidanceRoutesBound = true;
+  root.addEventListener("click", async (event) => {
+    const button = event.target?.closest?.(".eoc-guidance-route");
+    if (!button) return;
+    panel._pendingSettingFocus = button.dataset.target || "";
+    await panel._navigate(button.dataset.page, button.dataset.subsection);
   });
 }
 
 export {storeRuntimeGuidance} from "./management-runtime-guidance.js";
 
+const groupKeys = new WeakMap();
+function enhanceGroup(panel, name, dependencies, enhance) {
+  if (!enhancementChanged(panel, `guidance-${name}`, [panel._agentId, JSON.stringify(dependencies)])) return;
+  let groups = groupKeys.get(panel);
+  if (!groups) groupKeys.set(panel, groups = new Map());
+  const desired = new Set();
+  guidanceKeys.set(panel, desired);
+  enhance(panel);
+  for (const key of groups.get(name) || []) {
+    if (!desired.has(key)) panel.shadowRoot.querySelector(`[data-eoc-guidance-generated="${key}"]`)?.remove();
+  }
+  groups.set(name, desired);
+}
+
 export function enhanceConfigurationGuidance(panel) {
   if (!panel.shadowRoot) return;
+  if (enhancementChanged(panel, "guidance-styles")) ensureStyles(panel);
   const config = activeConfig(panel);
-  const keys = ["conversation_continuity", "web_search", "archive_enabled", "speech_processing_enabled", "local_intents_enabled", "memory_retrieval_mode", "api_mode", "web_search_context", ...MODEL_PARAMETERS.map((spec) => spec.key)];
-  const signature = JSON.stringify([keys.map((key) => config[key]), activeCapabilities(panel), activeRuntimeGuidance(panel), panel._result?.local_handling || panel._configData?.local_handling, panel._result?.options || panel._configData?.options]);
-  if (!enhancementChanged(panel, "configuration-guidance", [panel._agentId, signature, panel._eocSearchResultsRevision])) return;
-  ensureStyles(panel);
-  const desiredGuidance = new Set();
-  guidanceKeys.set(panel, desiredGuidance);
-  injectAndDecorateModelParameters(panel);
-  decorateDependencies(panel);
-  decorateMemory(panel);
-  decorateProviderGuidance(panel);
-  panel.shadowRoot.querySelectorAll("[data-eoc-guidance-generated]").forEach((node) => {
-    if (!desiredGuidance.has(node.dataset.eocGuidanceGenerated)) node.remove();
-  });
-  decorateSearchAvailability(panel);
+  const capabilities = activeCapabilities(panel);
+  enhanceGroup(panel, "model", [MODEL_PARAMETERS.map((spec) => config[spec.key]), capabilities, panel._result?.options || panel._configData?.options], injectAndDecorateModelParameters);
+  enhanceGroup(panel, "dependencies", [config.conversation_continuity, config.web_search, config.archive_enabled, config.speech_processing_enabled, config.local_intents_enabled, panel._result?.local_handling || panel._configData?.local_handling], decorateDependencies);
+  enhanceGroup(panel, "memory", [config.memory_retrieval_mode], decorateMemory);
+  enhanceGroup(panel, "provider", [config.api_mode, config.web_search, config.web_search_context, activeRuntimeGuidance(panel)], decorateProviderGuidance);
+  enhanceGroup(panel, "search", [capabilities, panel._eocSearchResultsRevision], decorateSearchAvailability);
   bindGuidanceRoutes(panel);
 }
 
@@ -412,10 +420,6 @@ function queueEnhance(panel) {
     panel._eocGuidanceEnhanceQueued = false;
     enhanceConfigurationGuidance(panel);
   });
-}
-
-function configControlFromEvent(event) {
-  return event.composedPath?.().find((item) => (item?.dataset?.config || item?.dataset?.memoryConfig)) || null;
 }
 
 function refreshRuntimeGuidance(panel) {
@@ -429,17 +433,9 @@ function refreshRuntimeGuidance(panel) {
     });
 }
 
-export function bindConfigurationGuidance(panel) {
-  if (panel._eocGuidanceHostBound) return;
-  panel._eocGuidanceHostBound = true;
-  panel.addEventListener("input", (event) => { if (configControlFromEvent(event)) queueEnhance(panel); }, true);
-  panel.addEventListener("change", (event) => {
-    queueEnhance(panel);
-    const control = configControlFromEvent(event);
-    if (control?.dataset?.config === "api_mode") {
-      queueMicrotask(() => refreshRuntimeGuidance(panel));
-    }
-  }, true);
+export function configurationGuidanceChanged(panel, key, committed = false) {
+  if (["conversation_continuity", "web_search", "archive_enabled", "speech_processing_enabled", "local_intents_enabled", "memory_retrieval_mode", "api_mode", "web_search_context", ...MODEL_PARAMETERS.map((spec) => spec.key)].includes(key)) queueEnhance(panel);
+  if (key === "api_mode" && committed) refreshRuntimeGuidance(panel);
 }
 
 export {MODEL_PARAMETERS};

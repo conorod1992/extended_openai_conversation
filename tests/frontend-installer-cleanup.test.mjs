@@ -34,7 +34,6 @@ const orderedCalls = [
   "applyManagementToolbarLayout(this)",
   "bindConfigurationClarity(this)",
   "enhanceConfigurationClarity(this)",
-  "bindConfigurationGuidance(this)",
   "enhanceConfigurationGuidance(this)",
   "polishSettingsLayout(this)",
   "enhanceOverviewHealthClarity(this)",
@@ -48,3 +47,5 @@ for (const call of orderedCalls) {
 
 assert.match(panel, /queueMicrotask\(\(\) => polishRenderedCopy\(this\)\)/u);
 assert.match(panel, /queueMicrotask\(\(\) => enhanceOverviewHealthClarity\(this\)\)/u);
+
+assert.doesNotMatch(panel, /bindConfigurationGuidance/, "configuration inputs must own guidance invalidation without another event listener layer");

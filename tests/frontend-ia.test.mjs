@@ -196,6 +196,7 @@ assert.match(partialOverviewHtml, /1,234 tokens today/);
 assert.match(partialOverviewHtml, /5,678 this month/);
 
 const panel = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
+const controlReader = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js", import.meta.url), "utf8");
 const editor = (
   await Promise.all([
     "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js",
@@ -237,8 +238,11 @@ assert.match(overview, /dashboard-action/);
 assert.match(overview, /panel\._broadcastSelected = new Set/);
 assert.match(overview, /available\.has\(entityId\)/);
 assert.match(editor, /panel\._configSectionFilter/);
-assert.match(editor, /if \(root\.querySelector\("#regex-rules"\)\)/);
-assert.match(editor, /if \(voiceMappings\)/);
+assert.match(controlReader, /if \(root\.querySelector\("#regex-rules"\)\)/);
+// The shared reader must preserve values belonging to an unmounted subsection.
+const {readConfigurationDraft} = await import("../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js");
+const hiddenConfig = {voice_device_mappings:{speaker:"user"}, speech_regex_replacements:[{pattern:"a",replacement:"b"}]};
+assert.deepEqual(readConfigurationDraft({_draft:hiddenConfig, shadowRoot:{querySelector:() => null, querySelectorAll:() => []}}), hiddenConfig);
 assert.doesNotMatch(editor, /id="config-search"/);
 assert.match(editor, /class="agent-actions-menu"/);
 assert.match(editor, /aria-haspopup="menu"/);

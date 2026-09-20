@@ -2,7 +2,7 @@
 import {describe, expect, it} from "vitest";
 import {readFile} from "node:fs/promises";
 
-import {applyIncrementalDraftUpdate} from "../../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js";
+import {applyConfigurationControl} from "../../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js";
 import {settingsResultsMarkup, SEARCH_DEBOUNCE_MS} from "../../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
 import {renderConfiguration, renderTools} from "../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
 
@@ -10,17 +10,17 @@ const owner = () => ({_e:(value) => String(value ?? ""), _titleCase:String, _emp
 
 describe("native management rendering", () => {
   it("updates one draft field without scanning the whole form", () => {
-    const panel = {_draft:{temperature:0.2}, _draftTitle:"Agent"};
+    const panel = {_draft:{temperature:0.2}, _draftTitle:"Agent", shadowRoot:{querySelectorAll:() => { throw new Error("ordinary edits must not scan controls"); }}};
     const control = {dataset:{config:"temperature", type:"number"}, value:"0.7"};
-    expect(applyIncrementalDraftUpdate(panel, control, {querySelectorAll:() => []})).toBe(true);
+    expect(applyConfigurationControl(panel, control)).toEqual({key:"temperature", changed:true});
     expect(panel._draft.temperature).toBe(0.7);
   });
 
   it("keeps title and structured voice mappings in the live draft", () => {
     const panel = {_draft:{}, _draftTitle:"Old"};
-    expect(applyIncrementalDraftUpdate(panel, {dataset:{config:"__title"}, value:"New"}, {})).toBe(true);
+    expect(applyConfigurationControl(panel, {dataset:{config:"__title"}, value:"New"})).toEqual({key:"__title", changed:true});
     expect(panel._draftTitle).toBe("New");
-    expect(applyIncrementalDraftUpdate(panel, {dataset:{}, id:"voice-mappings", value:'{"satellite":"user"}'}, {})).toBe(true);
+    expect(applyConfigurationControl(panel, {dataset:{}, id:"voice-mappings", value:'{"satellite":"user"}'})).toEqual({key:"voice_device_mappings", changed:true});
     expect(panel._draft.voice_device_mappings).toEqual({satellite:"user"});
   });
 
@@ -41,7 +41,7 @@ describe("native management rendering", () => {
     expect(source).toContain("data-eoc-persistent-shell");
     expect(source).toContain("main.innerHTML =");
     expect(source).not.toContain("shadowRoot.innerHTML =");
-    expect(source).toContain("event.stopImmediatePropagation()");
+    expect(source).not.toContain("event.stopImmediatePropagation()");
     expect(SEARCH_DEBOUNCE_MS).toBe(80);
   });
 

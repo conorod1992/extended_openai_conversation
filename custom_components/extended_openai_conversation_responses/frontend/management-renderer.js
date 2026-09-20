@@ -1,99 +1,8 @@
-import {refreshSettingEffects} from "./management-setting-metadata.js";
 import {updateDialogs} from "./management-dialogs.js";
 import {NAVIGATION, pageMetadata} from "./frontend-navigation.js";
 
 function navigationFor(panel) {
   return NAVIGATION.filter((item) => panel._canAccessView(item.id));
-}
-
-function setDependent(root, key, enabled) {
-  if (!key) return;
-  const container = root.querySelector(`[data-dependent="${CSS.escape(key)}"]`);
-  if (!container) return;
-  container.classList.toggle("is-disabled", !enabled);
-  container.querySelectorAll("input:not([readonly]),select,textarea:not([readonly]),button:not(.help-button)").forEach((control) => {
-    control.disabled = !enabled;
-  });
-}
-
-function controlValue(control) {
-  let value = control.dataset?.type === "boolean" ? Boolean(control.checked) : control.value;
-  if (control.dataset?.type === "number") value = Number(value);
-  const key = control.dataset?.config || "";
-  if (key === "skills" || key.startsWith("guest_readable_") || key.startsWith("guest_controllable_")) {
-    value = String(value).split(",").map((item) => item.trim()).filter(Boolean);
-  }
-  return value;
-}
-
-function hasClass(control, name) {
-  return Boolean(control.classList?.contains?.(name));
-}
-
-export function applyIncrementalDraftUpdate(panel, control, root = panel.shadowRoot) {
-  if (!panel._draft || !control) return false;
-
-  const key = control.dataset?.config;
-  if (key) {
-    if (key === "__title") panel._draftTitle = control.value;
-    else if (key === "prompt") panel._draft.prompt = control.value;
-    else panel._draft[key] = controlValue(control);
-    return true;
-  }
-
-  if (control.id === "voice-mappings") {
-    try {
-      panel._draft.voice_device_mappings = JSON.parse(control.value || "{}");
-    } catch (_) {
-      panel._draft.voice_device_mappings = control.value;
-    }
-    return true;
-  }
-
-  if (control.dataset?.localIntentExclusion !== undefined) {
-    panel._draft.local_intent_exclusions = [...root.querySelectorAll("[data-local-intent-exclusion]:checked")].map((input) => input.value);
-    return true;
-  }
-
-  if (hasClass(control, "regex-pattern") || hasClass(control, "regex-replacement")) {
-    const row = control.closest?.(".rule-row");
-    const index = Number(row?.dataset?.regexIndex);
-    if (!Number.isInteger(index) || index < 0 || !panel._draft.speech_regex_replacements?.[index]) return false;
-    const rule = panel._draft.speech_regex_replacements[index];
-    if (hasClass(control, "regex-pattern")) rule.pattern = control.value;
-    else rule.replacement = control.value;
-    return true;
-  }
-
-  return false;
-}
-
-function bindIncrementalDraftUpdates(panel) {
-  const root = panel.shadowRoot;
-  if (root.__eocIncrementalDraftBound) return;
-  root.__eocIncrementalDraftBound = true;
-  root.addEventListener("input", (event) => {
-    // Let the existing editor perform its full read once when a clean draft first
-    // becomes dirty. From then on, keep the already-hydrated draft current by
-    // updating only the control that changed.
-    if (!panel._configDirty || !root.querySelector(".save-bar")) return;
-    const control = event.target;
-    if (!applyIncrementalDraftUpdate(panel, control, root)) return;
-
-    event.stopImmediatePropagation();
-    if (control.dataset?.type === "boolean") setDependent(root, control.dataset.config, control.checked);
-    if (control.dataset?.config === "conversation_continuity") {
-      setDependent(root, "conversation_continuity", control.value !== "ha_default");
-    }
-    if (control.id === "prompt-editor") {
-      const counter = root.querySelector("#prompt-count");
-      if (counter) counter.textContent = `${control.value.length.toLocaleString()} characters`;
-    }
-    // The optimized handler stops the original event before bubble listeners,
-    // so reconcile this control explicitly after updating the shared draft.
-    panel._syncConfigControlDirty?.(control);
-    refreshSettingEffects(panel, control);
-  }, true);
 }
 
 function ensureHost(parent, id, before) {
@@ -137,7 +46,6 @@ function preparePersistentShell(panel) {
   panel._eocDialogTemplate = template.content;
   panel._eocPersistentReady = true;
   bindDynamicBase(panel);
-  bindIncrementalDraftUpdates(panel);
   return true;
 }
 
@@ -249,7 +157,6 @@ function renderDynamicRegions(panel) {
       panel._eocDialogMarkup = dialogs;
     }
     bindDynamicBase(panel);
-    bindIncrementalDraftUpdates(panel);
     return;
   }
   const markup = !agent
@@ -281,7 +188,6 @@ function renderDynamicRegions(panel) {
     panel._eocDialogMarkup = dialogs;
   }
   bindDynamicBase(panel);
-  bindIncrementalDraftUpdates(panel);
 }
 
 // The host calls this directly; feature decorators cannot own shell lifetime.

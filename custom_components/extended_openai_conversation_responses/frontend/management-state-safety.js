@@ -74,21 +74,6 @@ export function syncConfigDirtyKeys(panel, keys) {
   return changed;
 }
 
-export function configKeyForControl(control) {
-  if (!control) return null;
-  if (control.dataset?.config) return control.dataset.config;
-  if (control.dataset?.memoryConfig) return control.dataset.memoryConfig;
-  if (control.id === "voice-mappings") return "voice_device_mappings";
-  if (control.matches?.("[data-local-intent-exclusion]")) return "local_intent_exclusions";
-  if (control.matches?.(".regex-pattern,.regex-replacement")) {
-    return "speech_regex_replacements";
-  }
-  if (control.id === "conversation-timeout-preset") {
-    return "conversation_timeout_minutes";
-  }
-  return null;
-}
-
 export function configKeysForButton(button) {
   if (!button) return [];
   if (button.id === "reset-prompt") return RESET_PROMPT_KEYS;
@@ -116,13 +101,13 @@ function restoreConfigFocus(panel, control) {
   });
 }
 
-export function applyTargetedConfigDirty(panel, keys, control = null) {
+export function applyTargetedConfigDirty(panel, keys, control = null, renderWhenClean = true) {
   if (!keys.length) return;
   const wasDirty = Boolean(panel._configDirty);
   const changed = syncConfigDirtyKeys(panel, keys);
   panel._setConfigDirty(changed.size > 0);
   panel.shadowRoot?.dispatchEvent?.(new Event("eoc-config-dirty-changed"));
-  if (wasDirty && !panel._configDirty) {
+  if (renderWhenClean && wasDirty && !panel._configDirty) {
     panel._render?.();
     restoreConfigFocus(panel, control);
   }
@@ -261,14 +246,6 @@ export function bindStateSafety(panel) {
   const root = panel.shadowRoot;
   if (!root || root.__eocStateSafetyBound) return;
   root.__eocStateSafetyBound = true;
-
-  const syncConfigAfterControlEvent = (event) => {
-    const key = configKeyForControl(event.target);
-    if (key) applyTargetedConfigDirty(panel, [key], event.target);
-  };
-  root.addEventListener("input", syncConfigAfterControlEvent);
-  root.addEventListener("change", syncConfigAfterControlEvent);
-  root.addEventListener("value-changed", syncConfigAfterControlEvent);
 
   root.addEventListener("click", (event) => {
     const button = event.target?.closest?.("button");
