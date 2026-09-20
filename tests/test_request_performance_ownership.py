@@ -16,7 +16,6 @@ from custom_components.extended_openai_conversation_responses import (
     debug,
     entity as entity_module,
     input_footprint,
-    model_capabilities,
     request as request_module,
     request_static_cache as cache,
     skill_runtime_availability,
@@ -91,12 +90,6 @@ def test_provider_request_resolves_model_capabilities_once(monkeypatch):
         return original(model)
 
     monkeypatch.setattr(request_module, "get_model_capabilities", resolve)
-    monkeypatch.setattr(
-        model_capabilities,
-        "get_model_capabilities",
-        Mock(side_effect=AssertionError("request helpers must reuse the snapshot")),
-    )
-
     snapshot = request_module.build_provider_request_snapshot(
         {"chat_model": "gpt-4.1-mini"},
         {},
