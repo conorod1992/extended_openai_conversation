@@ -250,7 +250,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest tests/ \
-            -n 4 \
+            -n 3 \
             --dist=loadscope \
             -v \
             --asyncio-mode=auto \
