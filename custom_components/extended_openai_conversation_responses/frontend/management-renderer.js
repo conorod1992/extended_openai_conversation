@@ -15,7 +15,6 @@ function preparePersistentShell(panel) {
   const template = document.createElement("template");
   template.innerHTML = panel._eocDialogMarkup;
   panel._eocDialogTemplate = template.content;
-  panel._eocPersistentReady = true;
   bindDynamicBase(panel);
   syncManagementActions(panel);
   return true;
@@ -184,7 +183,6 @@ function renderDynamicRegions(panel) {
   const route = `${panel._agentId}|${panel._viewKey()}`;
   if (agent && !panel._busy && !panel._error && route === panel._eocRenderedRoute
       && !root.querySelector("dialog[open]") && panel._reconcileCollectionView?.()) {
-    panel._eocDeferredEditorRender = false;
     if (dialogs !== panel._eocDialogMarkup) {
       updateDialogs(panel, dialogs, {preserveEditors: true});
       panel._eocDialogMarkup = dialogs;
@@ -200,10 +198,8 @@ function renderDynamicRegions(panel) {
   const changed = route !== panel._eocRenderedRoute || markup !== panel._eocMainMarkup;
   const dialogsChanged = dialogs !== panel._eocDialogMarkup;
   if ((changed || dialogsChanged) && route === panel._eocRenderedRoute && root.querySelector("dialog[open]")) {
-    panel._eocDeferredEditorRender = true;
     return;
   }
-  panel._eocDeferredEditorRender = false;
   if (main && changed) {
     main.innerHTML = markup;
     panel._eocMainRevision = (panel._eocMainRevision || 0) + 1;
@@ -226,7 +222,7 @@ function renderDynamicRegions(panel) {
 // The host calls this directly; feature decorators cannot own shell lifetime.
 export function renderManagement(panel) {
   const navigation = navigationFor(panel);
-  if (!panel._eocPersistentReady || !panel.shadowRoot.querySelector("[data-eoc-persistent-shell]")
+  if (!panel.shadowRoot.querySelector("[data-eoc-persistent-shell]")
       || !navigationMatches(panel, navigation)) {
     panel._renderShell();
     preparePersistentShell(panel);
