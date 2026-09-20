@@ -40,4 +40,4 @@ python -m pip install -r "$TMP_PLUGIN_DEPS"
 
 python ci/install_ha_dependencies.py --manifest "$MANIFEST_FILE"
 python ci/install_ha_media_dependencies.py --marker "$MEDIA_MARKER"
-python -m pip check
+python ci/check_ha_dev_environment.py
