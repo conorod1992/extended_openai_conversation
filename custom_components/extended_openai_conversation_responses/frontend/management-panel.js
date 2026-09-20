@@ -922,7 +922,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _usage() {
     const usage = getRouteFeature("usage-maintenance/usage");
-    return usage ? `${usage.footprintMarkup(this)}${usage.renderUsagePage(this, this._result || {})}` : this._loading();
+    return usage ? `${usage.footprintRegionMarkup(this)}${usage.renderUsagePage(this, this._result || {})}` : this._loading();
   }
 
   _conversations() {
