@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import timedelta
@@ -198,16 +199,6 @@ async def test_parallel_request_contexts_never_cross_owners():
 
 
 # Expiry-prune persistence scheduling and task-lifecycle regressions.
-
-import asyncio
-from contextlib import suppress
-
-import pytest
-
-from custom_components.extended_openai_conversation_responses import (
-    temporary_memory as performance,
-)
-
 
 class Manager(performance.TemporaryMemory):
     def __init__(self, save) -> None:
