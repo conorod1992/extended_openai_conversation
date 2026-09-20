@@ -61,7 +61,6 @@ IMPORTANCE_MULTIPLIERS = {"low": 0.85, "normal": 1.0, "high": 1.2}
 MIN_LEXICAL_RELEVANCE_SCORE = 0.08
 MIN_SEMANTIC_SIMILARITY = 0.55
 EmbeddingProvider = Callable[[list[str]], Awaitable[list[list[float]]]]
-EmbeddingTaskScheduler = Callable[[Awaitable[Any]], Any]
 
 
 class _UnsetType:
@@ -270,8 +269,6 @@ class PersistentMemory:
         self,
         storage: MemoryStorage,
         embedding_cache_storage: EmbeddingCacheStorage | None = None,
-        *,
-        embedding_task_scheduler: EmbeddingTaskScheduler | None = None,
     ) -> None:
         """Initialize memory collection."""
         self._storage = storage
@@ -289,11 +286,6 @@ class PersistentMemory:
             "model": "default",
             "reason": "provider_not_configured",
         }
-        # Kept only for compatibility with the live-config lifecycle seam and its
-        # injected test scheduler. Production does not provide a scheduler, so
-        # configuring Hybrid retrieval never starts background prewarming.
-        self._embedding_task_scheduler = embedding_task_scheduler
-        self._embedding_maintenance_requested = False
         self._lock = asyncio.Lock()
         self._initialized = False
         self._committed_state: _MemoryMutationSnapshot | None = None
@@ -378,25 +370,12 @@ class PersistentMemory:
         if self._embedding_provider == provider and self._embedding_model == model:
             return
         model = str(model).strip() or "default"
-        changed = self._embedding_provider != provider or self._embedding_model != model
         self._embedding_provider = provider
         self._embedding_model = model
         self._set_hybrid_status(
             "ready" if provider is not None else "lexical_fallback",
             None if provider is not None else "provider_not_configured",
         )
-        if (
-            changed
-            and provider is not None
-            and self._embedding_task_scheduler is not None
-        ):
-            # Legacy/injected schedulers get a deliberately empty-scope maintenance
-            # coroutine. It exercises lifecycle scheduling without embedding Memory
-            # content; normal production construction never supplies this hook.
-            self._embedding_task_scheduler(self._async_refresh_missing_embeddings(()))
-
-        if provider is None:
-            self._embedding_maintenance_requested = False
 
     def hybrid_status(self) -> dict[str, Any]:
         """Return non-sensitive hybrid-retrieval availability diagnostics."""
@@ -722,6 +701,32 @@ class PersistentMemory:
         ]
         memories.sort(key=lambda memory: memory.updated_at, reverse=True)
         return memories[offset : offset + limit]
+
+    async def async_browse(
+        self,
+        user_id: str,
+        query: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[MemoryRecord], int]:
+        """Browse one owner's complete management projection with bounded output."""
+        self._ensure_initialized()
+        limit = max(1, min(limit, MAX_LIST_LIMIT))
+        offset = max(0, offset)
+        folded_query = str(query).casefold()
+        memories = [
+            memory
+            for memory in self._memories.values()
+            if memory.user_id == user_id
+            and folded_query
+            in " ".join(
+                str(value or "")
+                for value in (memory.content, memory.category, memory.source)
+            ).casefold()
+        ]
+        memories.sort(key=lambda memory: memory.updated_at, reverse=True)
+        total = len(memories)
+        return memories[offset : offset + limit], total
 
     async def async_update(
         self,
