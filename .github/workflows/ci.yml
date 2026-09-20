@@ -142,21 +142,61 @@ jobs:
         with:
           python-version: ${{ needs.prepare.outputs.python-version }}
           cache: pip
-          cache-dependency-path: requirements_test.txt
+          cache-dependency-path: |
+            .github/workflows/ci.yml
+            custom_components/extended_openai_conversation_responses/manifest.json
+            pyproject.toml
 
-      - name: Install dependencies
+      - name: Install type-check dependencies
         run: |
-          python -m pip install --upgrade pip
-          # Install dependencies with versions from HA core
+          # Keep the runtime/type surface used by mypy, but do not install the
+          # pytest/Home Assistant test stack from requirements_test.txt.
           pip install \
+            homeassistant \
             "openai==${{ needs.prepare.outputs.openai-version }}" \
             "hassil==${{ needs.prepare.outputs.hassil-version }}" \
             "home-assistant-intents==${{ needs.prepare.outputs.home-assistant-intents-version }}" \
             "xmltodict==${{ needs.prepare.outputs.xmltodict-version }}" \
             "beautifulsoup4==${{ needs.prepare.outputs.beautifulsoup4-version }}" \
-            "lxml==${{ needs.prepare.outputs.lxml-version }}"
-          pip install -r requirements_test.txt
-          pip install mypy
+            "lxml==${{ needs.prepare.outputs.lxml-version }}" \
+            "gazetteer-matcher==1.0.0" \
+            "voluptuous-openapi==0.4.1" \
+            "httpx>=0.25.0" \
+            "types-PyYAML>=6.0" \
+            "mypy==2.3.1"
+          pip check
+
+      - name: Fingerprint type environment
+        run: |
+          python - <<'PY' > .typecheck-environment.txt
+          from importlib.metadata import version
+
+          for package in (
+              "homeassistant",
+              "openai",
+              "hassil",
+              "home-assistant-intents",
+              "xmltodict",
+              "beautifulsoup4",
+              "lxml",
+              "gazetteer-matcher",
+              "voluptuous-openapi",
+              "httpx",
+              "PyYAML",
+              "types-PyYAML",
+              "mypy",
+          ):
+              print(f"{package}=={version(package)}")
+          PY
+          cat .typecheck-environment.txt
+
+      - name: Restore MyPy cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .mypy_cache
+          key: ${{ runner.os }}-mypy-${{ needs.prepare.outputs.python-version }}-${{ hashFiles('.typecheck-environment.txt', 'pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-mypy-${{ needs.prepare.outputs.python-version }}-
 
       - name: Run MyPy
         run: mypy custom_components/extended_openai_conversation_responses
