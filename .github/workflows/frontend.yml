@@ -149,9 +149,21 @@ jobs:
           retention-days: 7
 
   browser-real-ha:
-    name: Browser to genuine HA backend (Chromium)
+    name: Browser to genuine HA backend (Chromium / ${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: management-shell-refresh
+            test-paths: >-
+              tests_real_ha/test_browser_backend_acceptance.py
+              tests_real_ha/test_browser_refresh_boundary_acceptance.py
+          - shard: process-restart-runtime
+            test-paths: >-
+              tests_real_ha/test_browser_process_restart_acceptance.py
+              tests_real_ha/test_browser_runtime_acceptance.py
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
       credentials:
@@ -197,11 +209,7 @@ jobs:
         env:
           RUN_REAL_HA_BROWSER: "1"
         run: |
-          pytest \
-            tests_real_ha/test_browser_backend_acceptance.py \
-            tests_real_ha/test_browser_process_restart_acceptance.py \
-            tests_real_ha/test_browser_refresh_boundary_acceptance.py \
-            tests_real_ha/test_browser_runtime_acceptance.py \
+          pytest ${{ matrix.test-paths }} \
             -v \
             --asyncio-mode=auto \
             --timeout=180 \
@@ -211,7 +219,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: frontend-real-ha-browser-diagnostics
+          name: frontend-real-ha-browser-diagnostics-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/
