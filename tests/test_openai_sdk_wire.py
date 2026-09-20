@@ -22,6 +22,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
+    _async_close_provider_streams,
 )
 from homeassistant.components import conversation
 
@@ -350,6 +351,17 @@ def _tool_result(
 
 def _json_body(request: httpx.Request) -> dict[str, Any]:
     return json.loads(request.content.decode())
+
+
+async def test_provider_stream_cleanup_closes_both_layers() -> None:
+    """Provider cleanup explicitly closes transformed and raw SDK streams."""
+    transformed = SimpleNamespace(aclose=AsyncMock())
+    provider = SimpleNamespace(close=AsyncMock())
+
+    await _async_close_provider_streams(transformed, provider)
+
+    transformed.aclose.assert_awaited_once_with()
+    provider.close.assert_awaited_once_with()
 
 
 async def test_responses_real_sdk_serializes_and_parses_tool_round_trip(hass) -> None:
