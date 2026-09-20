@@ -42,7 +42,6 @@ from .management_setup_health import add_setup_health
 from .memory import async_get_memory, get_memory_mode
 from .usage import async_get_usage
 
-
 _LOGGER = logging.getLogger(__name__)
 _SLOW_MANAGEMENT_MS = 250.0
 _T = TypeVar("_T")
