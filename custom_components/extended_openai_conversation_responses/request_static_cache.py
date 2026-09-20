@@ -15,6 +15,12 @@ from .skill_availability import is_canonical_skill_loader
 _FORMATTED_TOOLS: ContextVar[
     dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]] | None
 ] = ContextVar("extended_openai_formatted_tool_cache", default=None)
+_FORMATTED_TOOL_RESULT_KEYS: ContextVar[
+    dict[int, tuple[str, tuple[str, ...]]] | None
+] = ContextVar("extended_openai_formatted_tool_result_keys", default=None)
+_FORMATTED_TOOL_MEASUREMENTS: ContextVar[
+    dict[tuple[str, tuple[str, ...]], tuple[int, int]] | None
+] = ContextVar("extended_openai_formatted_tool_measurements", default=None)
 
 
 def tools_for_available_skills(
@@ -69,7 +75,34 @@ def cached_format_tools(
     )
     if key not in cache:
         cache[key] = deepcopy(formatter(function_tools, api_mode))
-    return deepcopy(cache[key])
+    result = deepcopy(cache[key])
+    result_keys = _FORMATTED_TOOL_RESULT_KEYS.get()
+    if result_keys is not None:
+        result_keys[id(result)] = key
+    return result
+
+
+def formatted_tool_measurement(tools: Any) -> tuple[int, int] | None:
+    """Return a request-local serialized measurement for a formatted tool list."""
+    result_keys = _FORMATTED_TOOL_RESULT_KEYS.get()
+    measurements = _FORMATTED_TOOL_MEASUREMENTS.get()
+    if result_keys is None or measurements is None:
+        return None
+    key = result_keys.get(id(tools))
+    return measurements.get(key) if key is not None else None
+
+
+def remember_formatted_tool_measurement(
+    tools: Any, measurement: tuple[int, int]
+) -> None:
+    """Remember an exact formatted-tool measurement for later provider rounds."""
+    result_keys = _FORMATTED_TOOL_RESULT_KEYS.get()
+    measurements = _FORMATTED_TOOL_MEASUREMENTS.get()
+    if result_keys is None or measurements is None:
+        return
+    key = result_keys.get(id(tools))
+    if key is not None:
+        measurements[key] = measurement
 
 
 def render_maintained_entity_context(
@@ -91,9 +124,13 @@ def render_maintained_entity_context(
 
 @contextmanager
 def formatted_tool_cache() -> Iterator[None]:
-    """Give one conversation request a fresh cache without disturbing its caller."""
+    """Give one conversation request fresh schema/measurement caches."""
     token = _FORMATTED_TOOLS.set({})
+    result_key_token = _FORMATTED_TOOL_RESULT_KEYS.set({})
+    measurement_token = _FORMATTED_TOOL_MEASUREMENTS.set({})
     try:
         yield
     finally:
+        _FORMATTED_TOOL_MEASUREMENTS.reset(measurement_token)
+        _FORMATTED_TOOL_RESULT_KEYS.reset(result_key_token)
         _FORMATTED_TOOLS.reset(token)

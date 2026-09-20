@@ -13,6 +13,9 @@ from custom_components.extended_openai_conversation_responses.entity_context_cac
 from custom_components.extended_openai_conversation_responses.request_static_cache import (
     _FORMATTED_TOOLS,
     cached_format_tools,
+    formatted_tool_cache,
+    formatted_tool_measurement,
+    remember_formatted_tool_measurement,
     render_maintained_entity_context,
     tools_for_available_skills,
 )
@@ -56,6 +59,28 @@ def test_provider_formatting_is_reused_only_inside_one_request() -> None:
     cached_format_tools(tools, "responses", formatter)
     cached_format_tools(tools, "responses", formatter)
     assert calls == 3
+
+
+def test_formatted_tool_measurement_reuses_equal_request_local_schema() -> None:
+    """Equivalent formatted lists share only their content-free measurement."""
+    tools = [{"spec": {"name": "one"}}]
+
+    def formatter(value, api_mode):
+        return [{"mode": api_mode, "name": value[0]["spec"]["name"]}]
+
+    with formatted_tool_cache():
+        first = cached_format_tools(tools, "responses", formatter)
+        assert formatted_tool_measurement(first) is None
+
+        remember_formatted_tool_measurement(first, (123, 4))
+        assert formatted_tool_measurement(first) == (123, 4)
+
+        second = cached_format_tools(tools, "responses", formatter)
+        assert second == first
+        assert second is not first
+        assert formatted_tool_measurement(second) == (123, 4)
+
+    assert formatted_tool_measurement(first) is None
 
 
 def test_provider_format_cache_key_tracks_mode_and_effective_tool_objects() -> None:

@@ -601,14 +601,19 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     ],
                     api_mode,
                 )
-                tools = [
-                    *(
-                        [web_search_tool]
-                        if web_search_tool and self._provider_tool_allowed("web_search")
-                        else []
-                    ),
-                    *formatted_function_tools,
-                ]
+                allowed_web_search = (
+                    web_search_tool
+                    if web_search_tool and self._provider_tool_allowed("web_search")
+                    else None
+                )
+                # Keep the request-local formatted list intact when there is no
+                # provider-owned tool so its exact serialized footprint can be reused
+                # across otherwise unchanged provider rounds.
+                tools = (
+                    [allowed_web_search, *formatted_function_tools]
+                    if allowed_web_search is not None
+                    else formatted_function_tools
+                )
                 tool_kwargs: dict[str, Any] = {}
                 if tools:
                     tool_kwargs["tools"] = tools

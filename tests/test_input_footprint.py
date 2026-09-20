@@ -49,6 +49,32 @@ def test_live_footprint_reuses_context_serialization_without_changing_estimate()
     )
 
 
+def test_cached_tool_measurement_avoids_reserializing_tools(monkeypatch) -> None:
+    input_value = [{"role": "user", "content": "Hello"}]
+    tools = [{"type": "function", "name": "tool"}]
+    calls = []
+
+    def serialized(value):
+        calls.append(value)
+        if value is input_value:
+            return (30, 0)
+        raise AssertionError("tools should use the supplied cached measurement")
+
+    monkeypatch.setattr(context_usage_hardening, "_serialized_characters", serialized)
+
+    metrics = input_footprint_metrics(
+        input_value,
+        tools,
+        tool_measurement=(20, 2),
+    )
+
+    assert calls == [input_value]
+    assert metrics["input_characters"] == 30
+    assert metrics["tool_characters"] == 20
+    assert metrics["characters"] == 50
+    assert metrics["context_safety_estimate_tokens"] == 20
+
+
 def test_baseline_reports_group_savings_and_approximate_tokens() -> None:
     result = _baseline_footprint(
         {
