@@ -425,6 +425,28 @@ def _index_function_tools(
     return indexed
 
 
+def _partition_provider_tool_calls(
+    tool_calls: list[llm.ToolInput],
+    *,
+    integration_loader_seen: bool,
+) -> tuple[list[llm.ToolInput], list[llm.ToolInput], list[llm.ToolInput]]:
+    """Classify one provider round without repeatedly scanning the same calls."""
+    pending: list[llm.ToolInput] = []
+    loader: list[llm.ToolInput] = []
+    control: list[llm.ToolInput] = []
+    for tool_input in tool_calls:
+        if tool_input.tool_name == CONTINUE_CONVERSATION_TOOL_NAME:
+            control.append(tool_input)
+        elif (
+            integration_loader_seen
+            and tool_input.tool_name == FUNCTION_GROUP_LOADER_TOOL_NAME
+        ):
+            loader.append(tool_input)
+        else:
+            pending.append(tool_input)
+    return pending, loader, control
+
+
 def _build_web_search_tool(
     options: Mapping[str, Any],
     api_mode: str,
@@ -661,6 +683,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 request_started = time.monotonic()
                 existing_content_ids = {id(content) for content in chat_log.content}
                 pending_tool_calls: list[llm.ToolInput] = []
+                web_search_used = False
                 try:
                     if api_mode == API_MODE_RESPONSES:
                         responses_stream = cast(
@@ -694,11 +717,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         async for content in chat_log.async_add_delta_content_stream(
                             self.entity_id, transformed_stream
                         ):
-                            if (
-                                isinstance(content, conversation.AssistantContent)
-                                and content.tool_calls
-                            ):
-                                pending_tool_calls.extend(content.tool_calls)
+                            if isinstance(content, conversation.AssistantContent):
+                                native = getattr(content, "native", None)
+                                if getattr(native, "type", "") == "web_search_call":
+                                    web_search_used = True
+                                if content.tool_calls:
+                                    pending_tool_calls.extend(content.tool_calls)
                 except BaseException as err:
                     append_unresolved_tool_results(
                         chat_log,
@@ -744,15 +768,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                     "initial" if n_requests == 0 else "after_tool"
                                 ),
                                 tool_calls_requested=len(pending_tool_calls),
-                                web_search_used=any(
-                                    getattr(content, "native", None) is not None
-                                    and getattr(
-                                        getattr(content, "native", None), "type", ""
-                                    )
-                                    == "web_search_call"
-                                    for content in chat_log.content
-                                    if id(content) not in existing_content_ids
-                                ),
+                                web_search_used=web_search_used,
                             )
                     except BaseException as err:
                         append_unresolved_tool_results(
@@ -774,31 +790,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         ", ".join(call.tool_name for call in pending_tool_calls),
                     )
                 round_tool_calls = list(pending_tool_calls)
-
-                control_calls = [
-                    tool_input
-                    for tool_input in pending_tool_calls
-                    if tool_input.tool_name == CONTINUE_CONVERSATION_TOOL_NAME
-                ]
-                pending_tool_calls = [
-                    tool_input
-                    for tool_input in pending_tool_calls
-                    if tool_input.tool_name != CONTINUE_CONVERSATION_TOOL_NAME
-                ]
-                loader_calls = [
-                    tool_input
-                    for tool_input in pending_tool_calls
-                    if integration_loader_seen
-                    and tool_input.tool_name == FUNCTION_GROUP_LOADER_TOOL_NAME
-                ]
-                pending_tool_calls = [
-                    tool_input
-                    for tool_input in pending_tool_calls
-                    if not (
-                        integration_loader_seen
-                        and tool_input.tool_name == FUNCTION_GROUP_LOADER_TOOL_NAME
+                pending_tool_calls, loader_calls, control_calls = (
+                    _partition_provider_tool_calls(
+                        pending_tool_calls,
+                        integration_loader_seen=integration_loader_seen,
                     )
-                ]
+                )
 
                 if loader_calls:
                     loader_rounds += 1
