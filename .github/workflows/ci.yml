@@ -224,29 +224,22 @@ jobs:
             echo "Prebuilt dependency environment matches this checkout; skipping reconciliation."
           else
             echo "Dependency declarations changed; reconciling prebuilt environment."
+            rm -f /opt/eoai-ci/media-dependencies.ready
             pip install -r requirements_test.txt
             pip install --upgrade homeassistant
             python ci/install_ha_dependencies.py \
               --manifest custom_components/extended_openai_conversation_responses/manifest.json
           fi
 
-      - name: Install AI Task media dependencies
+      - name: Ensure AI Task media dependencies
         run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          import subprocess
-          import sys
-          import homeassistant
-
-          components = Path(next(iter(homeassistant.__path__))) / "components"
-          requirements = set()
-          for domain in ("camera", "stream"):
-              manifest = json.loads((components / domain / "manifest.json").read_text())
-              requirements.update(manifest.get("requirements", []))
-          if requirements:
-              subprocess.check_call([sys.executable, "-m", "pip", "install", *sorted(requirements)])
-          PY
+          if [ -f /opt/eoai-ci/media-dependencies.ready ]; then
+            echo "AI Task media dependencies are already baked into the stable image."
+          else
+            echo "Stable image predates baked media dependencies; installing compatibility fallback."
+            python ci/install_ha_media_dependencies.py \
+              --marker /opt/eoai-ci/media-dependencies.ready
+          fi
 
       - name: Verify stable test environment
         run: |

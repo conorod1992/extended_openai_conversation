@@ -73,6 +73,7 @@ jobs:
           docker pull "${IMAGE_NAME}:ha-stable"
           docker run --rm "${IMAGE_NAME}:ha-stable" python -c \
             'from importlib.metadata import version; print("homeassistant=" + version("homeassistant")); print("pytest-homeassistant-custom-component=" + version("pytest-homeassistant-custom-component"))'
+          docker run --rm "${IMAGE_NAME}:ha-stable" test -s /opt/eoai-ci/media-dependencies.ready
 
           docker pull "${IMAGE_NAME}:browser-stable"
           docker run --rm "${IMAGE_NAME}:browser-stable" node --version

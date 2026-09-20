@@ -21,9 +21,12 @@ RUN python -m pip install --upgrade pip \
     && pip install --no-cache-dir homeassistant
 
 COPY ci/install_ha_dependencies.py /opt/eoai-ci/install_ha_dependencies.py
+COPY ci/install_ha_media_dependencies.py /opt/eoai-ci/install_ha_media_dependencies.py
 COPY custom_components/extended_openai_conversation_responses/manifest.json /opt/eoai-ci/manifest.json
 RUN python /opt/eoai-ci/install_ha_dependencies.py \
         --manifest /opt/eoai-ci/manifest.json \
+    && python /opt/eoai-ci/install_ha_media_dependencies.py \
+        --marker /opt/eoai-ci/media-dependencies.ready \
     && pip check \
     && cat /opt/eoai-ci/requirements_test.txt /opt/eoai-ci/manifest.json \
         | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256
