@@ -307,7 +307,6 @@ def test_duplicate_related_and_index_edge_paths() -> None:
     )
     assert manager._find_related_candidate("bob", "Oscar", None, None) is None
 
-    manager._token_index.clear()
     manager._key_index[(first.user_id, first.key)] = "different"
     manager._unindex(first)
     assert manager._key_index[(first.user_id, first.key)] == "different"

@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
 import hashlib
 import json
@@ -165,7 +164,6 @@ class _MemoryMutationSnapshot:
     """Last successfully committed live state for durable-write rollback."""
 
     memories: dict[str, MemoryRecord]
-    token_index: dict[tuple[str, str], set[str]]
     key_index: dict[tuple[str, str], str]
     embedding_cache: dict[str, EmbeddingCacheEntry]
     embedding_cache_dirty: bool
@@ -273,7 +271,6 @@ class PersistentMemory:
         """Initialize memory collection."""
         self._storage = storage
         self._memories: dict[str, MemoryRecord] = {}
-        self._token_index: dict[tuple[str, str], set[str]] = defaultdict(set)
         self._key_index: dict[tuple[str, str], str] = {}
         self._embedding_provider: EmbeddingProvider | None = None
         self._embedding_model = "default"
@@ -354,7 +351,6 @@ class PersistentMemory:
                 self._initialized = True
             except BaseException:
                 self._memories.clear()
-                self._token_index = defaultdict(set)
                 self._key_index.clear()
                 self._embedding_cache.clear()
                 self._embedding_cache_dirty = False
@@ -985,7 +981,6 @@ class PersistentMemory:
             self._memories = {record.memory_id: record for record in records}
             self._embedding_cache.clear()
             self._embedding_cache_dirty = True
-            self._token_index.clear()
             self._key_index.clear()
             for record in records:
                 self._index(record)
@@ -1046,29 +1041,17 @@ class PersistentMemory:
 
     def _index(self, memory: MemoryRecord) -> None:
         self._assert_key_available(memory)
-        for token in _record_tokens(memory):
-            self._token_index[(memory.user_id, token)].add(memory.memory_id)
         if memory.key:
             self._key_index[(memory.user_id, memory.key)] = memory.memory_id
 
     def _unindex(self, memory: MemoryRecord) -> None:
-        for token in _record_tokens(memory):
-            key = (memory.user_id, token)
-            ids = self._token_index.get(key)
-            if ids is None:
-                continue
-            ids.discard(memory.memory_id)
-            if not ids:
-                del self._token_index[key]
         if memory.key:
             pair = (memory.user_id, memory.key)
             if self._key_index.get(pair) == memory.memory_id:
                 self._key_index.pop(pair, None)
 
     def _replace_record(self, current: MemoryRecord, **changes: Any) -> MemoryRecord:
-        values = asdict(current)
-        values.update(changes)
-        updated = MemoryRecord(**values)
+        updated = replace(current, **changes)
         self._assert_key_available(updated)
         embedding_changed = _embedding_fingerprint(updated) != _embedding_fingerprint(
             current
@@ -1086,7 +1069,6 @@ class PersistentMemory:
         """Capture live structures so a rejected durable write can be rolled back."""
         return _MemoryMutationSnapshot(
             memories=dict(self._memories),
-            token_index={key: set(ids) for key, ids in self._token_index.items()},
             key_index=dict(self._key_index),
             embedding_cache={
                 memory_id: EmbeddingCacheEntry(
@@ -1102,10 +1084,6 @@ class PersistentMemory:
     def _restore_mutation_state(self, snapshot: _MemoryMutationSnapshot) -> None:
         """Restore the last successfully committed live structures."""
         self._memories = dict(snapshot.memories)
-        self._token_index = defaultdict(
-            set,
-            {key: set(ids) for key, ids in snapshot.token_index.items()},
-        )
         self._key_index = dict(snapshot.key_index)
         self._embedding_cache = {
             memory_id: EmbeddingCacheEntry(
