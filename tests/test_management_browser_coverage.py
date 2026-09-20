@@ -64,7 +64,7 @@ async def test_command_routes_list_through_selected_scope_and_memory(
     hass, monkeypatch
 ) -> None:
     command = management_ui.async_management_command
-    memory = SimpleNamespace()
+    memory = SimpleNamespace(async_browse=AsyncMock())
     message = {
         "section": "memories",
         "action": "list",
@@ -105,7 +105,7 @@ async def test_command_routes_list_through_selected_scope_and_memory(
 @pytest.mark.asyncio
 async def test_blank_search_falls_back_to_list_page(hass, monkeypatch) -> None:
     command = management_ui.async_management_command
-    memory = SimpleNamespace()
+    memory = SimpleNamespace(async_browse=AsyncMock())
     message = {
         "section": "memories",
         "action": "search",
@@ -133,9 +133,7 @@ async def test_blank_search_falls_back_to_list_page(hass, monkeypatch) -> None:
         management_ui, "async_get_memory", AsyncMock(return_value=memory)
     )
     list_page = AsyncMock(return_value={"page": "fallback-list"})
-    search_page = Mock()
     monkeypatch.setattr(management_browser, "_list_page", list_page)
-    monkeypatch.setattr(management_browser, "_search_page", search_page)
 
     result = await command(hass, "user-a", False, message)
 
@@ -147,7 +145,7 @@ async def test_blank_search_falls_back_to_list_page(hass, monkeypatch) -> None:
         message,
         include_scope=False,
     )
-    search_page.assert_not_called()
+    memory.async_browse.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -155,7 +153,7 @@ async def test_search_routes_trimmed_query_with_bounded_paging(
     hass, monkeypatch
 ) -> None:
     command = management_ui.async_management_command
-    memory = SimpleNamespace()
+    memory = SimpleNamespace(async_browse=AsyncMock())
     message = {
         "section": "memories",
         "action": "search",
@@ -184,20 +182,24 @@ async def test_search_routes_trimmed_query_with_bounded_paging(
     monkeypatch.setattr(
         management_ui, "async_get_memory", AsyncMock(return_value=memory)
     )
-    search_page = Mock(return_value={"page": "search"})
+    memory.async_browse.return_value = ([], 0)
     list_page = AsyncMock()
-    monkeypatch.setattr(management_browser, "_search_page", search_page)
     monkeypatch.setattr(management_browser, "_list_page", list_page)
 
     result = await command(hass, "user-a", False, message)
 
-    assert result == {"page": "search"}
-    search_page.assert_called_once_with(
-        memory,
+    assert result == {
+        "memories": [],
+        "offset": 0,
+        "limit": management_browser.MAX_LIST_LIMIT,
+        "has_more": False,
+        "total": 0,
+        "query": "Marmalade",
+    }
+    memory.async_browse.assert_awaited_once_with(
         "user-a",
         "Marmalade",
         limit=management_browser.MAX_LIST_LIMIT,
         offset=0,
-        include_scope=False,
     )
     list_page.assert_not_awaited()
