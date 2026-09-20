@@ -27,6 +27,12 @@ test("critical CSS prevents shell and route-title FOUC while full stylesheet is 
       const box = node.getBoundingClientRect();
       return {x:box.x,y:box.y,width:box.width,height:box.height};
     };
+    const textRect = (node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const box = range.getBoundingClientRect();
+      return {x:box.x,y:box.y,width:box.width,height:box.height};
+    };
     return {
       critical: Boolean(root.querySelector("style[data-eoc-critical-styles]")),
       fullLoaded: Boolean(root.querySelector("link[data-eoc-persistent-styles]")?.sheet),
@@ -36,8 +42,8 @@ test("critical CSS prevents shell and route-title FOUC while full stylesheet is 
       mainDisplay: getComputedStyle(root.querySelector("main")).display,
       mainGap: getComputedStyle(root.querySelector("main")).gap,
       mobileNav: getComputedStyle(root.querySelector(".mobile-nav")).display,
-      shellTitle: rect(shellTitle),
-      routeTitle: rect(routeTitle),
+      shellTitle: textRect(shellTitle),
+      routeTitle: textRect(routeTitle),
       routeIntro: rect(routeIntro),
     };
   });
@@ -62,9 +68,15 @@ test("critical CSS prevents shell and route-title FOUC while full stylesheet is 
       const box = root.querySelector(selector).getBoundingClientRect();
       return {x:box.x,y:box.y,width:box.width,height:box.height};
     };
+    const textRect = (selector) => {
+      const range = document.createRange();
+      range.selectNodeContents(root.querySelector(selector));
+      const box = range.getBoundingClientRect();
+      return {x:box.x,y:box.y,width:box.width,height:box.height};
+    };
     return {
-      shellTitle:rect(".page-heading h1"),
-      routeTitle:rect(".page-intro h1"),
+      shellTitle:textRect(".page-heading h1"),
+      routeTitle:textRect(".page-intro h1"),
       routeIntro:rect(".page-intro"),
     };
   });
