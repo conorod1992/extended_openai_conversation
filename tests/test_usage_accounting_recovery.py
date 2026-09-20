@@ -5,8 +5,8 @@ from copy import deepcopy
 from dataclasses import asdict
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from zoneinfo import ZoneInfo
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 import pytest
 from homeassistant.core import HomeAssistant
