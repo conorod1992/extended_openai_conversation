@@ -131,6 +131,66 @@ function panelFor(page = "assistant", subsection = "basics") {
 }
 
 {
+  const panel = panelFor("capabilities", "functions");
+  const calls = [];
+  let resolveConfig;
+  panel._hass = {callWS: (message) => {
+    calls.push(message);
+    if (message.section === "configuration" && message.action === "get") {
+      return new Promise((resolve) => { resolveConfig = resolve; });
+    }
+    return Promise.resolve({});
+  }};
+  const loading = panel._loadSection();
+  assert.deepEqual(
+    calls.map((call) => [call.section, call.action]),
+    [["configuration", "get"]],
+    "Functions configuration starts before its lazy UI module resolves",
+  );
+  resolveConfig({title:"A", config:{}, revision:"r1"});
+  await loading;
+}
+
+{
+  const panel = panelFor("data-memory", "conversations");
+  const calls = [];
+  let resolveConfig;
+  let resolveScopes;
+  panel._hass = {callWS: (message) => {
+    calls.push(message);
+    if (message.section === "configuration" && message.action === "get") {
+      return new Promise((resolve) => { resolveConfig = resolve; });
+    }
+    if (message.section === "scopes" && message.action === "catalog") {
+      return new Promise((resolve) => { resolveScopes = resolve; });
+    }
+    if (message.section === "conversations" && message.action === "list") {
+      return Promise.resolve({sessions:[]});
+    }
+    if (message.section === "conversations" && message.action === "settings") {
+      return Promise.resolve({});
+    }
+    if (message.section === "conversations" && message.action === "active") {
+      return Promise.resolve({active:[]});
+    }
+    return Promise.resolve({});
+  }};
+  const loading = panel._loadSection();
+  assert.deepEqual(
+    calls.map((call) => [call.section, call.action]),
+    [["configuration", "get"], ["scopes", "catalog"]],
+    "Conversations prerequisites start before its lazy UI module resolves",
+  );
+  resolveConfig({title:"A", config:{}, revision:"r1"});
+  resolveScopes({scopes:initialScopes});
+  await loading;
+  assert.deepEqual(
+    calls.filter((call) => call.section === "conversations").map((call) => call.action),
+    ["list", "settings", "active"],
+  );
+}
+
+{
   globalThis.localStorage.values.clear();
   globalThis.localStorage.setItem(AGENT_KEY, "agent-a");
   globalThis.localStorage.setItem(ENTRY_KEY, "entry-a");
@@ -153,7 +213,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   assert.deepEqual(
     calls.map((call) => call.action),
     ["summary", "snapshot", "agents"],
-    "Overview module/summary/Broadcast prefetch begins before agents resolves",
+    "Overview summary and Broadcast snapshot start before agents resolves",
   );
 
   resolvers.get("agents")({agents, scopes:initialScopes, is_admin:true});
@@ -163,7 +223,12 @@ function panelFor(page = "assistant", subsection = "basics") {
     conversations:{},
     load_errors:[],
   });
-  resolvers.get("snapshot")({enabled:false, can_manage:true, catalog:{satellites:[], areas:[]}, history:[]});
+  resolvers.get("snapshot")({
+    enabled:false,
+    can_manage:true,
+    catalog:{satellites:[], areas:[]},
+    history:[],
+  });
   await loading;
   assert.equal(panel._result?.load_errors?.length, 0);
   assert.equal(panel._eocOverviewBroadcastPromise instanceof Promise, true);
