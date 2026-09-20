@@ -74,6 +74,36 @@ def _set_subsystem_status(
         setter(subsystem, configured, error, healthy=healthy)
 
 
+async def async_ensure_optional_manager(
+    entity: Any,
+    *,
+    attribute: str,
+    subsystem: str,
+    loader: Any,
+    failure_message: str,
+) -> bool:
+    """Ensure one shared optional manager and publish its runtime status.
+
+    Returns false only when initialization raised, allowing live reconciliation to
+    retain its retry-on-next-request behavior. Cancellation is intentionally not
+    swallowed.
+    """
+    if getattr(entity, attribute, None) is None:
+        try:
+            manager = await loader(
+                entity.hass,
+                entity.entry.entry_id,
+                entity.subentry.subentry_id,
+            )
+        except Exception as err:
+            _set_subsystem_status(entity, subsystem, True, err)
+            _LOGGER.exception(failure_message)
+            return False
+        setattr(entity, attribute, manager)
+    _set_subsystem_status(entity, subsystem, True, healthy=True)
+    return True
+
+
 def _archive_runtime_required(options: Any) -> bool:
     return bool(
         options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
@@ -179,39 +209,35 @@ async def async_reconcile_runtime_configuration(
         subentry_id = entity.subentry.subentry_id
 
         persistent_enabled = memory_enabled(options)
-        if persistent_enabled and getattr(entity, "_memory", None) is None:
-            try:
-                entity._memory = await async_get_memory(
-                    entity.hass, entry_id, subentry_id
-                )
-            except Exception as err:
-                retry = True
-                _set_subsystem_status(entity, "persistent_memory", True, err)
-                _LOGGER.exception(
+        if persistent_enabled:
+            initialized = await async_ensure_optional_manager(
+                entity,
+                attribute="_memory",
+                subsystem="persistent_memory",
+                loader=async_get_memory,
+                failure_message=(
                     "Unable to initialize persistent memory after live "
                     "configuration change"
-                )
-        if persistent_enabled and getattr(entity, "_memory", None) is not None:
-            _set_subsystem_status(entity, "persistent_memory", True, healthy=True)
+                ),
+            )
+            retry = retry or not initialized
 
         temporary_enabled = (
             options.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
             != TEMPORARY_MEMORY_OFF
         )
-        if temporary_enabled and getattr(entity, "_temporary_memory", None) is None:
-            try:
-                entity._temporary_memory = await async_get_temporary_memory(
-                    entity.hass, entry_id, subentry_id
-                )
-            except Exception as err:
-                retry = True
-                _set_subsystem_status(entity, "temporary_memory", True, err)
-                _LOGGER.exception(
+        if temporary_enabled:
+            initialized = await async_ensure_optional_manager(
+                entity,
+                attribute="_temporary_memory",
+                subsystem="temporary_memory",
+                loader=async_get_temporary_memory,
+                failure_message=(
                     "Unable to initialize temporary memory after live "
                     "configuration change"
-                )
-        if temporary_enabled and getattr(entity, "_temporary_memory", None) is not None:
-            _set_subsystem_status(entity, "temporary_memory", True, healthy=True)
+                ),
+            )
+            retry = retry or not initialized
 
         archive_enabled = bool(
             options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
