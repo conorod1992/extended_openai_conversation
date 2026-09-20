@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
     agent_config_defaults,
+    function_tool_enabled,
     validate_function_groups,
     validate_function_tools,
 )
@@ -33,6 +34,7 @@ from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
 from .knowledge import async_get_knowledge, get_loaded_knowledge
 from .management_function_repair import function_tools_issue as _function_tools_issue
 from .management_history_queries import usage_summary
+from .management_projections import async_scope_catalog_projection, settings_snapshot
 from .management_setup_health import add_setup_health
 from .memory import async_get_memory, get_memory_mode
 from .usage import async_get_usage
@@ -64,7 +66,6 @@ def _agent_snapshot(
 ) -> dict[str, Any]:
     """Build the cheap frontend metadata shared by bootstrap and overview."""
     options = config if config is not None else dict(subentry.data)
-    management_ui = _management_ui()
     configured_tools, function_issue = _function_tools_issue(options)
     if guest_status is None:
         loaded_guest = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
@@ -87,9 +88,7 @@ def _agent_snapshot(
         "memory_count": memory_count,
         "knowledge_enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
         "knowledge_source_count": knowledge_source_count,
-        "function_count": sum(
-            management_ui.function_tool_enabled(tool) for tool in configured_tools
-        ),
+        "function_count": sum(function_tool_enabled(tool) for tool in configured_tools),
         "function_group_count": len(
             options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS)
         ),
@@ -116,11 +115,6 @@ def _agent_snapshot(
     return snapshot
 
 
-def _management_ui():
-    from . import management_ui
-
-    return management_ui
-
 
 async def async_agent_catalog(
     hass: HomeAssistant, user_id: str, is_admin: bool
@@ -144,13 +138,12 @@ async def async_scope_catalog(
     subentry_id: str,
 ) -> dict[str, Any]:
     """Load scopes for the already-validated Management agent concurrently."""
-    management_ui = _management_ui()
     memory, archive = await asyncio.gather(
         async_get_memory(hass, entry_id, subentry_id),
         async_get_archive(hass, entry_id, subentry_id),
     )
     return {
-        "scopes": await management_ui._scope_catalog(
+        "scopes": await async_scope_catalog_projection(
             hass,
             user_id,
             is_admin,
@@ -168,7 +161,6 @@ async def async_overview_summary(
     is_admin: bool,
 ) -> dict[str, Any]:
     """Load and bound the already-selected agent's Overview in one request."""
-    management_ui = _management_ui()
     entry_id = str(entry.entry_id)
     subentry_id = str(subentry.subentry_id)
 
@@ -230,7 +222,7 @@ async def async_overview_summary(
             guest_status=guest_status,
         ),
         "usage": usage,
-        "conversations": management_ui._settings_snapshot(dict(subentry.data)),
+        "conversations": settings_snapshot(dict(subentry.data)),
         "load_errors": load_errors,
     }
 
