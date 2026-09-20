@@ -334,3 +334,18 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
 
   await panel._loadSection();
 }
+
+
+export function isRestrictedManagementView(page, subsection = null) {
+  if (page === "data-memory" && subsection === "knowledge") return true;
+  if (page === "usage-maintenance" && subsection === null) return true;
+  return page === "usage-maintenance" && ["usage", "diagnostics"].includes(subsection);
+}
+
+export function nonAdminOverviewKnowledgeSnapshot(panel) {
+  const agent = panel?._selectedAgent?.();
+  return {
+    sources: [],
+    stats: {source_count: Number(agent?.knowledge_source_count || 0)},
+  };
+}
