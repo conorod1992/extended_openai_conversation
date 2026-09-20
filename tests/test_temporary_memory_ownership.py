@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    management_request_preview,
     management_ui,
     temporary_memory as ownership,
     temporary_memory as temporary_module,
@@ -358,7 +359,7 @@ async def test_snapshot_contract_fails_closed_before_io_and_uses_bound_owner(
     store.async_load.assert_not_awaited()
     token = temporary_module._ACTIVE_OWNER_SCOPE_ID.set("user:alice")
     try:
-        records = await management_ui.async_read_temporary_memory_snapshot(
+        records = await management_request_preview.async_read_temporary_memory_snapshot(
             object(), "entry", "sub", "different-continuity"
         )
     finally:
@@ -366,7 +367,7 @@ async def test_snapshot_contract_fails_closed_before_io_and_uses_bound_owner(
     assert [r.memory_id for r in records] == ["one"]
     store.async_load.assert_awaited_once()
     assert (
-        management_ui.async_read_temporary_memory_snapshot
+        management_request_preview.async_read_temporary_memory_snapshot
         is temporary_module.async_read_temporary_memory_snapshot
     )
 
