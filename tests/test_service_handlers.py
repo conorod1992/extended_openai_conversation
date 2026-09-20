@@ -7,6 +7,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 from openai import OpenAIError
 import pytest
 
+from custom_components.extended_openai_conversation_responses import services
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -20,6 +21,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     SERVICE_MEMORY_DELETE,
     SERVICE_MEMORY_LIST,
     SERVICE_QUERY_IMAGE,
+    SERVICE_PROCESS,
     SERVICE_RELOAD_SKILLS,
 )
 from custom_components.extended_openai_conversation_responses.memory import MemoryRecord
@@ -131,17 +133,21 @@ async def test_function_state_actions_report_unknown_names(hass, monkeypatch) ->
     hass.config_entries.async_update_subentry.assert_not_called()
 
 
-async def test_skill_source_ref_rejects_blank_and_falls_back_without_version(
+async def test_skill_source_ref_validates_and_normalizes_installed_version(
     hass, monkeypatch
 ) -> None:
     with pytest.raises(HomeAssistantError, match="cannot be empty"):
         await async_skill_source_ref(hass, "   ")
 
+    integration = AsyncMock(return_value=SimpleNamespace(version="   "))
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.services.async_get_integration",
-        AsyncMock(return_value=SimpleNamespace(version="   ")),
+        integration,
     )
     assert await async_skill_source_ref(hass) == GITHUB_SKILLS_BRANCH
+
+    integration.return_value = SimpleNamespace(version=" 7.2.1 ")
+    assert await async_skill_source_ref(hass) == "7.2.1"
 
 
 @pytest.mark.parametrize("api_mode", [API_MODE_RESPONSES, "chat_completions"])
@@ -503,6 +509,39 @@ async def test_download_skill_recursively_stages_and_publishes_files(
             _Response(200, payload=[{"name": "../escape", "type": "dir", "url": "x"}]),
             "unsafe path",
         ),
+        (
+            _Response(200, payload=[{"name": 123, "type": "file"}]),
+            "no valid name",
+        ),
+        (
+            _Response(
+                200,
+                payload=[
+                    {
+                        "name": "SKILL.md",
+                        "path": "skills/demo/SKILL.md",
+                        "type": "file",
+                        "download_url": None,
+                        "size": 1,
+                    }
+                ],
+            ),
+            "No download URL",
+        ),
+        (
+            _Response(
+                200,
+                payload=[
+                    {
+                        "name": "assets",
+                        "path": "skills/demo/assets",
+                        "type": "dir",
+                        "url": None,
+                    }
+                ],
+            ),
+            "No API URL",
+        ),
     ],
 )
 async def test_download_skill_rejects_invalid_remote_content_and_cleans_staging(
@@ -778,3 +817,122 @@ async def test_function_group_service_requires_an_existing_admin_user(hass) -> N
                 "deleted-user",
             )
         )
+
+
+# Consolidated second-pass service-handler regressions.
+@pytest.mark.parametrize(
+    "helper",
+    [
+        services.async_set_function_tools_enabled,
+        services.async_set_function_groups_enabled,
+    ],
+)
+async def test_function_state_update_handles_entry_disappearing_after_resolution(
+    hass, monkeypatch: pytest.MonkeyPatch, helper
+) -> None:
+    """A config entry removed after target resolution must fail cleanly."""
+    monkeypatch.setattr(
+        services,
+        "resolve_memory_agent",
+        lambda *_args: ("entry", "agent"),
+    )
+    hass.config_entries.async_get_entry.return_value = None
+
+    with pytest.raises(HomeAssistantError, match="Config entry not found"):
+        await helper(hass, "entry", "agent", ["target"], True)
+
+    hass.config_entries.async_update_subentry.assert_not_called()
+
+
+async def test_download_skill_rejects_failed_file_download_and_cleans_staging(
+    hass, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A listed file that later fails to download must leave no staged install."""
+    root_url = (
+        "https://api.github.com/repos/conorod1992/extended_openai_conversation/"
+        "contents/examples/skills/demo?ref=v1.2.3"
+    )
+    responses = {
+        root_url: _Response(
+            200,
+            payload=[
+                {
+                    "name": "SKILL.md",
+                    "path": "skills/demo/SKILL.md",
+                    "type": "file",
+                    "download_url": "download:skill",
+                    "size": 7,
+                }
+            ],
+        ),
+        "download:skill": _Response(503),
+    }
+    handler, manager = await _download_handler(
+        hass, monkeypatch, tmp_path, responses
+    )
+
+    with pytest.raises(HomeAssistantError, match="Failed to download"):
+        await handler(_call({"skill_name": "demo"}))
+
+    assert not (tmp_path / "staging" / "demo.download-fixed").exists()
+    manager.async_publish_staged_skill.assert_not_awaited()
+
+
+async def test_process_auto_selection_skips_stale_and_unrelated_registry_entries(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Automatic agent discovery should ignore stale/non-integration registry rows."""
+    agent = SimpleNamespace(
+        entity_id="conversation.good",
+        async_process_direct=AsyncMock(
+            return_value=(
+                SimpleNamespace(
+                    response=SimpleNamespace(
+                        speech={"plain": {"speech": "Hello from the valid agent"}}
+                    ),
+                    conversation_id="conversation-1",
+                ),
+                {"handled_locally": False},
+            )
+        ),
+    )
+    registry = SimpleNamespace(
+        entities={
+            "wrong-platform": SimpleNamespace(
+                platform="other",
+                domain="conversation",
+                entity_id="conversation.other",
+            ),
+            "wrong-domain": SimpleNamespace(
+                platform=DOMAIN,
+                domain="sensor",
+                entity_id="sensor.not_an_agent",
+            ),
+            "stale": SimpleNamespace(
+                platform=DOMAIN,
+                domain="conversation",
+                entity_id="conversation.stale",
+            ),
+            "good": SimpleNamespace(
+                platform=DOMAIN,
+                domain="conversation",
+                entity_id="conversation.good",
+            ),
+        }
+    )
+    monkeypatch.setattr(services.er, "async_get", lambda _hass: registry)
+    monkeypatch.setattr(
+        services.conversation,
+        "async_get_agent",
+        lambda _hass, entity_id: agent if entity_id == "conversation.good" else None,
+    )
+    handlers = await _handlers(hass)
+
+    result = await handlers[SERVICE_PROCESS](_call({"text": "Hello"}))
+
+    assert result == {
+        "response": "Hello from the valid agent",
+        "conversation_id": "conversation-1",
+        "handled_locally": False,
+    }
+    agent.async_process_direct.assert_awaited_once()
