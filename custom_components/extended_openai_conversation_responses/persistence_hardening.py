@@ -19,6 +19,6 @@ def _repair_private_store_mode(path: str) -> None:
         os.chmod(path, _PRIVATE_STORE_MODE)
 
 
-async def _async_repair_private_store_mode(store: Store) -> None:
+async def _async_repair_private_store_mode(store: Store[dict[str, Any]]) -> None:
     """Tighten permissions on a historical Store file before loading it."""
     await store.hass.async_add_executor_job(_repair_private_store_mode, store.path)
