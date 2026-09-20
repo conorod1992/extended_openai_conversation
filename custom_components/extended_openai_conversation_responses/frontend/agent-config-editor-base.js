@@ -11,7 +11,7 @@ import {saveBarMarkup} from "./unsaved-state.js";
 import {modelDataControls, bindModelDataControls} from "./model-catalog.js";
 import { bindHALlmTools, haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools.js";
 import { bindHelp, helpButton, helpPopover, helpSearchTerms } from "./agent-config-help.js";
-import {destroyToolYamlEditor, getToolYamlEditor} from "./tool-yaml-editor-adapter.js";
+import {getToolYamlEditor} from "./tool-yaml-editor-adapter.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const bool = (value) => value ? "checked" : "";
