@@ -942,12 +942,6 @@ class ConversationArchive:
     def _partition_payload_locked(self, partition: str) -> dict[str, Any]:
         return self._partition_payload_for_state(partition, dict(self._turns))
 
-    async def _async_save_all_partitions_locked(self) -> None:
-        for partition in sorted(self._partitions):
-            await self._storage.async_save_partition(
-                partition, self._partition_payload_locked(partition)
-            )
-
     def _ensure_initialized(self) -> None:
         if not self._initialized:
             raise RuntimeError("conversation archive has not been initialized")
