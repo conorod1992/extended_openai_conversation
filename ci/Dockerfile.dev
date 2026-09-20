@@ -18,6 +18,7 @@ COPY custom_components/extended_openai_conversation_responses/manifest.json cust
 COPY ci/install_ha_dependencies.py ci/install_ha_dependencies.py
 COPY ci/install_ha_media_dependencies.py ci/install_ha_media_dependencies.py
 COPY ci/reconcile_ha_dev_environment.sh ci/reconcile_ha_dev_environment.sh
+COPY ci/check_ha_dev_environment.py ci/check_ha_dev_environment.py
 
 RUN python -m pip install --upgrade pip \
     && mkdir -p /tmp/ha-dev-wheel /opt/eoai-ci \
@@ -47,7 +48,7 @@ COPY --from=ha-dev-builder /usr/local /usr/local
 COPY --from=ha-dev-builder /opt/eoai-ci /opt/eoai-ci
 
 WORKDIR /workspace
-RUN pip check \
+RUN python ci/check_ha_dev_environment.py \
     && test -s /opt/eoai-ci/ha-core-sha \
     && test -s /opt/eoai-ci/environment.sha256
 
