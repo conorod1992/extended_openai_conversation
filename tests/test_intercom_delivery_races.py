@@ -546,7 +546,7 @@ def test_resolve_targets_skips_nonmatching_capable_satellite(hass, monkeypatch) 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("ttl_seconds", "expected_ttl"), [(1, 5), (7200, 3600)])
-async def test_async_send_expiry_callback_expires_residual2_message(
+async def test_async_send_expiry_callback_expires_message(
     hass, monkeypatch, ttl_seconds: int, expected_ttl: int
 ) -> None:
     entity_id = "assist_satellite.kitchen"
