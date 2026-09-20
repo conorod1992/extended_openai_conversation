@@ -5,7 +5,6 @@ on:
     paths:
       - "ci/Dockerfile.dev"
       - "ci/Dockerfile.typecheck"
-      - "ci/Dockerfile.typecheck"
       - "ci/install_ha_dependencies.py"
       - "ci/install_ha_media_dependencies.py"
       - "ci/reconcile_ha_dev_environment.sh"
@@ -18,6 +17,7 @@ on:
       - develop
     paths:
       - "ci/Dockerfile.dev"
+      - "ci/Dockerfile.typecheck"
       - "ci/install_ha_dependencies.py"
       - "ci/install_ha_media_dependencies.py"
       - "ci/reconcile_ha_dev_environment.sh"
