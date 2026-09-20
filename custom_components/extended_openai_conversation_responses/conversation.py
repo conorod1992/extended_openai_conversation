@@ -248,6 +248,24 @@ _PROCESS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
 )
 
 
+def _request_function_groups(
+    entity: Any, configured_tools: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Validate Function Groups once for the request-stable config revision."""
+    request_config = _ACTIVE_FUNCTION_CONFIG.get()
+    if request_config is not None and request_config[0] is configured_tools:
+        cached_groups = request_config[1]
+        if cached_groups is not None:
+            return cached_groups
+    groups = validate_function_groups(
+        entity.subentry.data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
+        configured_tools,
+    )
+    if request_config is not None and request_config[0] is configured_tools:
+        _ACTIVE_FUNCTION_CONFIG.set((configured_tools, groups))
+    return groups
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ExtendedOpenAIConfigEntry,
@@ -1471,7 +1489,7 @@ class ExtendedOpenAIAgentEntity(
         try:
             configured_tools = self._get_configured_function_tools()
             policy = self._effective_guest_policy()
-            groups = self._get_function_groups(configured_tools)
+            groups = _request_function_groups(self, configured_tools)
             manager = getattr(self, "skill_manager", None)
             if not isinstance(manager, SkillManager):
                 manager = SkillManager.get_loaded_instance()
@@ -1528,23 +1546,6 @@ class ExtendedOpenAIAgentEntity(
         return current_snapshot().project(
             self._configured_function_tools_from_data(self.subentry.data)
         )
-
-    def _get_function_groups(
-        self, configured_tools: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Validate Function Groups once for the request-stable config revision."""
-        request_config = _ACTIVE_FUNCTION_CONFIG.get()
-        if request_config is not None and request_config[0] is configured_tools:
-            cached_groups = request_config[1]
-            if cached_groups is not None:
-                return cached_groups
-        groups = validate_function_groups(
-            self.subentry.data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
-            configured_tools,
-        )
-        if request_config is not None and request_config[0] is configured_tools:
-            _ACTIVE_FUNCTION_CONFIG.set((configured_tools, groups))
-        return groups
 
     def _configured_function_tools_from_data(self, data: Any) -> list[dict[str, Any]]:
         """Parse configured tools from one current or persisted data mapping."""
