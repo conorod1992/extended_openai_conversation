@@ -227,6 +227,9 @@ async def test_agent_catalog_does_not_initialize_per_agent_managers(
     assert [agent["title"] for agent in result["agents"]] == ["Jarvis"]
     assert result["agents"][0]["model"] == agent_config_defaults()["chat_model"]
     assert result["is_admin"] is True
+    assert result["_performance"]["agent_count"] == 1
+    assert result["_performance"]["total_ms"] >= 0
+    assert result["_performance"]["snapshots"][0]["total_ms"] >= 0
 
 
 async def test_agent_catalog_keeps_invalid_function_tool_agent_visible(
@@ -371,8 +374,47 @@ async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) 
     assert result["agent"]["knowledge_source_count"] == 3
     assert result["agent"]["guest_mode"]["state"] == "scheduled"
     assert result["load_errors"] == []
+    performance = result["_performance"]
+    assert performance["total_ms"] >= 0
+    assert set(("usage_load_ms", "memory_load_ms", "knowledge_load_ms", "guest_load_ms")) <= performance.keys()
+    assert performance["agent_snapshot"]["total_ms"] >= 0
     for mock in mocks.values():
         mock.assert_awaited_once()
+
+
+async def test_configuration_get_reports_phase_timings(monkeypatch) -> None:
+    hass, _entry, _subentry = _hass_with_agent()
+    monkeypatch.setattr(management_ui, "local_handling_snapshot", lambda *_args: {})
+    monkeypatch.setattr(
+        management_ui,
+        "decorate_configuration_result",
+        lambda _hass, _entry_data, result, **_kwargs: result,
+    )
+
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "get",
+        },
+    )
+
+    performance = result["_performance"]
+    assert performance["total_ms"] >= 0
+    assert set(
+        (
+            "config_snapshot_ms",
+            "revision_ms",
+            "defaults_snapshot_ms",
+            "options_ms",
+            "model_capabilities_ms",
+            "local_handling_ms",
+        )
+    ) <= performance.keys()
 
 
 async def test_configuration_save_normalizes_once(monkeypatch) -> None:
