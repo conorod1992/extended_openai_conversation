@@ -9,6 +9,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .management_request_preview import (
+    async_preview_effective_request,
+    entry_and_agent,
+)
 from .payload_diagnostics import APPROX_TOKEN_METHOD, approximate_tokens
 from .usage import async_get_usage
 
@@ -135,12 +139,10 @@ async def async_input_footprint(
     message: dict[str, Any],
 ) -> dict[str, Any]:
     """Return baseline and latest content-free input footprint measurements."""
-    from . import management_ui
-
     entry_id = str(message.get("entry_id") or "")
     subentry_id = str(message.get("subentry_id") or "")
-    entry, subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
-    preview = await management_ui._async_preview_effective_request(
+    entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
+    preview = await async_preview_effective_request(
         hass, entry, subentry, dict(subentry.data), user_id
     )
     usage = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
