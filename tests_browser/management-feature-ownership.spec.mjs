@@ -101,6 +101,7 @@ test("lazy history helpers retain search pages and guard session dialogs", async
     };
   });
   await panel.locator("#archive-query").fill("project");
+  await panel.evaluate(host => { host._bindActions(); host._bindActions(); });
   await panel.locator("#archive-search").click();
   await expect(panel.getByRole("heading", {name:"Match 0",exact:true})).toBeVisible();
   await page.evaluate(() => { window.browserHarness.panel._render(); window.browserHarness.panel._render(); });
@@ -109,11 +110,18 @@ test("lazy history helpers retain search pages and guard session dialogs", async
   await panel.locator(".eoc-history-pager").getByRole("button", {name:"Next",exact:true}).click();
   await expect(panel.getByRole("heading", {name:"Match 20",exact:true})).toBeVisible();
   expect(await page.evaluate(() => window.featureCalls.filter((c) => c.action === "search" && c.offset === 20).length)).toBe(1);
-  await panel.locator(".view-session").click();
+  await panel.evaluate(host => { host._bindActions(); host._bindActions(); });
+  await panel.locator(".open-session").focus();
+  await panel.locator(".open-session").press("Enter");
   await expect(panel.locator("#session-body")).toContainText("Question 0");
   await panel.getByRole("button", {name:"Next turns",exact:true}).click();
   await expect(panel.locator("#session-body")).toContainText("Question 20");
   await expect(panel.locator(".eoc-turn-pager")).toHaveCount(1);
   expect(await page.evaluate(() => window.featureCalls.filter((c) => c.action === "get").map((c) => [c.start_turn,c.limit]))).toEqual([[0,20],[20,20]]);
+  await page.keyboard.press("Escape");
+  await expect(panel.locator("#session-dialog")).toHaveJSProperty("open", false);
+  await panel.locator(".view-session").click();
+  await expect(panel.locator("#session-body")).toContainText("Question 0");
+  expect(await page.evaluate(() => window.featureCalls.filter(c => c.action === "get").length)).toBe(3);
   await expectHarnessClean(page, errors);
 });
