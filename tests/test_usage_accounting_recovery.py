@@ -5,14 +5,22 @@ from copy import deepcopy
 from dataclasses import asdict
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any, cast
 from zoneinfo import ZoneInfo
+
+import pytest
+from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 import custom_components.extended_openai_conversation_responses.usage as usage_module
 from custom_components.extended_openai_conversation_responses.usage import (
     RequestUsage,
     UsageManager,
     UsageRequest,
+    UsageRun,
     UsageTotals,
+    _usage_request_from_backup,
+    _usage_run_from_backup,
     async_get_usage,
 )
 
@@ -314,3 +322,181 @@ async def test_detail_rows_do_not_reconstruct_or_double_count_aggregates() -> No
     assert len(manager.requests) == 2
     assert manager.totals.api_request_count == 1
     assert manager.totals.total_tokens == 3
+
+
+
+async def test_concurrent_provider_requests_are_counted_once_in_one_run() -> None:
+    """Concurrent provider completions remain one run with exact request totals."""
+    manager = UsageManager(FakeStorage(), FakeStorage(), FakeStorage())
+    await manager.async_initialize()
+
+    async with manager.async_run() as run:
+        await asyncio.gather(
+            *(
+                manager.async_record_request(
+                    successful=True,
+                    usage=RequestUsage(input_tokens=1, output_tokens=1, total_tokens=2),
+                    provider="openai",
+                    model="gpt-test",
+                    api_mode="responses",
+                )
+                for _ in range(12)
+            )
+        )
+
+    day = next(iter(manager.daily.values()))
+    assert manager.totals.conversation_count == 1
+    assert manager.totals.api_request_count == 12
+    assert manager.totals.total_tokens == 24
+    assert run.request_count == 12
+    assert run.total_tokens == 24
+    assert day["run_count"] == 1
+    assert day["api_request_count"] == 12
+    assert day["total_tokens"] == 24
+    assert len(manager.requests) == 12
+    assert len(manager.runs) == 1
+
+
+
+async def test_failed_initialization_replaces_published_manager_with_shared_fallback(
+    monkeypatch,
+) -> None:
+    """A failed published persistent manager cannot survive beside the fallback."""
+    hass = SimpleNamespace(data={})
+    key = ("entry", "agent")
+    published_manager = object()
+    calls = 0
+
+    async def failing_getter(_hass, entry_id: str, subentry_id: str):
+        nonlocal calls
+        calls += 1
+        persistent_managers = hass.data.setdefault(usage_module._USAGE_MANAGERS, {})
+        persistent_managers[(entry_id, subentry_id)] = published_manager
+        raise OSError("usage store unavailable")
+
+    monkeypatch.setattr(usage_module, "async_get_durable_usage", failing_getter)
+
+    manager = await usage_module.async_get_usage(hass, *key)
+    same_manager = await usage_module.async_get_usage(hass, *key)
+
+    assert manager is same_manager
+    assert calls == 1
+    assert key not in hass.data[usage_module._USAGE_MANAGERS]
+    assert hass.data[usage_module._VOLATILE_USAGE_MANAGERS][key] is manager
+    assert key in hass.data[usage_module._USAGE_GETTER_LOCKS]
+
+
+async def test_effective_getter_serializes_durable_selection(monkeypatch) -> None:
+    """Concurrent callers cannot race persistent and fallback manager selection."""
+    hass = SimpleNamespace(data={})
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    active = 0
+    max_active = 0
+
+    async def durable_getter(_hass, _entry_id: str, _subentry_id: str):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        entered.set()
+        await release.wait()
+        active -= 1
+        return object()
+
+    monkeypatch.setattr(usage_module, "async_get_durable_usage", durable_getter)
+
+    first = asyncio.create_task(usage_module.async_get_usage(hass, "entry", "agent"))
+    await entered.wait()
+    second = asyncio.create_task(usage_module.async_get_usage(hass, "entry", "agent"))
+    await asyncio.sleep(0)
+
+    assert max_active == 1
+    release.set()
+    await asyncio.gather(first, second)
+    assert max_active == 1
+
+
+
+def _timestamp_request(request_id: str, timestamp: object) -> dict:
+    return asdict(
+        UsageRequest(
+            request_id=request_id,
+            run_id="run-1",
+            timestamp=timestamp,  # type: ignore[arg-type]
+            agent_subentry_id="agent",
+            provider="openai",
+            model="gpt-test",
+            api_mode="responses",
+            successful=True,
+            duration_ms=10,
+        )
+    )
+
+
+def _timestamp_run(run_id: str, started_at: object) -> dict:
+    return asdict(
+        UsageRun(
+            run_id=run_id,
+            started_at=started_at,  # type: ignore[arg-type]
+            completed_at=None,
+            duration_ms=10,
+            agent_subentry_id="agent",
+            home_assistant_conversation_id=None,
+            source_device_id=None,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_initialize_drops_malformed_detail_timestamps_without_losing_valid_rows() -> None:
+    """Corrupt request/run timestamps must not abort Usage initialization."""
+    now = dt_util.utcnow().isoformat()
+    details = FakeStorage(
+        {
+            "requests": [
+                _timestamp_request("valid-request", now),
+                _timestamp_request("bad-string-request", "not-a-timestamp"),
+                _timestamp_request("bad-type-request", None),
+            ],
+            "runs": [
+                _timestamp_run("valid-run", now),
+                _timestamp_run("bad-string-run", "not-a-timestamp"),
+                _timestamp_run("bad-type-run", None),
+            ],
+        }
+    )
+    manager = UsageManager(
+        FakeStorage(),
+        FakeStorage(),
+        details,
+        agent_subentry_id="agent",
+    )
+
+    await manager.async_initialize()
+
+    assert [request.request_id for request in manager.requests] == ["valid-request"]
+    assert [run.run_id for run in manager.runs] == ["valid-run"]
+
+
+@pytest.mark.parametrize("invalid", ["not-a-timestamp", "2026-99-99T99:99:99"])
+def test_backup_validation_still_rejects_malformed_timestamps(invalid: str) -> None:
+    """Recovery semantics must not turn malformed backup timestamps into valid data."""
+    with pytest.raises(ValueError, match="usage request metadata is invalid"):
+        _usage_request_from_backup(_timestamp_request("bad-request", invalid), "agent")
+
+    with pytest.raises(ValueError, match="usage run metadata is invalid"):
+        _usage_run_from_backup(_timestamp_run("bad-run", invalid), "agent")
+
+
+
+async def test_runtime_usage_aggregate_stores_use_atomic_writes(
+    hass: HomeAssistant,
+) -> None:
+    """The authoritative aggregate snapshot and legacy mirror are crash-safe."""
+    manager = await async_get_usage(hass, "entry-a", "agent-a")
+
+    totals_store = cast(Any, manager._storage)
+    daily_store = cast(Any, manager._daily_storage)
+
+    assert totals_store._atomic_writes is True
+    assert daily_store._atomic_writes is True
