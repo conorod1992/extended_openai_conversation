@@ -102,7 +102,7 @@ selectors = [
 
 [tool.mutation-campaigns.guest-security]
 only_mutate = ["custom_components/extended_openai_conversation_responses/guest_mode.py"]
-pytest_add_cli_args_test_selection = ["tests/test_guest_mode_mutation.py"]
+pytest_add_cli_args_test_selection = ["tests/test_guest_mode.py"]
 selectors = ["*guest_mode.x_resolve_guest_policy__mutmut_*"]
 
 [tool.mutation-campaigns.ha-permissions]
