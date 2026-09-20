@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
-from hashlib import sha256
 import json
 from types import MappingProxyType
 from typing import Any, Final
@@ -136,6 +135,11 @@ from .management_function_quarantine import (
     _tolerant_agent_test as async_test_agent,
     _tolerant_persist_function_configuration,
     management_function_tools,
+)
+from .management_function_repair import (
+    agent_config_revision as _agent_config_revision,
+    persist_valid_function_configuration as _persist_valid_function_configuration,
+    require_agent_config_revision as _require_agent_config_revision,
 )
 from .management_history_queries import (
     archive_get_page,
@@ -568,64 +572,6 @@ def _validation_result(callback) -> dict[str, Any]:
     except AgentConfigError as err:
         return {"valid": False, "errors": {err.field: str(err).split(": ", 1)[-1]}}
     return {"valid": True, "errors": {}, "config": value}
-
-
-def _agent_config_revision(data: Mapping[str, Any], title: str) -> str:
-    """Hash the normalized config, or the unchanged raw config while tools need repair."""
-    from .management_function_repair import function_tools_issue
-
-    try:
-        config = agent_config_snapshot(dict(data))
-    except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
-        config = dict(data)
-        if function_tools_issue(config)[1] is None:
-            raise
-    return sha256(
-        canonical_json({"title": title, "config": config}).encode("utf-8")
-    ).hexdigest()
-
-
-def _require_agent_config_revision(subentry: Any, expected_revision: Any) -> None:
-    """Reject a stale management writer before it can replace newer settings."""
-    if expected_revision is None:
-        return
-    if not isinstance(expected_revision, str):
-        raise HomeAssistantError("revision must be a string")
-    if expected_revision != _agent_config_revision(subentry.data, subentry.title):
-        raise HomeAssistantError(
-            "Configuration changed in another tab. Reload the latest saved settings before saving."
-        )
-
-
-def _persist_valid_function_configuration(
-    hass: HomeAssistant,
-    entry: Any,
-    subentry: Any,
-    tools: list[dict[str, Any]],
-    groups: list[dict[str, Any]],
-    *,
-    extra_updates: dict[str, Any] | None = None,
-    expected_revision: str | None = None,
-) -> dict[str, Any]:
-    """Persist Function Tool fields only if the source snapshot is still current."""
-    _require_agent_config_revision(subentry, expected_revision)
-    updates: dict[str, Any] = {
-        CONF_FUNCTION_TOOLS: tools,
-        CONF_FUNCTION_GROUPS: groups,
-    }
-    if extra_updates:
-        updates.update(extra_updates)
-    normalized = preserve_legacy_guest_policy(
-        subentry.data,
-        merge_agent_config(subentry.data, updates),
-    )
-    hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
-    snapshot = agent_config_snapshot(normalized)
-    return {
-        "functions": snapshot[CONF_FUNCTION_TOOLS],
-        "function_groups": snapshot[CONF_FUNCTION_GROUPS],
-        "revision": _agent_config_revision(normalized, subentry.title),
-    }
 
 
 def _persist_function_configuration(
