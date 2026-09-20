@@ -491,7 +491,7 @@ def test_start_stop_lifecycle_arms_once_and_preserves_executing_task(
     executing_task.cancel.assert_not_called()
 
 
-def test_arm_ignores_live_waiter_missing_record_and_nonpending_coverage_record(hass) -> None:
+def test_arm_ignores_live_waiter_missing_record_and_nonpending_record(hass) -> None:
     """Arming cannot duplicate waiters or resurrect absent/completed records."""
     manager = DelayedToolManager(hass)
     live_task = MagicMock()
@@ -778,7 +778,7 @@ async def test_record_storage_helpers_preserve_durability_on_failures(hass) -> N
     manager = DelayedToolManager(hass)
     manager._store = SimpleNamespace(async_save=AsyncMock())
 
-    await manager._async_replace_coverage_record(_coverage_record(call_id="missing"))
+    await manager._async_replace_record(_coverage_record(call_id="missing"))
     manager._store.async_save.assert_not_awaited()
     assert await manager._async_discard("missing", "gone") is True
     await manager._async_finalize("missing")
