@@ -27,7 +27,7 @@ from .const import DOMAIN
 from .function_tool_resolution import latest_function_tool_for_execution
 from .ha_permissions import bind_active_ha_context
 from .helpers import get_exposed_entities
-from .persistence_hardening import _async_prepare_private_store
+from .persistence_hardening import _async_repair_private_store_mode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -130,7 +130,11 @@ class DelayedToolManager:
         """Initialize the scheduler."""
         self.hass = hass
         self._store = Store[dict[str, Any]](
-            hass, DELAYED_TOOL_STORAGE_VERSION, DELAYED_TOOL_STORAGE_KEY
+            hass,
+            DELAYED_TOOL_STORAGE_VERSION,
+            DELAYED_TOOL_STORAGE_KEY,
+            private=True,
+            atomic_writes=True,
         )
         self._records: dict[str, DelayedToolCall] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -141,7 +145,7 @@ class DelayedToolManager:
 
     async def async_setup(self) -> None:
         """Load persisted calls and arm recovery once Home Assistant is running."""
-        await _async_prepare_private_store(self._store)
+        await _async_repair_private_store_mode(self._store)
         if self._setup_complete:
             return
         async with self._setup_lock:

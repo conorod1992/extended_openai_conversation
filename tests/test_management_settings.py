@@ -4,9 +4,16 @@ from types import SimpleNamespace
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    agent_config_defaults,
+)
+from custom_components.extended_openai_conversation_responses.const import (
+    CONF_VOICE_DEFAULT_USER_ID,
+)
 from custom_components.extended_openai_conversation_responses.management_ui import (
     _scope_catalog,
     _selected_scope,
+    _settings_snapshot,
     _validate_settings,
 )
 from homeassistant.exceptions import HomeAssistantError
@@ -48,6 +55,20 @@ def test_retention_and_mapping_settings_are_strictly_validated() -> None:
         _validate_settings({"archive_retention_days": 31})
     with pytest.raises(HomeAssistantError, match="must map device IDs"):
         _validate_settings({"voice_device_mappings": ["kitchen"]})
+
+
+def test_management_settings_share_authoritative_agent_defaults() -> None:
+    """Shared Management settings cannot drift from agent configuration defaults."""
+    defaults = agent_config_defaults()
+    snapshot = _settings_snapshot({})
+
+    for key, value in snapshot.items():
+        if key == CONF_VOICE_DEFAULT_USER_ID:
+            assert value is None
+        else:
+            assert value == defaults[key]
+
+
 
 
 def test_normal_user_cannot_select_admin_or_other_user_scope() -> None:

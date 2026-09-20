@@ -17,7 +17,7 @@ from custom_components.extended_openai_conversation_responses.functions.file imp
     _atomic_replace_text,
 )
 from custom_components.extended_openai_conversation_responses.persistence_hardening import (
-    _async_prepare_private_store,
+    _async_repair_private_store_mode,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
     STORAGE_VERSION,
@@ -74,10 +74,10 @@ def test_atomic_write_failure_leaves_existing_file_intact(
     assert list(tmp_path.glob(".atomic.txt.*.tmp")) == []
 
 
-async def test_private_store_hardening_repairs_existing_file_without_rewrite(
+async def test_private_store_mode_repair_preserves_existing_file_contents(
     hass,
 ) -> None:
-    """An existing public Store is tightened before future private atomic writes."""
+    """Historical Store permissions are tightened without rewriting JSON."""
     store = Store[dict](hass, 1, "extended_openai_test.private_store")
     path = Path(store.path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,32 +85,49 @@ async def test_private_store_hardening_repairs_existing_file_without_rewrite(
     path.chmod(0o644)
     before = path.read_bytes()
 
-    await _async_prepare_private_store(store)
+    await _async_repair_private_store_mode(store)
 
-    assert store._private is True
-    assert store._atomic_writes is True
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert path.read_bytes() == before
 
 
-async def test_request_rules_store_is_hardened_before_initialize(hass) -> None:
-    """Request Rules prepares its real HA Store without a startup installer."""
+async def test_request_rules_store_writes_privately_and_atomically(
+    hass, monkeypatch
+) -> None:
+    """Request Rules uses Home Assistant's supported private atomic Store path."""
+    writes: list[bool] = []
+    monkeypatch.setattr(
+        "homeassistant.helpers.storage.write_utf8_file",
+        lambda *_args, **_kwargs: pytest.fail("non-atomic Store writer used"),
+    )
+    monkeypatch.setattr(
+        "homeassistant.helpers.storage.write_utf8_file_atomic",
+        lambda _path, _data, private, **_kwargs: writes.append(private),
+    )
     store = RequestRuleStore(
         hass, STORAGE_VERSION, "extended_openai_test.request_rules"
     )
-    rules = RequestRules(store)
 
-    await rules.async_initialize()
+    await store.async_save({"rules": []})
 
-    assert store._private is True
-    assert store._atomic_writes is True
+    assert writes == [True]
 
 
-async def test_delayed_tool_store_is_hardened_before_setup(hass) -> None:
-    """Delayed-tool recovery uses the same private atomic Store policy."""
+async def test_delayed_tool_store_writes_privately_and_atomically(
+    hass, monkeypatch
+) -> None:
+    """Delayed tools use Home Assistant's supported private atomic Store path."""
+    writes: list[bool] = []
+    monkeypatch.setattr(
+        "homeassistant.helpers.storage.write_utf8_file",
+        lambda *_args, **_kwargs: pytest.fail("non-atomic Store writer used"),
+    )
+    monkeypatch.setattr(
+        "homeassistant.helpers.storage.write_utf8_file_atomic",
+        lambda _path, _data, private, **_kwargs: writes.append(private),
+    )
     manager = DelayedToolManager(hass)
 
-    await manager.async_setup()
+    await manager._store.async_save({"calls": []})
 
-    assert manager._store._private is True
-    assert manager._store._atomic_writes is True
+    assert writes == [True]
