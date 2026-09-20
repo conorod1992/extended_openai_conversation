@@ -1,7 +1,7 @@
 import {configKeyForControl} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js";
 import assert from "node:assert/strict";
 
-import {dirtyConfigurationKeys} from "../custom_components/extended_openai_conversation_responses/frontend/management-draft-navigation.js";
+import {dirtyConfigurationKeys} from "../custom_components/extended_openai_conversation_responses/frontend/management-setting-metadata.js";
 import {
   configKeysForButton,
   rebuildConfigDirtyKeys,
