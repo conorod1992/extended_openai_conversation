@@ -261,6 +261,36 @@ async def test_conversation_final_text_without_tools(hass, monkeypatch) -> None:
     assert logs[0].content[-1].content == "Exact final answer."
 
 
+async def test_web_search_usage_is_carried_from_stream_without_history_rescan(
+    hass, monkeypatch
+) -> None:
+    usage = _UsageHarness()
+    web_search = SimpleNamespace(
+        type="web_search_call",
+        model_dump=lambda **_kwargs: {"type": "web_search_call"},
+    )
+    message = SimpleNamespace(type="message")
+    stream = FakeStream(
+        [
+            _event("response.output_item.added", item=web_search),
+            _event("response.output_item.done", item=web_search),
+            _event("response.output_item.added", item=message),
+            _event("response.output_text.delta", delta="Found it."),
+            _event("response.output_item.done", item=message),
+            _completed_event(),
+        ]
+    )
+    _entity, _client, _continuity, _logs, invoke = _provider_fixture(
+        hass, monkeypatch, [stream], usage=usage
+    )
+
+    result = await invoke()
+
+    assert result.response.speech["plain"]["speech"] == "Found it."
+    assert usage.async_record_request.await_count == 1
+    assert usage.async_record_request.call_args.kwargs["web_search_used"] is True
+
+
 async def test_conversation_single_tool_call_then_final_text(hass, monkeypatch) -> None:
     lookup = _tool(
         "lookup",
