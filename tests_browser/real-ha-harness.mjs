@@ -7,7 +7,7 @@ if (!backendUrl) throw new Error("Real HA browser fixture requires a backend URL
 
 sessionStorage.setItem("realHaRoute", route);
 sessionStorage.setItem("realHaBackendUrl", backendUrl);
-history.replaceState({}, "", `/extended-openai/${route}`);
+history.replaceState({}, "", `/extended-openai/${route}?route=${encodeURIComponent(route)}&backend=${encodeURIComponent(backendUrl)}`);
 
 const calls = [];
 const hass = {
