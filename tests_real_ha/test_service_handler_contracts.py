@@ -306,8 +306,17 @@ async def test_function_state_services_dispatch_exact_requested_state(
     enabled: bool,
 ) -> None:
     """Function state services must dispatch exact target, names and state."""
+    # tests/test_function_tool_services.py covers both states for both families.
+    # Keep real dispatch for each distinct HA schema and registration for all names.
     entry = _entry()
     await _setup_entry(hass, entry)
+    for registered_service in (
+        services.SERVICE_ENABLE_FUNCTION_TOOLS,
+        services.SERVICE_DISABLE_FUNCTION_TOOLS,
+        services.SERVICE_ENABLE_FUNCTION_GROUPS,
+        services.SERVICE_DISABLE_FUNCTION_GROUPS,
+    ):
+        assert hass.services.has_service(DOMAIN, registered_service)
     subentry = _conversation_subentry(entry)
     helper = AsyncMock()
     monkeypatch.setattr(services, helper_name, helper)

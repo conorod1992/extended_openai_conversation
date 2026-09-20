@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
-from openai import APIConnectionError, AuthenticationError
+from openai import AuthenticationError
 import pytest
 
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
@@ -178,6 +178,8 @@ async def test_user_flow_provider_error_can_be_corrected_without_restarting_flow
     hass: HomeAssistant,
 ) -> None:
     """A failed submission stays recoverable and a corrected retry creates the entry."""
+    # tests/test_config_flow_coverage.py owns the other provider-error mappings.
+    # Real HA proves that a failed submission can reuse the same flow manager ID.
     authenticate = AsyncMock(side_effect=[_authentication_error(), object()])
     with patch(f"{CONFIG_FLOW_MODULE}.get_authenticated_client", authenticate):
         result = await hass.config_entries.flow.async_init(
