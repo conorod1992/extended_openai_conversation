@@ -20,7 +20,9 @@ jobs:
         with:
           node-version: 24
       - run: npm ci --no-audit --no-fund
+        working-directory: frontend
       - run: npm run build
+        working-directory: frontend
       - name: Commit generated frontend bundle
         run: |
           if git diff --quiet -- custom_components/extended_openai_conversation_responses/frontend/dist/; then
