@@ -246,9 +246,7 @@ def build_provider_request_snapshot(
             api_kwargs: dict[str, Any] = {"model": model, "stream": True}
 
             max_tokens = options.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
-            normalized_limit = normalize_output_token_limit(
-                model, api_mode, max_tokens
-            )
+            normalized_limit = normalize_output_token_limit(model, api_mode, max_tokens)
             if normalized_limit is not None:
                 field, value = normalized_limit
                 api_kwargs[field] = value
