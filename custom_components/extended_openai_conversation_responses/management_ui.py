@@ -2267,12 +2267,6 @@ def _settings_snapshot(options: Mapping[str, Any]) -> dict[str, Any]:
     return {key: options.get(key, defaults[key]) for key in keys}
 
 
-def asdict_or_none(value: Any) -> dict[str, Any] | None:
-    from dataclasses import asdict
-
-    return asdict(value) if value is not None else None
-
-
 @websocket_api.websocket_command(
     {
         vol.Required("type"): WS_COMMAND,
