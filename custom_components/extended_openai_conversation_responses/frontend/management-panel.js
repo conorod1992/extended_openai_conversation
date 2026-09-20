@@ -50,6 +50,51 @@ try {
   // Cold-start instrumentation must never affect panel startup.
 }
 const MANAGEMENT_STYLESHEET_URL = new URL("./management.css", import.meta.url).href;
+const CRITICAL_STYLE = `
+  :host{display:block;min-height:100%;padding:28px;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);box-sizing:border-box;background:var(--primary-background-color)}
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  .page-shell{max-width:1380px;margin:auto}
+  header{display:flex;justify-content:space-between;gap:36px;align-items:end;margin-bottom:28px}
+  .page-heading h1{margin:0;font-size:30px;font-weight:500}
+  .page-heading p{margin:6px 0 0;color:var(--secondary-text-color);line-height:1.5}
+  header .global-search.eoc-global-search{width:min(380px,100%);max-width:100%;min-width:280px;margin:0;align-self:end;position:relative}
+  header .eoc-global-search>label{display:block}
+  header .eoc-global-search .search-label{display:none}
+  label{display:grid;gap:7px;font-size:13px;color:var(--secondary-text-color)}
+  input,select,textarea,button{font:inherit}
+  input,select,textarea{width:100%;min-height:42px;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:9px;padding:10px 12px}
+  button{min-height:42px;border:0;border-radius:9px;padding:9px 16px;cursor:pointer;background:var(--primary-color);color:var(--text-primary-color)}
+  .mobile-nav,.mobile-local-nav{display:none}
+  .eoc-agent-context-row{display:flex;align-items:end;gap:12px;margin:0 0 14px}
+  .eoc-agent-context-row .agent-picker{width:min(390px,100%);min-width:0;margin:0}
+  nav{display:flex;overflow:auto;border-bottom:1px solid var(--divider-color);margin-bottom:28px}
+  .top-nav{overflow:visible}
+  nav button{background:transparent;color:var(--secondary-text-color);border-radius:0;padding:13px 18px;white-space:nowrap}
+  nav button.active{color:var(--primary-color);border-bottom:3px solid var(--primary-color)}
+  .subsection-nav{display:flex;gap:8px;flex-wrap:wrap;overflow:visible;border:0;margin:0 0 12px;padding:0}
+  .subsection-nav button{min-height:38px;padding:8px 13px;border:1px solid var(--divider-color);border-radius:999px;background:var(--card-background-color);color:var(--secondary-text-color)}
+  .subsection-nav button.active{border-color:var(--primary-color);background:color-mix(in srgb,var(--primary-color) 10%,var(--card-background-color));color:var(--primary-color)}
+  .section-layout{display:block}
+  main{display:grid;gap:30px}
+  .page-intro{display:grid;gap:7px;max-width:780px}
+  .page-intro h1,.page-intro p{margin:0}
+  .page-intro p{color:var(--secondary-text-color);line-height:1.5}
+  .loading{display:flex;align-items:center;justify-content:center;gap:10px;min-height:130px;color:var(--secondary-text-color)}
+  .spinner{width:20px;height:20px;border:2px solid var(--divider-color);border-top-color:var(--primary-color);border-radius:50%}
+  @media (min-width:801px){.section-selector>label{display:none}.section-selector{margin-top:0}}
+  @media (max-width:800px){
+    header{flex-direction:column;align-items:stretch;gap:18px}
+    header .global-search.eoc-global-search{width:100%;min-width:0;align-self:stretch}
+    .eoc-agent-context-row{display:grid;grid-template-columns:1fr;align-items:stretch;gap:10px;margin-bottom:18px}
+    .eoc-agent-context-row .agent-picker{width:100%}
+    .subsection-nav{display:none}
+  }
+  @media (max-width:760px){
+    .top-nav{display:none}
+    .mobile-nav{display:grid;margin-bottom:18px}
+  }
+`;
 
 
 function performanceApi() {
@@ -843,6 +888,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._eocDialogMarkup = this._dialogs();
     this._eocRenderedRoute = `${this._agentId}|${this._viewKey()}`;
     this.shadowRoot.innerHTML = `
+      <style data-eoc-critical-styles>${CRITICAL_STYLE}</style>
       <link rel="stylesheet" href="${MANAGEMENT_STYLESHEET_URL}" data-eoc-persistent-styles>
       <div class="page-shell" data-eoc-persistent-shell>
         <header>
