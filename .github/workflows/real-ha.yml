@@ -49,7 +49,8 @@ jobs:
       matrix:
         shard:
           - parallel-safe
-          - serial-only
+          - process-restart
+          - stateful-serial
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       credentials:
@@ -97,29 +98,31 @@ jobs:
               "test_packaged_release.py",
               "test_packaged_process_restart.py",
           }
-          serial_only = {
+          process_restart = {
               "test_active_request_shutdown_recovery.py",
-              "test_backup_restore_atomicity.py",
-              "test_backup_restore_delayed_tool_collision.py",
-              "test_backup_restore_live_runtime_refresh.py",
               "test_browser_backend_acceptance.py",
               "test_browser_process_restart_acceptance.py",
               "test_browser_refresh_boundary_acceptance.py",
               "test_browser_runtime_acceptance.py",
+              "test_delayed_tool_process_restart.py",
+              "test_immediate_tool_process_crash.py",
+              "test_pending_store_write_shutdown_recovery.py",
+          }
+          stateful_serial = {
+              "test_backup_restore_atomicity.py",
+              "test_backup_restore_delayed_tool_collision.py",
+              "test_backup_restore_live_runtime_refresh.py",
               "test_cancel_after_side_effect.py",
               "test_concurrent_multi_entry_lifecycle.py",
               "test_config_update_inflight_request.py",
               "test_corrupt_subsystem_store_startup_isolation.py",
               "test_cross_entry_inflight_lifecycle.py",
               "test_delayed_tool_due_reauthorization.py",
-              "test_delayed_tool_process_restart.py",
-              "test_immediate_tool_process_crash.py",
               "test_inflight_subentry_removal.py",
               "test_lifecycle_concurrency.py",
               "test_live_config_mutation_semantics.py",
               "test_live_subentry_removal.py",
               "test_multi_entry_lifecycle.py",
-              "test_pending_store_write_shutdown_recovery.py",
               "test_persisted_startup_migration.py",
               "test_persistence_state_round_trips.py",
               "test_provider_failure_recovery.py",
@@ -141,21 +144,33 @@ jobs:
               for path in Path("tests_real_ha").glob("test_*.py")
           }
           generic = discovered - excluded
-          unknown = serial_only - generic
+          serial = process_restart | stateful_serial
+
+          unknown = serial - generic
           if unknown:
               raise SystemExit(
-                  "Serial-only shard lists missing/non-generic files: "
+                  "Stable shard lists missing/non-generic files: "
                   + ", ".join(sorted(unknown))
               )
+          overlap = process_restart & stateful_serial
+          if overlap:
+              raise SystemExit(
+                  "Stable serial shards overlap: " + ", ".join(sorted(overlap))
+              )
 
-          parallel_safe = generic - serial_only
-          if not parallel_safe:
-              raise SystemExit("Parallel-safe shard is unexpectedly empty")
-          if parallel_safe & serial_only:
-              raise SystemExit("Stable shard partition overlaps")
+          parallel_safe = generic - serial
+          assigned = parallel_safe | process_restart | stateful_serial
+          if assigned != generic:
+              missing = generic - assigned
+              extra = assigned - generic
+              raise SystemExit(
+                  f"Stable shard partition mismatch; missing={sorted(missing)}, "
+                  f"extra={sorted(extra)}"
+              )
 
           print(f"parallel-safe files: {len(parallel_safe)}")
-          print(f"serial-only files: {len(serial_only)}")
+          print(f"process-restart files: {len(process_restart)}")
+          print(f"stateful-serial files: {len(stateful_serial)}")
           print(f"excluded specialized files: {len(excluded)}")
           PY
 
@@ -165,29 +180,31 @@ jobs:
         run: |
           set -o pipefail
 
-          SERIAL_ONLY=(
+          PROCESS_RESTART=(
             tests_real_ha/test_active_request_shutdown_recovery.py
-            tests_real_ha/test_backup_restore_atomicity.py
-            tests_real_ha/test_backup_restore_delayed_tool_collision.py
-            tests_real_ha/test_backup_restore_live_runtime_refresh.py
             tests_real_ha/test_browser_backend_acceptance.py
             tests_real_ha/test_browser_process_restart_acceptance.py
             tests_real_ha/test_browser_refresh_boundary_acceptance.py
             tests_real_ha/test_browser_runtime_acceptance.py
+            tests_real_ha/test_delayed_tool_process_restart.py
+            tests_real_ha/test_immediate_tool_process_crash.py
+            tests_real_ha/test_pending_store_write_shutdown_recovery.py
+          )
+          STATEFUL_SERIAL=(
+            tests_real_ha/test_backup_restore_atomicity.py
+            tests_real_ha/test_backup_restore_delayed_tool_collision.py
+            tests_real_ha/test_backup_restore_live_runtime_refresh.py
             tests_real_ha/test_cancel_after_side_effect.py
             tests_real_ha/test_concurrent_multi_entry_lifecycle.py
             tests_real_ha/test_config_update_inflight_request.py
             tests_real_ha/test_corrupt_subsystem_store_startup_isolation.py
             tests_real_ha/test_cross_entry_inflight_lifecycle.py
             tests_real_ha/test_delayed_tool_due_reauthorization.py
-            tests_real_ha/test_delayed_tool_process_restart.py
-            tests_real_ha/test_immediate_tool_process_crash.py
             tests_real_ha/test_inflight_subentry_removal.py
             tests_real_ha/test_lifecycle_concurrency.py
             tests_real_ha/test_live_config_mutation_semantics.py
             tests_real_ha/test_live_subentry_removal.py
             tests_real_ha/test_multi_entry_lifecycle.py
-            tests_real_ha/test_pending_store_write_shutdown_recovery.py
             tests_real_ha/test_persisted_startup_migration.py
             tests_real_ha/test_persistence_state_round_trips.py
             tests_real_ha/test_provider_failure_recovery.py
@@ -204,28 +221,39 @@ jobs:
             tests_real_ha/test_usage_accounting_failure_recovery.py
           )
 
-          if [ "${{ matrix.shard }}" = "serial-only" ]; then
-            TEST_PATHS=("${SERIAL_ONLY[@]}")
-            COVERAGE_ARGS=()
-          else
-            TEST_PATHS=(tests_real_ha/)
-            TEST_PATHS+=(
-              --ignore=tests_real_ha/test_release_upgrade_acceptance.py
-              --ignore=tests_real_ha/test_release_upgrade_custom_function_tool.py
-              --ignore=tests_real_ha/test_browser_release_upgrade_acceptance.py
-              --ignore=tests_real_ha/test_packaged_release.py
-              --ignore=tests_real_ha/test_packaged_process_restart.py
-            )
-            for path in "${SERIAL_ONLY[@]}"; do
-              TEST_PATHS+=(--ignore="$path")
-            done
-            COVERAGE_ARGS=(
-              --cov=custom_components.extended_openai_conversation_responses.config_flow
-              --cov-branch
-              --cov-report=term-missing
-              --cov-report=xml:real-ha-config-flow-coverage.xml
-            )
-          fi
+          case "${{ matrix.shard }}" in
+            process-restart)
+              TEST_PATHS=("${PROCESS_RESTART[@]}")
+              COVERAGE_ARGS=()
+              ;;
+            stateful-serial)
+              TEST_PATHS=("${STATEFUL_SERIAL[@]}")
+              COVERAGE_ARGS=()
+              ;;
+            parallel-safe)
+              TEST_PATHS=(tests_real_ha/)
+              TEST_PATHS+=(
+                --ignore=tests_real_ha/test_release_upgrade_acceptance.py
+                --ignore=tests_real_ha/test_release_upgrade_custom_function_tool.py
+                --ignore=tests_real_ha/test_browser_release_upgrade_acceptance.py
+                --ignore=tests_real_ha/test_packaged_release.py
+                --ignore=tests_real_ha/test_packaged_process_restart.py
+              )
+              for path in "${PROCESS_RESTART[@]}" "${STATEFUL_SERIAL[@]}"; do
+                TEST_PATHS+=(--ignore="$path")
+              done
+              COVERAGE_ARGS=(
+                --cov=custom_components.extended_openai_conversation_responses.config_flow
+                --cov-branch
+                --cov-report=term-missing
+                --cov-report=xml:real-ha-config-flow-coverage.xml
+              )
+              ;;
+            *)
+              echo "Unknown stable shard: ${{ matrix.shard }}" >&2
+              exit 2
+              ;;
+          esac
 
           pytest "${TEST_PATHS[@]}" \
             -v \
