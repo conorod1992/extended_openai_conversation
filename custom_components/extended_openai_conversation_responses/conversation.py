@@ -1561,7 +1561,7 @@ class ExtendedOpenAIAgentEntity(
             }
         configured_tools = self._get_configured_function_tools()
         policy = self._effective_guest_policy()
-        groups = self._get_function_groups(configured_tools)
+        groups = _request_function_groups(self, configured_tools)
         manager = getattr(self, "skill_manager", None)
         if not isinstance(manager, SkillManager):
             manager = SkillManager.get_loaded_instance()
