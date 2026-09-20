@@ -62,7 +62,7 @@ export function reconcileInputFootprint(panel) {
 }
 
 export async function loadInputFootprint(panel) {
-  const pending = loadInputFootprintData(panel);
+  const pending = loadInputFootprintData(panel, {reusePending: false});
   if (!pending) return;
   reconcileInputFootprint(panel);
   await pending;
