@@ -2,7 +2,13 @@ name: hacs
 
 on:
   push:
+    branches:
+      - develop
   pull_request:
+    paths:
+      - "custom_components/extended_openai_conversation_responses/**"
+      - "hacs.json"
+      - ".github/workflows/hacs.yaml"
   schedule:
     - cron: "0 0 * * *"
 
