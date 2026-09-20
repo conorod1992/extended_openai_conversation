@@ -13,6 +13,7 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import intercom
 from custom_components.extended_openai_conversation_responses.intercom import (
+    ANNOUNCE_FEATURE,
     BroadcastMessage,
     Delivery,
     IntercomManager,
