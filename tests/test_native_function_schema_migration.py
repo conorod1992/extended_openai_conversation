@@ -246,7 +246,7 @@ def test_historical_inserted_service_preset_is_migrated(implementation: str) -> 
     """Both historical built-in service presets receive the persistent open schema."""
     tool = _legacy_service_preset(implementation)
 
-    migrated, changed = migrate_legacy_stock_native_function_tools([tool])
+    migrated, changed = migration.migrate_legacy_stock_native_function_tools([tool])
 
     assert changed is True
     current = migrated[0]
