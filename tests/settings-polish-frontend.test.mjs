@@ -34,5 +34,6 @@ assert.match(available, /Update available: v2 → v3/);
 assert.match(available, /Model capability data/);
 assert.match(available, /Future checks will not replace it automatically/);
 const panelSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js",import.meta.url),"utf8");
-assert.match(panelSource, /\[data-eoc-guide-layout\]\{grid-template-columns:minmax\(0,1fr\)!important\}/);
+const managementStyles = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management.css",import.meta.url),"utf8");
+assert.match(managementStyles, /\[data-eoc-guide-layout\]\{grid-template-columns:minmax\(0,1fr\)!important\}/);
 assert.doesNotMatch(panelSource, /polishSettingsLayout|data-eoc-settings-polish/);
