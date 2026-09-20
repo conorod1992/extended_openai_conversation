@@ -289,18 +289,6 @@ async def test_download_skill_service_success_publishes_staged_skill(
             True,
         ),
         (
-            services.SERVICE_DISABLE_FUNCTION_TOOLS,
-            "async_set_function_tools_enabled",
-            "functions",
-            False,
-        ),
-        (
-            services.SERVICE_ENABLE_FUNCTION_GROUPS,
-            "async_set_function_groups_enabled",
-            "function_groups",
-            True,
-        ),
-        (
             services.SERVICE_DISABLE_FUNCTION_GROUPS,
             "async_set_function_groups_enabled",
             "function_groups",

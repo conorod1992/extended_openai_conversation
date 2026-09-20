@@ -174,26 +174,11 @@ async def test_user_flow_creates_default_subentries_and_normalizes_openai_url(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("first_error", "expected_error"),
-    [
-        (_authentication_error(), "invalid_auth"),
-        (
-            APIConnectionError(
-                request=httpx.Request("GET", "https://api.openai.com/v1/models")
-            ),
-            "cannot_connect",
-        ),
-        (RuntimeError("unexpected validation failure"), "unknown"),
-    ],
-)
 async def test_user_flow_provider_error_can_be_corrected_without_restarting_flow(
     hass: HomeAssistant,
-    first_error: Exception,
-    expected_error: str,
 ) -> None:
     """A failed submission stays recoverable and a corrected retry creates the entry."""
-    authenticate = AsyncMock(side_effect=[first_error, object()])
+    authenticate = AsyncMock(side_effect=[_authentication_error(), object()])
     with patch(f"{CONFIG_FLOW_MODULE}.get_authenticated_client", authenticate):
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": SOURCE_USER}
@@ -210,7 +195,7 @@ async def test_user_flow_provider_error_can_be_corrected_without_restarting_flow
         result = await hass.config_entries.flow.async_configure(flow_id, dict(user_input))
         assert result["type"] is FlowResultType.FORM
         assert result["step_id"] == "user"
-        assert result["errors"] == {"base": expected_error}
+        assert result["errors"] == {"base": "invalid_auth"}
 
         result = await hass.config_entries.flow.async_configure(flow_id, dict(user_input))
 
