@@ -37,6 +37,7 @@ const {
   applyRequestRuleSearch,
   requestRuleSearchText,
   routeAssetPromise,
+  routeFeaturesReady,
 } = await import("../custom_components/extended_openai_conversation_responses/frontend/management-route.js");
 await routeAssetPromise("assistant/basics");
 
@@ -86,6 +87,49 @@ function panelFor(page = "assistant", subsection = "basics") {
 }
 
 {
+  const panel = panelFor("capabilities", "request-rules");
+  let resolveAgents;
+  const calls = [];
+  panel._hass = {callWS: (message) => {
+    calls.push(message);
+    if (message.action === "agents") {
+      return new Promise((resolve) => { resolveAgents = resolve; });
+    }
+    return Promise.resolve({});
+  }};
+  panel._loadSection = async () => {};
+  const loading = panel._loadAgents("agent-a");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(routeFeaturesReady("capabilities/request-rules"), true,
+    "deep-link route asset starts before agents resolves");
+  assert.deepEqual(calls.map((call) => call.action), ["agents"]);
+  resolveAgents({agents, scopes:initialScopes, is_admin:true});
+  await loading;
+}
+
+{
+  const panel = panelFor("assistant", "basics");
+  const listeners = new Map();
+  panel.shadowRoot = {
+    __eocRouteAssetWarmupBound:false,
+    addEventListener(name, callback) { listeners.set(name, callback); },
+  };
+  panel._bindRouteAssetWarmup();
+  panel._bindRouteAssetWarmup();
+  assert.deepEqual([...listeners.keys()].sort(), ["focusin", "pointerdown", "pointerover"]);
+
+  const target = {
+    dataset:{page:"guide"},
+    closest() { return this; },
+  };
+  listeners.get("pointerover")({target});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(routeFeaturesReady("guide"), true,
+    "navigation intent warms the target asset");
+}
+
+{
+  globalThis.localStorage.values.clear();
   const panel = panelFor("overview", null);
   const calls = [];
   panel._hass = {callWS: async (message) => {

@@ -88,6 +88,12 @@ export function routeAssetPromise(view, panel) {
   return feature ? Promise.all([feature, core]) : core;
 }
 
+export function warmRouteAsset(view) {
+  const pending = routeAssetPromise(view);
+  pending?.catch?.(() => {});
+  return pending;
+}
+
 function coreAssetPromise(view) {
   if (view === "overview") return ensureOverviewModule();
   if (view === "guide") return ensureGuideModule();
@@ -276,7 +282,11 @@ export function applyOverviewResult(panel, result) {
   return true;
 }
 
-export function startStoredOverviewPrefetch(panel, preferredSubentryId) {
+export function startStoredOverviewPrefetch(
+  panel,
+  preferredSubentryId,
+  overviewAsset = ensureOverviewModule(),
+) {
   if (panel._viewKey?.() !== "overview") return null;
   const subentryId = preferredSubentryId || globalThis.localStorage?.getItem?.(AGENT_KEY);
   const entryId = globalThis.localStorage?.getItem?.(ENTRY_KEY);
@@ -285,7 +295,7 @@ export function startStoredOverviewPrefetch(panel, preferredSubentryId) {
     entryId,
     subentryId,
     promise: Promise.allSettled([
-      ensureOverviewModule(),
+      overviewAsset,
       panel._hass.callWS({
         type: WS_TYPE,
         section: "overview",
@@ -302,7 +312,8 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
   const previousAgentId = panel._agentId;
   const saved = globalThis.localStorage?.getItem?.(AGENT_KEY);
   const preferred = selectedId || saved;
-  const prefetch = startStoredOverviewPrefetch(panel, preferred);
+  const routeAsset = warmRouteAsset(panel._viewKey?.());
+  const prefetch = startStoredOverviewPrefetch(panel, preferred, routeAsset);
 
   panel._data = await panel._hass.callWS({type: WS_TYPE, action: "agents"});
   panel._baseScopes = panel._data.scopes || [];
