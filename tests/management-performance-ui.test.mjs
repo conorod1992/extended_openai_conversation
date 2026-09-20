@@ -34,6 +34,8 @@ const [{ExtendedOpenAIManagementPanel}, {bindRequestRules}] = await Promise.all(
 
 // These cases isolate cached data behavior after route assets are ready.
 const {
+  AGENT_KEY,
+  ENTRY_KEY,
   applyRequestRuleSearch,
   requestRuleSearchText,
   routeAssetPromise,
@@ -186,6 +188,50 @@ function panelFor(page = "assistant", subsection = "basics") {
     calls.filter((call) => call.section === "conversations").map((call) => call.action),
     ["list", "settings", "active"],
   );
+}
+
+{
+  globalThis.localStorage.values.clear();
+  globalThis.localStorage.setItem(AGENT_KEY, "agent-a");
+  globalThis.localStorage.setItem(ENTRY_KEY, "entry-a");
+  const panel = panelFor("overview", null);
+  const calls = [];
+  const resolvers = new Map();
+  panel._hass = {callWS: (message) => {
+    calls.push(message);
+    return new Promise((resolve) => {
+      const key = message.action === "summary"
+        ? "summary"
+        : message.action === "snapshot"
+          ? "snapshot"
+          : message.action;
+      resolvers.set(key, resolve);
+    });
+  }};
+  const loading = panel._loadAgents();
+
+  assert.deepEqual(
+    calls.map((call) => call.action),
+    ["summary", "snapshot", "agents"],
+    "Overview summary and Broadcast snapshot start before agents resolves",
+  );
+
+  resolvers.get("agents")({agents, scopes:initialScopes, is_admin:true});
+  resolvers.get("summary")({
+    agent:{...agents[0], guest_mode:{}},
+    usage:{today:{}, month:{}},
+    conversations:{},
+    load_errors:[],
+  });
+  resolvers.get("snapshot")({
+    enabled:false,
+    can_manage:true,
+    catalog:{satellites:[], areas:[]},
+    history:[],
+  });
+  await loading;
+  assert.equal(panel._result?.load_errors?.length, 0);
+  assert.equal(panel._eocOverviewBroadcastPromise instanceof Promise, true);
 }
 
 {

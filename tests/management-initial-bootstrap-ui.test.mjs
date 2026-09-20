@@ -58,15 +58,19 @@ globalThis.localStorage = {
 
 let resolveAgents;
 let resolveOverview;
+let resolveBroadcast;
 const calls = [];
 const agentsPromise = new Promise((resolve) => { resolveAgents = resolve; });
 const overviewPromise = new Promise((resolve) => { resolveOverview = resolve; });
+const broadcastPromise = new Promise((resolve) => { resolveBroadcast = resolve; });
 const selectedAgent = {entry_id: "entry-a", subentry_id: "agent-a", title: "A"};
 const panel = {
   _hass: {
     callWS(payload) {
       calls.push(payload);
-      return payload.action === "agents" ? agentsPromise : overviewPromise;
+      if (payload.action === "agents") return agentsPromise;
+      if (payload.action === "snapshot") return broadcastPromise;
+      return overviewPromise;
     },
   },
   _viewKey: () => "overview",
@@ -81,11 +85,13 @@ const panel = {
 
 const load = module.loadAgentsWithOverviewPrefetch(panel);
 await Promise.resolve();
-assert.equal(calls.length, 2);
+assert.equal(calls.length, 3);
 assert.equal(calls.some((item) => item.action === "agents"), true);
 assert.equal(calls.some((item) => item.section === "overview" && item.action === "summary"), true);
+assert.equal(calls.some((item) => item.action === "snapshot"), true);
 
 resolveOverview({agent: {...selectedAgent, model: "gpt-test"}, usage: {today: {total_tokens: 12}}, conversations: {}, load_errors: []});
+resolveBroadcast({enabled:false, can_manage:true, catalog:{}, history:[]});
 resolveAgents({agents: [selectedAgent], is_admin: true});
 await load;
 assert.equal(panel.fallbackLoads || 0, 0);
