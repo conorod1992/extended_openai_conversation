@@ -18,7 +18,6 @@ from custom_components.extended_openai_conversation_responses.request_rule_patte
     _Compiler,
     _Fragment,
     _Literal,
-    _Optional,
     _Parser,
     _State,
     _can_match_empty,
