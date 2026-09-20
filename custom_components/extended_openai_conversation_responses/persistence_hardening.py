@@ -21,6 +21,8 @@ def _repair_private_store_mode(path: str) -> None:
         os.chmod(path, _PRIVATE_STORE_MODE)
 
 
-async def _async_repair_private_store_mode(store: Store[dict[str, Any]]) -> None:
-    """Tighten permissions on a historical Store file before loading it."""
+async def _async_repair_private_store_mode(store: Any) -> None:
+    """Tighten permissions on a historical Home Assistant Store before loading."""
+    if not isinstance(store, Store):
+        return
     await store.hass.async_add_executor_job(_repair_private_store_mode, store.path)
