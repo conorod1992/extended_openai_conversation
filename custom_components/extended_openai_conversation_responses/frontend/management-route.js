@@ -114,26 +114,48 @@ function coreAssetPromise(view) {
   return null;
 }
 
+export function requestRuleSearchText(rule) {
+  return `${rule?.name || ""} ${(rule?.phrases || []).join(" ")} ${rule?.action_type || ""}`.toLocaleLowerCase();
+}
+
 export function matchesRequestRuleSearch(rule, query) {
   const normalized = String(query || "").trim().toLocaleLowerCase();
-  if (!normalized) return true;
-  const haystack = `${rule?.name || ""} ${(rule?.phrases || []).join(" ")} ${rule?.action_type || ""}`.toLocaleLowerCase();
-  return haystack.includes(normalized);
+  return !normalized || requestRuleSearchText(rule).includes(normalized);
+}
+
+function requestRuleSearchEntries(panel, root, rules) {
+  const list = root.querySelector(".rule-list");
+  const revision = panel._eocRequestRuleCollectionRevision || 0;
+  const cached = panel._eocRequestRuleSearchCache;
+  if (
+    cached?.rules === rules
+    && cached.list === list
+    && cached.revision === revision
+  ) return cached.entries;
+
+  const cards = new Map(
+    [...(list?.querySelectorAll?.("[data-rule-key]") || [])]
+      .map((card) => [String(card.dataset.ruleKey), card]),
+  );
+  const entries = rules.map((rule) => ({
+    card: cards.get(String(rule.id)),
+    searchText: requestRuleSearchText(rule),
+  })).filter((entry) => entry.card);
+  panel._eocRequestRuleSearchCache = {rules, list, revision, entries};
+  return entries;
 }
 
 export function applyRequestRuleSearch(panel, root = panel?.shadowRoot) {
   if (!root || panel?._viewKey?.() !== REQUEST_RULES_VIEW) return 0;
   const query = String(root.querySelector("#rule-search")?.value ?? panel._query ?? "");
+  const normalized = query.trim().toLocaleLowerCase();
   const rules = panel._result?.rules || [];
-  const rulesById = new Map(rules.map((rule) => [String(rule.id), rule]));
-  const cards = [...root.querySelectorAll(".request-rule-card")];
+  const entries = requestRuleSearchEntries(panel, root, rules);
   let visible = 0;
 
-  for (const card of cards) {
-    const ruleId = card.querySelector(".rule-enabled")?.dataset?.id;
-    const rule = rulesById.get(String(ruleId));
-    const matches = rule ? matchesRequestRuleSearch(rule, query) : true;
-    card.hidden = !matches;
+  for (const {card, searchText} of entries) {
+    const matches = !normalized || searchText.includes(normalized);
+    if (card.hidden === matches) card.hidden = !matches;
     if (matches) visible += 1;
   }
 
@@ -223,15 +245,16 @@ async function loadRouteData(panel, silent, view, token) {
     panel._eocHistoryMode = "list";
     panel._eocHistoryQuery = "";
   }
-  const result = await panel._loadSectionData(silent);
   if (view === "usage-maintenance/usage" && isCurrentLazyLoad(panel, view, token)) {
     if (panel._inputFootprintAgentId !== panel._agentId) {
       panel._inputFootprint = null;
       panel._inputFootprintError = null;
     }
-    await feature.loadInputFootprint(panel);
+    // Footprint data is independent of the main Usage requests. Start it now and
+    // let its stable card region reconcile independently when it completes.
+    void feature.loadInputFootprint(panel);
   }
-  return result;
+  return panel._loadSectionData(silent);
 }
 
 // One native route entry point owns lazy assets and stale completion handling.
