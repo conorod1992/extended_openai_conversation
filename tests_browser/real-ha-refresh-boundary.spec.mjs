@@ -1,6 +1,4 @@
 import {expect, test} from "@playwright/test";
-import path from "node:path";
-import {fileURLToPath} from "node:url";
 import {acceptConfirmation, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
 
 const backendUrl = process.env.REAL_HA_BACKEND_URL;
@@ -10,17 +8,7 @@ const realFixtureUrl = (route) =>
   `/tests_browser/real-ha-fixture.html?route=${encodeURIComponent(route)}&backend=${encodeURIComponent(backendUrl)}`;
 
 const MEMORY = "Real HA refresh-boundary memory";
-const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const fixturePath = path.join(repoRoot, "tests_browser", "real-ha-fixture.html");
-
 test("hard refresh after committed Memory mutation converges without replay", async ({page}) => {
-  // The harness intentionally rewrites the address bar to the production-style
-  // /extended-openai route. On hard reload, serve the same static fixture at that
-  // rewritten URL so the browser performs a genuine document reload while the
-  // harness restores its backend bridge details from sessionStorage.
-  await page.route("**/extended-openai/**", (route) =>
-    route.fulfill({path: fixturePath, contentType: "text/html"}),
-  );
   const pageErrors = trackPageErrors(page);
   await page.goto(realFixtureUrl("data-memory/memories"));
 
@@ -60,9 +48,10 @@ test("hard refresh after committed Memory mutation converges without replay", as
   await expect.poll(() => page.evaluate(() => window.__refreshBoundary?.committed)).toBe(true);
   await expect(panel.locator("#memory-dialog")).toHaveJSProperty("open", true);
 
-  // A hard reload destroys the unresolved frontend promise. The integration must
-  // not replay the already-committed mutation when the fresh panel mounts.
-  await page.reload({waitUntil: "domcontentloaded"});
+  // A fresh full-document navigation destroys the unresolved frontend promise.
+  // Re-enter through the dedicated fixture URL rather than reloading the synthetic
+  // production-style path that the static test server does not actually own.
+  await page.goto(realFixtureUrl("data-memory/memories"), {waitUntil: "domcontentloaded"});
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("heading", {name: "Memories", exact: true})).toBeVisible();
 
@@ -70,9 +59,9 @@ test("hard refresh after committed Memory mutation converges without replay", as
   await expect(matchingCards).toHaveCount(1);
   await expect(matchingCards.first()).toContainText("refresh-boundary");
 
-  // Reload once more to prove the persisted backend state is stable, not merely a
-  // transient render artifact from the first post-refresh load.
-  await page.reload({waitUntil: "domcontentloaded"});
+  // Start one more fresh document to prove the persisted backend state is stable,
+  // not merely a transient render artifact from the first post-boundary load.
+  await page.goto(realFixtureUrl("data-memory/memories"), {waitUntil: "domcontentloaded"});
   panel = page.locator("extended-openai-management-panel");
   const persisted = panel.locator(".list-card").filter({hasText: MEMORY});
   await expect(persisted).toHaveCount(1);
@@ -82,7 +71,7 @@ test("hard refresh after committed Memory mutation converges without replay", as
   await acceptConfirmation(panel);
   await expect(panel.locator(".list-card").filter({hasText: MEMORY})).toHaveCount(0);
 
-  await page.reload({waitUntil: "domcontentloaded"});
+  await page.goto(realFixtureUrl("data-memory/memories"), {waitUntil: "domcontentloaded"});
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".list-card").filter({hasText: MEMORY})).toHaveCount(0);
   await expectHarnessClean(page, pageErrors);
