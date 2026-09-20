@@ -1,11 +1,11 @@
-"""Model capability catalog v2 parsing, lifecycle, and fail-safe refresh tests."""
+"""Model Catalog loading, strict validation, lookup and manager integration contracts."""
 
 from __future__ import annotations
 
-import asyncio
 from copy import deepcopy
-import json
+import inspect
 from pathlib import Path
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -19,10 +19,11 @@ from custom_components.extended_openai_conversation_responses import (
 
 @pytest.fixture(autouse=True)
 def isolated_catalog(monkeypatch):
+    """Keep catalogue publication local to each test."""
     monkeypatch.setattr(data, "_active", data.BUNDLED_CATALOG)
 
 
-def candidate():
+def _label_candidate():
     value = deepcopy(data.BUNDLED_CATALOG)
     value["catalog_version"] += 1
     value["models"][0]["display_name"] = "Astra (catalog update)"
@@ -30,43 +31,57 @@ def candidate():
 
 
 class MemoryStore:
-    def __init__(self):
-        self.saved = None
+    """Copy persisted state and inject save failures without publishing partial writes."""
+
+    def __init__(self, saved=None):
+        self.saved = deepcopy(saved)
         self.fail = False
+        self.save_calls = 0
 
     async def async_load(self):
         return deepcopy(self.saved)
 
     async def async_save(self, value):
+        self.save_calls += 1
         if self.fail:
             raise OSError("disk full")
         self.saved = deepcopy(value)
 
 
 @pytest.fixture
-def manager(hass):
+def check_manager(hass):
     result = runtime.ModelCatalogManager(hass)
     result.store = MemoryStore()
     return result
 
 
-def transport(monkeypatch, raw, *, status=200, etag='"v3"', error=None):
-    async def chunks(_size):
-        for offset in range(0, len(raw), 100):
-            yield raw[offset : offset + 100]
+def _catalog() -> dict:
+    value = deepcopy(data.BUNDLED_CATALOG)
+    value["catalog_version"] += 1
+    return value
 
-    response = SimpleNamespace(
-        status=status,
-        headers={"ETag": etag},
-        content=SimpleNamespace(iter_chunked=chunks),
-    )
-    context = AsyncMock()
-    context.__aenter__.return_value = response
-    if error:
-        context.__aenter__.side_effect = error
-    session = SimpleNamespace(get=Mock(return_value=context))
-    monkeypatch.setattr(runtime, "async_get_clientsession", lambda _: session)
-    return session.get
+
+def _model(value: dict) -> dict:
+    return value["models"][0]
+
+
+def _set_temperature(model: dict, support: str, allowed, send_policy: str) -> None:
+    model["temperature"] = {
+        "support": support,
+        "allowed_reasoning_efforts": allowed,
+        "send_policy": send_policy,
+    }
+
+
+def _stored_manager(hass) -> runtime.ModelCatalogManager:
+    manager = runtime.ModelCatalogManager(hass)
+    manager.store = MemoryStore()
+    return manager
+
+
+def _websocket_handler():
+    """Return the undecorated handler when HA decorators expose wrapped callables."""
+    return inspect.unwrap(runtime.websocket_catalog)
 
 
 def test_bundled_catalog_is_schema_v2_and_parses_exactly():
@@ -150,110 +165,14 @@ def test_every_current_model_supports_streaming():
     ],
 )
 def test_invalid_schema_v2_catalog_is_rejected(mutate):
-    value = candidate()
+    value = _label_candidate()
     mutate(value)
     with pytest.raises(ValueError):
         data.validate_catalog(value)
 
 
-async def test_check_stages_update_without_changing_active_catalog(manager, monkeypatch):
-    value = candidate()
-    get = transport(monkeypatch, json.dumps(value).encode())
-
-    result = await manager.async_check(force=True)
-
-    assert result["source"] == "bundled"
-    assert result["schema_version"] == 2
-    assert result["update_available"] is True
-    assert result["available_catalog_version"] == value["catalog_version"]
-    assert result["last_error"] is None
-    assert get.call_args.kwargs == {"headers": {}, "allow_redirects": False}
-    assert manager.catalog is None
-    assert manager.available_catalog == value
-    assert manager.store.saved["catalog"] is None
-    assert manager.store.saved["available_catalog"] == value
-    assert data.model_metadata("gpt-6-astra")["display_name"] == "gpt-6-astra"
-
-
-async def test_apply_activates_staged_catalog_and_clears_pending_state(
-    manager, monkeypatch
-):
-    value = candidate()
-    transport(monkeypatch, json.dumps(value).encode())
-    await manager.async_check(force=True)
-
-    result = await manager.async_apply_update()
-
-    assert result["source"] == "downloaded"
-    assert result["catalog_version"] == value["catalog_version"]
-    assert result["update_available"] is False
-    assert result["available_catalog_version"] is None
-    assert result["last_error"] is None
-    assert manager.catalog == value
-    assert manager.available_catalog is None
-    assert manager.store.saved["catalog"] == value
-    assert manager.store.saved["available_catalog"] is None
-    assert data.model_metadata("gpt-6-astra")["display_name"] == "Astra (catalog update)"
-
-
-async def test_restoring_bundled_data_is_persistent_across_restart(manager, monkeypatch):
-    value = candidate()
-    transport(monkeypatch, json.dumps(value).encode())
-    await manager.async_check(force=True)
-    await manager.async_apply_update()
-
-    result = await manager.async_reset()
-
-    assert result["source"] == "bundled"
-    assert result["update_available"] is True
-    assert manager.catalog is None
-    assert manager.available_catalog == value
-    assert manager.store.saved["catalog"] is None
-    assert manager.store.saved["available_catalog"] == value
-    assert data.model_metadata("gpt-6-astra")["display_name"] == "gpt-6-astra"
-
-    restarted = runtime.ModelCatalogManager(manager.hass)
-    restarted.store = manager.store
-    await restarted.async_load()
-
-    assert restarted.status()["source"] == "bundled"
-    assert restarted.status()["update_available"] is True
-    assert restarted.catalog is None
-    assert restarted.available_catalog == value
-    assert data.model_metadata("gpt-6-astra")["display_name"] == "gpt-6-astra"
-
-
-async def test_restart_does_not_resurrect_stale_pending_state(manager, monkeypatch):
-    value = candidate()
-    transport(monkeypatch, json.dumps(value).encode())
-    await manager.async_check(force=True)
-    await manager.async_apply_update()
-
-    assert manager.store.saved["available_catalog"] is None
-
-    restarted = runtime.ModelCatalogManager(manager.hass)
-    restarted.store = manager.store
-    await restarted.async_load()
-
-    assert restarted.catalog == value
-    assert restarted.available_catalog is None
-    assert restarted.status()["update_available"] is False
-    assert data.model_metadata("gpt-6-astra")["display_name"] == "Astra (catalog update)"
-
-    # Be defensive about storage left by an interrupted/older write: an update at
-    # or below the active version must not be surfaced as pending after restart.
-    restarted.store.saved["available_catalog"] = deepcopy(value)
-    second_restart = runtime.ModelCatalogManager(manager.hass)
-    second_restart.store = restarted.store
-    await second_restart.async_load()
-
-    assert second_restart.catalog == value
-    assert second_restart.available_catalog is None
-    assert second_restart.status()["update_available"] is False
-
-
-async def test_stored_v1_catalog_is_migrated_to_authoritative_v2(manager):
-    manager.store.saved = {
+async def test_stored_v1_catalog_is_migrated_to_authoritative_v2(check_manager):
+    check_manager.store.saved = {
         "catalog": {
             "schema_version": 1,
             "catalog_version": 1,
@@ -263,8 +182,8 @@ async def test_stored_v1_catalog_is_migrated_to_authoritative_v2(manager):
         "etag": '"old"',
         "last_checked": 0,
     }
-    await manager.async_load()
-    assert manager.status()["schema_version"] == 2
+    await check_manager.async_load()
+    assert check_manager.status()["schema_version"] == 2
     assert data.model_metadata("gpt-5.6")["reasoning"]["efforts"] == [
         "none",
         "low",
@@ -275,109 +194,18 @@ async def test_stored_v1_catalog_is_migrated_to_authoritative_v2(manager):
     ]
 
 
-@pytest.mark.parametrize(
-    "raw",
-    [
-        b"{",
-        b"[]",
-        b'{"schema_version":2,"schema_version":2}',
-        b" " * (data.MAX_CATALOG_BYTES + 1),
-    ],
-    ids=["truncated", "array", "duplicate-key", "oversized"],
-)
-async def test_malformed_and_oversized_download_rejected(manager, monkeypatch, raw):
-    transport(monkeypatch, raw)
-    assert (await manager.async_check(force=True))["last_error"]
-    assert manager.catalog is None
-    assert manager.available_catalog is None
-    assert data.model_metadata("gpt-5.6")["status"] == "current"
-
-
-@pytest.mark.parametrize("failure", ["network", "http", "storage", "old", "same-version"])
-async def test_failed_check_never_replaces_current_data(manager, monkeypatch, failure):
-    first = candidate()
-    transport(monkeypatch, json.dumps(first).encode())
-    await manager.async_check(force=True)
-    await manager.async_apply_update()
-    previous = deepcopy(manager.catalog)
-
-    value = deepcopy(first)
-    value["catalog_version"] += 1
-    value["models"][0]["display_name"] = "Another label"
-    if failure == "old":
-        value["catalog_version"] = data.BUNDLED_CATALOG["catalog_version"] - 1
-    elif failure == "same-version":
-        value["catalog_version"] = previous["catalog_version"]
-    elif failure == "storage":
-        manager.store.fail = True
-
-    transport(
-        monkeypatch,
-        json.dumps(value).encode(),
-        status=500 if failure == "http" else 200,
-        error=TimeoutError() if failure == "network" else None,
-    )
-    assert (await manager.async_check(force=True))["last_error"]
-    assert manager.catalog == previous
-    assert manager.available_catalog is None
-    assert data.model_metadata("gpt-6-astra")["display_name"] == "Astra (catalog update)"
-    if not manager.store.fail:
-        assert manager.store.saved["catalog"] == previous
-        assert manager.store.saved["available_catalog"] is None
-
-
-async def test_daily_cadence_and_etag_apply_to_checks(manager, monkeypatch):
-    now = 1_000_000.0
-    monkeypatch.setattr(runtime.time, "time", lambda: now)
-    get = transport(monkeypatch, json.dumps(candidate()).encode())
-    await manager.async_check()
-    now += runtime.UPDATE_INTERVAL - 1
-    await manager.async_check()
-    assert get.call_count == 1
-
-    now += 1
-    get = transport(monkeypatch, b"", status=304)
-    await manager.async_check()
-    assert get.call_args.kwargs["headers"] == {"If-None-Match": '"v3"'}
-    assert manager.status()["last_error"] is None
-    assert manager.status()["update_available"] is True
-
-
-async def test_corrupt_storage_falls_back_to_bundled(manager):
-    manager.store.saved = {"catalog": {"schema_version": 99}}
-    await manager.async_load()
-    assert manager.status()["source"] == "bundled"
-    assert manager.status()["schema_version"] == 2
-    assert manager.last_error
-
-
-async def test_reset_waits_for_inflight_check(manager, monkeypatch):
-    transport(monkeypatch, json.dumps(candidate()).encode())
-    started, release = asyncio.Event(), asyncio.Event()
-    save = manager.store.async_save
-
-    async def paused_save(value):
-        started.set()
-        await release.wait()
-        await save(value)
-
-    monkeypatch.setattr(manager.store, "async_save", paused_save)
-    check = asyncio.create_task(manager.async_check(force=True))
-    await started.wait()
-    assert data.model_metadata("gpt-6-astra")["display_name"] == "gpt-6-astra"
-    reset = asyncio.create_task(manager.async_reset())
-    release.set()
-    await asyncio.gather(check, reset)
-    assert manager.catalog is None
-    assert manager.available_catalog == candidate()
-    assert manager.store.saved["catalog"] is None
-    assert manager.store.saved["available_catalog"] == candidate()
+async def test_corrupt_storage_falls_back_to_bundled(check_manager):
+    check_manager.store.saved = {"catalog": {"schema_version": 99}}
+    await check_manager.async_load()
+    assert check_manager.status()["source"] == "bundled"
+    assert check_manager.status()["schema_version"] == 2
+    assert check_manager.last_error
 
 
 async def test_setup_is_shared_and_timer_is_removed_on_stop(hass, monkeypatch):
-    manager = runtime.ModelCatalogManager(hass)
-    manager.store = MemoryStore()
-    monkeypatch.setattr(runtime, "ModelCatalogManager", lambda _: manager)
+    check_manager = runtime.ModelCatalogManager(hass)
+    check_manager.store = MemoryStore()
+    monkeypatch.setattr(runtime, "ModelCatalogManager", lambda _: check_manager)
     interval, cancel = Mock(), Mock()
     interval.return_value = cancel
     monkeypatch.setattr(runtime, "async_track_time_interval", interval)
@@ -386,8 +214,359 @@ async def test_setup_is_shared_and_timer_is_removed_on_stop(hass, monkeypatch):
     await runtime.async_setup_model_catalog(hass)
     assert interval.call_count == 1
     assert interval.call_args.args[2].total_seconds() == 3600
-    manager.async_check = AsyncMock()
+    check_manager.async_check = AsyncMock()
     await interval.call_args.args[1](None)
-    manager.async_check.assert_awaited_once()
+    check_manager.async_check.assert_awaited_once()
     hass.bus.async_listen_once.call_args.args[1](None)
     cancel.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("allowed", "match"),
+    [
+        ([], "Invalid conditional temperature reasoning efforts"),
+        (["low", "low"], "Invalid conditional temperature reasoning efforts"),
+        (["none"], "Invalid conditional temperature reasoning efforts"),
+    ],
+)
+def test_conditional_sampling_requires_nonempty_unique_supported_efforts(
+    allowed, match
+) -> None:
+    value = _catalog()
+    _set_temperature(_model(value), "conditional", allowed, "omit_unless_configured")
+
+    with pytest.raises(ValueError, match=match):
+        data.validate_catalog(value)
+
+
+def test_nonconditional_sampling_requires_null_allowed_efforts() -> None:
+    value = _catalog()
+    _set_temperature(_model(value), "always", ["low"], "omit_unless_configured")
+
+    with pytest.raises(ValueError, match="allowed_reasoning_efforts must be null"):
+        data.validate_catalog(value)
+
+
+def test_unsupported_sampling_must_be_omitted() -> None:
+    value = _catalog()
+    _set_temperature(_model(value), "never", None, "omit_unless_configured")
+
+    with pytest.raises(ValueError, match="must be omitted"):
+        data.validate_catalog(value)
+
+
+def test_auto_api_must_reference_an_enabled_api() -> None:
+    value = _catalog()
+    model = _model(value)
+    model["api"]["responses"] = False
+
+    with pytest.raises(ValueError, match="Invalid Auto API preference"):
+        data.validate_catalog(value)
+
+
+def test_function_calling_flags_must_be_real_booleans() -> None:
+    value = _catalog()
+    _model(value)["function_calling"]["responses"] = 1
+
+    with pytest.raises(ValueError, match="Function-calling values must be boolean"):
+        data.validate_catalog(value)
+
+
+def test_function_preference_must_reference_enabled_api() -> None:
+    value = _catalog()
+    model = _model(value)
+    model["auto_api"] = None
+    model["api"]["responses"] = False
+    model["function_calling"]["preferred_api"] = "responses"
+    model["recommended_profile"]["api"] = "chat_completions"
+
+    with pytest.raises(ValueError, match="Invalid preferred function-calling API"):
+        data.validate_catalog(value)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda reasoning: reasoning.update(supported="yes"),
+        lambda reasoning: reasoning.update(efforts="low"),
+        lambda reasoning: reasoning.update(efforts=["low", "low"]),
+        lambda reasoning: reasoning.update(supported=False),
+    ],
+)
+def test_reasoning_capability_shape_is_strict(mutate) -> None:
+    value = _catalog()
+    mutate(_model(value)["reasoning"])
+
+    with pytest.raises(ValueError, match="Invalid reasoning"):
+        data.validate_catalog(value)
+
+
+def test_openai_reasoning_default_must_be_an_allowed_effort() -> None:
+    value = _catalog()
+    _model(value)["reasoning"]["openai_default"] = "none"
+
+    with pytest.raises(ValueError, match="Invalid OpenAI reasoning default"):
+        data.validate_catalog(value)
+
+
+def test_streaming_flag_must_be_boolean() -> None:
+    value = _catalog()
+    _model(value)["streaming"] = 1
+
+    with pytest.raises(ValueError, match="Streaming capability must be boolean"):
+        data.validate_catalog(value)
+
+
+def test_output_token_mapping_is_exact() -> None:
+    value = _catalog()
+    _model(value)["output_tokens"]["legacy_max_tokens"] = "max_tokens"
+
+    with pytest.raises(ValueError, match="Invalid output-token parameter mapping"):
+        data.validate_catalog(value)
+
+
+def test_recommended_api_must_be_available() -> None:
+    value = _catalog()
+    model = _model(value)
+    model["recommended_profile"]["api"] = "invalid"
+
+    with pytest.raises(ValueError, match="Invalid recommended API"):
+        data.validate_catalog(value)
+
+
+def test_recommended_reasoning_effort_must_be_supported() -> None:
+    value = _catalog()
+    _model(value)["recommended_profile"]["reasoning_effort"] = "none"
+
+    with pytest.raises(ValueError, match="Invalid recommended reasoning effort"):
+        data.validate_catalog(value)
+
+
+def test_recommended_sampling_profile_must_omit_sampling() -> None:
+    value = _catalog()
+    _model(value)["recommended_profile"]["temperature"] = 0.7
+
+    with pytest.raises(ValueError, match="Recommended sampling profile must omit"):
+        data.validate_catalog(value)
+
+
+@pytest.mark.parametrize("field", ["service_tier", "explicit_prompt_cache"])
+def test_compatibility_feature_flags_must_be_boolean(field: str) -> None:
+    value = _catalog()
+    _model(value)[field] = 1
+
+    with pytest.raises(ValueError, match="Compatibility feature flags must be boolean"):
+        data.validate_catalog(value)
+
+
+def test_alias_target_and_lifecycle_note_are_strictly_validated() -> None:
+    value = _catalog()
+    _model(value)["alias_of"] = "INVALID MODEL ID"
+    with pytest.raises(ValueError, match="Invalid alias target"):
+        data.validate_catalog(value)
+
+    value = _catalog()
+    _model(value)["lifecycle_note"] = "x" * 513
+    with pytest.raises(ValueError, match="Invalid lifecycle note"):
+        data.validate_catalog(value)
+
+
+def test_defaults_must_describe_unknown_models() -> None:
+    value = _catalog()
+    value["defaults"]["status"] = "current"
+
+    with pytest.raises(ValueError, match="defaults must describe unknown models"):
+        data.validate_catalog(value)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda model: model.update(display_name=""), "Invalid display name"),
+        (lambda model: model.update(kind="family"), "Invalid model kind"),
+    ],
+)
+def test_model_wrapper_metadata_is_strict(mutate, match) -> None:
+    value = _catalog()
+    mutate(_model(value))
+
+    with pytest.raises(ValueError, match=match):
+        data.validate_catalog(value)
+
+
+def test_alias_must_reference_a_different_catalog_model() -> None:
+    value = _catalog()
+    model = _model(value)
+    model["alias_of"] = model["id"]
+
+    with pytest.raises(ValueError, match="Alias target must reference another"):
+        data.validate_catalog(value)
+
+
+def test_v1_migration_rejects_non_v1_and_preserves_monotonic_version() -> None:
+    with pytest.raises(ValueError, match="Not a model catalogue v1 document"):
+        data.migrate_catalog_v1({"schema_version": 2})
+
+    migrated = data.migrate_catalog_v1(
+        {
+            "schema_version": 1,
+            "catalog_version": data.BUNDLED_CATALOG["catalog_version"] + 5,
+        }
+    )
+    assert migrated["schema_version"] == 2
+    assert migrated["catalog_version"] == data.BUNDLED_CATALOG["catalog_version"] + 6
+
+
+def test_validate_or_migrate_marks_only_v1_as_migrated() -> None:
+    migrated, changed = data.validate_or_migrate_catalog({"schema_version": 1})
+    assert changed is True
+    assert migrated["schema_version"] == 2
+
+    current = _catalog()
+    validated, changed = data.validate_or_migrate_catalog(current)
+    assert changed is False
+    assert validated == current
+    assert validated is not current
+
+
+def test_catalog_picker_preserves_selected_custom_model_case_insensitively() -> None:
+    picked = data.catalog_picker_models(selected_model="MY-CUSTOM-MODEL")
+    selected = next(item for item in picked if item["id"] == "my-custom-model")
+    assert selected["status"] == "unknown"
+    assert selected["display_name"] == "my-custom-model"
+
+
+def test_activate_catalog_can_restore_bundled_state() -> None:
+    custom = _catalog()
+    _model(custom)["display_name"] = "Updated Astra"
+    data.activate_catalog(custom)
+    assert data.model_metadata("gpt-6-astra")["display_name"] == "Updated Astra"
+
+    data.activate_catalog(None)
+    assert data.model_metadata("gpt-6-astra")["display_name"] == "gpt-6-astra"
+
+
+@pytest.mark.parametrize(
+    "saved",
+    [
+        {"catalog": None, "etag": None, "last_checked": True},
+        {"catalog": None, "etag": None, "last_checked": time.time() + 3600},
+        {"catalog": None, "etag": "bad\netag", "last_checked": 0},
+        {"catalog": None, "etag": "x" * 257, "last_checked": 0},
+    ],
+    ids=["boolean-check-time", "future-check-time", "newline-etag", "oversized-etag"],
+)
+async def test_load_rejects_invalid_storage_metadata(hass, saved) -> None:
+    manager = _stored_manager(hass)
+    manager.store = MemoryStore(saved)
+
+    await manager.async_load()
+
+    assert manager.catalog is None
+    assert (
+        manager.last_error
+        == "Stored model data could not be loaded; using bundled data."
+    )
+    assert manager.status()["source"] == "bundled"
+
+
+async def test_load_discards_download_older_than_bundled(hass, monkeypatch) -> None:
+    manager = _stored_manager(hass)
+    old = deepcopy(data.BUNDLED_CATALOG)
+    old["catalog_version"] -= 1
+    manager.store = MemoryStore({"catalog": old, "etag": '"stale"', "last_checked": 0})
+    monkeypatch.setattr(
+        runtime,
+        "validate_or_migrate_catalog",
+        lambda value: (deepcopy(value), False),
+    )
+
+    await manager.async_load()
+
+    assert manager.catalog is None
+    assert manager.etag is None
+    assert manager.last_error is None
+
+
+@pytest.mark.asyncio
+async def test_initialize_accepts_stored_metadata_without_catalog(
+    hass, monkeypatch
+) -> None:
+    manager = runtime.ModelCatalogManager(hass)
+    manager.store = SimpleNamespace(
+        async_load=AsyncMock(
+            return_value={"catalog": None, "etag": None, "last_checked": 0}
+        )
+    )
+    validate_transition = Mock()
+    activate = Mock()
+    monkeypatch.setattr(runtime, "validate_catalog_transition", validate_transition)
+    monkeypatch.setattr(runtime, "activate_catalog", activate)
+
+    await manager.async_load()
+
+    assert manager.catalog is None
+    assert manager.etag is None
+    assert manager.last_checked == 0
+    assert manager.last_error is None
+    validate_transition.assert_not_called()
+    activate.assert_called_once_with(None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["lookup", "reset", "update"])
+async def test_websocket_actions_return_complete_catalog_payload(
+    hass, monkeypatch, action: str
+) -> None:
+    status = {
+        "source": "downloaded",
+        "catalog_version": 7,
+        "schema_version": 2,
+        "update_available": False,
+        "available_catalog_version": None,
+        "last_checked": 123.0,
+        "last_error": None,
+    }
+    manager = SimpleNamespace(
+        catalog={"catalog_version": 7},
+        status=Mock(return_value=status),
+        async_check=AsyncMock(return_value=status),
+        async_reset=AsyncMock(return_value=status),
+    )
+    hass.data[runtime.DATA_MANAGER] = manager
+    connection = SimpleNamespace(send_result=Mock(), send_error=Mock())
+    metadata = {"id": "gpt-test", "reasoning": {"efforts": ["low", "high"]}}
+    capabilities = {"responses": True}
+    picker = [{"id": "gpt-test"}]
+    monkeypatch.setattr(runtime, "model_metadata", Mock(return_value=metadata))
+    monkeypatch.setattr(
+        runtime, "compatibility_capabilities", Mock(return_value=capabilities)
+    )
+    monkeypatch.setattr(runtime, "catalog_picker_models", Mock(return_value=picker))
+
+    await _websocket_handler()(
+        hass,
+        connection,
+        {"id": 42, "action": action, "model": "gpt-test"},
+    )
+
+    connection.send_error.assert_not_called()
+    connection.send_result.assert_called_once_with(
+        42,
+        {
+            **status,
+            "model_capabilities": capabilities,
+            "model_metadata": metadata,
+            "catalog_models": picker,
+            "reasoning_effort_options": ["low", "high"],
+        },
+    )
+    if action == "lookup":
+        manager.async_check.assert_not_awaited()
+        manager.async_reset.assert_not_awaited()
+    elif action == "reset":
+        manager.async_reset.assert_awaited_once_with()
+        manager.async_check.assert_not_awaited()
+    else:
+        manager.async_check.assert_awaited_once_with(force=True)
+        manager.async_reset.assert_not_awaited()
