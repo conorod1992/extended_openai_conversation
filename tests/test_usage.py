@@ -497,7 +497,7 @@ async def test_initialize_salvages_valid_detail_records_and_applies_retention() 
 async def test_request_outside_run_updates_aggregates_without_detail_record() -> None:
     details = CoverageMemoryStorage()
     manager = await _coverage_manager(CoverageMemoryStorage(), CoverageMemoryStorage(), details)
-    await manager.async_record_coverage_request(
+    await manager.async_record_request(
         successful=False,
         usage=usage.RequestUsage(total_tokens=4),
         provider="provider",
@@ -517,15 +517,15 @@ async def test_mark_failed_clamps_error_and_finalize_is_idempotent() -> None:
     manager = await _coverage_manager()
     manager.mark_current_run_failed("ignored-without-run")
 
-    async with manager.async_coverage_run() as run:
+    async with manager.async_run() as run:
         manager.mark_current_run_failed("x" * 200)
-        assert manager.current_coverage_run() is run
-    assert manager.current_coverage_run() is None
+        assert manager.current_run() is run
+    assert manager.current_run() is None
     assert run.successful is False
     assert run.error_type == "x" * 128
     assert manager.totals.conversation_count == 1
 
-    await manager._async_finalize_coverage_run(run)
+    await manager._async_finalize_run(run)
     assert manager.totals.conversation_count == 1
 
 
@@ -606,10 +606,10 @@ async def test_summary_series_pagination_breakdowns_and_listener_lifecycle() -> 
     assert page["has_more"] is False
     assert manager.recent_runs(limit=999, offset=-5)["limit"] == usage.MAX_RECENT_LIMIT
 
-    requests = manager.requests_for_coverage_run("one", limit=1)
+    requests = manager.requests_for_run("one", limit=1)
     assert requests["requests"][0]["request_id"] == "a"
     assert requests["has_more"] is True
-    assert manager.requests_for_coverage_run("missing", offset=-2)["offset"] == 0
+    assert manager.requests_for_run("missing", offset=-2)["offset"] == 0
 
     assert manager.breakdowns("2026-09-02", "2026-09-02") == {
         "providers": {"other": 5},
@@ -692,13 +692,13 @@ def test_backup_detail_validators_reject_invalid_metadata(target, change, match)
 
 def test_backup_detail_validators_reject_non_objects_and_unknown_fields() -> None:
     with pytest.raises(ValueError, match="request must be an object"):
-        usage._usage_request_from_coverage_backup([], "target")
+        usage._usage_request_from_backup([], "target")
     with pytest.raises(ValueError, match="request is invalid"):
-        usage._usage_request_from_coverage_backup({**_coverage_request(), "unknown": 1}, "target")
+        usage._usage_request_from_backup({**_coverage_request(), "unknown": 1}, "target")
     with pytest.raises(ValueError, match="run must be an object"):
-        usage._usage_run_from_coverage_backup([], "target")
+        usage._usage_run_from_backup([], "target")
     with pytest.raises(ValueError, match="run is invalid"):
-        usage._usage_run_from_coverage_backup({**_coverage_run(), "unknown": 1}, "target")
+        usage._usage_run_from_backup({**_coverage_run(), "unknown": 1}, "target")
 
 
 async def test_replace_backup_persists_then_reapplies_retention_and_notifies() -> None:
@@ -717,7 +717,7 @@ async def test_replace_backup_persists_then_reapplies_retention_and_notifies() -
     calls = []
     manager.async_add_listener(lambda: calls.append(True))
 
-    await manager.async_replace_coverage_backup(totals, days, requests, runs)
+    await manager.async_replace_backup(totals, days, requests, runs)
 
     assert manager.totals.total_tokens == 5
     assert manager.requests == []
