@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    management_ui,
     temporary_memory as ownership,
     temporary_memory as temporary_module,
 )
@@ -18,11 +19,13 @@ from custom_components.extended_openai_conversation_responses.scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
+    MAX_ACTIVE_RECORDS,
     MAX_DELETE_RECORDS,
     TemporaryMemory,
     TemporaryMemoryRecord,
 )
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 
 def _record(
@@ -296,8 +299,16 @@ async def test_direct_manager_backup_and_owned_helpers() -> None:
     assert [r.memory_id for r in validated] == ["valid", "legacy"]
     assert validated[1].owner_scope_id == SHARED_HOUSEHOLD_SCOPE_ID
     await memory.async_replace_backup(records)
-    assert [item.memory_id for item in await memory.async_list(owner_scope_id="user:alice")] == ["valid"]
-    assert [item.memory_id for item in await memory.async_list_all(owner_scope_id=SHARED_HOUSEHOLD_SCOPE_ID)] == ["legacy"]
+    assert [
+        item.memory_id
+        for item in await memory.async_list(owner_scope_id="user:alice")
+    ] == ["valid"]
+    assert [
+        item.memory_id
+        for item in await memory.async_list_all(
+            owner_scope_id=SHARED_HOUSEHOLD_SCOPE_ID
+        )
+    ] == ["legacy"]
     with pytest.raises(ValueError, match="resolved Personal or Shared owner"):
         await memory.async_list()
     with pytest.raises(ValueError, match="resolved Personal or Shared owner"):
@@ -361,29 +372,6 @@ async def test_snapshot_contract_fails_closed_before_io_and_uses_bound_owner(
 
 
 # Low-level owner normalization and selection invariants.
-
-from dataclasses import replace
-from datetime import timedelta
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
-
-import pytest
-
-from custom_components.extended_openai_conversation_responses import (
-    management_ui,
-    temporary_memory as ownership,
-)
-from custom_components.extended_openai_conversation_responses.scope import (
-    SHARED_HOUSEHOLD_SCOPE_ID,
-)
-from custom_components.extended_openai_conversation_responses.temporary_memory import (
-    MAX_ACTIVE_RECORDS,
-    TemporaryMemory,
-    TemporaryMemoryRecord,
-)
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.util import dt as dt_util
-
 
 def _ownership_record(
     memory_id: str,
@@ -459,7 +447,9 @@ def test_record_owner_normalization_preserves_valid_and_migrates_only_safe_legac
     valid = _ownership_record("valid", owner_scope_id="user:one")
     spaced = replace(valid, memory_id="spaced", owner_scope_id=" user:one ")
     legacy_safe = _ownership_record("legacy", owner_scope_id=None, scope_id="user:legacy")
-    legacy_unsafe = _ownership_record("unsafe", owner_scope_id=None, scope_id="conversation:123")
+    legacy_unsafe = _ownership_record(
+        "unsafe", owner_scope_id=None, scope_id="conversation:123"
+    )
     invalid = _ownership_record("invalid", owner_scope_id="device:kitchen")
 
     assert ownership._normalize_record_owner(valid) is valid
