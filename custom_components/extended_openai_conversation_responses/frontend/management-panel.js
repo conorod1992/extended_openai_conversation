@@ -14,7 +14,7 @@ import {bindPanelDialogs, knowledgeSourceAvailabilityControl} from "./management
 import {renderManagement} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, isAgentMutation, syncAgentPicker} from "./management-actions.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch} from "./management-route.js";
-import {getConfigurationEditor, getRouteFeature, routeAssetKind, routeFeaturesReady} from "./management-route.js";
+import {getConfigurationEditor, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath} from "./frontend-navigation.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview, enhanceOverviewHealthClarity} from "./overview-page.js";
@@ -32,19 +32,6 @@ const WS_TYPE = "extended_openai_conversation_responses/management";
 const TOOL_MUTATIONS = new Set(["save", "set_enabled", "delete", "save_group", "delete_group", "ha_add"]);
 const REQUEST_RULE_CACHE_KEY = "capabilities/request-rules";
 
-function isRestrictedManagementView(page, subsection = null) {
-  if (page === "data-memory" && subsection === "knowledge") return true;
-  if (page === "usage-maintenance" && subsection === null) return true;
-  return page === "usage-maintenance" && ["usage", "diagnostics"].includes(subsection);
-}
-
-function nonAdminOverviewKnowledgeSnapshot(panel) {
-  const agent = panel?._selectedAgent?.();
-  return {
-    sources: [],
-    stats: {source_count: Number(agent?.knowledge_source_count || 0)},
-  };
-}
 const KNOWLEDGE_TITLE_LIMIT = 120;
 const KNOWLEDGE_DESCRIPTION_LIMIT = 500;
 const KNOWLEDGE_LIMIT = 100000;
