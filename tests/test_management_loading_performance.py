@@ -385,6 +385,11 @@ async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) 
 async def test_configuration_get_reports_phase_timings(monkeypatch) -> None:
     hass, _entry, _subentry = _hass_with_agent()
     monkeypatch.setattr(management_ui, "local_handling_snapshot", lambda *_args: {})
+    monkeypatch.setattr(
+        management_ui,
+        "decorate_configuration_result",
+        lambda _hass, _entry_data, result, **_kwargs: result,
+    )
 
     result = await management_ui.async_management_command(
         hass,
