@@ -391,8 +391,8 @@ async def test_skill_load_publishes_complete_result_and_skips_bad_skill(
             ]
         ),
     )
-    monkeypatch.setattr(skills, "SkillManager", FakeManager)
-    monkeypatch.setattr(skills, "SkillMdParser", FakeParser)
+    monkeypatch.setattr(skills_module, "SkillManager", FakeManager)
+    monkeypatch.setattr(skills_module, "SkillMdParser", FakeParser)
 
     manager = FakeManager(hass)
     await manager.async_load_skills()
@@ -419,8 +419,8 @@ async def test_skill_first_load_failure_clears_singleton_and_retry_succeeds(
         data={},
         async_add_executor_job=executor,
     )
-    monkeypatch.setattr(skills, "SkillManager", FakeManager)
-    monkeypatch.setattr(skills, "SkillMdParser", FakeParser)
+    monkeypatch.setattr(skills_module, "SkillManager", FakeManager)
+    monkeypatch.setattr(skills_module, "SkillMdParser", FakeParser)
 
     with pytest.raises(OSError, match="disk unavailable"):
         await FakeManager.async_get_instance(hass, "/custom-skills")
@@ -457,8 +457,8 @@ async def test_skill_getter_initializes_without_custom_directory(
         data={},
         async_add_executor_job=AsyncMock(return_value=[]),
     )
-    monkeypatch.setattr(skills, "SkillManager", manager_type)
-    monkeypatch.setattr(skills, "SkillMdParser", _Parser)
+    monkeypatch.setattr(skills_module, "SkillManager", manager_type)
+    monkeypatch.setattr(skills_module, "SkillMdParser", _Parser)
 
     manager = await manager_type.async_get_instance(hass)
 
@@ -480,8 +480,8 @@ async def test_skill_getter_adopts_late_directory_before_first_load(
     )
     manager = manager_type(hass)
     manager_type._instance = manager
-    monkeypatch.setattr(skills, "SkillManager", manager_type)
-    monkeypatch.setattr(skills, "SkillMdParser", _Parser)
+    monkeypatch.setattr(skills_module, "SkillManager", manager_type)
+    monkeypatch.setattr(skills_module, "SkillMdParser", _Parser)
 
     resolved = await manager_type.async_get_instance(hass, "/late-skills")
 
@@ -509,8 +509,8 @@ async def test_skill_first_load_failure_does_not_clear_newer_singleton(
         data={},
         async_add_executor_job=AsyncMock(side_effect=fail_after_replacement),
     )
-    monkeypatch.setattr(skills, "SkillManager", manager_type)
-    monkeypatch.setattr(skills, "SkillMdParser", _Parser)
+    monkeypatch.setattr(skills_module, "SkillManager", manager_type)
+    monkeypatch.setattr(skills_module, "SkillMdParser", _Parser)
 
     with pytest.raises(OSError, match="load failed"):
         await manager_type.async_get_instance(hass)
@@ -524,7 +524,7 @@ def test_loaded_skill_getter_returns_none_for_uninitialized_singleton(
     """Callers must not observe a singleton before its catalogue is complete."""
     manager_type = _skill_manager_type()
     manager_type._instance = manager_type(SimpleNamespace())
-    monkeypatch.setattr(skills, "SkillManager", manager_type)
-    monkeypatch.setattr(skills, "SkillMdParser", _Parser)
+    monkeypatch.setattr(skills_module, "SkillManager", manager_type)
+    monkeypatch.setattr(skills_module, "SkillMdParser", _Parser)
 
     assert manager_type.get_loaded_instance() is None
