@@ -50,6 +50,8 @@ try {
   // Cold-start instrumentation must never affect panel startup.
 }
 const MANAGEMENT_STYLESHEET_URL = new URL("./management.css", import.meta.url).href;
+// Keep this deliberately small and geometry-identical to management.css: it exists
+// only to prevent FOUC/layout shift while the external stylesheet is still pending.
 const CRITICAL_STYLE = `
   :host{display:block;min-height:100%;padding:28px;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);box-sizing:border-box;background:var(--primary-background-color)}
   *{box-sizing:border-box}
