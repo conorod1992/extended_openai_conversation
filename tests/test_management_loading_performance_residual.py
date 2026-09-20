@@ -52,13 +52,11 @@ def _hass_with_agent():
 async def test_overview_summary_isolates_each_manager_failure(monkeypatch) -> None:
     """A failed optional manager must degrade the summary instead of failing it."""
     hass, entry, subentry = _hass_with_agent()
-    fake_ui = SimpleNamespace(
-        entry_and_agent=lambda *_args: (entry, subentry),
-        asdict_or_none=lambda value: value,
-        _settings_snapshot=lambda config: {"chat_model": config["chat_model"]},
-        function_tool_enabled=lambda tool: tool.get("enabled", True) is True,
+    monkeypatch.setattr(
+        loading,
+        "settings_snapshot",
+        lambda config: {"chat_model": config["chat_model"]},
     )
-    monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
     monkeypatch.setattr(loading, "get_loaded_guest_mode", lambda *_args: None)
 
     failures = {
@@ -103,13 +101,7 @@ async def test_overview_summary_uses_exception_type_when_message_is_empty(
     hass, entry, subentry = _hass_with_agent()
     knowledge = SimpleNamespace(source_count=0)
     guest = SimpleNamespace(status=lambda: {"state": "off", "currently_active": False})
-    fake_ui = SimpleNamespace(
-        entry_and_agent=lambda *_args: (entry, subentry),
-        asdict_or_none=lambda value: value,
-        _settings_snapshot=lambda config: config,
-        function_tool_enabled=lambda tool: tool.get("enabled", True) is True,
-    )
-    monkeypatch.setattr(loading, "_management_ui", lambda: fake_ui)
+    monkeypatch.setattr(loading, "settings_snapshot", lambda config: config)
     monkeypatch.setattr(
         loading, "async_get_usage", AsyncMock(side_effect=RuntimeError())
     )
