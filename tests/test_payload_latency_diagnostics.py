@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from custom_components.extended_openai_conversation_responses import payload_diagnostics
+from custom_components.extended_openai_conversation_responses import (
+    payload_diagnostics,
+)
 from custom_components.extended_openai_conversation_responses.payload_diagnostics import (
     APPROX_TOKEN_METHOD,
     cache_usage_metrics,
