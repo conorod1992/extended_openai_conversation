@@ -129,6 +129,8 @@ jobs:
         run: npx playwright install-deps chromium
 
       - name: Run shipped frontend browser smoke tests
+        env:
+          PLAYWRIGHT_WORKERS: "2"
         run: npx playwright test --config=playwright.config.mjs
 
       - name: Upload browser diagnostics
