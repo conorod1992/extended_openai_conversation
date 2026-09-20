@@ -239,7 +239,9 @@ def _service_data(tool: dict[str, Any]) -> dict[str, Any]:
     return properties["list"]["items"]["properties"]["service_data"]
 
 
-@pytest.mark.parametrize("implementation", ["execute_service", "execute_service_single"])
+@pytest.mark.parametrize(
+    "implementation", ["execute_service", "execute_service_single"]
+)
 def test_historical_inserted_service_preset_is_migrated(implementation: str) -> None:
     """Both historical built-in service presets receive the persistent open schema."""
     tool = _legacy_service_preset(implementation)
