@@ -105,10 +105,7 @@ def management_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
             "isolatable": bool(invalid),
             "validation_error": issue,
             "invalid_names": [
-                str(
-                    item.get("name")
-                    or f"Function Tool {int(item.get('index', 0)) + 1}"
-                )
+                str(item.get("name") or f"Function Tool {int(item.get('index', 0)) + 1}")
                 for item in invalid
             ],
         }
