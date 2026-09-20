@@ -181,6 +181,15 @@ class GuestCapabilityPolicy:
         }
 
 
+def can_reuse_request_policy(request_policy: Any, guest_mode: Any) -> bool:
+    """Reuse a request policy only while a normal-owner request stays unrestricted."""
+    return bool(
+        request_policy is not None
+        and not request_policy.guest_active
+        and (guest_mode is None or not guest_mode.is_active())
+    )
+
+
 class GuestModeManager:
     """Integration-owned, per-agent Guest Mode schedule."""
 
