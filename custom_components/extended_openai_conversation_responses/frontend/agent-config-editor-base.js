@@ -369,26 +369,6 @@ export function bindConfiguration(panel) {
   root.querySelector("#import-apply")?.addEventListener("click", async () => { const mode=root.querySelector('input[name="import-mode"]:checked').value, source=importDocument.value; if(!panel._importDocument||panel._importDocument!==source){invalidateImportPreview(panel,importApply,importSummary);return;} if(mode==="current"&&!await panel._confirm("Overwrite this agent?",`The saved configuration will be replaced.${panel._configDirty ? " Your unsaved shared draft will be discarded." : ""} Retained history and parent-entry credentials are not affected.`,"Overwrite"))return; try { await panel._call("configuration","import",{document:panel._importDocument,mode,confirm:mode==="current",...(mode==="current"?{revision:panel._configData?.revision}:{})}); root.querySelector("#import-dialog").close(); if(mode==="current")panel._clearConfigDraft(); await panel._loadAgents(panel._agentId); panel._toast(mode==="current"?"Configuration imported":"Agent created from import; your current draft is preserved"); } catch(err){panel._toast(`Unable to import: ${err.message||String(err)}`,true);} });
   root.querySelector("#import-cancel")?.addEventListener("click",()=>{root.querySelector("#import-dialog").close();actionsMenu?.querySelector("summary")?.focus();});
   root.querySelector("#import-dialog")?.addEventListener("cancel",()=>requestAnimationFrame(()=>actionsMenu?.querySelector("summary")?.focus()));
-  root.querySelector("#create-backup")?.addEventListener("click", async () => {
-    if(panel._configDirty)return;
-    const button=root.querySelector("#create-backup"); panel._setSaving(button,true);
-    try { const result=await panel._call("backup","create"); const blob=new Blob([result.json],{type:"application/json"}); const url=URL.createObjectURL(blob); const link=document.createElement("a"); link.href=url; link.download=result.filename||"conversation-agent-full-backup.json"; link.click(); setTimeout(()=>URL.revokeObjectURL(url),0); panel._toast("Full backup created"); }
-    catch(err){panel._toast(`Unable to create backup: ${err.message||String(err)}`,true);} finally{panel._setSaving(button,false);}
-  });
-  root.querySelector("#restore-backup")?.addEventListener("click",()=>{ const input=root.querySelector("#backup-file"); input.value=""; input.click(); });
-  root.querySelector("#backup-file")?.addEventListener("change",async(event)=>{
-    const file=event.target.files?.[0]; if(!file)return;
-    const apply=root.querySelector("#restore-apply");
-    if(file.size>16*1024*1024){panel._toast("The backup file exceeds the 16 MB size limit",true);return;}
-    try { const document=await file.text(); const result=await panel._call("backup","inspect",{document}); panel._backupDocument=document; root.querySelector("#restore-backup-name").textContent=result.title; root.querySelector("#restore-backup-meta").textContent=`Created ${new Date(result.summary.created_at).toLocaleString()} with integration ${result.summary.integration_version}`; root.querySelector("#restore-summary").innerHTML=backupSummaryLines(result.summary).map(line=>`<li>${panel._e(line)}</li>`).join(""); apply.disabled=false; root.querySelector("#restore-dialog").showModal(); }
-    catch(err){panel._backupDocument=null;apply.disabled=true;panel._toast(err.message||String(err),true);}
-  });
-  root.querySelector("#restore-cancel")?.addEventListener("click",()=>root.querySelector("#restore-dialog").close());
-  root.querySelector("#restore-apply")?.addEventListener("click",async()=>{
-    if(!panel._backupDocument)return; const button=root.querySelector("#restore-apply"); panel._setSaving(button,true);
-    try { await panel._call("backup","restore",{document:panel._backupDocument,confirm:true}); root.querySelector("#restore-dialog").close(); panel._backupDocument=null; panel._clearConfigDraft(); await panel._loadAgents(panel._agentId); panel._toast("Full backup restored"); }
-    catch(err){panel._toast(`Unable to restore backup: ${err.message||String(err)}`,true);} finally{panel._setSaving(button,false);}
-  });
   if (panel._configRestoreFocus) { const selector=panel._configRestoreFocus; panel._configRestoreFocus=null; requestAnimationFrame(()=>root.querySelector(selector)?.focus({preventScroll:true})); }
 }
 
