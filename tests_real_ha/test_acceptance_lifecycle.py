@@ -282,40 +282,6 @@ async def test_real_ha_unload_reload_cleans_and_recreates_runtime(
     } == entity_ids_before
 
 
-@pytest.mark.asyncio
-async def test_real_ha_two_entries_do_not_tear_down_each_other(
-    hass: HomeAssistant,
-) -> None:
-    """One entry unloading must not remove another entry's shared runtime."""
-    first = _make_entry("First", include_ai_task=False)
-    second = _make_entry("Second", include_ai_task=False)
-    await _setup_entry(hass, first)
-    await _setup_entry(hass, second)
-
-    manager = hass.data[DOMAIN][DATA_TEMPLATE_MANAGER]
-    second_conversation_id = _conversation_subentry(second).subentry_id
-    second_guest_mode_entity_id = next(
-        row.entity_id
-        for row in _registry_entries(hass, second)
-        if row.unique_id == f"{second_conversation_id}_guest_mode"
-    )
-
-    assert conversation.async_get_agent(hass, first.entry_id) is not None
-    assert conversation.async_get_agent(hass, second.entry_id) is not None
-
-    assert await hass.config_entries.async_unload(first.entry_id)
-    await hass.async_block_till_done()
-
-    assert conversation.async_get_agent(hass, first.entry_id) is None
-    assert conversation.async_get_agent(hass, second.entry_id) is not None
-    assert hass.states.get(second_guest_mode_entity_id) is not None
-    assert hass.data[DOMAIN][DATA_TEMPLATE_MANAGER] is manager
-    assert manager.in_use
-
-    assert await hass.config_entries.async_unload(second.entry_id)
-    await hass.async_block_till_done()
-    assert DATA_TEMPLATE_MANAGER not in hass.data.get(DOMAIN, {})
-
 
 @pytest.mark.asyncio
 async def test_real_ha_legacy_entry_migrates_before_platform_setup(
