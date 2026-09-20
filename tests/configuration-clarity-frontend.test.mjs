@@ -4,8 +4,6 @@ import {readFile} from "node:fs/promises";
 import {
   dirtyConfigurationDestinations,
   dirtyConfigurationKeys,
-} from "../custom_components/extended_openai_conversation_responses/frontend/management-draft-navigation.js";
-import {
   friendlySettingLabel,
   friendlySettingValue,
   settingEffectBadges,
