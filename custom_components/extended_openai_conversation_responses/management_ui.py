@@ -59,7 +59,6 @@ from .const import (
     MANAGEMENT_PANEL_URL,
     SERVICE_CALL_FUNCTION,
     SHARED_MEMORY_DISABLED,
-    TEMPORARY_MEMORY_OFF,
 )
 from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
@@ -118,14 +117,13 @@ from .management_permissions import (
     async_quiet_hours_command,
     require_management_permission,
 )
+from .management_projections import settings_snapshot
 from .management_request_preview import (
     async_preview_effective_request as _async_preview_effective_request,
     entry_and_agent,
 )
-from .management_projections import settings_snapshot
 from .memory import ANONYMOUS_USER_ID, async_get_memory
 from .regex_execution import async_process_speech_text
-from .request import canonical_json, format_function_tools
 from .request_rule_match_preview import async_request_rule_match_preview
 from .request_rules import (
     async_get_request_rules,
