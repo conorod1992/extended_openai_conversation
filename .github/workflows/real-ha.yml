@@ -244,6 +244,8 @@ jobs:
             tests_real_ha/test_usage_accounting_failure_recovery.py
           )
 
+          XDIST_ARGS=()
+
           case "${{ matrix.shard }}" in
             process-restart-a)
               TEST_PATHS=("${PROCESS_RESTART_A[@]}")
@@ -287,6 +289,7 @@ jobs:
           esac
 
           pytest "${TEST_PATHS[@]}" \
+            "${XDIST_ARGS[@]}" \
             -v \
             --asyncio-mode=auto \
             --timeout=60 \
