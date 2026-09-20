@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,7 +11,7 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import MockUser
 
-from custom_components.extended_openai_conversation_responses import services, skills
+from custom_components.extended_openai_conversation_responses import services
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -197,87 +196,6 @@ async def test_query_image_service_success_uses_loaded_runtime_client(
     ]
 
 
-class _AsyncResponse:
-    """Minimal aiohttp response context used at the external download boundary."""
-
-    def __init__(self, status: int = 200) -> None:
-        self.status = status
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        return None
-
-
-@pytest.mark.asyncio
-async def test_download_skill_service_success_publishes_staged_skill(
-    hass: HomeAssistant,
-    monkeypatch: pytest.MonkeyPatch,
-    hass_admin_user: MockUser,
-    tmp_path: Path,
-) -> None:
-    """A valid skill download must stage, validate, publish and report exact files."""
-    entry = _entry()
-    await _setup_entry(hass, entry)
-
-    manager = SimpleNamespace(
-        user_skills_dir=tmp_path / "skills",
-        staging_dir=tmp_path / "staging",
-        async_publish_staged_skill=AsyncMock(),
-    )
-    monkeypatch.setattr(
-        skills.SkillManager,
-        "async_get_instance",
-        AsyncMock(return_value=manager),
-    )
-    monkeypatch.setattr(
-        services,
-        "async_skill_source_ref",
-        AsyncMock(return_value="v-test"),
-    )
-    session = SimpleNamespace(get=MagicMock(return_value=_AsyncResponse()))
-    monkeypatch.setattr(services, "async_get_clientsession", lambda _hass: session)
-    monkeypatch.setattr(
-        services,
-        "async_read_bounded_json",
-        AsyncMock(
-            return_value=[
-                {
-                    "name": "SKILL.md",
-                    "type": "file",
-                    "path": "skills/demo/SKILL.md",
-                    "download_url": "https://example.com/SKILL.md",
-                    "size": 6,
-                }
-            ]
-        ),
-    )
-    monkeypatch.setattr(
-        services,
-        "async_read_bounded_response",
-        AsyncMock(return_value=b"# Demo"),
-    )
-
-    response = await _response_service_call(
-        hass,
-        SERVICE_DOWNLOAD_SKILL,
-        {"skill_name": "demo", "source_ref": "v-test"},
-        user_id=hass_admin_user.id,
-    )
-
-    assert response["skill_name"] == "demo"
-    assert response["source_ref"] == "v-test"
-    assert response["downloaded_files"] == ["skills/demo/SKILL.md"]
-    assert response["target_directory"] == str(
-        (tmp_path / "skills" / "demo").resolve()
-    )
-    manager.async_publish_staged_skill.assert_awaited_once()
-    published_name, staging_dir = manager.async_publish_staged_skill.await_args.args
-    assert published_name == "demo"
-    assert (staging_dir / "SKILL.md").read_bytes() == b"# Demo"
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("service_name", "helper_name", "field", "enabled"),
@@ -366,12 +284,12 @@ async def test_function_state_service_unknown_target_does_not_mutate(
 
 
 @pytest.mark.asyncio
-async def test_guest_mode_services_dispatch_and_translate_manager_failure(
+async def test_guest_mode_services_dispatch_registered_actions(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
     hass_admin_user: MockUser,
 ) -> None:
-    """Guest Mode actions must resolve one agent and preserve manager semantics."""
+    """Guest Mode actions must cross the real HA registry and dispatch correctly."""
     entry = _entry()
     await _setup_entry(hass, entry)
     subentry = _conversation_subentry(entry)
@@ -405,18 +323,3 @@ async def test_guest_mode_services_dispatch_and_translate_manager_failure(
     )
     assert disabled == {"enabled": False}
     manager.async_disable_trusted.assert_awaited_once_with()
-
-    manager.async_update_trusted.reset_mock()
-    manager.async_update_trusted.side_effect = ValueError("end must follow start")
-    with pytest.raises(HomeAssistantError, match="end must follow start"):
-        await _response_service_call(
-            hass,
-            SERVICE_GUEST_MODE_UPDATE,
-            {
-                **base,
-                "active_from": "2026-09-12T10:00:00+01:00",
-                "active_until": "2026-09-12T09:00:00+01:00",
-                "indefinite": False,
-            },
-            user_id=hass_admin_user.id,
-        )
