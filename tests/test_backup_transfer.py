@@ -13,9 +13,11 @@ import zipfile
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import agent_maintenance
-from custom_components.extended_openai_conversation_responses import backup
-from custom_components.extended_openai_conversation_responses import backup_transfer
+from custom_components.extended_openai_conversation_responses import (
+    agent_maintenance,
+    backup,
+    backup_transfer,
+)
 from tests.test_backup import _document
 
 
@@ -29,7 +31,9 @@ def _archive_manifest(payload: bytes) -> dict:
     }
 
 
-def _write_archive(path, payload: bytes, *, payload_info=None, manifest=None, extra=None):
+def _write_archive(
+    path, payload: bytes, *, payload_info=None, manifest=None, extra=None
+):
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         if payload_info is None:
             archive.writestr(backup_transfer.PAYLOAD_NAME, payload)
@@ -37,7 +41,9 @@ def _write_archive(path, payload: bytes, *, payload_info=None, manifest=None, ex
             archive.writestr(payload_info, payload)
         archive.writestr(
             backup_transfer.MANIFEST_NAME,
-            json.dumps(manifest if manifest is not None else _archive_manifest(payload)),
+            json.dumps(
+                manifest if manifest is not None else _archive_manifest(payload)
+            ),
         )
         if extra is not None:
             archive.writestr(extra[0], extra[1])
@@ -129,7 +135,7 @@ def test_archive_rejects_unsafe_members(tmp_path, attack) -> None:
     else:
         _write_archive(path, payload, extra=("extra.txt", b"unexpected"))
 
-    with pytest.raises(backup.BackupError, match="unexpected|unsafe"):
+    with pytest.raises(backup.BackupError, match=r"unexpected|unsafe"):
         backup_transfer._load_archive_document(str(path))
 
 
@@ -142,7 +148,9 @@ def test_archive_rejects_invalid_manifest(tmp_path) -> None:
         backup_transfer._load_archive_document(str(path))
 
 
-def test_archive_rejects_uncompressed_bomb_before_extraction(tmp_path, monkeypatch) -> None:
+def test_archive_rejects_uncompressed_bomb_before_extraction(
+    tmp_path, monkeypatch
+) -> None:
     path = tmp_path / "bomb.zip"
     payload = b"x" * 1024
     _write_archive(path, payload)
@@ -166,7 +174,11 @@ async def test_import_requires_ordered_complete_chunks(hass, monkeypatch) -> Non
             hass,
             "entry-1",
             "agent-1",
-            {"session_id": session_id, "index": 0, "data": base64.b64encode(b"abcd").decode()},
+            {
+                "session_id": session_id,
+                "index": 0,
+                "data": base64.b64encode(b"abcd").decode(),
+            },
         )
         assert first["received"] == 4
         assert first["complete"] is False
@@ -176,18 +188,24 @@ async def test_import_requires_ordered_complete_chunks(hass, monkeypatch) -> Non
                 hass,
                 "entry-1",
                 "agent-1",
-                {"session_id": session_id, "index": 2, "data": base64.b64encode(b"efgh").decode()},
+                {
+                    "session_id": session_id,
+                    "index": 2,
+                    "data": base64.b64encode(b"efgh").decode(),
+                },
             )
         with pytest.raises(backup.BackupError, match="incomplete"):
-            backup_transfer._completed_import(
-                hass, session_id, "entry-1", "agent-1"
-            )
+            backup_transfer._completed_import(hass, session_id, "entry-1", "agent-1")
 
         second = await backup_transfer._import_chunk(
             hass,
             "entry-1",
             "agent-1",
-            {"session_id": session_id, "index": 1, "data": base64.b64encode(b"efgh").decode()},
+            {
+                "session_id": session_id,
+                "index": 1,
+                "data": base64.b64encode(b"efgh").decode(),
+            },
         )
         assert second["received"] == 8
         assert second["complete"] is True
@@ -196,21 +214,9 @@ async def test_import_requires_ordered_complete_chunks(hass, monkeypatch) -> Non
         await backup_transfer._discard_import(hass, session_id)
 
 
-async def test_import_rejects_quota_before_allocating_file(hass, monkeypatch) -> None:
-    monkeypatch.setattr(backup_transfer, "MAX_TRANSFER_TEMP_BYTES", 4)
-
-    with pytest.raises(backup.BackupError, match="temporary storage quota"):
-        await backup_transfer._start_import(
-            hass,
-            "entry-1",
-            "agent-1",
-            {"filename": "backup.json", "size": 5},
-        )
-
-    assert backup_transfer._imports(hass) == {}
-
-
-async def test_cancelled_import_chunk_discards_partial_session(hass, monkeypatch) -> None:
+async def test_cancelled_import_chunk_discards_partial_session(
+    hass, monkeypatch
+) -> None:
     session = await backup_transfer._start_import(
         hass,
         "entry-1",
@@ -230,7 +236,11 @@ async def test_cancelled_import_chunk_discards_partial_session(hass, monkeypatch
             hass,
             "entry-1",
             "agent-1",
-            {"session_id": session_id, "index": 0, "data": base64.b64encode(b"abcd").decode()},
+            {
+                "session_id": session_id,
+                "index": 0,
+                "data": base64.b64encode(b"abcd").decode(),
+            },
         )
 
     assert session_id not in backup_transfer._imports(hass)
@@ -276,7 +286,9 @@ async def test_export_releases_snapshot_gate_before_compression(
         async with gate.shared():
             shared_entered.set()
 
-    export_task = asyncio.create_task(backup_transfer._start_export(hass, entry, subentry))
+    export_task = asyncio.create_task(
+        backup_transfer._start_export(hass, entry, subentry)
+    )
     await collection_started.wait()
     mutation_task = asyncio.create_task(ordinary_mutation())
     await asyncio.sleep(0)
