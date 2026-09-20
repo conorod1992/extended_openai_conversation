@@ -1,4 +1,9 @@
 import * as base from "./agent-config-editor-model-v2.js";
+import {
+  getToolYamlEditor,
+  installToolYamlEditor,
+  toolYamlChangeHandler,
+} from "./tool-yaml-editor-adapter.js";
 
 export * from "./agent-config-editor-model-v2.js";
 
@@ -182,18 +187,17 @@ export function bindNativeToolYaml(panel) {
   if (!textarea || !nativeEditor) return;
 
   installNativeStyle(root);
-  const valueDescriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
-  if (!valueDescriptor?.get || !valueDescriptor?.set) return;
+  const current = getToolYamlEditor(panel);
+  if (current?.nativeEditor === nativeEditor) return;
 
-  let rawYaml = valueDescriptor.get.call(textarea) || "";
+  let rawYaml = current?.getYaml?.() ?? String(textarea.value ?? "");
   let nativeReady = false;
+  let destroyed = false;
   let syncGeneration = 0;
-  const originalFocus = textarea.focus.bind(textarea);
 
-  const setFallbackValue = (value) => {
-    rawYaml = String(value ?? "");
-    valueDescriptor.set.call(textarea, rawYaml);
-  };
+  const isCurrent = () => !destroyed
+    && panel?._toolYamlEditorAdapter === adapter
+    && nativeEditor.isConnected;
 
   const showFallback = () => {
     nativeReady = false;
@@ -215,19 +219,21 @@ export function bindNativeToolYaml(panel) {
     if (!nativeReady || typeof nativeEditor.setValue !== "function") return;
     const generation = ++syncGeneration;
     if (!String(yaml || "").trim()) {
-      if (setNativeValue({})) nativeEditor.isValid = true;
+      if (isCurrent() && generation === syncGeneration && setNativeValue({})) {
+        nativeEditor.isValid = true;
+      }
       return;
     }
 
     const repairConfig = repairToolConfig(panel);
     if (repairConfig) {
-      setNativeValue(repairConfig);
+      if (isCurrent() && generation === syncGeneration) setNativeValue(repairConfig);
       return;
     }
 
     try {
       const result = await panel._call("tools", "validate_yaml", {yaml});
-      if (!nativeReady || generation !== syncGeneration) return;
+      if (!isCurrent() || generation !== syncGeneration) return;
       if (result?.valid) {
         setNativeValue(result.config);
         return;
@@ -236,51 +242,63 @@ export function bindNativeToolYaml(panel) {
       if (starter) setNativeValue(starter);
       else showFallback();
     } catch (_err) {
-      if (generation === syncGeneration) showFallback();
+      if (isCurrent() && generation === syncGeneration) showFallback();
     }
   };
 
-  Object.defineProperty(textarea, "value", {
-    configurable: true,
-    get: () => rawYaml,
-    set: (value) => {
-      setFallbackValue(value);
-      void syncNativeFromYaml(rawYaml);
-    },
-  });
-
-  textarea.addEventListener?.("input", () => {
-    // A user edit supersedes any outstanding YAML-to-native hydration reply.
+  const onTextareaInput = () => {
     ++syncGeneration;
-    rawYaml = String(valueDescriptor.get.call(textarea) ?? "");
-  });
-
-  textarea.focus = (...args) => {
-    if (nativeReady && typeof nativeEditor.focus === "function") nativeEditor.focus();
-    else originalFocus(...args);
+    rawYaml = String(textarea.value ?? "");
+    toolYamlChangeHandler(panel, rawYaml);
   };
 
-  nativeEditor.addEventListener("value-changed", (event) => {
-    const yaml = String(nativeEditor.yaml ?? "");
-    setFallbackValue(yaml);
-    textarea.dispatchEvent(new Event("input", {bubbles: true}));
-    if (event.detail?.isValid === false) {
-      const status = root.querySelector("#tool-error");
-      if (status) {
-        status.className = "validation invalid";
-        status.textContent = event.detail.errorMsg || "Function Tool YAML is invalid.";
-      }
-    }
-  });
+  const onNativeChange = (event) => {
+    ++syncGeneration;
+    rawYaml = String(nativeEditor.yaml ?? "");
+    textarea.value = rawYaml;
+    toolYamlChangeHandler(panel, rawYaml, event.detail || {});
+  };
 
-  nativeEditor.addEventListener("editor-save", () => {
+  const onNativeSave = () => {
     const dialog = root.querySelector("#tool-dialog");
     const save = root.querySelector("#tool-save");
     if (dialog?.open && save && !save.disabled) save.click();
-  });
+  };
+
+  textarea.addEventListener?.("input", onTextareaInput);
+  nativeEditor.addEventListener("value-changed", onNativeChange);
+  nativeEditor.addEventListener("editor-save", onNativeSave);
+
+  const adapter = {
+    textarea,
+    nativeEditor,
+    getYaml() {
+      return rawYaml;
+    },
+    setYaml(value) {
+      rawYaml = String(value ?? "");
+      textarea.value = rawYaml;
+      ++syncGeneration;
+      if (nativeReady) void syncNativeFromYaml(rawYaml);
+    },
+    focus() {
+      if (nativeReady && typeof nativeEditor.focus === "function") nativeEditor.focus();
+      else textarea.focus();
+    },
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      ++syncGeneration;
+      textarea.removeEventListener?.("input", onTextareaInput);
+      nativeEditor.removeEventListener?.("value-changed", onNativeChange);
+      nativeEditor.removeEventListener?.("editor-save", onNativeSave);
+    },
+  };
+
+  installToolYamlEditor(panel, adapter);
 
   const activate = () => {
-    if (!nativeEditor.isConnected || typeof nativeEditor.setValue !== "function") return;
+    if (!isCurrent() || typeof nativeEditor.setValue !== "function") return;
     try {
       nativeReady = true;
       textarea.hidden = true;
@@ -295,8 +313,14 @@ export function bindNativeToolYaml(panel) {
   if (customElements.get(NATIVE_EDITOR_TAG)) activate();
   else {
     void ensureNativeYamlEditor()
-      .then((ready) => { if (ready) activate(); else showFallback(); })
-      .catch(showFallback);
+      .then((ready) => {
+        if (!isCurrent()) return;
+        if (ready) activate();
+        else showFallback();
+      })
+      .catch(() => {
+        if (isCurrent()) showFallback();
+      });
   }
 }
 

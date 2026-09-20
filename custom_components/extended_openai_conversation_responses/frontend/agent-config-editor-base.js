@@ -11,6 +11,7 @@ import {saveBarMarkup} from "./unsaved-state.js";
 import {modelDataControls, bindModelDataControls} from "./model-catalog.js";
 import { bindHALlmTools, haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools.js";
 import { bindHelp, helpButton, helpPopover, helpSearchTerms } from "./agent-config-help.js";
+import {getToolYamlEditor} from "./tool-yaml-editor-adapter.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const bool = (value) => value ? "checked" : "";
@@ -720,11 +721,11 @@ export function synchronizePersistedFunctions(panel, result) {
 }
 
 function setToolEditorLoading(root, loading) {
-  const editor = root.querySelector("#tool-yaml");
-  editor.readOnly = loading;
+  const textarea = root.querySelector("#tool-yaml");
+  textarea.readOnly = loading;
   // The native HA YAML editor is inserted beside the textarea in this label.
   // Inert gates both editors without depending on HA's internal editor API.
-  if (editor.parentElement) editor.parentElement.inert = loading;
+  if (textarea.parentElement) textarea.parentElement.inert = loading;
   for (const id of ["tool-save", "tool-validate", "built-in-function"]) {
     const control = root.querySelector(`#${id}`);
     if (control) control.disabled = loading;
@@ -738,7 +739,7 @@ export async function openTool(panel, index = null, initialTool = null) {
   panel._toolOriginalName = index === null ? null : tool?.spec?.name || null;
   const root = panel.shadowRoot;
   const dialog = root.querySelector("#tool-dialog");
-  const editor = root.querySelector("#tool-yaml");
+  const editor = getToolYamlEditor(panel);
   const status = root.querySelector("#tool-error");
   const agentId = panel._agentId;
   const loadToken = {};
@@ -749,7 +750,7 @@ export async function openTool(panel, index = null, initialTool = null) {
   root.querySelector("#tool-dialog-title").textContent = index === null ? "Add Function Tool" : "Edit Function Tool";
   root.querySelector("#tool-dialog-meta").textContent = "Loading YAML...";
   setToolEditorLoading(root, true);
-  editor.value = "";
+  editor.setYaml("");
   status.className = "validation";
   status.textContent = "Loading editor...";
   root.querySelector("#built-in-picker").hidden = index !== null || Boolean(initialTool);
@@ -772,7 +773,7 @@ export async function openTool(panel, index = null, initialTool = null) {
       selector.innerHTML = '<option value="">Insert Built-in Function…</option>' + panel._builtInFunctions.map((preset) => `<option value="${panel._e(preset.implementation)}" ${preset.already_configured ? "disabled" : ""}>${panel._e(preset.label)}${preset.already_configured ? " — Already configured" : ""}</option>`).join("");
     }
     if (!isCurrent()) return;
-    editor.value = response.yaml;
+    editor.setYaml(response.yaml);
     panel._toolInitialYaml = response.yaml;
     panel._toolReplaceableYaml = response.yaml;
     root.querySelector("#tool-dialog-meta").textContent = index === null ? "New tool / YAML" : `${tool.spec?.name || "Unnamed"} / ${tool.function?.type || "unknown"}`;
@@ -796,7 +797,7 @@ async function validateDialogTool(panel) {
   status.className="validation";
   status.textContent="Validating...";
   try {
-    const result=await panel._call("tools","validate_yaml",{yaml:root.querySelector("#tool-yaml").value});
+    const result=await panel._call("tools","validate_yaml",{yaml:getToolYamlEditor(panel).getYaml()});
     if(!result.valid){status.className="validation invalid";status.textContent=`Function configuration is invalid: ${toolErrorText(result.errors)}`;return null;}
     status.className="validation valid";
     status.textContent=`Valid function tool / Name: ${result.name} / Type: ${result.type}`;
@@ -865,8 +866,8 @@ export function bindTools(panel) {
   prepareToolsCollection(panel);
   bindToolCollection(panel);
   root.querySelector("#validate-tools")?.addEventListener("click",async()=>{const status=root.querySelector("#tool-status");try{const result=await panel._call("tools","validate_current");status.className=`validation ${result.valid?"valid":"invalid"}`;status.textContent=result.valid?"All saved tools and groups are valid":toolErrorText(result.errors);}catch(err){status.className="validation invalid";status.textContent=err.message||String(err);}});
-  root.querySelector("#tool-yaml")?.addEventListener("input",()=>{root.querySelector("#tool-error").className="validation";root.querySelector("#tool-error").textContent="YAML changed; validate to refresh metadata.";});
-  root.querySelector("#built-in-function")?.addEventListener("change",async(event)=>{const preset=(panel._builtInFunctions||[]).find((item)=>item.implementation===event.target.value);if(!preset)return;const editor=root.querySelector("#tool-yaml");const replaceable=canReplaceToolYamlWithoutConfirmation(editor.value,panel._toolReplaceableYaml);if(!replaceable&&!await panel._confirm("Replace current YAML with this built-in function preset?","Your current Function Tool YAML will be replaced in the editor. Nothing is saved until you select Save.","Replace YAML")){event.target.value="";return;}editor.value=preset.yaml;panel._toolReplaceableYaml=preset.yaml;await validateDialogTool(panel);});
+  getToolYamlEditor(panel);
+  root.querySelector("#built-in-function")?.addEventListener("change",async(event)=>{const preset=(panel._builtInFunctions||[]).find((item)=>item.implementation===event.target.value);if(!preset)return;const editor=getToolYamlEditor(panel);const replaceable=canReplaceToolYamlWithoutConfirmation(editor.getYaml(),panel._toolReplaceableYaml);if(!replaceable&&!await panel._confirm("Replace current YAML with this built-in function preset?","Your current Function Tool YAML will be replaced in the editor. Nothing is saved until you select Save.","Replace YAML")){event.target.value="";return;}editor.setYaml(preset.yaml);panel._toolReplaceableYaml=preset.yaml;await validateDialogTool(panel);});
   root.querySelector("#tool-cancel")?.addEventListener("click",()=>root.querySelector("#tool-dialog").close());
   root.querySelector("#tool-dialog")?.addEventListener("cancel",()=>{panel._toolIndex=null;});
   root.querySelector("#tool-dialog")?.addEventListener("close", (event) => {
