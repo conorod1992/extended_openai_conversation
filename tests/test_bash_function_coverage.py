@@ -120,20 +120,55 @@ async def test_cleanup_non_posix_graceful_terminates_and_waits() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cleanup_non_posix_force_kills_running_process() -> None:
-    """Forced non-POSIX cleanup kills and reaps a still-running process."""
+async def test_cleanup_non_posix_force_kills_and_settles_stubborn_readers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Forced cleanup kills/reaps the process and settles timed-out pipe readers."""
     process = _process(returncode=None)
-    stdout_task = asyncio.create_task(asyncio.sleep(0, result=(b"", False)))
-    stderr_task = asyncio.create_task(asyncio.sleep(0, result=(b"", False)))
+
+    async def _wait_and_finish():
+        process.returncode = 0
+        return 0
+
+    process.wait = AsyncMock(side_effect=_wait_and_finish)
+    stdout_cancelled = asyncio.Event()
+    stderr_cancelled = asyncio.Event()
+
+    async def stubborn_reader(cancelled: asyncio.Event) -> tuple[bytes, bool]:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    stdout_task = asyncio.create_task(stubborn_reader(stdout_cancelled))
+    stderr_task = asyncio.create_task(stubborn_reader(stderr_cancelled))
+    await asyncio.sleep(0)
+
+    wait_for_calls = 0
+
+    async def wait_for_then_timeout(awaitable, *, timeout):
+        nonlocal wait_for_calls
+        wait_for_calls += 1
+        assert timeout == bash_module._SHELL_CLEANUP_WAIT_SECONDS
+        if wait_for_calls == 1:
+            return await awaitable
+        raise TimeoutError
+
+    monkeypatch.setattr(bash_module.asyncio, "wait_for", wait_for_then_timeout)
 
     with patch.object(bash_module.os, "name", "nt"):
         await bash_module._async_cleanup_process(
             process, stdout_task, stderr_task, graceful=False
         )
 
+    assert wait_for_calls == 2
     process.kill.assert_called_once_with()
     process.terminate.assert_not_called()
     process.wait.assert_awaited_once()
+    assert stdout_task.cancelled()
+    assert stderr_task.cancelled()
+    assert stdout_cancelled.is_set()
+    assert stderr_cancelled.is_set()
 
 
 def test_guard_command_covers_allowlist_and_recursive_rm(tmp_path: Path) -> None:
