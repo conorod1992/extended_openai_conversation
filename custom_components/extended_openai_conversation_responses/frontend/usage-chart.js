@@ -1,4 +1,5 @@
 import {tokenCount, tokenBreakdown, formatUsageNumber, formatUsageTimestamp} from "./usage-format.js";
+export {loadAllUsageDays} from "./usage-data.js";
 export {tokenBreakdown, formatUsageNumber, formatUsageTimestamp} from "./usage-format.js";
 
 const USAGE_WINDOW_OPTIONS = [
@@ -9,8 +10,6 @@ const USAGE_WINDOW_OPTIONS = [
   {id: "all", label: "All available"},
 ];
 const DEFAULT_USAGE_WINDOW = "30";
-const DAILY_PAGE_SIZE = 366;
-const MAX_DAILY_PAGES = 128;
 const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 function normalizeUsageWindow(value) {
@@ -184,26 +183,6 @@ export function usageChartBuckets(days = [], window = DEFAULT_USAGE_WINDOW) {
     buckets.set(key, bucket);
   }
   return [...buckets.values()];
-}
-
-export async function loadAllUsageDays(callPage, {pageSize = DAILY_PAGE_SIZE, maxPages = MAX_DAILY_PAGES} = {}) {
-  const rows = [];
-  let startDate = "0000-01-01";
-  const endDate = "9999-12-31";
-  for (let page = 0; page < maxPages; page += 1) {
-    const response = await callPage(startDate, endDate);
-    const current = Array.isArray(response?.days) ? response.days : [];
-    rows.push(...current);
-    if (current.length < pageSize) {
-      const unique = new Map(rows.map((day) => [String(day?.date || ""), day]));
-      return {days: [...unique.values()].sort((left, right) => String(left.date).localeCompare(String(right.date)))};
-    }
-    const lastDate = String(current.at(-1)?.date || "");
-    const nextDate = addUsageCalendarDays(lastDate, 1);
-    if (!nextDate || nextDate <= startDate || nextDate > endDate) break;
-    startDate = nextDate;
-  }
-  throw new Error("Daily usage history is larger than the bounded management transfer can safely load");
 }
 
 export function sortedUsageBreakdown(values = {}) {
@@ -397,15 +376,6 @@ export function renderUsagePage(panel, result = {}) {
     ${renderUsageDiagnostics(panel, result)}
     <section class="content-card"><h2>Recent runs</h2><p class="help">This table uses retained run detail and is not expanded by the selected aggregate-history period.</p><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody>${recentRows || `<tr><td colspan="7">No retained recent runs.</td></tr>`}</tbody></table></div></section>
     ${panel._data?.is_admin ? `<section class="content-card"><h2>Manage usage history</h2><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Daily, monthly, selected-period, and lifetime aggregates are never removed by detail pruning.</small></section>` : ""}`;
-}
-
-export function loadUsageDaily(panel, extra = {}) {
-  // Pin the selected assistant for every page even if the user switches mid-load.
-  const agent = panel._selectedAgent?.();
-  const identity = agent ? {entry_id: agent.entry_id, subentry_id: agent.subentry_id} : {};
-  return loadAllUsageDays((startDate, endDate) => panel._call("usage", "daily", {
-    ...extra, ...identity, start_date: startDate, end_date: endDate,
-  }));
 }
 
 export function bindUsageDiagnostics(panel) {
