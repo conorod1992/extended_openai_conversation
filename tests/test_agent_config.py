@@ -11,6 +11,7 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
     agent_config_defaults,
     agent_config_options,
     agent_config_snapshot,
+    configured_function_tool_metadata_from_data,
     function_tool_enabled,
     function_tool_yaml,
     merge_agent_config,
@@ -98,6 +99,24 @@ def test_function_tools_validate_yaml_schema_and_duplicates() -> None:
         validate_function_tools([invalid_type])
     with pytest.raises(AgentConfigError, match="duplicate tool name"):
         validate_function_tools([_native_tool(), _native_tool()])
+
+
+def test_function_tool_metadata_uses_cached_tools_without_runtime_copy(
+    monkeypatch,
+) -> None:
+    config = {"functions": yaml.safe_dump([_native_tool()], sort_keys=False)}
+    agent_config._cached_configured_tools.cache_clear()
+    monkeypatch.setattr(
+        agent_config,
+        "copy_runtime_function_config",
+        lambda _value: (_ for _ in ()).throw(
+            AssertionError("metadata must not copy hydrated runtime configs")
+        ),
+    )
+
+    metadata = configured_function_tool_metadata_from_data(config)
+
+    assert metadata == {"usable_count": 1, "enabled_count": 1, "total_count": 1}
 
 
 def test_function_tool_enabled_defaults_and_boolean_validation() -> None:
