@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {readFile} from "node:fs/promises";
 
 import {
   base64ToBytes,
@@ -144,4 +145,14 @@ assert.deepEqual([...base64ToBytes(bytesToBase64(new Uint8Array([0, 1, 127, 128,
   assert.match(dialog, /restore-transfer-cancel/);
   assert.match(dialog, /restore-transfer-apply/);
   assert.doesNotMatch(dialog, /id="restore-apply"/);
+}
+
+{
+  const editorSource = await readFile(
+    new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(editorSource, /backupSummaryLines|#create-backup"|#restore-backup"|#backup-file"|#restore-apply"/);
+  assert.match(editorSource, /renderBackupTransferPanel/);
+  assert.match(editorSource, /renderRestoreTransferDialog/);
 }
