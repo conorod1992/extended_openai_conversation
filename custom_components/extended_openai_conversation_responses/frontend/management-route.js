@@ -1,3 +1,4 @@
+import {loadInputFootprintData} from "./usage-data.js";
 import {ensureGuideModule} from "./guide-page.js";
 import {ensureOverviewModule, startOverviewBroadcastSnapshot} from "./overview-page.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
@@ -24,7 +25,6 @@ const featurePromises = new Map();
 // Ordinary panel-owned data requests should begin while route assets download.
 const DATA_FEATURES = new Set([
   "capabilities/quiet-hours",
-  "usage-maintenance/usage",
   "usage-maintenance/request-debug",
 ]);
 const featureLoaders = {
@@ -237,9 +237,9 @@ async function loadRouteData(panel, silent, view, token) {
       panel._inputFootprint = null;
       panel._inputFootprintError = null;
     }
-    // Footprint data is independent of the main Usage requests. Start it now and
-    // let its stable card region reconcile independently when it completes.
-    void feature.loadInputFootprint(panel);
+    // Data acquisition is owned below the lazy Usage UI boundary so this starts
+    // immediately while chart/footprint modules are still downloading.
+    void loadInputFootprintData(panel);
   }
   return panel._loadSectionData(silent);
 }

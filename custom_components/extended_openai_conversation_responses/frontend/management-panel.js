@@ -18,6 +18,7 @@ import {getConfigurationEditor, getRouteFeature, routeAssetKind, routeFeaturesRe
 import {NAVIGATION, pageMetadata, routeFromPath, routePath} from "./frontend-navigation.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview, enhanceOverviewHealthClarity} from "./overview-page.js";
+import {loadUsageDaily} from "./usage-data.js";
 import {formatUsageNumber} from "./usage-format.js";
 import {
   bindStateSafety,
@@ -355,9 +356,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _call(section, action, extra = {}) {
-    const usage = getRouteFeature("usage-maintenance/usage");
-    if (usage && section === "usage" && action === "daily" && !extra.start_date && !extra.end_date) {
-      return usage.loadUsageDaily(this, extra);
+    if (section === "usage" && action === "daily" && !extra.start_date && !extra.end_date) {
+      return loadUsageDaily(this, extra);
     }
     const guidanceCall = section === "configuration"
       && ["get", "validate", "update", "save"].includes(action);

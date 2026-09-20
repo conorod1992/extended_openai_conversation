@@ -387,7 +387,6 @@ function panelFor(page = "assistant", subsection = "basics") {
 }
 
 {
-  await routeAssetPromise("usage-maintenance/usage");
   const panel = panelFor("usage-maintenance", "usage");
   const started = [];
   const resolvers = new Map();
@@ -396,12 +395,18 @@ function panelFor(page = "assistant", subsection = "basics") {
     return new Promise((resolve) => resolvers.set(message.action, resolve));
   }};
   const loading = panel._loadSection();
-  await Promise.resolve();
-  assert.ok(started.includes("footprint"), "footprint starts without waiting for main Usage data");
-  assert.ok(started.includes("summary"), "main Usage data starts in the same load");
-  assert.ok(started.includes("daily"), "daily Usage data starts in the same load");
-  assert.ok(started.includes("runs"), "recent runs start in the same load");
-  assert.ok(started.includes("retention"), "retention starts in the same load");
+
+  for (const action of ["footprint", "summary", "daily", "runs", "retention"]) {
+    assert.ok(
+      started.includes(action),
+      `${action} starts before lazy Usage UI modules resolve`,
+    );
+  }
+  assert.equal(
+    routeFeaturesReady("usage-maintenance/usage"),
+    false,
+    "Usage data starts while the chart/footprint feature is still cold",
+  );
 
   resolvers.get("footprint")?.({baseline:{characters:0}});
   resolvers.get("summary")?.({});
@@ -409,6 +414,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   resolvers.get("runs")?.({runs:[]});
   resolvers.get("retention")?.({});
   await loading;
+  assert.equal(routeFeaturesReady("usage-maintenance/usage"), true);
 }
 
 {

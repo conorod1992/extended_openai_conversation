@@ -1,3 +1,5 @@
+import {loadInputFootprintData} from "./usage-data.js";
+
 const number = (value) => Number(value || 0).toLocaleString();
 const approx = (value) => `~${number(value)}`;
 
@@ -60,44 +62,23 @@ export function reconcileInputFootprint(panel) {
 }
 
 export async function loadInputFootprint(panel) {
-  const agentId = panel._agentId;
-  if (!agentId || panel._viewKey() !== "usage-maintenance/usage") return;
-  const requestToken = (panel._inputFootprintRequestToken || 0) + 1;
-  panel._inputFootprintRequestToken = requestToken;
-  panel._inputFootprintLoading = true;
-  panel._inputFootprintError = null;
+  const pending = loadInputFootprintData(panel, {reusePending: false});
+  if (!pending) return;
   reconcileInputFootprint(panel);
-  try {
-    const result = await panel._call("usage", "footprint");
-    if (
-      panel._agentId !== agentId
-      || panel._viewKey() !== "usage-maintenance/usage"
-      || panel._inputFootprintRequestToken !== requestToken
-    ) return;
-    panel._inputFootprint = result;
-    panel._inputFootprintAgentId = agentId;
-  } catch (err) {
-    if (
-      panel._agentId !== agentId
-      || panel._viewKey() !== "usage-maintenance/usage"
-      || panel._inputFootprintRequestToken !== requestToken
-    ) return;
-    panel._inputFootprint = null;
-    panel._inputFootprintAgentId = agentId;
-    panel._inputFootprintError = err?.message || String(err);
-  } finally {
-    if (
-      panel._agentId === agentId
-      && panel._viewKey() === "usage-maintenance/usage"
-      && panel._inputFootprintRequestToken === requestToken
-    ) {
-      panel._inputFootprintLoading = false;
-      reconcileInputFootprint(panel);
-    }
-  }
+  await pending;
+  reconcileInputFootprint(panel);
 }
 
 export function bindInputFootprint(panel) {
+  const pending = panel._inputFootprintPromise;
+  if (pending && panel._inputFootprintReconcilePromise !== pending) {
+    panel._inputFootprintReconcilePromise = pending;
+    void pending.finally(() => {
+      if (panel._inputFootprintReconcilePromise !== pending) return;
+      panel._inputFootprintReconcilePromise = null;
+      reconcileInputFootprint(panel);
+    });
+  }
   const button = panel.shadowRoot?.querySelector("#retry-input-footprint");
   if (button) button.onclick = () => { void loadInputFootprint(panel); };
 }
