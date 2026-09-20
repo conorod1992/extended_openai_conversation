@@ -133,17 +133,21 @@ async def test_function_state_actions_report_unknown_names(hass, monkeypatch) ->
     hass.config_entries.async_update_subentry.assert_not_called()
 
 
-async def test_skill_source_ref_rejects_blank_and_falls_back_without_version(
+async def test_skill_source_ref_validates_and_normalizes_installed_version(
     hass, monkeypatch
 ) -> None:
     with pytest.raises(HomeAssistantError, match="cannot be empty"):
         await async_skill_source_ref(hass, "   ")
 
+    integration = AsyncMock(return_value=SimpleNamespace(version="   "))
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.services.async_get_integration",
-        AsyncMock(return_value=SimpleNamespace(version="   ")),
+        integration,
     )
     assert await async_skill_source_ref(hass) == GITHUB_SKILLS_BRANCH
+
+    integration.return_value = SimpleNamespace(version=" 7.2.1 ")
+    assert await async_skill_source_ref(hass) == "7.2.1"
 
 
 @pytest.mark.parametrize("api_mode", [API_MODE_RESPONSES, "chat_completions"])
@@ -505,6 +509,39 @@ async def test_download_skill_recursively_stages_and_publishes_files(
             _Response(200, payload=[{"name": "../escape", "type": "dir", "url": "x"}]),
             "unsafe path",
         ),
+        (
+            _Response(200, payload=[{"name": 123, "type": "file"}]),
+            "no valid name",
+        ),
+        (
+            _Response(
+                200,
+                payload=[
+                    {
+                        "name": "SKILL.md",
+                        "path": "skills/demo/SKILL.md",
+                        "type": "file",
+                        "download_url": None,
+                        "size": 1,
+                    }
+                ],
+            ),
+            "No download URL",
+        ),
+        (
+            _Response(
+                200,
+                payload=[
+                    {
+                        "name": "assets",
+                        "path": "skills/demo/assets",
+                        "type": "dir",
+                        "url": None,
+                    }
+                ],
+            ),
+            "No API URL",
+        ),
     ],
 )
 async def test_download_skill_rejects_invalid_remote_content_and_cleans_staging(
@@ -805,74 +842,6 @@ async def test_function_state_update_handles_entry_disappearing_after_resolution
         await helper(hass, "entry", "agent", ["target"], True)
 
     hass.config_entries.async_update_subentry.assert_not_called()
-
-
-async def test_skill_source_ref_prefers_trimmed_installed_version(
-    hass, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Normal installed releases should pin skill downloads to their release version."""
-    monkeypatch.setattr(
-        services,
-        "async_get_integration",
-        AsyncMock(return_value=SimpleNamespace(version=" 7.2.1 ")),
-    )
-
-    assert await services.async_skill_source_ref(hass) == "7.2.1"
-
-
-@pytest.mark.parametrize(
-    ("payload", "message"),
-    [
-        ([{"name": 123, "type": "file"}], "no valid name"),
-        (
-            [
-                {
-                    "name": "SKILL.md",
-                    "path": "skills/demo/SKILL.md",
-                    "type": "file",
-                    "download_url": None,
-                    "size": 1,
-                }
-            ],
-            "No download URL",
-        ),
-        (
-            [
-                {
-                    "name": "assets",
-                    "path": "skills/demo/assets",
-                    "type": "dir",
-                    "url": None,
-                }
-            ],
-            "No API URL",
-        ),
-    ],
-)
-async def test_download_skill_rejects_malformed_github_item_metadata(
-    hass,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
-    payload,
-    message: str,
-) -> None:
-    """Malformed GitHub listing metadata must not escape the staging boundary."""
-    root_url = (
-        "https://api.github.com/repos/conorod1992/extended_openai_conversation/"
-        "contents/examples/skills/demo?ref=v1.2.3"
-    )
-    handler, manager = await _download_handler(
-        hass,
-        monkeypatch,
-        tmp_path,
-        {root_url: _Response(200, payload=payload)},
-    )
-
-    with pytest.raises(HomeAssistantError, match=message):
-        await handler(_call({"skill_name": "demo"}))
-
-    assert not (tmp_path / "staging" / "demo.download-fixed").exists()
-    manager.async_publish_staged_skill.assert_not_awaited()
 
 
 async def test_download_skill_rejects_failed_file_download_and_cleans_staging(
