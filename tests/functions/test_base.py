@@ -1,5 +1,7 @@
 """Tests for Function base class and helper function."""
 
+from copy import deepcopy
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,6 +19,11 @@ from custom_components.extended_openai_conversation_responses.functions import (
     ScriptFunction,
     TemplateFunction,
     get_function,
+)
+from custom_components.extended_openai_conversation_responses.functions.base import (
+    Function,
+    _RuntimeFunctionConfig,
+    copy_runtime_function_config,
 )
 
 
@@ -85,3 +92,96 @@ class TestFunctionBase:
 
         with pytest.raises(EntityNotExposed):
             function.validate_entity_ids(hass, ["light.not_exposed"], exposed_entities)
+
+class _Function(Function):
+    """Minimal concrete Function for base-class validation tests."""
+
+    async def execute(
+        self,
+        hass: Any,
+        function_config: dict[str, Any],
+        arguments: dict[str, Any],
+        llm_context: Any,
+        exposed_entities: list[dict[str, Any]],
+    ) -> Any:
+        return None
+
+
+class _AtomicRuntimeObject:
+    """Stand-in for a hydrated Home Assistant runtime object."""
+
+
+def test_copy_runtime_function_config_preserves_aliases_and_cycles() -> None:
+    """Mutable containers are isolated while aliases/cycles remain coherent."""
+    shared: dict[str, Any] = {"value": [1, 2]}
+    source: dict[str, Any] = {"first": shared, "second": shared}
+    source["self"] = source
+
+    copied = copy_runtime_function_config(source)
+
+    assert copied is not source
+    assert copied["first"] is copied["second"]
+    assert copied["first"] is not shared
+    assert copied["first"]["value"] is not shared["value"]
+    assert copied["self"] is copied
+
+
+def test_copy_runtime_function_config_preserves_collections_and_hydrated_leaves() -> None:
+    """Container types are copied while opaque runtime leaves retain identity."""
+    runtime_object = _AtomicRuntimeObject()
+    source = {
+        "tuple": ("alpha", runtime_object),
+        "set": {"alpha", "beta"},
+        "frozenset": frozenset({"alpha", "beta"}),
+        "nested": [runtime_object],
+    }
+
+    copied = copy_runtime_function_config(source)
+
+    assert copied["tuple"] == source["tuple"]
+    assert isinstance(copied["tuple"], tuple)
+    assert isinstance(copied["set"], set)
+    assert isinstance(copied["frozenset"], frozenset)
+    assert copied["set"] is not source["set"]
+    assert copied["frozenset"] is not source["frozenset"]
+    assert copied["tuple"][1] is runtime_object
+    assert copied["nested"] is not source["nested"]
+    assert copied["nested"][0] is runtime_object
+
+
+def test_validate_schema_returns_empty_mapping_for_non_mapping_schema_result() -> None:
+    """Defensively reject a schema callable that violates the mapping contract."""
+    function = _Function()
+    function.data_schema = lambda value: [value]  # type: ignore[assignment]
+    config = {"type": "example", "value": "kept"}
+
+    assert function.validate_schema(config) == {}
+    assert config == {"type": "example", "value": "kept"}
+
+
+def test_validate_schema_preserves_persisted_and_runtime_copy_contracts() -> None:
+    """Hydration stays runtime-only while copied wrappers retain hydrated leaves."""
+    runtime_object = _AtomicRuntimeObject()
+
+    def _hydrate(value: dict[str, Any]) -> dict[str, Any]:
+        value["runtime"] = runtime_object
+        return value
+
+    function = _Function()
+    function.data_schema = _hydrate  # type: ignore[assignment]
+    config = {"type": "example", "source": "persisted"}
+
+    validated = function.validate_schema(config)
+
+    assert isinstance(validated, _RuntimeFunctionConfig)
+    assert validated["runtime"] is runtime_object
+    assert deepcopy(validated) == {"type": "example", "source": "persisted"}
+
+    copied = copy_runtime_function_config(validated)
+
+    assert isinstance(copied, _RuntimeFunctionConfig)
+    assert copied is not validated
+    assert copied["runtime"] is runtime_object
+    assert deepcopy(copied) == {"type": "example", "source": "persisted"}
+    assert deepcopy(copied) is not config
+
