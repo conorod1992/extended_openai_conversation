@@ -141,12 +141,12 @@ from .guest_mode import (
     GuestModeDenied,
     GuestModeManager,
     async_get_guest_mode,
+    can_reuse_request_policy,
     execution_failure_result,
     guest_arguments_allowed_runtime,
     guest_mode_denial_result,
     resolve_guest_policy,
 )
-from .guest_performance import can_reuse_request_policy
 from .ha_llm_tools import (
     ToolSnapshot,
     async_discover,

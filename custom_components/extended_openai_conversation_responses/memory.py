@@ -1582,10 +1582,6 @@ def _cached_memory_record_terms(memory: MemoryRecord) -> tuple[str, ...]:
     )
 
 
-def _record_tokens(memory: MemoryRecord) -> set[str]:
-    return set(_record_token_list(memory))
-
-
 def _bm25_score(
     query_terms: list[str],
     document_terms: list[str],

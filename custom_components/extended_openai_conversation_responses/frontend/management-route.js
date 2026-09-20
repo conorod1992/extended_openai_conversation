@@ -1,5 +1,5 @@
 import {ensureGuideModule} from "./guide-page.js";
-import {ensureOverviewModule} from "./overview-page.js";
+import {ensureOverviewModule, startOverviewBroadcastSnapshot} from "./overview-page.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_VIEWS = new Set([
   "capabilities/home-assistant",
@@ -20,11 +20,12 @@ export function routeAssetKind(view) {
 
 const featureModules = new Map();
 const featurePromises = new Map();
-// These feature helpers must be available before their first data request.
-// Independent editor/UI assets still load in parallel with backend work.
+// Only routes whose data loader itself lives in the lazy feature must wait for it.
+// Ordinary panel-owned data requests should begin while route assets download.
 const DATA_FEATURES = new Set([
-  "capabilities/quiet-hours", "capabilities/functions", "data-memory/conversations",
-  "usage-maintenance/usage", "usage-maintenance/request-debug",
+  "capabilities/quiet-hours",
+  "usage-maintenance/usage",
+  "usage-maintenance/request-debug",
 ]);
 const featureLoaders = {
   "agent-config": () => import("./agent-config-editor.js"),
@@ -86,6 +87,12 @@ export function routeAssetPromise(view, panel) {
   const feature = routeFeaturePromise(view);
   const core = coreAssetPromise(view);
   return feature ? Promise.all([feature, core]) : core;
+}
+
+export function warmRouteAsset(view) {
+  const pending = routeAssetPromise(view);
+  pending?.catch?.(() => {});
+  return pending;
 }
 
 function coreAssetPromise(view) {
@@ -240,10 +247,12 @@ async function loadRouteData(panel, silent, view, token) {
 // One native route entry point owns lazy assets and stale completion handling.
 export function loadRoute(panel, silent = false) {
   const view = panel._viewKey();
+  if (view !== "overview") panel._eocOverviewBroadcastPromise = null;
   const token = (panel._eocViewAssetToken || 0) + 1;
   panel._eocViewAssetToken = token;
   const feature = routeFeaturePromise(view);
   const asset = coreAssetPromise(view);
+  if (view === "overview") startOverviewBroadcastSnapshot(panel);
   if (!feature && !asset) return loadRouteData(panel, silent, view, token);
   let loadData = () => loadRouteData(panel, silent, view, token);
   if (feature && DATA_FEATURES.has(view)) {
@@ -276,7 +285,11 @@ export function applyOverviewResult(panel, result) {
   return true;
 }
 
-export function startStoredOverviewPrefetch(panel, preferredSubentryId) {
+export function startStoredOverviewPrefetch(
+  panel,
+  preferredSubentryId,
+  overviewAsset = ensureOverviewModule(),
+) {
   if (panel._viewKey?.() !== "overview") return null;
   const subentryId = preferredSubentryId || globalThis.localStorage?.getItem?.(AGENT_KEY);
   const entryId = globalThis.localStorage?.getItem?.(ENTRY_KEY);
@@ -285,7 +298,7 @@ export function startStoredOverviewPrefetch(panel, preferredSubentryId) {
     entryId,
     subentryId,
     promise: Promise.allSettled([
-      ensureOverviewModule(),
+      overviewAsset,
       panel._hass.callWS({
         type: WS_TYPE,
         section: "overview",
@@ -293,6 +306,7 @@ export function startStoredOverviewPrefetch(panel, preferredSubentryId) {
         entry_id: entryId,
         subentry_id: subentryId,
       }),
+      startOverviewBroadcastSnapshot(panel),
     ]),
   };
 }
@@ -302,7 +316,8 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
   const previousAgentId = panel._agentId;
   const saved = globalThis.localStorage?.getItem?.(AGENT_KEY);
   const preferred = selectedId || saved;
-  const prefetch = startStoredOverviewPrefetch(panel, preferred);
+  const routeAsset = warmRouteAsset(panel._viewKey?.());
+  const prefetch = startStoredOverviewPrefetch(panel, preferred, routeAsset);
 
   panel._data = await panel._hass.callWS({type: WS_TYPE, action: "agents"});
   panel._baseScopes = panel._data.scopes || [];

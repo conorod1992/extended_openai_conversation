@@ -34,9 +34,12 @@ const [{ExtendedOpenAIManagementPanel}, {bindRequestRules}] = await Promise.all(
 
 // These cases isolate cached data behavior after route assets are ready.
 const {
+  AGENT_KEY,
+  ENTRY_KEY,
   applyRequestRuleSearch,
   requestRuleSearchText,
   routeAssetPromise,
+  routeFeaturesReady,
 } = await import("../custom_components/extended_openai_conversation_responses/frontend/management-route.js");
 await routeAssetPromise("assistant/basics");
 
@@ -86,6 +89,153 @@ function panelFor(page = "assistant", subsection = "basics") {
 }
 
 {
+  const panel = panelFor("capabilities", "request-rules");
+  let resolveAgents;
+  const calls = [];
+  panel._hass = {callWS: (message) => {
+    calls.push(message);
+    if (message.action === "agents") {
+      return new Promise((resolve) => { resolveAgents = resolve; });
+    }
+    return Promise.resolve({});
+  }};
+  panel._loadSection = async () => {};
+  const loading = panel._loadAgents("agent-a");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(routeFeaturesReady("capabilities/request-rules"), true,
+    "deep-link route asset starts before agents resolves");
+  assert.deepEqual(calls.map((call) => call.action), ["agents"]);
+  resolveAgents({agents, scopes:initialScopes, is_admin:true});
+  await loading;
+}
+
+{
+  const panel = panelFor("assistant", "basics");
+  const listeners = new Map();
+  panel.shadowRoot = {
+    __eocRouteAssetWarmupBound:false,
+    addEventListener(name, callback) { listeners.set(name, callback); },
+  };
+  panel._bindRouteAssetWarmup();
+  panel._bindRouteAssetWarmup();
+  assert.deepEqual([...listeners.keys()].sort(), ["focusin", "pointerdown", "pointerover"]);
+
+  const target = {
+    dataset:{page:"guide"},
+    closest() { return this; },
+  };
+  listeners.get("pointerover")({target});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(routeFeaturesReady("guide"), true,
+    "navigation intent warms the target asset");
+}
+
+{
+  const panel = panelFor("capabilities", "functions");
+  const calls = [];
+  let resolveConfig;
+  panel._hass = {callWS: (message) => {
+    calls.push(message);
+    if (message.section === "configuration" && message.action === "get") {
+      return new Promise((resolve) => { resolveConfig = resolve; });
+    }
+    return Promise.resolve({});
+  }};
+  const loading = panel._loadSection();
+  assert.deepEqual(
+    calls.map((call) => [call.section, call.action]),
+    [["configuration", "get"]],
+    "Functions configuration starts before its lazy UI module resolves",
+  );
+  resolveConfig({title:"A", config:{}, revision:"r1"});
+  await loading;
+}
+
+{
+  const panel = panelFor("data-memory", "conversations");
+  const calls = [];
+  let resolveConfig;
+  let resolveScopes;
+  panel._hass = {callWS: (message) => {
+    calls.push(message);
+    if (message.section === "configuration" && message.action === "get") {
+      return new Promise((resolve) => { resolveConfig = resolve; });
+    }
+    if (message.section === "scopes" && message.action === "catalog") {
+      return new Promise((resolve) => { resolveScopes = resolve; });
+    }
+    if (message.section === "conversations" && message.action === "list") {
+      return Promise.resolve({sessions:[]});
+    }
+    if (message.section === "conversations" && message.action === "settings") {
+      return Promise.resolve({});
+    }
+    if (message.section === "conversations" && message.action === "active") {
+      return Promise.resolve({active:[]});
+    }
+    return Promise.resolve({});
+  }};
+  const loading = panel._loadSection();
+  assert.deepEqual(
+    calls.map((call) => [call.section, call.action]),
+    [["configuration", "get"], ["scopes", "catalog"]],
+    "Conversations prerequisites start before its lazy UI module resolves",
+  );
+  resolveConfig({title:"A", config:{}, revision:"r1"});
+  resolveScopes({scopes:initialScopes});
+  await loading;
+  assert.deepEqual(
+    calls.filter((call) => call.section === "conversations").map((call) => call.action),
+    ["list", "settings", "active"],
+  );
+}
+
+{
+  globalThis.localStorage.values.clear();
+  globalThis.localStorage.setItem(AGENT_KEY, "agent-a");
+  globalThis.localStorage.setItem(ENTRY_KEY, "entry-a");
+  const panel = panelFor("overview", null);
+  const calls = [];
+  const resolvers = new Map();
+  panel._hass = {callWS: (message) => {
+    calls.push(message);
+    return new Promise((resolve) => {
+      const key = message.action === "summary"
+        ? "summary"
+        : message.action === "snapshot"
+          ? "snapshot"
+          : message.action;
+      resolvers.set(key, resolve);
+    });
+  }};
+  const loading = panel._loadAgents();
+
+  assert.deepEqual(
+    calls.map((call) => call.action),
+    ["summary", "snapshot", "agents"],
+    "Overview summary and Broadcast snapshot start before agents resolves",
+  );
+
+  resolvers.get("agents")({agents, scopes:initialScopes, is_admin:true});
+  resolvers.get("summary")({
+    agent:{...agents[0], guest_mode:{}},
+    usage:{today:{}, month:{}},
+    conversations:{},
+    load_errors:[],
+  });
+  resolvers.get("snapshot")({
+    enabled:false,
+    can_manage:true,
+    catalog:{satellites:[], areas:[]},
+    history:[],
+  });
+  await loading;
+  assert.equal(panel._result?.load_errors?.length, 0);
+  assert.equal(panel._eocOverviewBroadcastPromise instanceof Promise, true);
+}
+
+{
+  globalThis.localStorage.values.clear();
   const panel = panelFor("overview", null);
   const calls = [];
   panel._hass = {callWS: async (message) => {

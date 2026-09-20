@@ -123,18 +123,27 @@ function bindBroadcastControls(panel, snapshot) {
   });
 }
 
-async function loadBroadcast(panel) {
+function applyBroadcastSnapshot(panel, snapshot) {
   const host = panel.shadowRoot.querySelector("#broadcast-card");
   if (!host) return;
+  const available = new Set((snapshot.catalog?.satellites || []).map((satellite) => satellite.id));
+  panel._broadcastSelected = new Set([...(panel._broadcastSelected || new Set())].filter((entityId) => available.has(entityId)));
+  host.innerHTML = broadcastMarkup(panel, snapshot);
+  bindBroadcastControls(panel, snapshot);
+}
+
+function applyBroadcastError(panel, err) {
+  const host = panel.shadowRoot.querySelector("#broadcast-card");
+  if (!host) return;
+  host.innerHTML = `<div class="error" role="alert">Unable to load Broadcast: ${panel._e(err.message || String(err))}</div>`;
+}
+
+async function loadBroadcast(panel) {
   try {
     const snapshot = await panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"});
-    if (!panel.shadowRoot.querySelector("#broadcast-card")) return;
-    const available = new Set((snapshot.catalog?.satellites || []).map((satellite) => satellite.id));
-    panel._broadcastSelected = new Set([...(panel._broadcastSelected || new Set())].filter((entityId) => available.has(entityId)));
-    host.innerHTML = broadcastMarkup(panel, snapshot);
-    bindBroadcastControls(panel, snapshot);
+    applyBroadcastSnapshot(panel, snapshot);
   } catch (err) {
-    host.innerHTML = `<div class="error" role="alert">Unable to load Broadcast: ${panel._e(err.message || String(err))}</div>`;
+    applyBroadcastError(panel, err);
   }
 }
 
@@ -253,11 +262,16 @@ export function renderOverview(panel, agent) {
     <section id="broadcast-card" class="content-card" aria-label="Broadcast">${broadcastMarkup(panel, null)}</section>`;
 }
 
-export function bindOverview(panel) {
+export function bindOverview(panel, broadcastPromise) {
   panel.shadowRoot.querySelectorAll(".dashboard-action").forEach((button) => button.addEventListener("click", () => panel._navigate(button.dataset.page, button.dataset.subsection)));
   panel.shadowRoot.querySelectorAll(".setup-health-action").forEach((button) => button.addEventListener("click", async () => {
     panel._pendingSettingFocus = button.dataset.target || "";
     await panel._navigate(button.dataset.page, button.dataset.subsection || null);
   }));
-  loadBroadcast(panel);
+  void Promise.resolve(broadcastPromise)
+    .then((snapshot) => applyBroadcastSnapshot(panel, snapshot))
+    .catch((err) => applyBroadcastError(panel, err))
+    .finally(() => {
+      if (panel._eocOverviewBroadcastPromise === broadcastPromise) panel._eocOverviewBroadcastPromise = null;
+    });
 }
