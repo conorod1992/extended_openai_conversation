@@ -40,8 +40,15 @@ const NAVIGATION_MARK_PREFIX = "extended-openai:navigation";
 const LOAD_MARK_PREFIX = "extended-openai:load-section";
 const RENDER_MARK_PREFIX = "extended-openai:render";
 const MAX_MEASURE_ENTRIES = 100;
+const COLD_MARK_PREFIX = "extended-openai:cold";
 // Performance entries are global to the document, not to a panel instance.
 let performanceSequence = 0;
+
+try {
+  globalThis.performance?.mark?.(`${COLD_MARK_PREFIX}:module-evaluated`);
+} catch (_err) {
+  // Cold-start instrumentation must never affect panel startup.
+}
 const BUSY_STYLE = `
   [data-eoc-main].eoc-loading-in-background,
   main.eoc-loading-in-background {
@@ -156,6 +163,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
+    this._eocColdLifecycleMarks = new Set();
+    this._markColdLifecycle("constructed");
     const route = routeFromPath(window.location.pathname);
     this._page = route.page;
     this._subsection = route.section;
@@ -188,6 +197,21 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   }
 
+  _markColdLifecycle(name, detail = null) {
+    const api = performanceApi();
+    if (!api || !name || this._eocColdLifecycleMarks?.has(name)) return false;
+    this._eocColdLifecycleMarks ||= new Set();
+    this._eocColdLifecycleMarks.add(name);
+    try {
+      const mark = `${COLD_MARK_PREFIX}:${name}`;
+      if (detail == null) api.mark(mark);
+      else api.mark(mark, {detail});
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
   set hass(value) {
     const first = !this._hass;
     this._hass = value;
@@ -202,6 +226,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   connectedCallback() {
+    this._markColdLifecycle("connected");
     // Home Assistant can assign properties before custom-element upgrade. Replay
     // own properties so the class setters receive the values after definition.
     for (const name of ["hass", "route"]) {
@@ -567,9 +592,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _loadAgents(selectedId = null) {
+    this._markColdLifecycle("agents-start");
     try {
       await loadAgentsWithOverviewPrefetch(this, selectedId);
+      this._markColdLifecycle("agents-complete", {status: "fulfilled"});
     } catch (err) {
+      this._markColdLifecycle("agents-complete", {status: "rejected"});
       this._error = err.message || String(err);
       this._render();
     }
@@ -658,7 +686,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       let result;
       let contentData = null;
       if (view === "overview") {
+        this._markColdLifecycle("overview-summary-start");
         const summary = await this._call("overview", "summary");
+        this._markColdLifecycle("overview-summary-complete");
         if (loadToken !== this._loadToken) return;
         const {agent, ...overview} = summary;
         if (agent) Object.assign(this._selectedAgent(), agent);
@@ -759,6 +789,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _render(...args) {
+    this._markColdLifecycle("first-render-start");
     getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     const view = this._viewKey?.() || null;
     const busy = Boolean(this._busy);
@@ -798,6 +829,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
       syncAgentPicker(this);
       finishMeasure(measure, {view, busy});
+      this._markColdLifecycle("first-render-complete");
     }
   }
 
@@ -805,6 +837,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     initializePageDraft(this);
     bindStateSafety(this);
     renderManagement(this);
+    const main = this.shadowRoot?.querySelector?.("[data-eoc-main]") || this.shadowRoot?.querySelector?.("main");
+    const routeTitle = main?.querySelector?.(".page-intro h1");
+    if (routeTitle && this._markColdLifecycle("route-title-present", {view: this._viewKey()})) {
+      requestAnimationFrame(() => this._markColdLifecycle("route-title-next-frame", {view: this._viewKey()}));
+    }
+    if (this._viewKey() === "overview" && main?.querySelector?.(".dashboard-grid")
+        && this._markColdLifecycle("overview-content-present")) {
+      requestAnimationFrame(() => this._markColdLifecycle("overview-content-next-frame"));
+    }
     bindPanelDialogs(this);
     bindSingleRequestSave(this);
     bindFrontendCorrectness(this);
@@ -822,12 +863,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _renderShell() {
+    this._markColdLifecycle("shell-start");
     this._eocShellRevision = (this._eocShellRevision || 0) + 1;
     const agent = this._selectedAgent();
     const navigation = NAVIGATION.filter((item) => this._canAccessView(item.id));
     const local = this._visibleSubsections();
     const currentSection = local.find((item) => item.id === this._subsection);
-    this._eocMainMarkup = !agent ? this._empty("No conversation agents configured.") : this._busy ? this._loading() : this._error ? `<div class="error" role="alert">${this._e(this._error)}</div>` : this._content(agent);
+    this._eocMainMarkup = !agent ? this._empty("No conversation agents configured.") : this._busy ? this._loadingContent(agent) : this._error ? `<div class="error" role="alert">${this._e(this._error)}</div>` : this._content(agent);
     this._eocDialogMarkup = this._dialogs();
     this._eocRenderedRoute = `${this._agentId}|${this._viewKey()}`;
     this.shadowRoot.innerHTML = `
@@ -852,6 +894,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       <div id="eoc-dialog-host">${this._eocDialogMarkup}</div>
       <div id="toast" class="toast" role="status" aria-live="polite"></div>`;
     this._bindActions();
+    this._markColdLifecycle("shell-complete");
+    if (this.shadowRoot.querySelector(".page-heading h1")
+        && this._markColdLifecycle("shell-title-present")) {
+      requestAnimationFrame(() => this._markColdLifecycle("shell-next-frame"));
+    }
   }
 
   _reconcileCollectionView() {
@@ -865,9 +912,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return getConfigurationEditor()?.reconcileTools?.(this, {repairCards: repair?.renderFunctionRepairCards(this) || ""}) || false;
   }
 
+  _loadingContent(agent) {
+    if (this._viewKey() === "capabilities/home-assistant") {
+      return `${this._homeAssistantIntro()}${this._loading()}`;
+    }
+    return this._loading();
+  }
+
   _content(agent) {
     const view = this._viewKey();
-    if (!routeFeaturesReady(view)) return this._loading();
+    if (!routeFeaturesReady(view)) return this._loadingContent(agent);
     if (view === "data-memory/memory-settings") return getRouteFeature(view)?.renderMemorySettings(this) || this._loading();
     if (view === "capabilities/home-assistant") {
       this._configSections = ["local"];
@@ -905,9 +959,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return this._empty("This section is not available.");
   }
 
+  _homeAssistantIntro() {
+    return `<section class="page-intro"><h1>Home Assistant access</h1><p>Home Assistant controls which entities this assistant is allowed to access through Assist. Extended OpenAI can also automatically include exposed entity names and current states in the context sent to the model.</p></section>`;
+  }
+
   _homeAssistant(agent) {
     const contextIncluded = this._draft?.exposed_entities_enabled === true;
-    return `<section class="page-intro"><h1>Home Assistant access</h1><p>Home Assistant controls which entities this assistant is allowed to access through Assist. Extended OpenAI can also automatically include exposed entity names and current states in the context sent to the model.</p></section><section class="content-card access-explainer"><div><h2>Entity access</h2><p>Home Assistant's Assist exposure settings decide which entities may be used by the assistant. Manage exposure in Home Assistant's voice assistant settings.</p></div><div class="compact-status"><span><strong>Include exposed entity states in the prompt</strong><small>Adds exposed entity names and current states to the context sent with each request. Turning this off does not necessarily prevent the assistant from using exposed entities through Home Assistant tools.</small></span><strong class="status-value ${contextIncluded ? "on" : ""}">${contextIncluded ? "On" : "Off"}</strong></div><button type="button" class="secondary inline-route" data-page="assistant" data-subsection="prompt-context">Configure exposed entity context</button></section><section class="notice"><strong>Guest Mode adds another boundary</strong><p>Guest Mode applies additional restrictions to the assistant's normal Home Assistant access.</p><button type="button" class="secondary inline-route" data-page="capabilities" data-subsection="guest-mode">Configure Guest Mode</button></section>`;
+    return `${this._homeAssistantIntro()}<section class="content-card access-explainer"><div><h2>Entity access</h2><p>Home Assistant's Assist exposure settings decide which entities may be used by the assistant. Manage exposure in Home Assistant's voice assistant settings.</p></div><div class="compact-status"><span><strong>Include exposed entity states in the prompt</strong><small>Adds exposed entity names and current states to the context sent with each request. Turning this off does not necessarily prevent the assistant from using exposed entities through Home Assistant tools.</small></span><strong class="status-value ${contextIncluded ? "on" : ""}">${contextIncluded ? "On" : "Off"}</strong></div><button type="button" class="secondary inline-route" data-page="assistant" data-subsection="prompt-context">Configure exposed entity context</button></section><section class="notice"><strong>Guest Mode adds another boundary</strong><p>Guest Mode applies additional restrictions to the assistant's normal Home Assistant access.</p><button type="button" class="secondary inline-route" data-page="capabilities" data-subsection="guest-mode">Configure Guest Mode</button></section>`;
   }
 
   _usage() {
