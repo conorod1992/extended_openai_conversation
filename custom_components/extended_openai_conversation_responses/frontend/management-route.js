@@ -1,6 +1,3 @@
-import {ensureAgentConfigModule} from "./agent-config-loader.js";
-import {ensureRequestRulesModule, getRequestRulesModule} from "./request-rules-loader.js";
-
 import {ensureGuideModule} from "./guide-page.js";
 import {ensureOverviewModule} from "./overview-page.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
@@ -13,20 +10,7 @@ const CONFIG_VIEWS = new Set([
   "usage-maintenance/retention",
 ]);
 
-let configurationEditor = null;
-let configurationEditorPromise = null;
-export function getConfigurationEditor() { return configurationEditor; }
-function ensureConfigurationEditor() {
-  if (!configurationEditorPromise) {
-    configurationEditorPromise = Promise.all([
-      import("./agent-config-editor.js"), ensureAgentConfigModule(),
-    ]).then(([editor]) => (configurationEditor = editor)).catch((error) => {
-      configurationEditorPromise = null;
-      throw error;
-    });
-  }
-  return configurationEditorPromise;
-}
+export function getConfigurationEditor() { return getRouteFeature("agent-config"); }
 
 export function routeAssetKind(view) {
   if (String(view || "").startsWith("assistant/") || CONFIG_VIEWS.has(view)) return "agent-config";
@@ -43,6 +27,7 @@ const DATA_FEATURES = new Set([
   "usage-maintenance/usage", "usage-maintenance/request-debug",
 ]);
 const featureLoaders = {
+  "agent-config": () => import("./agent-config-editor.js"),
   "status": () => import("./management-feature-status.js"),
   "capabilities": () => import("./management-capabilities-ia.js"),
   "configuration": () => import("./management-configuration-feature.js"),
@@ -69,6 +54,7 @@ export function getRouteFeature(view) { return featureModules.get(view); }
 
 function routeFeatureKeys(view) {
   const keys = [view];
+  if (routeAssetKind(view) === "agent-config") keys.push("agent-config");
   if (routeAssetKind(view) === "agent-config" || view === "data-memory/memory-settings") keys.push("configuration");
   if (["data-memory/memories", "data-memory/conversations", "capabilities/guest-mode"].includes(view)) keys.push("memory-browser");
   if (["capabilities/home-assistant", "capabilities/web-skills", "data-memory/knowledge"].includes(view)) keys.push("capabilities");
@@ -77,9 +63,6 @@ function routeFeatureKeys(view) {
 }
 
 export function routeFeaturesReady(view) {
-  const kind = routeAssetKind(view);
-  if (kind === "agent-config" && !configurationEditor) return false;
-  if (kind === "request-rules" && !getRequestRulesModule()) return false;
   return routeFeatureKeys(view).every((key) => !featureLoaders[key] || featureModules.has(key));
 }
 
@@ -108,9 +91,6 @@ export function routeAssetPromise(view, panel) {
 function coreAssetPromise(view) {
   if (view === "overview") return ensureOverviewModule();
   if (view === "guide") return ensureGuideModule();
-  const kind = routeAssetKind(view);
-  if (kind === "agent-config" && !configurationEditor) return ensureConfigurationEditor();
-  if (kind === "request-rules" && !getRequestRulesModule()) return ensureRequestRulesModule();
   return null;
 }
 

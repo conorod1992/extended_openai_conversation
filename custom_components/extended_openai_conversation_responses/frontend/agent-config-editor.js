@@ -1,19 +1,13 @@
-import { bindBackupTransfer } from "./backup-transfer-ui.js";
-import { bindExposedAttributeSettings } from "./exposed-attributes-ui.js";
-const {ensureAgentConfigModule, getAgentConfigModule} = await import("./agent-config-loader.js");
-
-if (typeof document === "undefined") await ensureAgentConfigModule();
-
+import {bindBackupTransfer} from "./backup-transfer-ui.js";
+import {bindExposedAttributeSettings} from "./exposed-attributes-ui.js";
+import {renderConfiguration as renderConfigurationMarkup, backupSummaryLines as summaryLines} from "./agent-config-editor-base.js";
+import {bindConfiguration as bindModelConfiguration} from "./agent-config-editor-model-v2.js";
+export {renderTools, reconcileTools, configurationDialogs, restoreDialog} from "./agent-config-editor-base.js";
+export {bindTools} from "./agent-config-native-yaml.js";
 
 export const BACKUP_CREDENTIAL_WARNING = "Recognised API keys, tokens, passwords, authorization headers and other common secrets are redacted from full backups. Re-enter any required credentials after restore. Redaction is best-effort, so review backup files before sharing them.";
 const CACHEABLE_CONFIG_SECTIONS = new Set(["capabilities", "archive", "voice", "speech", "context", "retention", "backup"]);
 const MAX_CONFIG_RENDER_CACHE_ENTRIES = 8;
-
-export {reasoningEffortOptionsForResult} from "./agent-config-model-presentation.js";
-
-export function isFunctionGroupEnabled(...args) {
-  return requiredImplementation("isFunctionGroupEnabled").isFunctionGroupEnabled(...args);
-}
 
 function configRenderCacheKey(panel) {
   if (panel?._configDirty) return null;
@@ -52,114 +46,20 @@ function rememberConfigurationMarkup(panel, key, html, voiceIdentity) {
   return html;
 }
 
-function requiredImplementation(name) {
-  const module = getAgentConfigModule();
-  if (!module) throw new Error(`Agent configuration module is not loaded before ${name}`);
-  return module;
-}
-
-function queueRender(panel) {
-  void ensureAgentConfigModule()
-    .then(() => panel?._render?.())
-    .catch((err) => {
-      if (!panel) return;
-      panel._error = `Unable to load configuration editor: ${err.message || String(err)}`;
-      panel._render?.();
-    });
-}
-
 export function renderConfiguration(panel, presentation) {
-  const module = getAgentConfigModule();
-  if (!module) {
-    queueRender(panel);
-    return panel._loading?.() || '<div class="loading">Loading configuration…</div>';
-  }
   const cacheKey = configRenderCacheKey(panel);
   const cached = getCachedConfigurationMarkup(panel, cacheKey, presentation?.voiceIdentity);
   if (cached !== null) return cached;
-  return rememberConfigurationMarkup(panel, cacheKey, module.renderConfiguration(panel, presentation), presentation?.voiceIdentity);
+  return rememberConfigurationMarkup(panel, cacheKey, renderConfigurationMarkup(panel, presentation), presentation?.voiceIdentity);
 }
 
 export function bindConfiguration(panel) {
-  const module = getAgentConfigModule();
-  if (!module) return queueRender(panel);
-  const result = module.bindConfiguration(panel);
+  const result = bindModelConfiguration(panel);
   bindBackupTransfer(panel, backupSummaryLines);
   bindExposedAttributeSettings(panel);
   return result;
 }
 
-export function renderTools(panel, presentation) {
-  const module = getAgentConfigModule();
-  if (!module) {
-    queueRender(panel);
-    return panel._loading?.() || '<div class="loading">Loading Functions…</div>';
-  }
-  return module.renderTools(panel, presentation);
-}
-
-export function bindTools(panel) {
-  const module = getAgentConfigModule();
-  if (!module) return queueRender(panel);
-  return module.bindTools(panel);
-}
-
-export function reconcileTools(panel, presentation) {
-  return getAgentConfigModule()?.reconcileTools(panel, presentation) || false;
-}
-
-export function configurationDialogs(...args) {
-  return getAgentConfigModule()?.configurationDialogs(...args) || "";
-}
-
-export function restoreDialog(...args) {
-  return getAgentConfigModule()?.restoreDialog(...args) || "";
-}
-
-export function configurationChoiceLabel(...args) {
-  return requiredImplementation("configurationChoiceLabel").configurationChoiceLabel(...args);
-}
-
-export function copyTextToClipboard(...args) {
-  return requiredImplementation("copyTextToClipboard").copyTextToClipboard(...args);
-}
-
-export function functionGroupIdFromName(...args) {
-  return requiredImplementation("functionGroupIdFromName").functionGroupIdFromName(...args);
-}
-
-export function isFunctionToolEnabled(...args) {
-  return requiredImplementation("isFunctionToolEnabled").isFunctionToolEnabled(...args);
-}
-
-export function functionToolCountLabel(...args) {
-  return requiredImplementation("functionToolCountLabel").functionToolCountLabel(...args);
-}
-
-export function backupSummaryLines(...args) {
-  return [...requiredImplementation("backupSummaryLines").backupSummaryLines(...args), BACKUP_CREDENTIAL_WARNING];
-}
-
-export function canReplaceToolYamlWithoutConfirmation(...args) {
-  return requiredImplementation("canReplaceToolYamlWithoutConfirmation").canReplaceToolYamlWithoutConfirmation(...args);
-}
-
-export function matchesFunctionSearch(...args) {
-  return requiredImplementation("matchesFunctionSearch").matchesFunctionSearch(...args);
-}
-
-export function deleteFunctionGroup(...args) {
-  return requiredImplementation("deleteFunctionGroup").deleteFunctionGroup(...args);
-}
-
-export function categorizeFunctionTools(...args) {
-  return requiredImplementation("categorizeFunctionTools").categorizeFunctionTools(...args);
-}
-
-export function saveBar(...args) {
-  return requiredImplementation("saveBar").saveBar(...args);
-}
-
-export function synchronizePersistedFunctions(...args) {
-  return requiredImplementation("synchronizePersistedFunctions").synchronizePersistedFunctions(...args);
+export function backupSummaryLines(summary) {
+  return [...summaryLines(summary), BACKUP_CREDENTIAL_WARNING];
 }

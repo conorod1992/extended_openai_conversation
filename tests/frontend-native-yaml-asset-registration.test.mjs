@@ -6,7 +6,7 @@ const manifestPath = new URL(
   import.meta.url,
 );
 const loaderPath = new URL(
-  "../custom_components/extended_openai_conversation_responses/frontend/agent-config-loader.js",
+  "../custom_components/extended_openai_conversation_responses/frontend/management-route.js",
   import.meta.url,
 );
 
@@ -18,11 +18,11 @@ const manifest = JSON.parse(manifestText);
 
 assert.match(
   loaderSource,
-  /import\("\.\/agent-config-native-yaml\.js"\)/,
-  "the agent configuration loader must lazy-load the native YAML wrapper",
+  /import\("\.\/agent-config-editor\.js"\)/,
+  "the agent configuration loader must lazy-load the complete editor with native YAML bindings",
 );
 const nativeYaml = Object.entries(manifest).find(([source]) =>
-  source.endsWith("/agent-config-native-yaml.js")
+  source.endsWith("/agent-config-editor.js")
 );
-assert.ok(nativeYaml, "the lazy native YAML module must be emitted in the production manifest");
+assert.ok(nativeYaml, "the lazy editor feature must be emitted in the production manifest");
 assert.equal(nativeYaml[1].isDynamicEntry, true);

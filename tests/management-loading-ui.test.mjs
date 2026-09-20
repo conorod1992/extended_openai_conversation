@@ -6,16 +6,14 @@ const frontend = (name) => new URL(
   import.meta.url,
 );
 
-const [loading, overview, guide, debug, agentEditor, agentLoader, agentNativeYaml, requestRules, requestRulesLoader, routes] = await Promise.all([
+const [loading, overview, guide, debug, agentEditor, agentNativeYaml, requestRules, routes] = await Promise.all([
   readFile(frontend("management-actions.js"), "utf8"),
   readFile(frontend("overview-page.js"), "utf8"),
   readFile(frontend("guide-page.js"), "utf8"),
   readFile(frontend("debug-management.js"), "utf8"),
   readFile(frontend("agent-config-editor.js"), "utf8"),
-  readFile(frontend("agent-config-loader.js"), "utf8"),
   readFile(frontend("agent-config-native-yaml.js"), "utf8"),
   readFile(frontend("request-rules-ui.js"), "utf8"),
-  readFile(frontend("request-rules-loader.js"), "utf8"),
   readFile(frontend("management-route.js"), "utf8"),
 ]);
 
@@ -46,14 +44,12 @@ assert.doesNotMatch(debug, /^import "\.\/debug-panel\.js"/m);
 assert.doesNotMatch(agentEditor, /management-bootstrap\.js/);
 assert.match(routes, /import\("\.\/agent-config-editor\.js"\)/);
 assert.doesNotMatch(panelSource, /from "\.\/agent-config-editor\.js"/);
-assert.doesNotMatch(agentEditor, /from "\.\/agent-config-editor-base\.js"/);
-assert.doesNotMatch(agentEditor, /export \* from "\.\/agent-config-editor-base\.js"/);
-assert.match(agentLoader, /import\("\.\/agent-config-native-yaml\.js"\)/);
-assert.doesNotMatch(agentLoader, /agent-config-editor-model-v2\.js/);
-assert.match(agentNativeYaml, /import \* as base from "\.\/agent-config-editor-model-v2\.js"/);
-assert.match(agentNativeYaml, /export \* from "\.\/agent-config-editor-model-v2\.js"/);
-assert.doesNotMatch(requestRules, /from "\.\/request-rules-ui-impl\.js"/);
-assert.match(requestRulesLoader, /import\("\.\/request-rules-ui-impl\.js"\)/);
+assert.match(agentEditor, /from "\.\/agent-config-native-yaml\.js"/);
+assert.match(agentNativeYaml, /from "\.\/agent-config-editor-base\.js"/);
+assert.match(requestRules, /from "\.\/request-rules-ui-impl\.js"/);
+assert.match(routes, /import\("\.\/request-rules-ui\.js"\)/);
+assert.doesNotMatch(routes, /from "\.\/(?:agent-config-editor|request-rules-ui)\.js"/);
+assert.doesNotMatch(agentEditor + requestRules, /requiredImplementation|queueRender|typeof document/);
 assert.match(routes, /event\.stopImmediatePropagation\(\)/);
 assert.doesNotMatch(routes, /panel\._render\(\);\s*\/\/.*rule-search/);
 
@@ -240,3 +236,21 @@ for (const name of ["management-actions.js", "management-route.js", "management-
   const source = await readFile(frontend(name), "utf8");
   assert.doesNotMatch(source, /prototype\.|whenDefined|customElements/);
 }
+
+// Loading publishes the complete feature only after its dependencies resolve.
+assert.equal(routeModule.getConfigurationEditor(), undefined);
+assert.equal(routeModule.routeFeaturesReady("assistant/basics"), false);
+assert.equal(routeModule.routeFeaturesReady("capabilities/request-rules"), false);
+await Promise.all([routeModule.routeAssetPromise("assistant/basics"), routeModule.routeAssetPromise("assistant/basics")]);
+const editor = routeModule.getConfigurationEditor();
+assert.equal(routeModule.routeFeaturesReady("assistant/basics"), true);
+for (const name of ["renderConfiguration", "bindConfiguration", "renderTools", "bindTools", "configurationDialogs", "restoreDialog", "reconcileTools"]) assert.equal(typeof editor[name], "function", name);
+await routeModule.routeAssetPromise("assistant/basics");
+assert.equal(routeModule.getConfigurationEditor(), editor);
+assert.equal(routeModule.getRouteFeature("capabilities/request-rules"), undefined);
+await routeModule.routeAssetPromise("capabilities/request-rules");
+const rules = routeModule.getRouteFeature("capabilities/request-rules");
+assert.equal(routeModule.routeFeaturesReady("capabilities/request-rules"), true);
+for (const name of ["renderRequestRules", "bindRequestRules", "requestRulesDialog", "reconcileRequestRules"]) assert.equal(typeof rules[name], "function", name);
+await routeModule.routeAssetPromise("capabilities/request-rules");
+assert.equal(routeModule.getRouteFeature("capabilities/request-rules"), rules);

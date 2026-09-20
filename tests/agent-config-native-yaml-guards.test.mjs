@@ -121,7 +121,8 @@ try {
     "../custom_components/extended_openai_conversation_responses/frontend/agent-config-native-yaml.js",
     import.meta.url,
   );
-  const {bindNativeToolYaml, configurationDialogs, ensureNativeYamlEditor} = await import(moduleUrl);
+  const {bindNativeToolYaml, ensureNativeYamlEditor} = await import(moduleUrl);
+  const {configurationDialogs} = await import("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js");
 
   {
     delete globalThis.document;

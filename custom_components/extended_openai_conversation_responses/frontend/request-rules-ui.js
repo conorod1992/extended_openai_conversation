@@ -2,27 +2,8 @@ import {bindDecisionRequestRules} from "./management-decision-guidance.js";
 import {lookupModelData} from "./model-catalog.js";
 import {bindRequestRuleMatchTester, formatRequestRuleMatchResult} from "./request-rules-match-test-ui.js";
 
-const {ensureRequestRulesModule, getRequestRulesModule} = await import("./request-rules-loader.js");
-
-if (typeof document === "undefined") await ensureRequestRulesModule();
-
-export const FRIENDLY_TARGET_KEYS = ["entity_id", "device_id", "area_id", "floor_id", "label_id"];
-
-function requiredImplementation(name) {
-  const module = getRequestRulesModule();
-  if (!module) throw new Error(`Request Rules module is not loaded before ${name}`);
-  return module;
-}
-
-function queueRender(panel) {
-  void ensureRequestRulesModule()
-    .then(() => panel?._render?.())
-    .catch((err) => {
-      if (!panel) return;
-      panel._error = `Unable to load Request Rules: ${err.message || String(err)}`;
-      panel._render?.();
-    });
-}
+import {bindRequestRules as bindRuleControls} from "./request-rules-ui-impl.js";
+export {renderRequestRules, reconcileRequestRules, requestRulesDialog} from "./request-rules-ui-impl.js";
 
 function setReasoningOptions(root, efforts, selected = "") {
   const select = root?.querySelector("#rule-reasoning");
@@ -72,23 +53,8 @@ export function syncRequestRuleRoutingControls(root, efforts = null, selectedEff
   }
 }
 
-export function renderRequestRules(panel) {
-  const module = getRequestRulesModule();
-  if (!module) {
-    queueRender(panel);
-    return panel._loading?.() || '<div class="loading">Loading Request Rules…</div>';
-  }
-  return module.renderRequestRules(panel, {query: panel._query || "", inPlaceSearch: Boolean(panel._eocInPlaceRequestRuleSearch)});
-}
-
-export function reconcileRequestRules(panel) {
-  return getRequestRulesModule()?.reconcileRequestRules(panel) || false;
-}
-
 export function bindRequestRules(panel) {
-  const module = getRequestRulesModule();
-  if (!module) return queueRender(panel);
-  const result = module.bindRequestRules(panel);
+  const result = bindRuleControls(panel);
   bindDecisionRequestRules(panel);
   const root = panel.shadowRoot;
   let revision = 0;
@@ -117,46 +83,6 @@ export function bindRequestRules(panel) {
   void refreshRouting();
   bindRequestRuleMatchTester(panel);
   return result;
-}
-
-export function requestRulesDialog(...args) {
-  return getRequestRulesModule()?.requestRulesDialog(...args) || "";
-}
-
-export function friendlyFieldChange(...args) {
-  return requiredImplementation("friendlyFieldChange").friendlyFieldChange(...args);
-}
-
-export function friendlyFieldChangesForService(...args) {
-  return requiredImplementation("friendlyFieldChangesForService").friendlyFieldChangesForService(...args);
-}
-
-export function parseAdvancedActionConfig(...args) {
-  return requiredImplementation("parseAdvancedActionConfig").parseAdvancedActionConfig(...args);
-}
-
-export function mergeFriendlyActionValue(...args) {
-  return requiredImplementation("mergeFriendlyActionValue").mergeFriendlyActionValue(...args);
-}
-
-export function mergeActionEditorValue(...args) {
-  return requiredImplementation("mergeActionEditorValue").mergeActionEditorValue(...args);
-}
-
-export function refreshRequestRuleSlotSelectors(...args) {
-  return requiredImplementation("refreshRequestRuleSlotSelectors").refreshRequestRuleSlotSelectors(...args);
-}
-
-export function createRequestRuleActionSelector(...args) {
-  return requiredImplementation("createRequestRuleActionSelector").createRequestRuleActionSelector(...args);
-}
-
-export function loadRequestRuleActions(...args) {
-  return requiredImplementation("loadRequestRuleActions").loadRequestRuleActions(...args);
-}
-
-export function readRequestRuleActions(...args) {
-  return requiredImplementation("readRequestRuleActions").readRequestRuleActions(...args);
 }
 
 export {formatRequestRuleMatchResult};

@@ -99,8 +99,6 @@ test("render owners emit final markup without creating a template in a browser",
     const guide = await import(`${path}guide-page.js`);
     const rules = await import(`${path}request-rules-ui.js`);
     await guide.ensureGuideModule();
-    const {ensureRequestRulesModule} = await import(`${path}request-rules-loader.js`);
-    await ensureRequestRulesModule();
     const {panel} = window.browserHarness;
     panel._configSections = ["general", "model", "local", "prompt", "backup"];
     const create = document.createElement;

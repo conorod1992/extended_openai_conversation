@@ -1,9 +1,7 @@
 import {bindConfigurationInputs} from "./configuration-inputs.js";
 import {applyTargetedConfigDirty} from "./management-state-safety.js";
-import * as base from "./agent-config-editor-base.js";
+import {bindConfiguration as bindBaseConfiguration} from "./agent-config-editor-base.js";
 import {lookupModelData} from "./model-catalog.js";
-
-export * from "./agent-config-editor-base.js";
 
 function currentConfig(panel) {
   return panel?._draft || panel?._result?.config || {};
@@ -43,7 +41,7 @@ function applyModelDefaults(panel, data) {
 }
 
 export function bindConfiguration(panel) {
-  const result = base.bindConfiguration(panel);
+  const result = bindBaseConfiguration(panel);
   const root = panel?.shadowRoot;
   const modelInput = root?.querySelector('[data-config="chat_model"]');
   const reasoning = root?.querySelector('[data-config="reasoning_effort"]');

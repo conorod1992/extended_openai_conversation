@@ -6,7 +6,7 @@ const frontend = (name) =>
 
 const panel = await readFile(frontend("management-panel.js"), "utf8");
 const modules = await Promise.all([
-  "agent-config-loader.js",
+  "agent-config-editor.js",
   "management-navigation-search.js",
   "management-toolbar-layout.js",
   "management-configuration-clarity.js",

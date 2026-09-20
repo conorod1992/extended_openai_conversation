@@ -54,7 +54,7 @@ for (const [destination, section, asset, control, backend] of [
   ["capabilities", "guest-mode", "management-guest-feature", "#guest-now", "guest_mode"],
   ["capabilities", "request-rules", "request-rules-ui", "#rule-search", "request_rules"],
   ["data-memory", "memories", "management-memory-feature", "#add-memory", "memories"],
-  ["assistant", "basics", "management-configuration-feature", '[data-config="__title"]', "configuration"],
+  ["assistant", "basics", "agent-config-editor", '[data-config="__title"]', "configuration"],
 ]) {
   test(`${asset}: data starts during import and a stale completion cannot replace Guide`, async ({page}) => {
     const errors = trackPageErrors(page);
@@ -89,6 +89,23 @@ test("a cold lazy import failure reaches the section error and a fresh load reco
   await page.goto(fixtureUrl("capabilities/guest-mode"));
   await expect(panel.locator("#guest-now")).toBeVisible();
 });
+
+for (const [routeName, asset, control] of [
+  ["assistant/basics", "agent-config-editor", '[data-config="__title"]'],
+  ["capabilities/request-rules", "request-rules-ui", "#rule-search"],
+]) {
+  test(`${asset}: failed feature load remains unavailable and a fresh page recovers`, async ({page}) => {
+    await page.route(`**/${asset}.js`, route => route.abort());
+    await page.goto(fixtureUrl(routeName));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator("main [role=alert]")).toContainText("Unable to load this frontend section");
+    await expect(panel.locator(control)).toHaveCount(0);
+    expect(await page.evaluate(() => browserHarness.rejections)).toEqual([]);
+    await page.unroute(`**/${asset}.js`);
+    await page.goto(fixtureUrl(routeName));
+    await expect(panel.locator(control)).toBeVisible();
+  });
+}
 
 test("agent changes and reconnects during a shared lazy import keep the newest data", async ({page}) => {
   const errors = trackPageErrors(page);
