@@ -133,11 +133,39 @@ jobs:
     name: Type Check
     runs-on: ubuntu-latest
     needs: prepare
+    env:
+      TYPECHECK_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-typecheck:latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Try prebuilt Type Check environment
+        id: typecheck-image
+        run: |
+          if docker pull "$TYPECHECK_IMAGE"; then
+            IMAGE_HA_SHA="$(docker run --rm "$TYPECHECK_IMAGE" cat /opt/eoai-ci/ha-core-sha)"
+            if [ "$IMAGE_HA_SHA" = "${{ needs.prepare.outputs.ha-core-sha }}" ]; then
+              echo "available=true" >> "$GITHUB_OUTPUT"
+              docker run --rm "$TYPECHECK_IMAGE" cat /opt/eoai-ci/typecheck-environment.txt > .typecheck-environment.txt
+              echo "Using prebuilt Type Check image for HA dev snapshot $IMAGE_HA_SHA."
+            else
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              echo "Type Check image is for $IMAGE_HA_SHA; current HA dev is ${{ needs.prepare.outputs.ha-core-sha }}. Using live fallback."
+            fi
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Prebuilt Type Check image is not available yet; using live fallback."
+          fi
+
       - name: Set up Python ${{ needs.prepare.outputs.python-version }}
+        if: steps.typecheck-image.outputs.available != 'true'
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ needs.prepare.outputs.python-version }}
@@ -147,10 +175,9 @@ jobs:
             custom_components/extended_openai_conversation_responses/manifest.json
             pyproject.toml
 
-      - name: Install type-check dependencies
+      - name: Install live Type Check fallback
+        if: steps.typecheck-image.outputs.available != 'true'
         run: |
-          # Keep the runtime/type surface used by mypy, but do not install the
-          # pytest/Home Assistant test stack from requirements_test.txt.
           pip install \
             homeassistant \
             "openai==${{ needs.prepare.outputs.openai-version }}" \
@@ -166,7 +193,8 @@ jobs:
             "mypy==2.3.1"
           pip check
 
-      - name: Fingerprint type environment
+      - name: Fingerprint live Type Check fallback
+        if: steps.typecheck-image.outputs.available != 'true'
         run: |
           python - <<'PY' > .typecheck-environment.txt
           from importlib.metadata import version
@@ -198,7 +226,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mypy-${{ needs.prepare.outputs.python-version }}-
 
-      - name: Run MyPy
+      - name: Run MyPy in prebuilt Type Check environment
+        if: steps.typecheck-image.outputs.available == 'true'
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            "$TYPECHECK_IMAGE" \
+            mypy custom_components/extended_openai_conversation_responses
+
+      - name: Run MyPy in live fallback
+        if: steps.typecheck-image.outputs.available != 'true'
         run: mypy custom_components/extended_openai_conversation_responses
 
   stable-test:
