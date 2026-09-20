@@ -15,9 +15,9 @@ class ModelCapabilityError(ValueError):
     """A configuration is incompatible with the selected model capabilities."""
 
 
-_ACTIVE_CAPABILITY_SNAPSHOT: ContextVar[
-    tuple[str, Mapping[str, Any]] | None
-] = ContextVar("extended_openai_model_capability_snapshot", default=None)
+_ACTIVE_CAPABILITY_SNAPSHOT: ContextVar[tuple[str, Mapping[str, Any]] | None] = (
+    ContextVar("extended_openai_model_capability_snapshot", default=None)
+)
 
 
 def _request_capabilities(model_id: str) -> Mapping[str, Any]:
@@ -100,7 +100,9 @@ def select_api_path(
 
     if tools_required:
         preferred = cast(str, capabilities["function_calling"]["preferred_api"])
-        if capabilities["api"].get(preferred) and capabilities["function_calling"].get(preferred):
+        if capabilities["api"].get(preferred) and capabilities["function_calling"].get(
+            preferred
+        ):
             return preferred
         for api in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS):
             if capabilities["api"][api] and capabilities["function_calling"][api]:
