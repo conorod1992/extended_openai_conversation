@@ -1062,9 +1062,9 @@ async def test_async_get_archive_reuses_one_manager_per_agent(monkeypatch) -> No
     monkeypatch.setattr(archive_module, "HomeAssistantArchiveStorage", fake_storage)
     hass = SimpleNamespace(data={})
 
-    first = await async_get_coverage_archive(hass, "entry-1", "agent-1")
-    second = await async_get_coverage_archive(hass, "entry-1", "agent-1")
-    other = await async_get_coverage_archive(hass, "entry-1", "agent-2")
+    first = await async_get_archive(hass, "entry-1", "agent-1")
+    second = await async_get_archive(hass, "entry-1", "agent-1")
+    other = await async_get_archive(hass, "entry-1", "agent-2")
 
     assert first is second
     assert other is not first
