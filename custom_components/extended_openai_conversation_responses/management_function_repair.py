@@ -162,7 +162,7 @@ def agent_config_revision(data: Any, title: str) -> str:
     """Hash normalized valid state or unchanged raw state while tools need repair."""
     try:
         config = agent_config_snapshot(dict(data))
-    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError):
+    except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
         config = dict(data)
         if function_tools_issue(config)[1] is None:
             raise
