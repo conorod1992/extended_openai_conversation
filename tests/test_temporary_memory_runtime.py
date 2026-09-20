@@ -200,7 +200,7 @@ async def test_parallel_request_contexts_never_cross_owners():
 
 # Expiry-prune persistence scheduling and task-lifecycle regressions.
 
-class Manager(performance.TemporaryMemory):
+class Manager(temporary.TemporaryMemory):
     def __init__(self, save) -> None:
         super().__init__(None)
         self._async_save_locked = save
