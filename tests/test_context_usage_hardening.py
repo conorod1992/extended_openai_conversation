@@ -352,7 +352,7 @@ async def test_chat_stream_traces_usage_attached_to_normal_choice(
     async def stream():
         yield chunk
 
-    transformed = hardening.normalized_chat_stream(chat_log, stream(), usage)
+    transformed = context_usage_hardening.normalized_chat_stream(chat_log, stream(), usage)
     items = [item async for item in transformed]
 
     assert items == [chunk]
