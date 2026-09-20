@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       python-version: ${{ steps.get-versions.outputs.python-version }}
+      ha-core-sha: ${{ steps.get-versions.outputs.ha-core-sha }}
       openai-version: ${{ steps.get-versions.outputs.openai-version }}
       hassil-version: ${{ steps.get-versions.outputs.hassil-version }}
       home-assistant-intents-version: ${{ steps.get-versions.outputs.home-assistant-intents-version }}
@@ -41,19 +42,25 @@ jobs:
             echo "$manifest" | grep -o "\"$package==[^\"]*\"" | sed "s/\"$package==//;s/\"//"
           }
 
-          # Get Python version from HA core
-          PYTHON_VERSION=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/${{ env.HA_CORE_BRANCH }}/.python-version | tr -d '\n')
+          # Resolve one exact HA Core dev snapshot and use it consistently for
+          # Python, dependency metadata, and the cached HA-dev wheel.
+          HA_CORE_SHA="$(git ls-remote "https://github.com/${{ env.HA_CORE_REPO }}.git" "refs/heads/${{ env.HA_CORE_BRANCH }}" | awk '{print $1}')"
+          test -n "$HA_CORE_SHA"
+          echo "ha-core-sha=$HA_CORE_SHA" >> $GITHUB_OUTPUT
+          echo "Home Assistant Core dev commit: $HA_CORE_SHA"
+
+          PYTHON_VERSION=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/.python-version | tr -d '\n')
           echo "python-version=$PYTHON_VERSION" >> $GITHUB_OUTPUT
           echo "Python version from HA core: $PYTHON_VERSION"
 
           # Get openai_conversation dependencies
-          OPENAI_MANIFEST=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/${{ env.HA_CORE_BRANCH }}/homeassistant/components/openai_conversation/manifest.json)
+          OPENAI_MANIFEST=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/homeassistant/components/openai_conversation/manifest.json)
           OPENAI_VERSION=$(get_package_version "$OPENAI_MANIFEST" "openai")
           echo "openai-version=$OPENAI_VERSION" >> $GITHUB_OUTPUT
           echo "openai version from HA core: $OPENAI_VERSION"
 
           # Get conversation dependencies
-          CONVERSATION_MANIFEST=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/${{ env.HA_CORE_BRANCH }}/homeassistant/components/conversation/manifest.json)
+          CONVERSATION_MANIFEST=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/homeassistant/components/conversation/manifest.json)
           HASSIL_VERSION=$(get_package_version "$CONVERSATION_MANIFEST" "hassil")
           echo "hassil-version=$HASSIL_VERSION" >> $GITHUB_OUTPUT
           echo "hassil version from HA core: $HASSIL_VERSION"
@@ -63,13 +70,13 @@ jobs:
           echo "home-assistant-intents version from HA core: $HA_INTENTS_VERSION"
 
           # Get rest dependencies
-          REST_MANIFEST=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/${{ env.HA_CORE_BRANCH }}/homeassistant/components/rest/manifest.json)
+          REST_MANIFEST=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/homeassistant/components/rest/manifest.json)
           XMLTODICT_VERSION=$(get_package_version "$REST_MANIFEST" "xmltodict")
           echo "xmltodict-version=$XMLTODICT_VERSION" >> $GITHUB_OUTPUT
           echo "xmltodict version from HA core: $XMLTODICT_VERSION"
 
           # Get scrape dependencies
-          SCRAPE_MANIFEST=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/${{ env.HA_CORE_BRANCH }}/homeassistant/components/scrape/manifest.json)
+          SCRAPE_MANIFEST=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/homeassistant/components/scrape/manifest.json)
           BS4_VERSION=$(get_package_version "$SCRAPE_MANIFEST" "beautifulsoup4")
           echo "beautifulsoup4-version=$BS4_VERSION" >> $GITHUB_OUTPUT
           echo "beautifulsoup4 version from HA core: $BS4_VERSION"
@@ -198,10 +205,26 @@ jobs:
         run: |
           pip install homeassistant
 
+      - name: Cache Home Assistant dev wheel
+        if: matrix.home-assistant == 'dev'
+        id: ha-dev-wheel-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/ha-dev-wheel
+          key: ${{ runner.os }}-ha-dev-wheel-${{ needs.prepare.outputs.python-version }}-${{ needs.prepare.outputs.ha-core-sha }}
+
+      - name: Build Home Assistant dev wheel
+        if: matrix.home-assistant == 'dev' && steps.ha-dev-wheel-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/ha-dev-wheel"
+          pip wheel --no-deps \
+            "git+https://github.com/${{ env.HA_CORE_REPO }}.git@${{ needs.prepare.outputs.ha-core-sha }}" \
+            --wheel-dir "${RUNNER_TEMP}/ha-dev-wheel"
+
       - name: Install Home Assistant dev
         if: matrix.home-assistant == 'dev'
         run: |
-          pip install --upgrade git+https://github.com/home-assistant/core.git@dev
+          pip install "${RUNNER_TEMP}"/ha-dev-wheel/homeassistant-*.whl
 
       - name: Install AI Task media dependencies from the tested HA version
         run: |
@@ -224,6 +247,9 @@ jobs:
         run: |
           pip check
           python -c "from importlib.metadata import version; print('homeassistant=' + version('homeassistant'))"
+          if [ "${{ matrix.home-assistant }}" = "dev" ]; then
+            echo "home-assistant-core-sha=${{ needs.prepare.outputs.ha-core-sha }}"
+          fi
 
       - name: Run tests
         env:
