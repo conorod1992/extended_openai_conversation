@@ -49,7 +49,8 @@ jobs:
       matrix:
         shard:
           - parallel-safe
-          - process-restart
+          - process-restart-a
+          - process-restart-b
           - stateful-serial
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
@@ -98,15 +99,17 @@ jobs:
               "test_packaged_release.py",
               "test_packaged_process_restart.py",
           }
-          process_restart = {
+          process_restart_a = {
+              "test_delayed_tool_process_restart.py",
+              "test_pending_store_write_shutdown_recovery.py",
+          }
+          process_restart_b = {
               "test_active_request_shutdown_recovery.py",
+              "test_immediate_tool_process_crash.py",
               "test_browser_backend_acceptance.py",
               "test_browser_process_restart_acceptance.py",
               "test_browser_refresh_boundary_acceptance.py",
               "test_browser_runtime_acceptance.py",
-              "test_delayed_tool_process_restart.py",
-              "test_immediate_tool_process_crash.py",
-              "test_pending_store_write_shutdown_recovery.py",
           }
           stateful_serial = {
               "test_backup_restore_atomicity.py",
@@ -144,6 +147,7 @@ jobs:
               for path in Path("tests_real_ha").glob("test_*.py")
           }
           generic = discovered - excluded
+          process_restart = process_restart_a | process_restart_b
           serial = process_restart | stateful_serial
 
           unknown = serial - generic
@@ -152,10 +156,20 @@ jobs:
                   "Stable shard lists missing/non-generic files: "
                   + ", ".join(sorted(unknown))
               )
-          overlap = process_restart & stateful_serial
-          if overlap:
+          overlaps = {
+              "process A/process B": process_restart_a & process_restart_b,
+              "process/stateful": process_restart & stateful_serial,
+          }
+          bad_overlap = {
+              label: values for label, values in overlaps.items() if values
+          }
+          if bad_overlap:
               raise SystemExit(
-                  "Stable serial shards overlap: " + ", ".join(sorted(overlap))
+                  "Stable serial shards overlap: "
+                  + "; ".join(
+                      f"{label}={sorted(values)}"
+                      for label, values in sorted(bad_overlap.items())
+                  )
               )
 
           parallel_safe = generic - serial
@@ -169,7 +183,8 @@ jobs:
               )
 
           print(f"parallel-safe files: {len(parallel_safe)}")
-          print(f"process-restart files: {len(process_restart)}")
+          print(f"process-restart-a files: {len(process_restart_a)}")
+          print(f"process-restart-b files: {len(process_restart_b)}")
           print(f"stateful-serial files: {len(stateful_serial)}")
           print(f"excluded specialized files: {len(excluded)}")
           PY
@@ -180,15 +195,17 @@ jobs:
         run: |
           set -o pipefail
 
-          PROCESS_RESTART=(
+          PROCESS_RESTART_A=(
+            tests_real_ha/test_delayed_tool_process_restart.py
+            tests_real_ha/test_pending_store_write_shutdown_recovery.py
+          )
+          PROCESS_RESTART_B=(
             tests_real_ha/test_active_request_shutdown_recovery.py
+            tests_real_ha/test_immediate_tool_process_crash.py
             tests_real_ha/test_browser_backend_acceptance.py
             tests_real_ha/test_browser_process_restart_acceptance.py
             tests_real_ha/test_browser_refresh_boundary_acceptance.py
             tests_real_ha/test_browser_runtime_acceptance.py
-            tests_real_ha/test_delayed_tool_process_restart.py
-            tests_real_ha/test_immediate_tool_process_crash.py
-            tests_real_ha/test_pending_store_write_shutdown_recovery.py
           )
           STATEFUL_SERIAL=(
             tests_real_ha/test_backup_restore_atomicity.py
@@ -222,8 +239,12 @@ jobs:
           )
 
           case "${{ matrix.shard }}" in
-            process-restart)
-              TEST_PATHS=("${PROCESS_RESTART[@]}")
+            process-restart-a)
+              TEST_PATHS=("${PROCESS_RESTART_A[@]}")
+              COVERAGE_ARGS=()
+              ;;
+            process-restart-b)
+              TEST_PATHS=("${PROCESS_RESTART_B[@]}")
               COVERAGE_ARGS=()
               ;;
             stateful-serial)
@@ -239,7 +260,7 @@ jobs:
                 --ignore=tests_real_ha/test_packaged_release.py
                 --ignore=tests_real_ha/test_packaged_process_restart.py
               )
-              for path in "${PROCESS_RESTART[@]}" "${STATEFUL_SERIAL[@]}"; do
+              for path in "${PROCESS_RESTART_A[@]}" "${PROCESS_RESTART_B[@]}" "${STATEFUL_SERIAL[@]}"; do
                 TEST_PATHS+=(--ignore="$path")
               done
               COVERAGE_ARGS=(

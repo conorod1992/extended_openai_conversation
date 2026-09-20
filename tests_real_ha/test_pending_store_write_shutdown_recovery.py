@@ -43,11 +43,8 @@ def _expected_contents(mode: str) -> list[str]:
 
 def _storage_path(config_dir: Path) -> Path:
     """Return the real Home Assistant Store path for this acceptance test."""
-    from custom_components.extended_openai_conversation_responses.temporary_memory import (
-        STORAGE_KEY_PREFIX,
-    )
-
-    key = f"{STORAGE_KEY_PREFIX}.{_ENTRY_ID}.{_SUBENTRY_ID}"
+    storage_key_prefix = f"{DOMAIN}.temporary_memory"
+    key = f"{storage_key_prefix}.{_ENTRY_ID}.{_SUBENTRY_ID}"
     return config_dir / ".storage" / key
 
 
