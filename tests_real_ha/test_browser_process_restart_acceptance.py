@@ -177,6 +177,7 @@ def _write_onboarding_store(config_dir: Path) -> None:
 @pytest.mark.asyncio
 async def test_open_browser_survives_true_home_assistant_process_restart(
     tmp_path: Path,
+    socket_enabled: Any,
 ) -> None:
     """SIGKILL HA, restart it, and require the same Chromium document to recover."""
     repo_root = Path(__file__).resolve().parent.parent
