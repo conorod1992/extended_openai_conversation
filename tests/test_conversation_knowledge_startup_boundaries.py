@@ -109,10 +109,6 @@ async def test_guest_knowledge_get_rejects_forbidden_source_before_storage_looku
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "failed_subsystem",
-    ["temporary_memory", "archive", "knowledge", "persistent_memory"],
-)
 async def test_optional_managers_begin_loading_concurrently(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -187,6 +183,11 @@ async def test_optional_managers_begin_loading_concurrently(
         assert status["status"] == "healthy"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failed_subsystem",
+    ["temporary_memory", "archive", "knowledge", "persistent_memory"],
+)
 async def test_optional_storage_startup_failure_is_isolated(
     monkeypatch: pytest.MonkeyPatch,
     failed_subsystem: str,
