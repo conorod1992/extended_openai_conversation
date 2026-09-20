@@ -976,7 +976,7 @@ def archive_tools() -> list[dict[str, Any]]:
             "conversation_search",
             "Search prior retained discussions only when the user refers to them.",
             {
-                "query": {"type": "string"},
+                "query": {"type": "string", "minLength": 1},
                 "start_date": {"type": "string"},
                 "end_date": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 10},

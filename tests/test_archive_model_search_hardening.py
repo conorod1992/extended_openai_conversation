@@ -21,7 +21,10 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
+    archive_tools,
 )
+from custom_components.extended_openai_conversation_responses.knowledge import knowledge_tools
+from custom_components.extended_openai_conversation_responses.memory import memory_tools
 from custom_components.extended_openai_conversation_responses.request import (
     assemble_integration_function_tools,
 )
@@ -173,8 +176,20 @@ async def test_runtime_only_session_does_not_hide_pending_archive_transaction() 
 
 
 def test_model_search_schemas_require_nonempty_query() -> None:
-    """Model-facing Archive, Memory and Knowledge searches advertise minLength."""
-    tools = assemble_integration_function_tools(
+    """Each model-search owner advertises minLength before request assembly."""
+    owned_tools = [
+        *memory_tools(),
+        *archive_tools(),
+        *knowledge_tools(),
+    ]
+    by_name = {tool["spec"]["name"]: tool for tool in owned_tools}
+
+    for name in ("memory_search", "conversation_search", "knowledge_search"):
+        assert (
+            by_name[name]["spec"]["parameters"]["properties"]["query"]["minLength"] == 1
+        )
+
+    assembled = assemble_integration_function_tools(
         {
             CONF_MEMORY_MODE: MEMORY_MODE_MANUAL,
             CONF_ARCHIVE_ENABLED: True,
@@ -186,12 +201,9 @@ def test_model_search_schemas_require_nonempty_query() -> None:
         knowledge_available=True,
         archive_available=True,
     )
-    by_name = {tool["spec"]["name"]: tool for tool in tools}
-
+    assembled_by_name = {tool["spec"]["name"]: tool for tool in assembled}
     for name in ("memory_search", "conversation_search", "knowledge_search"):
-        assert (
-            by_name[name]["spec"]["parameters"]["properties"]["query"]["minLength"] == 1
-        )
+        assert assembled_by_name[name]["spec"] == by_name[name]["spec"]
 
 
 def _runtime_agent():
