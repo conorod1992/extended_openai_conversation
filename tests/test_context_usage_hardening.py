@@ -1,14 +1,116 @@
 from __future__ import annotations
 
+from custom_components.extended_openai_conversation_responses import (
+    context_usage_hardening,
+    input_footprint,
+)
 from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
     _capture_provider_usage,
     _LOCAL_ESTIMATE_DETAIL,
     _PARTIAL_PROVIDER_USAGE_DETAIL,
     _restore_local_estimate,
+    _serialized_characters,
+    estimate_prepared_request,
     estimate_provider_input_tokens,
     usage_for_accounting,
 )
 from custom_components.extended_openai_conversation_responses.usage import RequestUsage
+
+
+def test_ascii_serialization_skips_python_character_scan(monkeypatch) -> None:
+    """ASCII payloads return exact counts without calling ord per character."""
+    def fail_ord(_value):
+        raise AssertionError("ASCII fast path should not scan characters")
+
+    monkeypatch.setattr(context_usage_hardening, "ord", fail_ord, raising=False)
+
+    characters, non_ascii = _serialized_characters(
+        [{"role": "user", "content": "plain ascii text"}]
+    )
+
+    assert characters > 0
+    assert non_ascii == 0
+
+
+def test_estimate_prepared_request_reuses_text_only_input_list(monkeypatch) -> None:
+    """The normal no-attachment path does not rebuild the provider input list."""
+    input_value = [
+        {"role": "system", "content": "System"},
+        {"role": "user", "content": "Hello"},
+    ]
+    usage = RequestUsage()
+    seen = {}
+
+    def capture(_entity, measured, tools, *, tool_measurement=None):
+        seen["measured"] = measured
+        seen["tools"] = tools
+        seen["tool_measurement"] = tool_measurement
+        return 321
+
+    monkeypatch.setattr(input_footprint, "capture_live_footprint", capture)
+
+    estimate_prepared_request(object(), usage, input_value, None)
+
+    assert seen["measured"] is input_value
+    assert seen["tools"] is None
+    assert seen["tool_measurement"] is None
+    assert usage.input_tokens == 321
+    assert usage.total_tokens == 321
+
+
+def test_estimate_prepared_request_materializes_non_list_iterables(monkeypatch) -> None:
+    """A one-shot iterable is measured completely instead of being consumed by the scan."""
+    source = (
+        item
+        for item in [
+            {"role": "system", "content": "System"},
+            {"role": "user", "content": "Hello"},
+        ]
+    )
+    usage = RequestUsage()
+    seen = {}
+
+    def capture(_entity, measured, tools, *, tool_measurement=None):
+        seen["measured"] = measured
+        return 111
+
+    monkeypatch.setattr(input_footprint, "capture_live_footprint", capture)
+
+    estimate_prepared_request(object(), usage, source, None)
+
+    assert seen["measured"] == [
+        {"role": "system", "content": "System"},
+        {"role": "user", "content": "Hello"},
+    ]
+    assert usage.input_tokens == 111
+
+
+def test_estimate_prepared_request_projects_multipart_user_content(monkeypatch) -> None:
+    """Attachment bytes remain excluded while text content stays exact."""
+    input_value = [
+        {"role": "system", "content": "System"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "Describe this"},
+                {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+            ],
+        },
+    ]
+    usage = RequestUsage()
+    seen = {}
+
+    def capture(_entity, measured, tools, *, tool_measurement=None):
+        seen["measured"] = measured
+        return 222
+
+    monkeypatch.setattr(input_footprint, "capture_live_footprint", capture)
+
+    estimate_prepared_request(object(), usage, input_value, None)
+
+    assert seen["measured"] is not input_value
+    assert seen["measured"][1] == {"role": "user", "content": "Describe this"}
+    assert usage.input_tokens == 222
 
 
 def test_estimate_counts_input_and_tools_conservatively() -> None:

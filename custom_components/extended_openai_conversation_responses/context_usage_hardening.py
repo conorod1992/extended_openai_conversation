@@ -14,6 +14,10 @@ import logging
 import math
 from typing import Any
 
+from .request_static_cache import (
+    formatted_tool_measurement,
+    remember_formatted_tool_measurement,
+)
 from .usage import RequestUsage, extract_usage
 
 _LOGGER = logging.getLogger(__name__)
@@ -94,6 +98,8 @@ def _serialized_characters(value: Any) -> tuple[int, int]:
         separators=(",", ":"),
         default=str,
     )
+    if serialized.isascii():
+        return len(serialized), 0
     non_ascii = sum(ord(character) > 127 for character in serialized)
     return len(serialized), non_ascii
 
@@ -208,25 +214,48 @@ def estimate_prepared_request(
     """Measure the already assembled provider round without rebuilding tools/history."""
     from .input_footprint import capture_live_footprint
 
-    # Attachments are excluded from the established character footprint. Project
-    # only multipart user content; do not mutate or retain the actual wire payload.
-    measured = [
-        {
-            **item,
-            "content": "".join(
-                str(part.get("text", ""))
-                for part in item["content"]
-                if part.get("type") in {"text", "input_text"}
-            ),
-        }
-        if isinstance(item, dict)
+    # Attachments are excluded from the established character footprint. Avoid
+    # rebuilding the complete input list on the overwhelmingly common text-only path.
+    # Materialize non-list iterables once so the eligibility scan cannot consume them.
+    measurement_source = (
+        input_value if isinstance(input_value, list) else list(input_value)
+    )
+    has_multipart_user_content = any(
+        isinstance(item, dict)
         and item.get("role") == "user"
         and isinstance(item.get("content"), list)
-        else item
-        for item in input_value
-    ]
+        for item in measurement_source
+    )
+    measured = (
+        [
+            {
+                **item,
+                "content": "".join(
+                    str(part.get("text", ""))
+                    for part in item["content"]
+                    if part.get("type") in {"text", "input_text"}
+                ),
+            }
+            if isinstance(item, dict)
+            and item.get("role") == "user"
+            and isinstance(item.get("content"), list)
+            else item
+            for item in measurement_source
+        ]
+        if has_multipart_user_content
+        else measurement_source
+    )
+    tool_measurement = formatted_tool_measurement(tools) if tools else None
+    if tools and tool_measurement is None:
+        tool_measurement = _serialized_characters(tools)
+        remember_formatted_tool_measurement(tools, tool_measurement)
     try:
-        estimate = capture_live_footprint(entity, measured, tools)
+        estimate = capture_live_footprint(
+            entity,
+            measured,
+            tools,
+            tool_measurement=tool_measurement,
+        )
     except Exception:
         _LOGGER.debug("Unable to estimate provider input size", exc_info=True)
         return

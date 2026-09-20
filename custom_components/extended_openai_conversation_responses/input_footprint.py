@@ -15,7 +15,12 @@ from .usage import async_get_usage
 _LATEST_FOOTPRINTS = f"{DOMAIN}.input_footprints"
 
 
-def _serialized_footprint(input_value: Any, tools: Any = None) -> tuple[int, int, int]:
+def _serialized_footprint(
+    input_value: Any,
+    tools: Any = None,
+    *,
+    tool_measurement: tuple[int, int] | None = None,
+) -> tuple[int, int, int]:
     """Return exact serialized input/tool characters and the truncation estimate."""
     from . import context_usage_hardening
 
@@ -25,9 +30,9 @@ def _serialized_footprint(input_value: Any, tools: Any = None) -> tuple[int, int
     tool_characters = 0
     tool_non_ascii = 0
     if tools:
-        tool_characters, tool_non_ascii = (
-            context_usage_hardening._serialized_characters(tools)
-        )
+        if tool_measurement is None:
+            tool_measurement = context_usage_hardening._serialized_characters(tools)
+        tool_characters, tool_non_ascii = tool_measurement
 
     total_characters = input_characters + tool_characters
     non_ascii = input_non_ascii + tool_non_ascii
@@ -36,10 +41,17 @@ def _serialized_footprint(input_value: Any, tools: Any = None) -> tuple[int, int
     return input_characters, tool_characters, conservative_tokens
 
 
-def input_footprint_metrics(input_value: Any, tools: Any = None) -> dict[str, Any]:
+def input_footprint_metrics(
+    input_value: Any,
+    tools: Any = None,
+    *,
+    tool_measurement: tuple[int, int] | None = None,
+) -> dict[str, Any]:
     """Measure locally assembled model input without retaining its content."""
     input_characters, tool_characters, conservative_tokens = _serialized_footprint(
-        input_value, tools
+        input_value,
+        tools,
+        tool_measurement=tool_measurement,
     )
     characters = input_characters + tool_characters
     return {
@@ -52,9 +64,19 @@ def input_footprint_metrics(input_value: Any, tools: Any = None) -> dict[str, An
     }
 
 
-def capture_live_footprint(entity: Any, input_value: Any, tools: Any = None) -> int:
+def capture_live_footprint(
+    entity: Any,
+    input_value: Any,
+    tools: Any = None,
+    *,
+    tool_measurement: tuple[int, int] | None = None,
+) -> int:
     """Replace the existing context estimate while also retaining only its size."""
-    metrics = input_footprint_metrics(input_value, tools)
+    metrics = input_footprint_metrics(
+        input_value,
+        tools,
+        tool_measurement=tool_measurement,
+    )
     footprints = entity.hass.data.setdefault(_LATEST_FOOTPRINTS, {})
     footprints[(entity.entry.entry_id, entity.subentry.subentry_id)] = {
         **{
