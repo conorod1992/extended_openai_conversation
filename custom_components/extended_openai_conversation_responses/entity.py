@@ -125,6 +125,23 @@ MAX_TOOL_ITERATIONS = MAX_PROVIDER_REQUESTS
 _SCHEMA_COMPOSITION_KEYS = ("anyOf", "oneOf", "allOf")
 
 
+async def _async_close_provider_streams(
+    transformed_stream: AsyncGenerator[Any, None] | None,
+    provider_stream: AsyncStream[Any] | None,
+) -> None:
+    """Close both stream layers without letting cleanup mask request outcomes."""
+    if transformed_stream is not None:
+        try:
+            await transformed_stream.aclose()
+        except Exception:
+            _LOGGER.debug("Unable to close transformed provider stream", exc_info=True)
+    if provider_stream is not None:
+        try:
+            await provider_stream.close()
+        except Exception:
+            _LOGGER.debug("Unable to close OpenAI provider stream", exc_info=True)
+
+
 def _shorten_tool_call_id(tool_call_id: str) -> str:
     """Shorten tool call ID to exactly 9 alphanumeric characters as Mistral requires."""
     import hashlib
@@ -664,9 +681,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 existing_content_ids = {id(content) for content in chat_log.content}
                 pending_tool_calls: list[llm.ToolInput] = []
                 web_search_used = False
+                provider_stream: AsyncStream[Any] | None = None
+                transformed_stream: AsyncGenerator[Any, None] | None = None
                 try:
                     if api_mode == API_MODE_RESPONSES:
-                        responses_stream = cast(
+                        provider_stream = cast(
                             AsyncStream[Any],
                             await self._client.responses.create(
                                 input=messages,
@@ -675,10 +694,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             ),
                         )
                         transformed_stream = self._transform_responses_stream(
-                            chat_log, responses_stream, request_usage
+                            chat_log, provider_stream, request_usage
                         )
                     else:
-                        chat_stream = cast(
+                        provider_stream = cast(
                             AsyncStream[ChatCompletionChunk],
                             await self._client.chat.completions.create(
                                 messages=messages,
@@ -687,7 +706,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             ),
                         )
                         transformed_stream = self._transform_chat_stream(
-                            chat_log, chat_stream, request_usage
+                            chat_log, provider_stream, request_usage
                         )
 
                     with (
@@ -761,6 +780,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     observed_input_tokens = max(
                         observed_input_tokens,
                         request_usage.input_tokens or request_usage.total_tokens,
+                    )
+                finally:
+                    await _async_close_provider_streams(
+                        transformed_stream, provider_stream
                     )
 
                 if pending_tool_calls:
