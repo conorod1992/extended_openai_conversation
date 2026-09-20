@@ -277,7 +277,7 @@ async def test_disabling_during_announce_allows_in_flight_delivery_to_finish(
 
 
 @pytest.mark.asyncio
-async def test_failed_announce_does_not_block_next_queued_queue_message(
+async def test_failed_announce_does_not_block_next_queued_message(
     hass, monkeypatch
 ) -> None:
     """One satellite service failure must not strand later messages in its queue."""
