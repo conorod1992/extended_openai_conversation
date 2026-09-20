@@ -226,8 +226,6 @@ async def test_agent_catalog_keeps_invalid_function_tool_agent_visible(
 ) -> None:
     hass, _entry, subentry = _hass_with_agent()
     subentry.data["functions"] = _persisted_invalid_function_tools()
-    monkeypatch.setattr(management_ui, "_scope_catalog", AsyncMock(return_value=[]))
-
     result = await async_agent_catalog(hass, "admin", True)
 
     assert [agent["subentry_id"] for agent in result["agents"]] == ["agent-1"]
