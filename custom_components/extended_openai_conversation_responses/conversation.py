@@ -437,11 +437,15 @@ class ExtendedOpenAIAgentEntity(
                 loader=async_get_memory,
                 failure_message="Unable to initialize persistent memory",
             )
-            if initialized and self._memory is not None and (
-                self.subentry.data.get(
-                    CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE
+            if (
+                initialized
+                and self._memory is not None
+                and (
+                    self.subentry.data.get(
+                        CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE
+                    )
+                    == MEMORY_RETRIEVAL_HYBRID
                 )
-                == MEMORY_RETRIEVAL_HYBRID
             ):
                 self._memory.set_embedding_provider(
                     self._async_create_embeddings,
