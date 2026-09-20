@@ -1,0 +1,57 @@
+FROM python:3.14-slim-bookworm AS ha-stable
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        g++ \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/eoai-ci
+
+COPY requirements_test.txt /opt/eoai-ci/requirements_test.txt
+RUN python -m pip install --upgrade pip \
+    && pip install -r /opt/eoai-ci/requirements_test.txt \
+    && pip install homeassistant
+
+COPY ci/install_ha_dependencies.py /opt/eoai-ci/install_ha_dependencies.py
+COPY custom_components/extended_openai_conversation_responses/manifest.json /opt/eoai-ci/manifest.json
+RUN python /opt/eoai-ci/install_ha_dependencies.py \
+        --manifest /opt/eoai-ci/manifest.json \
+    && pip check \
+    && cat /opt/eoai-ci/requirements_test.txt /opt/eoai-ci/manifest.json \
+        | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256 \
+    && rm -rf /root/.cache/pip
+
+WORKDIR /workspace
+
+LABEL org.opencontainers.image.source="https://github.com/conorod1992/extended_openai_conversation" \
+      org.opencontainers.image.description="Stable Home Assistant CI environment for EOAI"
+
+
+FROM ha-stable AS browser-stable
+
+ARG NODE_VERSION=24.20.0
+ARG PLAYWRIGHT_VERSION=1.63.0
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends xz-utils \
+    && curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+    && tar -xJf "node-v${NODE_VERSION}-linux-x64.tar.xz" -C /usr/local --strip-components=1 \
+    && rm "node-v${NODE_VERSION}-linux-x64.tar.xz" \
+    && node --version \
+    && npm --version \
+    && npm install --global "@playwright/test@${PLAYWRIGHT_VERSION}" \
+    && npx playwright install --with-deps chromium \
+    && npm cache clean --force \
+    && rm -rf /var/lib/apt/lists/*
+
+LABEL org.opencontainers.image.description="Stable Home Assistant + Playwright browser CI environment for EOAI"
