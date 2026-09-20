@@ -97,6 +97,10 @@ def test_native_classification_fails_closed() -> None:
         classify_function({"type": "native", "name": "future_native"})
         == FunctionSecurity.UNSCOPABLE
     )
+    assert classify_tool({}) == FunctionSecurity.UNSCOPABLE
+    assert classify_tool({"function": "native"}) == FunctionSecurity.UNSCOPABLE
+    assert classify_function({"type": "template"}) == FunctionSecurity.UNSCOPABLE
+    assert classify_function({}) == FunctionSecurity.UNSCOPABLE
 
 
 def test_script_static_control_dynamic_and_indirect_classification() -> None:
@@ -144,6 +148,71 @@ def test_script_static_control_dynamic_and_indirect_classification() -> None:
             == FunctionSecurity.INDIRECT
         )
 
+    assert (
+        classify_function(
+            {
+                "type": "script",
+                "sequence": [
+                    {
+                        "action": "light.turn_on",
+                        "target": {"entity_id": ["light.a", "light.b"]},
+                    }
+                ],
+            }
+        )
+        == FunctionSecurity.CONTROL
+    )
+
+    invalid_scripts = [
+        {"type": "script", "sequence": "bad"},
+        {"type": "script", "sequence": [None]},
+        {
+            "type": "script",
+            "sequence": [
+                {"service": 123, "target": {"entity_id": "light.a"}}
+            ],
+        },
+        {
+            "type": "script",
+            "sequence": [
+                {"service": "light", "target": {"entity_id": "light.a"}}
+            ],
+        },
+        {
+            "type": "script",
+            "sequence": [{"service": "light.turn_on", "target": {}}],
+        },
+        {
+            "type": "script",
+            "sequence": [
+                {
+                    "service": "light.turn_on",
+                    "target": {"entity_id": "{{ entity }}"},
+                }
+            ],
+        },
+    ]
+    for function in invalid_scripts:
+        assert classify_function(function) == FunctionSecurity.UNSCOPABLE
+
+    for target in (
+        {"entity_id": []},
+        {"entity_id": ""},
+        {"entity_id": 123},
+        {"entity_id": "light.a", "unsupported": "x"},
+    ):
+        assert (
+            classify_function(
+                {
+                    "type": "script",
+                    "sequence": [
+                        {"service": "light.turn_on", "target": target}
+                    ],
+                }
+            )
+            == FunctionSecurity.UNSCOPABLE
+        )
+
 
 def test_static_script_target_is_revalidated_against_guest_policy(hass) -> None:
     policy = GuestCapabilityPolicy(
@@ -169,7 +238,20 @@ def test_generic_wrapper_arguments_are_explicitly_indirect() -> None:
             {"nested": [{"domain": domain, "service": "turn_on"}]}
         )
         assert contains_indirect_service_call({"service": f"{domain}.turn_on"})
+    assert contains_indirect_service_call({"domain": "automation"})
+    assert contains_indirect_service_call({"action": "script.turn_on"})
+    assert contains_indirect_service_call(
+        {"outer": [{"safe": True}, {"nested": {"domain": "script"}}]}
+    )
     assert not contains_indirect_service_call({"domain": "light", "service": "turn_on"})
+    assert not contains_indirect_service_call(
+        {
+            "domain": "light",
+            "service": "light.turn_on",
+            "nested": [1, "scene.turn_on"],
+        }
+    )
+    assert not contains_indirect_service_call("automation.turn_on")
 
 
 def _execution_entity(tool: dict, policy: GuestCapabilityPolicy):
