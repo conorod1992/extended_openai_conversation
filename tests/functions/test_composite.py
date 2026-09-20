@@ -1,6 +1,7 @@
 """Tests for CompositeFunction using yaml definitions."""
 
 import pytest
+import voluptuous as vol
 
 # Import Tools and test helpers
 from custom_components.extended_openai_conversation_responses.functions import (
@@ -17,6 +18,11 @@ class TestCompositeFunctionYaml:
     def function(self):
         """Create CompositeFunction instance."""
         return CompositeFunction()
+
+    def test_function_schema_rejects_non_mapping_config(self, function) -> None:
+        """Composite sequence entries must be function configuration mappings."""
+        with pytest.raises(vol.Invalid, match="expected dictionary"):
+            function.function_schema("not-a-function-config")
 
     async def test_composite_from_yaml(
         self, hass, function, exposed_entities, llm_context
