@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+from collections.abc import Awaitable
 from copy import deepcopy
+import logging
 from time import perf_counter
-from typing import Any
+from typing import Any, TypeVar
 
 from homeassistant.core import HomeAssistant
 
@@ -44,6 +45,7 @@ from .usage import async_get_usage
 
 _LOGGER = logging.getLogger(__name__)
 _SLOW_MANAGEMENT_MS = 250.0
+_T = TypeVar("_T")
 
 
 def _ms(start: float) -> float:
@@ -205,7 +207,7 @@ async def async_overview_summary(
     started = perf_counter()
     loader_timings: dict[str, float] = {}
 
-    async def timed(name: str, awaitable: Any) -> Any:
+    async def timed(name: str, awaitable: Awaitable[_T]) -> _T:
         phase = perf_counter()
         try:
             return await awaitable
