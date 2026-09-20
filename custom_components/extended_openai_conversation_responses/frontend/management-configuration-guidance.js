@@ -1,5 +1,6 @@
 import {friendlySettingLabel, settingEffectBadges} from "./management-setting-metadata.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
+import {storeRuntimeGuidance} from "./management-data-state.js";
 
 const MODEL_PARAMETERS = Object.freeze([
   Object.freeze({
@@ -384,7 +385,7 @@ function bindGuidanceRoutes(panel) {
   });
 }
 
-export {storeRuntimeGuidance} from "./management-runtime-guidance.js";
+export {storeRuntimeGuidance};
 
 const groupKeys = new WeakMap();
 function enhanceGroup(panel, name, dependencies, enhance) {
