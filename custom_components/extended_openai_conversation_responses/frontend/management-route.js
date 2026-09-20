@@ -1,5 +1,5 @@
 import {ensureGuideModule} from "./guide-page.js";
-import {ensureOverviewModule} from "./overview-page.js";
+import {ensureOverviewModule, startOverviewBroadcastSnapshot} from "./overview-page.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_VIEWS = new Set([
   "capabilities/home-assistant",
@@ -250,6 +250,7 @@ export function loadRoute(panel, silent = false) {
   panel._eocViewAssetToken = token;
   const feature = routeFeaturePromise(view);
   const asset = coreAssetPromise(view);
+  if (view === "overview") startOverviewBroadcastSnapshot(panel);
   if (!feature && !asset) return loadRouteData(panel, silent, view, token);
   let loadData = () => loadRouteData(panel, silent, view, token);
   if (feature && DATA_FEATURES.has(view)) {
@@ -303,6 +304,7 @@ export function startStoredOverviewPrefetch(
         entry_id: entryId,
         subentry_id: subentryId,
       }),
+      startOverviewBroadcastSnapshot(panel),
     ]),
   };
 }
