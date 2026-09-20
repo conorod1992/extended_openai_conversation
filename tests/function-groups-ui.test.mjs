@@ -30,15 +30,15 @@ assert.equal(functionToolCountLabel([tool("one"), {...tool("two"), enabled: fals
 assert.equal(canReplaceToolYamlWithoutConfirmation("", "starter"), true);
 assert.equal(canReplaceToolYamlWithoutConfirmation("starter", "starter"), true);
 assert.equal(canReplaceToolYamlWithoutConfirmation("edited", "starter"), false);
-const managementPanelSource = await readFile(
+const managementStyles = await readFile(
   new URL(
-    "../custom_components/extended_openai_conversation_responses/frontend/management-panel.js",
+    "../custom_components/extended_openai_conversation_responses/frontend/management.css",
     import.meta.url,
   ),
   "utf8",
 );
 assert.ok(
-  managementPanelSource.includes("[hidden]{display:none!important}"),
+  managementStyles.includes("[hidden]{display:none!important}"),
   "dialog search results marked hidden must actually be removed from layout",
 );
 
