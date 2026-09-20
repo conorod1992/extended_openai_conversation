@@ -671,7 +671,7 @@ def _request(name: str = "request") -> debug.DebugProviderRequest:
     )
 
 
-def _residual_residual_trace() -> debug.DebugTrace:
+def _residual_trace() -> debug.DebugTrace:
     return debug.DebugTrace(
         debug_id="debug-residual",
         entry_id="entry",
@@ -754,7 +754,7 @@ class _ResidualEndpoint:
         return self.result
 
 
-async def test_endpoint_proxy_leaves_stream_untouched_without_active_residual_trace() -> None:
+async def test_endpoint_proxy_leaves_stream_untouched_without_active_trace() -> None:
     """Instrumentation stays inert when capture is disabled, including streaming calls."""
     stream = _BareStream()
     proxy = debug._DebugEndpointProxy(_ResidualEndpoint(stream), "responses")
