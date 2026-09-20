@@ -17,7 +17,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_API_MODE,
     DOMAIN,
     SERVICE_CALL_FUNCTION,
-    SERVICE_DOWNLOAD_SKILL,
     SERVICE_GUEST_MODE_DISABLE,
     SERVICE_GUEST_MODE_UPDATE,
     SERVICE_PROCESS,
