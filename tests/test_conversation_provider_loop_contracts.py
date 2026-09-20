@@ -265,7 +265,10 @@ async def test_web_search_usage_is_carried_from_stream_without_history_rescan(
     hass, monkeypatch
 ) -> None:
     usage = _UsageHarness()
-    web_search = SimpleNamespace(type="web_search_call")
+    web_search = SimpleNamespace(
+        type="web_search_call",
+        model_dump=lambda **_kwargs: {"type": "web_search_call"},
+    )
     message = SimpleNamespace(type="message")
     stream = FakeStream(
         [
