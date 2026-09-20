@@ -7,7 +7,7 @@ import asyncio
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -76,6 +76,68 @@ async def test_concurrent_requests_have_independent_caches():
     await asyncio.gather(request(), request())
     assert formatter.call_count == 2
     assert cache._FORMATTED_TOOLS.get() is None
+
+
+async def test_request_reuses_function_config_across_provider_rounds(monkeypatch):
+    agent = object.__new__(ExtendedOpenAIAgentEntity)
+    agent.hass = SimpleNamespace()
+    agent.subentry = SimpleNamespace(
+        data={"functions": [], "skills": [], "function_groups": []},
+        subentry_id="agent",
+    )
+    agent._function_groups_runtime = None
+    agent._temporary_memory = None
+    agent._knowledge = None
+    agent._archive = None
+    agent._effective_guest_policy = lambda: GuestCapabilityPolicy.unrestricted()
+    agent._current_memory_scope_id = lambda: None
+    configured = Mock(return_value=[_tool("lookup")])
+    agent._configured_function_tools_from_data = configured
+    validate = Mock(wraps=agent_module.validate_function_groups)
+    monkeypatch.setattr(agent_module, "validate_function_groups", validate)
+
+    async def handle(*_args, **_kwargs):
+        first = agent._get_function_tools()
+        second = agent._get_function_tools()
+        assert [tool["spec"]["name"] for tool in first] == ["lookup"]
+        assert [tool["spec"]["name"] for tool in second] == ["lookup"]
+        return "done"
+
+    agent._async_handle_message = AsyncMock(side_effect=handle)
+    user_input = SimpleNamespace(as_llm_context=lambda _domain: SimpleNamespace())
+
+    result = await agent._async_handle_message_with_ha_tools(
+        user_input, SimpleNamespace(), {}
+    )
+
+    assert result == "done"
+    assert configured.call_count == 1
+    assert validate.call_count == 1
+    assert agent_module._ACTIVE_FUNCTION_CONFIG.get() is None
+
+
+def test_provider_tool_call_partition_is_single_pass_and_stable():
+    pending = [
+        SimpleNamespace(tool_name="first"),
+        SimpleNamespace(tool_name=entity_module.FUNCTION_GROUP_LOADER_TOOL_NAME),
+        SimpleNamespace(tool_name=entity_module.CONTINUE_CONVERSATION_TOOL_NAME),
+        SimpleNamespace(tool_name="second"),
+        SimpleNamespace(tool_name=entity_module.CONTINUE_CONVERSATION_TOOL_NAME),
+    ]
+
+    ordinary, loader, control = entity_module._partition_provider_tool_calls(
+        pending, integration_loader_seen=True
+    )
+
+    assert [call.tool_name for call in ordinary] == ["first", "second"]
+    assert [call.tool_name for call in loader] == [
+        entity_module.FUNCTION_GROUP_LOADER_TOOL_NAME
+    ]
+    assert [call.tool_name for call in control] == [
+        entity_module.CONTINUE_CONVERSATION_TOOL_NAME,
+        entity_module.CONTINUE_CONVERSATION_TOOL_NAME,
+    ]
+    assert pending[0].tool_name == "first"
 
 
 def test_effective_assembly_retrieves_and_validates_once(monkeypatch):
