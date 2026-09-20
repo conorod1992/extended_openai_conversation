@@ -15,6 +15,9 @@ from custom_components.extended_openai_conversation_responses import (
     knowledge,
     memory,
 )
+from custom_components.extended_openai_conversation_responses.const import (
+    SUBSYSTEM_STATUS_KEY,
+)
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity as Agent,
 )
@@ -186,7 +189,7 @@ async def test_shared_optional_manager_ensure_reuses_existing_without_io(startup
     )
     assert startup.agent._temporary_memory is existing
     loader.assert_not_awaited()
-    status = startup.agent.hass.data["extended_openai_conversation_responses.subsystem_status"][
+    status = startup.agent.hass.data[SUBSYSTEM_STATUS_KEY][
         ("entry", "agent")
     ]["temporary_memory"]
     assert status["status"] == "healthy"
