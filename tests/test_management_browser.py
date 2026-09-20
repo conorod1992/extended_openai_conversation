@@ -32,6 +32,21 @@ class FakeMemory:
         records.sort(key=lambda record: record.updated_at, reverse=True)
         return records[offset : offset + limit]
 
+    async def async_browse(self, owner, query, limit=100, offset=0):
+        folded = query.casefold()
+        records = [
+            record
+            for record in self._memories.values()
+            if record.user_id == owner
+            and folded
+            in " ".join(
+                str(value or "")
+                for value in (record.content, record.category, record.source)
+            ).casefold()
+        ]
+        records.sort(key=lambda record: record.updated_at, reverse=True)
+        return records[offset : offset + limit], len(records)
+
 
 def record(index: int, *, owner: str = "user-a", content: str | None = None):
     return SimpleNamespace(
@@ -76,17 +91,17 @@ async def test_list_page_reports_authoritative_has_more() -> None:
     assert memory.list_calls[-1] == ("user-a", None, 100, 100)
 
 
-def test_search_page_uses_complete_scope_not_first_list_page() -> None:
+@pytest.mark.asyncio
+async def test_search_page_uses_complete_scope_not_first_list_page() -> None:
     records = [record(index) for index in range(150)]
     records[149] = record(149, content="The hidden marmalade preference")
     memory = FakeMemory(records)
 
-    result = management_browser._search_page(
+    result = await management_browser.async_browse_memories(
         memory,
         "user-a",
-        "marmalade",
-        limit=100,
-        offset=0,
+        "user:user-a",
+        {"action": "search", "query": "marmalade", "limit": 100, "offset": 0},
         include_scope=False,
     )
 
@@ -95,25 +110,34 @@ def test_search_page_uses_complete_scope_not_first_list_page() -> None:
     assert result["memories"][0]["memory_id"] == "memory-149"
 
 
-def test_search_page_is_bounded_and_paginated() -> None:
+@pytest.mark.asyncio
+async def test_search_page_is_bounded_and_paginated() -> None:
     memory = FakeMemory(
         [record(index, content=f"Matching preference {index}") for index in range(130)]
     )
 
-    first = management_browser._search_page(
+    first = await management_browser.async_browse_memories(
         memory,
         "user-a",
-        "matching preference",
-        limit=100,
-        offset=0,
+        "user:user-a",
+        {
+            "action": "search",
+            "query": "matching preference",
+            "limit": 100,
+            "offset": 0,
+        },
         include_scope=False,
     )
-    second = management_browser._search_page(
+    second = await management_browser.async_browse_memories(
         memory,
         "user-a",
-        "matching preference",
-        limit=100,
-        offset=100,
+        "user:user-a",
+        {
+            "action": "search",
+            "query": "matching preference",
+            "limit": 100,
+            "offset": 100,
+        },
         include_scope=False,
     )
 
