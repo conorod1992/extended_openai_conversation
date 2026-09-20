@@ -31,6 +31,7 @@ from .const import (
     MEMORY_MODE_OFF,
     MEMORY_MODES,
 )
+from .persistence_hardening import _async_settle_transactional_save
 from .scope import LEGACY_ANONYMOUS_SCOPE_ID
 
 _LOGGER = logging.getLogger(__name__)
@@ -1145,40 +1146,11 @@ class PersistentMemory:
 
     async def _async_save_locked(self) -> None:
         """Settle each Store write before propagating cancellation or rolling back."""
-        save_task = asyncio.ensure_future(self._async_persist_locked())
-        cancellation: asyncio.CancelledError | None = None
-
-        # A caller cancellation must not abort a Store write after the manager's live
-        # state has already changed. Keep observing the save until it reaches a known
-        # result; repeated cancellation requests remain deferred to this boundary.
-        while not save_task.done():
-            try:
-                await asyncio.shield(save_task)
-            except asyncio.CancelledError as err:
-                if save_task.cancelled():
-                    self._restore_committed_state()
-                    raise
-                if cancellation is None:
-                    cancellation = err
-            except Exception:
-                # Inspect the finished task below so rollback and cancellation
-                # precedence stay in one place.
-                break
-
-        try:
-            save_task.result()
-        except asyncio.CancelledError:
-            self._restore_committed_state()
-            raise
-        except Exception as err:
-            self._restore_committed_state()
-            if cancellation is not None:
-                raise cancellation from err
-            raise
-
-        self._remember_committed_state()
-        if cancellation is not None:
-            raise cancellation
+        await _async_settle_transactional_save(
+            self._async_persist_locked(),
+            self._restore_committed_state,
+            self._remember_committed_state,
+        )
 
     async def _async_persist_locked(self) -> None:
         """Write durable facts and then the regenerable embedding cache."""
@@ -1458,7 +1430,7 @@ def memory_tools() -> list[dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string"},
+                        "query": {"type": "string", "minLength": 1},
                         "category": {"type": "string"},
                         "scope": {"type": "string", "enum": ["personal", "household"]},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 50},
