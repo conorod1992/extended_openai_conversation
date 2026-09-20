@@ -15,6 +15,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.exceptions import HomeAssistantError, Unauthorized
 
+from custom_components.extended_openai_conversation_responses import provider_credentials
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_API_PROVIDER,
     CONF_BASE_URL,
@@ -22,7 +23,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_SKIP_AUTHENTICATION,
     DOMAIN,
 )
-from custom_components.extended_openai_conversation_responses import provider_credentials
 from custom_components.extended_openai_conversation_responses.provider_credentials import (
     WS_UPDATE_API_KEY,
     _async_update_api_key_command,
