@@ -789,7 +789,13 @@ async def test_cached_management_setup_respects_completed_step_markers(
     websocket_register = MagicMock(side_effect=AssertionError("websocket repeated"))
     panel_register = AsyncMock()
     hass = SimpleNamespace(
-        data={static_key: True, websocket_key: True},
+        data={
+            static_key: True,
+            websocket_key: True,
+            frontend_assets._FRONTEND_ENTRY_URLS: {
+                "management": f"/{DOMAIN}/frontend/assets/management-test.js"
+            },
+        },
         http=SimpleNamespace(async_register_static_paths=static_paths),
     )
     monkeypatch.setattr(management_ui, "_UI_SETUP", setup_key)
