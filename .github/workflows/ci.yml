@@ -265,11 +265,53 @@ jobs:
     name: Test (HA dev)
     runs-on: ubuntu-latest
     needs: prepare
+    env:
+      HA_DEV_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-dev:ha-dev
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Try prebuilt HA dev environment
+        id: dev-image
+        run: |
+          if docker pull "$HA_DEV_IMAGE"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Prebuilt HA dev image is not available yet; using live fallback."
+          fi
+
+      - name: Run compatibility tests in prebuilt HA dev environment
+        if: steps.dev-image.outputs.available == 'true'
+        run: |
+          docker run --rm \
+            --ipc=host \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            -e PYTHONPATH=/workspace \
+            "$HA_DEV_IMAGE" \
+            bash -lc '
+              CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '"'"'{print $1}'"'"')"
+              BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
+              if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
+                echo "Dependency declarations changed since image build; reconciling without replacing HA dev."
+                bash ci/reconcile_ha_dev_environment.sh
+              fi
+              pip check
+              python -c "from importlib.metadata import version; print('''homeassistant=''' + version('''homeassistant'''))"
+              echo "home-assistant-core-sha=$(cat /opt/eoai-ci/ha-core-sha)"
+              bash ci/run_ha_dev_compat_tests.sh
+            '
+
       - name: Set up Python ${{ needs.prepare.outputs.python-version }}
+        if: steps.dev-image.outputs.available != 'true'
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ needs.prepare.outputs.python-version }}
@@ -277,7 +319,8 @@ jobs:
           cache: pip
           cache-dependency-path: requirements_test.txt
 
-      - name: Install dependencies
+      - name: Install live fallback dependencies
+        if: steps.dev-image.outputs.available != 'true'
         run: |
           python -m pip install --upgrade pip
           pip install \
@@ -290,25 +333,28 @@ jobs:
           grep -v '^pytest-homeassistant-custom-component' requirements_test.txt > "${RUNNER_TEMP}/requirements_test_ha_dev.txt"
           pip install -r "${RUNNER_TEMP}/requirements_test_ha_dev.txt"
 
-      - name: Cache Home Assistant dev wheel
+      - name: Cache Home Assistant dev wheel for fallback
+        if: steps.dev-image.outputs.available != 'true'
         id: ha-dev-wheel-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/ha-dev-wheel
           key: ${{ runner.os }}-ha-dev-wheel-${{ needs.prepare.outputs.python-version }}-${{ needs.prepare.outputs.ha-core-sha }}
 
-      - name: Build Home Assistant dev wheel
-        if: steps.ha-dev-wheel-cache.outputs.cache-hit != 'true'
+      - name: Build Home Assistant dev wheel for fallback
+        if: steps.dev-image.outputs.available != 'true' && steps.ha-dev-wheel-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "${RUNNER_TEMP}/ha-dev-wheel"
           pip wheel --no-deps \
             "git+https://github.com/${{ env.HA_CORE_REPO }}.git@${{ needs.prepare.outputs.ha-core-sha }}" \
             --wheel-dir "${RUNNER_TEMP}/ha-dev-wheel"
 
-      - name: Install Home Assistant dev
+      - name: Install Home Assistant dev fallback
+        if: steps.dev-image.outputs.available != 'true'
         run: pip install "${RUNNER_TEMP}"/ha-dev-wheel/homeassistant-*.whl
 
-      - name: Install AI Task media dependencies
+      - name: Install AI Task media dependencies for fallback
+        if: steps.dev-image.outputs.available != 'true'
         run: |
           python - <<'PY'
           import json
@@ -326,58 +372,15 @@ jobs:
               subprocess.check_call([sys.executable, "-m", "pip", "install", *sorted(requirements)])
           PY
 
-      - name: Verify dev test environment
+      - name: Verify live fallback environment
+        if: steps.dev-image.outputs.available != 'true'
         run: |
           pip check
           python -c "from importlib.metadata import version; print('homeassistant=' + version('homeassistant'))"
           echo "home-assistant-core-sha=${{ needs.prepare.outputs.ha-core-sha }}"
 
-      - name: Run compatibility tests
+      - name: Run compatibility tests in live fallback
+        if: steps.dev-image.outputs.available != 'true'
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: |
-          TEST_PATHS=(
-            tests/test_ai_task.py
-            tests/test_ai_task_migration.py
-            tests/test_ai_task_model_options.py
-            tests/test_ai_task_privacy.py
-            tests/test_ai_task_web_search.py
-            tests/test_broadcast_permissions.py
-            tests/test_config_flow_coverage.py
-            tests/test_configuration_lifecycle_hardening.py
-            tests/test_conversation_entry_ownership.py
-            tests/test_conversation_lifecycle.py
-            tests/test_conversation_runtime_coverage.py
-            tests/test_conversation_security_boundaries.py
-            tests/test_entity_attachments.py
-            tests/test_entity_content_conversion.py
-            tests/test_entity_response_serialization.py
-            tests/test_entity_schema_helpers.py
-            tests/test_exposed_attributes.py
-            tests/test_exposed_entities.py
-            tests/test_exposed_entity_attributes.py
-            tests/test_frontend_asset_registration.py
-            tests/test_ha_actions.py
-            tests/test_ha_actions_coverage.py
-            tests/test_ha_llm_management.py
-            tests/test_ha_llm_tools.py
-            tests/test_ha_llm_tools_coverage.py
-            tests/test_ha_permissions.py
-            tests/test_ha_tool_result_compat.py
-            tests/test_identity.py
-            tests/test_intercom.py
-            tests/test_intercom_runtime_contracts.py
-            tests/test_native_action_execution_bounds.py
-            tests/test_native_function_execution_budget.py
-            tests/test_native_function_schema_contracts.py
-            tests/test_process_service.py
-            tests/test_reauthentication.py
-            tests/test_scope_resolution.py
-            tests/test_service_handlers.py
-            tests/test_setup_cleanup_ownership.py
-            tests/test_voice_identity_runtime.py
-          )
-          pytest "${TEST_PATHS[@]}" \
-            -v \
-            --asyncio-mode=auto \
-            --timeout=30
+        run: bash ci/run_ha_dev_compat_tests.sh
