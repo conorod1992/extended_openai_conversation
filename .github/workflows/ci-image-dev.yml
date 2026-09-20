@@ -1,6 +1,15 @@
 name: HA Dev CI Image
 
 on:
+  pull_request:
+    paths:
+      - "ci/Dockerfile.dev"
+      - "ci/install_ha_dependencies.py"
+      - "ci/install_ha_media_dependencies.py"
+      - "ci/reconcile_ha_dev_environment.sh"
+      - "requirements_test.txt"
+      - "custom_components/extended_openai_conversation_responses/manifest.json"
+      - ".github/workflows/ci-image-dev.yml"
   push:
     branches:
       - develop
@@ -49,6 +58,7 @@ jobs:
           echo "Python: $PYTHON_VERSION"
 
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -64,7 +74,7 @@ jobs:
           context: .
           file: ci/Dockerfile.dev
           target: ha-dev
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           build-args: |
             HA_CORE_SHA=${{ steps.ha.outputs.sha }}
             PYTHON_VERSION=${{ steps.ha.outputs.python-version }}
@@ -75,6 +85,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=ha-dev-ci-image
 
       - name: Verify published image
+        if: github.event_name != 'pull_request'
         run: |
           docker pull "${IMAGE_NAME}:ha-dev"
           docker run --rm "${IMAGE_NAME}:ha-dev" bash -lc '
@@ -84,6 +95,7 @@ jobs:
           '
 
       - name: Publish image summary
+        if: github.event_name != 'pull_request'
         run: |
           {
             echo "### HA dev CI image"
