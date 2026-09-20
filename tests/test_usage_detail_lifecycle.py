@@ -1,4 +1,4 @@
-"""Focused coverage for Usage detail retention and destructive lifecycle paths."""
+"""Tests for Usage detail retention and destructive lifecycle paths."""
 
 import asyncio
 from copy import deepcopy
@@ -156,6 +156,7 @@ async def test_clear_without_detail_store_still_reports_and_clears_live_state() 
     manager.runs = [_run("run", now)]
 
     result = await manager.async_clear_details(confirm=True)
+    await manager._async_save_details()
 
     assert result == {"deleted_requests": 2, "deleted_runs": 1}
     assert manager.requests == []
@@ -352,3 +353,48 @@ async def test_usage_retention_scheduler_bounds_same_day_retry(
     await manager._async_prune_usage_if_due()
     assert manager._prune_task is None
     assert attempts == 2
+
+
+async def test_live_run_zero_retention_deduplicates_metadata_and_preserves_failure() -> None:
+    """Zero retention must not change aggregate/run accounting semantics."""
+    manager = _manager(
+        detail_storage=DetailStorage(),
+        request_retention_days=0,
+        run_retention_days=0,
+    )
+
+    async with manager.async_run() as run:
+        await manager.async_record_request(
+            successful=True,
+            usage=RequestUsage(input_tokens=3, output_tokens=2, total_tokens=5),
+            provider="openai",
+            model="gpt-test",
+            api_mode="responses",
+            tool_calls_requested=-4,
+        )
+        await manager.async_record_request(
+            successful=False,
+            usage=RequestUsage(total_tokens=2),
+            provider="openai",
+            model="gpt-test",
+            api_mode="responses",
+            error_type=None,
+            web_search_used=True,
+        )
+
+        assert run.request_count == 2
+        assert run.successful_request_count == 1
+        assert run.failed_request_count == 1
+        assert run.tool_call_count == 0
+        assert run.models == ["gpt-test"]
+        assert run.providers == ["openai"]
+        assert run.api_modes == ["responses"]
+        assert run.web_search_used is True
+        assert run.successful is False
+        assert run.error_type == "provider_error"
+        assert manager.requests == []
+
+    assert manager.runs == []
+    assert manager.totals.conversation_count == 1
+    assert manager.totals.api_request_count == 2
+    assert manager.totals.failed_request_count == 1

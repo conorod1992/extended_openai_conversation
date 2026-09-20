@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict
-from datetime import timedelta
 
 import pytest
 from homeassistant.util import dt as dt_util
@@ -102,96 +101,6 @@ def test_extract_usage_ignores_unmappable_detail_objects() -> None:
     assert result.cached_input_tokens == 7
     assert result.reasoning_tokens == 0
     assert result.details == {}
-
-
-async def test_live_run_zero_retention_deduplicates_metadata_and_preserves_failure() -> None:
-    """Zero retention must not change aggregate/run accounting semantics."""
-    manager = await _manager(
-        daily_storage=MemoryStorage(),
-        detail_storage=MemoryStorage(),
-        request_retention_days=0,
-        run_retention_days=0,
-    )
-
-    async with manager.async_run() as run:
-        await manager.async_record_request(
-            successful=True,
-            usage=usage.RequestUsage(input_tokens=3, output_tokens=2, total_tokens=5),
-            provider="openai",
-            model="gpt-test",
-            api_mode="responses",
-            tool_calls_requested=-4,
-        )
-        await manager.async_record_request(
-            successful=False,
-            usage=usage.RequestUsage(total_tokens=2),
-            provider="openai",
-            model="gpt-test",
-            api_mode="responses",
-            error_type=None,
-            web_search_used=True,
-        )
-
-        assert run.request_count == 2
-        assert run.successful_request_count == 1
-        assert run.failed_request_count == 1
-        assert run.tool_call_count == 0
-        assert run.models == ["gpt-test"]
-        assert run.providers == ["openai"]
-        assert run.api_modes == ["responses"]
-        assert run.web_search_used is True
-        assert run.successful is False
-        assert run.error_type == "provider_error"
-        assert manager.requests == []
-
-    assert manager.runs == []
-    assert manager.totals.conversation_count == 1
-    assert manager.totals.api_request_count == 2
-    assert manager.totals.failed_request_count == 1
-
-
-async def test_positive_retention_prune_keeps_recent_records_and_persists() -> None:
-    """Exercise the positive-retention side of both prune comprehensions."""
-    detail_storage = MemoryStorage()
-    manager = await _manager(
-        detail_storage=detail_storage,
-        request_retention_days=30,
-        run_retention_days=30,
-    )
-    now = dt_util.utcnow()
-    manager.requests = [
-        _request("recent", (now - timedelta(days=2)).isoformat()),
-        _request("old", (now - timedelta(days=60)).isoformat()),
-    ]
-    manager.runs = [
-        _run("recent", (now - timedelta(days=2)).isoformat()),
-        _run("old", (now - timedelta(days=60)).isoformat()),
-    ]
-
-    result = await manager.async_prune_details()
-
-    assert result == {"deleted_requests": 1, "deleted_runs": 1}
-    assert [item.request_id for item in manager.requests] == ["recent"]
-    assert [item.run_id for item in manager.runs] == ["recent"]
-    assert [item["request_id"] for item in detail_storage.data["requests"]] == [
-        "recent"
-    ]
-    assert [item["run_id"] for item in detail_storage.data["runs"]] == ["recent"]
-
-
-async def test_clear_and_detail_save_are_noops_without_detail_storage() -> None:
-    """No detail store is a supported configuration, not an error path."""
-    manager = await _manager()
-    now = dt_util.utcnow().isoformat()
-    manager.requests = [_request("request", now)]
-    manager.runs = [_run("run", now)]
-
-    result = await manager.async_clear_details(confirm=True)
-    await manager._async_save_details()
-
-    assert result == {"deleted_requests": 1, "deleted_runs": 1}
-    assert manager.requests == []
-    assert manager.runs == []
 
 
 def _minimal_backup(*, date: str) -> dict:
