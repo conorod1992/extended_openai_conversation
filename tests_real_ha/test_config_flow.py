@@ -178,7 +178,7 @@ async def test_user_flow_provider_error_can_be_corrected_without_restarting_flow
     hass: HomeAssistant,
 ) -> None:
     """A failed submission stays recoverable and a corrected retry creates the entry."""
-    # tests/test_config_flow_coverage.py owns the other provider-error mappings.
+    # tests/test_config_flow_coverage.py owns the other provider-error mappings in the ordinary unit suite.
     # Real HA proves that a failed submission can reuse the same flow manager ID.
     authenticate = AsyncMock(side_effect=[_authentication_error(), object()])
     with patch(f"{CONFIG_FLOW_MODULE}.get_authenticated_client", authenticate):
