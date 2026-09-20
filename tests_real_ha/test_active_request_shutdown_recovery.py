@@ -15,6 +15,8 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
+from tests_real_ha.process_harness import run_python_child
+
 DOMAIN = "extended_openai_conversation_responses"
 _CHILD_PHASE = "ACTIVE_REQUEST_SHUTDOWN_PHASE"
 _CONFIG_DIR = "ACTIVE_REQUEST_SHUTDOWN_CONFIG_DIR"
@@ -315,17 +317,14 @@ async def _child_main() -> None:
 
 
 def _run_child(config_dir: Path, phase: str) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
-    env[_CHILD_PHASE] = phase
-    env[_CONFIG_DIR] = str(config_dir)
-    return subprocess.run(
-        [sys.executable, str(Path(__file__).resolve())],
+    return run_python_child(
+        __file__,
         cwd=config_dir,
-        env=env,
-        text=True,
-        capture_output=True,
+        extra_env={
+            _CHILD_PHASE: phase,
+            _CONFIG_DIR: str(config_dir),
+        },
         timeout=90,
-        check=False,
     )
 
 

@@ -15,6 +15,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests_real_ha.process_harness import run_python_child
+
 DOMAIN = "extended_openai_conversation_responses"
 _CHILD_PHASE = "PENDING_STORE_WRITE_PHASE"
 _COMMIT_MODE = "PENDING_STORE_WRITE_COMMIT_MODE"
@@ -225,18 +227,15 @@ async def _child_main() -> None:
 def _run_child(
     config_dir: Path, phase: str, mode: str
 ) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
-    env[_CHILD_PHASE] = phase
-    env[_COMMIT_MODE] = mode
-    env[_CONFIG_DIR] = str(config_dir)
-    return subprocess.run(
-        [sys.executable, str(Path(__file__).resolve())],
+    return run_python_child(
+        __file__,
         cwd=config_dir,
-        env=env,
-        text=True,
-        capture_output=True,
+        extra_env={
+            _CHILD_PHASE: phase,
+            _COMMIT_MODE: mode,
+            _CONFIG_DIR: str(config_dir),
+        },
         timeout=90,
-        check=False,
     )
 
 

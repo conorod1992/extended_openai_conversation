@@ -18,6 +18,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import yaml
 
+from tests_real_ha.process_harness import child_process_env
+
 DOMAIN = "extended_openai_conversation_responses"
 _CHILD_PHASE = "IMMEDIATE_TOOL_CRASH_PHASE"
 _CONFIG_DIR_ENV = "IMMEDIATE_TOOL_CRASH_CONFIG_DIR"
@@ -264,17 +266,13 @@ async def _child_main() -> None:
 
 
 def _child_env(config_dir: Path, phase: str) -> dict[str, str]:
-    env = os.environ.copy()
-    env[_CHILD_PHASE] = phase
-    env[_CONFIG_DIR_ENV] = str(config_dir)
-    repo_root = Path(__file__).resolve().parents[1]
-    existing_pythonpath = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = (
-        str(repo_root)
-        if not existing_pythonpath
-        else os.pathsep.join((str(repo_root), existing_pythonpath))
+    return child_process_env(
+        __file__,
+        {
+            _CHILD_PHASE: phase,
+            _CONFIG_DIR_ENV: str(config_dir),
+        },
     )
-    return env
 
 
 def test_immediate_tool_side_effect_is_not_replayed_after_process_crash(
