@@ -1,14 +1,18 @@
 """HA-owned tools retain identity, isolation and the existing exchange contract."""
 
 import asyncio
+import builtins
 from copy import deepcopy
 import json
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import voluptuous as vol
 
+from custom_components.extended_openai_conversation_responses import ha_llm_tools
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
     agent_config_snapshot,
@@ -575,9 +579,18 @@ async def test_executor_does_not_interpret_external_delay_schema(hass, monkeypat
 
 
 async def test_merged_display_names_are_not_discovered_for_persistence(hass):
-    merged = llm.MergedAPI([TestAPI(hass, "a"), TestAPI(hass, "b")])
+    first = TestAPI(hass, "a")
+    second = TestAPI(hass, "b")
+    merged = llm.MergedAPI([first, second])
     register(hass, merged)
+
+    # An explicitly empty selection is a hard no-op and must not instantiate
+    # any API, while merged display names remain non-persistable.
+    assert not (await async_discover(hass, context(), [])).tools
+    assert first.contexts == []
+    assert second.contexts == []
     assert not (await async_discover(hass, context())).tools
+
     # Caller-provided APIs are already request-bound, so ephemeral merged names
     # remain usable without becoming agent configuration references.
     instance = await merged.async_get_api_instance(context())
@@ -753,3 +766,261 @@ async def test_ai_task_structured_output_uses_core_serializer_contract(hass):
     assert result["properties"]["state"]["enum"] == ["ready", "waiting"]
     assert result["properties"]["count"]["type"] == "integer"
     assert set(result["required"]) == {"state", "count"}
+
+
+# Consolidated HA LLM discovery/schema regressions.
+async def test_schema_falls_back_when_ha_converter_is_unavailable(hass, monkeypatch):
+    """Older HA converter availability still yields a live OpenAPI schema."""
+    monkeypatch.setattr(llm, "to_openapi", None, raising=False)
+    register(hass, TestAPI(hass))
+
+    snapshot = await ha_llm_tools.async_discover(hass, context())
+
+    live = next(iter(snapshot.tools.values()))
+    assert live.spec["parameters"]["properties"]["value"]["type"] == "string"
+
+
+async def test_namespaced_tools_are_preview_filtered_but_allowed_for_caller_api(hass):
+    """Merged display names are not persisted, while caller-owned instances remain usable."""
+    api = TestAPI(hass, tools=[llm.NamespacedTool("remote", Echo())])
+    register(hass, api)
+
+    preview = await ha_llm_tools.async_discover(hass, context())
+    caller_snapshot, caller_tools = ha_llm_tools.caller_api_tools(
+        await api.async_get_api_instance(context())
+    )
+
+    assert preview.tools == {}
+    assert caller_snapshot.caller_provided is True
+    assert len(caller_snapshot.tools) == 1
+    assert len(caller_tools) == 1
+    assert caller_tools[0]["ha_available"] is True
+
+
+async def test_bad_tool_schema_is_isolated_from_other_tools(hass, monkeypatch, caplog):
+    """One converter failure must not make a sibling HA tool unavailable."""
+    broken = Echo()
+    broken.name = "broken"
+    usable = Echo()
+    usable.name = "usable"
+    register(hass, TestAPI(hass, tools=[broken, usable]))
+    original_schema = ha_llm_tools._schema
+
+    def schema(tool, serializer):
+        if tool.name == "broken":
+            raise ValueError("unsupported schema")
+        return original_schema(tool, serializer)
+
+    monkeypatch.setattr(ha_llm_tools, "_schema", schema)
+
+    snapshot = await ha_llm_tools.async_discover(hass, context())
+
+    assert [live.tool.name for live in snapshot.tools.values()] == ["usable"]
+    assert "HA LLM tool schema unavailable" in caplog.text
+
+
+async def test_selected_api_skips_unreferenced_registered_api(hass):
+    """Reference-scoped discovery must not instantiate unrelated custom APIs."""
+    selected_api = register(hass, TestAPI(hass, "selected"))
+    unrelated = register(hass, TestAPI(hass, "unrelated"))
+    preview = await ha_llm_tools.async_discover(hass, context())
+    selected_reference = next(
+        live.reference
+        for live in preview.tools.values()
+        if live.reference["api_id"] == "selected"
+    )
+    selected_api.contexts.clear()
+    unrelated.contexts.clear()
+
+    snapshot = await ha_llm_tools.async_discover(
+        hass, context(), [selected_reference]
+    )
+
+    assert len(snapshot.tools) == 1
+    assert next(iter(snapshot.tools.values())).reference["api_id"] == "selected"
+    assert len(selected_api.contexts) == 1
+    assert unrelated.contexts == []
+
+
+async def test_assist_registry_unavailable_is_reported_without_raising(hass):
+    """A missing contributor registry marks Assist unavailable rather than remapping it."""
+    register(hass, llm_component.AssistAPI(hass))
+
+    snapshot = await ha_llm_tools.async_discover(hass, context())
+
+    assert snapshot.tools == {}
+    assert snapshot.unavailable_sources == ["assist"]
+
+
+async def test_platform_selection_and_empty_contribution_are_isolated(hass):
+    """Only selected contributor domains run, and a platform may contribute no tools."""
+    register(hass, llm_component.AssistAPI(hass))
+    selected = MagicMock(
+        return_value=llm_component.LLMTools(tools=[Echo()], prompt="selected")
+    )
+    ignored = MagicMock(
+        return_value=llm_component.LLMTools(tools=[Echo()], prompt="ignored")
+    )
+    empty = MagicMock(return_value=None)
+    hass.data[llm_component.DATA_PLATFORMS] = SimpleNamespace(
+        async_get_platforms=AsyncMock(
+            return_value={
+                "empty": SimpleNamespace(async_get_tools=empty),
+                "ignored": SimpleNamespace(async_get_tools=ignored),
+                "selected": SimpleNamespace(async_get_tools=selected),
+            }
+        )
+    )
+
+    scoped = await ha_llm_tools.async_discover(
+        hass, context(), [reference(source="selected")]
+    )
+
+    assert len(scoped.tools) == 1
+    assert next(iter(scoped.tools.values())).reference["source_id"] == "selected"
+    selected.assert_called_once()
+    ignored.assert_not_called()
+    empty.assert_not_called()
+
+    preview = await ha_llm_tools.async_discover(hass, context())
+
+    assert {live.reference["source_id"] for live in preview.tools.values()} == {
+        "ignored",
+        "selected",
+    }
+    assert preview.unavailable_sources == []
+    empty.assert_called_once()
+
+
+async def test_discovery_without_component_module_still_supports_custom_api(
+    hass, monkeypatch
+):
+    """Optional platform discovery must not be required for opaque custom APIs."""
+    api = register(hass, TestAPI(hass))
+    real_import = builtins.__import__
+
+    def import_without_component_llm(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "homeassistant.components" and "llm" in fromlist:
+            raise ImportError("component unavailable")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_component_llm)
+
+    snapshot = await ha_llm_tools.async_discover(hass, context())
+
+    assert len(snapshot.tools) == 1
+    assert next(iter(snapshot.tools.values())).reference["api_id"] == api.id
+
+
+# Consolidated HA LLM serializer/prompt compatibility regressions.
+def test_serializer_compat_preserves_ha_function_identity(monkeypatch) -> None:
+    """Calling the local compatibility helper never replaces HA functions."""
+
+    def existing(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    monkeypatch.setattr(ha_llm_tools.llm, "to_openapi", existing, raising=False)
+
+    ha_llm_tools.compatible_to_openapi({})
+
+    assert ha_llm_tools.llm.to_openapi is existing
+
+
+def test_serializer_compat_falls_back_when_probatio_is_unavailable(
+    monkeypatch,
+) -> None:
+    """Keep HA untouched if the compatibility dependencies cannot be imported."""
+    monkeypatch.setattr(ha_llm_tools.llm, "to_openapi", None, raising=False)
+    monkeypatch.setitem(sys.modules, "probatio", None)
+
+    ha_llm_tools.compatible_to_openapi({})
+
+    assert ha_llm_tools.llm.to_openapi is None
+
+
+def test_serializer_compat_selects_converter_and_translates_unsupported(
+    monkeypatch,
+) -> None:
+    """Bridge unsupported sentinels in both Probatio and voluptuous directions."""
+    probatio = ModuleType("probatio")
+    voluptuous_openapi = ModuleType("voluptuous_openapi")
+
+    probatio_unsupported = object()
+    voluptuous_unsupported = object()
+
+    class ProbatioSchema:
+        pass
+
+    probatio.Schema = ProbatioSchema  # type: ignore[attr-defined]
+    probatio.UNSUPPORTED = probatio_unsupported  # type: ignore[attr-defined]
+    voluptuous_openapi.UNSUPPORTED = voluptuous_unsupported  # type: ignore[attr-defined]
+
+    calls: list[str] = []
+
+    def probatio_convert(
+        _schema: Any, *, custom_serializer: Any = None, **_kwargs: Any
+    ) -> Any:
+        calls.append("probatio")
+        return custom_serializer("value")
+
+    def voluptuous_convert(
+        _schema: Any, *, custom_serializer: Any = None, **_kwargs: Any
+    ) -> Any:
+        calls.append("voluptuous")
+        return custom_serializer("value")
+
+    probatio.to_openapi = probatio_convert  # type: ignore[attr-defined]
+    voluptuous_openapi.convert = voluptuous_convert  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "probatio", probatio)
+    monkeypatch.setitem(sys.modules, "voluptuous_openapi", voluptuous_openapi)
+    monkeypatch.setattr(ha_llm_tools.llm, "to_openapi", None, raising=False)
+
+    converter = ha_llm_tools.compatible_to_openapi
+
+    assert (
+        converter(
+            ProbatioSchema(), custom_serializer=lambda _value: voluptuous_unsupported
+        )
+        is probatio_unsupported
+    )
+    assert (
+        converter(object(), custom_serializer=lambda _value: probatio_unsupported)
+        is voluptuous_unsupported
+    )
+    assert calls == ["probatio", "voluptuous"]
+
+
+def test_prompt_for_live_tool_without_source_prompt_still_adds_alias() -> None:
+    """A prompt-less live tool still contributes its request-local name mapping."""
+    reference = {
+        "type": ha_llm_tools.TOOL_TYPE,
+        "source_type": "api",
+        "source_id": "example.Tool",
+        "api_id": "example-api",
+        "tool_name": "turn_on",
+    }
+    live = ha_llm_tools.LiveTool(
+        reference=reference,
+        tool=SimpleNamespace(name="turn_on"),
+        instance=SimpleNamespace(),
+        source_label="Example API",
+        prompt="",
+        spec={},
+    )
+    snapshot = ha_llm_tools.ToolSnapshot(tools={ha_llm_tools.reference_key(reference): live})
+
+    rendered = snapshot.prompt_for(
+        [
+            {
+                "spec": {"name": "ha_local_name"},
+                "function": reference,
+                "enabled": True,
+            }
+        ]
+    )
+
+    assert rendered == (
+        "HA tool names in this request (source name = callable name):\n"
+        "Example API: turn_on = ha_local_name"
+    )
