@@ -9,6 +9,7 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     exposed_attributes,
+    management_request_preview,
     management_ui,
     prompt,
 )
@@ -33,8 +34,10 @@ from custom_components.extended_openai_conversation_responses.exposed_attributes
     enrich_exposed_entities,
     exposed_attribute_catalog,
 )
+from custom_components.extended_openai_conversation_responses.management_request_preview import (
+    async_preview_effective_request,
+)
 from custom_components.extended_openai_conversation_responses.management_ui import (
-    _async_preview_effective_request,
     _export_agent,
     _parse_import_document,
 )
@@ -376,17 +379,17 @@ async def test_preview_counts_rendered_attribute_context(hass, monkeypatch) -> N
         }
     )
     monkeypatch.setattr(
-        management_ui,
+        management_request_preview,
         "get_exposed_entities",
         lambda _hass: [_entity("light.kitchen")],
     )
     monkeypatch.setattr(
-        management_ui,
+        management_request_preview,
         "render_effective_prompt",
         prompt.render_effective_prompt,
     )
 
-    result = await _async_preview_effective_request(
+    result = await async_preview_effective_request(
         hass,
         SimpleNamespace(entry_id="entry-1", data={}),
         SimpleNamespace(subentry_id="agent-1"),
