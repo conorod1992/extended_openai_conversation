@@ -1,6 +1,95 @@
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+// Reproduce the real HA cold-load case where HTTP/1.1 delays the full stylesheet.
+test("critical CSS prevents shell and route-title FOUC while full stylesheet is delayed", async ({page}) => {
+  const errors = trackPageErrors(page);
+  let releaseStylesheet;
+  const stylesheetRequested = new Promise((resolve) => {
+    page.route("**/frontend/management.css", async (route) => {
+      resolve();
+      await new Promise((release) => { releaseStylesheet = release; });
+      await route.continue();
+    });
+  });
+
+  await page.goto(fixtureUrl("capabilities/home-assistant"), {waitUntil:"domcontentloaded"});
+  await stylesheetRequested;
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".page-heading h1")).toHaveText("Extended OpenAI");
+  await expect(panel.locator(".page-intro h1")).toHaveText("Home Assistant access");
+
+  const before = await panel.evaluate((host) => {
+    const root = host.shadowRoot;
+    const shellTitle = root.querySelector(".page-heading h1");
+    const routeTitle = root.querySelector(".page-intro h1");
+    const routeIntro = root.querySelector(".page-intro");
+    const rect = (node) => {
+      const box = node.getBoundingClientRect();
+      return {x:box.x,y:box.y,width:box.width,height:box.height};
+    };
+    const textRect = (node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const box = range.getBoundingClientRect();
+      return {x:box.x,y:box.y,width:box.width,height:box.height};
+    };
+    return {
+      critical: Boolean(root.querySelector("style[data-eoc-critical-styles]")),
+      fullLoaded: Boolean(root.querySelector("link[data-eoc-persistent-styles]")?.sheet),
+      hostPadding: getComputedStyle(host).paddingTop,
+      headerDisplay: getComputedStyle(root.querySelector("header")).display,
+      titleSize: getComputedStyle(shellTitle).fontSize,
+      mainDisplay: getComputedStyle(root.querySelector("main")).display,
+      mainGap: getComputedStyle(root.querySelector("main")).gap,
+      mobileNav: getComputedStyle(root.querySelector(".mobile-nav")).display,
+      shellTitle: textRect(shellTitle),
+      routeTitle: textRect(routeTitle),
+      routeIntro: rect(routeIntro),
+    };
+  });
+
+  expect(before).toMatchObject({
+    critical:true,
+    fullLoaded:false,
+    hostPadding:"28px",
+    headerDisplay:"flex",
+    titleSize:"30px",
+    mainDisplay:"grid",
+    mainGap:"30px",
+    mobileNav:"none",
+  });
+
+  releaseStylesheet();
+  await expect.poll(() => panel.evaluate((host) => Boolean(host.shadowRoot.querySelector("link[data-eoc-persistent-styles]")?.sheet))).toBe(true);
+
+  const after = await panel.evaluate((host) => {
+    const root = host.shadowRoot;
+    const rect = (selector) => {
+      const box = root.querySelector(selector).getBoundingClientRect();
+      return {x:box.x,y:box.y,width:box.width,height:box.height};
+    };
+    const textRect = (selector) => {
+      const range = document.createRange();
+      range.selectNodeContents(root.querySelector(selector));
+      const box = range.getBoundingClientRect();
+      return {x:box.x,y:box.y,width:box.width,height:box.height};
+    };
+    return {
+      shellTitle:textRect(".page-heading h1"),
+      routeTitle:textRect(".page-intro h1"),
+      routeIntro:rect(".page-intro"),
+    };
+  });
+
+  for (const key of ["shellTitle","routeTitle","routeIntro"]) {
+    for (const dimension of ["x","y","width","height"]) {
+      expect(Math.abs(after[key][dimension] - before[key][dimension]), `${key} ${dimension}`).toBeLessThanOrEqual(1);
+    }
+  }
+  await expectHarnessClean(page, errors);
+});
+
 for (const bundled of [false, true]) {
   test(`management shell uses external stylesheet (${bundled ? "bundle" : "source"})`, async ({page}) => {
     const errors = trackPageErrors(page);
