@@ -45,28 +45,15 @@ from .built_in_functions import built_in_function_catalog
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
     CONF_CHAT_MODEL,
-    CONF_CONTINUE_CONVERSATION,
-    CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
     CONF_FUNCTION_GROUPS,
     CONF_GUEST_ALLOWED_FUNCTION_NAMES,
     CONF_GUEST_MODE_ENABLED,
     CONF_GUEST_POLICY_VERSION,
-    CONF_KNOWLEDGE_ENABLED,
-    CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_SHARED_MEMORY_MODE,
-    CONF_SKILLS,
-    CONF_TEMPORARY_MEMORY,
-    CONTINUE_CONVERSATION_CONDITIONAL,
-    DEFAULT_CONTINUE_CONVERSATION,
-    DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
-    DEFAULT_FUNCTION_GROUPS,
-    DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_SHARED_MEMORY_MODE,
-    DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
-    FUNCTION_GROUP_LOADER_TOOL_NAME,
     GUEST_POLICY_VERSION,
     MANAGEMENT_PANEL_TITLE,
     MANAGEMENT_PANEL_URL,
@@ -74,7 +61,7 @@ from .const import (
     SHARED_MEMORY_DISABLED,
     TEMPORARY_MEMORY_OFF,
 )
-from .continuity import ConversationContinuity, async_get_continuity
+from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
 from .frontend_assets import async_register_frontend_assets, frontend_entry_url
 from .function_dependency_integrity import (
@@ -82,7 +69,7 @@ from .function_dependency_integrity import (
     async_validate_request_rule_functions,
     group_reference_updates,
 )
-from .function_groups import assemble_function_tools, get_function_group_runtime
+from .function_groups import get_function_group_runtime
 from .functions import FUNCTIONS
 from .functions.security import FunctionSecurity, classify_tool
 from .guest_mode import (
@@ -91,7 +78,6 @@ from .guest_mode import (
     resolve_guest_policy,
 )
 from .ha_llm_tools import (
-    ToolSnapshot,
     async_discover,
     is_ha_tool,
     new_reference_tool,
@@ -99,11 +85,7 @@ from .ha_llm_tools import (
     validate_reference,
 )
 from .helpers import get_exposed_entities
-from .knowledge import (
-    async_get_knowledge,
-    get_loaded_knowledge,
-    knowledge_source_as_dict,
-)
+from .knowledge import async_get_knowledge, knowledge_source_as_dict
 from .local_intents import CONF_LOCAL_INTENT_EXCLUSIONS, local_handling_snapshot
 from .management_browser import async_browse_memories
 from .management_configuration_guidance import (
@@ -141,16 +123,9 @@ from .management_request_preview import (
     entry_and_agent,
 )
 from .management_projections import settings_snapshot
-from .memory import ANONYMOUS_USER_ID, async_get_memory, memory_enabled
-from .prompt import render_effective_prompt
+from .memory import ANONYMOUS_USER_ID, async_get_memory
 from .regex_execution import async_process_speech_text
-from .request import (
-    CONTINUE_CONVERSATION_TOOL,
-    assemble_integration_function_tools,
-    build_provider_request_snapshot,
-    canonical_json,
-    format_function_tools,
-)
+from .request import canonical_json, format_function_tools
 from .request_rule_match_preview import async_request_rule_match_preview
 from .request_rules import (
     async_get_request_rules,
@@ -158,16 +133,9 @@ from .request_rules import (
     rule_has_sensitive_actions,
     validate_rule,
 )
-from .scope import SHARED_HOUSEHOLD_SCOPE_ID, user_scope
+from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .secret_redaction import redact_secrets, restore_redacted_secrets
-from .skill_runtime_availability import effective_tool_runtime_scope
-from .skills import SkillManager
-from .temporary_memory import (
-    async_get_temporary_memory,
-    async_read_temporary_memory_snapshot,
-    get_loaded_temporary_memory,
-    temporary_memory_as_dict,
-)
+from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_get_usage
 
 WS_COMMAND = f"{DOMAIN}/management"
