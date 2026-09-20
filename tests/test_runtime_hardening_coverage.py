@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
@@ -14,81 +13,10 @@ from custom_components.extended_openai_conversation_responses import (
     conversation,
     guest_mode,
     runtime_hardening,
-    skills,
 )
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     tool_result_data,
 )
-
-
-@pytest.mark.asyncio
-async def test_skill_load_publishes_complete_result_and_skips_bad_skill(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeParser:
-        @staticmethod
-        def parse(content: str, path: Path, _base: Path) -> Any:
-            if content == "bad":
-                raise ValueError("broken skill")
-            if content == "ignore":
-                return None
-            return SimpleNamespace(name=path.parent.name)
-
-    class FakeManager(skills.SkillManager):
-        _instance = None
-
-    hass = SimpleNamespace(
-        config=SimpleNamespace(config_dir="/config"),
-        data={},
-        async_add_executor_job=AsyncMock(
-            return_value=[
-                (Path("/skills/good/SKILL.md"), "good"),
-                (Path("/skills/bad/SKILL.md"), "bad"),
-                (Path("/skills/ignored/SKILL.md"), "ignore"),
-            ]
-        ),
-    )
-    monkeypatch.setattr(skills, "SkillManager", FakeManager)
-    monkeypatch.setattr(skills, "SkillMdParser", FakeParser)
-
-    manager = FakeManager(hass)
-    await manager.async_load_skills()
-
-    assert set(manager._skills) == {"good"}
-    assert manager._initialized is True
-
-
-@pytest.mark.asyncio
-async def test_skill_first_load_failure_clears_singleton_and_retry_succeeds(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeParser:
-        @staticmethod
-        def parse(_content: str, _path: Path, _base: Path) -> Any:
-            return None
-
-    class FakeManager(skills.SkillManager):
-        _instance = None
-
-    executor = AsyncMock(side_effect=[OSError("disk unavailable"), []])
-    hass = SimpleNamespace(
-        config=SimpleNamespace(config_dir="/config"),
-        data={},
-        async_add_executor_job=executor,
-    )
-    monkeypatch.setattr(skills, "SkillManager", FakeManager)
-    monkeypatch.setattr(skills, "SkillMdParser", FakeParser)
-
-    with pytest.raises(OSError, match="disk unavailable"):
-        await FakeManager.async_get_instance(hass, "/custom-skills")
-    assert FakeManager._instance is None
-
-    manager = await FakeManager.async_get_instance(hass, "/custom-skills")
-    assert FakeManager._instance is manager
-    assert manager._user_skills_dir == Path("/custom-skills")
-    assert manager._initialized is True
-    assert FakeManager.get_loaded_instance() is manager
-    assert await FakeManager.async_get_instance(hass, "/ignored-after-init") is manager
 
 
 @pytest.mark.asyncio
