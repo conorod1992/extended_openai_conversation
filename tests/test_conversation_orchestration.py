@@ -657,3 +657,30 @@ async def test_fresh_conversation_request_resets_owned_state_after_response(
         state_session_id="state-session",
         memory_session_id="memory-session",
     )
+
+
+async def test_archive_turn_with_empty_chat_log_records_empty_assistant_text() -> None:
+    """Archive recording remains best-effort when the provider produced no text."""
+    record_turn = AsyncMock()
+    entity = object.__new__(ExtendedOpenAIAgentEntity)
+    entity.subentry = SimpleNamespace(data={})
+    entity._archive = SimpleNamespace(async_record_turn=record_turn)
+    entity._effective_guest_policy = MagicMock(
+        return_value=SimpleNamespace(archive_retention=True)
+    )
+
+    await entity._async_archive_turn(
+        SimpleNamespace(session_id="session-1"),
+        "run-1",
+        SimpleNamespace(text="Hello"),
+        SimpleNamespace(content=[]),
+        successful=False,
+    )
+
+    record_turn.assert_awaited_once_with(
+        "session-1",
+        run_id="run-1",
+        user_text="Hello",
+        assistant_text="",
+        successful=False,
+    )
