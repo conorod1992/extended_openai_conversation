@@ -161,6 +161,8 @@ async def test_ai_task_advanced_schema_preserves_capability_pruning() -> None:
             CONF_TOP_P: 0.8,
         },
         _is_new=True,
+        _get_entry=MagicMock(return_value=SimpleNamespace()),
+        _get_reconfigure_subentry=MagicMock(return_value=SimpleNamespace()),
         async_create_entry=MagicMock(side_effect=_sync_result),
         async_update_and_abort=MagicMock(side_effect=_sync_result),
         async_show_form=MagicMock(side_effect=_sync_result),
