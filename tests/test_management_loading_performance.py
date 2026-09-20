@@ -11,6 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import (
     debug_ui,
+    frontend_assets,
     management_ui,
 )
 from custom_components.extended_openai_conversation_responses import (
@@ -164,6 +165,31 @@ def test_runtime_group_quarantine_drops_only_quarantined_references(
 
     quarantine._RUNTIME_QUARANTINED_FUNCTION_NAMES.set(frozenset())
     quarantine._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
+
+
+async def test_frontend_manifest_load_is_executor_backed_and_cached(
+    monkeypatch,
+) -> None:
+    urls = {
+        "management": f"/{DOMAIN}/frontend/assets/management-test.js",
+    }
+    loader = MagicMock(return_value=urls)
+    register_static = AsyncMock()
+    executor = AsyncMock(side_effect=lambda callback: callback())
+    hass = SimpleNamespace(
+        data={},
+        async_add_executor_job=executor,
+        http=SimpleNamespace(async_register_static_paths=register_static),
+    )
+    monkeypatch.setattr(frontend_assets, "_load_entry_urls_sync", loader)
+
+    await frontend_assets.async_register_frontend_assets(hass)
+    await frontend_assets.async_register_frontend_assets(hass)
+
+    executor.assert_awaited_once_with(loader)
+    loader.assert_called_once_with()
+    register_static.assert_awaited_once()
+    assert frontend_assets.frontend_entry_url(hass, "management") == urls["management"]
 
 
 def test_cached_setup_uses_shared_production_asset_boundary() -> None:
