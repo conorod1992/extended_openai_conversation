@@ -100,9 +100,16 @@ jobs:
           from pathlib import Path
 
           excluded = {
+              # Browser-only acceptance is owned by the dedicated Frontend
+              # Browser -> genuine HA job where RUN_REAL_HA_BROWSER is enabled.
+              "test_browser_backend_acceptance.py",
+              "test_browser_process_restart_acceptance.py",
+              "test_browser_refresh_boundary_acceptance.py",
+              "test_browser_runtime_acceptance.py",
+              "test_browser_release_upgrade_acceptance.py",
+              # Release/package journeys are owned by their specialized workflows.
               "test_release_upgrade_acceptance.py",
               "test_release_upgrade_custom_function_tool.py",
-              "test_browser_release_upgrade_acceptance.py",
               "test_packaged_release.py",
               "test_packaged_process_restart.py",
           }
@@ -113,10 +120,6 @@ jobs:
           process_restart_b = {
               "test_active_request_shutdown_recovery.py",
               "test_immediate_tool_process_crash.py",
-              "test_browser_backend_acceptance.py",
-              "test_browser_process_restart_acceptance.py",
-              "test_browser_refresh_boundary_acceptance.py",
-              "test_browser_runtime_acceptance.py",
           }
           stateful_serial = {
               "test_backup_restore_atomicity.py",
@@ -209,10 +212,6 @@ jobs:
           PROCESS_RESTART_B=(
             tests_real_ha/test_active_request_shutdown_recovery.py
             tests_real_ha/test_immediate_tool_process_crash.py
-            tests_real_ha/test_browser_backend_acceptance.py
-            tests_real_ha/test_browser_process_restart_acceptance.py
-            tests_real_ha/test_browser_refresh_boundary_acceptance.py
-            tests_real_ha/test_browser_runtime_acceptance.py
           )
           STATEFUL_SERIAL=(
             tests_real_ha/test_backup_restore_atomicity.py
@@ -261,9 +260,13 @@ jobs:
             parallel-safe)
               TEST_PATHS=(tests_real_ha/)
               TEST_PATHS+=(
+                --ignore=tests_real_ha/test_browser_backend_acceptance.py
+                --ignore=tests_real_ha/test_browser_process_restart_acceptance.py
+                --ignore=tests_real_ha/test_browser_refresh_boundary_acceptance.py
+                --ignore=tests_real_ha/test_browser_runtime_acceptance.py
+                --ignore=tests_real_ha/test_browser_release_upgrade_acceptance.py
                 --ignore=tests_real_ha/test_release_upgrade_acceptance.py
                 --ignore=tests_real_ha/test_release_upgrade_custom_function_tool.py
-                --ignore=tests_real_ha/test_browser_release_upgrade_acceptance.py
                 --ignore=tests_real_ha/test_packaged_release.py
                 --ignore=tests_real_ha/test_packaged_process_restart.py
               )

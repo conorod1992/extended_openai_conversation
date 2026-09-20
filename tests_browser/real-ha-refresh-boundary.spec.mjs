@@ -8,7 +8,6 @@ const realFixtureUrl = (route) =>
   `/tests_browser/real-ha-fixture.html?route=${encodeURIComponent(route)}&backend=${encodeURIComponent(backendUrl)}`;
 
 const MEMORY = "Real HA refresh-boundary memory";
-
 test("hard refresh after committed Memory mutation converges without replay", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(realFixtureUrl("data-memory/memories"));
@@ -49,9 +48,10 @@ test("hard refresh after committed Memory mutation converges without replay", as
   await expect.poll(() => page.evaluate(() => window.__refreshBoundary?.committed)).toBe(true);
   await expect(panel.locator("#memory-dialog")).toHaveJSProperty("open", true);
 
-  // A hard reload destroys the unresolved frontend promise. The integration must
-  // not replay the already-committed mutation when the fresh panel mounts.
-  await page.reload({waitUntil: "domcontentloaded"});
+  // A fresh full-document navigation destroys the unresolved frontend promise.
+  // Re-enter through the dedicated fixture URL rather than reloading the synthetic
+  // production-style path that the static test server does not actually own.
+  await page.goto(realFixtureUrl("data-memory/memories"), {waitUntil: "domcontentloaded"});
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("heading", {name: "Memories", exact: true})).toBeVisible();
 
@@ -59,9 +59,9 @@ test("hard refresh after committed Memory mutation converges without replay", as
   await expect(matchingCards).toHaveCount(1);
   await expect(matchingCards.first()).toContainText("refresh-boundary");
 
-  // Reload once more to prove the persisted backend state is stable, not merely a
-  // transient render artifact from the first post-refresh load.
-  await page.reload({waitUntil: "domcontentloaded"});
+  // Start one more fresh document to prove the persisted backend state is stable,
+  // not merely a transient render artifact from the first post-boundary load.
+  await page.goto(realFixtureUrl("data-memory/memories"), {waitUntil: "domcontentloaded"});
   panel = page.locator("extended-openai-management-panel");
   const persisted = panel.locator(".list-card").filter({hasText: MEMORY});
   await expect(persisted).toHaveCount(1);
@@ -71,7 +71,7 @@ test("hard refresh after committed Memory mutation converges without replay", as
   await acceptConfirmation(panel);
   await expect(panel.locator(".list-card").filter({hasText: MEMORY})).toHaveCount(0);
 
-  await page.reload({waitUntil: "domcontentloaded"});
+  await page.goto(realFixtureUrl("data-memory/memories"), {waitUntil: "domcontentloaded"});
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".list-card").filter({hasText: MEMORY})).toHaveCount(0);
   await expectHarnessClean(page, pageErrors);
