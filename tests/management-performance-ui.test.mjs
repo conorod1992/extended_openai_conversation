@@ -129,6 +129,7 @@ function panelFor(page = "assistant", subsection = "basics") {
 }
 
 {
+  globalThis.localStorage.values.clear();
   const panel = panelFor("overview", null);
   const calls = [];
   panel._hass = {callWS: async (message) => {
