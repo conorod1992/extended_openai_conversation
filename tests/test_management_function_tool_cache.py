@@ -11,21 +11,20 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 )
 
 
-def test_agent_snapshot_uses_authoritative_cached_function_parser(monkeypatch) -> None:
+def test_agent_snapshot_uses_authoritative_cached_function_metadata(monkeypatch) -> None:
     options = agent_config_defaults()
-    cached_parser = Mock(
-        return_value=[
-            {
-                "enabled": True,
-                "spec": {"name": "cached_tool"},
-                "function": {"type": "service", "service": "light.turn_on"},
-            }
-        ]
+    cached_metadata = Mock(
+        return_value={"usable_count": 1, "enabled_count": 1, "total_count": 1}
+    )
+    monkeypatch.setattr(
+        repair,
+        "configured_function_tool_metadata_from_data",
+        cached_metadata,
     )
     monkeypatch.setattr(
         repair,
         "configured_function_tools_from_data",
-        cached_parser,
+        Mock(side_effect=AssertionError("runtime Function Tool copies must not be used")),
     )
     monkeypatch.setattr(
         management_ui,
@@ -42,5 +41,5 @@ def test_agent_snapshot_uses_authoritative_cached_function_parser(monkeypatch) -
 
     result = loading._agent_snapshot(hass, entry, subentry)
 
-    cached_parser.assert_called_once_with(options)
+    cached_metadata.assert_called_once_with(options)
     assert result["function_count"] == 1

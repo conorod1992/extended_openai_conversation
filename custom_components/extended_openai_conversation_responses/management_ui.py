@@ -7,6 +7,8 @@ from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
 import json
+import logging
+from time import perf_counter
 from types import MappingProxyType
 from typing import Any, Final
 from uuid import uuid4
@@ -138,6 +140,17 @@ from .usage import async_get_usage
 
 WS_COMMAND = f"{DOMAIN}/management"
 _UI_SETUP = f"{DOMAIN}.management_ui_setup"
+_LOGGER = logging.getLogger(__name__)
+_SLOW_MANAGEMENT_MS = 250.0
+
+
+def _elapsed_ms(start: float) -> float:
+    return round((perf_counter() - start) * 1000, 2)
+
+
+def _warn_management_performance(operation: str, timings: dict[str, Any]) -> None:
+    if float(timings.get("total_ms", 0.0)) >= _SLOW_MANAGEMENT_MS:
+        _LOGGER.warning("Management performance %s: %s", operation, timings)
 
 
 def _reset_request_rule_runtime(
@@ -673,21 +686,56 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
     if action == "save":
         return await _async_save_configuration(request)
     if action == "get":
+        started = perf_counter()
+        phase = perf_counter()
         config = agent_config_snapshot(dict(subentry.data))
+        config_ms = _elapsed_ms(phase)
+
+        phase = perf_counter()
+        revision = _agent_config_revision(subentry.data, subentry.title)
+        revision_ms = _elapsed_ms(phase)
+
+        phase = perf_counter()
+        defaults = agent_config_snapshot(agent_config_defaults())
+        defaults_ms = _elapsed_ms(phase)
+
+        phase = perf_counter()
+        options = agent_config_options()
+        options_ms = _elapsed_ms(phase)
+
+        phase = perf_counter()
+        capabilities = model_capabilities(config[CONF_CHAT_MODEL])
+        model_capabilities_ms = _elapsed_ms(phase)
+
+        phase = perf_counter()
+        local_handling = local_handling_snapshot(
+            hass,
+            entry_id,
+            subentry_id,
+            config.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
+        )
+        local_handling_ms = _elapsed_ms(phase)
+
+        timings = {
+            "config_snapshot_ms": config_ms,
+            "revision_ms": revision_ms,
+            "defaults_snapshot_ms": defaults_ms,
+            "options_ms": options_ms,
+            "model_capabilities_ms": model_capabilities_ms,
+            "local_handling_ms": local_handling_ms,
+            "total_ms": _elapsed_ms(started),
+        }
+        _warn_management_performance("configuration.get", timings)
         return {
             "title": subentry.title,
-            "revision": _agent_config_revision(subentry.data, subentry.title),
+            "revision": revision,
             "config": config,
-            "defaults": agent_config_snapshot(agent_config_defaults()),
-            "options": agent_config_options(),
-            "model_capabilities": model_capabilities(config[CONF_CHAT_MODEL]),
+            "defaults": defaults,
+            "options": options,
+            "model_capabilities": capabilities,
             "function_types": sorted(FUNCTIONS),
-            "local_handling": local_handling_snapshot(
-                hass,
-                entry_id,
-                subentry_id,
-                config.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
-            ),
+            "local_handling": local_handling,
+            "_performance": timings,
         }
     if action == "validate":
         updates = message.get("config", {})
@@ -1922,7 +1970,7 @@ async def async_setup_management_ui(hass: HomeAssistant) -> None:
             hass,
             webcomponent_name="extended-openai-management-panel",
             frontend_url_path=MANAGEMENT_PANEL_URL,
-            module_url=frontend_entry_url("management"),
+            module_url=frontend_entry_url(hass, "management"),
             sidebar_title=MANAGEMENT_PANEL_TITLE,
             sidebar_icon="mdi:robot-outline",
             require_admin=False,

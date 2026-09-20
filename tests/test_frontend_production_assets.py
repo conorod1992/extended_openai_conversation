@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -13,8 +14,10 @@ from custom_components.extended_openai_conversation_responses import frontend_as
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 
 
-def test_checked_in_production_entry_is_hashed_and_present() -> None:
-    management = frontend_assets.frontend_entry_url("management")
+async def test_checked_in_production_entry_is_hashed_and_present(hass) -> None:
+    hass.http.async_register_static_paths = AsyncMock()
+    await frontend_assets.async_register_frontend_assets(hass)
+    management = frontend_assets.frontend_entry_url(hass, "management")
 
     assert management.startswith(f"/{DOMAIN}/frontend/assets/management-")
     assert management.endswith(".js")
@@ -22,7 +25,7 @@ def test_checked_in_production_entry_is_hashed_and_present() -> None:
     relative = management.removeprefix(f"/{DOMAIN}/frontend/")
     assert (frontend_assets._PRODUCTION_DIR / relative).is_file()
 
-    manifest = frontend_assets._manifest()
+    manifest = json.loads(frontend_assets._MANIFEST_PATH.read_text(encoding="utf-8"))
     debug_panel = next(
         entry
         for source, entry in manifest.items()
@@ -32,8 +35,8 @@ def test_checked_in_production_entry_is_hashed_and_present() -> None:
     assert str(debug_panel.get("file", "")).startswith("assets/debug-panel-")
 
 
-def test_frontend_entry_rejects_missing_manifest_asset(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+async def test_frontend_entry_rejects_missing_manifest_asset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, hass
 ) -> None:
     manifest = tmp_path / "manifest.json"
     manifest.write_text(
@@ -52,7 +55,10 @@ def test_frontend_entry_rejects_missing_manifest_asset(
     monkeypatch.setattr(frontend_assets, "_PRODUCTION_DIR", tmp_path)
 
     with pytest.raises(RuntimeError, match="management"):
-        frontend_assets.frontend_entry_url("management")
+        await frontend_assets.async_register_frontend_assets(hass)
+    assert frontend_assets._FRONTEND_ENTRY_URLS not in hass.data
+    assert frontend_assets._FRONTEND_ASSET_SETUP not in hass.data
+    hass.http.async_register_static_paths.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -64,6 +70,7 @@ async def test_register_frontend_assets_once_with_cache_headers() -> None:
 
     hass = SimpleNamespace(
         data={},
+        async_add_executor_job=AsyncMock(side_effect=lambda callback: callback()),
         http=SimpleNamespace(async_register_static_paths=register_static_paths),
     )
 

@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
 from copy import deepcopy
-from typing import Any
+import logging
+from time import perf_counter
+from typing import Any, TypeVar
 
 from homeassistant.core import HomeAssistant
 
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
     agent_config_defaults,
-    function_tool_enabled,
     validate_function_groups,
     validate_function_tools,
 )
@@ -32,12 +34,26 @@ from .conversation_archive import async_get_archive
 from .feature_status import management_feature_status
 from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
 from .knowledge import async_get_knowledge, get_loaded_knowledge
-from .management_function_repair import function_tools_issue as _function_tools_issue
+from .management_function_repair import management_function_tool_health
 from .management_history_queries import usage_summary
 from .management_projections import async_scope_catalog_projection, settings_snapshot
 from .management_setup_health import add_setup_health
 from .memory import async_get_memory, get_memory_mode
 from .usage import async_get_usage
+
+_LOGGER = logging.getLogger(__name__)
+_SLOW_MANAGEMENT_MS = 250.0
+_T = TypeVar("_T")
+
+
+def _ms(start: float) -> float:
+    return round((perf_counter() - start) * 1000, 2)
+
+
+def _warn_if_slow(operation: str, timings: dict[str, Any]) -> None:
+    total = float(timings.get("total_ms", 0.0))
+    if total >= _SLOW_MANAGEMENT_MS:
+        _LOGGER.warning("Management performance %s: %s", operation, timings)
 
 
 def _guest_has_ha_exclusions(options: dict[str, Any]) -> bool:
@@ -63,10 +79,23 @@ def _agent_snapshot(
     knowledge_source_count: int = 0,
     tokens_today: int = 0,
     guest_status: dict[str, Any] | None = None,
+    function_tools_health: dict[str, Any] | None = None,
+    function_tools_ms: float | None = None,
+    performance: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Build the cheap frontend metadata shared by bootstrap and overview."""
+    started = perf_counter()
     options = config if config is not None else dict(subentry.data)
-    configured_tools, function_issue = _function_tools_issue(options)
+    if function_tools_health is None:
+        phase = perf_counter()
+        function_tools_health = management_function_tool_health(options)
+        measured_function_tools_ms = _ms(phase)
+    else:
+        measured_function_tools_ms = function_tools_ms or 0.0
+    if performance is not None:
+        performance["function_tools_ms"] = measured_function_tools_ms
+    function_issue = function_tools_health.get("validation_error")
+    phase = perf_counter()
     if guest_status is None:
         loaded_guest = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
         guest_status = (
@@ -77,6 +106,8 @@ def _agent_snapshot(
     else:
         guest_status = dict(guest_status)
     guest_status["has_home_assistant_exclusions"] = _guest_has_ha_exclusions(options)
+    if performance is not None:
+        performance["guest_status_ms"] = _ms(phase)
     snapshot = {
         "entry_id": entry.entry_id,
         "entry_title": entry.title,
@@ -88,7 +119,7 @@ def _agent_snapshot(
         "memory_count": memory_count,
         "knowledge_enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
         "knowledge_source_count": knowledge_source_count,
-        "function_count": sum(function_tool_enabled(tool) for tool in configured_tools),
+        "function_count": int(function_tools_health.get("enabled_count", 0)),
         "function_group_count": len(
             options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS)
         ),
@@ -103,15 +134,20 @@ def _agent_snapshot(
         if loaded is not None:
             knowledge_source_count = int(loaded.source_count)
             snapshot["knowledge_source_count"] = knowledge_source_count
+    phase = perf_counter()
     snapshot["feature_status"] = management_feature_status(
         options, knowledge_source_count=knowledge_source_count
     )
+    if performance is not None:
+        performance["feature_status_ms"] = _ms(phase)
     if function_issue is not None:
         snapshot["configuration_issue"] = {
             "field": CONF_FUNCTION_TOOLS,
             "message": function_issue,
             "repairable": True,
         }
+    if performance is not None:
+        performance["total_ms"] = _ms(started)
     return snapshot
 
 
@@ -120,13 +156,23 @@ async def async_agent_catalog(
 ) -> dict[str, Any]:
     """Return startup navigation metadata without loading memory/archive scopes."""
     del user_id
-    agents = [
-        _agent_snapshot(hass, entry, subentry)
-        for entry in hass.config_entries.async_entries(DOMAIN)
-        for subentry in entry.subentries.values()
-        if subentry.subentry_type == "conversation"
-    ]
-    return {"agents": agents, "is_admin": is_admin}
+    started = perf_counter()
+    agents: list[dict[str, Any]] = []
+    snapshot_timings: list[dict[str, float]] = []
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        for subentry in entry.subentries.values():
+            if subentry.subentry_type != "conversation":
+                continue
+            timing: dict[str, float] = {}
+            agents.append(_agent_snapshot(hass, entry, subentry, performance=timing))
+            snapshot_timings.append(timing)
+    timings: dict[str, Any] = {
+        "total_ms": _ms(started),
+        "agent_count": len(agents),
+        "snapshots": snapshot_timings,
+    }
+    _warn_if_slow("agents", timings)
+    return {"agents": agents, "is_admin": is_admin, "_performance": timings}
 
 
 async def async_scope_catalog(
@@ -163,11 +209,21 @@ async def async_overview_summary(
     entry_id = str(entry.entry_id)
     subentry_id = str(subentry.subentry_id)
 
+    started = perf_counter()
+    loader_timings: dict[str, float] = {}
+
+    async def timed(name: str, awaitable: Awaitable[_T]) -> _T:
+        phase = perf_counter()
+        try:
+            return await awaitable
+        finally:
+            loader_timings[name] = _ms(phase)
+
     usage_result, memory_result, knowledge_result, guest_result = await asyncio.gather(
-        async_get_usage(hass, entry_id, subentry_id),
-        async_get_memory(hass, entry_id, subentry_id),
-        async_get_knowledge(hass, entry_id, subentry_id),
-        async_get_guest_mode(hass, entry_id, subentry_id),
+        timed("usage_load_ms", async_get_usage(hass, entry_id, subentry_id)),
+        timed("memory_load_ms", async_get_memory(hass, entry_id, subentry_id)),
+        timed("knowledge_load_ms", async_get_knowledge(hass, entry_id, subentry_id)),
+        timed("guest_load_ms", async_get_guest_mode(hass, entry_id, subentry_id)),
         return_exceptions=True,
     )
 
@@ -210,6 +266,12 @@ async def async_overview_summary(
     else:
         guest_status = guest_result.status()
 
+    function_tools_started = perf_counter()
+    function_tools_health = management_function_tool_health(dict(subentry.data))
+    function_tools_ms = _ms(function_tools_started)
+
+    projection_started = perf_counter()
+    agent_timing: dict[str, float] = {}
     result = {
         "agent": _agent_snapshot(
             hass,
@@ -219,13 +281,34 @@ async def async_overview_summary(
             knowledge_source_count=knowledge_source_count,
             tokens_today=tokens_today,
             guest_status=guest_status,
+            function_tools_health=function_tools_health,
+            function_tools_ms=function_tools_ms,
+            performance=agent_timing,
         ),
         "usage": usage,
         "conversations": settings_snapshot(dict(subentry.data)),
         "load_errors": load_errors,
     }
-
-    return add_setup_health(hass, entry, subentry, result, is_admin=is_admin)
+    projection_ms = _ms(projection_started)
+    health_started = perf_counter()
+    result = add_setup_health(
+        hass,
+        entry,
+        subentry,
+        result,
+        is_admin=is_admin,
+        function_tools_health=function_tools_health,
+    )
+    timings: dict[str, Any] = {
+        **loader_timings,
+        "projection_ms": projection_ms,
+        "agent_snapshot": agent_timing,
+        "setup_health_ms": _ms(health_started),
+        "total_ms": _ms(started),
+    }
+    result["_performance"] = timings
+    _warn_if_slow("overview.summary", timings)
+    return result
 
 
 def _snapshot_normalized_configuration(config: dict[str, Any]) -> dict[str, Any]:

@@ -180,6 +180,7 @@ async def test_install_enriches_overview_with_load_health_and_is_idempotent(
         knowledge_source_count,
         knowledge_available,
         is_admin,
+        function_tools_health=None,
     ):
         captured.update(
             {

@@ -31,6 +31,9 @@ async def test_management_setup_registers_only_live_panel_and_command(monkeypatc
     panel = AsyncMock()
     command = MagicMock()
     monkeypatch.setattr(management_ui, "async_register_frontend_assets", assets)
+    monkeypatch.setattr(
+        management_ui, "frontend_entry_url", lambda *_: "/frontend/management-test.js"
+    )
     monkeypatch.setattr(management_ui.panel_custom, "async_register_panel", panel)
     monkeypatch.setattr(management_ui.websocket_api, "async_register_command", command)
     await management_ui.async_setup_management_ui(hass)
