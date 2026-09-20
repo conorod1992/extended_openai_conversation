@@ -37,8 +37,8 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
-from custom_components.extended_openai_conversation_responses.management_ui import (
-    _async_preview_effective_request,
+from custom_components.extended_openai_conversation_responses.management_request_preview import (
+    async_preview_effective_request,
 )
 from custom_components.extended_openai_conversation_responses.memory import MemoryRecord
 from custom_components.extended_openai_conversation_responses.prompt import (
@@ -249,7 +249,7 @@ async def test_preview_matches_production_builder_without_user_or_history(
     subentry = SimpleNamespace(subentry_id="agent-1", data=options)
     entry = SimpleNamespace(entry_id="entry-1")
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_ui.get_exposed_entities",
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
         lambda _hass: _entity_context(),
     )
 
@@ -263,7 +263,7 @@ async def test_preview_matches_production_builder_without_user_or_history(
         SimpleNamespace(device_id=None),
         None,
     )
-    preview = await _async_preview_effective_request(
+    preview = await async_preview_effective_request(
         hass, entry, subentry, options, "admin"
     )
 
@@ -290,15 +290,15 @@ async def test_preview_reads_temporary_context_without_mutation(
         async_active=AsyncMock(),
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_ui.get_loaded_temporary_memory",
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_loaded_temporary_memory",
         lambda *_args: manager,
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_ui.get_exposed_entities",
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
         lambda _hass: _entity_context(),
     )
 
-    result = await _async_preview_effective_request(
+    result = await async_preview_effective_request(
         hass,
         SimpleNamespace(entry_id="entry-1"),
         SimpleNamespace(subentry_id="agent-1"),
@@ -325,19 +325,19 @@ async def test_preview_reads_stored_temporary_context_before_manager_load(
     options[CONF_KNOWLEDGE_ENABLED] = False
     read_snapshot = AsyncMock(return_value=[_temporary()])
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_ui.get_loaded_temporary_memory",
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_loaded_temporary_memory",
         lambda *_args: None,
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_ui.async_read_temporary_memory_snapshot",
+        "custom_components.extended_openai_conversation_responses.management_request_preview.async_read_temporary_memory_snapshot",
         read_snapshot,
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_ui.get_exposed_entities",
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
         lambda _hass: _entity_context(),
     )
 
-    result = await _async_preview_effective_request(
+    result = await async_preview_effective_request(
         hass,
         SimpleNamespace(entry_id="entry-1"),
         SimpleNamespace(subentry_id="agent-1"),
@@ -354,11 +354,11 @@ async def test_preview_reads_stored_temporary_context_before_manager_load(
 async def test_preview_render_failure_is_controlled(hass, monkeypatch) -> None:
     """Template failures become concise management errors without saving config."""
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_ui.get_exposed_entities",
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
         lambda _hass: [],
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_ui.render_effective_prompt",
+        "custom_components.extended_openai_conversation_responses.management_request_preview.render_effective_prompt",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad template")),
     )
 
@@ -366,7 +366,7 @@ async def test_preview_render_failure_is_controlled(hass, monkeypatch) -> None:
         HomeAssistantError,
         match="The effective request could not be assembled: bad template",
     ):
-        await _async_preview_effective_request(
+        await async_preview_effective_request(
             hass,
             SimpleNamespace(entry_id="entry-1"),
             SimpleNamespace(subentry_id="agent-1"),
@@ -439,10 +439,10 @@ async def test_effective_request_preview_uses_first_request_tool_assembly(
         }
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_ui.get_exposed_entities",
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
         lambda _hass: [],
     )
-    result = await _async_preview_effective_request(
+    result = await async_preview_effective_request(
         hass,
         SimpleNamespace(entry_id="entry-1", data={}),
         SimpleNamespace(subentry_id="agent-1"),
