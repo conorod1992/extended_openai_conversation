@@ -22,7 +22,9 @@ export default defineConfig({
   testDir: "./tests_browser",
   outputDir,
   fullyParallel: false,
-  workers: process.env.CI ? 1 : undefined,
+  workers: process.env.CI
+    ? Number.parseInt(process.env.PLAYWRIGHT_WORKERS || "1", 10)
+    : undefined,
   timeout: 30_000,
   expect: {
     timeout: 7_500,
