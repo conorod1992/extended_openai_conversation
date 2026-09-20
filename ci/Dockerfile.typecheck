@@ -1,0 +1,71 @@
+ARG PYTHON_VERSION=3.14.7
+FROM python:${PYTHON_VERSION}-slim-bookworm
+
+ARG HA_CORE_SHA
+ARG OPENAI_VERSION
+ARG HASSIL_VERSION
+ARG HA_INTENTS_VERSION
+ARG XMLTODICT_VERSION
+ARG BEAUTIFULSOUP4_VERSION
+ARG LXML_VERSION
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN test -n "$HA_CORE_SHA" \
+    && test -n "$OPENAI_VERSION" \
+    && test -n "$HASSIL_VERSION" \
+    && test -n "$HA_INTENTS_VERSION" \
+    && test -n "$XMLTODICT_VERSION" \
+    && test -n "$BEAUTIFULSOUP4_VERSION" \
+    && test -n "$LXML_VERSION"
+
+RUN python -m pip install --upgrade pip \
+    && pip install \
+        homeassistant \
+        "openai==${OPENAI_VERSION}" \
+        "hassil==${HASSIL_VERSION}" \
+        "home-assistant-intents==${HA_INTENTS_VERSION}" \
+        "xmltodict==${XMLTODICT_VERSION}" \
+        "beautifulsoup4==${BEAUTIFULSOUP4_VERSION}" \
+        "lxml==${LXML_VERSION}" \
+        "gazetteer-matcher==1.0.0" \
+        "voluptuous-openapi==0.4.1" \
+        "httpx>=0.25.0" \
+        "types-PyYAML>=6.0" \
+        "mypy==2.3.1" \
+    && pip check \
+    && mkdir -p /opt/eoai-ci \
+    && printf '%s\n' "$HA_CORE_SHA" > /opt/eoai-ci/ha-core-sha \
+    && python - <<'PY' > /opt/eoai-ci/typecheck-environment.txt
+from importlib.metadata import version
+
+for package in (
+    "homeassistant",
+    "openai",
+    "hassil",
+    "home-assistant-intents",
+    "xmltodict",
+    "beautifulsoup4",
+    "lxml",
+    "gazetteer-matcher",
+    "voluptuous-openapi",
+    "httpx",
+    "PyYAML",
+    "types-PyYAML",
+    "mypy",
+):
+    print(f"{package}=={version(package)}")
+PY
+
+WORKDIR /workspace
+
+RUN test -s /opt/eoai-ci/ha-core-sha \
+    && test -s /opt/eoai-ci/typecheck-environment.txt \
+    && mypy --version \
+    && pip check
+
+LABEL org.opencontainers.image.source="https://github.com/conorod1992/extended_openai_conversation" \
+      org.opencontainers.image.description="Lean prebuilt Type Check environment for EOAI"
