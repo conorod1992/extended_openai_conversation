@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
+import {loadAllUsageDays} from "../custom_components/extended_openai_conversation_responses/frontend/usage-data.js";
+
 import {
   addUsageCalendarDays,
-  loadAllUsageDays,
   localUsageDateKey,
   selectUsageHistory,
   usageChartBuckets,
@@ -104,11 +105,16 @@ assert.deepEqual(starts, ["0000-01-01","2026-09-03","2026-09-05"]);
 // issuing any page so a mid-load selector change cannot mix agents.
 const panelSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
 const usageSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-chart.js", import.meta.url), "utf8");
+const usageDataSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-data.js", import.meta.url), "utf8");
+const footprintSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-input-footprint.js", import.meta.url), "utf8");
 assert.match(panelSource, /const loadToken = \+\+this\._loadToken/);
 assert.match(panelSource, /if \(loadToken !== this\._loadToken\) return/);
-assert.match(usageSource, /const agent = panel\._selectedAgent\?\.\(\)/);
-assert.match(usageSource, /const identity = agent \? \{entry_id: agent\.entry_id, subentry_id: agent\.subentry_id\} : \{\}/);
+assert.match(usageDataSource, /const agent = panel\._selectedAgent\?\.\(\)/);
+assert.match(usageDataSource, /entry_id: agent\.entry_id, subentry_id: agent\.subentry_id/);
 assert.match(usageSource, /panel\._usageHistoryWindow = normalizeUsageWindow\(event\.target\.value\);\s*panel\._render\(\)/);
+assert.doesNotMatch(usageSource, /panel\._call\("usage", "daily"/);
+assert.doesNotMatch(footprintSource, /panel\._call\("usage", "footprint"/);
+assert.match(usageDataSource, /panel\._call\("usage", "footprint"\)/);
 
 // The management-window feature must not replace or reinterpret Today / Month sensor semantics.
 const sensorSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/sensor.py", import.meta.url), "utf8");
