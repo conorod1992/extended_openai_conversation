@@ -1,0 +1,127 @@
+name: Type Check CI Image
+
+on:
+  pull_request:
+    paths:
+      - "ci/Dockerfile.typecheck"
+      - ".github/workflows/ci-image-typecheck.yml"
+      - ".github/workflows/ci.yml"
+  push:
+    branches:
+      - develop
+    paths:
+      - "ci/Dockerfile.typecheck"
+      - ".github/workflows/ci-image-typecheck.yml"
+      - ".github/workflows/ci.yml"
+  schedule:
+    - cron: "40 23 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: typecheck-ci-image
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-typecheck
+  HA_CORE_REPO: home-assistant/core
+
+jobs:
+  build:
+    name: Build lean Type Check image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Resolve Home Assistant dev type surface
+        id: versions
+        run: |
+          get_package_version() {
+            local manifest="$1"
+            local package="$2"
+            echo "$manifest" | grep -o "\"$package==[^\"]*\"" | sed "s/\"$package==//;s/\"//"
+          }
+
+          HA_CORE_SHA="$(git ls-remote "https://github.com/${HA_CORE_REPO}.git" refs/heads/dev | awk '{print $1}')"
+          test -n "$HA_CORE_SHA"
+          PYTHON_VERSION="$(curl -fsSL "https://raw.githubusercontent.com/${HA_CORE_REPO}/$HA_CORE_SHA/.python-version" | tr -d '\n')"
+          test -n "$PYTHON_VERSION"
+
+          OPENAI_MANIFEST="$(curl -fsSL "https://raw.githubusercontent.com/${HA_CORE_REPO}/$HA_CORE_SHA/homeassistant/components/openai_conversation/manifest.json")"
+          CONVERSATION_MANIFEST="$(curl -fsSL "https://raw.githubusercontent.com/${HA_CORE_REPO}/$HA_CORE_SHA/homeassistant/components/conversation/manifest.json")"
+          REST_MANIFEST="$(curl -fsSL "https://raw.githubusercontent.com/${HA_CORE_REPO}/$HA_CORE_SHA/homeassistant/components/rest/manifest.json")"
+          SCRAPE_MANIFEST="$(curl -fsSL "https://raw.githubusercontent.com/${HA_CORE_REPO}/$HA_CORE_SHA/homeassistant/components/scrape/manifest.json")"
+
+          echo "ha-core-sha=$HA_CORE_SHA" >> "$GITHUB_OUTPUT"
+          echo "python-version=$PYTHON_VERSION" >> "$GITHUB_OUTPUT"
+          echo "openai-version=$(get_package_version "$OPENAI_MANIFEST" openai)" >> "$GITHUB_OUTPUT"
+          echo "hassil-version=$(get_package_version "$CONVERSATION_MANIFEST" hassil)" >> "$GITHUB_OUTPUT"
+          echo "home-assistant-intents-version=$(get_package_version "$CONVERSATION_MANIFEST" home-assistant-intents)" >> "$GITHUB_OUTPUT"
+          echo "xmltodict-version=$(get_package_version "$REST_MANIFEST" xmltodict)" >> "$GITHUB_OUTPUT"
+          echo "beautifulsoup4-version=$(get_package_version "$SCRAPE_MANIFEST" beautifulsoup4)" >> "$GITHUB_OUTPUT"
+          echo "lxml-version=$(get_package_version "$SCRAPE_MANIFEST" lxml)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build Type Check image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ci/Dockerfile.typecheck
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          build-args: |
+            PYTHON_VERSION=${{ steps.versions.outputs.python-version }}
+            HA_CORE_SHA=${{ steps.versions.outputs.ha-core-sha }}
+            OPENAI_VERSION=${{ steps.versions.outputs.openai-version }}
+            HASSIL_VERSION=${{ steps.versions.outputs.hassil-version }}
+            HA_INTENTS_VERSION=${{ steps.versions.outputs.home-assistant-intents-version }}
+            XMLTODICT_VERSION=${{ steps.versions.outputs.xmltodict-version }}
+            BEAUTIFULSOUP4_VERSION=${{ steps.versions.outputs.beautifulsoup4-version }}
+            LXML_VERSION=${{ steps.versions.outputs.lxml-version }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:ha-dev-${{ steps.versions.outputs.ha-core-sha }}
+          cache-from: type=gha,scope=typecheck-ci-image
+          cache-to: type=gha,mode=max,scope=typecheck-ci-image
+
+      - name: Pull published image
+        if: github.event_name != 'pull_request'
+        run: docker pull "${IMAGE_NAME}:latest"
+
+      - name: Verify Type Check image and current source
+        run: |
+          docker run --rm "${IMAGE_NAME}:latest" bash -lc '
+            test "$(cat /opt/eoai-ci/ha-core-sha)" = "${{ steps.versions.outputs.ha-core-sha }}"
+            pip check
+            mypy --version
+          '
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            "${IMAGE_NAME}:latest" \
+            mypy custom_components/extended_openai_conversation_responses
+
+      - name: Publish image summary
+        if: github.event_name != 'pull_request'
+        run: |
+          {
+            echo "### Type Check CI image"
+            echo
+            echo "Image: `${IMAGE_NAME}:latest`"
+            echo "HA Core dev snapshot: `${{ steps.versions.outputs.ha-core-sha }}`"
+            echo "Python: `${{ steps.versions.outputs.python-version }}`"
+          } >> "$GITHUB_STEP_SUMMARY"
