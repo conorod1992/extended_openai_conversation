@@ -126,7 +126,8 @@ def test_copy_runtime_function_config_preserves_aliases_and_cycles() -> None:
     assert copied["self"] is copied
 
 
-def test_copy_runtime_function_config_preserves_collections_and_hydrated_leaves() -> None:
+def test_copy_runtime_function_config_preserves_collections_and_hydrated_leaves(
+) -> None:
     """Container types are copied while opaque runtime leaves retain identity."""
     runtime_object = _AtomicRuntimeObject()
     source = {
