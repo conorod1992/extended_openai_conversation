@@ -7,6 +7,7 @@ class FakeTextAreaElement {
     this.hidden = false;
     this.focusCalls = 0;
     this.inputEvents = 0;
+    this.listeners = new Map();
   }
 
   get value() {
@@ -21,8 +22,19 @@ class FakeTextAreaElement {
     this.focusCalls += 1;
   }
 
+  addEventListener(type, listener) {
+    const listeners = this.listeners.get(type) || [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type, listener) {
+    this.listeners.set(type, (this.listeners.get(type) || []).filter((item) => item !== listener));
+  }
+
   dispatchEvent(event) {
     if (event?.type === "input") this.inputEvents += 1;
+    for (const listener of this.listeners.get(event?.type) || []) listener(event);
     return true;
   }
 }
@@ -49,6 +61,10 @@ class FakeNativeEditor {
 
   addEventListener(type, listener) {
     this.listeners.set(type, listener);
+  }
+
+  removeEventListener(type, listener) {
+    if (this.listeners.get(type) === listener) this.listeners.delete(type);
   }
 
   emit(type, detail = {}) {
@@ -157,9 +173,11 @@ try {
     assert.deepEqual(harness.calls, [{section: "tools", action: "validate_yaml", payload: {yaml}}]);
     assert.match(harness.getStyle().textContent, /#tool-yaml-native/);
 
-    harness.textarea.focus();
-    assert.equal(harness.editor.focusCalls, 1, "legacy focus calls should be forwarded to the native editor");
+    harness.panel._toolYamlEditorAdapter.focus();
+    assert.equal(harness.editor.focusCalls, 1, "adapter focus should target the native editor");
     assert.equal(harness.textarea.focusCalls, 0);
+    assert.equal(Object.hasOwn(harness.textarea, "value"), false, "native mode must not redefine textarea.value");
+    assert.equal(harness.textarea.focus, FakeTextAreaElement.prototype.focus, "native mode must not shadow textarea.focus");
   }
 
   {
@@ -178,14 +196,14 @@ try {
     assert.equal(harness.calls.length, 0, "empty YAML should not require a backend validation round trip");
 
     const starterYaml = "name: Starter\ntype: script\nsequence: []\n";
-    harness.textarea.value = starterYaml;
+    harness.panel._toolYamlEditorAdapter.setYaml(starterYaml);
     await flush();
     assert.equal(harness.textarea.value, starterYaml, "programmatic starter/preset replacement must preserve exact raw YAML");
     assert.deepEqual(harness.editor.values.at(-1), {name: "Starter", type: "script"});
     assert.deepEqual(harness.calls.at(-1), {section: "tools", action: "validate_yaml", payload: {yaml: starterYaml}});
 
     const replacementYaml = "name: Replacement\ntype: script\nsequence:\n  - stop: done\n";
-    harness.textarea.value = replacementYaml;
+    harness.panel._toolYamlEditorAdapter.setYaml(replacementYaml);
     await flush();
     assert.equal(harness.textarea.value, replacementYaml);
     assert.deepEqual(harness.editor.values.at(-1), {name: "Replacement", type: "script"});
@@ -205,8 +223,8 @@ try {
     bindNativeToolYaml(harness.panel);
     await flush();
 
-    harness.textarea.value = "name: First\ntype: script\n";
-    harness.textarea.value = "name: Second\ntype: script\n";
+    harness.panel._toolYamlEditorAdapter.setYaml("name: First\ntype: script\n");
+    harness.panel._toolYamlEditorAdapter.setYaml("name: Second\ntype: script\n");
     second.resolve({valid: true, config: {name: "Second", type: "script"}});
     await flush();
     assert.deepEqual(harness.editor.values.at(-1), {name: "Second", type: "script"});
@@ -229,7 +247,7 @@ try {
     await flush();
 
     const invalidYaml = "name: [broken\n";
-    harness.textarea.value = invalidYaml;
+    harness.panel._toolYamlEditorAdapter.setYaml(invalidYaml);
     await flush();
     assert.equal(harness.textarea.value, invalidYaml, "invalid raw YAML must remain available to the authoritative backend validator");
     assert.deepEqual(harness.calls.at(-1), {section: "tools", action: "validate_yaml", payload: {yaml: invalidYaml}});
@@ -239,14 +257,16 @@ try {
     harness.editor.yaml = nativeInvalidYaml;
     harness.editor.emit("value-changed", {isValid: false, errorMsg: "Expected closing bracket"});
     assert.equal(harness.textarea.value, nativeInvalidYaml, "native edits must synchronise back to the raw textarea contract");
-    assert.equal(harness.textarea.inputEvents, 1, "native edits must trigger the existing input/change handling");
+    assert.equal(harness.textarea.inputEvents, 0, "native edits must not synthesize textarea input events");
     assert.equal(harness.status.className, "validation invalid");
     assert.equal(harness.status.textContent, "Expected closing bracket");
 
     harness.editor.yaml = "name: valid again\ntype: script\n";
     harness.editor.emit("value-changed", {isValid: true});
     assert.equal(harness.textarea.value, "name: valid again\ntype: script\n");
-    assert.equal(harness.textarea.inputEvents, 2);
+    assert.equal(harness.textarea.inputEvents, 0);
+    assert.equal(harness.status.className, "validation");
+    assert.equal(harness.status.textContent, "YAML changed; validate to refresh metadata.");
 
     harness.editor.emit("editor-save");
     assert.equal(harness.save.clicks, 1, "native Ctrl/Cmd+S should use the existing Save function button");
@@ -267,8 +287,8 @@ try {
     await flush();
     assert.equal(harness.editor.hidden, true, "failed native hydration should fall back safely");
     assert.equal(harness.textarea.hidden, false);
-    harness.textarea.focus();
-    assert.equal(harness.textarea.focusCalls, 1, "fallback should restore normal textarea focus");
+    harness.panel._toolYamlEditorAdapter.focus();
+    assert.equal(harness.textarea.focusCalls, 1, "fallback adapter should focus the real textarea");
   }
 
   {
@@ -278,7 +298,7 @@ try {
     await flush();
     assert.equal(harness.editor.hidden, true, "a throwing native editor must be hidden rather than breaking the Function Tool dialog");
     assert.equal(harness.textarea.hidden, false, "the raw textarea must remain usable when native initialization throws");
-    harness.textarea.focus();
+    harness.panel._toolYamlEditorAdapter.focus();
     assert.equal(harness.textarea.focusCalls, 1);
   }
 
