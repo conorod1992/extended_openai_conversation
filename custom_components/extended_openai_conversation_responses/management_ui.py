@@ -133,7 +133,11 @@ from .request_rules import (
 )
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .secret_redaction import redact_secrets, restore_redacted_secrets
-from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
+from .temporary_memory import (
+    async_get_temporary_memory,
+    async_read_temporary_memory_snapshot,
+    temporary_memory_as_dict,
+)
 from .usage import async_get_usage
 
 WS_COMMAND = f"{DOMAIN}/management"
