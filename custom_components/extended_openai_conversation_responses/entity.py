@@ -102,7 +102,6 @@ from .request import (
     CONTINUE_CONVERSATION_TOOL,
     CONTINUE_CONVERSATION_TOOL_NAME,
     build_provider_request_snapshot,
-    build_web_search_tool,
     format_function_tools,
 )
 from .request_static_cache import cached_format_tools
@@ -415,16 +414,6 @@ def _format_tools(
     return cached_format_tools(function_tools, api_mode, format_function_tools)
 
 
-def _index_function_tools(
-    function_tools: list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """Index one provider round's effective tools without changing duplicate semantics."""
-    indexed: dict[str, dict[str, Any]] = {}
-    for function_tool in function_tools:
-        indexed.setdefault(function_tool["spec"]["name"], function_tool)
-    return indexed
-
-
 def _partition_provider_tool_calls(
     tool_calls: list[llm.ToolInput],
     *,
@@ -445,15 +434,6 @@ def _partition_provider_tool_calls(
         else:
             pending.append(tool_input)
     return pending, loader, control
-
-
-def _build_web_search_tool(
-    options: Mapping[str, Any],
-    api_mode: str,
-    entry_data: Mapping[str, Any],
-) -> dict[str, Any] | None:
-    """Build the native OpenAI Responses Web Search tool when enabled."""
-    return build_web_search_tool(options, api_mode, entry_data)
 
 
 class ExtendedOpenAIBaseLLMEntity(Entity):
