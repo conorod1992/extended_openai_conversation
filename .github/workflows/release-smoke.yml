@@ -2,6 +2,13 @@ name: Release Artifact Smoke
 
 on:
   pull_request:
+    paths:
+      - "custom_components/extended_openai_conversation_responses/**"
+      - "requirements_test.txt"
+      - "scripts/set_release_version.py"
+      - "tests_real_ha/test_packaged_release.py"
+      - "tests_real_ha/test_packaged_process_restart.py"
+      - ".github/workflows/release-smoke.yml"
   push:
     branches:
       - develop
