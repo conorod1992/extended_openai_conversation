@@ -106,7 +106,7 @@ function temporaryDialog(panel) {
   </dialog>`;
 }
 
-export function openTemporaryMemory(panel, memoryId) {
+function openTemporaryMemory(panel, memoryId) {
   const memory = (panel._result?.memories || []).find((item) => item.memory_id === memoryId);
   if (!memory) return;
   panel._temporaryMemoryDraft = {
@@ -133,7 +133,7 @@ export function temporaryMemoryDirty(panel) {
     || panel.shadowRoot.querySelector("#temporary-memory-expiry")?.value !== draft.expires_at;
 }
 
-export async function closeTemporaryMemory(panel, force = false) {
+async function closeTemporaryMemory(panel, force = false) {
   const dialog = panel.shadowRoot.querySelector("#temporary-memory-dialog");
   if (force) dialog?.close();
   else if (!await panel._confirmEditorClose(dialog)) return false;
@@ -141,7 +141,7 @@ export async function closeTemporaryMemory(panel, force = false) {
   return true;
 }
 
-export async function saveTemporaryMemory(panel) {
+async function saveTemporaryMemory(panel) {
   const draft = panel._temporaryMemoryDraft;
   if (!draft || panel._temporaryMemorySaving) return;
   const content = panel.shadowRoot.querySelector("#temporary-memory-content")?.value ?? "";
@@ -163,7 +163,7 @@ export async function saveTemporaryMemory(panel) {
       category,
       expires_at: expiresAt,
     });
-    await panel._closeTemporaryMemory(true);
+    await closeTemporaryMemory(panel, true);
     await panel._refreshAfterMutation();
     panel._toast("Short-term memory updated");
   } catch (err) {
@@ -171,7 +171,7 @@ export async function saveTemporaryMemory(panel) {
   } finally { panel._temporaryMemorySaving = false; panel._setSaving(save, false); }
 }
 
-export async function deleteTemporaryMemory(panel, memoryId) {
+async function deleteTemporaryMemory(panel, memoryId) {
   if (!memoryId || !await panel._confirm(
     "Delete temporary memory?",
     "This short-lived fact will no longer be included in later requests.",
@@ -183,7 +183,7 @@ export async function deleteTemporaryMemory(panel, memoryId) {
       memory_id: memoryId,
     });
     if (panel._temporaryMemoryDraft?.memory_id === memoryId) {
-      await panel._closeTemporaryMemory(true);
+      await closeTemporaryMemory(panel, true);
     }
     await panel._refreshAfterMutation();
     panel._toast("Temporary memory deleted");
@@ -206,20 +206,20 @@ export function bindTemporaryMemory(panel) {
   }
   delegateCollectionActions(host, ".edit-temporary-memory,.delete-temporary,.memory-kind,#clear-temporary", control => {
     if (control.matches("#clear-temporary")) { void clearTemporaryMemories(panel); return; }
-    if (control.matches(".delete-temporary")) void panel._deleteTemporaryMemory(control.dataset.id);
+    if (control.matches(".delete-temporary")) void deleteTemporaryMemory(panel, control.dataset.id);
     else if (control.matches(".memory-kind")) {
       panel._memoryKind = control.dataset.kind; panel._query = "";
       void panel._loadSection();
-    } else panel._openTemporaryMemory(control.dataset.id);
+    } else openTemporaryMemory(panel, control.dataset.id);
   });
   const form = panel.shadowRoot.querySelector("#temporary-memory-form");
   if (!form || form.__eocTemporaryBound) return;
   form.__eocTemporaryBound = true;
-  form.addEventListener("submit", event => { event.preventDefault(); void panel._saveTemporaryMemory(); });
+  form.addEventListener("submit", event => { event.preventDefault(); void saveTemporaryMemory(panel); });
   form.addEventListener("click", event => {
     const control = event.target.closest("button");
-    if (control?.matches(".close-temporary-editor")) void panel._closeTemporaryMemory(!control.classList.contains("icon"));
-    if (control?.id === "temporary-memory-delete" && panel._temporaryMemoryDraft?.memory_id) void panel._deleteTemporaryMemory(panel._temporaryMemoryDraft.memory_id);
+    if (control?.matches(".close-temporary-editor")) void closeTemporaryMemory(panel, !control.classList.contains("icon"));
+    if (control?.id === "temporary-memory-delete" && panel._temporaryMemoryDraft?.memory_id) void deleteTemporaryMemory(panel, panel._temporaryMemoryDraft.memory_id);
   });
 }
 

@@ -928,22 +928,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return getRouteFeature("memory-browser")?.decorateConversations(this, content);
   }
 
-  _openTemporaryMemory(memoryId) {
-    return getRouteFeature("data-memory/memories")?.openTemporaryMemory(this, memoryId);
-  }
-
-  _temporaryMemoryDirty() {
-    return getRouteFeature("data-memory/memories")?.temporaryMemoryDirty(this);
-  }
-
-  _closeTemporaryMemory(force = false) {
-    return getRouteFeature("data-memory/memories")?.closeTemporaryMemory(this, force);
-  }
-
-  _saveTemporaryMemory() {
-    return getRouteFeature("data-memory/memories")?.saveTemporaryMemory(this);
-  }
-
   _memories() {
     if (this._memoryKind === "temporary") return getRouteFeature("data-memory/memories")?.renderTemporaryMemories(this);
     return getRouteFeature("memory-browser")?.renderPersistentMemories(this);
@@ -1067,12 +1051,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       q("#list-search")?.addEventListener("input", (event) => { this._query = event.target.value; this._updateVisibleList(); });
     }
     getRouteFeature("data-memory/knowledge")?.bindKnowledge(this);
-    root.querySelectorAll(".open-session, .view-session").forEach((element) => this._activate(element, () => this._openSession(element.dataset.id)));
+    getRouteFeature("data-memory/conversations")?.bindConversationActions(this);
     root.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => { if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return; await this._call("conversations", "end_active", { continuity_key: button.dataset.key }); await this._loadSection(); }));
     root.querySelectorAll(".delete-session").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSession(button.dataset.id); }));
     q("#clear-details")?.addEventListener("click", () => this._clearUsageDetails());
-    q("#archive-search")?.addEventListener("click", () => this._searchArchive());
-    q("#archive-query")?.addEventListener("keydown", (event) => { if (event.key === "Enter") this._searchArchive(); });
     q("#test-agent")?.addEventListener("click", () => this._testAgent());
     q("#guest-indefinite")?.addEventListener("change", (event) => { const end = q("#guest-end"); if (end) end.disabled = event.target.checked; });
     q("#guest-update")?.addEventListener("click", () => this._updateGuestMode(false));
@@ -1269,14 +1251,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     } catch (err) { this._toast(`Unable to delete memory: ${err.message || String(err)}`, true); }
   }
 
-  _deleteTemporaryMemory(memoryId) {
-    return getRouteFeature("data-memory/memories")?.deleteTemporaryMemory(this, memoryId);
-  }
-
-  _openSession(sessionId, startTurn = 0) {
-    return getRouteFeature("data-memory/conversations")?.openSession(this, sessionId, startTurn);
-  }
-
   async _deleteSession(sessionId) {
     if (!await this._confirm("Delete conversation?", "This retained conversation and its turns will be permanently removed.", "Delete")) return;
     try { await this._call("conversations", "delete", { scope_id: this._scopeId, session_id: sessionId }); await this._refreshAfterMutation(); this._toast("Conversation deleted"); }
@@ -1303,10 +1277,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!await this._confirm("Clear recent usage details?", "Request and run details will be removed. Daily, monthly, and lifetime totals remain.", "Clear details")) return;
     try { await this._call("usage", "clear_details", { confirm: true }); await this._loadSection(); this._toast("Recent usage details cleared"); }
     catch (err) { this._toast(`Unable to clear details: ${err.message || String(err)}`, true); }
-  }
-
-  _searchArchive(offset = 0) {
-    return getRouteFeature("data-memory/conversations")?.searchArchive(this, offset);
   }
 
   _testAgent() {

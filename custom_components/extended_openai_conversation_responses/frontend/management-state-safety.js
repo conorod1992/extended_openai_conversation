@@ -1,3 +1,4 @@
+import {getRouteFeature} from "./management-route.js";
 import {pageCoordinator, currentPageScope} from "./management-page-drafts.js";
 import {same, clone} from "./unsaved-state.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
@@ -170,7 +171,7 @@ function dialogDirty(panel, dialog) {
     const read = dialog.id === "knowledge-dialog" ? panel._knowledgeValues : panel._memoryValues;
     return panel._editorInitial != null && !same(read.call(panel), panel._editorInitial);
   }
-  if (dialog.id === "temporary-memory-dialog") return panel._temporaryMemoryDirty?.() || false;
+  if (dialog.id === "temporary-memory-dialog") return getRouteFeature("data-memory/memories")?.temporaryMemoryDirty(panel) || false;
   return dialogHasUnsavedChanges(
     dialog,
     panel._eocDialogBaselines?.get(dialog.id),

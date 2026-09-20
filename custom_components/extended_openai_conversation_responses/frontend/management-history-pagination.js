@@ -137,7 +137,7 @@ function appendTurnPager(panel, body, sessionId, data) {
   previous.className = "secondary";
   previous.textContent = "Previous turns";
   previous.disabled = offset === 0;
-  previous.addEventListener("click", () => void panel._openSession(sessionId, Math.max(0, offset - limit)));
+  previous.addEventListener("click", () => void openSession(panel, sessionId, Math.max(0, offset - limit)));
   pager.append(previous);
 
   const next = document.createElement("button");
@@ -148,12 +148,22 @@ function appendTurnPager(panel, body, sessionId, data) {
   const nextOffset = data.next_offset == null
     ? offset + integer(data.returned, (data.turns || []).length)
     : integer(data.next_offset);
-  next.addEventListener("click", () => void panel._openSession(sessionId, nextOffset));
+  next.addEventListener("click", () => void openSession(panel, sessionId, nextOffset));
   pager.append(next);
   body.append(pager);
 }
 
-export async function searchArchive(panel, offset = 0) {
+export function bindConversationActions(panel) {
+  const root = panel.shadowRoot;
+  const host = root.querySelector("#archive-query")?.closest(".content-card");
+  if (!host || host.__eocHistoryActionsBound) return;
+  host.__eocHistoryActionsBound = true;
+  root.querySelectorAll(".open-session, .view-session").forEach(element => panel._activate(element, () => openSession(panel, element.dataset.id)));
+  root.querySelector("#archive-search")?.addEventListener("click", () => searchArchive(panel));
+  root.querySelector("#archive-query")?.addEventListener("keydown", event => { if (event.key === "Enter") void searchArchive(panel); });
+}
+
+async function searchArchive(panel, offset = 0) {
   const input = panel.shadowRoot.querySelector("#archive-query");
   const query = (offset ? panel._eocHistoryQuery : input?.value || "").trim();
   if (!query) {
@@ -167,7 +177,7 @@ export async function searchArchive(panel, offset = 0) {
   await loadConversationPage(panel, offset);
 }
 
-export async function openSession(panel, sessionId, startTurn = 0) {
+async function openSession(panel, sessionId, startTurn = 0) {
   const root = panel.shadowRoot;
   const dialog = root.querySelector("#session-dialog");
   const title = root.querySelector("#session-title");
