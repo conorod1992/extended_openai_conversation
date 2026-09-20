@@ -18,6 +18,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import yaml
 
+from tests_real_ha.process_harness import run_python_child
+
 DOMAIN = "extended_openai_conversation_responses"
 _CHILD_PHASE = "DELAYED_TOOL_PROCESS_PHASE"
 _CONFIG_DIR_ENV = "DELAYED_TOOL_PROCESS_CONFIG_DIR"
@@ -326,24 +328,14 @@ async def _child_main() -> None:
 
 def _run_child(config_dir: Path, phase: str) -> subprocess.CompletedProcess[str]:
     """Run one completely independent Home Assistant Python process."""
-    env = os.environ.copy()
-    env[_CHILD_PHASE] = phase
-    env[_CONFIG_DIR_ENV] = str(config_dir)
-    repo_root = Path(__file__).resolve().parents[1]
-    existing_pythonpath = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = (
-        str(repo_root)
-        if not existing_pythonpath
-        else os.pathsep.join((str(repo_root), existing_pythonpath))
-    )
-    return subprocess.run(
-        [sys.executable, str(Path(__file__).resolve())],
+    return run_python_child(
+        __file__,
         cwd=config_dir,
-        env=env,
-        text=True,
-        capture_output=True,
+        extra_env={
+            _CHILD_PHASE: phase,
+            _CONFIG_DIR_ENV: str(config_dir),
+        },
         timeout=30,
-        check=False,
     )
 
 
