@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -36,6 +37,16 @@ from homeassistant.exceptions import HomeAssistantError
 def test_reset_request_is_scoped_to_current_execution_context() -> None:
     token = begin_conversation_lifecycle()
     try:
+        for state_session_id, memory_session_id in (
+            (None, "memory-1"),
+            ("state-1", None),
+        ):
+            with pytest.raises(
+                RuntimeError, match="No active conversation is available to reset"
+            ):
+                request_fresh_conversation(state_session_id, memory_session_id)
+            assert requested_conversation_reset() is None
+
         request = request_fresh_conversation(
             "continuity:user:alice", "continuity:user:alice"
         )
@@ -197,3 +208,41 @@ def test_lifecycle_tool_is_builtin_and_reserved() -> None:
             knowledge_available=False,
             archive_available=False,
         )
+
+
+@pytest.mark.parametrize("state_session_id", ["opaque-session", "conversation:"])
+async def test_reset_without_conversation_id_skips_ignore(
+    monkeypatch: pytest.MonkeyPatch,
+    state_session_id: str,
+) -> None:
+    """Only a non-empty HA conversation id should be ignored after reset."""
+    continuity = Mock()
+    continuity.async_request_end = AsyncMock()
+    continuity.async_ignore_next_incoming_conversation_id = AsyncMock()
+    continuity.async_clear_memory_bundle = AsyncMock()
+
+    request_rules = Mock()
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.conversation_lifecycle.get_function_group_runtime",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.conversation_lifecycle.get_request_rule_runtime",
+        lambda *_args: request_rules,
+    )
+
+    hass = Mock()
+    await async_reset_conversation_context(
+        hass,
+        continuity,
+        "entry-1",
+        "subentry-1",
+        continuity_key=None,
+        state_session_id=state_session_id,
+        memory_session_id="memory-1",
+    )
+
+    continuity.async_request_end.assert_not_awaited()
+    continuity.async_ignore_next_incoming_conversation_id.assert_not_awaited()
+    continuity.async_clear_memory_bundle.assert_awaited_once_with("memory-1")
+    request_rules.reset.assert_called_once_with(state_session_id)

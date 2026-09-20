@@ -320,3 +320,23 @@ def test_guest_argument_filter_is_recursive_and_fail_closed(
     )
 
     assert Agent._guest_arguments_allowed(value, policy, control=control) is expected
+
+
+@pytest.mark.asyncio
+async def test_memory_retrieval_ranking_failure_is_best_effort() -> None:
+    """Ranking failure must not take down the conversation turn."""
+    rank = AsyncMock(side_effect=RuntimeError("ranking failed"))
+    agent = _MemoryRetrievalHarness(
+        memory=SimpleNamespace(),
+        continuity=None,
+        scopes=["user:alice"],
+        retrieve_limit=2,
+        rank=rank,
+    )
+
+    result = await agent._async_retrieve_memories(
+        SimpleNamespace(), "remember this"
+    )
+
+    assert result == []
+    rank.assert_awaited_once_with(["user:alice"], "remember this", 2)
