@@ -153,7 +153,6 @@ def _warn_management_performance(operation: str, timings: dict[str, Any]) -> Non
         _LOGGER.warning("Management performance %s: %s", operation, timings)
 
 
-
 def _reset_request_rule_runtime(
     hass: HomeAssistant, entry_id: str, subentry_id: str, continuity_key: str
 ) -> None:
