@@ -49,7 +49,6 @@ def test_configuration_guidance_frontend_modules_are_build_inputs() -> None:
         / "frontend"
     )
     for name in (
-        "management-configuration-clarity.js",
         "management-configuration-guidance.js",
         "management-decision-guidance.js",
     ):
