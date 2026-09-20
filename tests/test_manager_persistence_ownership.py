@@ -137,7 +137,7 @@ async def test_failed_initialization_repair_clears_partial_state_and_retries(
     assert not manager._initialized
     assert manager._committed_state is None
     if kind == "memory":
-        assert manager._memories == manager._token_index == manager._key_index == {}
+        assert manager._memories == manager._key_index == {}
         assert manager._embedding_cache == {}
         assert not manager._embedding_cache_dirty
     else:

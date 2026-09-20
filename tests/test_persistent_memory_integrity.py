@@ -178,7 +178,6 @@ async def test_key_collision_does_not_mutate_memory_or_indexes() -> None:
         "alice", "Milo is a Labrador.", "pets", "explicit", key="pet.milo.breed"
     )
     before_memories = dict(memory._memories)
-    before_tokens = {key: set(value) for key, value in memory._token_index.items()}
     before_keys = dict(memory._key_index)
 
     with pytest.raises(ValueError, match="canonical key already exists"):
@@ -187,7 +186,6 @@ async def test_key_collision_does_not_mutate_memory_or_indexes() -> None:
         )
 
     assert memory._memories == before_memories
-    assert {key: set(value) for key, value in memory._token_index.items()} == before_tokens
     assert memory._key_index == before_keys
     results = await memory.async_search("alice", "Oscar Cavachon")
     assert results and results[0].memory_id == first["memory"]["memory_id"]

@@ -47,9 +47,6 @@ def _durable_manager_state(memory: PersistentMemory) -> dict[str, Any]:
     """Capture facts and indexes that must match the durable Memory store."""
     return {
         "memories": dict(memory._memories),
-        "token_index": {
-            key: frozenset(value) for key, value in memory._token_index.items()
-        },
         "key_index": dict(memory._key_index),
     }
 
@@ -225,7 +222,6 @@ async def test_delete_racing_update_cannot_resurrect_or_corrupt_indexes() -> Non
     assert isinstance(update_result, MemoryRecord | ValueError)
     assert await memory.async_list("alice") == []
     assert memory._key_index == {}
-    assert all(memory_id not in ids for ids in memory._token_index.values())
 
     reloaded = await _memory(storage)
     assert await reloaded.async_list("alice") == []
