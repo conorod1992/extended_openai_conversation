@@ -9,6 +9,10 @@ on:
     - cron: "30 0 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -32,17 +36,91 @@ jobs:
           echo "python-version=$PYTHON_VERSION" >> "$GITHUB_OUTPUT"
           echo "Home Assistant Python version: $PYTHON_VERSION"
 
-  acceptance:
-    name: Genuine Home Assistant lifecycle (${{ matrix.home-assistant }})
+  stable:
+    name: Genuine Home Assistant lifecycle (stable)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Reconcile current test requirements
+        run: |
+          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
+          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
+          if [ "$CURRENT_ENVIRONMENT_SHA" = "$BUILT_ENVIRONMENT_SHA" ]; then
+            echo "Prebuilt dependency environment matches this checkout; skipping reconciliation."
+          else
+            echo "Dependency declarations changed; reconciling prebuilt environment."
+            pip install -r requirements_test.txt
+            pip install --upgrade homeassistant
+            python ci/install_ha_dependencies.py \
+              --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          fi
+
+      - name: Verify stable test environment
+        run: |
+          pip check
+          python - <<'PY'
+          from importlib.metadata import version
+          print("homeassistant=" + version("homeassistant"))
+          print("pytest-homeassistant-custom-component=" + version("pytest-homeassistant-custom-component"))
+          PY
+
+      - name: Run genuine Home Assistant acceptance tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set -o pipefail
+          TEST_PATHS=(tests_real_ha/)
+          # These release/upgrade journeys are owned by their dedicated
+          # workflows, which construct the candidate/published payloads they
+          # require before running the tests. Avoid collecting them again as
+          # part of the generic stable Real HA suite.
+          TEST_PATHS+=(
+            --ignore=tests_real_ha/test_release_upgrade_acceptance.py
+            --ignore=tests_real_ha/test_release_upgrade_custom_function_tool.py
+            --ignore=tests_real_ha/test_browser_release_upgrade_acceptance.py
+            --ignore=tests_real_ha/test_packaged_release.py
+            --ignore=tests_real_ha/test_packaged_process_restart.py
+          )
+
+          pytest "${TEST_PATHS[@]}" \
+            -v \
+            --asyncio-mode=auto \
+            --timeout=60 \
+            --durations=30 \
+            --junitxml=real-ha-junit.xml \
+            --cov=custom_components.extended_openai_conversation_responses.config_flow \
+            --cov-branch \
+            --cov-report=term-missing \
+            --cov-report=xml:real-ha-config-flow-coverage.xml \
+            2>&1 | tee real-ha-pytest.log
+
+      - name: Upload acceptance diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: real-ha-acceptance-diagnostics-stable
+          path: |
+            real-ha-pytest.log
+            real-ha-junit.xml
+            real-ha-config-flow-coverage.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+  upcoming:
+    name: Genuine Home Assistant lifecycle (upcoming)
     runs-on: ubuntu-latest
     needs: prepare
-    continue-on-error: ${{ matrix.home-assistant == 'upcoming' && github.event_name == 'pull_request' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        home-assistant:
-          - stable
-          - upcoming
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -61,12 +139,7 @@ jobs:
       - name: Install Home Assistant test requirements
         run: pip install -r requirements_test.txt
 
-      - name: Install stable Home Assistant
-        if: matrix.home-assistant == 'stable'
-        run: pip install homeassistant
-
       - name: Install upcoming Home Assistant Core
-        if: matrix.home-assistant == 'upcoming'
         run: |
           # pytest-homeassistant-custom-component installs a released HA build.
           # Deliberately replace it with current Home Assistant Core dev.
@@ -75,68 +148,10 @@ jobs:
 
       - name: Install integration dependency requirements
         run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          import subprocess
-          import sys
+          python ci/install_ha_dependencies.py \
+            --manifest custom_components/extended_openai_conversation_responses/manifest.json
 
-          import homeassistant
-
-          components = Path(next(iter(homeassistant.__path__))) / "components"
-          custom_manifest = json.loads(
-              Path(
-                  "custom_components/extended_openai_conversation_responses/manifest.json"
-              ).read_text()
-          )
-
-          requirements = set(custom_manifest.get("requirements", []))
-          pending = [
-              *custom_manifest.get("dependencies", []),
-              *custom_manifest.get("after_dependencies", []),
-          ]
-          visited = set()
-
-          # The Home Assistant wheel/source install intentionally does not install
-          # every built-in integration's optional Python requirements. Walk both
-          # hard dependencies and after-dependencies recursively: after-dependencies
-          # can still be imported at runtime (AI Task imports Camera, for example).
-          while pending:
-              domain = pending.pop()
-              if domain in visited:
-                  continue
-              visited.add(domain)
-
-              manifest_path = components / domain / "manifest.json"
-              if not manifest_path.exists():
-                  raise RuntimeError(
-                      f"Home Assistant dependency manifest not found: {domain}"
-                  )
-
-              manifest = json.loads(manifest_path.read_text())
-              requirements.update(manifest.get("requirements", []))
-              pending.extend(manifest.get("dependencies", []))
-              pending.extend(manifest.get("after_dependencies", []))
-
-          print("Resolved HA dependency integrations:", ", ".join(sorted(visited)))
-          if requirements:
-              subprocess.check_call(
-                  [sys.executable, "-m", "pip", "install", *sorted(requirements)]
-              )
-          PY
-
-      - name: Verify resolved stable test environment
-        if: matrix.home-assistant == 'stable'
-        run: |
-          pip check
-          python - <<'PY'
-          from importlib.metadata import version
-          print("homeassistant=" + version("homeassistant"))
-          print("pytest-homeassistant-custom-component=" + version("pytest-homeassistant-custom-component"))
-          PY
-
-      - name: Verify resolved upcoming test environment
-        if: matrix.home-assistant == 'upcoming'
+      - name: Verify upcoming test environment
         run: |
           # pytest-homeassistant-custom-component pins a released HA build, so pip
           # check is expected to report that one deliberate mismatch after replacing
@@ -153,57 +168,42 @@ jobs:
         run: |
           set -o pipefail
 
-          if [ "${{ matrix.home-assistant }}" = "upcoming" ]; then
-            # Upcoming HA is a compatibility canary, not a second copy of the
-            # complete EOAI acceptance suite. Keep this list focused on seams
-            # where Home Assistant API/lifecycle changes can break the integration.
-            TEST_PATHS=(
-              tests_real_ha/test_acceptance_lifecycle.py
-              tests_real_ha/test_ai_task_lifecycle.py
-              tests_real_ha/test_ai_task_runtime.py
-              tests_real_ha/test_assist_origin_context.py
-              tests_real_ha/test_assist_streaming_speech_processing.py
-              tests_real_ha/test_assist_voice_identity_precedence.py
-              tests_real_ha/test_browser_backend_acceptance.py
-              tests_real_ha/test_config_entry_disable_enable.py
-              tests_real_ha/test_config_flow.py
-              tests_real_ha/test_config_flow_edges.py
-              tests_real_ha/test_config_flow_lifecycle_contracts.py
-              tests_real_ha/test_entity_registry_customization.py
-              tests_real_ha/test_entity_registry_disabled.py
-              tests_real_ha/test_exposed_attribute_catalog_acceptance.py
-              tests_real_ha/test_frontend_asset_registration.py
-              tests_real_ha/test_ha_llm_tool_acceptance.py
-              tests_real_ha/test_intercom_voice_acceptance.py
-              tests_real_ha/test_management_backend_acceptance.py
-              tests_real_ha/test_native_indirect_mixed_exposure.py
-              tests_real_ha/test_native_indirect_target_resolution.py
-              tests_real_ha/test_native_multi_indirect_target_union.py
-              tests_real_ha/test_native_registry_state_disagreement.py
-              tests_real_ha/test_native_service_disappearance.py
-              tests_real_ha/test_native_service_schema_rejection.py
-              tests_real_ha/test_native_target_disappearance.py
-              tests_real_ha/test_native_unavailable_target.py
-              tests_real_ha/test_partial_platform_setup_retry.py
-              tests_real_ha/test_runtime_reauthentication.py
-              tests_real_ha/test_security_routing_boundaries.py
-              tests_real_ha/test_service_registry_acceptance.py
-              tests_real_ha/test_user_permission_acceptance.py
-            )
-          else
-            TEST_PATHS=(tests_real_ha/)
-            # These release/upgrade journeys are owned by their dedicated
-            # workflows, which construct the candidate/published payloads they
-            # require before running the tests. Avoid collecting them again as
-            # part of the generic stable Real HA suite.
-            TEST_PATHS+=(
-              --ignore=tests_real_ha/test_release_upgrade_acceptance.py
-              --ignore=tests_real_ha/test_release_upgrade_custom_function_tool.py
-              --ignore=tests_real_ha/test_browser_release_upgrade_acceptance.py
-              --ignore=tests_real_ha/test_packaged_release.py
-              --ignore=tests_real_ha/test_packaged_process_restart.py
-            )
-          fi
+          # Upcoming HA is a compatibility canary, not a second copy of the
+          # complete EOAI acceptance suite. Keep this list focused on seams
+          # where Home Assistant API/lifecycle changes can break the integration.
+          TEST_PATHS=(
+            tests_real_ha/test_acceptance_lifecycle.py
+            tests_real_ha/test_ai_task_lifecycle.py
+            tests_real_ha/test_ai_task_runtime.py
+            tests_real_ha/test_assist_origin_context.py
+            tests_real_ha/test_assist_streaming_speech_processing.py
+            tests_real_ha/test_assist_voice_identity_precedence.py
+            tests_real_ha/test_browser_backend_acceptance.py
+            tests_real_ha/test_config_entry_disable_enable.py
+            tests_real_ha/test_config_flow.py
+            tests_real_ha/test_config_flow_edges.py
+            tests_real_ha/test_config_flow_lifecycle_contracts.py
+            tests_real_ha/test_entity_registry_customization.py
+            tests_real_ha/test_entity_registry_disabled.py
+            tests_real_ha/test_exposed_attribute_catalog_acceptance.py
+            tests_real_ha/test_frontend_asset_registration.py
+            tests_real_ha/test_ha_llm_tool_acceptance.py
+            tests_real_ha/test_intercom_voice_acceptance.py
+            tests_real_ha/test_management_backend_acceptance.py
+            tests_real_ha/test_native_indirect_mixed_exposure.py
+            tests_real_ha/test_native_indirect_target_resolution.py
+            tests_real_ha/test_native_multi_indirect_target_union.py
+            tests_real_ha/test_native_registry_state_disagreement.py
+            tests_real_ha/test_native_service_disappearance.py
+            tests_real_ha/test_native_service_schema_rejection.py
+            tests_real_ha/test_native_target_disappearance.py
+            tests_real_ha/test_native_unavailable_target.py
+            tests_real_ha/test_partial_platform_setup_retry.py
+            tests_real_ha/test_runtime_reauthentication.py
+            tests_real_ha/test_security_routing_boundaries.py
+            tests_real_ha/test_service_registry_acceptance.py
+            tests_real_ha/test_user_permission_acceptance.py
+          )
 
           pytest "${TEST_PATHS[@]}" \
             -v \
@@ -221,7 +221,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: real-ha-acceptance-diagnostics-${{ matrix.home-assistant }}
+          name: real-ha-acceptance-diagnostics-upcoming
           path: |
             real-ha-pytest.log
             real-ha-junit.xml
