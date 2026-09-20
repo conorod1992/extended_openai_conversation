@@ -7,7 +7,7 @@ const collections = new WeakMap();
 const identity = panel => JSON.stringify([panel._selectedAgent?.()?.entry_id, panel._agentId, panel._hass?.user?.id]);
 const signature = source => JSON.stringify([source.title, source.description, source.enabled, source.character_count, source.updated_at]);
 const matches = (source, query) => `${source.title || ""} ${source.description || ""}`.toLocaleLowerCase().includes(query);
-const countText = sources => `${formatUsageNumber(sources.length)} source${sources.length === 1 ? "" : "s"} stored locally for on-demand search.`;
+const countText = sources => `${formatUsageNumber(sources.length)} source${sources.length === 1 ? "" : "s"}`;
 const statusMarkup = panel => featureStatusMarkup(panel, "Knowledge Library", selectedFeatureStatus(panel, "knowledge"));
 
 function sourceCard(panel, source) {
@@ -16,7 +16,7 @@ function sourceCard(panel, source) {
 
 export function renderKnowledge(panel) {
   const sources = panel._result?.sources || [];
-  return `<div id="knowledge-status">${statusMarkup(panel)}</div><section class="content-card" data-knowledge-collection data-collection-identity="${panel._e(identity(panel))}"><div class="section-heading"><div><h2>Knowledge Library</h2><p data-source-count>${countText(sources)}</p></div><button type="button" id="add-source">+ Add source</button></div><input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${sources.map(source => sourceCard(panel, source)).join("")}<div data-source-empty>${panel._empty("No Knowledge sources yet. Add one to make reference information available on demand.")}</div></div></section>`;
+  return `<div id="knowledge-status">${statusMarkup(panel)}</div><section class="content-card" data-knowledge-collection data-collection-identity="${panel._e(identity(panel))}"><div class="section-heading"><div><h2>Sources</h2><p data-source-count>${countText(sources)}</p></div><button type="button" id="add-source">+ Add source</button></div><input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${sources.map(source => sourceCard(panel, source)).join("")}<div data-source-empty>${panel._empty("No Knowledge sources yet. Add one to make reference information available on demand.")}</div></div></section>`;
 }
 
 export function filterKnowledge(panel) {

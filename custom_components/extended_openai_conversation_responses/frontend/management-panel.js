@@ -1,7 +1,6 @@
 import {bindConfigurationClarity, enhanceConfigurationClarity} from "./management-draft-navigation.js";
 import {formatManagementTimestamp, prepareMemoryBrowser, ensureTemporaryScope} from "./management-data-state.js";
 import {DECISION_GUIDANCE_STYLES, enhanceConfirmationScope} from "./management-confirmation-scope.js";
-import {polishRenderedCopy} from "./agent-config-loader.js";
 import {enhanceNavigationSearch} from "./management-navigation-search.js";
 import {applyManagementToolbarLayout} from "./management-toolbar-layout.js";
 import {configurationDestinations} from "./management-setting-metadata.js";
@@ -785,7 +784,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _renderContent() {
-    const shellRevision = this._eocShellRevision;
     initializePageDraft(this);
     bindStateSafety(this);
     renderManagement(this);
@@ -798,9 +796,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     refreshPageSaveBar(this);
 
     // Keep the former decorator ordering explicit without mutating class methods at runtime.
-    if (shellRevision === undefined || shellRevision !== this._eocShellRevision) {
-      queueMicrotask(() => polishRenderedCopy(this));
-    }
     enhanceNavigationSearch(this);
     applyManagementToolbarLayout(this);
     bindConfigurationClarity(this);
@@ -927,11 +922,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _conversations() {
     const result = this._contentData || this._result || {};
-    const settings = result.settings || {};
     const active = result.active?.active || [];
-    const content = `${this._data?.is_admin && active.length ? `<section class="content-card"><div class="section-heading"><div><h2>Active conversations</h2><p>Recent conversations that can continue when the same user or voice device speaks again.</p></div></div><div class="list">${active.map((item) => `<article class="list-card"><div class="card-main"><h3>${this._e(item.label)}</h3><p class="meta">Last active ${this._e(this._formatDate(item.last_active))} · Expires ${this._e(this._formatDate(item.expires_at))}</p></div><div class="actions"><button type="button" class="danger end-active" data-key="${this._e(item.key)}">Start fresh next time</button></div></article>`).join("")}</div></section>` : ""}<section class="notice ${settings.archive_enabled ? "on" : ""}"><div><strong>Conversation archive ${settings.archive_enabled ? "enabled" : "disabled"}</strong><p>Saved conversations are kept for ${settings.archive_retention_days || 30} days · Assistant search is ${settings.archive_model_search_enabled ? "on" : "off"}</p></div></section>
-      <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-id="${this._e(item.session_id)}"><h3>${this._e(item.title || "Untitled conversation")}</h3><p class="meta">${this._e(this._formatDate(item.last_message_at))} · ${this._e(String(item.turn_count))} turns · ${this._e(item.scope_source)}</p></div><div class="actions"><button type="button" class="secondary view-session" data-id="${this._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${this._e(item.session_id)}">Delete</button></div></article>`).join("") || this._empty("No retained conversations in this scope.")}</div></section>
-      ${this._data?.is_admin ? `<p class="help">Continuity is recent context used for follow-ups. The archive is retained history; configure its behavior below.</p>` : ""}`;
+    const content = `${this._data?.is_admin ? `<p class="help">Recent context lets conversations continue; saved history is the archive you can review or search.</p>` : ""}${this._data?.is_admin && active.length ? `<section class="content-card"><div class="section-heading"><div><h2>Active conversations</h2><p>Recent conversations that can continue when the same user or voice device speaks again.</p></div></div><div class="list">${active.map((item) => `<article class="list-card"><div class="card-main"><h3>${this._e(item.label)}</h3><p class="meta">Last active ${this._e(this._formatDate(item.last_active))} · Expires ${this._e(this._formatDate(item.expires_at))}</p></div><div class="actions"><button type="button" class="danger end-active" data-key="${this._e(item.key)}">Start fresh next time</button></div></article>`).join("")}</div></section>` : ""}
+      <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-id="${this._e(item.session_id)}"><h3>${this._e(item.title || "Untitled conversation")}</h3><p class="meta">${this._e(this._formatDate(item.last_message_at))} · ${this._e(String(item.turn_count))} turns · ${this._e(item.scope_source)}</p></div><div class="actions"><button type="button" class="secondary view-session" data-id="${this._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${this._e(item.session_id)}">Delete</button></div></article>`).join("") || this._empty("No retained conversations in this scope.")}</div></section>`;
     return getRouteFeature("memory-browser")?.decorateConversations(this, content);
   }
 

@@ -6,7 +6,7 @@ test("mounted management panel recovers after HA backend disconnect and reconnec
   await page.goto(fixtureUrl("data-memory/knowledge"));
 
   const panel = page.locator("extended-openai-management-panel");
-  await expect(panel.getByRole("heading", {name: "Knowledge Library", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toBeVisible();
 
   const marker = await page.evaluate(() => {
     const value = `mounted-${Math.random()}`;

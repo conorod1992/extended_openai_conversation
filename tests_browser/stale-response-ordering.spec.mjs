@@ -58,7 +58,7 @@ test("older backend response cannot overwrite a newer mounted-panel route", asyn
   await page.waitForTimeout(50);
 
   await expect(panel.getByRole("heading", {name: "Memories", exact: true})).toBeVisible();
-  await expect(panel.getByRole("heading", {name: "Knowledge Library", exact: true})).toHaveCount(0);
+  await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toHaveCount(0);
   await expect(page).toHaveURL(/\/extended-openai\/data-memory\/memories$/);
   expect(await page.evaluate(() => window.browserHarness.panel === window.__staleResponsePanel)).toBe(true);
 

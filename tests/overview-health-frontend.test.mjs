@@ -101,7 +101,7 @@ assert.match(markup, /Optional features that are off by choice are not treated a
 assert.match(markup, /Off by choice/);
 assert.match(markup, /Run live test/);
 assert.match(markup, /data-target="config-api_mode"/);
-assert.match(markup, /Overview never sends a provider test request/);
+assert.match(markup, /<ha-icon icon="mdi:information-outline" aria-hidden="true"><\/ha-icon> Connection tests only run when you start one from Diagnostics\./);
 assert.match(markup, /4 items to review/);
 
 panel._result.setup_health = {
@@ -113,7 +113,7 @@ panel._result.setup_health = {
 const nonAdminMarkup = renderOverview(panel, agent);
 assert.match(nonAdminMarkup, /Unable to determine/);
 assert.match(nonAdminMarkup, /2 items to review/);
-assert.match(nonAdminMarkup, /An administrator can run Diagnostics/);
+assert.match(nonAdminMarkup, /Connection tests only run when you start one from Diagnostics\./);
 assert.doesNotMatch(nonAdminMarkup, /<button[^>]*class="[^"]*setup-health-action/);
 
 const source = await readFile(
