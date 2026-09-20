@@ -1,13 +1,9 @@
 const params = new URLSearchParams(location.search);
-const storedRoute = sessionStorage.getItem("realHaRoute");
-const storedBackendUrl = sessionStorage.getItem("realHaBackendUrl");
-const route = params.get("route") || storedRoute || "assistant/basics";
-const backendUrl = params.get("backend") || storedBackendUrl;
+const route = params.get("route") || "assistant/basics";
+const backendUrl = params.get("backend");
 if (!backendUrl) throw new Error("Real HA browser fixture requires a backend URL");
 
-sessionStorage.setItem("realHaRoute", route);
-sessionStorage.setItem("realHaBackendUrl", backendUrl);
-history.replaceState({}, "", `/extended-openai/${route}?route=${encodeURIComponent(route)}&backend=${encodeURIComponent(backendUrl)}`);
+history.replaceState({}, "", `/extended-openai/${route}`);
 
 const calls = [];
 const hass = {
