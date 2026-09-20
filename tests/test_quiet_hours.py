@@ -1,4 +1,4 @@
-"""Fast unit tests for Quiet Hours parsing and satellite discovery."""
+"""Quiet Hours configuration, scheduling boundaries, timezone and discovery contracts."""
 
 from __future__ import annotations
 
@@ -8,7 +8,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import quiet_hours_runtime
+from custom_components.extended_openai_conversation_responses import (
+    quiet_hours_runtime as runtime,
+)
 from custom_components.extended_openai_conversation_responses.quiet_hours import (
     _config_from_data,
     discover_satellite_capabilities,
@@ -18,7 +20,7 @@ from custom_components.extended_openai_conversation_responses.quiet_hours import
 _DUBLIN = ZoneInfo("Europe/Dublin")
 
 
-def _entry(
+def _discovery_entry(
     entity_id: str,
     domain: str,
     device_id: str,
@@ -39,19 +41,19 @@ def _entry(
 
 def _discovery_hass(monkeypatch):
     entries = {
-        "assist_satellite.bedroom": _entry(
+        "assist_satellite.bedroom": _discovery_entry(
             "assist_satellite.bedroom",
             "assist_satellite",
             "device-bedroom",
             original_name="Assist satellite",
         ),
-        "media_player.bedroom": _entry(
+        "media_player.bedroom": _discovery_entry(
             "media_player.bedroom",
             "media_player",
             "device-bedroom",
             original_name="Media Player",
         ),
-        "switch.bedroom_wake_sound": _entry(
+        "switch.bedroom_wake_sound": _discovery_entry(
             "switch.bedroom_wake_sound",
             "switch",
             "device-bedroom",
@@ -59,9 +61,9 @@ def _discovery_hass(monkeypatch):
         ),
     }
     registry = SimpleNamespace(async_get=entries.get)
-    monkeypatch.setattr(quiet_hours_runtime.er, "async_get", lambda _hass: registry)
+    monkeypatch.setattr(runtime.er, "async_get", lambda _hass: registry)
     monkeypatch.setattr(
-        quiet_hours_runtime.er,
+        runtime.er,
         "async_entries_for_device",
         lambda _registry, device_id: [
             entry for entry in entries.values() if entry.device_id == device_id
@@ -229,3 +231,122 @@ def test_manual_mapping_overrides_auto_discovery(monkeypatch) -> None:
     assert discovered[0].media_player_source == "manual"
     assert discovered[0].wake_sound_entity_id == "switch.manual_wake"
     assert discovered[0].wake_sound_source == "manual"
+
+
+def test_clock_config_and_value_object_edge_cases() -> None:
+    override = runtime.SatelliteOverride(
+        "assist_satellite.bedroom",
+        "media_player.bedroom",
+        "switch.bedroom_wake",
+    )
+    config = runtime.QuietHoursConfig(overrides=(override,))
+    assert config.as_dict()["overrides"]["assist_satellite.bedroom"] == {
+        "media_player_entity_id": "media_player.bedroom",
+        "wake_sound_entity_id": "switch.bedroom_wake",
+    }
+
+    capability = runtime.SatelliteCapabilities(
+        "assist_satellite.bedroom",
+        "Bedroom",
+        "device-1",
+        "media_player.bedroom",
+        "switch.bedroom_wake",
+        "auto",
+        "manual",
+    )
+    assert capability.as_dict()["wake_sound_source"] == "manual"
+
+    with pytest.raises(ValueError, match="HH:MM string"):
+        runtime._parse_clock(2200)
+    with pytest.raises(ValueError, match="HH:MM"):
+        runtime._parse_clock("22:00:01")
+    with pytest.raises(ValueError, match="timezone-aware"):
+        runtime.quiet_period_for(datetime(2026, 9, 13, 23), "22:00", "07:00")
+    with pytest.raises(ValueError, match="must differ"):
+        runtime.quiet_period_for(
+            datetime(2026, 9, 13, 23, tzinfo=UTC), "22:00", "22:00"
+        )
+
+    assert (
+        runtime.quiet_period_for(
+            datetime(2026, 9, 13, 12, tzinfo=UTC), "09:00", "17:00"
+        )
+        is not None
+    )
+    assert (
+        runtime.quiet_period_for(
+            datetime(2026, 9, 13, 18, tzinfo=UTC), "09:00", "17:00"
+        )
+        is None
+    )
+    assert (
+        runtime.quiet_period_for(
+            datetime(2026, 9, 13, 12, tzinfo=UTC), "22:00", "07:00"
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ([], "must be an object"),
+        ({"enabled": "yes"}, "boolean"),
+        ({"start": "08:00", "end": "08:00"}, "must differ"),
+        ({"max_volume": True}, "must be a number"),
+        ({"max_volume": float("inf")}, "between 0 and 1"),
+        ({"wake_sound_enabled": "yes"}, "boolean"),
+        ({"overrides": "bad"}, "must be an object"),
+        ({"overrides": {"assist_satellite.bedroom": "bad"}}, "must be an object"),
+        (
+            {
+                "overrides": {
+                    "assist_satellite.bedroom": {"wake_sound_entity_id": "light.wrong"}
+                }
+            },
+            "must be a switch entity",
+        ),
+    ],
+)
+def test_config_validation_rejects_bad_persisted_values(value, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        runtime._config_from_data(value)
+
+
+def test_config_migrates_legacy_overrides_and_wake_flag() -> None:
+    config = runtime._config_from_data(
+        {
+            "volume_level": 0.35,
+            "wake_sound_enabled": False,
+            "overrides": [
+                {
+                    "satellite_entity_id": "assist_satellite.bedroom",
+                    "media_player_entity_id": "media_player.bedroom",
+                },
+                "ignored",
+                {},
+            ],
+        }
+    )
+    assert config.max_volume == 0.35
+    assert config.wake_sound == "off"
+    assert config.overrides == (
+        runtime.SatelliteOverride(
+            "assist_satellite.bedroom",
+            "media_player.bedroom",
+            None,
+        ),
+    )
+    assert runtime._optional_entity("", "switch", "Wake") is None
+
+
+def test_parse_clock_rejects_invalid_iso_time() -> None:
+    with pytest.raises(ValueError, match="time must use HH:MM"):
+        runtime._parse_clock("not-a-time")
+
+
+def test_config_rejects_more_than_100_overrides() -> None:
+    overrides = {f"assist_satellite.room_{index}": {} for index in range(101)}
+
+    with pytest.raises(ValueError, match="Select no more than 100 satellite overrides"):
+        runtime._config_from_data({"overrides": overrides})
