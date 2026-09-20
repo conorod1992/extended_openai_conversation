@@ -1,7 +1,7 @@
+import {bindConfigurationInputs} from "./configuration-inputs.js";
 import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
 import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {saveBarMarkup} from "./unsaved-state.js";
-const clone = (value) => JSON.parse(JSON.stringify(value));
 const settingSearch = (label, description, key) => `${label} ${description} ${key} ${settingSearchAliases(key)}`.toLowerCase();
 
 function option(panel, item, selected, key) {
@@ -55,82 +55,6 @@ export function renderMemorySettings(panel) {
     </div>`;
 }
 
-function readMemorySettings(panel) {
-  const config = clone(panel._draft || panel._result?.config || {});
-  panel.shadowRoot.querySelectorAll("[data-memory-config]").forEach((input) => {
-    let value = input.value;
-    if (input.dataset.type === "number") value = Number(value);
-    config[input.dataset.memoryConfig] = value;
-  });
-  panel._draft = config;
-  return config;
-}
-
-function showErrors(panel, errors = {}) {
-  panel.shadowRoot.querySelectorAll(".field-error").forEach((item) => { item.textContent = ""; });
-  for (const [key, message] of Object.entries(errors)) {
-    const target = panel.shadowRoot.querySelector(`[data-error="${CSS.escape(key)}"]`);
-    if (target) target.textContent = message;
-  }
-}
-
-function bindSaveControls(panel) {
-  const root = panel.shadowRoot;
-  root.querySelector("#memory-settings-revert")?.addEventListener("click", () => {
-    panel._draft = clone(panel._configData.config);
-    panel._draftTitle = panel._configData.title;
-    panel._setConfigDirty(false);
-    panel._render();
-  });
-  root.querySelector("#memory-settings-save")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    panel._setSaving?.(button, true);
-    try {
-      const config = readMemorySettings(panel);
-      const validation = await panel._call("configuration", "validate", {config});
-      showErrors(panel, validation.errors);
-      if (!validation.valid) {
-        panel._toast("Fix the highlighted configuration errors", true);
-        return;
-      }
-      const saved = await panel._call("configuration", "update", {config, title: panel._draftTitle});
-      panel._configData = {...panel._configData, ...saved};
-      panel._result = panel._configData;
-      panel._draft = clone(saved.config);
-      panel._draftTitle = saved.title;
-      panel._setConfigDirty(false);
-      panel._toast("Configuration saved");
-      await panel._loadAgents(panel._agentId);
-    } catch (err) {
-      panel._toast(`Unable to save configuration: ${err.message || String(err)}`, true);
-    } finally {
-      panel._setSaving?.(button, false);
-    }
-  });
-}
-
-function ensureSaveBar(panel) {
-  if (panel.shadowRoot.querySelector("#memory-settings-save")) return;
-  panel.shadowRoot.querySelector("#memory-settings-save-anchor")?.insertAdjacentHTML("beforebegin", saveBar(panel));
-  bindSaveControls(panel);
-}
-
-function updateHybridState(panel) {
-  const root = panel.shadowRoot;
-  const hybrid = root.querySelector('[data-memory-config="memory_retrieval_mode"]')?.value === "hybrid";
-  const container = root.querySelector("[data-memory-hybrid]");
-  const input = root.querySelector('[data-memory-config="memory_embedding_model"]');
-  container?.classList.toggle("is-disabled", !hybrid);
-  if (input) input.disabled = !hybrid;
-}
-
 export function bindMemorySettings(panel) {
-  const root = panel.shadowRoot;
-  bindSaveControls(panel);
-  root.querySelectorAll("[data-memory-config]").forEach((input) => input.addEventListener("input", () => {
-    readMemorySettings(panel);
-    panel._setConfigDirty(true);
-    ensureSaveBar(panel);
-    if (input.dataset.memoryConfig === "memory_retrieval_mode") updateHybridState(panel);
-  }));
+  bindConfigurationInputs(panel);
 }

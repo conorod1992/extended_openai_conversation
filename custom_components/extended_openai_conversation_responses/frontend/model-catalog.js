@@ -1,9 +1,9 @@
 // All model matching and capability choices come from the Python catalogue.
-export async function lookupModelData(panel, model = "", action = "lookup") {
+export async function lookupModelData(panel, model = "", action = "lookup", isCurrent = () => true) {
   const result = await panel._hass.callWS({
     type: "extended_openai_conversation_responses/model_catalog", action, model,
   });
-  if (panel && result) {
+  if (panel && result && isCurrent()) {
     panel._modelCatalogData = {...result, requested_model: String(model || "")};
     if (panel._result && result.model_capabilities) panel._result.model_capabilities = result.model_capabilities;
   }

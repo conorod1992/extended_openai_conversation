@@ -1,3 +1,5 @@
+import {bindConfigurationInputs} from "./configuration-inputs.js";
+import {applyTargetedConfigDirty} from "./management-state-safety.js";
 import * as base from "./agent-config-editor-base.js";
 import {lookupModelData} from "./model-catalog.js";
 
@@ -17,8 +19,11 @@ async function ensureCatalogData(panel) {
   const model = String(config.chat_model || "");
   if (currentCatalogData(panel, model)) return;
   const searchTarget = panel._pendingSettingFocus;
+  const agent = panel._agentId;
+  const current = () => panel._agentId === agent && String(currentConfig(panel).chat_model || "") === model;
   try {
-    await lookupModelData(panel, model);
+    await lookupModelData(panel, model, "lookup", current);
+    if (!current()) return;
     panel._configRestoreFocus = searchTarget ? `#${CSS.escape(searchTarget)}` : '[data-config="chat_model"]';
     panel._render();
   } catch (err) {
@@ -26,9 +31,7 @@ async function ensureCatalogData(panel) {
   }
 }
 
-function applyModelDefaults(panel, model, data) {
-  if (!panel._draft) panel._draft = {...(panel._result?.config || {})};
-  panel._draft.chat_model = model;
+function applyModelDefaults(panel, data) {
   const reasoning = data?.model_metadata?.reasoning || {};
   const efforts = Array.isArray(reasoning.efforts) ? reasoning.efforts : [];
   if (!reasoning.supported || !efforts.length) {
@@ -51,29 +54,35 @@ export function bindConfiguration(panel) {
   );
   if (hasModelAwareControls) void ensureCatalogData(panel);
 
-  modelInput?.addEventListener("change", async (event) => {
-    event.stopImmediatePropagation();
-    try {
-      const model = modelInput.value;
-      const data = await lookupModelData(panel, model);
-      if (modelInput.value !== model) return;
-      applyModelDefaults(panel, model, data);
-      const validation = await panel._call("configuration", "validate", {config: panel._draft});
-      if (!validation.valid) return;
-      panel._result.model_capabilities = validation.model_capabilities;
-      panel._setConfigDirty?.(true);
-      panel._configRestoreFocus = '[data-config="chat_model"]';
+  bindConfigurationInputs(panel, {
+    modelChanged: (control) => changeConfigurationModel(panel, control),
+    reasoningChanged: () => {
+      panel._configRestoreFocus = '[data-config="reasoning_effort"]';
       panel._render();
-    } catch (err) {
-      panel._toast?.(`Unable to inspect model options: ${err.message || String(err)}`, true);
-    }
-  }, true);
-  reasoning?.addEventListener("change", () => {
-    if (!panel._draft) panel._draft = {...(panel._result?.config || {})};
-    panel._draft.reasoning_effort = reasoning.value;
-    panel._setConfigDirty?.(true);
-    panel._configRestoreFocus = '[data-config="reasoning_effort"]';
-    panel._render();
+    },
   });
   return result;
+}
+
+export async function changeConfigurationModel(panel, control) {
+  const model = control.value;
+  const agent = panel._agentId;
+  const draft = panel._draft;
+  const token = (panel._eocModelChangeToken || 0) + 1;
+  panel._eocModelChangeToken = token;
+  const current = () => panel._agentId === agent && panel._draft === draft
+    && panel._eocModelChangeToken === token && draft.chat_model === model;
+  try {
+    const data = await lookupModelData(panel, model, "lookup", current);
+    if (!current()) return;
+    applyModelDefaults(panel, data);
+    applyTargetedConfigDirty(panel, ["chat_model", "reasoning_effort"], control, false);
+    const validation = await panel._call("configuration", "validate", {config: panel._draft});
+    if (!current() || !validation.valid) return;
+    panel._result.model_capabilities = validation.model_capabilities;
+    panel._configRestoreFocus = '[data-config="chat_model"]';
+    panel._render();
+  } catch (err) {
+    if (current()) panel._toast?.(`Unable to inspect model options: ${err.message || String(err)}`, true);
+  }
 }

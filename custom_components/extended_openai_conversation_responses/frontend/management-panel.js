@@ -27,10 +27,8 @@ import {REQUEST_RULE_CACHE_KEY, TOOL_MUTATIONS} from "./management-function-depe
 import {isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-permission-boundaries.js";
 import {storeRuntimeGuidance} from "./management-runtime-guidance.js";
 import {
-  applyTargetedConfigDirty,
   bindStateSafety,
   cleanupStateSafety,
-  configKeyForControl,
   confirmDialogClose,
   confirmStateSafeNavigation,
   openDialogBaseline,
@@ -264,11 +262,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const changed = rebuildConfigDirtyKeys(this);
     this._configDirty = changed.size > 0;
     return this._configDirty;
-  }
-
-  _syncConfigControlDirty(control) {
-    const key = configKeyForControl(control);
-    if (key) applyTargetedConfigDirty(this, [key], control);
   }
 
   _captureDialogBaseline(dialog) {
@@ -812,7 +805,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     applyManagementToolbarLayout(this);
     bindConfigurationClarity(this);
     enhanceConfigurationClarity(this);
-    getRouteFeature("configuration")?.bindConfigurationGuidance(this);
     getRouteFeature("configuration")?.enhanceConfigurationGuidance(this);
     polishSettingsLayout(this);
     if (this._page === "overview") queueMicrotask(() => enhanceOverviewHealthClarity(this));

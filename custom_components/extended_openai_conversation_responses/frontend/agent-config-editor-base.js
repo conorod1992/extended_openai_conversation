@@ -1,3 +1,5 @@
+import {readConfigurationDraft as readConfig} from "./configuration-controls.js";
+import {bindConfigurationInputs, updateConfigurationControl} from "./configuration-inputs.js";
 import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys, setAttribute, setText} from "./keyed-collection.js";
 import {renderBackupTransferPanel, renderRestoreTransferDialog} from "./backup-transfer-ui.js";
 import {renderExposedAttributeSettings} from "./exposed-attributes-ui.js";
@@ -6,13 +8,13 @@ import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "
 import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {bindSingleRequestSave} from "./management-actions.js";
 import {saveBarMarkup} from "./unsaved-state.js";
-import {lookupModelData, modelDataControls, bindModelDataControls} from "./model-catalog.js";
+import {modelDataControls, bindModelDataControls} from "./model-catalog.js";
 import { bindHALlmTools, haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools.js";
 import { bindHelp, helpButton, helpPopover, helpSearchTerms } from "./agent-config-help.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const bool = (value) => value ? "checked" : "";
-export const skillNamesFromText = (value) => String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+export {skillNamesFromText} from "./configuration-controls.js";
 export function invalidateImportPreview(panel, applyButton, summary) {
   panel._importDocument = null;
   if (applyButton) applyButton.disabled = true;
@@ -245,31 +247,6 @@ function regexRow(panel, rule, index, disabled = false) {
   return `<article class="rule-row" data-regex-index="${index}"><label><span class="mobile-label">Pattern</span><input class="regex-pattern" value="${panel._e(rule.pattern || "")}" spellcheck="false" ${disabled ? "disabled" : ""}><span class="field-error" data-error="speech_regex_replacements[${index}].pattern"></span></label><label><span class="mobile-label">Replacement</span><input class="regex-replacement" value="${panel._e(rule.replacement || "")}" spellcheck="false" ${disabled ? "disabled" : ""}><span class="field-error" data-error="speech_regex_replacements[${index}].replacement"></span></label><div class="rule-actions"><button type="button" class="secondary move-regex" data-direction="-1" aria-label="Move rule up" ${disabled || index === 0 ? "disabled" : ""}>&uarr;</button><button type="button" class="secondary move-regex" data-direction="1" aria-label="Move rule down" ${disabled ? "disabled" : ""}>&darr;</button><button type="button" class="danger delete-regex" ${disabled ? "disabled" : ""}>Delete</button></div></article>`;
 }
 
-function readConfig(panel) {
-  const root = panel.shadowRoot;
-  const config = clone(panel._draft || panel._result.config);
-  root.querySelectorAll("[data-config]").forEach((input) => {
-    const key = input.dataset.config;
-    if (key === "__title" || key === "prompt") return;
-    let value = input.dataset.type === "boolean" ? input.checked : input.value;
-    if (input.dataset.type === "number") value = Number(value);
-    if (key === "skills") value = skillNamesFromText(value);
-    else if (key.startsWith("guest_readable_") || key.startsWith("guest_controllable_")) value = String(value).split(",").map(item => item.trim()).filter(Boolean);
-    config[key] = value;
-  });
-  config.prompt = root.querySelector("#prompt-editor")?.value ?? config.prompt;
-  if (root.querySelector("#local-intent-list")) config.local_intent_exclusions = [...root.querySelectorAll("[data-local-intent-exclusion]:checked")].map((input) => input.value);
-  if (root.querySelector("#regex-rules")) config.speech_regex_replacements = [...root.querySelectorAll(".rule-row")].map((row) => ({pattern: row.querySelector(".regex-pattern").value, replacement: row.querySelector(".regex-replacement").value}));
-  const voiceMappings = root.querySelector("#voice-mappings");
-  if (voiceMappings) {
-    try { config.voice_device_mappings = JSON.parse(voiceMappings.value || "{}"); }
-    catch (_) { config.voice_device_mappings = voiceMappings.value; }
-  }
-  panel._draftTitle = root.querySelector('[data-config="__title"]')?.value ?? panel._draftTitle;
-  panel._draft = config;
-  return config;
-}
-
 function dirty(panel) {
   readConfig(panel);
   panel._setConfigDirty(true);
@@ -287,13 +264,6 @@ function showErrors(panel, errors = {}) {
   });
 }
 
-function setDependent(root, key, enabled) {
-  const container = root.querySelector(`[data-dependent="${key}"]`);
-  if (!container) return;
-  container.classList.toggle("is-disabled", !enabled);
-  container.querySelectorAll("input:not([readonly]),select,textarea:not([readonly]),button:not(.help-button)").forEach((control) => control.disabled = !enabled);
-}
-
 function renderRegexRules(panel, focusIndex = null) {
   const list = panel.shadowRoot.querySelector("#regex-rules");
   if (!list) return;
@@ -309,7 +279,6 @@ function renderRegexRules(panel, focusIndex = null) {
 
 function bindRegexRules(panel) {
   const root = panel.shadowRoot;
-  root.querySelectorAll(".regex-pattern,.regex-replacement").forEach((input) => input.addEventListener("input", () => dirty(panel)));
   root.querySelectorAll(".delete-regex").forEach((button) => button.addEventListener("click", () => {
     const index = Number(button.closest(".rule-row").dataset.regexIndex);
     readConfig(panel);
@@ -330,7 +299,6 @@ function bindRegexRules(panel) {
 
 function bindSaveBar(panel) {
   const root=panel.shadowRoot;
-  root.querySelector("#revert-config")?.addEventListener("click", () => { panel._draft=clone(panel._configData.config); panel._draftTitle=panel._configData.title; panel._setConfigDirty(false); panel._render(); });
   bindSingleRequestSave(panel);
 
 }
@@ -340,13 +308,7 @@ export function bindConfiguration(panel) {
   bindModelDataControls(panel, (message) => { readConfig(panel); panel._render(); panel._toast(message); });
   bindHelp(panel);
   bindSaveBar(panel);
-  root.querySelectorAll("[data-config],#voice-mappings").forEach((input) => input.addEventListener("input", () => {
-    dirty(panel);
-    if (input.dataset.type === "boolean") setDependent(root, input.dataset.config, input.checked);
-    if (input.dataset.config === "conversation_continuity") setDependent(root, "conversation_continuity", input.value !== "ha_default");
-    if (input.id === "prompt-editor") root.querySelector("#prompt-count").textContent = `${input.value.length.toLocaleString()} characters`;
-  }));
-  root.querySelectorAll("[data-local-intent-exclusion]").forEach((input) => input.addEventListener("input", () => dirty(panel)));
+  bindConfigurationInputs(panel);
   root.querySelector("#local-intent-search")?.addEventListener("input", (event) => {
     const query = event.target.value;
     root.querySelectorAll("[data-local-intent-choice]").forEach((choice) => {
@@ -358,38 +320,12 @@ export function bindConfiguration(panel) {
   actionsMenu?.addEventListener("keydown", (event) => { if (event.key === "Escape") { actionsMenu.open = false; actionsMenu.querySelector("summary")?.focus(); } });
   actionsMenu?.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => { actionsMenu.open = false; }));
   root.querySelectorAll("[data-jump]").forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); root.querySelector(`#${link.dataset.jump}`)?.scrollIntoView({behavior:"smooth",block:"start"}); }));
-  root.querySelector('[data-config="chat_model"]')?.addEventListener("change", async () => {
-    try {
-      const model = root.querySelector('[data-config="chat_model"]').value;
-      const metadata = await lookupModelData(panel, model);
-      if (root.querySelector('[data-config="chat_model"]').value !== model) return;
-      const reasoning = root.querySelector('[data-config="reasoning_effort"]');
-      const efforts = metadata.reasoning_effort_options;
-      if (reasoning && !efforts.includes(reasoning.value)) {
-        const value = efforts.includes("high") ? "high" : efforts[0];
-        if (![...reasoning.options].some((option) => option.value === value)) {
-          const option = reasoning.ownerDocument.createElement("option");
-          option.value = value;
-          option.textContent = value;
-          reasoning.append(option);
-        }
-        reasoning.value = value;
-      }
-      const validation = await panel._call("configuration", "validate", {config: readConfig(panel)});
-      if (validation.valid) {
-        panel._result.model_capabilities = validation.model_capabilities;
-        panel._setConfigDirty(true);
-        panel._configRestoreFocus = '[data-config="chat_model"]';
-        panel._render();
-      }
-    } catch (err) { panel._toast(`Unable to inspect model options: ${err.message || String(err)}`, true); }
-  });
   root.querySelector("#conversation-timeout-preset")?.addEventListener("change", (event) => {
     const input = root.querySelector('[data-config="conversation_timeout_minutes"]');
     const custom = event.target.value === "custom";
     input.hidden = !custom;
     if (!custom) input.value = event.target.value;
-    dirty(panel);
+    updateConfigurationControl(panel, input);
     if (custom) input.focus();
   });
   root.querySelector("#reset-prompt")?.addEventListener("click", () => { const editor=root.querySelector("#prompt-editor"); editor.value=panel._result.defaults.prompt; for(const key of ["current_datetime_enabled","exposed_entities_enabled"]){const input=root.querySelector(`[data-config="${key}"]`);if(input)input.checked=true;} for(const key of ["current_datetime_template","exposed_entities_template"]){const input=root.querySelector(`[data-config="${key}"]`);if(input)input.value="";} editor.focus(); dirty(panel); root.querySelector("#prompt-count").textContent=`${editor.value.length.toLocaleString()} characters`; });

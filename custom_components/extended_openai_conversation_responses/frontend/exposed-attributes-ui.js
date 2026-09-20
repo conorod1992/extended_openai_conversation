@@ -1,3 +1,4 @@
+import {applyTargetedConfigDirty} from "./management-state-safety.js";
 const CONFIG_KEY = "exposed_entity_attributes";
 
 const clonePreferences = (value = {}) => Object.fromEntries(
@@ -131,12 +132,7 @@ export function renderExposedAttributeSettings(panel) {
 }
 
 function markConfigDirty(panel) {
-  const existingControl = panel?.shadowRoot?.querySelector('[data-config="exposed_entities_enabled"]');
-  if (existingControl && typeof Event !== "undefined") {
-    existingControl.dispatchEvent(new Event("input"));
-    return;
-  }
-  panel?._setConfigDirty?.(true);
+  applyTargetedConfigDirty(panel, [CONFIG_KEY]);
 }
 
 function rerenderKeepingEditor(panel, entityId = null) {

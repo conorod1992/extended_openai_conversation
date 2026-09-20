@@ -103,7 +103,8 @@ const editorSource = (
   ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
 ).join("\n");
 assert.match(editorSource, /insertAdjacentHTML\("beforebegin", saveBar\(panel\)\)/, "the bar should appear as soon as a clean configuration becomes dirty");
-assert.match(editorSource, /#revert-config[\s\S]*?_setConfigDirty\(false\); panel\._render\(\)/, "reverting should clear dirty state and remove the bar");
+const inputSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/configuration-inputs.js", import.meta.url), "utf8");
+assert.match(inputSource, /#revert-config[\s\S]*?_setConfigDirty\(false\);[\s\S]*?panel\._eocMainMarkup = null;\s*panel\._render\(\)/, "reverting should clear dirty state and restore the form including the save bar");
 assert.match(editorSource, /bindSingleRequestSave\(panel\)/, "configuration saves must use the canonical shell handler");
 assert.doesNotMatch(editorSource, /Save tools and groups|Keep in draft|unsaved tool draft/i);
 assert.match(editorSource, /id="tool-save">Save<\/button>/);

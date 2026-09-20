@@ -1,4 +1,4 @@
-import {dirtyConfigurationDestinations, refreshSettingEffects} from "./management-setting-metadata.js";
+import {dirtyConfigurationDestinations} from "./management-setting-metadata.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 
 function ensureStyles(panel) {
@@ -97,10 +97,4 @@ export function bindConfigurationClarity(panel) {
   root.__eocClarityInteractionBound = true;
   // State safety dispatches this after updating authoritative dirty state.
   root.addEventListener("eoc-config-dirty-changed", () => enhanceConfigurationClarity(panel));
-  for (const type of ["input", "change", "value-changed"]) {
-    root.addEventListener(type, (event) => {
-      refreshSettingEffects(panel, event.target);
-      enhanceConfigurationClarity(panel);
-    });
-  }
 }
