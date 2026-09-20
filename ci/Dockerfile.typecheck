@@ -39,26 +39,7 @@ RUN python -m pip install --upgrade pip \
     && pip check \
     && mkdir -p /opt/eoai-ci \
     && printf '%s\n' "$HA_CORE_SHA" > /opt/eoai-ci/ha-core-sha \
-    && python - <<'PY' > /opt/eoai-ci/typecheck-environment.txt
-from importlib.metadata import version
-
-for package in (
-    "homeassistant",
-    "openai",
-    "hassil",
-    "home-assistant-intents",
-    "xmltodict",
-    "beautifulsoup4",
-    "lxml",
-    "gazetteer-matcher",
-    "voluptuous-openapi",
-    "httpx",
-    "PyYAML",
-    "types-PyYAML",
-    "mypy",
-):
-    print(f"{package}=={version(package)}")
-PY
+    && pip freeze | sort > /opt/eoai-ci/typecheck-environment.txt
 
 WORKDIR /workspace
 
