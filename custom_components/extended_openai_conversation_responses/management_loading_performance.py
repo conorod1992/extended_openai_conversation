@@ -14,7 +14,6 @@ from homeassistant.core import HomeAssistant
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
     agent_config_defaults,
-    function_tool_enabled,
     validate_function_groups,
     validate_function_tools,
 )
@@ -35,7 +34,7 @@ from .conversation_archive import async_get_archive
 from .feature_status import management_feature_status
 from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
 from .knowledge import async_get_knowledge, get_loaded_knowledge
-from .management_function_repair import function_tools_issue as _function_tools_issue
+from .management_function_repair import management_function_tool_health
 from .management_history_queries import usage_summary
 from .management_projections import async_scope_catalog_projection, settings_snapshot
 from .management_setup_health import add_setup_health
@@ -80,15 +79,22 @@ def _agent_snapshot(
     knowledge_source_count: int = 0,
     tokens_today: int = 0,
     guest_status: dict[str, Any] | None = None,
+    function_tools_health: dict[str, Any] | None = None,
+    function_tools_ms: float | None = None,
     performance: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Build the cheap frontend metadata shared by bootstrap and overview."""
     started = perf_counter()
     options = config if config is not None else dict(subentry.data)
-    phase = perf_counter()
-    configured_tools, function_issue = _function_tools_issue(options)
+    if function_tools_health is None:
+        phase = perf_counter()
+        function_tools_health = management_function_tool_health(options)
+        measured_function_tools_ms = _ms(phase)
+    else:
+        measured_function_tools_ms = function_tools_ms or 0.0
     if performance is not None:
-        performance["function_tools_ms"] = _ms(phase)
+        performance["function_tools_ms"] = measured_function_tools_ms
+    function_issue = function_tools_health.get("validation_error")
     phase = perf_counter()
     if guest_status is None:
         loaded_guest = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
@@ -113,7 +119,7 @@ def _agent_snapshot(
         "memory_count": memory_count,
         "knowledge_enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
         "knowledge_source_count": knowledge_source_count,
-        "function_count": sum(function_tool_enabled(tool) for tool in configured_tools),
+        "function_count": int(function_tools_health.get("enabled_count", 0)),
         "function_group_count": len(
             options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS)
         ),
@@ -260,6 +266,10 @@ async def async_overview_summary(
     else:
         guest_status = guest_result.status()
 
+    function_tools_started = perf_counter()
+    function_tools_health = management_function_tool_health(dict(subentry.data))
+    function_tools_ms = _ms(function_tools_started)
+
     projection_started = perf_counter()
     agent_timing: dict[str, float] = {}
     result = {
@@ -271,6 +281,8 @@ async def async_overview_summary(
             knowledge_source_count=knowledge_source_count,
             tokens_today=tokens_today,
             guest_status=guest_status,
+            function_tools_health=function_tools_health,
+            function_tools_ms=function_tools_ms,
             performance=agent_timing,
         ),
         "usage": usage,
@@ -279,7 +291,14 @@ async def async_overview_summary(
     }
     projection_ms = _ms(projection_started)
     health_started = perf_counter()
-    result = add_setup_health(hass, entry, subentry, result, is_admin=is_admin)
+    result = add_setup_health(
+        hass,
+        entry,
+        subentry,
+        result,
+        is_admin=is_admin,
+        function_tools_health=function_tools_health,
+    )
     timings: dict[str, Any] = {
         **loader_timings,
         "projection_ms": projection_ms,
