@@ -53,6 +53,7 @@ assert.match(panel, /All eligible enabled functions are available to guests. New
 assert.match(panel, /filter\(\(item\) => !item\.unsafe_in_guest_mode\)/);
 assert.match(panel, /The assistant can never shorten or disable Guest Mode/);
 assert.doesNotMatch(panel, /Trusted actions|trusted Home Assistant actions|trusted controls/i);
+assert.doesNotMatch(panel, /futureKnowledge|futureFunctions/);
 assert.match(panel, /Guest Mode activation/);
 assert.match(panel, /The assistant can enable or extend Guest Mode, but cannot shorten or disable it\. Administrators and Home Assistant automations can change or end Guest Mode\./);
 assert.match(guide, /The assistant can enable or extend Guest Mode, but cannot shorten or disable it\. Administrators and Home Assistant automations can change or end Guest Mode\./);
