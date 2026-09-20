@@ -86,3 +86,24 @@ def test_extract_value_handles_attribute_raw_text_and_normal_text() -> None:
         data,
         {web.scrape.const.CONF_SELECT: "#message"},
     ) == "Hello world"
+
+    assert (
+        function._extract_value(
+            data,
+            {
+                web.scrape.const.CONF_SELECT: ".item",
+                web.scrape.const.CONF_INDEX: 1,
+            },
+        )
+        is None
+    )
+    assert (
+        function._extract_value(
+            data,
+            {
+                web.scrape.const.CONF_SELECT: "#message",
+                CONF_ATTRIBUTE: "href",
+            },
+        )
+        is None
+    )
