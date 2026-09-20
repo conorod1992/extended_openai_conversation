@@ -44,7 +44,7 @@ async def test_agent_catalog_does_not_load_scope_dependencies(monkeypatch) -> No
     scope_catalog = AsyncMock(
         side_effect=AssertionError("scope catalogue should be lazy")
     )
-    monkeypatch.setattr(management_ui, "_scope_catalog", scope_catalog)
+    monkeypatch.setattr(loading, "async_scope_catalog_projection", scope_catalog)
 
     for name in ("async_get_memory", "async_get_archive"):
         monkeypatch.setattr(
@@ -80,11 +80,7 @@ async def test_scope_catalog_loads_memory_and_archive_concurrently(monkeypatch) 
         return SimpleNamespace(scope_counts=lambda: archive_counts)
 
     scope_catalog = AsyncMock(return_value=[{"id": "all", "label": "All"}])
-    fake_management_ui = SimpleNamespace(
-        entry_and_agent=lambda *_args: (object(), object()),
-        _scope_catalog=scope_catalog,
-    )
-    monkeypatch.setattr(loading, "_management_ui", lambda: fake_management_ui)
+    monkeypatch.setattr(loading, "async_scope_catalog_projection", scope_catalog)
     monkeypatch.setattr(loading, "async_get_memory", get_memory)
     monkeypatch.setattr(loading, "async_get_archive", get_archive)
 

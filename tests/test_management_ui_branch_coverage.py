@@ -657,14 +657,14 @@ async def test_fallthrough_branches_and_scope_catalog(
         "async_get_knowledge",
         AsyncMock(return_value=SimpleNamespace()),
     )
-    monkeypatch.setattr(
-        management_ui,
-        "_scope_catalog",
-        AsyncMock(return_value=[{"scope_id": "user:user"}]),
-    )
-
     from custom_components.extended_openai_conversation_responses import (
         management_loading_performance as loading,
+    )
+
+    monkeypatch.setattr(
+        loading,
+        "async_scope_catalog_projection",
+        AsyncMock(return_value=[{"scope_id": "user:user"}]),
     )
 
     monkeypatch.setattr(loading, "async_get_archive", management_ui.async_get_archive)

@@ -10,10 +10,12 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_VOICE_DEFAULT_USER_ID,
 )
+from custom_components.extended_openai_conversation_responses.management_projections import (
+    async_scope_catalog_projection,
+    settings_snapshot,
+)
 from custom_components.extended_openai_conversation_responses.management_ui import (
-    _scope_catalog,
     _selected_scope,
-    _settings_snapshot,
     _validate_settings,
 )
 from homeassistant.exceptions import HomeAssistantError
@@ -60,7 +62,7 @@ def test_retention_and_mapping_settings_are_strictly_validated() -> None:
 def test_management_settings_share_authoritative_agent_defaults() -> None:
     """Shared Management settings cannot drift from agent configuration defaults."""
     defaults = agent_config_defaults()
-    snapshot = _settings_snapshot({})
+    snapshot = settings_snapshot({})
 
     for key, value in snapshot.items():
         if key == CONF_VOICE_DEFAULT_USER_ID:
@@ -82,7 +84,7 @@ def test_normal_user_cannot_select_admin_or_other_user_scope() -> None:
 
 async def test_scope_catalog_adds_counts_and_hides_empty_legacy_scope() -> None:
     hass = SimpleNamespace(auth=_Auth())
-    scopes = await _scope_catalog(
+    scopes = await async_scope_catalog_projection(
         hass,
         "current",
         True,
@@ -101,7 +103,7 @@ async def test_scope_catalog_adds_counts_and_hides_empty_legacy_scope() -> None:
 
 async def test_scope_catalog_retains_legacy_scope_only_when_it_has_data() -> None:
     hass = SimpleNamespace(auth=_Auth())
-    scopes = await _scope_catalog(hass, "current", True, {"__anonymous__": 2})
+    scopes = await async_scope_catalog_projection(hass, "current", True, {"__anonymous__": 2})
 
     legacy = next(scope for scope in scopes if scope["scope_id"] == "__anonymous__")
     assert legacy["memory_count"] == 2

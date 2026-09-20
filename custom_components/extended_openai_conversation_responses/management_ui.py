@@ -44,10 +44,6 @@ from .backup import async_create_backup, async_restore_backup, inspect_backup
 from .built_in_functions import built_in_function_catalog
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
-    CONF_ARCHIVE_ENABLED,
-    CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
-    CONF_ARCHIVE_RETENTION_DAYS,
-    CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     CONF_CHAT_MODEL,
     CONF_CONTINUE_CONVERSATION,
     CONF_CONVERSATION_CONTINUITY,
@@ -58,16 +54,9 @@ from .const import (
     CONF_GUEST_POLICY_VERSION,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
-    CONF_SHARED_ARCHIVE_ENABLED,
     CONF_SHARED_MEMORY_MODE,
     CONF_SKILLS,
     CONF_TEMPORARY_MEMORY,
-    CONF_USAGE_REQUEST_RETENTION_DAYS,
-    CONF_USAGE_RUN_RETENTION_DAYS,
-    CONF_VOICE_DEFAULT_USER_ID,
-    CONF_VOICE_DEVICE_MAPPINGS,
-    CONF_VOICE_SCOPE_POLICY,
-    CONF_VOICE_UNMAPPED_POLICY,
     CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_CONVERSATION_CONTINUITY,
@@ -147,6 +136,7 @@ from .management_permissions import (
     async_quiet_hours_command,
     require_management_permission,
 )
+from .management_projections import settings_snapshot
 from .memory import ANONYMOUS_USER_ID, async_get_memory, memory_enabled
 from .prompt import render_effective_prompt
 from .regex_execution import async_process_speech_text
@@ -519,19 +509,6 @@ async def _async_preview_effective_request(
     }
 
 
-async def _async_preview_effective_prompt(
-    hass: HomeAssistant,
-    entry: Any,
-    subentry: Any,
-    options: dict[str, Any],
-    user_id: str,
-) -> dict[str, Any]:
-    """Backward-compatible internal alias for the expanded request preview."""
-    return await _async_preview_effective_request(
-        hass, entry, subentry, options, user_id
-    )
-
-
 def _require_admin(is_admin: bool) -> None:
     if not is_admin:
         raise HomeAssistantError("Administrator permission is required")
@@ -722,45 +699,6 @@ def _validate_request_rule_functions(
                 f"Function Tool `{function_name}` needs input: "
                 + ", ".join(sorted(missing_inputs))
             )
-
-
-async def _scope_catalog(
-    hass: HomeAssistant,
-    user_id: str,
-    is_admin: bool,
-    memory_counts: dict[str, int] | None = None,
-    conversation_counts: dict[str, int] | None = None,
-) -> list[dict[str, Any]]:
-    memory_counts = memory_counts or {}
-    conversation_counts = conversation_counts or {}
-
-    def scope_item(scope_id: str, scope_type: str, display_name: str) -> dict[str, Any]:
-        owner = _memory_scope(scope_id)
-        return {
-            "scope_id": scope_id,
-            "scope_type": scope_type,
-            "display_name": display_name,
-            "is_current_user": scope_id == f"user:{user_id}",
-            "memory_count": memory_counts.get(owner, 0),
-            "conversation_count": conversation_counts.get(scope_id, 0),
-        }
-
-    if not is_admin:
-        user = await hass.auth.async_get_user(user_id)
-        return [
-            scope_item(
-                f"user:{user_id}", "user", (user.name or user_id) if user else user_id
-            )
-        ]
-    users = await hass.auth.async_get_users()
-    scopes = [
-        scope_item(f"user:{user.id}", "user", user.name or user.id) for user in users
-    ]
-    scopes.append(scope_item(SHARED_HOUSEHOLD_SCOPE_ID, "shared", "Shared household"))
-    legacy = scope_item(ANONYMOUS_USER_ID, "anonymous_legacy", "Legacy anonymous")
-    if legacy["memory_count"] or legacy["conversation_count"]:
-        scopes.append(legacy)
-    return scopes
 
 
 @dataclass(frozen=True)
@@ -1827,7 +1765,7 @@ async def async_conversations_command(request: _ManagementRequest) -> dict[str, 
             confirm=message.get("confirm") is True,
         )
     if action == "settings":
-        return _settings_snapshot(subentry.data)
+        return settings_snapshot(subentry.data)
 
     return _unknown_management_action(request)
 
@@ -2104,7 +2042,7 @@ async def async_settings_command(request: _ManagementRequest) -> dict[str, Any]:
         hass.config_entries.async_update_subentry(
             entry, subentry, data={**subentry.data, **normalized}
         )
-        return {"settings": _settings_snapshot({**subentry.data, **normalized})}
+        return {"settings": settings_snapshot({**subentry.data, **normalized})}
 
     return _unknown_management_action(request)
 
@@ -2245,26 +2183,6 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
             ) from err
         raise
     return {key: normalized[key] for key in settings}
-
-
-def _settings_snapshot(options: Mapping[str, Any]) -> dict[str, Any]:
-    defaults = agent_config_defaults()
-    defaults[CONF_VOICE_DEFAULT_USER_ID] = None
-    keys = (
-        CONF_ARCHIVE_ENABLED,
-        CONF_ARCHIVE_RETENTION_DAYS,
-        CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
-        CONF_SHARED_ARCHIVE_ENABLED,
-        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
-        CONF_VOICE_SCOPE_POLICY,
-        CONF_VOICE_DEFAULT_USER_ID,
-        CONF_VOICE_DEVICE_MAPPINGS,
-        CONF_VOICE_UNMAPPED_POLICY,
-        CONF_SHARED_MEMORY_MODE,
-        CONF_USAGE_REQUEST_RETENTION_DAYS,
-        CONF_USAGE_RUN_RETENTION_DAYS,
-    )
-    return {key: options.get(key, defaults[key]) for key in keys}
 
 
 @websocket_api.websocket_command(

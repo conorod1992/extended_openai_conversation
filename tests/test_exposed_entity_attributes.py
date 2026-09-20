@@ -34,7 +34,7 @@ from custom_components.extended_openai_conversation_responses.exposed_attributes
     exposed_attribute_catalog,
 )
 from custom_components.extended_openai_conversation_responses.management_ui import (
-    _async_preview_effective_prompt,
+    _async_preview_effective_request,
     _export_agent,
     _parse_import_document,
 )
@@ -386,7 +386,7 @@ async def test_preview_counts_rendered_attribute_context(hass, monkeypatch) -> N
         prompt.render_effective_prompt,
     )
 
-    result = await _async_preview_effective_prompt(
+    result = await _async_preview_effective_request(
         hass,
         SimpleNamespace(entry_id="entry-1", data={}),
         SimpleNamespace(subentry_id="agent-1"),
