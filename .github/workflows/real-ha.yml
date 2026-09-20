@@ -275,6 +275,10 @@ jobs:
               for path in "${PROCESS_RESTART_A[@]}" "${PROCESS_RESTART_B[@]}" "${STATEFUL_SERIAL[@]}"; do
                 TEST_PATHS+=(--ignore="$path")
               done
+              XDIST_ARGS=(
+                -n 2
+                --dist=loadscope
+              )
               COVERAGE_ARGS=(
                 --cov=custom_components.extended_openai_conversation_responses.config_flow
                 --cov-branch
