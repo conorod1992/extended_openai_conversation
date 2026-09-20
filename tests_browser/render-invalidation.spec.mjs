@@ -49,7 +49,7 @@ test("unchanged renders retain toolbar, navigation, guidance and main nodes", as
     panel._render();
     await new Promise(requestAnimationFrame);
     const root = panel.shadowRoot;
-    const selectors = ["main > :first-child", "#settings-search", ".eoc-agent-context-row", ".subsection-nav", "[data-eoc-guidance-generated]", "style[data-eoc-persistent-styles]"];
+    const selectors = ["main > :first-child", "#settings-search", ".eoc-agent-context-row", ".subsection-nav", "[data-eoc-guidance-generated]", "[data-eoc-persistent-styles]"];
     const before = selectors.map((selector) => root.querySelector(selector));
     const observer = new MutationObserver(() => {});
     observer.observe(root, {childList:true, subtree:true});
