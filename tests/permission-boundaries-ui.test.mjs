@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   isRestrictedManagementView,
   nonAdminOverviewKnowledgeSnapshot,
-} from "../custom_components/extended_openai_conversation_responses/frontend/management-permission-boundaries.js";
+} from "../custom_components/extended_openai_conversation_responses/frontend/management-route.js";
 
 assert.equal(isRestrictedManagementView("data-memory", "knowledge"), true);
 assert.equal(isRestrictedManagementView("usage-maintenance", "usage"), true);
