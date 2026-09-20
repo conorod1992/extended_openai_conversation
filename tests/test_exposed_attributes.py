@@ -303,3 +303,30 @@ def test_configuration_projection_preserves_shape_and_exposed_catalog(monkeypatc
     assert result["other"] is True
     assert result["exposed_attribute_catalog"] == {"seen": {"x": 1}}
     assert "configuration_guidance" in result
+
+
+def test_legacy_renderer_without_selected_attributes_omits_column(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Legacy prompt rows retain their pre-attribute CSV shape when unused."""
+    monkeypatch.setattr(ea, "resolve_area_id", lambda _hass, _entity_id: "kitchen")
+
+    rendered = ea._render_legacy_default(
+        object(),
+        [
+            {
+                "entity_id": "light.kitchen",
+                "name": "Kitchen",
+                "state": "on",
+                "aliases": ["Main light"],
+                "attributes": {"brightness": 123},
+            }
+        ],
+        include_attributes=False,
+    )
+
+    header = rendered.splitlines()[2]
+    row = rendered.splitlines()[3]
+    assert header == "entity_id,name,state,area_id,aliases"
+    assert row == "light.kitchen,Kitchen,on,kitchen,Main light"
+    assert "brightness" not in rendered
