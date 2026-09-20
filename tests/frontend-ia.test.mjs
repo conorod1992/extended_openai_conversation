@@ -196,6 +196,7 @@ assert.match(partialOverviewHtml, /1,234 tokens today/);
 assert.match(partialOverviewHtml, /5,678 this month/);
 
 const panel = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
+const managementStyles = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management.css", import.meta.url), "utf8");
 const controlReader = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js", import.meta.url), "utf8");
 const editor = (
   await Promise.all([
@@ -220,13 +221,13 @@ assert.match(panel, /id="local-section"/);
 assert.doesNotMatch(panel, /local-section-mobile/);
 assert.doesNotMatch(panel, /<aside class="local-nav"/);
 assert.match(panel, /aria-current="page"/);
-assert.match(panel, /settings-result/);
+assert.match(navigationSearch, /settings-result/);
 const usage = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-chart.js", import.meta.url), "utf8");
 assert.match(usage, /class="chart-axis"/);
 assert.match(usage, /usageChartBuckets/);
 assert.match(panel, /usage\.renderUsagePage\(this, this\._result/);
-assert.match(panel, /font-size:14px;line-height:1\.45/);
-assert.match(panel, /background:color-mix\(in srgb,var\(--secondary-background-color\) 42%,var\(--primary-background-color\)\)/);
+assert.match(managementStyles, /font-size:14px;line-height:1\.45/);
+assert.match(managementStyles, /background:color-mix\(in srgb,var\(--secondary-background-color\) 42%,var\(--primary-background-color\)\)/);
 assert.doesNotMatch(homeAssistant, /this\._metric\("Assistant", agent\.title\)/);
 assert.doesNotMatch(homeAssistant, /this\._metric\("Provider", agent\.provider\)/);
 assert.doesNotMatch(homeAssistant, /this\._metric\("Exposed context"/);
