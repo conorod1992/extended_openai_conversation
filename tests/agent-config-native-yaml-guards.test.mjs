@@ -26,6 +26,10 @@ class GuardTextArea {
     this.listeners.set(type, listeners);
   }
 
+  removeEventListener(type, listener) {
+    this.listeners.set(type, (this.listeners.get(type) || []).filter((item) => item !== listener));
+  }
+
   dispatchEvent(event) {
     for (const listener of this.listeners.get(event?.type) || []) listener(event);
     return true;
@@ -51,6 +55,10 @@ class GuardEditor {
 
   addEventListener(type, listener) {
     this.listeners.set(type, listener);
+  }
+
+  removeEventListener(type, listener) {
+    if (this.listeners.get(type) === listener) this.listeners.delete(type);
   }
 
   emit(type, detail = {}) {
@@ -259,15 +267,19 @@ try {
   }
 
   {
-    class NoValueTextArea {}
-    globalThis.HTMLTextAreaElement = NoValueTextArea;
+    class NoValueDescriptorTextArea {}
+    globalThis.HTMLTextAreaElement = NoValueDescriptorTextArea;
     const harness = makeRoot();
     globalThis.customElements = {
       get: () => GuardEditor,
       whenDefined: () => Promise.resolve(),
     };
-    bindNativeToolYaml({shadowRoot: harness.root, _call: async () => ({valid: true, config: {}})});
-    assert.equal(harness.editor.hidden, true, "missing native textarea value descriptor must leave the base UI untouched");
+    const panel = {shadowRoot: harness.root, _call: async () => ({valid: true, config: {}})};
+    bindNativeToolYaml(panel);
+    await flush();
+    assert.equal(harness.editor.hidden, false, "adapter mounting must not depend on the textarea prototype value descriptor");
+    assert.equal(Object.hasOwn(harness.textarea, "value"), false, "adapter must not redefine textarea.value");
+    assert.equal(harness.textarea.focus, GuardTextArea.prototype.focus, "adapter must not shadow textarea.focus");
     globalThis.HTMLTextAreaElement = GuardTextArea;
   }
 
