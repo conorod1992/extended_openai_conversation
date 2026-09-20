@@ -1,0 +1,43 @@
+name: Regenerate frontend dist once
+
+on:
+  push:
+    branches:
+      - cleanup/frontend-management-micro-modules
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: cleanup/frontend-management-micro-modules
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Build frontend bundle
+        working-directory: frontend
+        run: npm run build
+
+      - name: Commit rebuilt bundle
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/extended_openai_conversation_responses/frontend/dist/
+          if git diff --cached --quiet; then
+            echo "Bundle already current."
+            exit 0
+          fi
+          git commit -m "Rebuild frontend bundle"
+          git push origin HEAD:cleanup/frontend-management-micro-modules
