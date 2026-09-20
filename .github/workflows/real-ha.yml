@@ -242,14 +242,17 @@ jobs:
             process-restart-a)
               TEST_PATHS=("${PROCESS_RESTART_A[@]}")
               COVERAGE_ARGS=()
+              PARALLEL_ARGS=()
               ;;
             process-restart-b)
               TEST_PATHS=("${PROCESS_RESTART_B[@]}")
               COVERAGE_ARGS=()
+              PARALLEL_ARGS=()
               ;;
             stateful-serial)
               TEST_PATHS=("${STATEFUL_SERIAL[@]}")
               COVERAGE_ARGS=()
+              PARALLEL_ARGS=()
               ;;
             parallel-safe)
               TEST_PATHS=(tests_real_ha/)
@@ -269,6 +272,10 @@ jobs:
                 --cov-report=term-missing
                 --cov-report=xml:real-ha-config-flow-coverage.xml
               )
+              PARALLEL_ARGS=(
+                -n 2
+                --dist=loadscope
+              )
               ;;
             *)
               echo "Unknown stable shard: ${{ matrix.shard }}" >&2
@@ -277,6 +284,7 @@ jobs:
           esac
 
           pytest "${TEST_PATHS[@]}" \
+            "${PARALLEL_ARGS[@]}" \
             -v \
             --asyncio-mode=auto \
             --timeout=60 \
