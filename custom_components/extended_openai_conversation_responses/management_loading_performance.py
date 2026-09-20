@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
 import logging
+from copy import deepcopy
 from time import perf_counter
 from typing import Any
 
