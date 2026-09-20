@@ -1970,7 +1970,7 @@ async def async_setup_management_ui(hass: HomeAssistant) -> None:
             hass,
             webcomponent_name="extended-openai-management-panel",
             frontend_url_path=MANAGEMENT_PANEL_URL,
-            module_url=frontend_entry_url("management"),
+            module_url=frontend_entry_url(hass, "management"),
             sidebar_title=MANAGEMENT_PANEL_TITLE,
             sidebar_icon="mdi:robot-outline",
             require_admin=False,

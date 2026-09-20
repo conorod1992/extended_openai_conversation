@@ -1120,6 +1120,18 @@ def _cached_configured_tools(raw_yaml: str | None) -> tuple[dict[str, Any], ...]
     return tuple(_configured_function_tools_from_data(data))
 
 
+def configured_function_tool_metadata_from_data(
+    data: Mapping[str, Any],
+) -> dict[str, int]:
+    """Return immutable-style metadata without copying hydrated runtime configs."""
+    tools = _cached_configured_tools(_configured_tools_yaml(data))
+    return {
+        "usable_count": len(tools),
+        "enabled_count": sum(function_tool_enabled(tool) for tool in tools),
+        "total_count": len(tools),
+    }
+
+
 def configured_function_tools_from_data(
     data: Mapping[str, Any],
 ) -> list[dict[str, Any]]:

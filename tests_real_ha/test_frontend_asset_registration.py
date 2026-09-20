@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -26,7 +27,11 @@ async def test_startup_serves_bundled_assets_idempotently(
     await async_setup_management_ui(hass)
 
     client = await aiohttp_client(hass.http.app)
-    manifest = frontend_assets._manifest()
+    manifest = json.loads(
+        await hass.async_add_executor_job(
+            frontend_assets._MANIFEST_PATH.read_text, "utf-8"
+        )
+    )
     files = {entry["file"] for entry in manifest.values()}
 
     for filename in files:
@@ -38,7 +43,7 @@ async def test_startup_serves_bundled_assets_idempotently(
         assert response.status == 200, url
         assert await response.read() == expected, url
 
-    management_url = frontend_assets.frontend_entry_url("management")
+    management_url = frontend_assets.frontend_entry_url(hass, "management")
     response = await client.get(management_url)
     assert response.status == 200
     assert response.content_type in {"text/javascript", "application/javascript"}

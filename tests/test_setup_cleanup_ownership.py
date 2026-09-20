@@ -79,6 +79,9 @@ async def test_setup_retries_asset_failure_and_preserves_identities(monkeypatch)
     hass = SimpleNamespace(data={})
     register = AsyncMock(side_effect=[RuntimeError("asset failure"), None])
     monkeypatch.setattr(management_ui, "async_register_frontend_assets", register)
+    monkeypatch.setattr(
+        management_ui, "frontend_entry_url", lambda *_: "/frontend/management-test.js"
+    )
     monkeypatch.setattr(management_ui.websocket_api, "async_register_command", Mock())
     monkeypatch.setattr(management_ui.panel_custom, "async_register_panel", AsyncMock())
     setup = management_ui.async_setup_management_ui
@@ -95,7 +98,9 @@ async def test_setup_retries_asset_failure_and_preserves_identities(monkeypatch)
 async def test_shared_versioned_assets_retry_and_register_once(monkeypatch):
     register = AsyncMock(side_effect=[RuntimeError("HTTP unavailable"), None])
     hass = SimpleNamespace(
-        data={}, http=SimpleNamespace(async_register_static_paths=register)
+        data={},
+        http=SimpleNamespace(async_register_static_paths=register),
+        async_add_executor_job=AsyncMock(side_effect=lambda callback: callback()),
     )
     with pytest.raises(RuntimeError, match="HTTP unavailable"):
         await frontend_assets.async_register_frontend_assets(hass)
@@ -103,9 +108,10 @@ async def test_shared_versioned_assets_retry_and_register_once(monkeypatch):
     await frontend_assets.async_register_frontend_assets(hass)
     await frontend_assets.async_register_frontend_assets(hass)
     assert register.await_count == 2
+    assert hass.async_add_executor_job.await_count == 2
     asset = register.await_args.args[0][0]
     assert asset.cache_headers is True
-    assert frontend_assets.frontend_entry_url("management").startswith(
+    assert frontend_assets.frontend_entry_url(hass, "management").startswith(
         asset.url_path + "/assets/management-"
     )
 

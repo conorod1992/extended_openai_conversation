@@ -1520,6 +1520,7 @@ async def test_websocket_and_setup_wiring(monkeypatch) -> None:
 
     hass = _residual_hass()
     register_command = MagicMock()
+    hass.async_add_executor_job = AsyncMock(side_effect=lambda callback: callback())
     register_panel = AsyncMock()
     monkeypatch.setattr(
         management_ui.websocket_api, "async_register_command", register_command

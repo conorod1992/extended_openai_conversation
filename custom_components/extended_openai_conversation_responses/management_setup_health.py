@@ -22,7 +22,7 @@ from .const import (
     DEFAULT_PROMPT,
 )
 from .management_configuration_guidance import configuration_guidance_snapshot
-from .management_function_repair import editable_function_tools, isolated_function_tools
+from .management_function_repair import management_function_tool_health
 from .memory import get_memory_mode
 
 
@@ -35,21 +35,8 @@ def _exposed_entity_count(hass: HomeAssistant) -> int:
 
 
 def _function_health(options: dict[str, Any]) -> dict[str, Any]:
-    """Summarize effective and quarantined Function Tool state."""
-    editable = editable_function_tools(options)
-    valid, invalid, issue = isolated_function_tools(options)
-    total = len(editable) if isinstance(editable, list) else None
-    return {
-        "usable_count": len(valid),
-        "invalid_count": len(invalid),
-        "total_count": total,
-        "isolatable": bool(invalid),
-        "validation_error": issue,
-        "invalid_names": [
-            str(item.get("name") or f"Function Tool {int(item.get('index', 0)) + 1}")
-            for item in invalid
-        ],
-    }
+    """Summarize Function Tool state through the metadata-only Management path."""
+    return management_function_tool_health(options)
 
 
 def build_setup_health_facts(
@@ -61,6 +48,7 @@ def build_setup_health_facts(
     knowledge_source_count: int,
     knowledge_available: bool,
     is_admin: bool,
+    function_tools_health: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return only runtime facts the frontend cannot safely derive itself."""
     options = dict(subentry.data)
@@ -88,7 +76,11 @@ def build_setup_health_facts(
                 options.get(CONF_API_MODE, DEFAULT_API_MODE)
             ).strip(),
         },
-        "function_tools": _function_health(options),
+        "function_tools": (
+            function_tools_health
+            if function_tools_health is not None
+            else _function_health(options)
+        ),
         "prompt_state": prompt_state,
         "exposed_entity_count": exposed_entity_count,
         "memory": {
@@ -117,6 +109,7 @@ def add_setup_health(
     result: dict[str, Any],
     *,
     is_admin: bool,
+    function_tools_health: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Add setup facts without turning a partial Overview into a request failure."""
     try:
@@ -134,6 +127,7 @@ def add_setup_health(
             knowledge_source_count=int(agent.get("knowledge_source_count", 0)),
             knowledge_available="knowledge" not in failed_keys,
             is_admin=is_admin,
+            function_tools_health=function_tools_health,
         )
     except Exception:
         facts = {

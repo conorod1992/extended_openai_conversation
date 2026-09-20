@@ -11,6 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import (
     debug_ui,
+    frontend_assets,
     management_ui,
 )
 from custom_components.extended_openai_conversation_responses import (
@@ -166,8 +167,40 @@ def test_runtime_group_quarantine_drops_only_quarantined_references(
     quarantine._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
 
 
+async def test_frontend_manifest_load_is_executor_backed_and_cached(
+    monkeypatch,
+) -> None:
+    urls = {
+        "management": f"/{DOMAIN}/frontend/assets/management-test.js",
+    }
+    loader = MagicMock(return_value=urls)
+    register_static = AsyncMock()
+    executor = AsyncMock(side_effect=lambda callback: callback())
+    hass = SimpleNamespace(
+        data={},
+        async_add_executor_job=executor,
+        http=SimpleNamespace(async_register_static_paths=register_static),
+    )
+    monkeypatch.setattr(frontend_assets, "_load_entry_urls_sync", loader)
+
+    await frontend_assets.async_register_frontend_assets(hass)
+    await frontend_assets.async_register_frontend_assets(hass)
+
+    executor.assert_awaited_once_with(loader)
+    loader.assert_called_once_with()
+    register_static.assert_awaited_once()
+    assert frontend_assets.frontend_entry_url(hass, "management") == urls["management"]
+
+
 def test_cached_setup_uses_shared_production_asset_boundary() -> None:
-    assert management_ui.frontend_entry_url("management").startswith(
+    hass = SimpleNamespace(
+        data={
+            f"{DOMAIN}.frontend_entry_urls": {
+                "management": f"/{DOMAIN}/frontend/assets/management-test.js"
+            }
+        }
+    )
+    assert management_ui.frontend_entry_url(hass, "management").startswith(
         f"/{DOMAIN}/frontend/assets/management-"
     )
 
@@ -382,6 +415,53 @@ async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) 
         mock.assert_awaited_once()
 
 
+async def test_overview_reuses_one_function_tool_health_projection(monkeypatch) -> None:
+    hass, entry, subentry = _hass_with_agent()
+    usage = SimpleNamespace(
+        as_dict=lambda: {"total_tokens": 0},
+        today_summary=lambda: {"total_tokens": 0},
+        month_summary=lambda: {"total_tokens": 0},
+        latest_run=None,
+    )
+    monkeypatch.setattr(loading, "async_get_usage", AsyncMock(return_value=usage))
+    monkeypatch.setattr(
+        loading,
+        "async_get_memory",
+        AsyncMock(return_value=SimpleNamespace(stats=lambda: {"memory_count": 0})),
+    )
+    monkeypatch.setattr(
+        loading,
+        "async_get_knowledge",
+        AsyncMock(return_value=SimpleNamespace(source_count=0)),
+    )
+    monkeypatch.setattr(
+        loading,
+        "async_get_guest_mode",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                status=lambda: {"state": "inactive", "currently_active": False}
+            )
+        ),
+    )
+    health = {
+        "usable_count": 2,
+        "enabled_count": 1,
+        "invalid_count": 0,
+        "total_count": 2,
+        "isolatable": False,
+        "validation_error": None,
+        "invalid_names": [],
+    }
+    projection = MagicMock(return_value=health)
+    monkeypatch.setattr(loading, "management_function_tool_health", projection)
+
+    result = await async_overview_summary(hass, entry, subentry, is_admin=True)
+
+    projection.assert_called_once_with(dict(subentry.data))
+    assert result["agent"]["function_count"] == 1
+    assert result["setup_health"]["function_tools"] is health
+
+
 async def test_configuration_get_reports_phase_timings(monkeypatch) -> None:
     hass, _entry, _subentry = _hass_with_agent()
     monkeypatch.setattr(management_ui, "local_handling_snapshot", lambda *_args: {})
@@ -508,7 +588,9 @@ async def test_management_setup_retry_resumes_after_panel_failure(monkeypatch) -
     monkeypatch.setattr(management_ui, "_UI_SETUP", setup_key)
     monkeypatch.setattr(management_ui, "async_register_frontend_assets", asset_register)
     monkeypatch.setattr(
-        management_ui, "frontend_entry_url", lambda name: f"/built/{name}.js"
+        management_ui,
+        "frontend_entry_url",
+        lambda _hass, name: f"/built/{name}.js",
     )
     monkeypatch.setattr(
         management_ui.websocket_api, "async_register_command", websocket_register
@@ -707,7 +789,13 @@ async def test_cached_management_setup_respects_completed_step_markers(
     websocket_register = MagicMock(side_effect=AssertionError("websocket repeated"))
     panel_register = AsyncMock()
     hass = SimpleNamespace(
-        data={static_key: True, websocket_key: True},
+        data={
+            static_key: True,
+            websocket_key: True,
+            frontend_assets._FRONTEND_ENTRY_URLS: {
+                "management": f"/{DOMAIN}/frontend/assets/management-test.js"
+            },
+        },
         http=SimpleNamespace(async_register_static_paths=static_paths),
     )
     monkeypatch.setattr(management_ui, "_UI_SETUP", setup_key)
