@@ -53,6 +53,7 @@ from .temporary_memory import (
     get_loaded_temporary_memory,
 )
 
+
 def entry_and_agent(hass: HomeAssistant, entry_id: str, subentry_id: str):
     """Resolve an exact entry and conversation subentry for every management API."""
     entry = hass.config_entries.async_get_entry(entry_id)
