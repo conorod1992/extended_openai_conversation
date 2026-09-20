@@ -244,6 +244,8 @@ jobs:
             tests_real_ha/test_usage_accounting_failure_recovery.py
           )
 
+          XDIST_ARGS=()
+
           case "${{ matrix.shard }}" in
             process-restart-a)
               TEST_PATHS=("${PROCESS_RESTART_A[@]}")
@@ -273,6 +275,10 @@ jobs:
               for path in "${PROCESS_RESTART_A[@]}" "${PROCESS_RESTART_B[@]}" "${STATEFUL_SERIAL[@]}"; do
                 TEST_PATHS+=(--ignore="$path")
               done
+              XDIST_ARGS=(
+                -n 2
+                --dist=loadscope
+              )
               COVERAGE_ARGS=(
                 --cov=custom_components.extended_openai_conversation_responses.config_flow
                 --cov-branch
@@ -287,6 +293,7 @@ jobs:
           esac
 
           pytest "${TEST_PATHS[@]}" \
+            "${XDIST_ARGS[@]}" \
             -v \
             --asyncio-mode=auto \
             --timeout=60 \
