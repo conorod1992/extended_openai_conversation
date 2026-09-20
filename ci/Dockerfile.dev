@@ -20,14 +20,13 @@ COPY ci/install_ha_media_dependencies.py ci/install_ha_media_dependencies.py
 COPY ci/reconcile_ha_dev_environment.sh ci/reconcile_ha_dev_environment.sh
 
 RUN python -m pip install --upgrade pip \
-    && mkdir -p /tmp/ha-dev-wheel \
+    && mkdir -p /tmp/ha-dev-wheel /opt/eoai-ci \
     && pip wheel --no-deps "git+https://github.com/home-assistant/core.git@${HA_CORE_SHA}" --wheel-dir /tmp/ha-dev-wheel \
     && pip install /tmp/ha-dev-wheel/homeassistant-*.whl \
     && bash ci/reconcile_ha_dev_environment.sh \
         requirements_test.txt \
         custom_components/extended_openai_conversation_responses/manifest.json \
         /opt/eoai-ci/media-dependencies.ready \
-    && mkdir -p /opt/eoai-ci \
     && printf '%s\n' "$HA_CORE_SHA" > /opt/eoai-ci/ha-core-sha \
     && cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json \
         | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256
