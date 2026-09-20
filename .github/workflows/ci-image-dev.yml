@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "ci/Dockerfile.dev"
+      - "ci/Dockerfile.typecheck"
+      - "ci/Dockerfile.typecheck"
       - "ci/install_ha_dependencies.py"
       - "ci/install_ha_media_dependencies.py"
       - "ci/reconcile_ha_dev_environment.sh"
@@ -55,6 +57,35 @@ jobs:
           test -n "$PYTHON_VERSION"
           echo "sha=$HA_CORE_SHA" >> "$GITHUB_OUTPUT"
           echo "python-version=$PYTHON_VERSION" >> "$GITHUB_OUTPUT"
+          get_package_version() {
+            local manifest="$1"
+            local package="$2"
+            echo "$manifest" | grep -o "\"$package==[^\"]*\"" | sed "s/\"$package==//;s/\"//"
+          }
+
+          OPENAI_MANIFEST="$(curl -fsSL "https://raw.githubusercontent.com/${HA_CORE_REPO}/$HA_CORE_SHA/homeassistant/components/openai_conversation/manifest.json")"
+          CONVERSATION_MANIFEST="$(curl -fsSL "https://raw.githubusercontent.com/${HA_CORE_REPO}/$HA_CORE_SHA/homeassistant/components/conversation/manifest.json")"
+          REST_MANIFEST="$(curl -fsSL "https://raw.githubusercontent.com/${HA_CORE_REPO}/$HA_CORE_SHA/homeassistant/components/rest/manifest.json")"
+          SCRAPE_MANIFEST="$(curl -fsSL "https://raw.githubusercontent.com/${HA_CORE_REPO}/$HA_CORE_SHA/homeassistant/components/scrape/manifest.json")"
+
+          OPENAI_VERSION="$(get_package_version "$OPENAI_MANIFEST" "openai")"
+          HASSIL_VERSION="$(get_package_version "$CONVERSATION_MANIFEST" "hassil")"
+          HA_INTENTS_VERSION="$(get_package_version "$CONVERSATION_MANIFEST" "home-assistant-intents")"
+          XMLTODICT_VERSION="$(get_package_version "$REST_MANIFEST" "xmltodict")"
+          BEAUTIFULSOUP4_VERSION="$(get_package_version "$SCRAPE_MANIFEST" "beautifulsoup4")"
+          LXML_VERSION="$(get_package_version "$SCRAPE_MANIFEST" "lxml")"
+
+          for value in "$OPENAI_VERSION" "$HASSIL_VERSION" "$HA_INTENTS_VERSION" "$XMLTODICT_VERSION" "$BEAUTIFULSOUP4_VERSION" "$LXML_VERSION"; do
+            test -n "$value"
+          done
+
+          echo "openai-version=$OPENAI_VERSION" >> "$GITHUB_OUTPUT"
+          echo "hassil-version=$HASSIL_VERSION" >> "$GITHUB_OUTPUT"
+          echo "home-assistant-intents-version=$HA_INTENTS_VERSION" >> "$GITHUB_OUTPUT"
+          echo "xmltodict-version=$XMLTODICT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "beautifulsoup4-version=$BEAUTIFULSOUP4_VERSION" >> "$GITHUB_OUTPUT"
+          echo "lxml-version=$LXML_VERSION" >> "$GITHUB_OUTPUT"
+
           echo "HA dev: $HA_CORE_SHA"
           echo "Python: $PYTHON_VERSION"
 
@@ -85,6 +116,27 @@ jobs:
           cache-from: type=gha,scope=ha-dev-ci-image
           cache-to: type=gha,mode=max,scope=ha-dev-ci-image
 
+      - name: Build and publish Type Check image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ci/Dockerfile.typecheck
+          push: ${{ github.event_name != 'pull_request' }}
+          build-args: |
+            HA_CORE_SHA=${{ steps.ha.outputs.sha }}
+            PYTHON_VERSION=${{ steps.ha.outputs.python-version }}
+            OPENAI_VERSION=${{ steps.ha.outputs.openai-version }}
+            HASSIL_VERSION=${{ steps.ha.outputs.hassil-version }}
+            HA_INTENTS_VERSION=${{ steps.ha.outputs.home-assistant-intents-version }}
+            XMLTODICT_VERSION=${{ steps.ha.outputs.xmltodict-version }}
+            BEAUTIFULSOUP4_VERSION=${{ steps.ha.outputs.beautifulsoup4-version }}
+            LXML_VERSION=${{ steps.ha.outputs.lxml-version }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:typecheck
+            ${{ env.IMAGE_NAME }}:typecheck-${{ steps.ha.outputs.sha }}
+          cache-from: type=gha,scope=typecheck-ci-image
+          cache-to: type=gha,mode=max,scope=typecheck-ci-image
+
       - name: Verify published image
         if: github.event_name != 'pull_request'
         run: |
@@ -94,6 +146,13 @@ jobs:
             test "$(cat /opt/eoai-ci/ha-core-sha)" = "${{ steps.ha.outputs.sha }}"
             python -c "from importlib.metadata import version; print(\"homeassistant=\" + version(\"homeassistant\")); print(\"pytest-homeassistant-custom-component=\" + version(\"pytest-homeassistant-custom-component\"))"
           '
+          docker pull "${IMAGE_NAME}:typecheck-${{ steps.ha.outputs.sha }}"
+          docker run --rm "${IMAGE_NAME}:typecheck-${{ steps.ha.outputs.sha }}" bash -lc '
+            test "$(cat /opt/eoai-ci/ha-core-sha)" = "${{ steps.ha.outputs.sha }}"
+            test -s /opt/eoai-ci/typecheck-environment.txt
+            mypy --version
+            pip check
+          '
 
       - name: Publish image summary
         if: github.event_name != 'pull_request'
@@ -101,7 +160,8 @@ jobs:
           {
             echo "### HA dev CI image"
             echo
-            echo "Image: `${IMAGE_NAME}:ha-dev`"
+            echo "HA dev image: `${IMAGE_NAME}:ha-dev`"
+            echo "Type Check image: `${IMAGE_NAME}:typecheck-${{ steps.ha.outputs.sha }}`"
             echo "HA Core: `${{ steps.ha.outputs.sha }}`"
             echo "Python: `${{ steps.ha.outputs.python-version }}`"
           } >> "$GITHUB_STEP_SUMMARY"
