@@ -28,7 +28,7 @@ def test_management_panel_dependencies_are_build_inputs() -> None:
         "management-capabilities-ia.js",
         "quiet-hours-ui.js",
         "voice-identity-ui.js",
-        "management-permission-boundaries.js",
+        "management-panel.js",
         "management-navigation-search.js",
     }
     frontend = Path(management_ui.__file__).parent / "frontend"
