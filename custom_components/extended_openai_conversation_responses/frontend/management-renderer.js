@@ -193,7 +193,7 @@ function renderDynamicRegions(panel) {
   }
   const markup = !agent
     ? panel._empty("No conversation agents configured.")
-    : panel._busy ? panel._loading()
+    : panel._busy ? (panel._loadingContent?.(agent) || panel._loading())
       : panel._error ? `<div class="error" role="alert">${panel._e(panel._error)}</div>`
         : panel._content(agent);
   const changed = route !== panel._eocRenderedRoute || markup !== panel._eocMainMarkup;

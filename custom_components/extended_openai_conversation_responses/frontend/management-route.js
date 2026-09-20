@@ -294,18 +294,29 @@ export function startStoredOverviewPrefetch(
   const subentryId = preferredSubentryId || globalThis.localStorage?.getItem?.(AGENT_KEY);
   const entryId = globalThis.localStorage?.getItem?.(ENTRY_KEY);
   if (!subentryId || !entryId) return null;
+  panel._markColdLifecycle?.("overview-summary-start");
+  const overviewSummary = panel._hass.callWS({
+    type: WS_TYPE,
+    section: "overview",
+    action: "summary",
+    entry_id: entryId,
+    subentry_id: subentryId,
+  }).then(
+    (result) => {
+      panel._markColdLifecycle?.("overview-summary-complete", {status: "fulfilled"});
+      return result;
+    },
+    (err) => {
+      panel._markColdLifecycle?.("overview-summary-complete", {status: "rejected"});
+      throw err;
+    },
+  );
   return {
     entryId,
     subentryId,
     promise: Promise.allSettled([
       overviewAsset,
-      panel._hass.callWS({
-        type: WS_TYPE,
-        section: "overview",
-        action: "summary",
-        entry_id: entryId,
-        subentry_id: subentryId,
-      }),
+      overviewSummary,
       startOverviewBroadcastSnapshot(panel),
     ]),
   };
@@ -316,7 +327,14 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
   const previousAgentId = panel._agentId;
   const saved = globalThis.localStorage?.getItem?.(AGENT_KEY);
   const preferred = selectedId || saved;
+  if (panel._viewKey?.() === "overview") panel._markColdLifecycle?.("overview-asset-start");
   const routeAsset = warmRouteAsset(panel._viewKey?.());
+  if (panel._viewKey?.() === "overview" && routeAsset?.then) {
+    routeAsset.then(
+      () => panel._markColdLifecycle?.("overview-asset-complete", {status: "fulfilled"}),
+      () => panel._markColdLifecycle?.("overview-asset-complete", {status: "rejected"}),
+    );
+  }
   const prefetch = startStoredOverviewPrefetch(panel, preferred, routeAsset);
 
   panel._data = await panel._hass.callWS({type: WS_TYPE, action: "agents"});
