@@ -1,8 +1,8 @@
-"""Focused residual coverage for Temporary Memory ownership boundaries."""
+"""Canonical Temporary Memory ownership and integration-boundary tests."""
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    management_ui,
     temporary_memory as ownership,
     temporary_memory as temporary_module,
 )
@@ -18,11 +19,13 @@ from custom_components.extended_openai_conversation_responses.scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
+    MAX_ACTIVE_RECORDS,
     MAX_DELETE_RECORDS,
     TemporaryMemory,
     TemporaryMemoryRecord,
 )
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 
 def _record(
@@ -296,6 +299,20 @@ async def test_direct_manager_backup_and_owned_helpers() -> None:
     assert [r.memory_id for r in validated] == ["valid", "legacy"]
     assert validated[1].owner_scope_id == SHARED_HOUSEHOLD_SCOPE_ID
     await memory.async_replace_backup(records)
+    assert [
+        item.memory_id
+        for item in await memory.async_list(owner_scope_id="user:alice")
+    ] == ["valid"]
+    assert [
+        item.memory_id
+        for item in await memory.async_list_all(
+            owner_scope_id=SHARED_HOUSEHOLD_SCOPE_ID
+        )
+    ] == ["legacy"]
+    with pytest.raises(ValueError, match="resolved Personal or Shared owner"):
+        await memory.async_list()
+    with pytest.raises(ValueError, match="resolved Personal or Shared owner"):
+        await memory.async_list_all(owner_scope_id="device:kitchen")
     updated = await memory.async_update_owned(
         "user:alice", "valid", "new", None, "note"
     )
@@ -352,3 +369,191 @@ async def test_snapshot_contract_fails_closed_before_io_and_uses_bound_owner(
         management_ui.async_read_temporary_memory_snapshot
         is temporary_module.async_read_temporary_memory_snapshot
     )
+
+
+# Low-level owner normalization and selection invariants.
+
+def _ownership_record(
+    memory_id: str,
+    *,
+    scope_id: str = "user:one",
+    owner_scope_id: str | None = "user:one",
+    expires_delta: int = 3600,
+    updated_delta: int = 0,
+) -> TemporaryMemoryRecord:
+    now = dt_util.utcnow()
+    created = (now - timedelta(seconds=30)).isoformat()
+    updated = (now + timedelta(seconds=updated_delta)).isoformat()
+    expires = (now + timedelta(seconds=expires_delta)).isoformat()
+    return TemporaryMemoryRecord(
+        memory_id=memory_id,
+        scope_id=scope_id,
+        content=f"content-{memory_id}",
+        category="general",
+        source="automatic",
+        expires_at=expires,
+        created_at=created,
+        updated_at=updated,
+        owner_scope_id=owner_scope_id,
+    )
+
+
+def test_owner_validation_and_resolved_scope_translation() -> None:
+    assert ownership._valid_owner_scope_id(" user:abc ") == "user:abc"
+    assert (
+        ownership._valid_owner_scope_id(SHARED_HOUSEHOLD_SCOPE_ID)
+        == SHARED_HOUSEHOLD_SCOPE_ID
+    )
+    assert ownership._valid_owner_scope_id("user:") is None
+    assert ownership._valid_owner_scope_id("device:kitchen") is None
+    assert ownership._valid_owner_scope_id(42) is None
+    assert ownership._valid_owner_scope_id("user:" + "x" * 124) is None
+
+    assert (
+        ownership._owner_from_resolved_scope(
+            SimpleNamespace(scope_type="user", user_id="abc")
+        )
+        == "user:abc"
+    )
+    assert (
+        ownership._owner_from_resolved_scope(
+            SimpleNamespace(scope_type="shared", user_id=None)
+        )
+        == SHARED_HOUSEHOLD_SCOPE_ID
+    )
+    assert (
+        ownership._owner_from_resolved_scope(
+            SimpleNamespace(scope_type="device", user_id="abc")
+        )
+        is None
+    )
+    assert ownership._owner_from_resolved_scope(None) is None
+
+
+def test_require_owner_uses_context_and_rejects_missing_owner() -> None:
+    token = ownership._ACTIVE_OWNER_SCOPE_ID.set("user:context")
+    try:
+        assert ownership._require_owner_scope_id() == "user:context"
+    finally:
+        ownership._ACTIVE_OWNER_SCOPE_ID.reset(token)
+
+    with pytest.raises(ValueError, match="resolved Personal or Shared owner"):
+        ownership._require_owner_scope_id("device:kitchen")
+
+
+def test_record_owner_normalization_preserves_valid_and_migrates_only_safe_legacy() -> (
+    None
+):
+    valid = _ownership_record("valid", owner_scope_id="user:one")
+    spaced = replace(valid, memory_id="spaced", owner_scope_id=" user:one ")
+    legacy_safe = _ownership_record("legacy", owner_scope_id=None, scope_id="user:legacy")
+    legacy_unsafe = _ownership_record(
+        "unsafe", owner_scope_id=None, scope_id="conversation:123"
+    )
+    invalid = _ownership_record("invalid", owner_scope_id="device:kitchen")
+
+    assert ownership._normalize_record_owner(valid) is valid
+    assert ownership._normalize_record_owner(spaced).owner_scope_id == "user:one"
+    assert (
+        ownership._normalize_record_owner(legacy_safe).owner_scope_id == "user:legacy"
+    )
+    assert ownership._normalize_record_owner(legacy_unsafe) is None
+    assert ownership._normalize_record_owner(invalid) is None
+
+
+@pytest.mark.asyncio
+async def test_normalize_loaded_records_prunes_invalid_and_overflow_and_persists() -> (
+    None
+):
+    records = {
+        f"r{i}": _ownership_record(f"r{i}", updated_delta=i)
+        for i in range(MAX_ACTIVE_RECORDS + 2)
+    }
+    records["invalid"] = _ownership_record("invalid", owner_scope_id="device:kitchen")
+    manager = TemporaryMemory(None)
+    manager._records = records
+    manager._async_save_locked = AsyncMock()
+    async with manager._lock:
+        await manager._async_normalize_loaded_records_locked()
+
+    assert len(manager._records) == MAX_ACTIVE_RECORDS
+    assert "invalid" not in manager._records
+    assert "r0" not in manager._records
+    assert "r1" not in manager._records
+    assert manager.invalid_owners_pruned == 1
+    assert manager.overflow_pruned == 2
+    manager._async_save_locked.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_normalize_loaded_records_restores_original_on_save_failure() -> None:
+    invalid = _ownership_record("invalid", owner_scope_id="device:kitchen")
+    original = {"invalid": invalid}
+    manager = TemporaryMemory(None)
+    manager._records = original
+    manager._async_save_locked = AsyncMock(side_effect=OSError("disk failed"))
+    with pytest.raises(OSError, match="disk failed"):
+        async with manager._lock:
+            await manager._async_normalize_loaded_records_locked()
+
+    assert manager._records is original
+
+
+def test_records_for_owner_filters_expired_and_orders_deterministically() -> None:
+    manager = SimpleNamespace(
+        _records={
+            "later": _ownership_record("later", expires_delta=7200),
+            "earlier": _ownership_record("earlier", expires_delta=3600),
+            "other": _ownership_record("other", owner_scope_id="user:other"),
+            "expired": _ownership_record("expired", expires_delta=-10),
+        }
+    )
+    memory = TemporaryMemory(None)
+    memory._records = manager._records
+    result = memory._records_for_owner("user:one")
+    assert [item.memory_id for item in result] == ["earlier", "later"]
+
+
+@pytest.mark.parametrize("entry_id", [None, "", 123])
+async def test_temporary_memory_rejects_invalid_selection(hass, entry_id):
+    with pytest.raises(HomeAssistantError, match="entry_id is required"):
+        await management_ui.async_management_command(
+            hass,
+            "user",
+            False,
+            {
+                "section": "memories",
+                "action": "temporary_list",
+                "entry_id": entry_id,
+                "subentry_id": "agent",
+            },
+        )
+    hass.config_entries.async_get_entry.assert_not_called()
+
+
+async def test_backup_restore_enforces_global_record_ceiling_and_keeps_newest() -> None:
+    raw = [
+        asdict(_ownership_record(f"r{index}", updated_delta=index))
+        for index in range(MAX_ACTIVE_RECORDS + 4)
+    ]
+    with pytest.raises(ValueError, match="temporary memory count is invalid"):
+        TemporaryMemory.validate_backup_data({"records": raw})
+    validated = [
+        TemporaryMemory.validate_backup_data({"records": [record]})[0]
+        for record in raw
+    ]
+
+    store = SimpleNamespace(
+        async_load=AsyncMock(return_value=None),
+        async_save=AsyncMock(),
+    )
+    memory = TemporaryMemory(store)
+    await memory.async_initialize()
+    await memory.async_replace_backup(validated)
+
+    restored = await memory.async_list_owned("user:one")
+    assert len(restored) == MAX_ACTIVE_RECORDS
+    ids = {record.memory_id for record in restored}
+    assert f"r{MAX_ACTIVE_RECORDS + 3}" in ids
+    assert "r0" not in ids
+
