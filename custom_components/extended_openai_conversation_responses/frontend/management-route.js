@@ -20,11 +20,12 @@ export function routeAssetKind(view) {
 
 const featureModules = new Map();
 const featurePromises = new Map();
-// These feature helpers must be available before their first data request.
-// Independent editor/UI assets still load in parallel with backend work.
+// Only routes whose data loader itself lives in the lazy feature must wait for it.
+// Ordinary panel-owned data requests should begin while route assets download.
 const DATA_FEATURES = new Set([
-  "capabilities/quiet-hours", "capabilities/functions", "data-memory/conversations",
-  "usage-maintenance/usage", "usage-maintenance/request-debug",
+  "capabilities/quiet-hours",
+  "usage-maintenance/usage",
+  "usage-maintenance/request-debug",
 ]);
 const featureLoaders = {
   "agent-config": () => import("./agent-config-editor.js"),
