@@ -100,9 +100,7 @@ def select_api_path(
 
     if tools_required:
         preferred = cast(str, capabilities["function_calling"]["preferred_api"])
-        if capabilities["api"].get(preferred) and capabilities["function_calling"].get(
-            preferred
-        ):
+        if capabilities["api"].get(preferred) and capabilities["function_calling"].get(preferred):
             return preferred
         for api in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS):
             if capabilities["api"][api] and capabilities["function_calling"][api]:
