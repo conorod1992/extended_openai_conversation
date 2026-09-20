@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -360,3 +362,169 @@ def test_discovery_handles_read_errors_and_both_resource_limits(hass, tmp_path: 
     monkeypatch.setattr(skills_module, "MAX_SKILL_DISCOVERY_ENTRIES", 100)
     monkeypatch.setattr(skills_module, "MAX_DISCOVERED_SKILLS", 0)
     assert manager._load_skills_from_dir_sync(entry_limit_root) == []
+
+
+@pytest.mark.asyncio
+async def test_skill_load_publishes_complete_result_and_skips_bad_skill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeParser:
+        @staticmethod
+        def parse(content: str, path: Path, _base: Path) -> Any:
+            if content == "bad":
+                raise ValueError("broken skill")
+            if content == "ignore":
+                return None
+            return SimpleNamespace(name=path.parent.name)
+
+    class FakeManager(skills_module.SkillManager):
+        _instance = None
+
+    hass = SimpleNamespace(
+        config=SimpleNamespace(config_dir="/config"),
+        data={},
+        async_add_executor_job=AsyncMock(
+            return_value=[
+                (Path("/skills/good/SKILL.md"), "good"),
+                (Path("/skills/bad/SKILL.md"), "bad"),
+                (Path("/skills/ignored/SKILL.md"), "ignore"),
+            ]
+        ),
+    )
+    monkeypatch.setattr(skills, "SkillManager", FakeManager)
+    monkeypatch.setattr(skills, "SkillMdParser", FakeParser)
+
+    manager = FakeManager(hass)
+    await manager.async_load_skills()
+
+    assert set(manager._skills) == {"good"}
+    assert manager._initialized is True
+
+
+@pytest.mark.asyncio
+async def test_skill_first_load_failure_clears_singleton_and_retry_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeParser:
+        @staticmethod
+        def parse(_content: str, _path: Path, _base: Path) -> Any:
+            return None
+
+    class FakeManager(skills_module.SkillManager):
+        _instance = None
+
+    executor = AsyncMock(side_effect=[OSError("disk unavailable"), []])
+    hass = SimpleNamespace(
+        config=SimpleNamespace(config_dir="/config"),
+        data={},
+        async_add_executor_job=executor,
+    )
+    monkeypatch.setattr(skills, "SkillManager", FakeManager)
+    monkeypatch.setattr(skills, "SkillMdParser", FakeParser)
+
+    with pytest.raises(OSError, match="disk unavailable"):
+        await FakeManager.async_get_instance(hass, "/custom-skills")
+    assert FakeManager._instance is None
+
+    manager = await FakeManager.async_get_instance(hass, "/custom-skills")
+    assert FakeManager._instance is manager
+    assert manager._user_skills_dir == Path("/custom-skills")
+    assert manager._initialized is True
+    assert FakeManager.get_loaded_instance() is manager
+    assert await FakeManager.async_get_instance(hass, "/ignored-after-init") is manager
+
+class _Parser:
+    @staticmethod
+    def parse(_content: str, _path: Path, _base: Path) -> None:
+        return None
+
+
+def _skill_manager_type():
+    class FakeManager(skills_module.SkillManager):
+        _instance = None
+
+    return FakeManager
+
+
+@pytest.mark.asyncio
+async def test_skill_getter_initializes_without_custom_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default Skill directory path remains valid on first initialization."""
+    manager_type = _skill_manager_type()
+    hass = SimpleNamespace(
+        config=SimpleNamespace(config_dir="/config"),
+        data={},
+        async_add_executor_job=AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(skills, "SkillManager", manager_type)
+    monkeypatch.setattr(skills, "SkillMdParser", _Parser)
+
+    manager = await manager_type.async_get_instance(hass)
+
+    assert manager_type._instance is manager
+    assert manager._user_skills_dir == manager.user_skills_dir
+    assert manager._initialized is True
+
+
+@pytest.mark.asyncio
+async def test_skill_getter_adopts_late_directory_before_first_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An existing uninitialized singleton may still adopt its configured Skill path."""
+    manager_type = _skill_manager_type()
+    hass = SimpleNamespace(
+        config=SimpleNamespace(config_dir="/config"),
+        data={},
+        async_add_executor_job=AsyncMock(return_value=[]),
+    )
+    manager = manager_type(hass)
+    manager_type._instance = manager
+    monkeypatch.setattr(skills, "SkillManager", manager_type)
+    monkeypatch.setattr(skills, "SkillMdParser", _Parser)
+
+    resolved = await manager_type.async_get_instance(hass, "/late-skills")
+
+    assert resolved is manager
+    assert manager._user_skills_dir == Path("/late-skills")
+    assert hass.async_add_executor_job.await_args.args[1] == Path("/late-skills")
+
+
+@pytest.mark.asyncio
+async def test_skill_first_load_failure_does_not_clear_newer_singleton(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed old initializer must not discard a singleton published meanwhile."""
+    manager_type = _skill_manager_type()
+    replacement_holder: dict[str, Any] = {}
+
+    async def fail_after_replacement(*_args: Any) -> Any:
+        replacement = manager_type(SimpleNamespace())
+        replacement_holder["manager"] = replacement
+        manager_type._instance = replacement
+        raise OSError("load failed")
+
+    hass = SimpleNamespace(
+        config=SimpleNamespace(config_dir="/config"),
+        data={},
+        async_add_executor_job=AsyncMock(side_effect=fail_after_replacement),
+    )
+    monkeypatch.setattr(skills, "SkillManager", manager_type)
+    monkeypatch.setattr(skills, "SkillMdParser", _Parser)
+
+    with pytest.raises(OSError, match="load failed"):
+        await manager_type.async_get_instance(hass)
+
+    assert manager_type._instance is replacement_holder["manager"]
+
+
+def test_loaded_skill_getter_returns_none_for_uninitialized_singleton(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Callers must not observe a singleton before its catalogue is complete."""
+    manager_type = _skill_manager_type()
+    manager_type._instance = manager_type(SimpleNamespace())
+    monkeypatch.setattr(skills, "SkillManager", manager_type)
+    monkeypatch.setattr(skills, "SkillMdParser", _Parser)
+
+    assert manager_type.get_loaded_instance() is None
