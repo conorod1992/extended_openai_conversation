@@ -5,47 +5,19 @@ function navigationFor(panel) {
   return NAVIGATION.filter((item) => panel._canAccessView(item.id));
 }
 
-function ensureHost(parent, id, before) {
-  let host = parent.querySelector(`#${id}`);
-  if (!host) {
-    host = document.createElement("div");
-    host.id = id;
-    parent.insertBefore(host, before);
-  }
-  return host;
-}
-
 function preparePersistentShell(panel) {
   const root = panel.shadowRoot;
-  const shell = root.querySelector(".page-shell");
-  const layout = shell?.querySelector(".section-layout");
-  if (!shell || !layout) return false;
-
-  shell.dataset.eocPersistentShell = "";
-  root.querySelector("style")?.setAttribute("data-eoc-persistent-styles", "");
-  layout.querySelector("main")?.setAttribute("data-eoc-main", "");
-
-  const scopeHost = ensureHost(shell, "eoc-scope-host", layout);
-  const sectionHost = ensureHost(shell, "eoc-section-host", layout);
-  const existingScope = [...shell.children].find((item) => item.classList?.contains("scope-bar"));
-  const existingSection = [...shell.children].find((item) => item.classList?.contains("section-selector"));
-  if (existingScope) scopeHost.append(existingScope);
-  if (existingSection) sectionHost.append(existingSection);
-
-  let dialogHost = root.querySelector("#eoc-dialog-host");
-  if (!dialogHost) {
-    dialogHost = document.createElement("div");
-    dialogHost.id = "eoc-dialog-host";
-    const toast = root.querySelector("#toast");
-    root.insertBefore(dialogHost, toast || null);
-    [...root.children].filter((item) => item.tagName === "DIALOG").forEach((dialog) => dialogHost.append(dialog));
-  }
+  const shell = root.querySelector("[data-eoc-persistent-shell]");
+  const main = shell?.querySelector("[data-eoc-main]");
+  const dialogHost = root.querySelector("#eoc-dialog-host");
+  if (!shell || !main || !dialogHost) return false;
 
   const template = document.createElement("template");
   template.innerHTML = panel._eocDialogMarkup;
   panel._eocDialogTemplate = template.content;
   panel._eocPersistentReady = true;
   bindDynamicBase(panel);
+  syncManagementActions(panel);
   return true;
 }
 
@@ -92,25 +64,94 @@ function updateNavigation(panel, navigation) {
 
 function bindDynamicBase(panel) {
   const root = panel.shadowRoot;
-  if (!root.__eocRouteControlsBound) {
-    root.__eocRouteControlsBound = true;
-    root.addEventListener("change", async (event) => {
-      const control = event.target;
-      if (control?.id === "local-section") void panel._navigate(panel._page, control.value);
-      if (control?.id === "scope") {
-        const nextScope = control.value;
-        control.value = panel._scopeId;
-        if (!await panel._confirmUnsavedNavigation(panel._viewKey())) return;
-        panel._scopeId = nextScope;
-        control.value = nextScope;
-        void panel._loadSection();
-      }
-      if (control?.id === "show-empty-scopes") {
-        panel._showEmptyScopes = control.checked;
-        panel._render();
-      }
-    });
+  if (root.__eocRouteControlsBound) return;
+  root.__eocRouteControlsBound = true;
+
+  root.addEventListener("click", (event) => {
+    const target = event.target;
+    const pageButton = target?.closest?.(".top-nav button[data-page]");
+    if (pageButton) {
+      void panel._navigate(pageButton.dataset.page);
+      return;
+    }
+    const subsectionButton = target?.closest?.(".subsection-nav button[data-subsection]");
+    if (subsectionButton) {
+      void panel._navigate(panel._page, subsectionButton.dataset.subsection);
+      return;
+    }
+    const routeButton = target?.closest?.(".inline-route");
+    if (routeButton) {
+      void panel._navigate(routeButton.dataset.page, routeButton.dataset.subsection);
+      return;
+    }
+    const guideButton = target?.closest?.(".guide-topic-link");
+    if (guideButton) {
+      panel._guideTopic = guideButton.dataset.guideTopic;
+      void panel._navigate("guide");
+    }
+  });
+
+  root.addEventListener("change", async (event) => {
+    const control = event.target;
+    if (control?.id === "top-section-mobile") {
+      void panel._navigate(control.value);
+      return;
+    }
+    if (control?.id === "local-section") {
+      void panel._navigate(panel._page, control.value);
+      return;
+    }
+    if (control?.id === "agent") {
+      const nextAgent = control.value;
+      control.value = panel._agentId;
+      if (!await panel._confirmUnsavedNavigation(null)) return;
+      control.value = nextAgent;
+      panel._unsavedState?.scopes.clear();
+      panel._agentId = nextAgent;
+      localStorage.setItem("extended-openai-agent", panel._agentId);
+      panel._clearConfigDraft();
+      panel._scopeId = null;
+      panel._applyScopes(panel._scopeCatalogCache.get(panel._scopeCatalogKey()) || panel._baseScopes);
+      await panel._loadSection();
+      return;
+    }
+    if (control?.id === "scope") {
+      const nextScope = control.value;
+      control.value = panel._scopeId;
+      if (!await panel._confirmUnsavedNavigation(panel._viewKey())) return;
+      panel._scopeId = nextScope;
+      control.value = nextScope;
+      void panel._loadSection();
+      return;
+    }
+    if (control?.id === "show-empty-scopes") {
+      panel._showEmptyScopes = control.checked;
+      panel._render();
+    }
+  });
+}
+
+function syncManagementActions(panel) {
+  const root = panel.shadowRoot;
+  const contextRow = root.querySelector(".eoc-agent-context-row");
+  const actionsMenu = root.querySelector("main .agent-actions-menu") || root.querySelector(".eoc-agent-actions .agent-actions-menu");
+  if (!contextRow || !actionsMenu) return false;
+  const summary = actionsMenu.querySelector("summary");
+  if (summary && summary.textContent !== "Assistant actions") summary.textContent = "Assistant actions";
+  let actionGroup = contextRow.querySelector(".eoc-agent-actions");
+  if (!actionGroup) {
+    actionGroup = document.createElement("div");
+    actionGroup.className = "eoc-agent-actions";
+    contextRow.append(actionGroup);
   }
+  if (actionsMenu.parentElement !== actionGroup) {
+    const actionHelp = root.querySelector("main .action-help") || root.querySelector(".eoc-agent-actions .action-help");
+    actionGroup.replaceChildren(actionsMenu);
+    if (actionHelp) actionGroup.append(actionHelp);
+  }
+  const configToolbar = root.querySelector(".config-toolbar");
+  if (configToolbar && !configToolbar.children.length) configToolbar.remove();
+  return true;
 }
 
 const regionMarkup = new WeakMap();
@@ -118,15 +159,6 @@ function updateRegion(host, markup) {
   if (!host || regionMarkup.get(host) === markup) return;
   host.innerHTML = markup;
   regionMarkup.set(host, markup);
-}
-
-function bindDynamicMain(panel) {
-  const root = panel.shadowRoot;
-  root.querySelectorAll("main .inline-route").forEach((button) => button.addEventListener("click", () => panel._navigate(button.dataset.page, button.dataset.subsection)));
-  root.querySelectorAll("main .guide-topic-link").forEach((button) => button.addEventListener("click", () => {
-    panel._guideTopic = button.dataset.guideTopic;
-    panel._navigate("guide");
-  }));
 }
 
 function renderDynamicRegions(panel) {
@@ -147,6 +179,7 @@ function renderDynamicRegions(panel) {
   }
 
   const main = root.querySelector("[data-eoc-main]") || root.querySelector("main");
+  if (main) main.toggleAttribute("data-eoc-guide-layout", panel._page === "guide");
   const dialogs = panel._dialogs();
   const route = `${panel._agentId}|${panel._viewKey()}`;
   if (agent && !panel._busy && !panel._error && route === panel._eocRenderedRoute
@@ -180,7 +213,6 @@ function renderDynamicRegions(panel) {
     updateDialogs(panel, dialogs);
     panel._eocDialogMarkup = dialogs;
     panel._bindActions();
-    bindDynamicMain(panel);
   }
 
   if (!changed && dialogsChanged) {
@@ -188,6 +220,7 @@ function renderDynamicRegions(panel) {
     panel._eocDialogMarkup = dialogs;
   }
   bindDynamicBase(panel);
+  syncManagementActions(panel);
 }
 
 // The host calls this directly; feature decorators cannot own shell lifetime.

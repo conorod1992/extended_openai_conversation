@@ -1,11 +1,4 @@
-import {enhancementChanged} from "./management-enhancement-state.js";
-
-function ensureStyles(panel) {
-  const root = panel?.shadowRoot;
-  if (!root || root.querySelector("style[data-eoc-settings-polish]")) return;
-  const style = document.createElement("style");
-  style.dataset.eocSettingsPolish = "";
-  style.textContent = `
+export const SETTINGS_POLISH_STYLE = `
     [data-eoc-guide-layout]{grid-template-columns:minmax(0,1fr)!important}
     [data-eoc-guide-layout]>*{min-width:0;max-width:100%}
     .guide-quick-start,
@@ -38,20 +31,3 @@ function ensureStyles(panel) {
     .eoc-model-data-status [data-model-data-status]{margin:0}
     @media(max-width:900px){.eoc-model-data-actions{grid-template-columns:1fr}}
   `;
-  root.append(style);
-}
-
-function applyGuideLayout(panel) {
-  const root = panel?.shadowRoot;
-  if (!root) return;
-  const main = root.querySelector("[data-eoc-main]") || root.querySelector("main");
-  if (!main) return;
-  if (root.querySelector(".guide-quick-start")) main.dataset.eocGuideLayout = "";
-  else delete main.dataset.eocGuideLayout;
-}
-
-export function polishSettingsLayout(panel) {
-  if (!panel.shadowRoot || !enhancementChanged(panel, "settings-layout")) return;
-  ensureStyles(panel);
-  applyGuideLayout(panel);
-}

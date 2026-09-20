@@ -11,7 +11,7 @@ test("search debounces only results and preserves input, focus, page and styles"
   await page.evaluate(() => {
     const {panel} = window.browserHarness;
     const root = panel.shadowRoot;
-    window.renderProbe = {input:root.querySelector("#settings-search"), main:root.querySelector("main").firstElementChild, style:root.querySelector("[data-eoc-navigation-search]"), renders:0, mutations:[]};
+    window.renderProbe = {input:root.querySelector("#settings-search"), main:root.querySelector("main").firstElementChild, style:root.querySelector("[data-eoc-persistent-styles]"), renders:0, mutations:[]};
     const render = panel._render.bind(panel);
     panel._render = (...args) => { window.renderProbe.renders += 1; return render(...args); };
     const observer = new MutationObserver((records) => window.renderProbe.mutations.push(...records));
@@ -33,7 +33,7 @@ test("search debounces only results and preserves input, focus, page and styles"
     const probe = window.renderProbe;
     const root = window.browserHarness.panel.shadowRoot;
     probe.observer.disconnect();
-    return {renders:probe.renders, mutations:probe.mutations.length, input:root.querySelector("#settings-search") === probe.input, main:root.querySelector("main").firstElementChild === probe.main, style:root.querySelector("[data-eoc-navigation-search]") === probe.style, focused:root.activeElement === probe.input, caret:probe.input.selectionStart};
+    return {renders:probe.renders, mutations:probe.mutations.length, input:root.querySelector("#settings-search") === probe.input, main:root.querySelector("main").firstElementChild === probe.main, style:root.querySelector("[data-eoc-persistent-styles]") === probe.style, focused:root.activeElement === probe.input, caret:probe.input.selectionStart};
   });
   expect(result).toEqual({renders:0, mutations:0, input:true, main:true, style:true, focused:true, caret:3});
   await expectHarnessClean(page, errors);
@@ -49,7 +49,7 @@ test("unchanged renders retain toolbar, navigation, guidance and main nodes", as
     panel._render();
     await new Promise(requestAnimationFrame);
     const root = panel.shadowRoot;
-    const selectors = ["main > :first-child", "#settings-search", ".eoc-agent-context-row", ".subsection-nav", "[data-eoc-guidance-generated]", "style[data-eoc-management-toolbar]"];
+    const selectors = ["main > :first-child", "#settings-search", ".eoc-agent-context-row", ".subsection-nav", "[data-eoc-guidance-generated]", "style[data-eoc-persistent-styles]"];
     const before = selectors.map((selector) => root.querySelector(selector));
     const observer = new MutationObserver(() => {});
     observer.observe(root, {childList:true, subtree:true});
