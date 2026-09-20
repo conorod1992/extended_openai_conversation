@@ -8,8 +8,11 @@ from datetime import timedelta
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses import (
     debug,
+    hot_path_cleanup,
     local_intents,
     request_rules,
 )
@@ -189,3 +192,145 @@ def test_request_rule_fuzzy_matching_still_runs_as_fallback(monkeypatch) -> None
     assert match is not None
     assert match.fuzzy is True
     assert match.phrase == "something else"
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (None, False),
+        ({"type": "response.output_text.delta", "delta": "hello"}, True),
+        ({"type": "response.output_text.delta", "delta": ""}, False),
+        ({"choices": [{"delta": {"content": "hello"}}]}, True),
+        ({"choices": [None, {"delta": {"content": ""}}]}, False),
+        ({"choices": "invalid"}, False),
+    ],
+)
+def test_debug_event_has_text_variants(payload: object, expected: bool) -> None:
+    assert hot_path_cleanup._debug_event_has_text(payload) is expected
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (None, False),
+        ({"type": "response.function_call_arguments.delta"}, True),
+        ({"type": "response.web_search_call.completed"}, True),
+        ({"item": {"type": "function_call"}}, True),
+        ({"item": {"type": "web_search_call"}}, True),
+        ({"item": {"type": "message"}}, False),
+        ({"item": "invalid"}, False),
+    ],
+)
+def test_debug_event_has_action_variants(payload: object, expected: bool) -> None:
+    assert hot_path_cleanup._debug_event_has_action(payload) is expected
+
+
+def test_debug_usage_handles_chat_completions_names_and_invalid_values() -> None:
+    assert hot_path_cleanup._debug_usage(None) is None
+    assert hot_path_cleanup._debug_usage({"usage": "invalid"}) is None
+
+    assert hot_path_cleanup._debug_usage(
+        {
+            "usage": {
+                "prompt_tokens": 7,
+                "completion_tokens": 3,
+                "total_tokens": -1,
+                "prompt_tokens_details": {"cached_tokens": 2},
+                "completion_tokens_details": {"reasoning_tokens": 1},
+            }
+        }
+    ) == {
+        "input_tokens": 7,
+        "output_tokens": 3,
+        "total_tokens": 10,
+        "cached_input_tokens": 2,
+        "reasoning_tokens": 1,
+    }
+
+
+def test_debug_usage_reads_nested_response_and_rejects_non_integer_counts() -> None:
+    assert hot_path_cleanup._debug_usage(
+        {
+            "response": {
+                "usage": {
+                    "input_tokens": "5",
+                    "output_tokens": None,
+                    "total_tokens": 9,
+                    "input_tokens_details": [],
+                    "output_tokens_details": "invalid",
+                }
+            }
+        }
+    ) == {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 9,
+        "cached_input_tokens": 0,
+        "reasoning_tokens": 0,
+    }
+
+
+def _debug_request() -> debug.DebugProviderRequest:
+    return debug.DebugProviderRequest(
+        request_id="request",
+        api_surface="responses",
+        started_at=dt_util.utcnow().isoformat(),
+        started_offset_ms=0,
+        request={},
+        metrics={},
+        _started_monotonic=time.monotonic(),
+    )
+
+
+def test_debug_add_event_stops_after_already_truncated() -> None:
+    request = _debug_request()
+    request.response_events_truncated = True
+    request.response_events = [{"existing": True}]
+
+    request.add_event({"type": "response.output_text.delta", "delta": "hello"})
+
+    assert request.first_event_ms is not None
+    assert request.first_text_ms is not None
+    assert request.response_events == [{"existing": True}]
+
+
+def test_debug_add_event_marks_size_overflow_without_retaining_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _debug_request()
+    monkeypatch.setattr(debug, "DEBUG_MAX_EVENT_BYTES", 1)
+
+    request.add_event({"type": "message", "content": "too large"})
+
+    assert request.response_events_truncated is True
+    assert request.response_events == []
+    assert request._event_bytes == 0
+
+
+def test_debug_event_records_first_action_latency_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Action latency is captured on the first tool/search event and remains stable."""
+    monkeypatch.setattr(
+        debug.DebugProviderRequest, "add_event", debug.DebugProviderRequest.add_event
+    )
+    request = debug.DebugProviderRequest(
+        request_id="request",
+        api_surface="responses",
+        started_at=dt_util.utcnow().isoformat(),
+        started_offset_ms=0,
+        request={},
+        metrics={},
+        _started_monotonic=time.monotonic() - 0.05,
+    )
+
+    request.add_event({"type": "response.function_call.arguments.delta", "delta": "{}"})
+    first_action_ms = request.first_action_ms
+    request.add_event({"type": "response.web_search_call.completed"})
+
+    assert first_action_ms is not None
+    assert request.first_action_ms == first_action_ms
+    assert len(request.response_events) == 2
+    assert (
+        request.response_events[0]["type"] == "response.function_call.arguments.delta"
+    )
