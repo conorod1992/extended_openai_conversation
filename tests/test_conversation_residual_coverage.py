@@ -149,10 +149,12 @@ async def test_retrieval_short_circuits_and_isolates_temporary_store_failures() 
     agent = _agent()
     agent._current_readable_memory_scope_ids = lambda _context: ["user:one"]
     assert await Agent._async_retrieve_memories(agent, object(), "query") == []
+    assert await Agent._async_select_memories(agent, object(), "query") == []
 
     agent._memory = object()
     agent._current_readable_memory_scope_ids = lambda _context: []
     assert await Agent._async_retrieve_memories(agent, object(), "query") == []
+    assert await Agent._async_select_memories(agent, object(), "query") == []
     assert await Agent._async_search_memories(agent, [], "query", 3) == []
 
     agent._current_readable_memory_scope_ids = lambda _context: ["user:one"]
