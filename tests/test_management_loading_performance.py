@@ -382,6 +382,53 @@ async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) 
         mock.assert_awaited_once()
 
 
+async def test_overview_reuses_one_function_tool_health_projection(monkeypatch) -> None:
+    hass, entry, subentry = _hass_with_agent()
+    usage = SimpleNamespace(
+        as_dict=lambda: {"total_tokens": 0},
+        today_summary=lambda: {"total_tokens": 0},
+        month_summary=lambda: {"total_tokens": 0},
+        latest_run=None,
+    )
+    monkeypatch.setattr(loading, "async_get_usage", AsyncMock(return_value=usage))
+    monkeypatch.setattr(
+        loading,
+        "async_get_memory",
+        AsyncMock(return_value=SimpleNamespace(stats=lambda: {"memory_count": 0})),
+    )
+    monkeypatch.setattr(
+        loading,
+        "async_get_knowledge",
+        AsyncMock(return_value=SimpleNamespace(source_count=0)),
+    )
+    monkeypatch.setattr(
+        loading,
+        "async_get_guest_mode",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                status=lambda: {"state": "inactive", "currently_active": False}
+            )
+        ),
+    )
+    health = {
+        "usable_count": 2,
+        "enabled_count": 1,
+        "invalid_count": 0,
+        "total_count": 2,
+        "isolatable": False,
+        "validation_error": None,
+        "invalid_names": [],
+    }
+    projection = MagicMock(return_value=health)
+    monkeypatch.setattr(loading, "management_function_tool_health", projection)
+
+    result = await async_overview_summary(hass, entry, subentry, is_admin=True)
+
+    projection.assert_called_once_with(dict(subentry.data))
+    assert result["agent"]["function_count"] == 1
+    assert result["setup_health"]["function_tools"] is health
+
+
 async def test_configuration_get_reports_phase_timings(monkeypatch) -> None:
     hass, _entry, _subentry = _hass_with_agent()
     monkeypatch.setattr(management_ui, "local_handling_snapshot", lambda *_args: {})
