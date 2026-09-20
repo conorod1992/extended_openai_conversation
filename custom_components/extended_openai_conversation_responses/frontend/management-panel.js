@@ -53,7 +53,7 @@ const MANAGEMENT_STYLESHEET_URL = new URL("./management.css", import.meta.url).h
 // Keep this deliberately small and geometry-identical to management.css: it exists
 // only to prevent FOUC/layout shift while the external stylesheet is still pending.
 const CRITICAL_STYLE = `
-  :host{display:block;min-height:100%;padding:28px;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);box-sizing:border-box;background:var(--primary-background-color)}
+  :host{display:block;min-height:100%;padding:28px;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);font-size:14px;line-height:1.45;box-sizing:border-box;background:color-mix(in srgb,var(--secondary-background-color) 42%,var(--primary-background-color))}
   *{box-sizing:border-box}
   [hidden]{display:none!important}
   .page-shell{max-width:1380px;margin:auto}
@@ -63,7 +63,7 @@ const CRITICAL_STYLE = `
   header .global-search.eoc-global-search{width:min(380px,100%);max-width:100%;min-width:280px;margin:0;align-self:end;position:relative}
   header .eoc-global-search>label{display:block}
   header .eoc-global-search .search-label{display:none}
-  label{display:grid;gap:7px;font-size:13px;color:var(--secondary-text-color)}
+  label{display:grid;gap:7px;font-size:14px;color:var(--secondary-text-color)}
   input,select,textarea,button{font:inherit}
   input,select,textarea{width:100%;min-height:42px;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:9px;padding:10px 12px}
   button{min-height:42px;border:0;border-radius:9px;padding:9px 16px;cursor:pointer;background:var(--primary-color);color:var(--text-primary-color)}

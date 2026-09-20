@@ -2,18 +2,19 @@ import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 // Reproduce the real HA cold-load case where HTTP/1.1 delays the full stylesheet.
-test("critical CSS prevents shell and route-title FOUC while full stylesheet is delayed", async ({page}) => {
+for (const bundled of [false, true]) {
+test(`critical CSS prevents shell and route-title FOUC while full stylesheet is delayed (${bundled ? "bundle" : "source"})`, async ({page}) => {
   const errors = trackPageErrors(page);
   let releaseStylesheet;
   const stylesheetRequested = new Promise((resolve) => {
-    page.route("**/frontend/management.css", async (route) => {
+    page.route(/\/management[^/]*\.css$/, async (route) => {
       resolve();
       await new Promise((release) => { releaseStylesheet = release; });
       await route.continue();
     });
   });
 
-  await page.goto(fixtureUrl("capabilities/home-assistant"), {waitUntil:"domcontentloaded"});
+  await page.goto(fixtureUrl("capabilities/home-assistant", bundled ? "&bundle=1" : ""), {waitUntil:"domcontentloaded"});
   await stylesheetRequested;
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".page-heading h1")).toHaveText("Extended OpenAI");
@@ -89,6 +90,7 @@ test("critical CSS prevents shell and route-title FOUC while full stylesheet is 
   }
   await expectHarnessClean(page, errors);
 });
+}
 
 for (const bundled of [false, true]) {
   test(`management shell uses external stylesheet (${bundled ? "bundle" : "source"})`, async ({page}) => {
