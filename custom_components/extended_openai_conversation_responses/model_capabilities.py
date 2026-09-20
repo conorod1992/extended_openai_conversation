@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, cast
 
 from .const import API_MODE_AUTO, API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES
@@ -12,6 +15,31 @@ class ModelCapabilityError(ValueError):
     """A configuration is incompatible with the selected model capabilities."""
 
 
+_ACTIVE_CAPABILITY_SNAPSHOT: ContextVar[tuple[str, Mapping[str, Any]] | None] = (
+    ContextVar("extended_openai_model_capability_snapshot", default=None)
+)
+
+
+def _request_capabilities(model_id: str) -> Mapping[str, Any]:
+    """Return the request-local snapshot when one is active for this model."""
+    snapshot = _ACTIVE_CAPABILITY_SNAPSHOT.get()
+    if snapshot is not None and snapshot[0] == model_id:
+        return snapshot[1]
+    return get_model_capabilities(model_id)
+
+
+@contextmanager
+def model_capability_snapshot(
+    model_id: str, capabilities: Mapping[str, Any]
+) -> Iterator[None]:
+    """Reuse one already-isolated capability snapshot during request preparation."""
+    token = _ACTIVE_CAPABILITY_SNAPSHOT.set((model_id, capabilities))
+    try:
+        yield
+    finally:
+        _ACTIVE_CAPABILITY_SNAPSHOT.reset(token)
+
+
 def get_model_capabilities(model_id: str) -> dict[str, Any]:
     """Return authoritative v2 capability data for one exact model ID."""
     return model_metadata(model_id)
@@ -19,7 +47,7 @@ def get_model_capabilities(model_id: str) -> dict[str, Any]:
 
 def validate_reasoning_effort(model: str, effort: str | None) -> str | None:
     """Validate an exact model reasoning enum without family-name heuristics."""
-    reasoning = get_model_capabilities(model)["reasoning"]
+    reasoning = _request_capabilities(model)["reasoning"]
     if not reasoning["supported"]:
         if effort is not None:
             raise ModelCapabilityError(
@@ -40,7 +68,7 @@ def parameter_is_allowed(model: str, parameter: str, effort: str | None) -> bool
     """Return whether temperature/top_p may be sent for this exact request."""
     if parameter not in {"temperature", "top_p"}:
         raise ModelCapabilityError(f"Unknown sampling parameter: {parameter}")
-    capability = get_model_capabilities(model)[parameter]
+    capability = _request_capabilities(model)[parameter]
     support = capability["support"]
     if support == "always":
         return True
@@ -53,7 +81,7 @@ def validate_api_path(model: str, api: str, tools_required: bool = False) -> str
     """Validate API and function-calling support for one selected path."""
     if api not in {API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS}:
         raise ModelCapabilityError(f"Unknown API path: {api}")
-    capabilities = get_model_capabilities(model)
+    capabilities = _request_capabilities(model)
     if not capabilities["api"][api]:
         raise ModelCapabilityError(f"{model} does not support {api}.")
     if tools_required and not capabilities["function_calling"][api]:
@@ -67,7 +95,7 @@ def select_api_path(
     model: str, configured_api: str, tools_required: bool = False
 ) -> str:
     """Resolve Auto entirely from exact model capability metadata."""
-    capabilities = get_model_capabilities(model)
+    capabilities = _request_capabilities(model)
     if configured_api != API_MODE_AUTO:
         return validate_api_path(model, configured_api, tools_required)
 
@@ -103,7 +131,7 @@ def select_api_path(
 
 def recommended_reasoning_effort(model: str) -> str | None:
     """Return the HA/application default, separately from the provider default."""
-    capabilities = get_model_capabilities(model)
+    capabilities = _request_capabilities(model)
     return cast(str | None, capabilities["recommended_profile"]["reasoning_effort"])
 
 
@@ -120,7 +148,7 @@ def normalize_output_token_limit(
         raise ModelCapabilityError("Output token limit must be an integer.") from err
     if value <= 0:
         raise ModelCapabilityError("Output token limit must be greater than zero.")
-    capabilities = get_model_capabilities(model)
+    capabilities = _request_capabilities(model)
     ceiling = capabilities["limits"]["max_output_tokens"]
     if value > ceiling:
         raise ModelCapabilityError(
