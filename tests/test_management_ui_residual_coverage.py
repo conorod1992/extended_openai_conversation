@@ -210,8 +210,8 @@ async def test_non_admin_scope_catalog_handles_known_and_missing_users() -> None
     hass.auth.async_get_user = AsyncMock(
         side_effect=[SimpleNamespace(name="Alice"), None]
     )
-    first = await management_ui._scope_catalog(hass, "alice", False, {"alice": 2})
-    second = await management_ui._scope_catalog(hass, "missing", False)
+    first = await management_projections.async_scope_catalog_projection(hass, "alice", False, {"alice": 2})
+    second = await management_projections.async_scope_catalog_projection(hass, "missing", False)
     assert first[0]["display_name"] == "Alice"
     assert first[0]["memory_count"] == 2
     assert second[0]["display_name"] == "missing"
