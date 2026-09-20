@@ -509,7 +509,6 @@ async def _async_preview_effective_request(
     }
 
 
-
 def _require_admin(is_admin: bool) -> None:
     if not is_admin:
         raise HomeAssistantError("Administrator permission is required")
@@ -2184,7 +2183,6 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
             ) from err
         raise
     return {key: normalized[key] for key in settings}
-
 
 
 @websocket_api.websocket_command(
