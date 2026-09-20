@@ -1,4 +1,4 @@
-"""Focused residual coverage for Temporary Memory ownership boundaries."""
+"""Canonical Temporary Memory ownership and integration-boundary tests."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -529,6 +529,7 @@ async def test_temporary_memory_rejects_invalid_selection(hass, entry_id):
             },
         )
     hass.config_entries.async_get_entry.assert_not_called()
+
 
 async def test_backup_restore_enforces_global_record_ceiling_and_keeps_newest() -> None:
     raw = [
