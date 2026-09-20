@@ -60,11 +60,12 @@ export function loadUsageDaily(panel, extra = {}) {
   }));
 }
 
-export function loadInputFootprintData(panel) {
+export function loadInputFootprintData(panel, {reusePending = true} = {}) {
   const agentId = panel._agentId;
   if (!agentId || panel._viewKey?.() !== "usage-maintenance/usage") return null;
   if (
-    panel._inputFootprintPromise
+    reusePending
+    && panel._inputFootprintPromise
     && panel._inputFootprintPendingAgentId === agentId
   ) return panel._inputFootprintPromise;
 
