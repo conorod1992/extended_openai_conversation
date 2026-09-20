@@ -173,10 +173,36 @@ def test_function_call_budget_counts_individual_calls() -> None:
 def test_parallel_budget_reservation_is_atomic() -> None:
     budget = FunctionCallBudget(limit=2, used=1)
 
-    with pytest.raises(HomeAssistantError, match="Function call limit of 2 reached"):
+    with pytest.raises(
+        HomeAssistantError,
+        match=r"Function call limit of 2 reached; refusing to execute additional tool `third`",
+    ):
         budget.claim_many(("second", "third"))
 
     assert budget.used == 1
+    assert budget.remaining == 1
+    assert budget.exhausted is False
+
+
+def test_function_call_budget_unlimited_and_empty_batch_edges() -> None:
+    unlimited = FunctionCallBudget(limit=-1)
+
+    assert unlimited.remaining is None
+    assert unlimited.exhausted is False
+
+    unlimited.claim_many(("first_tool", "second_tool"))
+
+    assert unlimited.used == 2
+    assert unlimited.remaining is None
+    assert unlimited.exhausted is False
+
+    exhausted = FunctionCallBudget(limit=0)
+    assert exhausted.exhausted is True
+
+    exhausted.claim_many(())
+
+    assert exhausted.used == 0
+    assert exhausted.remaining == 0
 
 
 def test_provider_safety_ceiling_is_separate_from_function_budget() -> None:
