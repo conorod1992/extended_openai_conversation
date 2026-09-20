@@ -53,7 +53,6 @@ from .const import (
     CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
     CONF_FUNCTION_GROUPS,
-    CONF_FUNCTION_TOOLS,
     CONF_GUEST_ALLOWED_FUNCTION_NAMES,
     CONF_GUEST_MODE_ENABLED,
     CONF_GUEST_POLICY_VERSION,
@@ -138,7 +137,6 @@ from .management_function_quarantine import (
 )
 from .management_function_repair import (
     agent_config_revision as _agent_config_revision,
-    persist_valid_function_configuration as _persist_valid_function_configuration,
     require_agent_config_revision as _require_agent_config_revision,
 )
 from .management_history_queries import (
