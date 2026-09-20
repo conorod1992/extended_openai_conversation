@@ -35,13 +35,15 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 from custom_components.extended_openai_conversation_responses.entity import (
     CONTINUE_CONVERSATION_TOOL_NAME,
     ExtendedOpenAIBaseLLMEntity,
-    _build_web_search_tool,
     _convert_content_to_responses_param,
     _format_tools,
     _normalize_url_citation,
 )
 from custom_components.extended_openai_conversation_responses.helpers import (
     get_api_mode,
+)
+from custom_components.extended_openai_conversation_responses.request import (
+    build_web_search_tool as _build_web_search_tool,
 )
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError

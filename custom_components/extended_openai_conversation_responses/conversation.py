@@ -37,6 +37,7 @@ from . import ExtendedOpenAIConfigEntry
 from .agent_config import function_tool_enabled
 from .agent_configuration import (
     _archive_runtime_required,
+    async_ensure_optional_manager,
     async_reconcile_runtime_configuration,
     sync_memory_embedding_provider,
 )
@@ -141,12 +142,12 @@ from .guest_mode import (
     GuestModeDenied,
     GuestModeManager,
     async_get_guest_mode,
+    can_reuse_request_policy,
     execution_failure_result,
     guest_arguments_allowed_runtime,
     guest_mode_denial_result,
     resolve_guest_policy,
 )
-from .guest_performance import can_reuse_request_policy
 from .ha_llm_tools import (
     ToolSnapshot,
     async_discover,
@@ -405,15 +406,13 @@ class ExtendedOpenAIAgentEntity(
         async def initialize_temporary_memory() -> None:
             if not temporary_configured:
                 return
-            try:
-                self._temporary_memory = await async_get_temporary_memory(
-                    self.hass, self.entry.entry_id, self.subentry.subentry_id
-                )
-            except Exception as err:
-                self._set_subsystem_status("temporary_memory", True, err)
-                _LOGGER.exception("Unable to initialize temporary memory")
-            else:
-                self._set_subsystem_status("temporary_memory", True, healthy=True)
+            await async_ensure_optional_manager(
+                self,
+                attribute="_temporary_memory",
+                subsystem="temporary_memory",
+                loader=async_get_temporary_memory,
+                failure_message="Unable to initialize temporary memory",
+            )
 
         async def initialize_knowledge() -> None:
             try:
@@ -431,30 +430,32 @@ class ExtendedOpenAIAgentEntity(
         async def initialize_persistent_memory() -> None:
             if not memory_configured:
                 return
-            try:
-                self._memory = await async_get_memory(
-                    self.hass, self.entry.entry_id, self.subentry.subentry_id
-                )
-                if (
+            initialized = await async_ensure_optional_manager(
+                self,
+                attribute="_memory",
+                subsystem="persistent_memory",
+                loader=async_get_memory,
+                failure_message="Unable to initialize persistent memory",
+            )
+            if (
+                initialized
+                and self._memory is not None
+                and (
                     self.subentry.data.get(
                         CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE
                     )
                     == MEMORY_RETRIEVAL_HYBRID
-                ):
-                    self._memory.set_embedding_provider(
-                        self._async_create_embeddings,
-                        str(
-                            self.subentry.data.get(
-                                CONF_MEMORY_EMBEDDING_MODEL,
-                                DEFAULT_MEMORY_EMBEDDING_MODEL,
-                            )
-                        ),
-                    )
-            except Exception as err:
-                self._set_subsystem_status("persistent_memory", True, err)
-                _LOGGER.exception("Unable to initialize persistent memory")
-            else:
-                self._set_subsystem_status("persistent_memory", True, healthy=True)
+                )
+            ):
+                self._memory.set_embedding_provider(
+                    self._async_create_embeddings,
+                    str(
+                        self.subentry.data.get(
+                            CONF_MEMORY_EMBEDDING_MODEL,
+                            DEFAULT_MEMORY_EMBEDDING_MODEL,
+                        )
+                    ),
+                )
 
         await asyncio.gather(
             initialize_temporary_memory(),

@@ -12,7 +12,11 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     agent_configuration as configuration,
     conversation,
+    knowledge,
     memory,
+)
+from custom_components.extended_openai_conversation_responses.const import (
+    SUBSYSTEM_STATUS_KEY,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity as Agent,
@@ -168,6 +172,56 @@ async def test_retention_cancellation_is_not_swallowed(startup):
     startup.agent._archive.async_prune.side_effect = asyncio.CancelledError
     with pytest.raises(asyncio.CancelledError):
         await startup.scheduled[0][1](None)
+
+
+async def test_shared_optional_manager_ensure_reuses_existing_without_io(startup):
+    """Startup/live ownership must not reacquire an already-loaded shared manager."""
+    existing = object()
+    startup.agent._temporary_memory = existing
+    loader = AsyncMock(side_effect=AssertionError("existing manager must be reused"))
+
+    assert await configuration.async_ensure_optional_manager(
+        startup.agent,
+        attribute="_temporary_memory",
+        subsystem="temporary_memory",
+        loader=loader,
+        failure_message="unused",
+    )
+    assert startup.agent._temporary_memory is existing
+    loader.assert_not_awaited()
+    status = startup.agent.hass.data[SUBSYSTEM_STATUS_KEY][
+        ("entry", "agent")
+    ]["temporary_memory"]
+    assert status["status"] == "healthy"
+
+
+async def test_disabled_knowledge_keeps_distinct_startup_and_live_semantics(
+    startup, monkeypatch
+):
+    """Knowledge stays preloadable at startup but is not live-created while disabled."""
+    agent = startup.agent
+    agent.subentry.data = {
+        **agent.subentry.data,
+        "memory_mode": "off",
+        "temporary_memory": "off",
+        "archive_enabled": False,
+        "archive_model_search_enabled": False,
+        "knowledge_enabled": False,
+    }
+    startup_knowledge = object()
+    startup.getters["knowledge"].return_value = startup_knowledge
+
+    await agent._async_initialize_optional_managers()
+    assert agent._knowledge is startup_knowledge
+    startup.getters["knowledge"].assert_awaited_once()
+
+    agent._knowledge = None
+    live_getter = AsyncMock(return_value=object())
+    monkeypatch.setattr(knowledge, "async_get_knowledge", live_getter)
+    await configuration.async_reconcile_runtime_configuration(agent, force=True)
+
+    live_getter.assert_not_awaited()
+    assert agent._knowledge is None
 
 
 async def test_concurrent_reconciliation_initializes_once_and_retries_after_cancellation(

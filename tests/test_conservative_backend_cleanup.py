@@ -3,24 +3,9 @@
 from typing import Any, cast
 
 from custom_components.extended_openai_conversation_responses import request_rules
-from custom_components.extended_openai_conversation_responses.entity import (
-    _index_function_tools,
-)
 from custom_components.extended_openai_conversation_responses.request_rules import (
     RequestRules,
 )
-
-
-def test_function_tool_index_preserves_first_definition() -> None:
-    """Indexing must retain the old linear lookup's first-match behavior."""
-    first = {"spec": {"name": "same"}, "marker": "first"}
-    second = {"spec": {"name": "same"}, "marker": "second"}
-    other = {"spec": {"name": "other"}, "marker": "other"}
-
-    indexed = _index_function_tools([first, second, other])
-
-    assert indexed["same"] is first
-    assert indexed["other"] is other
 
 
 def test_request_rule_match_reuses_normalization_by_profile(monkeypatch: Any) -> None:
