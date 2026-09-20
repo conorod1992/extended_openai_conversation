@@ -202,6 +202,7 @@ def _sampling_value(
     model: str,
     parameter: str,
     effort: str | None,
+    capabilities: Mapping[str, Any],
 ) -> Any | None:
     """Return a valid explicitly configured sampling value, else omit it."""
     if parameter == CONF_TEMPERATURE:
@@ -211,7 +212,9 @@ def _sampling_value(
     value = options.get(parameter, legacy_default)
     if not sampling_value_is_configured(parameter, value, legacy_default):
         return None
-    if parameter_is_allowed(model, parameter, effort):
+    if parameter_is_allowed(
+        model, parameter, effort, capabilities=capabilities
+    ):
         return value
     _LOGGER.debug(
         "Omitting stale %s=%r for model %s at reasoning_effort=%r because the "
@@ -239,12 +242,22 @@ def build_provider_request_snapshot(
     )
     configured_api = str(options.get(CONF_API_MODE, DEFAULT_API_MODE))
     try:
-        api_mode = select_api_path(model, configured_api, needs_tools)
         capabilities = get_model_capabilities(model)
+        api_mode = select_api_path(
+            model,
+            configured_api,
+            needs_tools,
+            capabilities=capabilities,
+        )
         api_kwargs: dict[str, Any] = {"model": model, "stream": True}
 
         max_tokens = options.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
-        normalized_limit = normalize_output_token_limit(model, api_mode, max_tokens)
+        normalized_limit = normalize_output_token_limit(
+            model,
+            api_mode,
+            max_tokens,
+            capabilities=capabilities,
+        )
         if normalized_limit is not None:
             field, value = normalized_limit
             api_kwargs[field] = value
@@ -269,9 +282,13 @@ def build_provider_request_snapshot(
         if capabilities["reasoning"]["supported"]:
             raw_effort = options.get(CONF_REASONING_EFFORT)
             if raw_effort is None:
-                raw_effort = recommended_reasoning_effort(model)
+                raw_effort = recommended_reasoning_effort(
+                    model, capabilities=capabilities
+                )
             effort = validate_reasoning_effort(
-                model, str(raw_effort) if raw_effort is not None else None
+                model,
+                str(raw_effort) if raw_effort is not None else None,
+                capabilities=capabilities,
             )
             if effort is not None:
                 if api_mode == API_MODE_RESPONSES:
@@ -288,10 +305,12 @@ def build_provider_request_snapshot(
                     model,
                 )
 
-        temperature = _sampling_value(options, model, CONF_TEMPERATURE, effort)
+        temperature = _sampling_value(
+            options, model, CONF_TEMPERATURE, effort, capabilities
+        )
         if temperature is not None:
             api_kwargs[CONF_TEMPERATURE] = temperature
-        top_p = _sampling_value(options, model, CONF_TOP_P, effort)
+        top_p = _sampling_value(options, model, CONF_TOP_P, effort, capabilities)
         if top_p is not None:
             api_kwargs[CONF_TOP_P] = top_p
 

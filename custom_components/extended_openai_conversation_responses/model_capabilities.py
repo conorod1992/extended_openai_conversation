@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, cast
 
 from .const import API_MODE_AUTO, API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES
@@ -17,9 +18,15 @@ def get_model_capabilities(model_id: str) -> dict[str, Any]:
     return model_metadata(model_id)
 
 
-def validate_reasoning_effort(model: str, effort: str | None) -> str | None:
+def validate_reasoning_effort(
+    model: str,
+    effort: str | None,
+    *,
+    capabilities: Mapping[str, Any] | None = None,
+) -> str | None:
     """Validate an exact model reasoning enum without family-name heuristics."""
-    reasoning = get_model_capabilities(model)["reasoning"]
+    active = capabilities if capabilities is not None else get_model_capabilities(model)
+    reasoning = active["reasoning"]
     if not reasoning["supported"]:
         if effort is not None:
             raise ModelCapabilityError(
@@ -36,11 +43,18 @@ def validate_reasoning_effort(model: str, effort: str | None) -> str | None:
     return effort
 
 
-def parameter_is_allowed(model: str, parameter: str, effort: str | None) -> bool:
+def parameter_is_allowed(
+    model: str,
+    parameter: str,
+    effort: str | None,
+    *,
+    capabilities: Mapping[str, Any] | None = None,
+) -> bool:
     """Return whether temperature/top_p may be sent for this exact request."""
     if parameter not in {"temperature", "top_p"}:
         raise ModelCapabilityError(f"Unknown sampling parameter: {parameter}")
-    capability = get_model_capabilities(model)[parameter]
+    active = capabilities if capabilities is not None else get_model_capabilities(model)
+    capability = active[parameter]
     support = capability["support"]
     if support == "always":
         return True
@@ -49,14 +63,20 @@ def parameter_is_allowed(model: str, parameter: str, effort: str | None) -> bool
     return False
 
 
-def validate_api_path(model: str, api: str, tools_required: bool = False) -> str:
+def validate_api_path(
+    model: str,
+    api: str,
+    tools_required: bool = False,
+    *,
+    capabilities: Mapping[str, Any] | None = None,
+) -> str:
     """Validate API and function-calling support for one selected path."""
     if api not in {API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS}:
         raise ModelCapabilityError(f"Unknown API path: {api}")
-    capabilities = get_model_capabilities(model)
-    if not capabilities["api"][api]:
+    active = capabilities if capabilities is not None else get_model_capabilities(model)
+    if not active["api"][api]:
         raise ModelCapabilityError(f"{model} does not support {api}.")
-    if tools_required and not capabilities["function_calling"][api]:
+    if tools_required and not active["function_calling"][api]:
         raise ModelCapabilityError(
             f"{model} does not support function/tool calling through {api}."
         )
@@ -64,21 +84,30 @@ def validate_api_path(model: str, api: str, tools_required: bool = False) -> str
 
 
 def select_api_path(
-    model: str, configured_api: str, tools_required: bool = False
+    model: str,
+    configured_api: str,
+    tools_required: bool = False,
+    *,
+    capabilities: Mapping[str, Any] | None = None,
 ) -> str:
     """Resolve Auto entirely from exact model capability metadata."""
-    capabilities = get_model_capabilities(model)
+    active = capabilities if capabilities is not None else get_model_capabilities(model)
     if configured_api != API_MODE_AUTO:
-        return validate_api_path(model, configured_api, tools_required)
+        return validate_api_path(
+            model,
+            configured_api,
+            tools_required,
+            capabilities=active,
+        )
 
     if tools_required:
-        preferred = cast(str, capabilities["function_calling"]["preferred_api"])
-        if capabilities["api"].get(preferred) and capabilities["function_calling"].get(
+        preferred = cast(str, active["function_calling"]["preferred_api"])
+        if active["api"].get(preferred) and active["function_calling"].get(
             preferred
         ):
             return preferred
         for api in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS):
-            if capabilities["api"][api] and capabilities["function_calling"][api]:
+            if active["api"][api] and active["function_calling"][api]:
                 return api
         raise ModelCapabilityError(
             f"{model} has no supported API path for function/tool calling."
@@ -87,31 +116,38 @@ def select_api_path(
     # Unknown/custom models remain conservative and use Responses. Known models
     # may opt into a different no-tool Auto path through explicit catalog data;
     # otherwise preserve the longstanding Chat-first fallback.
-    if capabilities["status"] == "unknown":
+    if active["status"] == "unknown":
         preferred = API_MODE_RESPONSES
     else:
         preferred = (
-            cast(str | None, capabilities.get("auto_api")) or API_MODE_CHAT_COMPLETIONS
+            cast(str | None, active.get("auto_api")) or API_MODE_CHAT_COMPLETIONS
         )
-    if capabilities["api"].get(preferred):
+    if active["api"].get(preferred):
         return preferred
     for api in (API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES):
-        if capabilities["api"][api]:
+        if active["api"][api]:
             return api
     raise ModelCapabilityError(f"{model} has no supported conversational API path.")
 
 
-def recommended_reasoning_effort(model: str) -> str | None:
+def recommended_reasoning_effort(
+    model: str, *, capabilities: Mapping[str, Any] | None = None
+) -> str | None:
     """Return the HA/application default, separately from the provider default."""
-    capabilities = get_model_capabilities(model)
-    return cast(str | None, capabilities["recommended_profile"]["reasoning_effort"])
+    active = capabilities if capabilities is not None else get_model_capabilities(model)
+    return cast(str | None, active["recommended_profile"]["reasoning_effort"])
 
 
 def normalize_output_token_limit(
-    model: str, api: str, configured_limit: int | str | None
+    model: str,
+    api: str,
+    configured_limit: int | str | None,
+    *,
+    capabilities: Mapping[str, Any] | None = None,
 ) -> tuple[str, int] | None:
     """Validate the model ceiling and return the modern path-specific field/value."""
-    validate_api_path(model, api, False)
+    active = capabilities if capabilities is not None else get_model_capabilities(model)
+    validate_api_path(model, api, False, capabilities=active)
     if configured_limit is None or configured_limit == "":
         return None
     try:
@@ -120,13 +156,12 @@ def normalize_output_token_limit(
         raise ModelCapabilityError("Output token limit must be an integer.") from err
     if value <= 0:
         raise ModelCapabilityError("Output token limit must be greater than zero.")
-    capabilities = get_model_capabilities(model)
-    ceiling = capabilities["limits"]["max_output_tokens"]
+    ceiling = active["limits"]["max_output_tokens"]
     if value > ceiling:
         raise ModelCapabilityError(
             f"Output token limit {value} exceeds {model}'s maximum of {ceiling}."
         )
-    field = cast(str, capabilities["output_tokens"][api])
+    field = cast(str, active["output_tokens"][api])
     if field == "max_tokens":
         raise ModelCapabilityError("Legacy max_tokens must never be emitted.")
     return field, value

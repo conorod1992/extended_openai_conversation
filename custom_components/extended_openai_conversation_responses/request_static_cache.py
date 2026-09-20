@@ -74,8 +74,10 @@ def cached_format_tools(
         tuple(signature for signature in signatures if signature is not None),
     )
     if key not in cache:
-        cache[key] = deepcopy(formatter(function_tools, api_mode))
-    result = deepcopy(cache[key])
+        result = formatter(function_tools, api_mode)
+        cache[key] = deepcopy(result)
+    else:
+        result = deepcopy(cache[key])
     result_keys = _FORMATTED_TOOL_RESULT_KEYS.get()
     if result_keys is not None:
         result_keys[id(result)] = key

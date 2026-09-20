@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -231,3 +232,72 @@ async def test_optional_storage_startup_failure_is_isolated(
         "persistent_memory",
     } - {failed_subsystem}:
         assert statuses[subsystem]["status"] == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_optional_managers_begin_loading_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Independent optional stores reach their first await before any one completes."""
+    entry = SimpleNamespace(entry_id="entry-id", runtime_data=None)
+    subentry = SimpleNamespace(
+        subentry_id="subentry-id",
+        title="Test agent",
+        data={
+            CONF_TEMPORARY_MEMORY: "on",
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_KNOWLEDGE_ENABLED: True,
+        },
+    )
+    agent = Agent(entry, subentry)
+    agent.hass = SimpleNamespace(data={}, config=SimpleNamespace(config_dir="/tmp"))
+    monkeypatch.setattr(conversation_module, "memory_enabled", lambda _data: True)
+
+    started = {name: asyncio.Event() for name in (
+        "temporary_memory", "archive", "knowledge", "persistent_memory"
+    )}
+    release = asyncio.Event()
+
+    async def wait_for_release(name, result):
+        started[name].set()
+        await release.wait()
+        return result
+
+    archive = SimpleNamespace(async_prune=AsyncMock())
+    memory = SimpleNamespace(set_embedding_provider=Mock())
+    monkeypatch.setattr(
+        conversation_module,
+        "async_get_temporary_memory",
+        lambda *_args: wait_for_release("temporary_memory", object()),
+    )
+    monkeypatch.setattr(
+        conversation_module,
+        "async_get_archive",
+        lambda *_args: wait_for_release("archive", archive),
+    )
+    monkeypatch.setattr(
+        conversation_module,
+        "async_get_knowledge",
+        lambda *_args: wait_for_release("knowledge", SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        conversation_module,
+        "async_get_memory",
+        lambda *_args: wait_for_release("persistent_memory", memory),
+    )
+
+    initialization = asyncio.create_task(agent._async_initialize_optional_managers())
+    await asyncio.wait_for(
+        asyncio.gather(*(event.wait() for event in started.values())),
+        timeout=1,
+    )
+    assert not initialization.done()
+
+    release.set()
+    await initialization
+    archive.async_prune.assert_awaited_once()
+    for subsystem in started:
+        status = agent.hass.data[SUBSYSTEM_STATUS_KEY][("entry-id", "subentry-id")][
+            subsystem
+        ]
+        assert status["status"] == "healthy"

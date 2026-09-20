@@ -364,13 +364,26 @@ class ExtendedOpenAIAgentEntity(
         )
 
     async def _async_initialize_optional_managers(self) -> None:
-        """Load optional capabilities, reporting ordinary failures independently."""
+        """Load independent optional capabilities concurrently."""
         temporary_configured = (
             self.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
             != TEMPORARY_MEMORY_OFF
         )
+        archive_configured = bool(
+            self.subentry.data.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+        )
+        knowledge_configured = bool(
+            self.subentry.data.get(CONF_KNOWLEDGE_ENABLED, DEFAULT_KNOWLEDGE_ENABLED)
+        )
+        memory_configured = memory_enabled(self.subentry.data)
+
         self._set_subsystem_status("temporary_memory", temporary_configured)
-        if temporary_configured:
+        self._set_subsystem_status("knowledge", knowledge_configured)
+        self._set_subsystem_status("persistent_memory", memory_configured)
+
+        async def initialize_temporary_memory() -> None:
+            if not temporary_configured:
+                return
             try:
                 self._temporary_memory = await async_get_temporary_memory(
                     self.hass, self.entry.entry_id, self.subentry.subentry_id
@@ -381,28 +394,22 @@ class ExtendedOpenAIAgentEntity(
             else:
                 self._set_subsystem_status("temporary_memory", True, healthy=True)
 
-        archive_configured = bool(
-            self.subentry.data.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
-        )
-        await self._async_initialize_archive(archive_configured)
+        async def initialize_knowledge() -> None:
+            try:
+                self._knowledge = await async_get_knowledge(
+                    self.hass, self.entry.entry_id, self.subentry.subentry_id
+                )
+            except Exception as err:
+                self._set_subsystem_status("knowledge", knowledge_configured, err)
+                _LOGGER.exception("Unable to initialize Knowledge Library")
+            else:
+                self._set_subsystem_status(
+                    "knowledge", knowledge_configured, healthy=True
+                )
 
-        knowledge_configured = bool(
-            self.subentry.data.get(CONF_KNOWLEDGE_ENABLED, DEFAULT_KNOWLEDGE_ENABLED)
-        )
-        self._set_subsystem_status("knowledge", knowledge_configured)
-        try:
-            self._knowledge = await async_get_knowledge(
-                self.hass, self.entry.entry_id, self.subentry.subentry_id
-            )
-        except Exception as err:
-            self._set_subsystem_status("knowledge", knowledge_configured, err)
-            _LOGGER.exception("Unable to initialize Knowledge Library")
-        else:
-            self._set_subsystem_status("knowledge", knowledge_configured, healthy=True)
-
-        memory_configured = memory_enabled(self.subentry.data)
-        self._set_subsystem_status("persistent_memory", memory_configured)
-        if memory_configured:
+        async def initialize_persistent_memory() -> None:
+            if not memory_configured:
+                return
             try:
                 self._memory = await async_get_memory(
                     self.hass, self.entry.entry_id, self.subentry.subentry_id
@@ -426,7 +433,16 @@ class ExtendedOpenAIAgentEntity(
                 self._set_subsystem_status("persistent_memory", True, err)
                 _LOGGER.exception("Unable to initialize persistent memory")
             else:
-                self._set_subsystem_status("persistent_memory", True, healthy=True)
+                self._set_subsystem_status(
+                    "persistent_memory", True, healthy=True
+                )
+
+        await asyncio.gather(
+            initialize_temporary_memory(),
+            self._async_initialize_archive(archive_configured),
+            initialize_knowledge(),
+            initialize_persistent_memory(),
+        )
 
     def _schedule_archive_retention(self) -> None:
         """Tie daily retention to this entity's HA registration lifetime."""
