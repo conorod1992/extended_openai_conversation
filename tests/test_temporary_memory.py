@@ -1,11 +1,14 @@
 """Temporary-memory lifecycle, ownership, and safety tests."""
 
+from copy import deepcopy
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import temporary_memory
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_PROMPT,
     CONF_TEMPORARY_MEMORY,
@@ -16,8 +19,11 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     MAX_ACTIVE_RECORDS,
+    MAX_CONTENT_LENGTH,
+    MAX_INJECT_CHARACTERS,
     MAX_INJECT_RECORDS,
     TemporaryMemory,
+    TemporaryMemoryRecord,
 )
 from homeassistant.util import dt as dt_util
 
@@ -304,26 +310,7 @@ def test_balanced_prompt_infers_weekend_expiry_without_clarification() -> None:
 
 # Canonical validation, serialization, cold-read, and manager-cache coverage.
 
-from copy import deepcopy
-from datetime import timedelta
-from types import SimpleNamespace
-from typing import Any
-from unittest.mock import AsyncMock
-
-import pytest
-
-from custom_components.extended_openai_conversation_responses import temporary_memory
-from custom_components.extended_openai_conversation_responses.temporary_memory import (
-    MAX_ACTIVE_RECORDS,
-    MAX_CONTENT_LENGTH,
-    MAX_INJECT_CHARACTERS,
-    TemporaryMemory,
-    TemporaryMemoryRecord,
-)
-from homeassistant.util import dt as dt_util
-
-
-class Storage:
+class ValidationStorage:
     """Small detached storage double."""
 
     def __init__(self, data: Any = None) -> None:
@@ -375,7 +362,7 @@ def _model_record(
 
 
 async def test_initialize_skips_malformed_records_and_keeps_valid_data() -> None:
-    storage = Storage({"records": [None, {"memory_id": "broken"}, _record()]})
+    storage = ValidationStorage({"records": [None, {"memory_id": "broken"}, _record()]})
     manager = TemporaryMemory(storage)  # type: ignore[arg-type]
 
     await manager.async_initialize()
@@ -384,7 +371,7 @@ async def test_initialize_skips_malformed_records_and_keeps_valid_data() -> None
 
 
 async def test_add_coalesces_duplicate_for_same_owner_and_persists_update() -> None:
-    storage = Storage()
+    storage = ValidationStorage()
     manager = TemporaryMemory(storage)  # type: ignore[arg-type]
     await manager.async_initialize()
     created = await manager.async_add(
@@ -425,7 +412,7 @@ def test_injection_budget_skips_large_later_record_but_keeps_smaller_one() -> No
 
 
 async def test_delete_owned_records_deduplicates_ids_and_saves_once() -> None:
-    storage = Storage({"records": [_record()]})
+    storage = ValidationStorage({"records": [_record()]})
     manager = TemporaryMemory(storage)  # type: ignore[arg-type]
     await manager.async_initialize()
 
@@ -441,7 +428,7 @@ async def test_delete_owned_records_deduplicates_ids_and_saves_once() -> None:
 
 
 def test_scope_counts_reports_records_by_continuity_scope() -> None:
-    manager = TemporaryMemory(Storage())  # type: ignore[arg-type]
+    manager = TemporaryMemory(ValidationStorage())  # type: ignore[arg-type]
     manager._records = {
         "one": TemporaryMemoryRecord(**_record("one", scope_id="conversation:one")),
         "two": TemporaryMemoryRecord(**_record("two", scope_id="conversation:one")),
@@ -592,7 +579,7 @@ def test_store_factory_uses_private_atomic_non_loop_serialization(monkeypatch) -
 async def test_cold_snapshot_skips_corruption_without_creating_manager(
     monkeypatch,
 ) -> None:
-    store = Storage(
+    store = ValidationStorage(
         {
             "records": [
                 None,
