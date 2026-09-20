@@ -227,6 +227,9 @@ async def test_agent_catalog_does_not_initialize_per_agent_managers(
     assert [agent["title"] for agent in result["agents"]] == ["Jarvis"]
     assert result["agents"][0]["model"] == agent_config_defaults()["chat_model"]
     assert result["is_admin"] is True
+    assert result["_performance"]["agent_count"] == 1
+    assert result["_performance"]["total_ms"] >= 0
+    assert result["_performance"]["snapshots"][0]["total_ms"] >= 0
 
 
 async def test_agent_catalog_keeps_invalid_function_tool_agent_visible(
@@ -371,6 +374,10 @@ async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) 
     assert result["agent"]["knowledge_source_count"] == 3
     assert result["agent"]["guest_mode"]["state"] == "scheduled"
     assert result["load_errors"] == []
+    performance = result["_performance"]
+    assert performance["total_ms"] >= 0
+    assert set(("usage_load_ms", "memory_load_ms", "knowledge_load_ms", "guest_load_ms")) <= performance.keys()
+    assert performance["agent_snapshot"]["total_ms"] >= 0
     for mock in mocks.values():
         mock.assert_awaited_once()
 
