@@ -177,6 +177,8 @@ export function reconcileRequestRules(panel) {
   if (searchEmpty) nodes.push(searchEmpty);
   placeChildren(list, nodes);
   pruneKeys(state.cards, new Set(rules.map(rule => rule.id)));
+  panel._eocRequestRuleCollectionRevision = (panel._eocRequestRuleCollectionRevision || 0) + 1;
+  panel._eocRequestRuleSearchCache = null;
   return true;
 }
 

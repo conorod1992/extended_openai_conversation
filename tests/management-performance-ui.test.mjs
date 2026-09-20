@@ -33,7 +33,11 @@ const [{ExtendedOpenAIManagementPanel}, {bindRequestRules}] = await Promise.all(
 ]);
 
 // These cases isolate cached data behavior after route assets are ready.
-const {routeAssetPromise} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-route.js");
+const {
+  applyRequestRuleSearch,
+  requestRuleSearchText,
+  routeAssetPromise,
+} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-route.js");
 await routeAssetPromise("assistant/basics");
 
 const agents = [
@@ -230,6 +234,84 @@ function panelFor(page = "assistant", subsection = "basics") {
   bindRequestRules(panel);
   bindRequestRules(panel);
   assert.equal(shadowRootListeners, 1, "delete-context delegation binds only once across rerenders");
+}
+
+{
+  await routeAssetPromise("usage-maintenance/usage");
+  const panel = panelFor("usage-maintenance", "usage");
+  const started = [];
+  const resolvers = new Map();
+  panel._hass = {callWS: (message) => {
+    started.push(message.action);
+    return new Promise((resolve) => resolvers.set(message.action, resolve));
+  }};
+  const loading = panel._loadSection();
+  await Promise.resolve();
+  assert.ok(started.includes("footprint"), "footprint starts without waiting for main Usage data");
+  assert.ok(started.includes("summary"), "main Usage data starts in the same load");
+  assert.ok(started.includes("daily"), "daily Usage data starts in the same load");
+  assert.ok(started.includes("runs"), "recent runs start in the same load");
+  assert.ok(started.includes("retention"), "retention starts in the same load");
+
+  resolvers.get("footprint")?.({baseline:{characters:0}});
+  resolvers.get("summary")?.({});
+  resolvers.get("daily")?.({days:[]});
+  resolvers.get("runs")?.({runs:[]});
+  resolvers.get("retention")?.({});
+  await loading;
+}
+
+{
+  assert.equal(requestRuleSearchText({name:"Good Night",phrases:["Bed Time"],action_type:"local_action"}), "good night bed time local_action");
+  let listQueries = 0;
+  const firstCard = {dataset:{ruleKey:"one"}, hidden:false};
+  const secondCard = {dataset:{ruleKey:"two"}, hidden:false};
+  const empty = {hidden:true};
+  const count = {textContent:""};
+  const search = {value:"night"};
+  const list = {
+    querySelectorAll(selector) {
+      assert.equal(selector, "[data-rule-key]");
+      listQueries += 1;
+      return [firstCard, secondCard];
+    },
+    querySelector(selector) {
+      return selector === "[data-eoc-rule-search-empty]" ? empty : null;
+    },
+    append() {},
+  };
+  const root = {
+    querySelector(selector) {
+      if (selector === "#rule-search") return search;
+      if (selector === ".rule-list") return list;
+      if (selector === ".search-row .count") return count;
+      return null;
+    },
+    ownerDocument:{createElement:() => null},
+  };
+  const panel = {
+    _viewKey:() => "capabilities/request-rules",
+    _query:"",
+    _result:{rules:[
+      {id:"one",name:"Good Night",phrases:["Bed Time"],action_type:"local_action"},
+      {id:"two",name:"Think Carefully",phrases:["reason"],action_type:"model_routing"},
+    ]},
+  };
+
+  assert.equal(applyRequestRuleSearch(panel, root), 1);
+  assert.equal(firstCard.hidden, false);
+  assert.equal(secondCard.hidden, true);
+  assert.equal(listQueries, 1);
+
+  search.value = "think";
+  assert.equal(applyRequestRuleSearch(panel, root), 1);
+  assert.equal(firstCard.hidden, true);
+  assert.equal(secondCard.hidden, false);
+  assert.equal(listQueries, 1, "keystrokes reuse cached cards and normalized search text");
+
+  panel._eocRequestRuleCollectionRevision = 1;
+  applyRequestRuleSearch(panel, root);
+  assert.equal(listQueries, 2, "collection changes rebuild the search representation");
 }
 
 const management = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");

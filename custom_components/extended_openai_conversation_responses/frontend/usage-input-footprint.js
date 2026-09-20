@@ -43,26 +43,56 @@ export function footprintMarkup(panel) {
   </section>`;
 }
 
+export function footprintRegionMarkup(panel) {
+  return `<div data-eoc-input-footprint>${footprintMarkup(panel)}</div>`;
+}
+
+export function reconcileInputFootprint(panel) {
+  const host = panel.shadowRoot?.querySelector?.("[data-eoc-input-footprint]");
+  if (!host) return false;
+  const markup = footprintMarkup(panel);
+  if (host.__eocFootprintMarkup !== markup) {
+    host.innerHTML = markup;
+    host.__eocFootprintMarkup = markup;
+  }
+  bindInputFootprint(panel);
+  return true;
+}
+
 export async function loadInputFootprint(panel) {
   const agentId = panel._agentId;
   if (!agentId || panel._viewKey() !== "usage-maintenance/usage") return;
+  const requestToken = (panel._inputFootprintRequestToken || 0) + 1;
+  panel._inputFootprintRequestToken = requestToken;
   panel._inputFootprintLoading = true;
   panel._inputFootprintError = null;
-  panel._render();
+  reconcileInputFootprint(panel);
   try {
     const result = await panel._call("usage", "footprint");
-    if (panel._agentId !== agentId || panel._viewKey() !== "usage-maintenance/usage") return;
+    if (
+      panel._agentId !== agentId
+      || panel._viewKey() !== "usage-maintenance/usage"
+      || panel._inputFootprintRequestToken !== requestToken
+    ) return;
     panel._inputFootprint = result;
     panel._inputFootprintAgentId = agentId;
   } catch (err) {
-    if (panel._agentId !== agentId || panel._viewKey() !== "usage-maintenance/usage") return;
+    if (
+      panel._agentId !== agentId
+      || panel._viewKey() !== "usage-maintenance/usage"
+      || panel._inputFootprintRequestToken !== requestToken
+    ) return;
     panel._inputFootprint = null;
     panel._inputFootprintAgentId = agentId;
     panel._inputFootprintError = err?.message || String(err);
   } finally {
-    if (panel._agentId === agentId && panel._viewKey() === "usage-maintenance/usage") {
+    if (
+      panel._agentId === agentId
+      && panel._viewKey() === "usage-maintenance/usage"
+      && panel._inputFootprintRequestToken === requestToken
+    ) {
       panel._inputFootprintLoading = false;
-      panel._render();
+      reconcileInputFootprint(panel);
     }
   }
 }
