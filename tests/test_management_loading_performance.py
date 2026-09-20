@@ -167,7 +167,14 @@ def test_runtime_group_quarantine_drops_only_quarantined_references(
 
 
 def test_cached_setup_uses_shared_production_asset_boundary() -> None:
-    assert management_ui.frontend_entry_url("management").startswith(
+    hass = SimpleNamespace(
+        data={
+            f"{DOMAIN}.frontend_entry_urls": {
+                "management": f"/{DOMAIN}/frontend/assets/management-test.js"
+            }
+        }
+    )
+    assert management_ui.frontend_entry_url(hass, "management").startswith(
         f"/{DOMAIN}/frontend/assets/management-"
     )
 
@@ -555,7 +562,9 @@ async def test_management_setup_retry_resumes_after_panel_failure(monkeypatch) -
     monkeypatch.setattr(management_ui, "_UI_SETUP", setup_key)
     monkeypatch.setattr(management_ui, "async_register_frontend_assets", asset_register)
     monkeypatch.setattr(
-        management_ui, "frontend_entry_url", lambda name: f"/built/{name}.js"
+        management_ui,
+        "frontend_entry_url",
+        lambda _hass, name: f"/built/{name}.js",
     )
     monkeypatch.setattr(
         management_ui.websocket_api, "async_register_command", websocket_register
