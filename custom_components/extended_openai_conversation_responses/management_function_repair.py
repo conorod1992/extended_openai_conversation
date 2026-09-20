@@ -14,7 +14,9 @@ from homeassistant.exceptions import HomeAssistantError
 from .agent_config import (
     agent_config_defaults,
     agent_config_snapshot,
+    configured_function_tool_metadata_from_data,
     configured_function_tools_from_data,
+    function_tool_enabled,
     merge_agent_config as _strict_merge_agent_config,
     preserve_legacy_guest_policy,
     validate_function_groups,
@@ -85,6 +87,39 @@ def isolated_function_tools(
     except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
         return [], [], str(err) or type(err).__name__
     return valid, [], None
+
+
+def management_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
+    """Return Management metadata without copying hydrated runtime Function Tools."""
+    try:
+        metadata = configured_function_tool_metadata_from_data(options)
+    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
+        editable = editable_function_tools(options)
+        valid, invalid, isolated_issue = isolated_function_tools(options)
+        issue = isolated_issue or str(err) or type(err).__name__
+        return {
+            "usable_count": len(valid),
+            "enabled_count": sum(function_tool_enabled(tool) for tool in valid),
+            "invalid_count": len(invalid),
+            "total_count": len(editable) if isinstance(editable, list) else None,
+            "isolatable": bool(invalid),
+            "validation_error": issue,
+            "invalid_names": [
+                str(
+                    item.get("name")
+                    or f"Function Tool {int(item.get('index', 0)) + 1}"
+                )
+                for item in invalid
+            ],
+        }
+
+    return {
+        **metadata,
+        "invalid_count": 0,
+        "isolatable": False,
+        "validation_error": None,
+        "invalid_names": [],
+    }
 
 
 def function_tools_issue(
