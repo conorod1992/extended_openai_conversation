@@ -2,6 +2,13 @@ name: Real HA Acceptance
 
 on:
   pull_request:
+    paths:
+      - "custom_components/extended_openai_conversation_responses/**"
+      - "tests_real_ha/**"
+      - "requirements_test.txt"
+      - "pyproject.toml"
+      - "ci/**"
+      - ".github/workflows/real-ha.yml"
   push:
     branches:
       - develop

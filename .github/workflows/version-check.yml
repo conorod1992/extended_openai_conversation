@@ -2,6 +2,11 @@ name: Version metadata
 
 on:
   pull_request:
+    paths:
+      - "custom_components/extended_openai_conversation_responses/manifest.json"
+      - "custom_components/extended_openai_conversation_responses/frontend_version.py"
+      - "scripts/set_release_version.py"
+      - ".github/workflows/version-check.yml"
   push:
     branches:
       - develop
