@@ -210,3 +210,40 @@ jobs:
             test-results/
           if-no-files-found: warn
           retention-days: 7
+
+  generate-cleanup-b-bundle:
+    name: Temporary Cleanup B bundle generation
+    if: github.event_name == 'pull_request' && github.head_ref == 'cleanup/native-yaml-editor-interface'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Cleanup B branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Build and commit generated bundle
+        working-directory: frontend
+        run: |
+          npm run build
+          cd ..
+          if git diff --quiet -- custom_components/extended_openai_conversation_responses/frontend/dist/; then
+            echo "Generated bundle is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A custom_components/extended_openai_conversation_responses/frontend/dist/
+          git commit -m "Build frontend bundle for Cleanup B"
+          git push origin HEAD:${{ github.head_ref }}
+
