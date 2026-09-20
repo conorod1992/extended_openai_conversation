@@ -17,45 +17,6 @@ def _bounded_offset(message: dict[str, Any]) -> int:
     return max(0, int(message.get("offset", 0)))
 
 
-def _search_projection(record: Any) -> str:
-    """Mirror the former browser-side Memory filter without touching retrieval."""
-    return " ".join(
-        str(value or "") for value in (record.content, record.category, record.source)
-    ).casefold()
-
-
-def _search_page(
-    memory: Any,
-    owner: str,
-    query: str,
-    *,
-    limit: int,
-    offset: int,
-    include_scope: bool,
-) -> dict[str, Any]:
-    """Search the complete in-memory management projection with bounded output."""
-    # PersistentMemory has already been initialized by async_get_memory(). Taking one
-    # event-loop-local snapshot avoids paging/sorting the same collection repeatedly.
-    records = [
-        record
-        for record in memory._memories.values()
-        if record.user_id == owner and query.casefold() in _search_projection(record)
-    ]
-    records.sort(key=lambda record: record.updated_at, reverse=True)
-    page = records[offset : offset + limit]
-    return {
-        "memories": [
-            management_memory_dict(record, include_scope=include_scope)
-            for record in page
-        ],
-        "offset": offset,
-        "limit": limit,
-        "has_more": len(records) > offset + limit,
-        "total": len(records),
-        "query": query,
-    }
-
-
 async def _list_page(
     memory: Any,
     owner: str,
@@ -100,14 +61,25 @@ async def async_browse_memories(
         return await _list_page(
             memory, owner, scope_id, message, include_scope=include_scope
         )
-    return _search_page(
-        memory,
+    limit = _bounded_limit(message, 100)
+    offset = _bounded_offset(message)
+    records, total = await memory.async_browse(
         owner,
         query,
-        limit=_bounded_limit(message, 100),
-        offset=_bounded_offset(message),
-        include_scope=include_scope,
+        limit=limit,
+        offset=offset,
     )
+    return {
+        "memories": [
+            management_memory_dict(record, include_scope=include_scope)
+            for record in records
+        ],
+        "offset": offset,
+        "limit": limit,
+        "has_more": total > offset + len(records),
+        "total": total,
+        "query": query,
+    }
 
 
 def management_memory_dict(record: Any, *, include_scope: bool) -> dict[str, Any]:
