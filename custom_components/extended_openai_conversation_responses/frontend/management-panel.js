@@ -13,7 +13,7 @@ import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl} from "./management-dialogs.js";
 import {renderManagement} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, isAgentMutation, syncAgentPicker} from "./management-actions.js";
-import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch} from "./management-route.js";
+import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset} from "./management-route.js";
 import {getConfigurationEditor, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath} from "./frontend-navigation.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
@@ -210,12 +210,33 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this[name] = value;
     }
     bindStateSafety(this);
+    this._bindRouteAssetWarmup();
     getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
   }
 
   disconnectedCallback() {
     getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     cleanupStateSafety(this);
+  }
+
+  _warmNavigationTarget(target) {
+    const page = target?.dataset?.page || this._page;
+    const subsection = target?.dataset?.subsection
+      || (target?.dataset?.page ? this._visibleSubsections(page)[0]?.id || null : null);
+    warmRouteAsset(this._viewKey(page, subsection));
+  }
+
+  _bindRouteAssetWarmup() {
+    const root = this.shadowRoot;
+    if (!root || root.__eocRouteAssetWarmupBound) return;
+    root.__eocRouteAssetWarmupBound = true;
+    const warm = (event) => {
+      const target = event.target?.closest?.("[data-page],[data-subsection]");
+      if (target) this._warmNavigationTarget(target);
+    };
+    root.addEventListener("pointerover", warm);
+    root.addEventListener("focusin", warm);
+    root.addEventListener("pointerdown", warm);
   }
 
   _setConfigDirty(value) {
