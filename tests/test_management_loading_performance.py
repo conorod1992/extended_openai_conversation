@@ -382,6 +382,36 @@ async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) 
         mock.assert_awaited_once()
 
 
+async def test_configuration_get_reports_phase_timings(monkeypatch) -> None:
+    hass, _entry, _subentry = _hass_with_agent()
+    monkeypatch.setattr(management_ui, "local_handling_snapshot", lambda *_args: {})
+
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "get",
+        },
+    )
+
+    performance = result["_performance"]
+    assert performance["total_ms"] >= 0
+    assert set(
+        (
+            "config_snapshot_ms",
+            "revision_ms",
+            "defaults_snapshot_ms",
+            "options_ms",
+            "model_capabilities_ms",
+            "local_handling_ms",
+        )
+    ) <= performance.keys()
+
+
 async def test_configuration_save_normalizes_once(monkeypatch) -> None:
     """The combined Save path validates and persists one normalized candidate."""
     hass, _entry, subentry = _hass_with_agent()
