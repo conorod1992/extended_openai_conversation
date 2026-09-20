@@ -493,7 +493,7 @@ async def test_temporary_memory_initialization_failure_requests_retry(
     entity = _entity(options)
     failure = RuntimeError("temporary store unavailable")
     get_temporary = AsyncMock(side_effect=failure)
-    monkeypatch.setattr(temporary_memory, "async_get_temporary_memory", get_temporary)
+    monkeypatch.setattr(temporary_memory_module, "async_get_temporary_memory", get_temporary)
     monkeypatch.setattr(hardening, "memory_enabled", lambda _options: False)
 
     await hardening.async_reconcile_runtime_configuration(entity, force=True)
