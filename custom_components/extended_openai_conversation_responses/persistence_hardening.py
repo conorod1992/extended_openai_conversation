@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import stat
+from typing import Any
+
 from homeassistant.helpers.storage import Store
 
 _PRIVATE_STORE_MODE = 0o600
