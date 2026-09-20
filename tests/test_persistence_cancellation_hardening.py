@@ -215,3 +215,19 @@ async def test_cancellation_waits_for_failed_commit_then_rolls_back(kind: str) -
     assert _snapshot(kind, manager) == baseline
     assert storage.data == baseline_storage
     assert _committed_snapshot(kind, manager) == baseline
+
+
+@pytest.mark.parametrize("kind", ["memory", "knowledge", "request_rules"])
+async def test_cancelled_store_restores_committed_state(kind):
+    storage = BlockingStorage()
+    manager = await _create_manager(kind, storage)
+    await _mutate(kind, manager, "first")
+    committed = _snapshot(kind, manager)
+
+    async def cancelled_save(data):
+        raise asyncio.CancelledError
+
+    storage.async_save = cancelled_save
+    with pytest.raises(asyncio.CancelledError):
+        await _mutate(kind, manager, "second")
+    assert _snapshot(kind, manager) == committed

@@ -1,13 +1,18 @@
 """Regression tests for restart-safe full restore transactions."""
 
+from __future__ import annotations
+
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import backup
-from custom_components.extended_openai_conversation_responses import restore_recovery
+from custom_components.extended_openai_conversation_responses import (
+    backup,
+    restore_recovery,
+)
+from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from tests.test_backup import _document
 
 
@@ -87,9 +92,7 @@ async def _recover_with_journal(monkeypatch, journal):
         restore_recovery, "_durable_managers", AsyncMock(return_value=(object(),) * 7)
     )
     monkeypatch.setattr(restore_recovery, "_apply_prepared", apply)
-    monkeypatch.setattr(
-        restore_recovery, "_async_persist_config_entries", AsyncMock()
-    )
+    monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
     monkeypatch.setattr(restore_recovery, "reset_restored_runtime", MagicMock())
 
     recovered = await restore_recovery.async_recover_pending_restore(
@@ -101,9 +104,7 @@ async def _recover_with_journal(monkeypatch, journal):
 async def test_uncommitted_restart_always_rolls_back(monkeypatch) -> None:
     """Every interruption before the durable commit decision restores old state."""
     target, rollback = _states()
-    journal = restore_recovery._new_journal(
-        "entry-1", "agent-new", target, rollback
-    )
+    journal = restore_recovery._new_journal("entry-1", "agent-new", target, rollback)
 
     hass, entry, subentry, store, selected, recovered = await _recover_with_journal(
         monkeypatch, journal
@@ -122,12 +123,12 @@ async def test_uncommitted_restart_always_rolls_back(monkeypatch) -> None:
     )
 
 
-async def test_committed_restart_finishes_target_then_cleans_journal(monkeypatch) -> None:
+async def test_committed_restart_finishes_target_then_cleans_journal(
+    monkeypatch,
+) -> None:
     """Once commit intent is durable, recovery always converges on the target."""
     target, rollback = _states()
-    journal = restore_recovery._new_journal(
-        "entry-1", "agent-new", target, rollback
-    )
+    journal = restore_recovery._new_journal("entry-1", "agent-new", target, rollback)
     journal["phase"] = restore_recovery._PHASE_COMMITTED
 
     _hass, _entry, subentry, store, selected, recovered = await _recover_with_journal(
@@ -164,7 +165,9 @@ async def test_journal_is_verified_before_first_destructive_write(
     )
     monkeypatch.setattr(restore_recovery, "_apply_prepared", apply)
 
-    with pytest.raises(backup.BackupError, match="journal could not be durably verified"):
+    with pytest.raises(
+        backup.BackupError, match="journal could not be durably verified"
+    ):
         await restore_recovery.async_restore_backup_recoverably(
             hass, entry, subentry, _document()
         )
@@ -221,11 +224,11 @@ async def test_unpersisted_commit_decision_rolls_back(monkeypatch) -> None:
     monkeypatch.setattr(
         backup, "_snapshot_for_restore", AsyncMock(return_value=rollback)
     )
-    monkeypatch.setattr(restore_recovery, "_async_write_journal_verified", verified_write)
-    monkeypatch.setattr(restore_recovery, "_apply_prepared", apply)
     monkeypatch.setattr(
-        restore_recovery, "_async_persist_config_entries", AsyncMock()
+        restore_recovery, "_async_write_journal_verified", verified_write
     )
+    monkeypatch.setattr(restore_recovery, "_apply_prepared", apply)
+    monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
     monkeypatch.setattr(restore_recovery, "reset_restored_runtime", MagicMock())
 
     with pytest.raises(backup.BackupError, match="previous agent state was recovered"):
@@ -261,10 +264,14 @@ async def test_unverifiable_commit_decision_stays_pending(monkeypatch) -> None:
     monkeypatch.setattr(
         backup, "_snapshot_for_restore", AsyncMock(return_value=rollback)
     )
-    monkeypatch.setattr(restore_recovery, "_async_write_journal_verified", verified_write)
+    monkeypatch.setattr(
+        restore_recovery, "_async_write_journal_verified", verified_write
+    )
     monkeypatch.setattr(restore_recovery, "_apply_prepared", apply)
 
-    with pytest.raises(backup.BackupError, match="commit decision could not be verified"):
+    with pytest.raises(
+        backup.BackupError, match="commit decision could not be verified"
+    ):
         await restore_recovery.async_restore_backup_recoverably(
             hass, entry, subentry, _document()
         )
@@ -297,9 +304,7 @@ async def test_interrupted_rollback_remains_retryable(monkeypatch) -> None:
         restore_recovery, "_durable_managers", AsyncMock(return_value=(object(),) * 7)
     )
     monkeypatch.setattr(restore_recovery, "_apply_prepared", flaky_apply)
-    monkeypatch.setattr(
-        restore_recovery, "_async_persist_config_entries", AsyncMock()
-    )
+    monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
     monkeypatch.setattr(restore_recovery, "reset_restored_runtime", MagicMock())
 
     with pytest.raises(backup.BackupError, match="could not be recovered safely"):
@@ -315,7 +320,9 @@ async def test_interrupted_rollback_remains_retryable(monkeypatch) -> None:
     assert store.data is None
 
 
-async def test_committed_state_survives_cleanup_failure_and_retries(monkeypatch) -> None:
+async def test_committed_state_survives_cleanup_failure_and_retries(
+    monkeypatch,
+) -> None:
     """A crash-like cleanup failure never changes a durable commit into rollback."""
     hass = FakeHass()
     entry, subentry = _identity()
@@ -343,9 +350,7 @@ async def test_committed_state_survives_cleanup_failure_and_retries(monkeypatch)
         restore_recovery, "_durable_managers", AsyncMock(return_value=(object(),) * 7)
     )
     monkeypatch.setattr(restore_recovery, "_apply_prepared", apply)
-    monkeypatch.setattr(
-        restore_recovery, "_async_persist_config_entries", AsyncMock()
-    )
+    monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
     monkeypatch.setattr(restore_recovery, "reset_restored_runtime", cleanup)
 
     with pytest.raises(backup.BackupError, match="could not be recovered safely"):
@@ -361,7 +366,9 @@ async def test_committed_state_survives_cleanup_failure_and_retries(monkeypatch)
     assert store.data is None
 
 
-def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(monkeypatch) -> None:
+def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(
+    monkeypatch,
+) -> None:
     """Stale transient state is cleared without splitting live runtime identity."""
     from custom_components.extended_openai_conversation_responses import (
         continuity,
@@ -395,7 +402,15 @@ def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(monkeypatch
             usage._VOLATILE_USAGE_MANAGERS: {key: fallback_usage},
         }
     )
-    managers = (object(), object(), object(), object(), durable_usage, object(), object())
+    managers = (
+        object(),
+        object(),
+        object(),
+        object(),
+        durable_usage,
+        object(),
+        object(),
+    )
     monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_args: agent)
 
     restore_recovery.reset_restored_runtime(hass, *key, managers)
@@ -430,7 +445,9 @@ class _VerifierStore:
         return deepcopy(self.payload)
 
 
-async def test_configuration_is_forced_to_disk_before_journal_cleanup(monkeypatch) -> None:
+async def test_configuration_is_forced_to_disk_before_journal_cleanup(
+    monkeypatch,
+) -> None:
     """The target subentry must be present in a fresh Core-store disk read."""
     hass = FakeHass()
     entry, subentry = _identity()
@@ -523,3 +540,169 @@ async def test_configuration_disk_mismatch_keeps_recovery_pending(monkeypatch) -
 
     with pytest.raises(backup.BackupError, match="durably verified"):
         await restore_recovery._update_configuration(hass, entry, subentry, target)
+
+
+@pytest.mark.asyncio
+async def test_persist_config_entries_requires_core_store_internals() -> None:
+    prepared, _rollback = _states()
+    hass = SimpleNamespace(config_entries=SimpleNamespace())
+
+    with pytest.raises(backup.BackupError, match="durably verified"):
+        await restore_recovery._async_persist_config_entries(
+            hass, "entry-1", "agent-new", prepared
+        )
+
+
+@pytest.mark.asyncio
+async def test_persist_config_entries_wraps_store_failures(monkeypatch) -> None:
+    prepared, _rollback = _states()
+
+    async def fail_save(_value):
+        raise OSError("disk unavailable")
+
+    hass = SimpleNamespace(
+        config_entries=SimpleNamespace(
+            _store=SimpleNamespace(
+                version=1,
+                key="core.config_entries",
+                minor_version=1,
+                async_save=fail_save,
+            ),
+            _data_to_save=lambda: {"entries": []},
+        )
+    )
+
+    class Verifier:
+        @classmethod
+        def __class_getitem__(cls, _item):
+            return cls
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+    monkeypatch.setattr(restore_recovery, "Store", Verifier)
+
+    with pytest.raises(backup.BackupError, match="durably verified"):
+        await restore_recovery._async_persist_config_entries(
+            hass, "entry-1", "agent-new", prepared
+        )
+
+
+@pytest.mark.asyncio
+async def test_recover_all_pending_restores_only_visits_conversation_subentries(
+    monkeypatch,
+) -> None:
+    conversation_one = SimpleNamespace(
+        subentry_id="agent-1", subentry_type="conversation"
+    )
+    ignored = SimpleNamespace(subentry_id="sensor-1", subentry_type="other")
+    conversation_two = SimpleNamespace(
+        subentry_id="agent-2", subentry_type="conversation"
+    )
+    entry_one = SimpleNamespace(
+        entry_id="entry-1",
+        subentries={"agent-1": conversation_one, "sensor-1": ignored},
+    )
+    entry_two = SimpleNamespace(
+        entry_id="entry-2", subentries={"agent-2": conversation_two}
+    )
+    hass = SimpleNamespace(
+        config_entries=SimpleNamespace(
+            async_entries=MagicMock(return_value=[entry_one, entry_two])
+        )
+    )
+    recover = AsyncMock(return_value=True)
+    monkeypatch.setattr(restore_recovery, "async_recover_pending_restore", recover)
+
+    await restore_recovery.async_recover_pending_restores(hass)
+
+    hass.config_entries.async_entries.assert_called_once_with(DOMAIN)
+    assert recover.await_count == 2
+    recover.assert_any_await(hass, entry_one, conversation_one)
+    recover.assert_any_await(hass, entry_two, conversation_two)
+
+
+class _JournalStore:
+    """Minimal Store stand-in for journal verification tests."""
+
+    def __init__(self, *, persisted=None, save_error=None, load_error=None) -> None:
+        self.persisted = persisted
+        self.save_error = save_error
+        self.load_error = load_error
+        self.saved = None
+
+    async def async_save(self, value) -> None:
+        if self.save_error is not None:
+            raise self.save_error
+        self.saved = value
+
+    async def async_load(self):
+        if self.load_error is not None:
+            raise self.load_error
+        return self.persisted
+
+
+@pytest.mark.parametrize("failure_at", ["save", "load"])
+async def test_journal_verification_unavailable_preserves_underlying_failure(
+    failure_at,
+) -> None:
+    """An unreadable durability decision is distinct from a verified mismatch."""
+    error = OSError(f"{failure_at} unavailable")
+    store = _JournalStore(
+        persisted={"phase": "applying"},
+        save_error=error if failure_at == "save" else None,
+        load_error=error if failure_at == "load" else None,
+    )
+
+    with pytest.raises(restore_recovery._JournalVerificationUnavailable) as exc_info:
+        await restore_recovery._async_write_journal_verified(
+            store, {"phase": "applying"}
+        )
+
+    assert exc_info.value.__cause__ is error
+
+
+async def test_journal_verification_requires_exact_read_back() -> None:
+    """A swallowed or stale Store write must not count as durable journal state."""
+    journal = {"phase": "committed", "transaction_id": "tx-1"}
+    store = _JournalStore(persisted={**journal, "phase": "applying"})
+
+    assert await restore_recovery._async_write_journal_verified(store, journal) is False
+    assert store.saved == journal
+
+
+async def test_durable_managers_bypasses_volatile_usage_fallback(monkeypatch) -> None:
+    """Restore must resolve the original durable Usage manager, never fallback RAM."""
+    from custom_components.extended_openai_conversation_responses import (
+        conversation_archive,
+        guest_mode,
+        knowledge,
+        memory,
+        request_rules,
+        temporary_memory,
+        usage,
+    )
+
+    expected = [object() for _ in range(7)]
+    getters = [
+        (memory, "async_get_memory"),
+        (temporary_memory, "async_get_temporary_memory"),
+        (knowledge, "async_get_knowledge"),
+        (conversation_archive, "async_get_archive"),
+        (usage, "async_get_durable_usage"),
+        (guest_mode, "async_get_guest_mode"),
+        (request_rules, "async_get_request_rules"),
+    ]
+
+    mocks = []
+    for (module, name), value in zip(getters, expected, strict=True):
+        mock = AsyncMock(return_value=value)
+        monkeypatch.setattr(module, name, mock)
+        mocks.append(mock)
+
+    hass = object()
+    result = await restore_recovery._durable_managers(hass, "entry-1", "agent-1")
+
+    assert result == tuple(expected)
+    for mock in mocks:
+        mock.assert_awaited_once_with(hass, "entry-1", "agent-1")

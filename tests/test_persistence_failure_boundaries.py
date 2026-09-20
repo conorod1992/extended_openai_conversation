@@ -90,6 +90,8 @@ async def test_archive_journal_failure_does_not_publish_candidate_state() -> Non
     assert archive._active is old_active
     assert archive._partitions is old_partitions
     assert archive._pending_partitions == set()
+    # The intent write is attempted before any partition can be published.
+    assert len(storage.metadata_calls) == 1
     assert storage.partition_calls == []
 
 
