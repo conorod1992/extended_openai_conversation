@@ -2,6 +2,8 @@
 let implementation = null;
 let loadPromise = null;
 
+const WS_BROADCAST = "extended_openai_conversation_responses/broadcast";
+
 export async function ensureOverviewModule() {
   if (implementation) return implementation;
   if (!loadPromise) {
@@ -13,6 +15,13 @@ export async function ensureOverviewModule() {
       .finally(() => { loadPromise = null; });
   }
   return loadPromise;
+}
+
+export function startOverviewBroadcastSnapshot(panel) {
+  if (panel._eocOverviewBroadcastPromise) return panel._eocOverviewBroadcastPromise;
+  const promise = panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"});
+  panel._eocOverviewBroadcastPromise = promise;
+  return promise;
 }
 
 if (typeof document === "undefined") await ensureOverviewModule();
@@ -45,7 +54,8 @@ export function renderOverview(panel, agent) {
 }
 
 export function bindOverview(panel) {
-  implementation?.bindOverview?.(panel);
+  const broadcast = panel._eocOverviewBroadcastPromise || startOverviewBroadcastSnapshot(panel);
+  implementation?.bindOverview?.(panel, broadcast);
   implementation?.bindGettingStarted(panel);
 }
 

@@ -32,7 +32,11 @@ for (const admin of [true, false]) {
       const usage = dom(renderUsagePage(panel));
       const overview = await Promise.all([false, true].map(async enabled => {
         const root = dom(renderOverview(panel, panel._selectedAgent()));
-        bindOverview({shadowRoot: root, _e: panel._e, _hass: {callWS: async () => ({enabled, can_manage: panel._data.is_admin, catalog: {}, history: []})}});
+        const snapshot = {enabled, can_manage: panel._data.is_admin, catalog: {}, history: []};
+        bindOverview(
+          {shadowRoot: root, _e: panel._e, _hass: {callWS: async () => snapshot}},
+          Promise.resolve(snapshot),
+        );
         await Promise.resolve();
         return {intro: root.querySelector(".broadcast-heading p")?.textContent,
           state: root.querySelector(".broadcast-toggle-row p")?.textContent,
