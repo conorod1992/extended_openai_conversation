@@ -52,6 +52,7 @@ from .memory import MEMORY_TOOL_NAMES, memory_tools
 from .model_capabilities import (
     ModelCapabilityError,
     get_model_capabilities,
+    model_capability_snapshot,
     normalize_output_token_limit,
     parameter_is_allowed,
     recommended_reasoning_effort,
@@ -239,66 +240,67 @@ def build_provider_request_snapshot(
     )
     configured_api = str(options.get(CONF_API_MODE, DEFAULT_API_MODE))
     try:
-        api_mode = select_api_path(model, configured_api, needs_tools)
         capabilities = get_model_capabilities(model)
-        api_kwargs: dict[str, Any] = {"model": model, "stream": True}
+        with model_capability_snapshot(model, capabilities):
+            api_mode = select_api_path(model, configured_api, needs_tools)
+            api_kwargs: dict[str, Any] = {"model": model, "stream": True}
 
-        max_tokens = options.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
-        normalized_limit = normalize_output_token_limit(model, api_mode, max_tokens)
-        if normalized_limit is not None:
-            field, value = normalized_limit
-            api_kwargs[field] = value
-            if (
-                CONF_MAX_TOKENS in options
-                and model not in _LEGACY_TOKEN_MIGRATION_LOGGED
-            ):
-                _LOGGER.debug(
-                    "Normalizing persisted max_tokens for %s to API-specific %s; "
-                    "deprecated max_tokens will not be sent",
-                    model,
-                    field,
+            max_tokens = options.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
+            normalized_limit = normalize_output_token_limit(model, api_mode, max_tokens)
+            if normalized_limit is not None:
+                field, value = normalized_limit
+                api_kwargs[field] = value
+                if (
+                    CONF_MAX_TOKENS in options
+                    and model not in _LEGACY_TOKEN_MIGRATION_LOGGED
+                ):
+                    _LOGGER.debug(
+                        "Normalizing persisted max_tokens for %s to API-specific %s; "
+                        "deprecated max_tokens will not be sent",
+                        model,
+                        field,
+                    )
+                    _LEGACY_TOKEN_MIGRATION_LOGGED.add(model)
+
+            if api_mode == API_MODE_RESPONSES:
+                api_kwargs["store"] = False
+            else:
+                api_kwargs["stream_options"] = {"include_usage": True}
+
+            effort: str | None = None
+            if capabilities["reasoning"]["supported"]:
+                raw_effort = options.get(CONF_REASONING_EFFORT)
+                if raw_effort is None:
+                    raw_effort = recommended_reasoning_effort(model)
+                effort = validate_reasoning_effort(
+                    model, str(raw_effort) if raw_effort is not None else None
                 )
-                _LEGACY_TOKEN_MIGRATION_LOGGED.add(model)
+                if effort is not None:
+                    if api_mode == API_MODE_RESPONSES:
+                        api_kwargs["reasoning"] = {"effort": effort}
+                        api_kwargs["include"] = ["reasoning.encrypted_content"]
+                    else:
+                        api_kwargs["reasoning_effort"] = effort
+            else:
+                stale_effort = options.get(CONF_REASONING_EFFORT)
+                if stale_effort not in {None, DEFAULT_REASONING_EFFORT}:
+                    _LOGGER.debug(
+                        "Ignoring stale reasoning_effort=%r for non-reasoning model %s",
+                        stale_effort,
+                        model,
+                    )
 
-        if api_mode == API_MODE_RESPONSES:
-            api_kwargs["store"] = False
-        else:
-            api_kwargs["stream_options"] = {"include_usage": True}
+            temperature = _sampling_value(options, model, CONF_TEMPERATURE, effort)
+            if temperature is not None:
+                api_kwargs[CONF_TEMPERATURE] = temperature
+            top_p = _sampling_value(options, model, CONF_TOP_P, effort)
+            if top_p is not None:
+                api_kwargs[CONF_TOP_P] = top_p
 
-        effort: str | None = None
-        if capabilities["reasoning"]["supported"]:
-            raw_effort = options.get(CONF_REASONING_EFFORT)
-            if raw_effort is None:
-                raw_effort = recommended_reasoning_effort(model)
-            effort = validate_reasoning_effort(
-                model, str(raw_effort) if raw_effort is not None else None
-            )
-            if effort is not None:
-                if api_mode == API_MODE_RESPONSES:
-                    api_kwargs["reasoning"] = {"effort": effort}
-                    api_kwargs["include"] = ["reasoning.encrypted_content"]
-                else:
-                    api_kwargs["reasoning_effort"] = effort
-        else:
-            stale_effort = options.get(CONF_REASONING_EFFORT)
-            if stale_effort not in {None, DEFAULT_REASONING_EFFORT}:
-                _LOGGER.debug(
-                    "Ignoring stale reasoning_effort=%r for non-reasoning model %s",
-                    stale_effort,
-                    model,
+            if capabilities.get("service_tier"):
+                api_kwargs["service_tier"] = options.get(
+                    CONF_SERVICE_TIER, DEFAULT_SERVICE_TIER
                 )
-
-        temperature = _sampling_value(options, model, CONF_TEMPERATURE, effort)
-        if temperature is not None:
-            api_kwargs[CONF_TEMPERATURE] = temperature
-        top_p = _sampling_value(options, model, CONF_TOP_P, effort)
-        if top_p is not None:
-            api_kwargs[CONF_TOP_P] = top_p
-
-        if capabilities.get("service_tier"):
-            api_kwargs["service_tier"] = options.get(
-                CONF_SERVICE_TIER, DEFAULT_SERVICE_TIER
-            )
     except ModelCapabilityError as err:
         raise HomeAssistantError(str(err)) from err
 
