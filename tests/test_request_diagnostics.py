@@ -414,11 +414,11 @@ def _residual_trace() -> debug.DebugTrace:
 
 
 def test_debug_trace_helper_tracks_current_context() -> None:
-    assert request_diagnostics._debug_residual_trace() is None
+    assert request_diagnostics._debug_trace() is None
     trace = _residual_trace()
     token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     try:
-        assert request_diagnostics._debug_residual_trace() is trace
+        assert request_diagnostics._debug_trace() is trace
     finally:
         debug._ACTIVE_DEBUG_TRACE.reset(token)
 
