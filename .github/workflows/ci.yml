@@ -216,6 +216,8 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest tests/ \
+            -n 2 \
+            --dist=loadscope \
             -v \
             --asyncio-mode=auto \
             --timeout=30 \
