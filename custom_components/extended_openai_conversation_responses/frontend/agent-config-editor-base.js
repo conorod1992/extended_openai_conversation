@@ -114,6 +114,19 @@ export function functionToolCountLabel(tools = []) {
   return `${enabled} enabled · ${disabled} disabled`;
 }
 
+export function backupSummaryLines(summary = {}) {
+  return [
+    "Agent configuration",
+    `${Number(summary.request_rules || 0)} Request Rules`,
+    `${Number(summary.persistent_memories || 0)} persistent memories`,
+    `${Number(summary.temporary_memories || 0)} active temporary memories`,
+    `${Number(summary.knowledge_sources || 0)} Knowledge sources`,
+    `${Number(summary.archive_sessions || 0)} archived conversations (${Number(summary.archive_turns || 0)} turns)`,
+    `Usage history (${Number(summary.usage_runs || 0)} runs, ${Number(summary.usage_requests || 0)} requests)`,
+    `Guest Mode schedule ${summary.guest_mode_scheduled ? "included" : "inactive"}`,
+  ];
+}
+
 export const canReplaceToolYamlWithoutConfirmation = (current, replaceable) => !String(current || "").trim() || current === replaceable;
 
 const searchTokens = (value) => String(value || "")
