@@ -192,6 +192,17 @@ jobs:
             )
           else
             TEST_PATHS=(tests_real_ha/)
+            # These release/upgrade journeys are owned by their dedicated
+            # workflows, which construct the candidate/published payloads they
+            # require before running the tests. Avoid collecting them again as
+            # part of the generic stable Real HA suite.
+            TEST_PATHS+=(
+              --ignore=tests_real_ha/test_release_upgrade_acceptance.py
+              --ignore=tests_real_ha/test_release_upgrade_custom_function_tool.py
+              --ignore=tests_real_ha/test_browser_release_upgrade_acceptance.py
+              --ignore=tests_real_ha/test_packaged_release.py
+              --ignore=tests_real_ha/test_packaged_process_restart.py
+            )
           fi
 
           pytest "${TEST_PATHS[@]}" \
