@@ -6,6 +6,7 @@ import asyncio
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from threading import Event
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -517,7 +518,7 @@ async def test_archive_list_filters_scope_and_retention_without_displacing_newes
     older = _edge_session(10)
     foreign = _edge_session(40, scope_id="user:bob")
     expired = _edge_session(50, retention_state="expired")
-    archive._edge_sessions = {
+    archive._sessions = {
         item.session_id: item
         for item in (newest, second, older, foreign, expired)
     }
@@ -540,12 +541,12 @@ async def test_archive_search_applies_access_date_and_text_filters_with_bounded_
     session = _edge_session(100, turn_count=6)
     foreign = _edge_session(101, scope_id="user:bob", turn_count=1)
     expired = _edge_session(102, retention_state="expired", turn_count=1)
-    archive._edge_sessions = {
+    archive._sessions = {
         session.session_id: session,
         foreign.session_id: foreign,
         expired.session_id: expired,
     }
-    archive._edge_turns = defaultdict(
+    archive._turns = defaultdict(
         list,
         {
             session.session_id: [
@@ -633,14 +634,14 @@ async def test_archive_get_page_clamps_inputs_and_recovers_missing_total_metadat
         archive,
         "user:alice",
         "session-1",
-        start_edge_turn=-5,
+        start_turn=-5,
         limit=999,
     )
 
     async_get.assert_awaited_once_with(
         "user:alice", "session-1", 0, MANAGEMENT_ARCHIVE_TURN_PAGE_MAX
     )
-    assert result["start_edge_turn"] == 0
+    assert result["start_turn"] == 0
     assert result["limit"] == MANAGEMENT_ARCHIVE_TURN_PAGE_MAX
     assert result["returned"] == 1
     assert result["total"] == 1
