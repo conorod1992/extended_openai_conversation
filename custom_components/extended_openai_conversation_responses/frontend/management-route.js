@@ -246,6 +246,7 @@ async function loadRouteData(panel, silent, view, token) {
 // One native route entry point owns lazy assets and stale completion handling.
 export function loadRoute(panel, silent = false) {
   const view = panel._viewKey();
+  if (view !== "overview") panel._eocOverviewBroadcastPromise = null;
   const token = (panel._eocViewAssetToken || 0) + 1;
   panel._eocViewAssetToken = token;
   const feature = routeFeaturePromise(view);
