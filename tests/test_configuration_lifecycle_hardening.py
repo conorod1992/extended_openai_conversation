@@ -198,21 +198,17 @@ async def test_live_memory_settings_replace_and_clear_shared_embedding_provider(
 
 
 def test_embedding_provider_sync_is_idempotent_for_unchanged_live_config() -> None:
-    scheduled = []
-
-    def scheduler(coroutine):
-        scheduled.append(coroutine)
-        coroutine.close()
-        return SimpleNamespace(done=lambda: True)
-
-    memory = PersistentMemory(FakeStorage(), embedding_task_scheduler=scheduler)
+    memory = PersistentMemory(FakeStorage())
     memory._initialized = True
     entity = FakeEntity(memory, MEMORY_RETRIEVAL_HYBRID, "same-model")
 
     sync_memory_embedding_provider(entity)
+    first_provider = memory._embedding_provider
     sync_memory_embedding_provider(entity)
 
-    assert len(scheduled) == 1
+    assert first_provider is not None
+    assert memory._embedding_provider is first_provider
+    assert memory._embedding_model == "same-model"
 
 
 @pytest.mark.asyncio
