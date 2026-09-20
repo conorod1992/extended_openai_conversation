@@ -1,0 +1,38 @@
+name: Temporary regenerate frontend dist
+
+on:
+  push:
+    branches:
+      - perf/frontend-residual-performance
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: perf/frontend-residual-performance
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+      - working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - working-directory: frontend
+        run: npm run build
+      - name: Commit generated dist and remove temporary workflow
+        run: |
+          rm .github/workflows/tmp-regenerate-dist.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A custom_components/extended_openai_conversation_responses/frontend/dist .github/workflows/tmp-regenerate-dist.yml
+          if git diff --cached --quiet; then
+            echo "No generated changes"
+            exit 1
+          fi
+          git commit -m "Update generated frontend bundle"
+          git push origin HEAD:perf/frontend-residual-performance
