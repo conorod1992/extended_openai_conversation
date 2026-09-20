@@ -16,6 +16,7 @@ from custom_components.extended_openai_conversation_responses import (
     debug,
     entity as entity_module,
     input_footprint,
+    request as request_module,
     request_static_cache as cache,
     skill_runtime_availability,
 )
@@ -76,6 +77,43 @@ async def test_concurrent_requests_have_independent_caches():
     await asyncio.gather(request(), request())
     assert formatter.call_count == 2
     assert cache._FORMATTED_TOOLS.get() is None
+
+
+def test_provider_request_resolves_model_capabilities_once(monkeypatch):
+    """One request-preparation pass reuses one isolated capability snapshot."""
+    calls = 0
+    original = request_module.get_model_capabilities
+
+    def resolve(model):
+        nonlocal calls
+        calls += 1
+        return original(model)
+
+    monkeypatch.setattr(request_module, "get_model_capabilities", resolve)
+    snapshot = request_module.build_provider_request_snapshot(
+        {"chat_model": "gpt-4.1-mini"},
+        {},
+        tools_required=False,
+    )
+
+    assert snapshot.api_kwargs["model"] == "gpt-4.1-mini"
+    assert calls == 1
+
+
+def test_tool_format_cache_miss_keeps_cache_isolated_without_second_copy():
+    """The first formatted result is fresh while the cached baseline stays private."""
+    source = [_tool("lookup")]
+    formatted = format_function_tools(source, "responses")
+    formatter = Mock(return_value=formatted)
+
+    with cache.formatted_tool_cache():
+        first = cache.cached_format_tools(source, "responses", formatter)
+        assert first is formatted
+        first[0]["mutated"] = True
+        second = cache.cached_format_tools(source, "responses", formatter)
+
+    assert "mutated" not in second[0]
+    assert formatter.call_count == 1
 
 
 async def test_request_reuses_function_config_across_provider_rounds(monkeypatch):
