@@ -213,5 +213,3 @@ async def test_browser_created_request_rule_survives_unload_reload_and_stays_liv
     assert request["body"]["reasoning_effort"] == "xhigh"
 
 
-@pytest.mark.usefixtures("socket_enabled")
-@pytest.mark.timeout(180)
