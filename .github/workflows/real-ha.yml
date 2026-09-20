@@ -27,13 +27,18 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       python-version: ${{ steps.versions.outputs.python-version }}
+      ha-core-sha: ${{ steps.versions.outputs.ha-core-sha }}
     steps:
-      - name: Read Python version from Home Assistant Core
+      - name: Resolve Home Assistant Core dev snapshot
         id: versions
         run: |
-          PYTHON_VERSION="$(curl -fsSL "https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/${{ env.HA_CORE_BRANCH }}/.python-version" | tr -d '\n')"
+          HA_CORE_SHA="$(git ls-remote "https://github.com/${{ env.HA_CORE_REPO }}.git" "refs/heads/${{ env.HA_CORE_BRANCH }}" | awk '{print $1}')"
+          test -n "$HA_CORE_SHA"
+          PYTHON_VERSION="$(curl -fsSL "https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/.python-version" | tr -d '\n')"
           test -n "$PYTHON_VERSION"
+          echo "ha-core-sha=$HA_CORE_SHA" >> "$GITHUB_OUTPUT"
           echo "python-version=$PYTHON_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Home Assistant Core dev commit: $HA_CORE_SHA"
           echo "Home Assistant Python version: $PYTHON_VERSION"
 
   stable:
@@ -136,15 +141,58 @@ jobs:
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
 
-      - name: Install Home Assistant test requirements
-        run: pip install -r requirements_test.txt
+      - name: Install upcoming test requirements without released HA
+        run: |
+          grep -v '^pytest-homeassistant-custom-component' requirements_test.txt \
+            > "${RUNNER_TEMP}/requirements-real-ha-upcoming.txt"
+          pip install -r "${RUNNER_TEMP}/requirements-real-ha-upcoming.txt"
+
+      - name: Cache upcoming Home Assistant Core wheel
+        id: ha-dev-wheel-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/ha-dev-wheel
+          key: ${{ runner.os }}-ha-dev-wheel-${{ needs.prepare.outputs.python-version }}-${{ needs.prepare.outputs.ha-core-sha }}
+
+      - name: Build upcoming Home Assistant Core wheel
+        if: steps.ha-dev-wheel-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/ha-dev-wheel"
+          pip wheel --no-deps \
+            "git+https://github.com/${{ env.HA_CORE_REPO }}.git@${{ needs.prepare.outputs.ha-core-sha }}" \
+            --wheel-dir "${RUNNER_TEMP}/ha-dev-wheel"
 
       - name: Install upcoming Home Assistant Core
         run: |
-          # pytest-homeassistant-custom-component installs a released HA build.
-          # Deliberately replace it with current Home Assistant Core dev.
-          pip install --upgrade --force-reinstall \
-            "git+https://github.com/${{ env.HA_CORE_REPO }}.git@${{ env.HA_CORE_BRANCH }}"
+          pip install "${RUNNER_TEMP}"/ha-dev-wheel/homeassistant-*.whl
+
+      - name: Install Home Assistant pytest fixture plugin without stable HA
+        run: |
+          PLUGIN_SPEC="$(grep '^pytest-homeassistant-custom-component' requirements_test.txt)"
+          test -n "$PLUGIN_SPEC"
+
+          pip install --no-deps "$PLUGIN_SPEC"
+          python - <<'PY'
+          from importlib.metadata import requires
+          from packaging.requirements import Requirement
+          from packaging.utils import canonicalize_name
+          from pathlib import Path
+
+          plugin = "pytest-homeassistant-custom-component"
+          filtered = []
+          for spec in requires(plugin) or []:
+              requirement = Requirement(spec)
+              if canonicalize_name(requirement.name) == "homeassistant":
+                  continue
+              if requirement.marker is not None and not requirement.marker.evaluate():
+                  continue
+              filtered.append(spec)
+
+          path = Path("/tmp/pytest-ha-plugin-deps.txt")
+          path.write_text("\n".join(filtered) + "\n", encoding="utf-8")
+          print(path.read_text(encoding="utf-8"))
+          PY
+          pip install -r /tmp/pytest-ha-plugin-deps.txt
 
       - name: Install integration dependency requirements
         run: |
@@ -153,14 +201,12 @@ jobs:
 
       - name: Verify upcoming test environment
         run: |
-          # pytest-homeassistant-custom-component pins a released HA build, so pip
-          # check is expected to report that one deliberate mismatch after replacing
-          # HA with Core dev. Verify the versions we are actually about to exercise.
           python - <<'PY'
           from importlib.metadata import version
           print("homeassistant=" + version("homeassistant"))
           print("pytest-homeassistant-custom-component=" + version("pytest-homeassistant-custom-component"))
           PY
+          echo "home-assistant-core-sha=${{ needs.prepare.outputs.ha-core-sha }}"
 
       - name: Run genuine Home Assistant acceptance tests
         env:
