@@ -108,7 +108,6 @@ from .debug import (
     conversation_debug_trace,
     current_debug_trace,
     model_path_timing,
-    record_current_provider_failure,
     record_memory_retrieval,
     record_system_prompt,
 )
@@ -178,11 +177,6 @@ from .model_tool_results import (
 )
 from .prompt import render_effective_prompt
 from .prompt_cache import _PROMPT_CACHE_CONTEXT, prompt_cache_context
-from .provider_errors import (
-    log_provider_failure,
-    provider_user_message,
-    request_reauthentication,
-)
 from .regex_execution import async_process_speech_text
 from .request import assemble_integration_function_tools
 from .request_diagnostics import (
@@ -960,42 +954,14 @@ class ExtendedOpenAIAgentEntity(
                 ),
                 request_options=request_options,
             )
-        except OpenAIError as err:
-            if self._usage is not None:
-                self._usage.mark_current_run_failed(type(err).__name__)
-            request_reauthentication(self.hass, getattr(self, "entry", None), err)
-            record_current_provider_failure(err)
-            log_provider_failure(_LOGGER, "OpenAI conversation request failed", err)
-            intent_response = intent.IntentResponse(language=user_input.language)
-            intent_response.async_set_error(
-                intent.IntentResponseErrorCode.UNKNOWN,
-                f"Sorry, I had a problem talking to OpenAI: {provider_user_message(err)}",
-            )
-            self._fire_conversation_finished(
-                user_input, chat_log, status="error", error_type=type(err).__name__
-            )
-            return conversation.ConversationResult(
-                response=intent_response,
-                conversation_id=(
-                    None
-                    if requested_conversation_reset() is not None
-                    else user_input.conversation_id
-                ),
-            )
-        except HomeAssistantError as err:
-            if self._usage is not None:
-                self._usage.mark_current_run_failed(type(err).__name__)
-            _LOGGER.error("Error during conversation: %s", err, exc_info=True)
-            intent_response = intent.IntentResponse(language=user_input.language)
-            intent_response.async_set_error(
-                intent.IntentResponseErrorCode.UNKNOWN,
-                f"Something went wrong: {err}",
-            )
-            self._fire_conversation_finished(
-                user_input, chat_log, status="error", error_type=type(err).__name__
-            )
-            return conversation.ConversationResult(
-                response=intent_response,
+        except (OpenAIError, HomeAssistantError) as err:
+            return _conversation_error_result(
+                self,
+                user_input,
+                chat_log,
+                err,
+                logger=_LOGGER,
+                provider_log_message="OpenAI conversation request failed",
                 conversation_id=(
                     None
                     if requested_conversation_reset() is not None

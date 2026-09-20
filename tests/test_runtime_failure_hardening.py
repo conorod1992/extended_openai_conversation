@@ -223,6 +223,34 @@ def test_openai_conversation_error_uses_provider_failure_path(monkeypatch) -> No
     log.assert_called_once()
 
 
+def test_conversation_error_helper_preserves_phase_logger_and_reset_id(
+    monkeypatch,
+) -> None:
+    entity = _ConversationEntity()
+    user_input = SimpleNamespace(language="en", conversation_id="conversation-1")
+    error = OpenAIError("provider unavailable")
+    log = Mock()
+    logger = Mock()
+    monkeypatch.setattr(hardening, "request_reauthentication", Mock())
+    monkeypatch.setattr(hardening, "record_current_provider_failure", Mock())
+    monkeypatch.setattr(hardening, "log_provider_failure", log)
+    monkeypatch.setattr(hardening, "provider_user_message", lambda _err: "try again")
+
+    result = hardening._conversation_error_result(
+        entity,
+        user_input,
+        SimpleNamespace(),
+        error,
+        logger=logger,
+        provider_log_message="OpenAI conversation request failed",
+        conversation_id=None,
+    )
+
+    assert result.conversation_id is None
+    log.assert_called_once_with(logger, "OpenAI conversation request failed", error)
+    assert entity.finished == [("error", "OpenAIError")]
+
+
 async def test_archive_wrapper_delegates_non_archive_and_blocks_disallowed_guest(
     monkeypatch,
 ) -> None:

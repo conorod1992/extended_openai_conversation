@@ -16,6 +16,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .persistence_hardening import _async_settle_transactional_save
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -559,44 +560,13 @@ class KnowledgeLibrary:
 
     async def _async_save_locked(self) -> None:
         """Settle each Store write before propagating cancellation or rolling back."""
-        save_task = asyncio.ensure_future(
+        await _async_settle_transactional_save(
             self._storage.async_save(
                 {"sources": [asdict(source) for source in self._sources.values()]}
-            )
+            ),
+            self._restore_committed_state,
+            self._remember_committed_state,
         )
-        cancellation: asyncio.CancelledError | None = None
-
-        # A caller cancellation must not abort a Store write after the manager's live
-        # state has already changed. Keep observing the save until it reaches a known
-        # result; repeated cancellation requests remain deferred to this boundary.
-        while not save_task.done():
-            try:
-                await asyncio.shield(save_task)
-            except asyncio.CancelledError as err:
-                if save_task.cancelled():
-                    self._restore_committed_state()
-                    raise
-                if cancellation is None:
-                    cancellation = err
-            except Exception:
-                # Inspect the finished task below so rollback and cancellation
-                # precedence stay in one place.
-                break
-
-        try:
-            save_task.result()
-        except asyncio.CancelledError:
-            self._restore_committed_state()
-            raise
-        except Exception as err:
-            self._restore_committed_state()
-            if cancellation is not None:
-                raise cancellation from err
-            raise
-
-        self._remember_committed_state()
-        if cancellation is not None:
-            raise cancellation
 
     def _remember_committed_state(self) -> None:
         self._committed_state = {"sources": dict(self._sources)}
@@ -683,6 +653,7 @@ def knowledge_tools() -> list[dict[str, Any]]:
                     "properties": {
                         "query": {
                             "type": "string",
+                            "minLength": 1,
                             "description": "What information to find in the local knowledge library.",
                         },
                         "source_ids": {
