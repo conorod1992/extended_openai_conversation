@@ -58,6 +58,7 @@ jobs:
           - parallel-safe
           - process-restart-a
           - process-restart-b
+          - process-restart-c
           - stateful-serial
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
@@ -115,11 +116,13 @@ jobs:
           }
           process_restart_a = {
               "test_delayed_tool_process_restart.py",
-              "test_pending_store_write_shutdown_recovery.py",
           }
           process_restart_b = {
               "test_active_request_shutdown_recovery.py",
               "test_immediate_tool_process_crash.py",
+          }
+          process_restart_c = {
+              "test_pending_store_write_shutdown_recovery.py",
           }
           stateful_serial = {
               "test_backup_restore_atomicity.py",
@@ -157,7 +160,7 @@ jobs:
               for path in Path("tests_real_ha").glob("test_*.py")
           }
           generic = discovered - excluded
-          process_restart = process_restart_a | process_restart_b
+          process_restart = process_restart_a | process_restart_b | process_restart_c
           serial = process_restart | stateful_serial
 
           unknown = serial - generic
@@ -168,6 +171,8 @@ jobs:
               )
           overlaps = {
               "process A/process B": process_restart_a & process_restart_b,
+              "process A/process C": process_restart_a & process_restart_c,
+              "process B/process C": process_restart_b & process_restart_c,
               "process/stateful": process_restart & stateful_serial,
           }
           bad_overlap = {
@@ -195,6 +200,7 @@ jobs:
           print(f"parallel-safe files: {len(parallel_safe)}")
           print(f"process-restart-a files: {len(process_restart_a)}")
           print(f"process-restart-b files: {len(process_restart_b)}")
+          print(f"process-restart-c files: {len(process_restart_c)}")
           print(f"stateful-serial files: {len(stateful_serial)}")
           print(f"excluded specialized files: {len(excluded)}")
           PY
@@ -207,11 +213,13 @@ jobs:
 
           PROCESS_RESTART_A=(
             tests_real_ha/test_delayed_tool_process_restart.py
-            tests_real_ha/test_pending_store_write_shutdown_recovery.py
           )
           PROCESS_RESTART_B=(
             tests_real_ha/test_active_request_shutdown_recovery.py
             tests_real_ha/test_immediate_tool_process_crash.py
+          )
+          PROCESS_RESTART_C=(
+            tests_real_ha/test_pending_store_write_shutdown_recovery.py
           )
           STATEFUL_SERIAL=(
             tests_real_ha/test_backup_restore_atomicity.py
@@ -255,6 +263,10 @@ jobs:
               TEST_PATHS=("${PROCESS_RESTART_B[@]}")
               COVERAGE_ARGS=()
               ;;
+            process-restart-c)
+              TEST_PATHS=("${PROCESS_RESTART_C[@]}")
+              COVERAGE_ARGS=()
+              ;;
             stateful-serial)
               TEST_PATHS=("${STATEFUL_SERIAL[@]}")
               COVERAGE_ARGS=()
@@ -272,7 +284,7 @@ jobs:
                 --ignore=tests_real_ha/test_packaged_release.py
                 --ignore=tests_real_ha/test_packaged_process_restart.py
               )
-              for path in "${PROCESS_RESTART_A[@]}" "${PROCESS_RESTART_B[@]}" "${STATEFUL_SERIAL[@]}"; do
+              for path in "${PROCESS_RESTART_A[@]}" "${PROCESS_RESTART_B[@]}" "${PROCESS_RESTART_C[@]}" "${STATEFUL_SERIAL[@]}"; do
                 TEST_PATHS+=(--ignore="$path")
               done
               XDIST_ARGS=(
