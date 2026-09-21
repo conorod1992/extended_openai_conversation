@@ -267,6 +267,80 @@ async def test_search_ranking_and_description_and_phrase_boost() -> None:
     )
 
 
+async def test_search_and_catalog_reuse_precomputed_lexical_features(
+    monkeypatch,
+) -> None:
+    """Repeated reads only tokenize and normalize the query, not indexed source text."""
+    library = await _library()
+    source = await library.async_create(
+        "Concrete wall drill",
+        "Masonry tools and fixings",
+        "Use the blue masonry bit for concrete walls.",
+    )
+    features = library._source_features[source.source_id]
+    chunk = next(
+        item for item in library._chunks.values() if item.source_id == source.source_id
+    )
+
+    assert features.title_tokens == frozenset({"concrete", "wall", "drill"})
+    assert features.normalized_description == "masonry tools and fixings"
+    assert chunk.normalized_text == "use the blue masonry bit for concrete walls"
+
+    original_tokens = knowledge._tokens
+    original_normalize = knowledge._normalize
+    token_inputs: list[str] = []
+    normalize_inputs: list[str] = []
+
+    def tracked_tokens(value: str) -> set[str]:
+        token_inputs.append(value)
+        return original_tokens(value)
+
+    def tracked_normalize(value: str) -> str:
+        normalize_inputs.append(value)
+        return original_normalize(value)
+
+    monkeypatch.setattr(knowledge, "_tokens", tracked_tokens)
+    monkeypatch.setattr(knowledge, "_normalize", tracked_normalize)
+
+    assert [item.source_id for item in await library.async_search("concrete wall")] == [
+        source.source_id
+    ]
+    catalog = await library.async_catalog("masonry tools")
+    assert [item["source_id"] for item in catalog["sources"]] == [source.source_id]
+
+    assert token_inputs == ["concrete wall", "masonry tools"]
+    assert normalize_inputs == ["concrete wall", "masonry tools"]
+
+
+async def test_update_rebuilds_precomputed_lexical_features() -> None:
+    """Updating one source replaces its derived metadata and chunk features."""
+    library = await _library()
+    source = await library.async_create(
+        "Old title", "Old description", "Old searchable body"
+    )
+    old_features = library._source_features[source.source_id]
+
+    await library.async_update(
+        source.source_id,
+        title="New title",
+        description="New description",
+        content="Fresh searchable body",
+    )
+
+    features = library._source_features[source.source_id]
+    chunks = [
+        chunk
+        for chunk in library._chunks.values()
+        if chunk.source_id == source.source_id
+    ]
+    assert features is not old_features
+    assert features.normalized_title == "new title"
+    assert features.normalized_description == "new description"
+    assert chunks
+    assert all("old searchable body" not in chunk.normalized_text for chunk in chunks)
+    assert any("fresh searchable body" in chunk.normalized_text for chunk in chunks)
+
+
 async def test_long_source_returns_relevant_bounded_chunk_without_duplicates() -> None:
     library = await _library()
     content = (

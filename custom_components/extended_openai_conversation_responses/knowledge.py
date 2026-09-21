@@ -73,7 +73,18 @@ class _Chunk:
     chunk_id: int
     start: int
     text: str
+    normalized_text: str
     tokens: frozenset[str]
+
+
+@dataclass(slots=True, frozen=True)
+class _SourceFeatures:
+    title_tokens: frozenset[str]
+    description_tokens: frozenset[str]
+    metadata_tokens: frozenset[str]
+    normalized_title: str
+    normalized_description: str
+    normalized_metadata: str
 
 
 class KnowledgeStorage(Protocol):
@@ -126,6 +137,7 @@ class KnowledgeLibrary:
         self._storage = storage
         self._sources: dict[str, KnowledgeSource] = {}
         self._chunks: dict[tuple[str, int], _Chunk] = {}
+        self._source_features: dict[str, _SourceFeatures] = {}
         self._token_index: dict[str, set[tuple[str, int]]] = defaultdict(set)
         self._lock = asyncio.Lock()
         self._initialized = False
@@ -166,6 +178,7 @@ class KnowledgeLibrary:
             except BaseException:
                 self._sources.clear()
                 self._chunks.clear()
+                self._source_features.clear()
                 self._token_index = defaultdict(set)
                 self._initialized = False
                 self._committed_state = None
@@ -226,9 +239,11 @@ class KnowledgeLibrary:
             sources = [
                 source
                 for source in sources
-                if normalized_query
-                in _normalize(f"{source.title} {source.description}")
-                or bool(query_tokens & _tokens(f"{source.title} {source.description}"))
+                if (features := self._source_features.get(source.source_id)) is not None
+                and (
+                    normalized_query in features.normalized_metadata
+                    or bool(query_tokens & features.metadata_tokens)
+                )
             ]
         sources.sort(
             key=lambda source: (source.updated_at, source.source_id), reverse=True
@@ -340,28 +355,16 @@ class KnowledgeLibrary:
         for token in query_tokens:
             candidates.update(self._token_index.get(token, set()))
 
-        source_features: dict[str, tuple[set[str], set[str], str, str]] = {}
         best_by_source: dict[str, tuple[float, _Chunk]] = {}
         for chunk_key in candidates:
             chunk = self._chunks[chunk_key]
             if allowed is not None and chunk.source_id not in allowed:
                 continue
-            source = self._sources[chunk.source_id]
-            features = source_features.get(chunk.source_id)
-            if features is None:
-                features = (
-                    _tokens(source.title),
-                    _tokens(source.description),
-                    _normalize(source.title),
-                    _normalize(source.description),
-                )
-                source_features[chunk.source_id] = features
-            (
-                title_tokens,
-                description_tokens,
-                normalized_title,
-                normalized_description,
-            ) = features
+            features = self._source_features[chunk.source_id]
+            title_tokens = features.title_tokens
+            description_tokens = features.description_tokens
+            normalized_title = features.normalized_title
+            normalized_description = features.normalized_description
             overlap = len(query_tokens & chunk.tokens) / len(query_tokens)
             title_overlap = len(query_tokens & title_tokens) / len(query_tokens)
             description_overlap = len(query_tokens & description_tokens) / len(
@@ -372,7 +375,7 @@ class KnowledgeLibrary:
                 score += 8
             if normalized_query in normalized_description:
                 score += 5
-            if normalized_query in _normalize(chunk.text):
+            if normalized_query in chunk.normalized_text:
                 score += 4
             current = best_by_source.get(chunk.source_id)
             if (
@@ -511,6 +514,7 @@ class KnowledgeLibrary:
             self._ensure_initialized()
             self._sources = {source.source_id: source for source in sources}
             self._chunks.clear()
+            self._source_features.clear()
             self._token_index.clear()
             for source in sources:
                 self._index(source)
@@ -532,14 +536,29 @@ class KnowledgeLibrary:
     def _index(self, source: KnowledgeSource) -> None:
         if not source.enabled:
             return
-        title_description_tokens = _tokens(f"{source.title} {source.description}")
+        title_tokens = frozenset(_tokens(source.title))
+        description_tokens = frozenset(_tokens(source.description))
+        metadata_tokens = title_tokens | description_tokens
+        normalized_title = _normalize(source.title)
+        normalized_description = _normalize(source.description)
+        self._source_features[source.source_id] = _SourceFeatures(
+            title_tokens=title_tokens,
+            description_tokens=description_tokens,
+            metadata_tokens=metadata_tokens,
+            normalized_title=normalized_title,
+            normalized_description=normalized_description,
+            normalized_metadata=" ".join(
+                filter(None, (normalized_title, normalized_description))
+            ),
+        )
         for chunk_id, (start, text) in enumerate(_split_chunks(source.content)):
             chunk = _Chunk(
                 source_id=source.source_id,
                 chunk_id=chunk_id,
                 start=start,
                 text=text,
-                tokens=frozenset(_tokens(text) | title_description_tokens),
+                normalized_text=_normalize(text),
+                tokens=frozenset(_tokens(text) | metadata_tokens),
             )
             key = (source.source_id, chunk_id)
             self._chunks[key] = chunk
@@ -547,6 +566,7 @@ class KnowledgeLibrary:
                 self._token_index[token].add(key)
 
     def _unindex(self, source_id: str) -> None:
+        self._source_features.pop(source_id, None)
         keys = [key for key in self._chunks if key[0] == source_id]
         for key in keys:
             chunk = self._chunks.pop(key)
@@ -577,6 +597,7 @@ class KnowledgeLibrary:
             return
         self._sources = dict(snapshot["sources"])
         self._chunks.clear()
+        self._source_features.clear()
         self._token_index = defaultdict(set)
         for source in self._sources.values():
             self._index(source)
