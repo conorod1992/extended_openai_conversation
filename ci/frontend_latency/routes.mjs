@@ -6,7 +6,6 @@ export const LATENCY_ROUTES = [
   {name: "assistant-prompt-context", path: "assistant/prompt-context"},
   {name: "assistant-voice", path: "assistant/voice"},
   {name: "assistant-speech", path: "assistant/speech"},
-  {name: "assistant-advanced", path: "assistant/advanced"},
   {name: "capabilities-home-assistant", path: "capabilities/home-assistant"},
   {name: "capabilities-web-skills", path: "capabilities/web-skills"},
   {name: "capabilities-request-rules", path: "capabilities/request-rules"},
