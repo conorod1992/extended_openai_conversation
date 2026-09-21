@@ -852,29 +852,44 @@ async def test_cached_debug_setup_respects_completed_step_markers(monkeypatch) -
 
 
 
-async def test_scope_catalog_loads_memory_and_archive_concurrently(monkeypatch) -> None:
+async def test_scope_catalog_loads_all_scope_managers_concurrently(monkeypatch) -> None:
     """Independent scope managers must start together rather than as a waterfall."""
     memory_started = asyncio.Event()
     archive_started = asyncio.Event()
+    temporary_started = asyncio.Event()
     memory_counts = {"all": 4, "user": 3}
     archive_counts = {"all": 7, "user": 5}
+    temporary_counts = {"user:user": 2}
+
+    async def wait_for_peers(*events):
+        await asyncio.wait_for(
+            asyncio.gather(*(event.wait() for event in events)),
+            timeout=1,
+        )
 
     async def get_memory(_hass, entry_id, subentry_id):
         assert (entry_id, subentry_id) == ("entry-1", "agent-1")
         memory_started.set()
-        await asyncio.wait_for(archive_started.wait(), timeout=1)
+        await wait_for_peers(archive_started, temporary_started)
         return SimpleNamespace(scope_counts=lambda: memory_counts)
 
     async def get_archive(_hass, entry_id, subentry_id):
         assert (entry_id, subentry_id) == ("entry-1", "agent-1")
         archive_started.set()
-        await asyncio.wait_for(memory_started.wait(), timeout=1)
+        await wait_for_peers(memory_started, temporary_started)
         return SimpleNamespace(scope_counts=lambda: archive_counts)
+
+    async def get_temporary(_hass, entry_id, subentry_id):
+        assert (entry_id, subentry_id) == ("entry-1", "agent-1")
+        temporary_started.set()
+        await wait_for_peers(memory_started, archive_started)
+        return SimpleNamespace(owner_counts=lambda: temporary_counts)
 
     scope_catalog = AsyncMock(return_value=[{"id": "all", "label": "All"}])
     monkeypatch.setattr(loading, "async_scope_catalog_projection", scope_catalog)
     monkeypatch.setattr(loading, "async_get_memory", get_memory)
     monkeypatch.setattr(loading, "async_get_archive", get_archive)
+    monkeypatch.setattr(loading, "async_get_temporary_memory", get_temporary)
 
     hass = SimpleNamespace()
     result = await loading.async_scope_catalog(
@@ -892,4 +907,5 @@ async def test_scope_catalog_loads_memory_and_archive_concurrently(monkeypatch) 
         True,
         memory_counts,
         archive_counts,
+        temporary_counts,
     )
