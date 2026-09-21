@@ -252,6 +252,11 @@ _PROCESS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
 )
 
 
+def _request_llm_context(user_input: ConversationInput) -> Any:
+    """Reuse the request-scoped LLM context, with a direct-call fallback."""
+    return _ACTIVE_LLM_CONTEXT.get() or user_input.as_llm_context(DOMAIN)
+
+
 def _request_function_groups(
     entity: Any, configured_tools: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -902,9 +907,7 @@ class ExtendedOpenAIAgentEntity(
         request_options: Mapping[str, Any] | None = None,
     ) -> ConversationResult:
         """Resolve HA references and cache one validated config revision per request."""
-        llm_context = _ACTIVE_LLM_CONTEXT.get()
-        if llm_context is None:
-            llm_context = user_input.as_llm_context(DOMAIN)
+        llm_context = _request_llm_context(user_input)
         configured = self._configured_function_tools_from_data(self.subentry.data)
         references = [
             tool["function"]
@@ -959,9 +962,7 @@ class ExtendedOpenAIAgentEntity(
         deferred_speech: list[tuple[str, Mapping[str, Any]]],
     ) -> ConversationResult:
         """Call the API."""
-        llm_context = _ACTIVE_LLM_CONTEXT.get()
-        if llm_context is None:
-            llm_context = user_input.as_llm_context(DOMAIN)
+        llm_context = _request_llm_context(user_input)
 
         # Get exposed entities for function tools
         exposed_entities = self._get_exposed_entities()
