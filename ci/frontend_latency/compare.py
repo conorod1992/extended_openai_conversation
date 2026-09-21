@@ -63,16 +63,32 @@ def main() -> None:
     ]
     comparison: dict[str, Any] = {"backend": {}, "browser": {}}
 
-    for name in baseline["backend"]:
-        if name not in current["backend"]:
+    backend_names = list(baseline["backend"])
+    backend_names.extend(name for name in current["backend"] if name not in baseline["backend"])
+    for name in backend_names:
+        before_entry = baseline["backend"].get(name, {})
+        after_entry = current["backend"].get(name, {})
+        before = before_entry.get("median_ms")
+        after = after_entry.get("median_ms")
+        if before is not None and after is not None:
+            before_value = float(before)
+            after_value = float(after)
+            lines.append(row(name, before_value, after_value))
+            comparison["backend"][name] = {
+                "baseline_ms": before_value,
+                "current_ms": after_value,
+                "delta_ms": after_value - before_value,
+            }
             continue
-        before = float(baseline["backend"][name]["median_ms"])
-        after = float(current["backend"][name]["median_ms"])
-        lines.append(row(name, before, after))
+
+        before_text = "n/a" if before is None else f"{float(before):.1f}"
+        after_text = "n/a" if after is None else f"{float(after):.1f}"
+        lines.append(f"| {name} | {before_text} | {after_text} | n/a | n/a |")
         comparison["backend"][name] = {
-            "baseline_ms": before,
-            "current_ms": after,
-            "delta_ms": after - before,
+            "baseline_ms": None if before is None else float(before),
+            "current_ms": None if after is None else float(after),
+            "baseline_supported": before_entry.get("supported", before is not None),
+            "current_supported": after_entry.get("supported", after is not None),
         }
 
     before_routes = browser_medians(baseline)
@@ -102,7 +118,7 @@ def main() -> None:
         "",
         "- Absolute GitHub-runner timings are not expected to match an Odroid/LAN install.",
         "- The same runner executes the baseline and current develop sequentially, making deltas useful for repository-caused regressions and improvements.",
-        "- Raw JSON includes LCP, EOAI performance marks/measures, and integration resource timing for deeper diagnosis.",
+        "- Backend operations unavailable on the historical baseline are shown as `n/a`; current develop must still support every measured operation.\n- Raw JSON includes LCP, EOAI performance marks/measures, and integration resource timing for deeper diagnosis.",
         "",
     ]
 
