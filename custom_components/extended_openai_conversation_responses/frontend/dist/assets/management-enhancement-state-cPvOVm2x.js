@@ -1,1 +1,0 @@
-var e=new WeakMap;function t(t,n,r=[]){let i=e.get(t);i||e.set(t,i=new Map);let a=[t.shadowRoot,t._eocShellRevision,t._eocMainRevision,...r],o=i.get(n);return o&&o.length===a.length&&a.every((e,t)=>Object.is(e,o[t]))?!1:(i.set(n,a),!0)}export{t};
