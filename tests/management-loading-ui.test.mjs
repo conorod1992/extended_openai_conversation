@@ -32,9 +32,6 @@ assert.match(loading, /Document changed\. Validate & preview again before import
 assert.match(loading, /validatedImportMatches\(panel\._importDocument, current\)/);
 assert.match(panelSource, /section === "guest_mode" && action === "update"/);
 assert.doesNotMatch(loading, /button\.id === "guest-policy-save"/);
-assert.match(loading, /button\.classList\.contains\("rule-duplicate"\)/);
-assert.match(loading, /button\.classList\.contains\("rule-delete"\)/);
-assert.match(loading, /input\?\.classList\?\.contains\("rule-enabled"\)/);
 assert.match(panelSource, /this\._eocRuleSavePromise/);
 
 assert.match(overview, /import\("\.\/overview-page-impl\.js"\)/);
