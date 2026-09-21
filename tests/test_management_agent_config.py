@@ -166,7 +166,7 @@ async def test_configuration_get_defers_live_metadata_and_reuses_snapshot_revisi
         {
             **base,
             "action": "live_metadata",
-            "metadata": ["local_handling", "exposed_attribute_catalog"],
+            "metadata_keys": ["local_handling", "exposed_attribute_catalog"],
         },
     )
     assert live["local_handling"]["supported"] is True
