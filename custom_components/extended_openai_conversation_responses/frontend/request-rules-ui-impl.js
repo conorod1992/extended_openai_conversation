@@ -265,38 +265,27 @@ export function bindRequestRules(panel) {
     if (!button || button.disabled) return;
     if (button.id === "rule-empty-add") return open();
     if (button.matches(".rule-edit")) return open(button.dataset.id);
-    if (!button.matches(".rule-duplicate,.rule-delete,.rule-move")) return;
-    const action = button.matches(".rule-delete") ? "delete" : button.matches(".rule-move") ? "move" : "duplicate";
-    if (action === "delete" && !await panel._confirm("Delete Request Rule?", "This cannot be undone.", "Delete")) return;
+    if (!button.matches(".rule-move")) return;
     pendingRuleButtons.add(button);
     button.disabled = true;
     try {
-      if (action === "delete") await panel._call("request_rules", "delete", {rule_id: button.dataset.id, confirm: true, revision: panel._result?.revision});
-      else if (action === "move") await panel._call("request_rules", "move", {rule_id: button.dataset.id, direction: button.dataset.direction, revision: panel._result?.revision});
-      else await panel._call("request_rules", "duplicate", {rule_id: button.dataset.id, revision: panel._result?.revision});
+      await panel._call("request_rules", "move", {
+        rule_id: button.dataset.id,
+        direction: button.dataset.direction,
+        revision: panel._result?.revision,
+      });
       await panel._loadSection(true);
     } catch (err) {
-      if (action === "delete") await recoverRequestRuleMutation(panel, err, "Unable to delete Request Rule");
-      else if (action === "duplicate") await recoverRequestRuleMutation(panel, err, "Unable to duplicate Request Rule");
-      else await recoverRequestRuleMutation(panel, err, "Unable to move Request Rule");
-    }
-    finally {
+      await recoverRequestRuleMutation(panel, err, "Unable to move Request Rule");
+    } finally {
       pendingRuleButtons.delete(button);
       const current = rules();
-      button.disabled = action === "move" && moveDisabled(current.findIndex(rule => rule.id === button.dataset.id), current.length, button.dataset.direction);
+      button.disabled = moveDisabled(
+        current.findIndex(rule => rule.id === button.dataset.id),
+        current.length,
+        button.dataset.direction,
+      );
     }
-  });
-  list?.addEventListener("change", async event => {
-    const input = event.target;
-    if (!input.matches?.(".rule-enabled") || input.disabled) return;
-    const rule = rules().find(item => item.id === input.dataset.id);
-    if (!rule) return;
-    input.disabled = true;
-    try {
-      await panel._call("request_rules", "update", {rule_id: rule.id, rule: {...rule, enabled: input.checked, sensitive_matching_warning: undefined}, revision: panel._result?.revision});
-      await panel._loadSection(true);
-    } catch (err) { input.checked = Boolean(rule.enabled); await recoverRequestRuleMutation(panel, err, "Unable to update Request Rule"); }
-    finally { input.disabled = false; }
   });
   q("#rules-default-fuzzy")?.addEventListener("change", () => setFuzzyState(root, "rules-default"));
   q("#rule-fuzzy")?.addEventListener("change", () => setFuzzyState(root, "rule"));
