@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
+import {LATENCY_ROUTES} from "../ci/frontend_latency/routes.mjs";
+import {NAVIGATION} from "../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
 
 const workflow = await readFile(".github/workflows/frontend-latency-diagnostics.yml", "utf8");
 const pythonHarness = await readFile("ci/frontend_latency/test_latency_diagnostics.py", "utf8");
 const browserHarness = await readFile("ci/frontend_latency/latency.spec.mjs", "utf8");
+const routeManifest = await readFile("ci/frontend_latency/routes.mjs", "utf8");
+const routeSmoke = await readFile("tests_browser/latency-route-readiness.spec.mjs", "utf8");
 const comparison = await readFile("ci/frontend_latency/compare.py", "utf8");
 
 for (const route of [
@@ -14,7 +18,6 @@ for (const route of [
   "assistant-prompt-context",
   "assistant-voice",
   "assistant-speech",
-  "assistant-advanced",
   "capabilities-home-assistant",
   "capabilities-web-skills",
   "capabilities-request-rules",
@@ -31,7 +34,7 @@ for (const route of [
   "usage-maintenance-retention",
   "usage-maintenance-request-debug",
 ]) {
-  assert.match(browserHarness, new RegExp(`name: "${route}"`), route);
+  assert.match(routeManifest, new RegExp(`name: "${route}"`), route);
 }
 
 for (const operation of [
@@ -69,14 +72,35 @@ assert.match(pythonHarness, /"supported": False/);
 
 assert.match(browserHarness, /baselineMode = label === "baseline"/);
 assert.match(browserHarness, /supported: false/);
-assert.match(browserHarness, /if \(!baselineMode\)/);
 assert.match(comparison, /Backend operations or browser routes unavailable on the historical baseline are shown as `n\/a`/);
 
 assert.match(browserHarness, /async function closeContext/);
 assert.match(browserHarness, /baselineMode \? 2500 : 30000/);
+assert.match(browserHarness, /waitForManagementRouteReady/);
+assert.doesNotMatch(routeManifest, /ready:/);
+assert.match(routeSmoke, /for \(const route of LATENCY_ROUTES\)/);
 const latencyPlaywrightConfig = await readFile("ci/frontend_latency/playwright.config.mjs", "utf8");
 assert.match(latencyPlaywrightConfig, /timeout: 240_000/);
 
 const closeContextBody = browserHarness.match(/async function closeContext\(context\) \{([\s\S]*?)\n\}/)?.[1] || "";
 assert.match(closeContextBody, /await context\.close\(\)/);
 assert.doesNotMatch(closeContextBody, /await closeContext\(context\)/);
+
+const currentManagementPaths = new Set(
+  NAVIGATION.flatMap((page) => page.sections.length
+    ? page.sections.map((section) => `${page.id}/${section.id}`)
+    : page.id === "overview" ? ["overview"] : []),
+);
+for (const route of LATENCY_ROUTES) {
+  assert.ok(currentManagementPaths.has(route.path), `stale latency route: ${route.path}`);
+}
+const latencyPaths = new Set(LATENCY_ROUTES.map((route) => route.path));
+assert.equal(latencyPaths.size, LATENCY_ROUTES.length);
+assert.deepEqual([...latencyPaths].sort(), [...currentManagementPaths].sort());
+
+assert.match(browserHarness, /baselineMode && routeMismatch/);
+assert.match(browserHarness, /Latency route \$\{route\.path\} failed readiness/);
+assert.doesNotMatch(routeManifest, /assistant\/advanced/);
+
+assert.match(routeManifest, /_eocRenderedRoute/);
+assert.doesNotMatch(routeManifest, /page-intro h1/);
