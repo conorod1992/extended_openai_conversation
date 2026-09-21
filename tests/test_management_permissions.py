@@ -86,7 +86,7 @@ async def test_overview_bounds_and_sanitizes_usage_once(
     monkeypatch.setattr(
         loading,
         "async_get_memory",
-        AsyncMock(return_value=SimpleNamespace(stats=lambda: {"memory_count": 2})),
+        AsyncMock(return_value=SimpleNamespace(memory_count=2)),
     )
     monkeypatch.setattr(
         loading,
