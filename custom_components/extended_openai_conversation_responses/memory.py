@@ -704,6 +704,35 @@ class PersistentMemory:
         memories.sort(key=lambda memory: memory.updated_at, reverse=True)
         return memories[offset : offset + limit]
 
+    async def async_list_page(
+        self,
+        user_id: str | Sequence[str],
+        category: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[MemoryRecord], bool]:
+        """List one page and continuation state with a single scan and sort."""
+        self._ensure_initialized()
+        limit = max(1, min(limit, MAX_LIST_LIMIT))
+        offset = max(0, offset)
+        category_filter = _clean_category(category) if category else None
+        scope_ids = {user_id} if isinstance(user_id, str) else set(user_id)
+        memories = [
+            memory
+            for memory in self._memories.values()
+            if memory.user_id in scope_ids
+            and (category_filter is None or memory.category == category_filter)
+        ]
+        memories.sort(key=lambda memory: memory.updated_at, reverse=True)
+        end = offset + limit
+        return memories[offset:end], len(memories) > end
+
+    @property
+    def memory_count(self) -> int:
+        """Return the number of retained persistent memories in O(1)."""
+        self._ensure_initialized()
+        return len(self._memories)
+
     async def async_browse(
         self,
         user_id: str,
