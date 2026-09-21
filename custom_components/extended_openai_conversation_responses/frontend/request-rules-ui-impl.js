@@ -259,7 +259,6 @@ export function bindRequestRules(panel) {
   };
 
   q("#rule-add")?.addEventListener("click", () => open());
-  q("#rule-search")?.addEventListener("input", (event) => { panel._query = event.target.value; panel._render(); });
   const list = q(".rule-list");
   list?.addEventListener("click", async event => {
     const button = event.target.closest?.("button");
