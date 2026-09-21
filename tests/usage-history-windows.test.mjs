@@ -90,7 +90,7 @@ const monthBuckets = usageChartBuckets(yearHistory.days, "year");
 assert.ok(monthBuckets.length <= 12);
 assert.equal(monthBuckets.reduce((sum, bucket) => sum + bucket.total_tokens, 0), yearHistory.summary.total_tokens);
 
-// All-available history is transferred in bounded pages and then deduplicated.
+// All-available history is transferred in ordered, non-overlapping bounded pages.
 const pagedDays = ["2026-09-01","2026-09-02","2026-09-03","2026-09-04","2026-09-05"].map((date) => makeDay(date));
 const starts = [];
 const paged = await loadAllUsageDays(async (startDate) => {
@@ -99,6 +99,16 @@ const paged = await loadAllUsageDays(async (startDate) => {
 }, {pageSize:2,maxPages:4});
 assert.deepEqual(paged.days.map((day) => day.date), pagedDays.map((day) => day.date));
 assert.deepEqual(starts, ["0000-01-01","2026-09-03","2026-09-05"]);
+
+const usageDataImplementation = await readFile(
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-data.js", import.meta.url),
+  "utf8",
+);
+assert.doesNotMatch(
+  usageDataImplementation,
+  /new Map\(rows\.map|unique\.values|localeCompare/,
+  "ordered non-overlapping backend pages should not be deduplicated or resorted in the frontend",
+);
 
 // Range changes are local renders over one loaded aggregate snapshot. Agent loads are
 // still generation-guarded, and the paging helper captures one agent identity before
