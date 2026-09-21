@@ -203,10 +203,9 @@ def usage_breakdowns(
         }
         for key in output_fields
     }
-    for date in sorted(manager.daily):
+    for date, day in manager.daily.items():
         if (start_date and date < start_date) or (end_date and date > end_date):
             continue
-        day = manager.daily[date]
         for output_key, day_key in output_fields.items():
             values = day.get(day_key, {})
             if not isinstance(values, dict):

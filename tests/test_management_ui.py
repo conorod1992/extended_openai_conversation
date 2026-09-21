@@ -1381,7 +1381,7 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
     )
     memory = SimpleNamespace(
         _memories={record.memory_id: record},
-        async_list=AsyncMock(return_value=[record]),
+        async_list_page=AsyncMock(return_value=([record], False)),
         async_add=AsyncMock(return_value={"status": "created"}),
         async_update=AsyncMock(return_value=record),
         async_delete=AsyncMock(return_value=1),

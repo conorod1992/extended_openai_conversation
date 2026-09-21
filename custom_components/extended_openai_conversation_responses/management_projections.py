@@ -8,6 +8,9 @@ depend only on domain/configuration owners, never on management_ui.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
+from functools import lru_cache
+from types import MappingProxyType
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -77,12 +80,19 @@ async def async_scope_catalog_projection(
     return scopes
 
 
-def settings_snapshot(options: Mapping[str, Any]) -> dict[str, Any]:
-    """Project the Management conversation/archive settings shape."""
+@lru_cache(maxsize=1)
+def _settings_defaults() -> Mapping[str, Any]:
+    """Build invariant Management settings defaults once."""
     defaults = agent_config_defaults()
     # Management historically presents an unconfigured voice owner as null even
     # though the broader agent configuration normalization has its own defaults.
     defaults[CONF_VOICE_DEFAULT_USER_ID] = None
+    return MappingProxyType(defaults)
+
+
+def settings_snapshot(options: Mapping[str, Any]) -> dict[str, Any]:
+    """Project the Management conversation/archive settings shape."""
+    defaults = _settings_defaults()
     keys = (
         CONF_ARCHIVE_ENABLED,
         CONF_ARCHIVE_RETENTION_DAYS,
@@ -97,4 +107,6 @@ def settings_snapshot(options: Mapping[str, Any]) -> dict[str, Any]:
         CONF_USAGE_REQUEST_RETENTION_DAYS,
         CONF_USAGE_RUN_RETENTION_DAYS,
     )
-    return {key: options.get(key, defaults[key]) for key in keys}
+    return {
+        key: options[key] if key in options else deepcopy(defaults[key]) for key in keys
+    }

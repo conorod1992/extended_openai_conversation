@@ -252,7 +252,7 @@ async def async_overview_summary(
     if isinstance(memory_result, BaseException):
         record_failure("memories", "Memory", memory_result)
     else:
-        memory_count = int(memory_result.stats().get("memory_count", 0))
+        memory_count = int(memory_result.memory_count)
 
     knowledge_source_count = 0
     if isinstance(knowledge_result, BaseException):

@@ -21,7 +21,7 @@ class FakeMemory:
         self._memories = {record.memory_id: record for record in records}
         self.list_calls: list[tuple[str, object, int, int]] = []
 
-    async def async_list(self, owner, category, limit, offset):
+    async def async_list_page(self, owner, category, limit, offset):
         self.list_calls.append((owner, category, limit, offset))
         records = [
             record
@@ -30,7 +30,8 @@ class FakeMemory:
             and (category is None or record.category == category)
         ]
         records.sort(key=lambda record: record.updated_at, reverse=True)
-        return records[offset : offset + limit]
+        end = offset + limit
+        return records[offset:end], len(records) > end
 
     async def async_browse(self, owner, query, limit=100, offset=0):
         folded = query.casefold()
@@ -88,7 +89,10 @@ async def test_list_page_reports_authoritative_has_more() -> None:
     assert first["has_more"] is True
     assert len(last["memories"]) == 1
     assert last["has_more"] is False
-    assert memory.list_calls[-1] == ("user-a", None, 100, 100)
+    assert memory.list_calls == [
+        ("user-a", None, 100, 0),
+        ("user-a", None, 100, 100),
+    ]
 
 
 @pytest.mark.asyncio

@@ -155,7 +155,7 @@ async def test_ui_backend_memory_crud_uses_authenticated_user_scope() -> None:
         last_confirmed_at="now",
     )
     memory = SimpleNamespace(
-        async_list=AsyncMock(return_value=[record]),
+        async_list_page=AsyncMock(return_value=([record], False)),
         async_get_many=AsyncMock(return_value=[record]),
         async_add=AsyncMock(return_value={"status": "created"}),
         async_update=AsyncMock(return_value=record),
@@ -203,7 +203,7 @@ async def test_ui_backend_memory_crud_uses_authenticated_user_scope() -> None:
 
     assert listed["memories"][0]["content"] == record.content
     assert listed["has_more"] is False
-    memory.async_list.assert_awaited_once_with("user-7", None, 100, 0)
+    memory.async_list_page.assert_awaited_once_with("user-7", None, 100, 0)
     memory.async_add.assert_awaited_once_with(
         "user-7", record.content, "preferences", "explicit"
     )

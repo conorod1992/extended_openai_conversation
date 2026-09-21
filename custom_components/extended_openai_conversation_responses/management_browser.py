@@ -29,12 +29,7 @@ async def _list_page(
     limit = _bounded_limit(message, 100)
     offset = _bounded_offset(message)
     category = message.get("category")
-    records = await memory.async_list(owner, category, limit, offset)
-    has_more = False
-    if len(records) == limit:
-        has_more = bool(
-            await memory.async_list(owner, category, 1, offset + len(records))
-        )
+    records, has_more = await memory.async_list_page(owner, category, limit, offset)
     return {
         "memories": [
             management_memory_dict(record, include_scope=include_scope)
