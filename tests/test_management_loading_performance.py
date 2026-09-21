@@ -284,8 +284,8 @@ def test_agent_config_revision_does_not_validate_persisted_config(monkeypatch) -
 
 async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatch) -> None:
     hass, _entry, _subentry = _hass_with_agent()
-    management_ui._cached_agent_config_snapshot.cache_clear()
-    original = management_ui.agent_config_snapshot
+    function_repair._cached_agent_config_snapshot.cache_clear()
+    original = function_repair.agent_config_snapshot
     calls = 0
 
     def counted(data):
@@ -293,7 +293,7 @@ async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatc
         calls += 1
         return original(data)
 
-    monkeypatch.setattr(management_ui, "agent_config_snapshot", counted)
+    monkeypatch.setattr(function_repair, "agent_config_snapshot", counted)
     monkeypatch.setattr(
         management_ui,
         "decorate_configuration_result",
