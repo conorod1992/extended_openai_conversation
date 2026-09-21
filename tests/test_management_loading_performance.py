@@ -382,7 +382,10 @@ async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) 
         month_summary=lambda: {"total_tokens": 80},
         latest_run=None,
     )
-    memory = SimpleNamespace(stats=lambda: {"memory_count": 7})
+    memory = SimpleNamespace(
+        memory_count=7,
+        stats=MagicMock(side_effect=AssertionError("overview must not build memory stats")),
+    )
     knowledge = SimpleNamespace(source_count=3)
     guest = SimpleNamespace(
         status=lambda: {"state": "scheduled", "currently_active": False}
@@ -406,6 +409,7 @@ async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) 
     assert result["agent"]["memory_count"] == 7
     assert result["agent"]["knowledge_source_count"] == 3
     assert result["agent"]["guest_mode"]["state"] == "scheduled"
+    memory.stats.assert_not_called()
     assert result["load_errors"] == []
     performance = result["_performance"]
     assert performance["total_ms"] >= 0
@@ -427,7 +431,7 @@ async def test_overview_reuses_one_function_tool_health_projection(monkeypatch) 
     monkeypatch.setattr(
         loading,
         "async_get_memory",
-        AsyncMock(return_value=SimpleNamespace(stats=lambda: {"memory_count": 0})),
+        AsyncMock(return_value=SimpleNamespace(memory_count=0)),
     )
     monkeypatch.setattr(
         loading,
@@ -702,7 +706,7 @@ async def test_overview_summary_uses_exception_type_when_message_is_empty(
     monkeypatch.setattr(
         loading,
         "async_get_memory",
-        AsyncMock(return_value=SimpleNamespace(stats=lambda: {})),
+        AsyncMock(return_value=SimpleNamespace(memory_count=0)),
     )
     monkeypatch.setattr(
         loading, "async_get_knowledge", AsyncMock(return_value=knowledge)
