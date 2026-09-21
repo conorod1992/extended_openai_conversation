@@ -30,7 +30,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-async def _timed_management_call(
+async def _timed_management_response(
     client: Any,
     *,
     entry: Any,
@@ -46,9 +46,7 @@ async def _timed_management_call(
         action=action,
         **payload,
     )
-    elapsed_ms = (time.perf_counter() - started) * 1000
-    assert response["success"], response
-    return elapsed_ms, response["result"]
+    return (time.perf_counter() - started) * 1000, response
 
 
 @pytest.mark.asyncio
@@ -88,19 +86,37 @@ async def test_manual_frontend_latency_diagnostics(
 
     backend: dict[str, dict[str, Any]] = {}
 
-    async def collect(name: str, section: str, action: str, **payload: Any) -> dict[str, Any]:
+    async def collect(
+        name: str,
+        section: str,
+        action: str,
+        *,
+        optional_on_baseline: bool = False,
+        **payload: Any,
+    ) -> dict[str, Any]:
         samples: list[float] = []
         last_result: dict[str, Any] = {}
         for _ in range(runs):
-            elapsed_ms, last_result = await _timed_management_call(
+            elapsed_ms, response = await _timed_management_response(
                 client,
                 entry=entry,
                 section=section,
                 action=action,
                 **payload,
             )
+            if not response["success"]:
+                if label == "baseline" and optional_on_baseline:
+                    backend[name] = {
+                        "supported": False,
+                        "error_code": response.get("error", {}).get("code"),
+                        "error_message": response.get("error", {}).get("message"),
+                    }
+                    return {}
+                raise AssertionError(response)
+            last_result = response["result"]
             samples.append(round(elapsed_ms, 3))
         backend[name] = {
+            "supported": True,
             "samples_ms": samples,
             "first_ms": samples[0],
             "median_ms": round(median(samples), 3),
@@ -114,12 +130,14 @@ async def test_manual_frontend_latency_diagnostics(
         "configuration_live_local_handling",
         "configuration",
         "live_metadata",
+        optional_on_baseline=True,
         metadata_keys=["local_handling"],
     )
     await collect(
         "configuration_live_exposed_attributes",
         "configuration",
         "live_metadata",
+        optional_on_baseline=True,
         metadata_keys=["exposed_attribute_catalog"],
     )
     await collect("guest_mode_get", "guest_mode", "get")
