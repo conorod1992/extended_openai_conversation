@@ -981,7 +981,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._page === "assistant") {
       this._configSections = this._configSectionsForView();
       const voiceIdentity = view === "assistant/voice" ? getRouteFeature(view)?.renderVoiceIdentity : null;
-      return (getConfigurationEditor()?.renderConfiguration(this, {voiceIdentity}) || this._loading());
+      const specialized = getRouteFeature(view);
+      return (getConfigurationEditor()?.renderConfiguration(this, {
+        voiceIdentity,
+        renderExposedAttributes: specialized?.renderExposedAttributeSettings,
+      }) || this._loading());
     }
     if (view === "capabilities/request-rules") return getRouteFeature("capabilities/request-rules")?.renderRequestRules(this) || this._loading();
     if (view === "capabilities/functions") {
@@ -999,7 +1003,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? ((getConfigurationEditor()?.renderConfiguration(this) || this._loading())) : ""}`; }
     if (view === "usage-maintenance/usage") return this._usage();
     if (view === "usage-maintenance/diagnostics") return this._diagnostics(agent);
-    if (["usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) { this._configSections = this._configSectionsForView(); return ((getConfigurationEditor()?.renderConfiguration(this) || this._loading())); }
+    if (["usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) {
+      this._configSections = this._configSectionsForView();
+      const specialized = getRouteFeature(view);
+      return (getConfigurationEditor()?.renderConfiguration(this, {
+        renderBackup: specialized?.renderBackupTransferPanel,
+      }) || this._loading());
+    }
     return this._empty("This section is not available.");
   }
 
@@ -1135,7 +1145,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       <dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>
       <dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope">${this._scopeOptions("memories", true, true)}</select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>
       <dialog id="confirm-dialog" class="editor-dialog confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-header"><h2 id="confirm-title">Confirm</h2></div><div class="dialog-body"><p id="confirm-message"></p></div><div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">Cancel</button><button type="button" class="danger" id="confirm-accept">Confirm</button></div></dialog>
-      ${this._viewKey() === "capabilities/request-rules" ? (getRouteFeature("capabilities/request-rules")?.requestRulesDialog(this) || "") : ""}${routeAssetKind(this._viewKey()) === "agent-config" ? getConfigurationEditor()?.configurationDialogs(this) || "" : ""}${this._viewKey() === "usage-maintenance/backup-restore" ? getConfigurationEditor()?.restoreDialog(this) || "" : ""}`;
+      ${this._viewKey() === "capabilities/request-rules" ? (getRouteFeature("capabilities/request-rules")?.requestRulesDialog(this) || "") : ""}${routeAssetKind(this._viewKey()) === "agent-config" ? getConfigurationEditor()?.configurationDialogs(this) || "" : ""}${this._viewKey() === "usage-maintenance/backup-restore" ? getRouteFeature("usage-maintenance/backup-restore")?.renderRestoreTransferDialog(this) || "" : ""}`;
     const usageDialog = this._viewKey() === "usage-maintenance/usage"
       ? getRouteFeature("usage-maintenance/usage")?.requestDetailsDialog() || "" : "";
     return `${content}${getRouteFeature("data-memory/memories")?.temporaryDialog(this) || ""}${usageDialog}`;
@@ -1164,6 +1174,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     root.querySelectorAll("[data-guest-mode]").forEach((element) => element.addEventListener("change", () => { this._guestDraft[element.dataset.guestMode] = element.value; this._render(); }));
     if (this._viewKey() === "capabilities/guest-mode") this._setupGuestSelectors();
     if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(this._viewKey())) getConfigurationEditor()?.bindConfiguration(this);
+    if (this._viewKey() === "assistant/prompt-context") getRouteFeature("assistant/prompt-context")?.bindExposedAttributeSettings(this);
+    if (this._viewKey() === "usage-maintenance/backup-restore") getRouteFeature("usage-maintenance/backup-restore")?.bindBackupTransfer(this, getConfigurationEditor()?.backupSummaryLines);
     if (this._viewKey() === "capabilities/functions") getConfigurationEditor()?.bindTools(this);
     if (this._viewKey() === "capabilities/request-rules") getRouteFeature("capabilities/request-rules")?.bindRequestRules(this);
     if (this._viewKey() === "overview") bindOverview(this);
