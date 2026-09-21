@@ -98,3 +98,7 @@ for (const route of LATENCY_ROUTES) {
 const latencyPaths = new Set(LATENCY_ROUTES.map((route) => route.path));
 assert.equal(latencyPaths.size, LATENCY_ROUTES.length);
 assert.deepEqual([...latencyPaths].sort(), [...currentManagementPaths].sort());
+
+assert.match(browserHarness, /baselineMode && routeMismatch/);
+assert.match(browserHarness, /Latency route \$\{route\.path\} failed readiness/);
+assert.doesNotMatch(routeManifest, /assistant\/advanced/);
