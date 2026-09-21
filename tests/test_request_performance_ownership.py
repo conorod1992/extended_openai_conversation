@@ -116,6 +116,29 @@ def test_tool_format_cache_miss_keeps_cache_isolated_without_second_copy():
     assert formatter.call_count == 1
 
 
+def test_request_llm_context_reuses_active_instance_without_rebuilding():
+    calls = 0
+    fallback = object()
+
+    def as_llm_context(_domain):
+        nonlocal calls
+        calls += 1
+        return fallback
+
+    user_input = SimpleNamespace(as_llm_context=as_llm_context)
+    assert agent_module._request_llm_context(user_input) is fallback
+    assert calls == 1
+
+    active = object()
+    token = agent_module._ACTIVE_LLM_CONTEXT.set(active)
+    try:
+        assert agent_module._request_llm_context(user_input) is active
+        assert agent_module._request_llm_context(user_input) is active
+        assert calls == 1
+    finally:
+        agent_module._ACTIVE_LLM_CONTEXT.reset(token)
+
+
 async def test_request_reuses_function_config_across_provider_rounds(monkeypatch):
     agent = object.__new__(ExtendedOpenAIAgentEntity)
     agent.hass = SimpleNamespace()

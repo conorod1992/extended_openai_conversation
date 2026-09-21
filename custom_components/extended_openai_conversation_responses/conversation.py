@@ -244,9 +244,17 @@ _ACTIVE_GUEST_POLICY: ContextVar[GuestCapabilityPolicy | None] = ContextVar(
 _ACTIVE_FUNCTION_CONFIG: ContextVar[
     tuple[list[dict[str, Any]], list[dict[str, Any]] | None] | None
 ] = ContextVar("extended_openai_active_function_config", default=None)
+_ACTIVE_LLM_CONTEXT: ContextVar[Any | None] = ContextVar(
+    "extended_openai_active_llm_context", default=None
+)
 _PROCESS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
     "extended_openai_process_metadata", default=None
 )
+
+
+def _request_llm_context(user_input: ConversationInput) -> Any:
+    """Reuse the request-scoped LLM context, with a direct-call fallback."""
+    return _ACTIVE_LLM_CONTEXT.get() or user_input.as_llm_context(DOMAIN)
 
 
 def _request_function_groups(
@@ -631,6 +639,7 @@ class ExtendedOpenAIAgentEntity(
         cache_token = _PROMPT_CACHE_CONTEXT.set(None)
         try:
             llm_context = user_input.as_llm_context(DOMAIN)
+            llm_context_token = _ACTIVE_LLM_CONTEXT.set(llm_context)
             request_policy = self._resolve_live_guest_policy()
             guest_policy_token = _ACTIVE_GUEST_POLICY.set(request_policy)
             try:
@@ -683,6 +692,7 @@ class ExtendedOpenAIAgentEntity(
                     )
             finally:
                 _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
+                _ACTIVE_LLM_CONTEXT.reset(llm_context_token)
         finally:
             _PROMPT_CACHE_CONTEXT.reset(cache_token)
 
@@ -897,6 +907,7 @@ class ExtendedOpenAIAgentEntity(
         request_options: Mapping[str, Any] | None = None,
     ) -> ConversationResult:
         """Resolve HA references and cache one validated config revision per request."""
+        llm_context = _request_llm_context(user_input)
         configured = self._configured_function_tools_from_data(self.subentry.data)
         references = [
             tool["function"]
@@ -905,9 +916,7 @@ class ExtendedOpenAIAgentEntity(
         ]
         snapshot = ToolSnapshot()
         if references and not self._effective_guest_policy().guest_active:
-            snapshot = await async_discover(
-                self.hass, user_input.as_llm_context(DOMAIN), references
-            )
+            snapshot = await async_discover(self.hass, llm_context, references)
         with tool_snapshot_scope(snapshot):
             function_config_token = _ACTIVE_FUNCTION_CONFIG.set(
                 (snapshot.project(configured), None)
@@ -953,8 +962,7 @@ class ExtendedOpenAIAgentEntity(
         deferred_speech: list[tuple[str, Mapping[str, Any]]],
     ) -> ConversationResult:
         """Call the API."""
-        # Create LLM context
-        llm_context = user_input.as_llm_context(DOMAIN)
+        llm_context = _request_llm_context(user_input)
 
         # Get exposed entities for function tools
         exposed_entities = self._get_exposed_entities()
