@@ -102,7 +102,7 @@ assert.match(markup, /Off by choice/);
 assert.match(markup, /Run live test/);
 assert.match(markup, /data-target="config-api_mode"/);
 assert.match(markup, /<ha-icon icon="mdi:information-outline" aria-hidden="true"><\/ha-icon> Connection tests only run when you start one from Diagnostics\./);
-assert.match(markup, /4 items to review/);
+assert.match(markup, /<strong>Review recommended<\/strong><span>4 issues to review<\/span>/);
 
 panel._result.setup_health = {
   ...defaultFacts,
@@ -112,7 +112,7 @@ panel._result.setup_health = {
 };
 const nonAdminMarkup = renderOverview(panel, agent);
 assert.match(nonAdminMarkup, /Unable to determine/);
-assert.match(nonAdminMarkup, /2 items to review/);
+assert.match(nonAdminMarkup, /<strong>Status incomplete<\/strong><span>2 checks unavailable<\/span>/);
 assert.match(nonAdminMarkup, /Connection tests only run when you start one from Diagnostics\./);
 assert.doesNotMatch(nonAdminMarkup, /<button[^>]*class="[^"]*setup-health-action/);
 
@@ -129,6 +129,11 @@ const claritySource = await readFile(
     import.meta.url,
   ),
   "utf8",
+);
+assert.doesNotMatch(
+  claritySource,
+  /clarifySetupHealthSummary|setup-health-check-(?:error|warning|unknown)/,
+  "Overview health summary should be final at render time, not rewritten from DOM classes",
 );
 assert.match(
   claritySource,
