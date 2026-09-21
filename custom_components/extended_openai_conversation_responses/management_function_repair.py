@@ -54,7 +54,7 @@ def _function_tools_cache_key(options: dict[str, Any]) -> tuple[str, str]:
         return ("string", raw)
     try:
         return ("json", canonical_json(raw))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return ("yaml", yaml.safe_dump(raw, sort_keys=True, allow_unicode=True))
 
 
@@ -161,8 +161,7 @@ def management_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
         "validation_error": issue,
         "invalid_names": [
             str(
-                item.get("name")
-                or f"Function Tool {int(item.get('index', 0)) + 1}"
+                item.get("name") or f"Function Tool {int(item.get('index', 0)) + 1}"
             )
             for item in invalid
         ],
