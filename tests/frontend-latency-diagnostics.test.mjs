@@ -76,3 +76,7 @@ assert.match(browserHarness, /async function closeContext/);
 assert.match(browserHarness, /baselineMode \? 2500 : 30000/);
 const latencyPlaywrightConfig = await readFile("ci/frontend_latency/playwright.config.mjs", "utf8");
 assert.match(latencyPlaywrightConfig, /timeout: 240_000/);
+
+const closeContextBody = browserHarness.match(/async function closeContext\(context\) \{([\s\S]*?)\n\}/)?.[1] || "";
+assert.match(closeContextBody, /await context\.close\(\)/);
+assert.doesNotMatch(closeContextBody, /await closeContext\(context\)/);
