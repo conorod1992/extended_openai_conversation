@@ -143,16 +143,18 @@ const searchTokens = (value) => String(value || "")
     return token;
   });
 
-export function matchesFunctionSearch(query, searchableText) {
-  const queryTokens = searchTokens(query);
+function matchesFunctionSearchTokens(queryTokens, textTokens) {
   if (!queryTokens.length) return true;
-  const textTokens = searchTokens(searchableText);
   return queryTokens.every((queryToken) => textTokens.some((textToken) =>
     textToken === queryToken || (
       Math.min(textToken.length, queryToken.length) >= 3
       && (textToken.startsWith(queryToken) || queryToken.startsWith(textToken))
     )
   ));
+}
+
+export function matchesFunctionSearch(query, searchableText) {
+  return matchesFunctionSearchTokens(searchTokens(query), searchTokens(searchableText));
 }
 
 export function deleteFunctionGroup(config, groupId) {
@@ -512,21 +514,39 @@ export function renderTools(panel, {repairCards = ""} = {}) {
 // Only DOM references and presentation signatures are retained here. Mutations
 // still synchronize _draft/_configData from the backend before reconciling.
 const toolCollections = new WeakMap();
+const functionSearchTokenCache = new WeakMap();
+
+function cachedFunctionSearchTokens(node, searchableText) {
+  const value = String(searchableText || "");
+  const cached = functionSearchTokenCache.get(node);
+  if (cached?.value === value) return cached.tokens;
+  const tokens = searchTokens(value);
+  functionSearchTokenCache.set(node, {value, tokens});
+  return tokens;
+}
 
 function applyFunctionSearch(panel) {
   const root = panel.shadowRoot;
   const query = root.querySelector("#tool-search")?.value || "";
+  const hasQuery = Boolean(query.trim());
+  const queryTokens = hasQuery ? searchTokens(query) : [];
   root.querySelectorAll(".function-group-card").forEach(card => {
-    const groupMatch = Boolean(query.trim()) && matchesFunctionSearch(query, card.dataset.groupSearch);
+    const groupMatch = hasQuery && matchesFunctionSearchTokens(
+      queryTokens,
+      cachedFunctionSearchTokens(card, card.dataset.groupSearch),
+    );
     let toolMatch = false;
     card.querySelectorAll(".tool-card").forEach(tool => {
-      const matches = !query.trim() || groupMatch || matchesFunctionSearch(query, tool.dataset.toolSearch);
+      const matches = !hasQuery || groupMatch || matchesFunctionSearchTokens(
+        queryTokens,
+        cachedFunctionSearchTokens(tool, tool.dataset.toolSearch),
+      );
       if (tool.hidden === matches) tool.hidden = !matches;
       toolMatch ||= matches;
     });
-    const hidden = Boolean(query.trim()) && !groupMatch && !toolMatch;
+    const hidden = hasQuery && !groupMatch && !toolMatch;
     if (card.hidden !== hidden) card.hidden = hidden;
-    if (query.trim() && toolMatch) {
+    if (hasQuery && toolMatch) {
       const details = card.querySelector("details");
       if (details && !details.open) details.open = true;
     }
