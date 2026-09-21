@@ -239,9 +239,7 @@ class KnowledgeLibrary:
             sources = [
                 source
                 for source in sources
-                if (
-                    features := self._source_features.get(source.source_id)
-                ) is not None
+                if (features := self._source_features.get(source.source_id)) is not None
                 and (
                     normalized_query in features.normalized_metadata
                     or bool(query_tokens & features.metadata_tokens)
