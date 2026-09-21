@@ -70,4 +70,4 @@ assert.match(pythonHarness, /"supported": False/);
 assert.match(browserHarness, /baselineMode = label === "baseline"/);
 assert.match(browserHarness, /supported: false/);
 assert.match(browserHarness, /if \(!baselineMode\)/);
-assert.match(comparison, /Backend operations or browser routes unavailable on the historical baseline are shown as `n\\/a`/);
+assert.match(comparison, /Backend operations or browser routes unavailable on the historical baseline are shown as `n\/a`/);
