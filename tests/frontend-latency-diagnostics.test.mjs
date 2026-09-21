@@ -4,6 +4,8 @@ import {readFile} from "node:fs/promises";
 const workflow = await readFile(".github/workflows/frontend-latency-diagnostics.yml", "utf8");
 const pythonHarness = await readFile("ci/frontend_latency/test_latency_diagnostics.py", "utf8");
 const browserHarness = await readFile("ci/frontend_latency/latency.spec.mjs", "utf8");
+const routeManifest = await readFile("ci/frontend_latency/routes.mjs", "utf8");
+const routeSmoke = await readFile("tests_browser/latency-route-readiness.spec.mjs", "utf8");
 const comparison = await readFile("ci/frontend_latency/compare.py", "utf8");
 
 for (const route of [
@@ -31,7 +33,7 @@ for (const route of [
   "usage-maintenance-retention",
   "usage-maintenance-request-debug",
 ]) {
-  assert.match(browserHarness, new RegExp(`name: "${route}"`), route);
+  assert.match(routeManifest, new RegExp(`name: "${route}"`), route);
 }
 
 for (const operation of [
@@ -74,6 +76,9 @@ assert.match(comparison, /Backend operations or browser routes unavailable on th
 
 assert.match(browserHarness, /async function closeContext/);
 assert.match(browserHarness, /baselineMode \? 2500 : 30000/);
+assert.match(browserHarness, /waitForManagementRouteReady/);
+assert.doesNotMatch(routeManifest, /ready:/);
+assert.match(routeSmoke, /for \(const route of LATENCY_ROUTES\)/);
 const latencyPlaywrightConfig = await readFile("ci/frontend_latency/playwright.config.mjs", "utf8");
 assert.match(latencyPlaywrightConfig, /timeout: 240_000/);
 
