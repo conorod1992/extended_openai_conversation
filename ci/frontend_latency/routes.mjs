@@ -59,3 +59,53 @@ export async function waitForManagementRouteReady(page, route, timeout) {
     {timeout},
   );
 }
+
+
+export function routeStateMismatch(state, route) {
+  if (!state) return false;
+  const expected = expectedRouteState(route);
+  return state.page !== expected.page || state.subsection !== expected.subsection;
+}
+
+export async function waitForLatencyRoute({
+  route,
+  baselineMode,
+  waitReady,
+  getState,
+  probeTimeout = 2500,
+  fullTimeout = 30000,
+}) {
+  if (!baselineMode) {
+    await waitReady(fullTimeout);
+    return {supported: true};
+  }
+
+  try {
+    await waitReady(probeTimeout);
+    return {supported: true};
+  } catch (_probeError) {
+    const probeState = await getState();
+    if (routeStateMismatch(probeState, route)) {
+      return {
+        supported: false,
+        unavailable_reason:
+          `Historical route resolved to ${probeState.page || "unknown"}/${probeState.subsection || ""}`,
+      };
+    }
+  }
+
+  try {
+    await waitReady(fullTimeout);
+    return {supported: true};
+  } catch (error) {
+    const state = await getState();
+    if (routeStateMismatch(state, route)) {
+      return {
+        supported: false,
+        unavailable_reason:
+          `Historical route resolved to ${state.page || "unknown"}/${state.subsection || ""}`,
+      };
+    }
+    throw error;
+  }
+}

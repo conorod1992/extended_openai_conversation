@@ -75,8 +75,9 @@ assert.match(browserHarness, /supported: false/);
 assert.match(comparison, /Backend operations or browser routes unavailable on the historical baseline are shown as `n\/a`/);
 
 assert.match(browserHarness, /async function closeContext/);
-assert.match(browserHarness, /baselineMode \? 2500 : 30000/);
-assert.match(browserHarness, /waitForManagementRouteReady/);
+assert.match(browserHarness, /waitForLatencyRoute/);
+assert.match(routeManifest, /probeTimeout = 2500/);
+assert.match(routeManifest, /fullTimeout = 30000/);
 assert.doesNotMatch(routeManifest, /ready:/);
 assert.match(routeSmoke, /for \(const route of LATENCY_ROUTES\)/);
 const latencyPlaywrightConfig = await readFile("ci/frontend_latency/playwright.config.mjs", "utf8");
@@ -98,7 +99,7 @@ const latencyPaths = new Set(LATENCY_ROUTES.map((route) => route.path));
 assert.equal(latencyPaths.size, LATENCY_ROUTES.length);
 assert.deepEqual([...latencyPaths].sort(), [...currentManagementPaths].sort());
 
-assert.match(browserHarness, /baselineMode && routeMismatch/);
+assert.match(routeManifest, /routeStateMismatch/);
 assert.match(browserHarness, /Latency route \$\{route\.path\} failed readiness/);
 assert.doesNotMatch(routeManifest, /assistant\/advanced/);
 
