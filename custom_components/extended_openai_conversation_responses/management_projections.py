@@ -45,10 +45,12 @@ async def async_scope_catalog_projection(
     is_admin: bool,
     memory_counts: dict[str, int] | None = None,
     conversation_counts: dict[str, int] | None = None,
+    temporary_memory_counts: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Project visible Management scopes and their aggregate counts."""
     memory_counts = memory_counts or {}
     conversation_counts = conversation_counts or {}
+    temporary_memory_counts = temporary_memory_counts or {}
 
     def scope_item(scope_id: str, scope_type: str, display_name: str) -> dict[str, Any]:
         owner = _memory_scope(scope_id)
@@ -59,6 +61,7 @@ async def async_scope_catalog_projection(
             "is_current_user": scope_id == f"user:{user_id}",
             "memory_count": memory_counts.get(owner, 0),
             "conversation_count": conversation_counts.get(scope_id, 0),
+            "temporary_memory_count": temporary_memory_counts.get(scope_id, 0),
         }
 
     if not is_admin:
