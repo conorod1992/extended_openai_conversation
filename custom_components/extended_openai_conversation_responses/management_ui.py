@@ -712,9 +712,11 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
     if action == "save":
         return await _async_save_configuration(request)
     if action == "get":
+        from .management_loading_performance import _snapshot_normalized_configuration
+
         started = perf_counter()
         phase = perf_counter()
-        config = agent_config_snapshot(dict(subentry.data))
+        config = _snapshot_normalized_configuration(dict(subentry.data))
         config_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
