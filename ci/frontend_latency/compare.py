@@ -54,20 +54,20 @@ def main() -> None:
     lines = [
         "# Frontend latency diagnostics",
         "",
-        "Same-run genuine Home Assistant comparison. Negative deltas are faster.",
+        "Same-run genuine Home Assistant comparison. Negative deltas mean current develop is faster than the baseline.",
         "",
         "## Backend WebSocket timings",
         "",
-        "| Operation | develop ms | candidate ms | delta ms | delta % |",
+        "| Operation | baseline ms | current ms | delta ms | delta % |",
         "| --- | ---: | ---: | ---: | ---: |",
     ]
     comparison: dict[str, Any] = {"backend": {}, "browser": {}}
 
     for name in baseline["backend"]:
-        if name not in candidate["backend"]:
+        if name not in current["backend"]:
             continue
         before = float(baseline["backend"][name]["median_ms"])
-        after = float(candidate["backend"][name]["median_ms"])
+        after = float(current["backend"][name]["median_ms"])
         lines.append(row(name, before, after))
         comparison["backend"][name] = {
             "develop_ms": before,
@@ -76,12 +76,12 @@ def main() -> None:
         }
 
     before_routes = browser_medians(baseline)
-    after_routes = browser_medians(candidate)
+    after_routes = browser_medians(current)
     lines += [
         "",
         "## Browser cold-route ready time",
         "",
-        "| Route | develop ms | candidate ms | delta ms | delta % |",
+        "| Route | baseline ms | current ms | delta ms | delta % |",
         "| --- | ---: | ---: | ---: | ---: |",
     ]
     for route in before_routes:
