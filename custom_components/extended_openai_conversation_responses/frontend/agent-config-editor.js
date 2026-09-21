@@ -1,4 +1,4 @@
-import {renderConfiguration as renderConfigurationMarkup, backupSummaryLines as summaryLines} from "./agent-config-editor-base.js";
+import {renderConfiguration as renderConfigurationMarkup, renderConfigurationActions as renderConfigurationActionsMarkup, backupSummaryLines as summaryLines} from "./agent-config-editor-base.js";
 import {bindConfiguration as bindModelConfiguration} from "./agent-config-editor-model-v2.js";
 export {renderTools, reconcileTools, configurationDialogs} from "./agent-config-editor-base.js";
 export {bindTools} from "./agent-config-native-yaml.js";
@@ -49,6 +49,10 @@ export function renderConfiguration(panel, presentation) {
   const cached = getCachedConfigurationMarkup(panel, cacheKey, presentation?.voiceIdentity);
   if (cached !== null) return cached;
   return rememberConfigurationMarkup(panel, cacheKey, renderConfigurationMarkup(panel, presentation), presentation?.voiceIdentity);
+}
+
+export function renderConfigurationActions(panel, sections) {
+  return renderConfigurationActionsMarkup(panel, sections);
 }
 
 export function bindConfiguration(panel) {

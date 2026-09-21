@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {renderConfiguration, renderTools, configurationDialogs} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
+import {renderConfiguration, renderConfigurationActions, renderTools, configurationDialogs} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
 import {renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
 import {renderGuide} from "../custom_components/extended_openai_conversation_responses/frontend/guide-page.js";
 
@@ -16,6 +16,9 @@ try {
     owner._configSections = ["local"];
     owner._result.local_handling = {intents:[{intent:"HassTurnOn", label:"Lights <on>"}]};
     const html = renderConfiguration(owner);
+    const actions = renderConfigurationActions(owner, owner._configSections);
+    assert.doesNotMatch(html, /agent-actions-menu|config-toolbar|action-help/);
+    assert.match(actions, /class="agent-actions-menu"/);
     assert.equal((html.match(/class="notice local-handling-explainer"/g) || []).length, 1);
     assert.doesNotMatch(html, /data-field="local_intent_delayed_commands_to_ai"/);
     const choice = html.match(/<div id="local-intent-list"[^>]*><label[^>]*><input[^>]+>/)?.[0];

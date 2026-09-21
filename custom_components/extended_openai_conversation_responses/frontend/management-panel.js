@@ -388,6 +388,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }[this._viewKey()] || [];
   }
 
+  _configurationActions() {
+    const sections = this._configSectionsForView();
+    if (!sections.length) return "";
+    if (this._viewKey() === "data-memory/conversations" && !this._data?.is_admin) return "";
+    return getConfigurationEditor()?.renderConfigurationActions?.(this, sections) || "";
+  }
+
   _canAccessView(page, subsection = null) {
     if (page === "data-memory" && subsection === "memory-settings" && this._data?.is_admin === false) return false;
     if (this._data?.is_admin === false && isRestrictedManagementView(page, subsection)) return false;
@@ -921,6 +928,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const local = this._visibleSubsections();
     const currentSection = local.find((item) => item.id === this._subsection);
     this._eocMainMarkup = !agent ? this._empty("No conversation agents configured.") : this._busy ? this._loadingContent(agent) : this._error ? `<div class="error" role="alert">${this._e(this._error)}</div>` : this._content(agent);
+    const configurationActions = agent && !this._busy && !this._error ? this._configurationActions() : "";
     this._eocDialogMarkup = this._dialogs();
     this._eocRenderedRoute = `${this._agentId}|${this._viewKey()}`;
     this.shadowRoot.innerHTML = `
@@ -934,6 +942,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         <label class="mobile-nav"><span>Page</span><select id="top-section-mobile">${navigation.map((item) => `<option value="${item.id}" ${item.id === this._page ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
         <div class="eoc-agent-context-row" aria-label="Assistant context">
           <label class="agent-picker"><span>Conversation agent</span><select id="agent">${(this._data?.agents || []).map((a) => `<option value="${this._e(a.subentry_id)}" ${a.subentry_id === this._agentId ? "selected" : ""}>${this._e(a.title)}</option>`).join("")}</select>${agent ? `<small>${this._e(agent.provider)} · ${this._e(agent.model)}</small>` : ""}</label>
+          <div id="eoc-agent-actions-host" class="eoc-agent-actions" ${configurationActions ? "" : "hidden"}>${configurationActions}</div>
         </div>
         <nav class="top-nav" aria-label="Management sections">${navigation.map((item) => `<button type="button" data-page="${item.id}" class="${item.id === this._page ? "active" : ""}" ${item.id === this._page ? 'aria-current="page"' : ""}>${item.label}</button>`).join("")}</nav>
         <nav class="subsection-nav" aria-label="${this._e(pageMetadata(this._page).label)} sections" ${local.length > 1 ? "" : "hidden"}>${local.length > 1 ? local.map((item) => `<button type="button" data-subsection="${this._e(item.id)}" class="${item.id === this._subsection ? "active" : ""}" ${item.id === this._subsection ? 'aria-current="page"' : ""}>${this._e(item.label)}</button>`).join("") : ""}</nav>
