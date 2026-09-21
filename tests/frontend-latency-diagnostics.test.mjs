@@ -101,3 +101,6 @@ assert.deepEqual([...latencyPaths].sort(), [...currentManagementPaths].sort());
 assert.match(browserHarness, /baselineMode && routeMismatch/);
 assert.match(browserHarness, /Latency route \$\{route\.path\} failed readiness/);
 assert.doesNotMatch(routeManifest, /assistant\/advanced/);
+
+assert.match(routeManifest, /_eocRenderedRoute/);
+assert.doesNotMatch(routeManifest, /page-intro h1/);
