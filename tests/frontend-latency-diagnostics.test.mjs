@@ -105,3 +105,6 @@ assert.doesNotMatch(routeManifest, /assistant\/advanced/);
 
 assert.match(routeManifest, /_eocRenderedRoute/);
 assert.doesNotMatch(routeManifest, /page-intro h1/);
+
+assert.match(routeManifest, /page\.locator\("extended-openai-management-panel"\)/);
+assert.doesNotMatch(routeManifest, /document\.querySelector\("extended-openai-management-panel"\)/);
