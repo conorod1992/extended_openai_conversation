@@ -581,7 +581,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
             "editor_snapshot_ms": editor_snapshot_ms,
             "knowledge_list_ms": knowledge_list_ms,
         }
-        return {
+        result = {
             "revision": revision,
             "status": guest_manager.status(),
             "policy": policy.as_diagnostics(),
@@ -627,6 +627,10 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                 "total_ms": _elapsed_ms(started),
             },
         }
+        _warn_management_performance(
+            "guest_mode.get", result["_performance"]
+        )
+        return result
     _require_admin(is_admin)
     if action == "save_policy":
         _require_agent_config_revision(subentry, message.get("revision"))
