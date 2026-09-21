@@ -29,7 +29,7 @@ test("Request Rules UI explains AI-routing command semantics", async () => {
   assert.match(source, /acknowledged locally and apply to the rest of the current conversation/);
   assert.match(source, /original request (?:unchanged )?to the provider(?: unchanged)?/);
   assert.match(source, /matched words are not stripped/);
-  assert.match(source, /final tie-breaker after match type and phrase specificity/);
+  assert.match(source, /rules are evaluated from top to bottom and the first matching rule wins/);
 });
 
 test("Guide explains broad versus complete AI-routing matches", async () => {
