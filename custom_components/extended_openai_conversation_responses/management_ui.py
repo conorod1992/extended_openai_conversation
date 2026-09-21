@@ -105,6 +105,7 @@ from .management_function_quarantine import (
 )
 from .management_function_repair import (
     agent_config_revision as _agent_config_revision,
+    agent_config_revision_from_snapshot as _agent_config_revision_from_snapshot,
     require_agent_config_revision as _require_agent_config_revision,
 )
 from .management_history_queries import (
@@ -167,6 +168,23 @@ def _configuration_defaults() -> dict[str, Any]:
 
 def _configuration_options() -> dict[str, list[dict[str, Any]]]:
     return deepcopy(_cached_configuration_options())
+
+
+@lru_cache(maxsize=128)
+def _cached_agent_config_snapshot(raw_json: str) -> dict[str, Any]:
+    """Normalize one persisted agent revision once for repeated Management reads."""
+    return agent_config_snapshot(json.loads(raw_json))
+
+
+def _configuration_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Return an isolated normalized snapshot for persisted configuration."""
+    raw_json = json.dumps(
+        dict(data),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return deepcopy(_cached_agent_config_snapshot(raw_json))
 
 
 def _elapsed_ms(start: float) -> float:
@@ -531,12 +549,18 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
         exposed_entities_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
-        policy = resolve_guest_policy(
-            hass,
-            subentry.data,
-            guest_manager,
-            configured_tools,
-            exposed_entities=exposed_entities,
+        policy = (
+            resolve_guest_policy(
+                hass,
+                subentry.data,
+                guest_manager,
+                configured_tools,
+                exposed_entities=exposed_entities,
+            )
+            if is_admin
+            else resolve_guest_policy(
+                hass, subentry.data, guest_manager, configured_tools
+            )
         )
         policy_ms = _elapsed_ms(phase)
         if not is_admin:
@@ -627,7 +651,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                 "total_ms": _elapsed_ms(started),
             },
         }
-        _warn_management_performance("guest_mode.get", result["_performance"])
+        _warn_management_performance("guest_mode.get", {**timings, "total_ms": result["_performance"]["total_ms"]})
         return result
     _require_admin(is_admin)
     if action == "save_policy":
@@ -763,15 +787,13 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
     if action == "save":
         return await _async_save_configuration(request)
     if action == "get":
-        from .management_loading_performance import _snapshot_normalized_configuration
-
         started = perf_counter()
         phase = perf_counter()
-        config = _snapshot_normalized_configuration(dict(subentry.data))
+        config = _configuration_snapshot(subentry.data)
         config_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
-        revision = _agent_config_revision(subentry.data, subentry.title)
+        revision = _agent_config_revision_from_snapshot(config, subentry.title)
         revision_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
@@ -863,7 +885,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         snapshot = agent_config_snapshot(normalized)
         return {
             "title": saved_title,
-            "revision": _agent_config_revision(normalized, saved_title),
+            "revision": _agent_config_revision_from_snapshot(snapshot, saved_title),
             "config": snapshot,
             "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
             "local_handling": local_handling_snapshot(
