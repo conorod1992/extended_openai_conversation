@@ -244,7 +244,7 @@ def test_invalid_function_tool_health_is_cached_per_persisted_revision(
     monkeypatch,
 ) -> None:
     function_repair._cached_isolated_function_tools.cache_clear()
-    function_repair._cached_management_function_tool_health.cache_clear()
+    function_repair._cached_function_tool_state.cache_clear()
     original = function_repair._isolate_function_tools_uncached
     calls = 0
 
