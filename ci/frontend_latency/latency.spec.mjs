@@ -1,6 +1,7 @@
 import {mkdir, writeFile} from "node:fs/promises";
 import {dirname} from "node:path";
 import {expect, test} from "@playwright/test";
+import {LATENCY_ROUTES, waitForManagementRouteReady} from "./routes.mjs";
 
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
@@ -20,35 +21,6 @@ async function closeContext(context) {
   }
 }
 
-const routes = [
-  {name: "overview", path: "overview", ready: ".dashboard-grid"},
-
-  {name: "assistant-basics", path: "assistant/basics", ready: '[data-config="__title"]'},
-  {name: "assistant-model-responses", path: "assistant/model-responses", ready: "#reset-model-parameters"},
-  {name: "assistant-conversation", path: "assistant/conversation", ready: '[data-config="conversation_continuity"]'},
-  {name: "assistant-prompt-context", path: "assistant/prompt-context", ready: "#prompt-editor"},
-  {name: "assistant-voice", path: "assistant/voice", ready: "#voice-mappings"},
-  {name: "assistant-speech", path: "assistant/speech", ready: "#preview-speech"},
-  {name: "assistant-advanced", path: "assistant/advanced", ready: "#reset-advanced"},
-
-  {name: "capabilities-home-assistant", path: "capabilities/home-assistant", ready: '[data-config="local_intents_enabled"]'},
-  {name: "capabilities-web-skills", path: "capabilities/web-skills", ready: '[data-config="web_search"]'},
-  {name: "capabilities-request-rules", path: "capabilities/request-rules", ready: "#rule-search"},
-  {name: "capabilities-functions", path: "capabilities/functions", ready: "#tool-search"},
-  {name: "capabilities-guest-mode", path: "capabilities/guest-mode", ready: "#guest-start"},
-  {name: "capabilities-quiet-hours", path: "capabilities/quiet-hours", ready: "#qh-enabled"},
-
-  {name: "data-memory-memories", path: "data-memory/memories", ready: "#add-memory"},
-  {name: "data-memory-memory-settings", path: "data-memory/memory-settings", ready: '[data-memory-config="memory_mode"]'},
-  {name: "data-memory-knowledge", path: "data-memory/knowledge", ready: "#add-source"},
-  {name: "conversation-history", path: "data-memory/conversations", ready: "#archive-query"},
-
-  {name: "usage-maintenance-usage", path: "usage-maintenance/usage", ready: "#usage-window"},
-  {name: "usage-maintenance-diagnostics", path: "usage-maintenance/diagnostics", ready: "#test-agent"},
-  {name: "usage-maintenance-backup-restore", path: "usage-maintenance/backup-restore", ready: "#create-backup-transfer"},
-  {name: "usage-maintenance-retention", path: "usage-maintenance/retention", ready: '[data-config="usage_request_retention_days"]'},
-  {name: "usage-maintenance-request-debug", path: "usage-maintenance/request-debug", ready: "extended-openai-debug-panel #refresh"},
-];
 
 async function measureRoute(browser, authData, route, iteration) {
   const context = await browser.newContext();
@@ -77,8 +49,7 @@ async function measureRoute(browser, authData, route, iteration) {
   try {
     await page.goto(`${baseUrl}/extended-openai/${route.path}`, {waitUntil: "domcontentloaded"});
     await expect(page.locator("extended-openai-management-panel")).toHaveCount(1);
-    await expect(page.locator(`extended-openai-management-panel ${route.ready}`))
-      .toBeVisible({timeout: baselineMode ? 2500 : 30000});
+    await waitForManagementRouteReady(page, route, baselineMode ? 2500 : 30000);
   } catch (error) {
     if (!baselineMode) {
       await closeContext(context);
@@ -147,7 +118,7 @@ async function measureRoute(browser, authData, route, iteration) {
 test("collect genuine HA cold-route latency diagnostics", async ({browser}) => {
   const authData = JSON.parse(authDataRaw);
   const samples = [];
-  for (const route of routes) {
+  for (const route of LATENCY_ROUTES) {
     for (let iteration = 1; iteration <= runs; iteration += 1) {
       const sample = await measureRoute(browser, authData, route, iteration);
       samples.push(sample);
