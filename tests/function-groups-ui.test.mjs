@@ -115,6 +115,26 @@ assert.match(inputSource, /#revert-config[\s\S]*?_setConfigDirty\(false\);[\s\S]
 assert.match(editorSource, /bindSingleRequestSave\(panel\)/, "configuration saves must use the canonical shell handler");
 assert.match(
   editorSource,
+  /const functionSearchTokenCache = new WeakMap\(\)/,
+  "Function Tool search should cache static tokenization by persistent DOM node",
+);
+assert.match(
+  editorSource,
+  /const queryTokens = hasQuery \? searchTokens\(query\) : \[\]/,
+  "Function Tool search should tokenize the changing query once per input event",
+);
+assert.match(
+  editorSource,
+  /cachedFunctionSearchTokens\(card, card\.dataset\.groupSearch\)/,
+  "group search text should reuse cached static tokens",
+);
+assert.match(
+  editorSource,
+  /cachedFunctionSearchTokens\(tool, tool\.dataset\.toolSearch\)/,
+  "tool search text should reuse cached static tokens",
+);
+assert.match(
+  editorSource,
   /const categories = indexFunctionToolGroups\(config\);[\s\S]*?const membership = categories\.membership;/,
   "reconciliation should reuse the categorisation membership index",
 );
