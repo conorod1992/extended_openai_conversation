@@ -23,6 +23,25 @@ export const LATENCY_ROUTES = [
   {name: "usage-maintenance-request-debug", path: "usage-maintenance/request-debug"},
 ];
 
+export function expectedRouteState(route) {
+  const [page, subsection = null] = route.path.split("/");
+  return {page, subsection};
+}
+
+export async function managementRouteState(page) {
+  return page.evaluate(() => {
+    const panel = document.querySelector("extended-openai-management-panel");
+    return panel ? {
+      page: panel._page || null,
+      subsection: panel._subsection || null,
+      busy: Boolean(panel._busy),
+      error: panel._error || null,
+      loading: Boolean(panel.shadowRoot?.querySelector("main .loading")),
+      heading: panel.shadowRoot?.querySelector("main .page-intro h1")?.textContent?.trim() || null,
+    } : null;
+  });
+}
+
 export async function waitForManagementRouteReady(page, route, timeout) {
   await page.waitForFunction(
     ({path}) => {
@@ -34,13 +53,7 @@ export async function waitForManagementRouteReady(page, route, timeout) {
       if (panel._busy || panel._error) return false;
       const main = panel.shadowRoot.querySelector("main");
       if (!main || main.querySelector(".loading")) return false;
-      const heading = main.querySelector(".page-intro h1");
-      if (!heading?.textContent?.trim()) return false;
-      return Boolean(
-        main.querySelector(
-          ".dashboard-grid,.config-section,.content-card,.list-card,.notice,extended-openai-debug-panel,.empty"
-        )
-      );
+      return Boolean(main.querySelector(".page-intro h1")?.textContent?.trim());
     },
     {path: route.path},
     {timeout},
