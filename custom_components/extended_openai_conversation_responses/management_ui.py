@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import lru_cache
 import json
 import logging
 from time import perf_counter
@@ -64,6 +65,7 @@ from .const import (
 )
 from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
+from .exposed_attributes import exposed_attribute_catalog
 from .frontend_assets import async_register_frontend_assets, frontend_entry_url
 from .function_dependency_integrity import (
     _TOOL_MUTATIONS,
@@ -103,6 +105,7 @@ from .management_function_quarantine import (
 )
 from .management_function_repair import (
     agent_config_revision as _agent_config_revision,
+    agent_config_revision_from_snapshot as _agent_config_revision_from_snapshot,
     require_agent_config_revision as _require_agent_config_revision,
 )
 from .management_history_queries import (
@@ -142,6 +145,29 @@ WS_COMMAND = f"{DOMAIN}/management"
 _UI_SETUP = f"{DOMAIN}.management_ui_setup"
 _LOGGER = logging.getLogger(__name__)
 _SLOW_MANAGEMENT_MS = 250.0
+_LIVE_CONFIGURATION_METADATA = frozenset(
+    {"local_handling", "exposed_attribute_catalog"}
+)
+
+
+@lru_cache(maxsize=1)
+def _cached_configuration_defaults() -> dict[str, Any]:
+    """Build the immutable-source default configuration projection once."""
+    return agent_config_snapshot(agent_config_defaults())
+
+
+@lru_cache(maxsize=1)
+def _cached_configuration_options() -> dict[str, list[dict[str, Any]]]:
+    """Build static management choice metadata once."""
+    return agent_config_options()
+
+
+def _configuration_defaults() -> dict[str, Any]:
+    return deepcopy(_cached_configuration_defaults())
+
+
+def _configuration_options() -> dict[str, list[dict[str, Any]]]:
+    return deepcopy(_cached_configuration_options())
 
 
 def _elapsed_ms(start: float) -> float:
@@ -692,29 +718,20 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         config_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
-        revision = _agent_config_revision(subentry.data, subentry.title)
+        revision = _agent_config_revision_from_snapshot(config, subentry.title)
         revision_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
-        defaults = agent_config_snapshot(agent_config_defaults())
+        defaults = _configuration_defaults()
         defaults_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
-        options = agent_config_options()
+        options = _configuration_options()
         options_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
         capabilities = model_capabilities(config[CONF_CHAT_MODEL])
         model_capabilities_ms = _elapsed_ms(phase)
-
-        phase = perf_counter()
-        local_handling = local_handling_snapshot(
-            hass,
-            entry_id,
-            subentry_id,
-            config.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
-        )
-        local_handling_ms = _elapsed_ms(phase)
 
         timings = {
             "config_snapshot_ms": config_ms,
@@ -722,7 +739,6 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "defaults_snapshot_ms": defaults_ms,
             "options_ms": options_ms,
             "model_capabilities_ms": model_capabilities_ms,
-            "local_handling_ms": local_handling_ms,
             "total_ms": _elapsed_ms(started),
         }
         _warn_management_performance("configuration.get", timings)
@@ -734,9 +750,32 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "options": options,
             "model_capabilities": capabilities,
             "function_types": sorted(FUNCTIONS),
-            "local_handling": local_handling,
             "_performance": timings,
         }
+    if action == "live_metadata":
+        requested = message.get("metadata", [])
+        if not isinstance(requested, list) or any(
+            not isinstance(item, str) for item in requested
+        ):
+            raise HomeAssistantError("metadata must be a list of strings")
+        unknown = set(requested) - _LIVE_CONFIGURATION_METADATA
+        if unknown:
+            raise HomeAssistantError(
+                "Unknown configuration metadata: " + ", ".join(sorted(unknown))
+            )
+        metadata: dict[str, Any] = {}
+        if "local_handling" in requested:
+            metadata["local_handling"] = local_handling_snapshot(
+                hass,
+                entry_id,
+                subentry_id,
+                subentry.data.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
+            )
+        if "exposed_attribute_catalog" in requested:
+            metadata["exposed_attribute_catalog"] = exposed_attribute_catalog(
+                hass, subentry.data
+            )
+        return metadata
     if action == "validate":
         updates = message.get("config", {})
         if not isinstance(updates, dict):
@@ -771,7 +810,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         snapshot = agent_config_snapshot(normalized)
         return {
             "title": saved_title,
-            "revision": _agent_config_revision(normalized, saved_title),
+            "revision": _agent_config_revision_from_snapshot(snapshot, saved_title),
             "config": snapshot,
             "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
             "local_handling": local_handling_snapshot(
@@ -1846,16 +1885,29 @@ async def _async_management_request(
     elif is_admin and section == "tools" and action in _TOOL_MUTATIONS:
         _require_agent_config_revision(subentry, message.get("revision"))
 
+    configuration_action = _configuration_action(message)
+    configuration_started = perf_counter() if configuration_action is not None else None
     with management_function_tools(section):
         result = await handler(request)
 
-    configuration_action = _configuration_action(message)
     if configuration_action is not None:
+        decoration_started = perf_counter()
         result = decorate_configuration_result(
             hass,
             getattr(entry, "data", {}),
             result,
             action=configuration_action,
+        )
+        decoration_ms = _elapsed_ms(decoration_started)
+        assert configuration_started is not None
+        request_total_ms = _elapsed_ms(configuration_started)
+        performance = result.get("_performance")
+        if isinstance(performance, dict):
+            performance["decoration_ms"] = decoration_ms
+            performance["request_total_ms"] = request_total_ms
+        _warn_management_performance(
+            f"configuration.{configuration_action}.request",
+            {"decoration_ms": decoration_ms, "total_ms": request_total_ms},
         )
     return result
 
@@ -1914,6 +1966,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("expected_revision"): str,
         vol.Optional("refresh_confirmation"): bool,
         vol.Optional("memory_ids"): list,
+        vol.Optional("metadata"): list,
         vol.Optional("memory_id"): str,
         vol.Optional("session_id"): str,
         vol.Optional("source_id"): str,

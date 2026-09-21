@@ -176,6 +176,44 @@ test("scope catalog is shared across data routes with a fixed TTL and mutation i
   expect(counts).toEqual({shared:1, unchangedTimestamp:true, expired:2, mutated:3});
 });
 
+test("configuration live metadata is fetched only by routes that use it", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+
+  const calls = () => page.evaluate(() =>
+    browserHarness.calls
+      .filter((call) => call.section === "configuration" && call.action === "live_metadata")
+      .map((call) => call.metadata)
+  );
+
+  expect(await calls()).toEqual([]);
+
+  await panel.evaluate(host => host._navigate("capabilities", "home-assistant"));
+  await expect(panel.locator('[data-config="local_intents_enabled"]')).toBeVisible();
+  await expect.poll(calls).toEqual([["local_handling"]]);
+
+  await panel.evaluate(host => host._navigate("assistant", "model-responses"));
+  await expect(panel.locator("#reset-model-parameters")).toBeVisible();
+  await expect.poll(calls).toEqual([["local_handling"]]);
+
+  await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
+  await expect(panel.locator("#prompt-editor")).toBeVisible();
+  await expect.poll(calls).toEqual([
+    ["local_handling"],
+    ["exposed_attribute_catalog"],
+  ]);
+
+  await panel.evaluate(host => host._navigate("capabilities", "home-assistant"));
+  await expect(panel.locator('[data-config="local_intents_enabled"]')).toBeVisible();
+  await expect.poll(calls).toEqual([
+    ["local_handling"],
+    ["exposed_attribute_catalog"],
+  ]);
+  await expectHarnessClean(page, errors);
+});
+
 test("conversation configuration starts before a pending scope catalog finishes", async ({page}) => {
   await page.goto(fixtureUrl("overview"));
   await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();

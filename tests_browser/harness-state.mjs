@@ -97,7 +97,25 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     if (key === "quiet_hours/update") { state.quiet.config = clone(message.config); save(); return clone(state.quiet); }
     if (key === "service_catalog/get") return {services: {}};
 
-    if (key === "configuration/get") return clone(state.configuration);
+    if (key === "configuration/get") {
+      const result = clone(state.configuration);
+      delete result.local_handling;
+      delete result.exposed_attribute_catalog;
+      return result;
+    }
+    if (key === "configuration/live_metadata") {
+      const requested = new Set(message.metadata || []);
+      return {
+        ...(requested.has("local_handling") ? {local_handling: clone(state.configuration.local_handling)} : {}),
+        ...(requested.has("exposed_attribute_catalog") ? {
+          exposed_attribute_catalog: {
+            entities: [],
+            saved_unexposed: [],
+            identity_policy: "entity_registry",
+          },
+        } : {}),
+      };
+    }
     if (key === "configuration/validate") return {valid: true, errors: {}, model_capabilities: {}};
     if (key === "configuration/update" || key === "configuration/save") {
       if (failConfigurationOnce && !state.failedConfigurationOnce) { state.failedConfigurationOnce = true; save(); throw new Error("Fixture rejected configuration save once"); }

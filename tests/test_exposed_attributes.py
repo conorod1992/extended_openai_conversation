@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 from typing import Any
 
 import pytest
@@ -283,7 +284,9 @@ def test_attribute_helpers_and_renderers_cover_empty_and_non_string_entities(
     assert '"{""brightness"":1}"' in rendered
 
 
-def test_configuration_projection_preserves_shape_and_exposed_catalog(monkeypatch):
+def test_configuration_projection_defers_catalog_on_get_and_keeps_it_on_update(
+    monkeypatch,
+):
     from custom_components.extended_openai_conversation_responses import (
         management_configuration_guidance as guidance,
     )
@@ -293,16 +296,23 @@ def test_configuration_projection_preserves_shape_and_exposed_catalog(monkeypatc
         guidance.decorate_configuration_result(object(), {}, untouched, action="get")
         is untouched
     )
-    monkeypatch.setattr(
-        guidance, "exposed_attribute_catalog", lambda _hass, config: {"seen": config}
-    )
-    result = guidance.decorate_configuration_result(
+    catalog = Mock(return_value={"seen": {"x": 1}})
+    monkeypatch.setattr(guidance, "exposed_attribute_catalog", catalog)
+
+    cold = guidance.decorate_configuration_result(
         object(), {}, {"config": {"x": 1}, "other": True}, action="get"
     )
-    assert result["config"] == {"x": 1}
-    assert result["other"] is True
-    assert result["exposed_attribute_catalog"] == {"seen": {"x": 1}}
-    assert "configuration_guidance" in result
+    assert cold["config"] == {"x": 1}
+    assert cold["other"] is True
+    assert "exposed_attribute_catalog" not in cold
+    assert "configuration_guidance" in cold
+    catalog.assert_not_called()
+
+    updated = guidance.decorate_configuration_result(
+        object(), {}, {"config": {"x": 1}, "other": True}, action="update"
+    )
+    assert updated["exposed_attribute_catalog"] == {"seen": {"x": 1}}
+    catalog.assert_called_once()
 
 
 def test_legacy_renderer_without_selected_attributes_omits_column(

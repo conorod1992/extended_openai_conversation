@@ -60,14 +60,21 @@ async def test_configuration_catalog_uses_real_assist_exposure(
     )
 
     client = await _admin_client(hass, hass_ws_client)
-    result = await _management_call(
+    base = await _management_call(
         client,
         entry=entry,
         section="configuration",
         action="get",
     )
+    assert "exposed_attribute_catalog" not in base
 
-    assert "exposed_attribute_catalog" in result
+    result = await _management_call(
+        client,
+        entry=entry,
+        section="configuration",
+        action="live_metadata",
+        metadata=["exposed_attribute_catalog"],
+    )
     catalog = result["exposed_attribute_catalog"]
     by_entity_id = {item["entity_id"]: item for item in catalog["entities"]}
 

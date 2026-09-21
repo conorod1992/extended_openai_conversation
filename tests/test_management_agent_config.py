@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import yaml
@@ -117,6 +117,62 @@ async def test_configuration_read_and_update_require_admin(hass) -> None:
     )
     assert updated["config"]["max_tokens"] == 750
     hass.config_entries.async_update_subentry.assert_called_once()
+
+
+async def test_configuration_get_defers_live_metadata_and_reuses_snapshot_revision(
+    hass, monkeypatch
+) -> None:
+    _setup_entry(hass)
+    from custom_components.extended_openai_conversation_responses import management_ui
+
+    local_handling = Mock(
+        return_value={"supported": True, "intents": [], "pipeline_conflicts": []}
+    )
+    exposed_catalog = Mock(
+        return_value={
+            "entities": [],
+            "saved_unexposed": [],
+            "identity_policy": "entity_registry",
+        }
+    )
+    monkeypatch.setattr(management_ui, "local_handling_snapshot", local_handling)
+    monkeypatch.setattr(management_ui, "exposed_attribute_catalog", exposed_catalog)
+    monkeypatch.setattr(
+        management_ui,
+        "_agent_config_revision",
+        Mock(side_effect=AssertionError("cold get must reuse its normalized snapshot")),
+    )
+
+    base = {
+        "section": "configuration",
+        "entry_id": "entry-1",
+        "subentry_id": "agent-1",
+    }
+    result = await async_management_command(
+        hass, "admin", True, {**base, "action": "get"}
+    )
+
+    assert "local_handling" not in result
+    assert "exposed_attribute_catalog" not in result
+    assert result["_performance"]["request_total_ms"] >= 0
+    assert result["_performance"]["decoration_ms"] >= 0
+    local_handling.assert_not_called()
+    exposed_catalog.assert_not_called()
+
+    live = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            **base,
+            "action": "live_metadata",
+            "metadata": ["local_handling", "exposed_attribute_catalog"],
+        },
+    )
+    assert live["local_handling"]["supported"] is True
+    assert live["exposed_attribute_catalog"]["identity_policy"] == "entity_registry"
+    local_handling.assert_called_once()
+    exposed_catalog.assert_called_once()
 
 
 async def test_guest_policy_requires_explicit_central_save(hass, monkeypatch) -> None:

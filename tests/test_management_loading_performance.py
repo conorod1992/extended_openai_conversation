@@ -492,7 +492,8 @@ async def test_configuration_get_reports_phase_timings(monkeypatch) -> None:
             "defaults_snapshot_ms",
             "options_ms",
             "model_capabilities_ms",
-            "local_handling_ms",
+            "decoration_ms",
+            "request_total_ms",
         )
     ) <= performance.keys()
 

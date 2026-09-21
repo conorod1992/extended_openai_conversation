@@ -91,7 +91,7 @@ def decorate_configuration_result(
         **result,
         "configuration_guidance": configuration_guidance_snapshot(entry_data, config),
     }
-    if action in {"get", "update", "save"}:
+    if action in {"update", "save"}:
         decorated["exposed_attribute_catalog"] = exposed_attribute_catalog(hass, config)
     return decorated
 
