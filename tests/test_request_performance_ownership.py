@@ -139,6 +139,47 @@ def test_request_llm_context_reuses_active_instance_without_rebuilding():
         agent_module._ACTIVE_LLM_CONTEXT.reset(token)
 
 
+@pytest.mark.asyncio
+async def test_memory_retrieval_sync_is_defensive_by_default(monkeypatch):
+    agent = object.__new__(ExtendedOpenAIAgentEntity)
+    agent.subentry = SimpleNamespace(data={})
+    agent._temporary_memory = None
+    agent._async_select_memories = AsyncMock(return_value=[])
+
+    sync = Mock()
+    monkeypatch.setattr(agent_module, "memory_enabled", lambda _data: True)
+    monkeypatch.setattr(agent_module, "sync_memory_embedding_provider", sync)
+
+    await agent._async_retrieve_memories(SimpleNamespace(), "hello")
+
+    sync.assert_called_once_with(agent)
+
+
+@pytest.mark.asyncio
+async def test_memory_retrieval_skips_sync_after_runtime_reconciliation(monkeypatch):
+    agent = object.__new__(ExtendedOpenAIAgentEntity)
+    agent.subentry = SimpleNamespace(data={})
+    agent._temporary_memory = None
+    agent._async_select_memories = AsyncMock(return_value=[])
+
+    sync = Mock()
+    monkeypatch.setattr(agent_module, "memory_enabled", lambda _data: True)
+    monkeypatch.setattr(agent_module, "sync_memory_embedding_provider", sync)
+
+    await agent._async_retrieve_memories(
+        SimpleNamespace(),
+        "hello",
+        runtime_reconciled=True,
+    )
+
+    sync.assert_not_called()
+
+
+def test_generation_passes_request_reconciliation_state_to_memory_retrieval():
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "runtime_reconciled=_ACTIVE_RUNTIME_RECONCILED.get()" in source
+
+
 async def test_request_reuses_function_config_across_provider_rounds(monkeypatch):
     agent = object.__new__(ExtendedOpenAIAgentEntity)
     agent.hass = SimpleNamespace()
