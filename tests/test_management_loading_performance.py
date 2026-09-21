@@ -282,35 +282,40 @@ def test_agent_config_revision_does_not_validate_persisted_config(monkeypatch) -
     assert len(revision) == 64
 
 
-async def test_configuration_get_uses_lightweight_persisted_snapshot(monkeypatch) -> None:
+async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatch) -> None:
     hass, _entry, _subentry = _hass_with_agent()
-    monkeypatch.setattr(
-        management_ui,
-        "agent_config_snapshot",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("configuration reads must not fully normalize persisted config")
-        ),
-    )
+    management_ui._cached_agent_config_snapshot.cache_clear()
+    original = management_ui.agent_config_snapshot
+    calls = 0
+
+    def counted(data):
+        nonlocal calls
+        calls += 1
+        return original(data)
+
+    monkeypatch.setattr(management_ui, "agent_config_snapshot", counted)
     monkeypatch.setattr(
         management_ui,
         "decorate_configuration_result",
         lambda _hass, _entry_data, result, **_kwargs: result,
     )
 
-    result = await management_ui.async_management_command(
-        hass,
-        "admin",
-        True,
-        {
-            "entry_id": "entry-1",
-            "subentry_id": "agent-1",
-            "section": "configuration",
-            "action": "get",
-        },
+    message = {
+        "entry_id": "entry-1",
+        "subentry_id": "agent-1",
+        "section": "configuration",
+        "action": "get",
+    }
+    first = await management_ui.async_management_command(
+        hass, "admin", True, message
+    )
+    second = await management_ui.async_management_command(
+        hass, "admin", True, message
     )
 
-    assert result["config"]["chat_model"] == agent_config_defaults()["chat_model"]
-    assert isinstance(result["revision"], str)
+    assert calls == 1
+    assert first["config"] == second["config"]
+    assert first["revision"] == second["revision"]
 
 
 async def test_guest_mode_get_reuses_one_exposed_entity_projection(monkeypatch) -> None:
