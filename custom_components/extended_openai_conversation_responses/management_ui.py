@@ -520,26 +520,72 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
     action = request.message["action"]
     guest_manager = await async_get_guest_mode(hass, entry_id, subentry_id)
     if action == "get":
+        started = perf_counter()
+
+        phase = perf_counter()
         configured_tools = configured_function_tools_from_data(subentry.data)
+        configured_tools_ms = _elapsed_ms(phase)
+
+        phase = perf_counter()
+        exposed_entities = get_exposed_entities(hass) if is_admin else None
+        exposed_entities_ms = _elapsed_ms(phase)
+
+        phase = perf_counter()
         policy = resolve_guest_policy(
-            hass, subentry.data, guest_manager, configured_tools
+            hass,
+            subentry.data,
+            guest_manager,
+            configured_tools,
+            exposed_entities=exposed_entities,
         )
+        policy_ms = _elapsed_ms(phase)
         if not is_admin:
             return {
                 "status": guest_manager.status(),
                 "policy": policy.as_diagnostics(),
             }
+        phase = perf_counter()
         library = await async_get_knowledge(hass, entry_id, subentry_id)
+        knowledge_manager_ms = _elapsed_ms(phase)
+
+        phase = perf_counter()
         groups = validate_function_groups(
             subentry.data.get(CONF_FUNCTION_GROUPS, []), configured_tools
         )
+        groups_ms = _elapsed_ms(phase)
+
+        phase = perf_counter()
+        revision = _agent_config_revision(subentry.data, subentry.title)
+        revision_ms = _elapsed_ms(phase)
+
+        phase = perf_counter()
+        editor_config = guest_policy_editor_snapshot(
+            hass,
+            subentry.data,
+            configured_tools,
+            exposed_entities=exposed_entities,
+        )
+        editor_snapshot_ms = _elapsed_ms(phase)
+
+        phase = perf_counter()
+        knowledge_sources = await library.async_list()
+        knowledge_list_ms = _elapsed_ms(phase)
+
+        timings = {
+            "configured_tools_ms": configured_tools_ms,
+            "exposed_entities_ms": exposed_entities_ms,
+            "policy_ms": policy_ms,
+            "knowledge_manager_ms": knowledge_manager_ms,
+            "groups_ms": groups_ms,
+            "revision_ms": revision_ms,
+            "editor_snapshot_ms": editor_snapshot_ms,
+            "knowledge_list_ms": knowledge_list_ms,
+        }
         return {
-            "revision": _agent_config_revision(subentry.data, subentry.title),
+            "revision": revision,
             "status": guest_manager.status(),
             "policy": policy.as_diagnostics(),
-            "config": guest_policy_editor_snapshot(
-                hass, subentry.data, configured_tools
-            ),
+            "config": editor_config,
             "legacy_policy": subentry.data.get(CONF_GUEST_POLICY_VERSION)
             != GUEST_POLICY_VERSION,
             "migration_notice": (
@@ -549,7 +595,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                 if subentry.data.get(CONF_GUEST_POLICY_VERSION) != GUEST_POLICY_VERSION
                 else None
             ),
-            "knowledge_sources": await library.async_list(),
+            "knowledge_sources": knowledge_sources,
             "functions": [
                 {
                     "name": tool["spec"]["name"],
@@ -572,10 +618,14 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
             "domains": sorted(
                 {
                     item["entity_id"].partition(".")[0]
-                    for item in get_exposed_entities(hass)
+                    for item in exposed_entities or ()
                     if isinstance(item.get("entity_id"), str)
                 }
             ),
+            "_performance": {
+                **timings,
+                "total_ms": _elapsed_ms(started),
+            },
         }
     _require_admin(is_admin)
     if action == "save_policy":
