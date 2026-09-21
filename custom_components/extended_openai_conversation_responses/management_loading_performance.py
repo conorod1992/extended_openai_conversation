@@ -39,6 +39,7 @@ from .management_history_queries import usage_summary
 from .management_projections import async_scope_catalog_projection, settings_snapshot
 from .management_setup_health import add_setup_health
 from .memory import async_get_memory, get_memory_mode
+from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
 
 _LOGGER = logging.getLogger(__name__)
@@ -183,9 +184,10 @@ async def async_scope_catalog(
     subentry_id: str,
 ) -> dict[str, Any]:
     """Load scopes for the already-validated Management agent concurrently."""
-    memory, archive = await asyncio.gather(
+    memory, archive, temporary_memory = await asyncio.gather(
         async_get_memory(hass, entry_id, subentry_id),
         async_get_archive(hass, entry_id, subentry_id),
+        async_get_temporary_memory(hass, entry_id, subentry_id),
     )
     return {
         "scopes": await async_scope_catalog_projection(
@@ -194,6 +196,7 @@ async def async_scope_catalog(
             is_admin,
             memory.scope_counts(),
             archive.scope_counts(),
+            temporary_memory.owner_counts(),
         )
     }
 

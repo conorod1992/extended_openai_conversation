@@ -247,8 +247,11 @@ async def test_management_contract_validates_and_enriches_owner_operations(
         [
             {
                 "scopes": [
-                    {"scope_id": "user:alice"},
-                    {"scope_id": SHARED_HOUSEHOLD_SCOPE_ID},
+                    {"scope_id": "user:alice", "temporary_memory_count": 2},
+                    {
+                        "scope_id": SHARED_HOUSEHOLD_SCOPE_ID,
+                        "temporary_memory_count": 4,
+                    },
                     "ignore-me",
                 ]
             },

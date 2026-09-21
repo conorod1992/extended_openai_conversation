@@ -704,8 +704,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const configPromise = view === "data-memory/conversations" && this._data?.is_admin
         ? this._loadConfigDraft() : Promise.resolve();
       const scopePromise = needsScopes ? this._loadScopes(scopeCatalogKey) : Promise.resolve();
-      // Attach rejection handlers immediately, even when scope loading fails first.
-      const prerequisites = Promise.allSettled([scopePromise, configPromise]);
+      const activeConversationsPromise = view === "data-memory/conversations" && this._data?.is_admin
+        ? this._call("conversations", "active") : Promise.resolve({active: []});
+      // Attach rejection handlers immediately so independent History work can run
+      // while the selected archive scope is still resolving.
+      const prerequisites = Promise.allSettled([
+        scopePromise, configPromise, activeConversationsPromise,
+      ]);
       if (needsScopes) await scopePromise;
       if (loadToken !== this._loadToken) return;
       let result;
@@ -726,15 +731,18 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         ]);
         result = settledSectionResult(entries, settled);
       } else if (view === "data-memory/conversations") {
-        const [sessions, settings, active] = await Promise.all([
+        const [sessions, prerequisiteResults] = await Promise.all([
           this._call("conversations", "list", { scope_id: this._scopeId, limit: 50 }),
-          this._call("conversations", "settings", { scope_id: this._scopeId }),
-          this._data?.is_admin ? this._call("conversations", "active") : Promise.resolve({active: []}),
-          prerequisites.then((results) => {
-            if (results[1].status === "rejected") throw results[1].reason;
-          }),
+          prerequisites,
         ]);
-        contentData = { sessions, settings, active };
+        if (prerequisiteResults[1].status === "rejected") {
+          throw prerequisiteResults[1].reason;
+        }
+        if (prerequisiteResults[2].status === "rejected") {
+          throw prerequisiteResults[2].reason;
+        }
+        const active = prerequisiteResults[2].value;
+        contentData = { sessions, active };
         if (this._data?.is_admin) result = this._configData;
         else result = contentData;
       } else if (view === "data-memory/memories") {
