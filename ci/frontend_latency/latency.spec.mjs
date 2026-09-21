@@ -13,7 +13,7 @@ test.skip(!baseUrl || !authDataRaw || !output, "requires the manual genuine-HA l
 
 async function closeContext(context) {
   try {
-    await closeContext(context);
+    await context.close();
   } catch (error) {
     const message = error?.message || String(error);
     if (!message.includes("Failed to find context with id")) throw error;
