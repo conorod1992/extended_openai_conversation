@@ -71,10 +71,10 @@ def _repairable_agent() -> tuple[Any, Any]:
 
 
 @pytest.mark.asyncio
-async def test_function_repair_configuration_get_preserves_dynamic_metadata(
+async def test_function_repair_configuration_get_defers_live_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Repair-mode Configuration keeps Assist catalogue and guidance metadata."""
+    """Repair-mode Configuration keeps guidance but defers live HA metadata."""
     entry, subentry = _repairable_agent()
     registry_entry = SimpleNamespace(id="registry-light-1", entity_id="light.kitchen")
     registry = SimpleNamespace(
@@ -125,7 +125,24 @@ async def test_function_repair_configuration_get_preserves_dynamic_metadata(
     )
 
     assert payload["function_repair"]["invalid_count"] == 1
-    assert payload["exposed_attribute_catalog"]["entities"] == [
+    assert "exposed_attribute_catalog" not in payload
+    assert "local_handling" not in payload
+    assert "configuration_guidance" in payload
+    assert "web_search" in payload["configuration_guidance"]
+
+    live = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "configuration",
+            "action": "live_metadata",
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+            "metadata": ["exposed_attribute_catalog"],
+        },
+    )
+    assert live["exposed_attribute_catalog"]["entities"] == [
         {
             "entity_id": "light.kitchen",
             "name": "Kitchen",
@@ -136,19 +153,17 @@ async def test_function_repair_configuration_get_preserves_dynamic_metadata(
             "durable_selection_available": True,
         }
     ]
-    assert "configuration_guidance" in payload
-    assert "web_search" in payload["configuration_guidance"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("section", "action", "catalog_expected"),
     [
-        ("configuration", "get", True),
+        ("configuration", "get", False),
         ("configuration", "update", True),
         ("configuration", "save", True),
         ("configuration", "validate", False),
-        ("function_repair", "configuration_get", True),
+        ("function_repair", "configuration_get", False),
         ("function_repair", "configuration_save", True),
         ("function_repair", "configuration_validate", False),
     ],
@@ -159,7 +174,7 @@ async def test_shared_configuration_response_contract_covers_normal_and_repair_a
     action: str,
     catalog_expected: bool,
 ) -> None:
-    """Normal and repair Configuration actions share one metadata contract."""
+    """Normal and repair Configuration actions share one guidance contract."""
     entry = SimpleNamespace(data={"provider": "test"})
     subentry = SimpleNamespace()
     monkeypatch.setattr(

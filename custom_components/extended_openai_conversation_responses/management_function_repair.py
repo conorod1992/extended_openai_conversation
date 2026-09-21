@@ -192,6 +192,12 @@ def safe_function_configuration(options: dict[str, Any]) -> dict[str, Any]:
     return safe
 
 
+def agent_config_revision_from_snapshot(config: dict[str, Any], title: str) -> str:
+    """Hash one already-normalized frontend configuration snapshot."""
+    document = canonical_json({"title": title, "config": config})
+    return sha256(document.encode("utf-8")).hexdigest()
+
+
 def agent_config_revision(data: Any, title: str) -> str:
     """Hash normalized valid state or unchanged raw state while tools need repair."""
     try:
@@ -200,8 +206,7 @@ def agent_config_revision(data: Any, title: str) -> str:
         config = dict(data)
         if function_tools_issue(config)[1] is None:
             raise
-    document = canonical_json({"title": title, "config": config})
-    return sha256(document.encode("utf-8")).hexdigest()
+    return agent_config_revision_from_snapshot(config, title)
 
 
 def repair_revision(subentry: Any) -> str:
@@ -292,12 +297,6 @@ def _safe_configuration_payload(
             "validation_error": issue,
             "isolatable": bool(invalid),
         },
-        "local_handling": management_ui.local_handling_snapshot(
-            hass,
-            str(entry.entry_id),
-            str(subentry.subentry_id),
-            config.get("local_intent_exclusions", []),
-        ),
     }
 
 

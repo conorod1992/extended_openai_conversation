@@ -771,6 +771,24 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
   }
 
+  _configurationLiveMetadataKeys() {
+    return {
+      "capabilities/home-assistant": ["local_handling"],
+      "assistant/prompt-context": ["exposed_attribute_catalog"],
+    }[this._viewKey()] || [];
+  }
+
+  async _loadConfigurationLiveMetadata() {
+    const requested = this._configurationLiveMetadataKeys();
+    const missing = requested.filter((key) => this._configData?.[key] === undefined);
+    if (!missing.length) return;
+    const agentId = this._agentId;
+    const loadToken = this._loadToken;
+    const metadata = await this._call("configuration", "live_metadata", {metadata: missing});
+    if (agentId !== this._agentId || loadToken !== this._loadToken) return;
+    this._configData = {...this._configData, ...metadata};
+  }
+
   async _loadConfigDraft() {
     if (!this._configData || this._draftAgentId !== this._agentId) {
       const agentId = this._agentId;
@@ -783,6 +801,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._draftAgentId = agentId;
       this._setConfigDirty(false);
     }
+    await this._loadConfigurationLiveMetadata();
     this._result = this._configData;
   }
 
