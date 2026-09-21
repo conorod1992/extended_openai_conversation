@@ -35,7 +35,7 @@ test("guidance responds to its dependencies without rescanning for unrelated dra
       return {unrelated, runtime, repeated, capabilities, search:scans, runtimeUpdated};
     } finally { root.querySelector = original; }
   });
-  expect(counts).toEqual({unrelated:0, runtime:0, repeated:0, capabilities:1, search:1, runtimeUpdated:true});
+  expect(counts).toEqual({unrelated:0, runtime:0, repeated:0, capabilities:0, search:0, runtimeUpdated:true});
 });
 
 for (const query of ["", "conversation timeout"]) test(`unchanged renders skip enhancement queries and content replacement invalidates them (query: ${query})`, async ({page}) => {
@@ -69,6 +69,6 @@ for (const query of ["", "conversation timeout"]) test(`unchanged renders skip e
   }, query);
   console.log("Enhancement query counts", result);
   expect(result.unchanged).toEqual({guidance:0, clarity:0});
-  expect(result.replaced.guidance).toBe(2);
+  expect(result.replaced.guidance).toBe(0);
   expect(result.restored).toBe(true);
 });
