@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from functools import lru_cache
 from hashlib import sha256
+import json
 from typing import Any
 
 import yaml
@@ -254,9 +255,24 @@ def agent_config_revision_from_snapshot(config: dict[str, Any], title: str) -> s
     return sha256(document.encode("utf-8")).hexdigest()
 
 
+@lru_cache(maxsize=128)
+def _cached_agent_config_snapshot(raw_json: str) -> dict[str, Any]:
+    """Normalize one persisted agent revision once."""
+    return agent_config_snapshot(json.loads(raw_json))
+
+
+def cached_agent_config_snapshot(data: Any) -> dict[str, Any]:
+    """Return an isolated normalized snapshot for unchanged persisted state."""
+    raw_json = canonical_json(dict(data))
+    return deepcopy(_cached_agent_config_snapshot(raw_json))
+
+
 def agent_config_revision(data: Any, title: str) -> str:
-    """Hash persisted state directly for cheap optimistic-concurrency checks."""
-    return agent_config_revision_from_snapshot(dict(data), title)
+    """Hash normalized valid state or unchanged raw state while tools need repair."""
+    raw = dict(data)
+    if function_tools_issue(raw)[1] is not None:
+        return agent_config_revision_from_snapshot(raw, title)
+    return agent_config_revision_from_snapshot(cached_agent_config_snapshot(raw), title)
 
 
 def repair_revision(subentry: Any) -> str:
