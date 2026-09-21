@@ -247,6 +247,9 @@ _ACTIVE_FUNCTION_CONFIG: ContextVar[
 _ACTIVE_LLM_CONTEXT: ContextVar[Any | None] = ContextVar(
     "extended_openai_active_llm_context", default=None
 )
+_ACTIVE_RUNTIME_RECONCILED: ContextVar[bool] = ContextVar(
+    "extended_openai_active_runtime_reconciled", default=False
+)
 _PROCESS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
     "extended_openai_process_metadata", default=None
 )
@@ -625,9 +628,13 @@ class ExtendedOpenAIAgentEntity(
                     with formatted_tool_cache():
                         async with voice_identity_scope(self, user_input):
                             await async_reconcile_runtime_configuration(self)
-                            result = await self._async_process_with_continuity(
-                                user_input
-                            )
+                            reconciled_token = _ACTIVE_RUNTIME_RECONCILED.set(True)
+                            try:
+                                result = await self._async_process_with_continuity(
+                                    user_input
+                                )
+                            finally:
+                                _ACTIVE_RUNTIME_RECONCILED.reset(reconciled_token)
                     if trace is not None:
                         trace.result = result
                     return result
@@ -968,7 +975,9 @@ class ExtendedOpenAIAgentEntity(
         exposed_entities = self._get_exposed_entities()
 
         retrieved_memories = await self._async_retrieve_memories(
-            llm_context, user_input.text
+            llm_context,
+            user_input.text,
+            runtime_reconciled=_ACTIVE_RUNTIME_RECONCILED.get(),
         )
         temporary_memories = await self._async_retrieve_temporary_memories()
 
@@ -1278,7 +1287,11 @@ class ExtendedOpenAIAgentEntity(
         return effective.text
 
     async def _async_retrieve_memories(
-        self, llm_context: llm.LLMContext, query: str
+        self,
+        llm_context: llm.LLMContext,
+        query: str,
+        *,
+        runtime_reconciled: bool = False,
     ) -> list[MemoryRecord]:
         """Retrieve live-enabled memory while overlapping temporary retrieval."""
         existing = _TEMPORARY_MEMORY_PREFETCH.get()
@@ -1289,7 +1302,8 @@ class ExtendedOpenAIAgentEntity(
         try:
             if not memory_enabled(self.subentry.data):
                 return []
-            sync_memory_embedding_provider(self)
+            if not runtime_reconciled:
+                sync_memory_embedding_provider(self)
             started = time.monotonic()
             records = await self._async_select_memories(llm_context, query)
             record_memory_retrieval("persistent", started, records)
