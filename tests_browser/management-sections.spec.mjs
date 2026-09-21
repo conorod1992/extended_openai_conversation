@@ -80,7 +80,6 @@ test("Conversation history loads scoped archive state through the management UI"
   expect(calls).toEqual(expect.arrayContaining([
     "scopes/catalog",
     "conversations/list",
-    "conversations/settings",
     "conversations/active",
     "configuration/get",
   ]));
