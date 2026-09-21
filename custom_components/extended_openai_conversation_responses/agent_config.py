@@ -1116,7 +1116,7 @@ def _configured_tools_yaml(data: Mapping[str, Any]) -> str | None:
             separators=(",", ":"),
             ensure_ascii=False,
         )
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         # Runtime-only hydrated configs may contain objects such as HA Templates.
         # Preserve the established fallback for those uncommon call sites.
         return yaml.safe_dump(
