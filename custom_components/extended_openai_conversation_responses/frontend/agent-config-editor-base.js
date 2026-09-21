@@ -45,15 +45,16 @@ const labelRow = (panel, label, key, helpKey = null, strong = false, value = und
   const text = panel._e(friendlySettingLabel(key) || label);
   return `<span class="setting-label-row"><label for="config-${key}">${strong ? `<strong>${text}</strong>` : text}</label>${helpKey ? helpButton(panel, helpKey) : ""}${settingBadgesMarkup(panel, key, value, disabled)}</span>`;
 };
-const field = (panel, key, label, value, type = "text", description = "", disabled = false, helpKey = null) => {
+const field = (panel, key, label, value, type = "text", description = "", disabled = false, helpKey = null, forceVisible = false) => {
   if (key === "memory_auto_retrieve_limit") {
     label = "Automatically include memories";
     description = "Select up to this many relevant memories when a new conversation starts. The same memories remain available for that conversation. Set to 0 to use memory only on demand.";
   }
-  const presentation = modelFieldPresentation(panel, key, value);
-  if (presentation.visible === false) return "";
-  disabled = presentation.disabled ?? disabled;
-  let result = `<div class="setting ${presentation.disabled ? "is-disabled" : ""}" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<input id="config-${key}" data-config="${key}" data-type="${type}" type="${type === "number" ? "number" : "text"}" value="${panel._e(value)}" ${presentation.max ? `max="${presentation.max}"` : ""} ${presentation.models ? 'list="extended-openai-model-catalog"' : ""} ${disabled ? "disabled" : ""}>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span>${modelFieldNotes(panel, presentation)}</div>`;
+  let presentation = modelFieldPresentation(panel, key, value);
+  if (presentation.visible === false && !forceVisible) return "";
+  if (presentation.visible === false) presentation = {};
+  disabled = forceVisible || (presentation.disabled ?? disabled);
+  let result = `<div class="setting ${presentation.disabled || forceVisible ? "is-disabled eoc-unavailable-model-setting" : ""}" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<input id="config-${key}" data-config="${key}" data-type="${type}" type="${type === "number" ? "number" : "text"}" value="${panel._e(value)}" ${presentation.max ? `max="${presentation.max}"` : ""} ${presentation.models ? 'list="extended-openai-model-catalog"' : ""} ${disabled ? "disabled" : ""}>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span>${modelFieldNotes(panel, presentation)}</div>`;
   if (key === "memory_auto_retrieve_limit") {
     const config = panel._draft || panel._result?.config || {};
     const choices = panel._result?.options?.memory_retrieval_mode || [];
@@ -62,12 +63,14 @@ const field = (panel, key, label, value, type = "text", description = "", disabl
   }
   return result;
 };
-const select = (panel, key, label, value, options, description = "", disabled = false, helpKey = null) => {
-  const presentation = modelFieldPresentation(panel, key, value);
-  if (presentation.visible === false) return "";
+const select = (panel, key, label, value, options, description = "", disabled = false, helpKey = null, forceVisible = false) => {
+  let presentation = modelFieldPresentation(panel, key, value);
+  if (presentation.visible === false && !forceVisible) return "";
+  if (presentation.visible === false) presentation = {};
+  disabled = forceVisible || disabled;
   value = presentation.value ?? value;
   options = presentation.options ?? options;
-  return `<div class="setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<select id="config-${key}" data-config="${key}" ${disabled ? "disabled" : ""}>${options.map((item) => {
+  return `<div class="setting ${forceVisible ? "is-disabled eoc-unavailable-model-setting" : ""}" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<select id="config-${key}" data-config="${key}" ${disabled ? "disabled" : ""}>${options.map((item) => {
     const choice = typeof item === "string" ? item : item.value;
     return option(panel, choice, value, friendlySettingValue(key, choice) || (typeof item === "string" ? null : item.label), presentation.disabledOption?.(choice));
   }).join("")}</select>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span>${modelFieldNotes(panel, presentation)}</div>`;
