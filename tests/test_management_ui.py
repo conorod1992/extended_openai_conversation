@@ -685,6 +685,11 @@ async def test_fallthrough_branches_and_scope_catalog(
 
     monkeypatch.setattr(loading, "async_get_archive", management_ui.async_get_archive)
     monkeypatch.setattr(loading, "async_get_memory", management_ui.async_get_memory)
+    monkeypatch.setattr(
+        loading,
+        "async_get_temporary_memory",
+        management_ui.async_get_temporary_memory,
+    )
     catalog = await management_ui.async_management_command(
         hass, "admin", True, _message("scopes", "catalog")
     )
@@ -934,10 +939,17 @@ async def test_non_admin_scope_catalog_handles_known_and_missing_users() -> None
     hass.auth.async_get_user = AsyncMock(
         side_effect=[SimpleNamespace(name="Alice"), None]
     )
-    first = await management_projections.async_scope_catalog_projection(hass, "alice", False, {"alice": 2})
+    first = await management_projections.async_scope_catalog_projection(
+        hass,
+        "alice",
+        False,
+        {"alice": 2},
+        temporary_memory_counts={"user:alice": 3},
+    )
     second = await management_projections.async_scope_catalog_projection(hass, "missing", False)
     assert first[0]["display_name"] == "Alice"
     assert first[0]["memory_count"] == 2
+    assert first[0]["temporary_memory_count"] == 3
     assert second[0]["display_name"] == "missing"
 
 
