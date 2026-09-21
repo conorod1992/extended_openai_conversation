@@ -97,7 +97,9 @@ async def test_async_match_keeps_home_assistant_event_loop_responsive(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The effective live matcher seam must execute CPU work in HA's executor."""
-    manager = RequestRules(MemoryStore())
+    manager = RequestRules(
+        MemoryStore({"rules": [_rule(0, "hello", match_type="equals")]})
+    )
     await manager.async_initialize()
     started = Event()
     release = Event()
@@ -217,10 +219,33 @@ async def test_matching_uses_complete_snapshot_during_rebuild(monkeypatch) -> No
 async def test_lightweight_host_matching_is_off_loop(monkeypatch) -> None:
     from threading import get_ident
 
-    manager = RequestRules(MemoryStore())
+    manager = RequestRules(
+        MemoryStore({"rules": [_rule(0, "hello", match_type="equals")]})
+    )
+    await manager.async_initialize()
     event_loop_thread = get_ident()
     monkeypatch.setattr(manager, "match", lambda _text: get_ident())
     assert await manager.async_match(SimpleNamespace(), "hello") != event_loop_thread
+
+
+async def test_empty_snapshot_skips_executor(monkeypatch) -> None:
+    """No compiled rules should return immediately without scheduling CPU work."""
+    manager = RequestRules(MemoryStore())
+    await manager.async_initialize()
+
+    def unexpected_executor(*_args):
+        raise AssertionError("empty Request Rules must not schedule executor work")
+
+    hass = SimpleNamespace(async_add_executor_job=unexpected_executor)
+    monkeypatch.setattr(
+        manager,
+        "match",
+        lambda _text: (_ for _ in ()).throw(
+            AssertionError("empty Request Rules must not call match")
+        ),
+    )
+
+    assert await manager.async_match(hass, "hello") is None
 
 
 async def test_certain_earlier_winner_skips_later_sentence_work(

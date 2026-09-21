@@ -137,6 +137,7 @@ class _MatchingSnapshot:
     deterministic: tuple[
         tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...
     ] = ()
+    fuzzy: tuple[tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...] = ()
 
 
 def _match_compiled_sentence(
@@ -596,9 +597,7 @@ class RequestRules:
                 return RuleMatch(rule, compiled.original, False, 100.0)
 
         fuzzy: list[tuple[tuple[float, int, int], RuleMatch]] = []
-        for rule, settings, compiled in snapshot.phrases:
-            if compiled.sentence_pattern is not None or not settings["fuzzy"]:
-                continue
+        for rule, settings, compiled in snapshot.fuzzy:
             score = _fuzzy_score(
                 candidate(settings), cast(str, compiled.normalized), rule["match_type"]
             )
@@ -610,7 +609,11 @@ class RequestRules:
         return max(fuzzy, key=lambda item: item[0])[1] if fuzzy else None
 
     async def async_match(self, hass: HomeAssistant, text: str) -> RuleMatch | None:
-        """Run matching off-loop, including when used with lightweight hosts."""
+        """Run matching off-loop only when the compiled snapshot has work."""
+        snapshot = self._matching_snapshot
+        if not snapshot.deterministic:
+            validate_match_input(text)
+            return None
         executor = getattr(hass, "async_add_executor_job", None)
         if callable(executor):
             return cast(RuleMatch | None, await executor(self.match, text))
@@ -694,10 +697,16 @@ class RequestRules:
                 compiled_rules.extend(
                     (rule, dict(settings), phrase) for phrase in phrases
                 )
+        fuzzy_rules = tuple(
+            (rule, settings, phrase)
+            for rule, settings, phrase in compiled_rules
+            if phrase.sentence_pattern is None and settings["fuzzy"]
+        )
         self._matching_snapshot = _MatchingSnapshot(
             tuple(compiled_rules),
             tuple(_copy_wording_groups(self._wording_groups)),
             tuple(compiled_rules),
+            fuzzy_rules,
         )
         self._diagnostics = diagnostics
         return order_changed
