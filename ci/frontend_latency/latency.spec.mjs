@@ -5,6 +5,8 @@ import {expect, test} from "@playwright/test";
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
 const output = process.env.EOAI_BROWSER_LATENCY_OUTPUT;
+const label = process.env.EOAI_LATENCY_LABEL || "current";
+const baselineMode = label === "baseline";
 const runs = Math.max(1, Number(process.env.EOAI_LATENCY_RUNS || "3"));
 
 test.skip(!baseUrl || !authDataRaw || !output, "requires the manual genuine-HA latency harness");
@@ -63,9 +65,25 @@ async function measureRoute(browser, authData, route, iteration) {
   });
 
   const wallStarted = Date.now();
-  await page.goto(`${baseUrl}/extended-openai/${route.path}`, {waitUntil: "domcontentloaded"});
-  await expect(page.locator("extended-openai-management-panel")).toHaveCount(1);
-  await expect(page.locator(`extended-openai-management-panel ${route.ready}`)).toBeVisible();
+  try {
+    await page.goto(`${baseUrl}/extended-openai/${route.path}`, {waitUntil: "domcontentloaded"});
+    await expect(page.locator("extended-openai-management-panel")).toHaveCount(1);
+    await expect(page.locator(`extended-openai-management-panel ${route.ready}`))
+      .toBeVisible({timeout: baselineMode ? 5000 : 30000});
+  } catch (error) {
+    if (!baselineMode) {
+      await context.close();
+      throw error;
+    }
+    await context.close();
+    return {
+      route: route.name,
+      iteration,
+      supported: false,
+      unavailable_reason: error?.message || String(error),
+      failures,
+    };
+  }
   const wallReadyMs = Date.now() - wallStarted;
   await page.waitForTimeout(100);
 
@@ -110,6 +128,7 @@ async function measureRoute(browser, authData, route, iteration) {
   return {
     route: route.name,
     iteration,
+    supported: true,
     wall_ready_ms: wallReadyMs,
     failures,
     ...browserMetrics,
@@ -121,9 +140,11 @@ test("collect genuine HA cold-route latency diagnostics", async ({browser}) => {
   const samples = [];
   for (const route of routes) {
     for (let iteration = 1; iteration <= runs; iteration += 1) {
-      samples.push(await measureRoute(browser, authData, route, iteration));
+      const sample = await measureRoute(browser, authData, route, iteration);
+      samples.push(sample);
+      if (sample.supported === false) break;
     }
   }
   await mkdir(dirname(output), {recursive: true});
-  await writeFile(output, JSON.stringify({runs, samples}, null, 2));
+  await writeFile(output, JSON.stringify({label, runs, samples}, null, 2));
 });
