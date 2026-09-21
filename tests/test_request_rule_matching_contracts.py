@@ -243,6 +243,23 @@ async def test_fuzzy_fallback_skips_ineligible_earlier_candidates(earlier_type):
     assert rules.match("liagt").rule["id"] == "fuzzy"
 
 
+async def test_compiled_fuzzy_snapshot_contains_only_fuzzy_text_candidates():
+    rules = await manager(
+        rule("strict", "good night"),
+        rule("pattern", "turn on {room}", "sentence_pattern", order=1),
+        rule(
+            "fuzzy",
+            "light",
+            order=2,
+            matching={"fuzzy": True, "fuzzy_threshold": 70},
+        ),
+    )
+
+    assert [
+        candidate[0]["id"] for candidate in rules._matching_snapshot.fuzzy
+    ] == ["fuzzy"]
+
+
 @pytest.mark.parametrize(
     "match_type,text",
     [
