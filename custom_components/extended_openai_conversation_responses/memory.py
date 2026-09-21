@@ -1613,13 +1613,14 @@ def _cached_memory_record_token_set(memory: MemoryRecord) -> frozenset[str]:
 
 def _bm25_score(
     query_terms: list[str],
-    document_terms: tuple[str, ...],
+    document_terms: Sequence[str],
     document_frequency: Mapping[str, int],
     document_count: int,
     average_length: float,
 ) -> float:
     """Calculate the existing BM25 score without rebuilding term frequencies."""
-    frequencies = _cached_memory_term_frequencies(document_terms)
+    cached_terms = document_terms if isinstance(document_terms, tuple) else tuple(document_terms)
+    frequencies = _cached_memory_term_frequencies(cached_terms)
     k1, b = 1.2, 0.75
     score = 0.0
     max_score = 0.0
@@ -1657,7 +1658,9 @@ def _edit_distance_one(left: str, right: str) -> bool:
     return shorter[index:] == longer[index + 1 :]
 
 
-def _fuzzy_relevance(query_tokens: set[str], document_tokens: set[str]) -> float:
+def _fuzzy_relevance(
+    query_tokens: set[str], document_tokens: set[str] | frozenset[str]
+) -> float:
     matches = 0
     for query in query_tokens:
         if any(
