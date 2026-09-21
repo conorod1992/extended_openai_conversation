@@ -15,6 +15,9 @@ from custom_components.extended_openai_conversation_responses import (
     management_ui,
 )
 from custom_components.extended_openai_conversation_responses import (
+    management_function_repair as function_repair,
+)
+from custom_components.extended_openai_conversation_responses import (
     management_loading_performance as loading,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -235,6 +238,128 @@ def test_agent_snapshot_keeps_invalid_function_tool_agent_discoverable() -> None
     assert result["configuration_issue"]["field"] == "functions"
     assert result["configuration_issue"]["repairable"] is True
     assert "minLength" in result["configuration_issue"]["message"]
+
+
+def test_invalid_function_tool_health_is_cached_per_persisted_revision(
+    monkeypatch,
+) -> None:
+    function_repair._cached_isolated_function_tools.cache_clear()
+    function_repair._cached_function_tool_state.cache_clear()
+    original = function_repair._isolate_function_tools_uncached
+    calls = 0
+
+    def counted(options):
+        nonlocal calls
+        calls += 1
+        return original(options)
+
+    monkeypatch.setattr(function_repair, "_isolate_function_tools_uncached", counted)
+    options = {"functions": _persisted_invalid_function_tools()}
+
+    first = function_repair.management_function_tool_health(options)
+    second = function_repair.management_function_tool_health(options)
+
+    assert calls == 1
+    assert first == second
+    assert first["invalid_count"] == 1
+    assert "minLength" in first["validation_error"]
+
+
+def test_agent_config_revision_does_not_validate_persisted_config(monkeypatch) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    subentry.data["functions"] = _persisted_invalid_function_tools()
+    monkeypatch.setattr(
+        function_repair,
+        "agent_config_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("revision checks must not validate configuration")
+        ),
+    )
+
+    revision = function_repair.agent_config_revision(subentry.data, subentry.title)
+
+    assert isinstance(revision, str)
+    assert len(revision) == 64
+
+
+async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatch) -> None:
+    hass, _entry, _subentry = _hass_with_agent()
+    function_repair._cached_agent_config_snapshot.cache_clear()
+    original = function_repair.agent_config_snapshot
+    calls = 0
+
+    def counted(data):
+        nonlocal calls
+        calls += 1
+        return original(data)
+
+    monkeypatch.setattr(function_repair, "agent_config_snapshot", counted)
+    monkeypatch.setattr(
+        management_ui,
+        "decorate_configuration_result",
+        lambda _hass, _entry_data, result, **_kwargs: result,
+    )
+
+    message = {
+        "entry_id": "entry-1",
+        "subentry_id": "agent-1",
+        "section": "configuration",
+        "action": "get",
+    }
+    first = await management_ui.async_management_command(
+        hass, "admin", True, message
+    )
+    second = await management_ui.async_management_command(
+        hass, "admin", True, message
+    )
+
+    assert calls == 1
+    assert first["config"] == second["config"]
+    assert first["revision"] == second["revision"]
+
+
+async def test_guest_mode_get_reuses_one_exposed_entity_projection(monkeypatch) -> None:
+    hass, _entry, _subentry = _hass_with_agent()
+    guest = SimpleNamespace(
+        status=lambda: {"state": "inactive", "currently_active": False}
+    )
+    policy = SimpleNamespace(as_diagnostics=lambda: {"guest_active": False})
+    library = SimpleNamespace(async_list=AsyncMock(return_value=[]))
+    exposed = [{"entity_id": "light.kitchen"}, {"entity_id": "switch.fan"}]
+    exposed_loader = MagicMock(return_value=exposed)
+
+    monkeypatch.setattr(management_ui, "async_get_guest_mode", AsyncMock(return_value=guest))
+    monkeypatch.setattr(management_ui, "async_get_knowledge", AsyncMock(return_value=library))
+    monkeypatch.setattr(management_ui, "configured_function_tools_from_data", lambda _data: [])
+    monkeypatch.setattr(management_ui, "validate_function_groups", lambda _groups, _tools: [])
+    monkeypatch.setattr(management_ui, "get_exposed_entities", exposed_loader)
+
+    def resolve_policy(_hass, _options, _manager, _tools, *, exposed_entities=None):
+        assert exposed_entities is exposed
+        return policy
+
+    def editor_snapshot(_hass, _options, _tools, *, exposed_entities=None):
+        assert exposed_entities is exposed
+        return {}
+
+    monkeypatch.setattr(management_ui, "resolve_guest_policy", resolve_policy)
+    monkeypatch.setattr(management_ui, "guest_policy_editor_snapshot", editor_snapshot)
+
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "guest_mode",
+            "action": "get",
+        },
+    )
+
+    exposed_loader.assert_called_once_with(hass)
+    assert result["domains"] == ["light", "switch"]
+    assert result["_performance"]["total_ms"] >= 0
 
 
 async def test_agent_catalog_does_not_initialize_per_agent_managers(

@@ -491,12 +491,21 @@ def resolve_guest_policy(
     options: Mapping[str, Any],
     manager: GuestModeManager | None,
     configured_tools: Sequence[Mapping[str, Any]] = (),
+    *,
+    exposed_entities: Sequence[Mapping[str, Any]] | None = None,
 ) -> GuestCapabilityPolicy:
     """Resolve one restrictive policy from the current Guest state and config."""
     if manager is None or not manager.is_active():
         return GuestCapabilityPolicy.unrestricted()
     if options.get(CONF_GUEST_POLICY_VERSION) == GUEST_POLICY_VERSION:
-        return _resolve_exclusion_policy(hass, options, configured_tools)
+        if exposed_entities is None:
+            return _resolve_exclusion_policy(hass, options, configured_tools)
+        return _resolve_exclusion_policy(
+            hass,
+            options,
+            configured_tools,
+            exposed_entities=exposed_entities,
+        )
     return _resolve_legacy_policy(hass, options, configured_tools)
 
 
@@ -557,11 +566,16 @@ def _resolve_exclusion_policy(
     hass: HomeAssistant,
     options: Mapping[str, Any],
     configured_tools: Sequence[Mapping[str, Any]],
+    *,
+    exposed_entities: Sequence[Mapping[str, Any]] | None = None,
 ) -> GuestCapabilityPolicy:
     """Resolve v2 against HA's normal assistant exposure, then subtract denies."""
+    exposed = (
+        exposed_entities if exposed_entities is not None else get_exposed_entities(hass)
+    )
     baseline = {
         item["entity_id"]
-        for item in get_exposed_entities(hass)
+        for item in exposed
         if isinstance(item, Mapping) and isinstance(item.get("entity_id"), str)
     }
     readable = baseline - resolve_guest_selector_entity_ids(
@@ -674,6 +688,8 @@ def guest_policy_editor_snapshot(
     hass: HomeAssistant,
     options: Mapping[str, Any],
     configured_tools: Sequence[Mapping[str, Any]],
+    *,
+    exposed_entities: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return a v2 editor draft, conservatively translating legacy settings."""
     keys = (
@@ -709,9 +725,12 @@ def guest_policy_editor_snapshot(
             ),
         }
 
+    exposed = (
+        exposed_entities if exposed_entities is not None else get_exposed_entities(hass)
+    )
     baseline = {
         item["entity_id"]
-        for item in get_exposed_entities(hass)
+        for item in exposed
         if isinstance(item, Mapping) and isinstance(item.get("entity_id"), str)
     }
     readable = _resolve_legacy_entity_ids(hass, options, control=False)
