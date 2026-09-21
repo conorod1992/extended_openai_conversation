@@ -259,9 +259,8 @@ async def test_structured_output_is_sent_in_each_provider_format(
     chat_log = conversation.ChatLog(hass, "conversation-id")
     chat_log.content[0] = conversation.SystemContent(content="system")
     chat_log.async_add_user_content(conversation.UserContent(content="question"))
-    monkeypatch.setattr(
-        module, "_format_structured_output", lambda *_: {"type": "object"}
-    )
+    formatted = Mock(return_value={"type": "object"})
+    monkeypatch.setattr(module, "_format_structured_output", formatted)
 
     await entity._async_handle_chat_log(
         chat_log,
@@ -273,6 +272,7 @@ async def test_structured_output_is_sent_in_each_provider_format(
 
     create = responses_create if api_mode == API_MODE_RESPONSES else chat_create
     assert format_key in create.await_args.kwargs
+    formatted.assert_called_once()
     entity._truncate_message_history.assert_awaited_once()
 
 

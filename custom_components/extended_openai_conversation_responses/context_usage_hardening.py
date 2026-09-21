@@ -104,6 +104,31 @@ def _serialized_characters(value: Any) -> tuple[int, int]:
     return len(serialized), non_ascii
 
 
+def measure_provider_input(
+    input_value: Any,
+    tools: Any = None,
+    *,
+    tool_measurement: tuple[int, int] | None = None,
+) -> tuple[int, int, int]:
+    """Return serialized input/tool characters and conservative context tokens."""
+    input_characters, input_non_ascii = _serialized_characters(input_value)
+    tool_characters = 0
+    tool_non_ascii = 0
+    if tools:
+        if tool_measurement is None:
+            tool_measurement = _serialized_characters(tools)
+        tool_characters, tool_non_ascii = tool_measurement
+
+    total_characters = input_characters + tool_characters
+    non_ascii = input_non_ascii + tool_non_ascii
+    ascii_characters = max(0, total_characters - non_ascii)
+    conservative_tokens = max(
+        1,
+        math.ceil(ascii_characters / 3) + (non_ascii * 2),
+    )
+    return input_characters, tool_characters, conservative_tokens
+
+
 def estimate_provider_input_tokens(input_value: Any, tools: Any = None) -> int:
     """Conservatively estimate provider input tokens without a tokenizer dependency.
 
@@ -112,16 +137,7 @@ def estimate_provider_input_tokens(input_value: Any, tools: Any = None) -> int:
     them at one or more tokens per character. This estimate is intentionally used only
     as a safety fallback for truncation and is never reported as provider/billing usage.
     """
-    input_characters, input_non_ascii = _serialized_characters(input_value)
-    tool_characters = 0
-    tool_non_ascii = 0
-    if tools:
-        tool_characters, tool_non_ascii = _serialized_characters(tools)
-
-    total_characters = input_characters + tool_characters
-    non_ascii = input_non_ascii + tool_non_ascii
-    ascii_characters = max(0, total_characters - non_ascii)
-    return max(1, math.ceil(ascii_characters / 3) + (non_ascii * 2))
+    return measure_provider_input(input_value, tools)[2]
 
 
 def usage_for_accounting(usage: RequestUsage | None) -> RequestUsage | None:
