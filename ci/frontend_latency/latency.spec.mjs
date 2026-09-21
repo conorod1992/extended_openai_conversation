@@ -11,6 +11,15 @@ const runs = Math.max(1, Number(process.env.EOAI_LATENCY_RUNS || "3"));
 
 test.skip(!baseUrl || !authDataRaw || !output, "requires the manual genuine-HA latency harness");
 
+async function closeContext(context) {
+  try {
+    await closeContext(context);
+  } catch (error) {
+    const message = error?.message || String(error);
+    if (!message.includes("Failed to find context with id")) throw error;
+  }
+}
+
 const routes = [
   {name: "overview", path: "overview", ready: ".dashboard-grid"},
 
@@ -69,13 +78,13 @@ async function measureRoute(browser, authData, route, iteration) {
     await page.goto(`${baseUrl}/extended-openai/${route.path}`, {waitUntil: "domcontentloaded"});
     await expect(page.locator("extended-openai-management-panel")).toHaveCount(1);
     await expect(page.locator(`extended-openai-management-panel ${route.ready}`))
-      .toBeVisible({timeout: baselineMode ? 5000 : 30000});
+      .toBeVisible({timeout: baselineMode ? 2500 : 30000});
   } catch (error) {
     if (!baselineMode) {
-      await context.close();
+      await closeContext(context);
       throw error;
     }
-    await context.close();
+    await closeContext(context);
     return {
       route: route.name,
       iteration,
@@ -124,7 +133,7 @@ async function measureRoute(browser, authData, route, iteration) {
     };
   });
 
-  await context.close();
+  await closeContext(context);
   return {
     route: route.name,
     iteration,
