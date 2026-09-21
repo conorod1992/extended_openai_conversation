@@ -63,3 +63,7 @@ assert.match(workflow, /Measure baseline/);
 assert.match(workflow, /Measure current develop/);
 assert.match(comparison, /baseline ms \| current ms/);
 assert.match(comparison, /Negative deltas mean current develop is faster than the baseline/);
+
+assert.match(pythonHarness, /label == "baseline" and optional_on_baseline/);
+assert.match(pythonHarness, /"supported": False/);
+assert.match(comparison, /Backend operations unavailable on the historical baseline are shown as `n\/a`/);
