@@ -161,14 +161,39 @@ export function deleteFunctionGroup(config, groupId) {
   return result;
 }
 
-export function categorizeFunctionTools(config) {
+function indexFunctionToolGroups(config) {
   const tools = config.functions || [];
   const groups = config.function_groups || [];
-  const assigned = new Set(groups.flatMap((group) => group.functions || []));
-  return {
-    alwaysAvailable: tools.filter((tool) => !assigned.has(tool.spec?.name)),
-    groups: groups.map((group) => ({...group, tools: tools.filter((tool) => (group.functions || []).includes(tool.spec?.name))})),
-  };
+  const indexedGroups = groups.map((group) => ({...group, tools: []}));
+  const groupIndexesByTool = new Map();
+  const membership = new Map();
+
+  groups.forEach((group, groupIndex) => {
+    for (const name of group.functions || []) {
+      const indexes = groupIndexesByTool.get(name);
+      if (indexes) indexes.push(groupIndex);
+      else groupIndexesByTool.set(name, [groupIndex]);
+      membership.set(name, group);
+    }
+  });
+
+  const alwaysAvailable = [];
+  for (const tool of tools) {
+    const name = tool.spec?.name;
+    const groupIndexes = groupIndexesByTool.get(name);
+    if (!groupIndexes) {
+      alwaysAvailable.push(tool);
+      continue;
+    }
+    for (const groupIndex of groupIndexes) indexedGroups[groupIndex].tools.push(tool);
+  }
+
+  return {alwaysAvailable, groups: indexedGroups, membership};
+}
+
+export function categorizeFunctionTools(config) {
+  const {alwaysAvailable, groups} = indexFunctionToolGroups(config);
+  return {alwaysAvailable, groups};
 }
 
 function section(panel, id, title, description, keywords, body, includeHeading = true) {
@@ -529,8 +554,8 @@ export function reconcileTools(panel, {repairCards} = {}) {
   const config = panel._draft || panel._result?.config || {};
   const tools = config.functions || [];
   const groups = config.function_groups || [];
-  const categories = categorizeFunctionTools(config);
-  const membership = new Map(groups.flatMap(group => (group.functions || []).map(name => [name, group])));
+  const categories = indexFunctionToolGroups(config);
+  const membership = categories.membership;
   const choices = JSON.stringify(groups.map(({id, name, enabled}) => ({id, name, enabled})));
   const toolNodes = new Map();
   tools.forEach((tool, index) => {
