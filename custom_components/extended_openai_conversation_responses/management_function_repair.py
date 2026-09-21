@@ -251,12 +251,8 @@ def agent_config_revision_from_snapshot(config: dict[str, Any], title: str) -> s
 
 
 def agent_config_revision(data: Any, title: str) -> str:
-    """Hash valid normalized state without revalidating known-broken Function Tools."""
-    raw = dict(data)
-    if function_tools_issue(raw)[1] is not None:
-        return agent_config_revision_from_snapshot(raw, title)
-    config = agent_config_snapshot(raw)
-    return agent_config_revision_from_snapshot(config, title)
+    """Hash persisted state directly for cheap optimistic-concurrency checks."""
+    return agent_config_revision_from_snapshot(dict(data), title)
 
 
 def repair_revision(subentry: Any) -> str:
