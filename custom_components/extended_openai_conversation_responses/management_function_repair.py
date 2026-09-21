@@ -148,23 +148,34 @@ def _cached_function_tool_state(
 
 
 def management_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
-    """Return cached Management metadata for one persisted Function Tool revision."""
-    valid, invalid, issue, total_count = _cached_function_tool_state(
-        *_function_tools_cache_key(options)
-    )
+    """Return cheap cached metadata, including cached tolerant failure state."""
+    try:
+        metadata = configured_function_tool_metadata_from_data(options)
+    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError):
+        valid, invalid, issue, total_count = _cached_function_tool_state(
+            *_function_tools_cache_key(options)
+        )
+        return {
+            "usable_count": len(valid),
+            "enabled_count": sum(function_tool_enabled(tool) for tool in valid),
+            "invalid_count": len(invalid),
+            "total_count": total_count,
+            "isolatable": bool(invalid),
+            "validation_error": issue,
+            "invalid_names": [
+                str(
+                    item.get("name")
+                    or f"Function Tool {int(item.get('index', 0)) + 1}"
+                )
+                for item in invalid
+            ],
+        }
     return {
-        "usable_count": len(valid),
-        "enabled_count": sum(function_tool_enabled(tool) for tool in valid),
-        "invalid_count": len(invalid),
-        "total_count": total_count,
-        "isolatable": bool(invalid),
-        "validation_error": issue,
-        "invalid_names": [
-            str(
-                item.get("name") or f"Function Tool {int(item.get('index', 0)) + 1}"
-            )
-            for item in invalid
-        ],
+        **metadata,
+        "invalid_count": 0,
+        "isolatable": False,
+        "validation_error": None,
+        "invalid_names": [],
     }
 
 
