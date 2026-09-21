@@ -107,6 +107,7 @@ const source = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/management-configuration-guidance.js", import.meta.url),
   "utf8",
 );
-assert.match(source, /dataset\.eocInjectedModel/);
+assert.doesNotMatch(source, /eocInjectedModel|createDisabledModelField|grid\.insertBefore\(field/);
+assert.match(source, /decorateModelParameters/);
 assert.match(source, /parent\.disabled = !config\.local_intents_enabled/);
 assert.match(source, /configuration.*validate/s);
