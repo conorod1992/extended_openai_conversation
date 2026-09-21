@@ -627,9 +627,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                 "total_ms": _elapsed_ms(started),
             },
         }
-        _warn_management_performance(
-            "guest_mode.get", result["_performance"]
-        )
+        _warn_management_performance("guest_mode.get", result["_performance"])
         return result
     _require_admin(is_admin)
     if action == "save_policy":
