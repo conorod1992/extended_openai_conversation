@@ -195,7 +195,7 @@ test("configuration live metadata is fetched only by routes that use it", async 
   await expect.poll(calls).toEqual([["local_handling"]]);
 
   await panel.evaluate(host => host._navigate("assistant", "model-responses"));
-  await expect(panel.locator('[data-config="chat_model"]')).toBeVisible();
+  await expect(panel.locator("#reset-model-parameters")).toBeVisible();
   await expect.poll(calls).toEqual([["local_handling"]]);
 
   await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
