@@ -46,6 +46,25 @@ const categorized = categorizeFunctionTools(config);
 assert.deepEqual(categorized.alwaysAvailable.map((item) => item.spec.name), ["general"]);
 assert.deepEqual(categorized.groups.map((group) => group.tools.map((item) => item.spec.name)), [["remind"], ["calendar"]]);
 
+const duplicateMembership = {
+  functions: [tool("first"), tool("shared"), tool("last")],
+  function_groups: [
+    {id: "alpha", name: "Alpha", functions: ["shared", "first"]},
+    {id: "beta", name: "Beta", functions: ["shared", "last"]},
+  ],
+};
+const duplicateCategorized = categorizeFunctionTools(duplicateMembership);
+assert.deepEqual(
+  duplicateCategorized.groups.map((group) => group.tools.map((item) => item.spec.name)),
+  [["first", "shared"], ["shared", "last"]],
+  "group membership must preserve configured tool order and duplicate membership",
+);
+assert.deepEqual(
+  duplicateCategorized.alwaysAvailable,
+  [],
+  "a tool assigned to any group must not also be categorized as ungrouped",
+);
+
 const deleted = deleteFunctionGroup(config, "reminders");
 assert.equal(deleted.function_groups.length, 1);
 assert.deepEqual(deleted.functions, config.functions, "deleting a group must retain its functions");
@@ -94,6 +113,16 @@ assert.match(editorSource, /insertAdjacentHTML\("beforebegin", saveBar\(panel\)\
 const inputSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/configuration-inputs.js", import.meta.url), "utf8");
 assert.match(inputSource, /#revert-config[\s\S]*?_setConfigDirty\(false\);[\s\S]*?panel\._eocMainMarkup = null;\s*panel\._render\(\)/, "reverting should clear dirty state and restore the form including the save bar");
 assert.match(editorSource, /bindSingleRequestSave\(panel\)/, "configuration saves must use the canonical shell handler");
+assert.match(
+  editorSource,
+  /const categories = indexFunctionToolGroups\(config\);[\s\S]*?const membership = categories\.membership;/,
+  "reconciliation should reuse the categorisation membership index",
+);
+assert.doesNotMatch(
+  editorSource,
+  /new Map\(groups\.flatMap\(group => \(group\.functions \|\| \[\]\)\.map\(name => \[name, group\]\)\)\)/,
+  "reconciliation must not rebuild group membership after categorisation",
+);
 assert.doesNotMatch(editorSource, /Save tools and groups|Keep in draft|unsaved tool draft/i);
 assert.match(editorSource, /id="tool-save">Save<\/button>/);
 assert.match(editorSource, /id="group-save">Save<\/button>/);
