@@ -16,7 +16,6 @@ function preparePersistentShell(panel) {
   template.innerHTML = panel._eocDialogMarkup;
   panel._eocDialogTemplate = template.content;
   bindDynamicBase(panel);
-  syncManagementActions(panel);
   return true;
 }
 
@@ -130,32 +129,21 @@ function bindDynamicBase(panel) {
   });
 }
 
-function syncManagementActions(panel) {
-  const root = panel.shadowRoot;
-  const contextRow = root.querySelector(".eoc-agent-context-row");
-  const actionsMenu = root.querySelector("main .agent-actions-menu") || root.querySelector(".eoc-agent-actions .agent-actions-menu");
-  if (!contextRow || !actionsMenu) return false;
-  let actionGroup = contextRow.querySelector(".eoc-agent-actions");
-  if (!actionGroup) {
-    actionGroup = document.createElement("div");
-    actionGroup.className = "eoc-agent-actions";
-    contextRow.append(actionGroup);
-  }
-  if (actionsMenu.parentElement !== actionGroup) {
-    const actionHelp = root.querySelector("main .action-help") || root.querySelector(".eoc-agent-actions .action-help");
-    actionGroup.replaceChildren(actionsMenu);
-    if (actionHelp) actionGroup.append(actionHelp);
-  }
-  const configToolbar = root.querySelector(".config-toolbar");
-  if (configToolbar && !configToolbar.children.length) configToolbar.remove();
-  return true;
-}
-
 const regionMarkup = new WeakMap();
 function updateRegion(host, markup) {
   if (!host || regionMarkup.get(host) === markup) return;
   host.innerHTML = markup;
   regionMarkup.set(host, markup);
+}
+
+function updateAgentActions(panel) {
+  const host = panel.shadowRoot.querySelector("#eoc-agent-actions-host");
+  if (!host) return;
+  const markup = panel._selectedAgent() && !panel._busy && !panel._error
+    ? panel._configurationActions?.() || ""
+    : "";
+  updateRegion(host, markup);
+  host.hidden = !markup;
 }
 
 function renderDynamicRegions(panel) {
@@ -166,6 +154,7 @@ function renderDynamicRegions(panel) {
 
   updateAgentPicker(panel, agent);
   updateNavigation(panel, navigationFor(panel));
+  updateAgentActions(panel);
 
   const scopeHost = root.querySelector("#eoc-scope-host");
   updateRegion(scopeHost, ["data-memory/conversations", "data-memory/memories"].includes(panel._viewKey()) ? panel._scopePicker() : "");
@@ -217,7 +206,6 @@ function renderDynamicRegions(panel) {
     panel._eocDialogMarkup = dialogs;
   }
   bindDynamicBase(panel);
-  syncManagementActions(panel);
 }
 
 // The host calls this directly; feature decorators cannot own shell lifetime.
