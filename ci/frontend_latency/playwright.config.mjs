@@ -1,9 +1,9 @@
 import {defineConfig, devices} from "@playwright/test";
 
 export default defineConfig({
-  testDir: "./ci/frontend_latency",
+  testDir: ".",
   testMatch: "latency.spec.mjs",
-  outputDir: "latency-results/playwright",
+  outputDir: "../../latency-results/playwright",
   fullyParallel: false,
   workers: 1,
   timeout: 90_000,
