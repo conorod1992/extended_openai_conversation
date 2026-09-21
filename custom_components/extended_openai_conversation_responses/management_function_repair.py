@@ -131,58 +131,52 @@ def isolated_function_tools(
 
 
 @lru_cache(maxsize=128)
-def _cached_management_function_tool_health(
+def _cached_function_tool_state(
     kind: str, payload: str
-) -> dict[str, Any]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None, int | None]:
+    """Resolve one persisted Function Tool revision once for all Management reads."""
     options = _options_from_function_tools_cache_key(kind, payload)
     try:
-        metadata = configured_function_tool_metadata_from_data(options)
+        valid = configured_function_tools_from_data(options)
     except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
         editable = editable_function_tools(options)
         valid, invalid, isolated_issue = isolated_function_tools(options)
         issue = isolated_issue or str(err) or type(err).__name__
-        return {
-            "usable_count": len(valid),
-            "enabled_count": sum(function_tool_enabled(tool) for tool in valid),
-            "invalid_count": len(invalid),
-            "total_count": len(editable) if isinstance(editable, list) else None,
-            "isolatable": bool(invalid),
-            "validation_error": issue,
-            "invalid_names": [
-                str(
-                    item.get("name")
-                    or f"Function Tool {int(item.get('index', 0)) + 1}"
-                )
-                for item in invalid
-            ],
-        }
-
-    return {
-        **metadata,
-        "invalid_count": 0,
-        "isolatable": False,
-        "validation_error": None,
-        "invalid_names": [],
-    }
+        total_count = len(editable) if isinstance(editable, list) else None
+        return valid, invalid, issue, total_count
+    return valid, [], None, len(valid)
 
 
 def management_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
     """Return cached Management metadata for one persisted Function Tool revision."""
-    return deepcopy(
-        _cached_management_function_tool_health(*_function_tools_cache_key(options))
+    valid, invalid, issue, total_count = _cached_function_tool_state(
+        *_function_tools_cache_key(options)
     )
+    return {
+        "usable_count": len(valid),
+        "enabled_count": sum(function_tool_enabled(tool) for tool in valid),
+        "invalid_count": len(invalid),
+        "total_count": total_count,
+        "isolatable": bool(invalid),
+        "validation_error": issue,
+        "invalid_names": [
+            str(
+                item.get("name")
+                or f"Function Tool {int(item.get('index', 0)) + 1}"
+            )
+            for item in invalid
+        ],
+    }
 
 
 def function_tools_issue(
     options: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], str | None]:
-    """Return usable tools while isolating a persisted validation/parsing failure."""
-    try:
-        return configured_function_tools_from_data(options), None
-    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
-        valid, _invalid, isolated_issue = isolated_function_tools(options)
-        return valid, isolated_issue or str(err) or type(err).__name__
-
+    """Return cached usable tools plus any persisted validation/parsing failure."""
+    valid, _invalid, issue, _total_count = _cached_function_tool_state(
+        *_function_tools_cache_key(options)
+    )
+    return deepcopy(valid), issue
 
 def effective_function_configuration(
     options: dict[str, Any],
