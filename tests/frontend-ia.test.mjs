@@ -254,7 +254,16 @@ assert.match(editor, /const cleanOnly = panel\._configDirty/);
 assert.match(editor, /id="duplicate-agent" \$\{cleanOnly\}/);
 assert.match(editor, /id="export-agent" \$\{cleanOnly\}/);
 assert.match(editor, /id="import-agent">Import configuration/);
-const actionOwner = {_configDirty:false, _configSections:["general"]};
+const actionOwner = {
+  _e:escape,
+  _titleCase:String,
+  _empty:escape,
+  _draft:{},
+  _result:{config:{},options:{},defaults:{}},
+  _configDirty:false,
+  _configSections:["general"],
+  _viewKey:() => "assistant/basics",
+};
 assert.match(renderConfigurationActions(actionOwner, ["general"]), /id="duplicate-agent"/);
 assert.match(renderConfigurationActions(actionOwner, ["general"]), /id="import-agent"/);
 assert.doesNotMatch(renderConfiguration(actionOwner), /agent-actions-menu|config-toolbar|action-help/);
