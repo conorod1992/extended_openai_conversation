@@ -112,7 +112,7 @@ jobs:
         run: |
           git checkout --force "$BASELINE_SHA"
           # Always use the current diagnostic harness so both revisions exercise
-          # the same route list, selectors, backend calls, and result schema.
+          # the same current route manifest, readiness contract, backend calls, and result schema.
           git checkout "$CURRENT_SHA" -- ci/frontend_latency
           pytest ci/frontend_latency/test_latency_diagnostics.py::test_manual_frontend_latency_diagnostics \
             -q \
