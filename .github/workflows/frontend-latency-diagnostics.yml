@@ -3,8 +3,8 @@ name: Frontend Latency Diagnostics
 on:
   workflow_dispatch:
     inputs:
-      candidate_ref:
-        description: "Candidate branch/tag/SHA (blank = the ref used to dispatch this workflow)"
+      baseline_ref:
+        description: "Baseline branch/tag/SHA (blank = current develop for a self-comparison)"
         required: false
         type: string
       runs:
@@ -26,11 +26,12 @@ concurrency:
 
 jobs:
   diagnose:
-    name: Compare develop with candidate
+    name: Compare baseline with current develop
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       PYTHONPATH: ${{ github.workspace }}
+
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
       credentials:
@@ -43,42 +44,56 @@ jobs:
         shell: bash
 
     steps:
-      - name: Checkout candidate
+      - name: Checkout current develop
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.candidate_ref || github.ref }}
+          ref: develop
           fetch-depth: 0
 
       - name: Trust mounted checkout for Git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Resolve comparison refs
+        env:
+          BASELINE_REF: ${{ inputs.baseline_ref }}
         run: |
-          CANDIDATE_SHA="$(git rev-parse HEAD)"
           git fetch origin develop
-          DEVELOP_SHA="$(git rev-parse origin/develop)"
-          echo "CANDIDATE_SHA=$CANDIDATE_SHA" >> "$GITHUB_ENV"
-          echo "DEVELOP_SHA=$DEVELOP_SHA" >> "$GITHUB_ENV"
+          CURRENT_SHA="$(git rev-parse origin/develop)"
+          if [ -n "$BASELINE_REF" ]; then
+            git fetch origin "$BASELINE_REF"
+            BASELINE_SHA="$(git rev-parse FETCH_HEAD)"
+          else
+            BASELINE_SHA="$CURRENT_SHA"
+          fi
+          echo "CURRENT_SHA=$CURRENT_SHA" >> "$GITHUB_ENV"
+          echo "BASELINE_SHA=$BASELINE_SHA" >> "$GITHUB_ENV"
+          echo "Current develop: $CURRENT_SHA"
+          echo "Baseline:        $BASELINE_SHA"
 
       - name: Require matching dependency declarations
         run: |
-          git show "$DEVELOP_SHA:requirements_test.txt" > /tmp/develop-requirements_test.txt
-          git show "$DEVELOP_SHA:custom_components/extended_openai_conversation_responses/manifest.json" > /tmp/develop-manifest.json
-          if ! cmp -s /tmp/develop-requirements_test.txt requirements_test.txt             || ! cmp -s /tmp/develop-manifest.json custom_components/extended_openai_conversation_responses/manifest.json; then
-            echo "Latency comparison requires identical test/HA dependency declarations on develop and candidate." >&2
+          git show "$BASELINE_SHA:requirements_test.txt" > /tmp/baseline-requirements_test.txt
+          git show "$BASELINE_SHA:custom_components/extended_openai_conversation_responses/manifest.json" > /tmp/baseline-manifest.json
+          git show "$CURRENT_SHA:requirements_test.txt" > /tmp/current-requirements_test.txt
+          git show "$CURRENT_SHA:custom_components/extended_openai_conversation_responses/manifest.json" > /tmp/current-manifest.json
+          if ! cmp -s /tmp/baseline-requirements_test.txt /tmp/current-requirements_test.txt \
+            || ! cmp -s /tmp/baseline-manifest.json /tmp/current-manifest.json; then
+            echo "Latency comparison requires identical test/HA dependency declarations on baseline and current develop." >&2
             exit 1
           fi
 
       - name: Reconcile Home Assistant environment
         run: |
+          git checkout --force "$CURRENT_SHA"
           CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
           BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
           if [ "$CURRENT_ENVIRONMENT_SHA" = "$BUILT_ENVIRONMENT_SHA" ]; then
-            echo "Prebuilt dependency environment matches this checkout."
+            echo "Prebuilt dependency environment matches current develop."
           else
             pip install -r requirements_test.txt
             pip install --upgrade homeassistant
-            python ci/install_ha_dependencies.py               --manifest custom_components/extended_openai_conversation_responses/manifest.json
+            python ci/install_ha_dependencies.py \
+              --manifest custom_components/extended_openai_conversation_responses/manifest.json
           fi
 
       - name: Verify browser environment
@@ -88,31 +103,41 @@ jobs:
           npx playwright --version
           npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
 
-      - name: Measure develop baseline
+      - name: Measure baseline
         env:
           RUN_EOAI_LATENCY_DIAGNOSTICS: "1"
-          EOAI_LATENCY_LABEL: develop
+          EOAI_LATENCY_LABEL: baseline
           EOAI_LATENCY_RUNS: ${{ inputs.runs }}
-          EOAI_LATENCY_OUTPUT: latency-results/develop.json
+          EOAI_LATENCY_OUTPUT: latency-results/baseline.json
         run: |
-          git checkout --force "$DEVELOP_SHA"
-          # Use the same diagnostic harness for both integration revisions.
-          git checkout "$CANDIDATE_SHA" -- ci/frontend_latency
-          pytest ci/frontend_latency/test_latency_diagnostics.py::test_manual_frontend_latency_diagnostics             -q             --asyncio-mode=auto             --timeout=240
+          git checkout --force "$BASELINE_SHA"
+          # Always use the current diagnostic harness so both revisions exercise
+          # the same route list, selectors, backend calls, and result schema.
+          git checkout "$CURRENT_SHA" -- ci/frontend_latency
+          pytest ci/frontend_latency/test_latency_diagnostics.py::test_manual_frontend_latency_diagnostics \
+            -q \
+            --asyncio-mode=auto \
+            --timeout=360
 
-      - name: Measure candidate
+      - name: Measure current develop
         env:
           RUN_EOAI_LATENCY_DIAGNOSTICS: "1"
-          EOAI_LATENCY_LABEL: candidate
+          EOAI_LATENCY_LABEL: current
           EOAI_LATENCY_RUNS: ${{ inputs.runs }}
-          EOAI_LATENCY_OUTPUT: latency-results/candidate.json
+          EOAI_LATENCY_OUTPUT: latency-results/current.json
         run: |
-          git checkout --force "$CANDIDATE_SHA"
-          pytest ci/frontend_latency/test_latency_diagnostics.py::test_manual_frontend_latency_diagnostics             -q             --asyncio-mode=auto             --timeout=240
+          git checkout --force "$CURRENT_SHA"
+          pytest ci/frontend_latency/test_latency_diagnostics.py::test_manual_frontend_latency_diagnostics \
+            -q \
+            --asyncio-mode=auto \
+            --timeout=360
 
       - name: Compare results
         run: |
-          python ci/frontend_latency/compare.py             latency-results/develop.json             latency-results/candidate.json             latency-results/comparison
+          python ci/frontend_latency/compare.py \
+            latency-results/baseline.json \
+            latency-results/current.json \
+            latency-results/comparison
           cat latency-results/comparison/summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload latency diagnostics
