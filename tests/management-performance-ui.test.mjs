@@ -178,7 +178,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   const loading = panel._loadSection();
   assert.deepEqual(
     calls.map((call) => [call.section, call.action]),
-    [["configuration", "get"], ["scopes", "catalog"]],
+    [["configuration", "get"], ["scopes", "catalog"], ["conversations", "active"]],
     "Conversations prerequisites start before its lazy UI module resolves",
   );
   resolveConfig({title:"A", config:{}, revision:"r1"});
@@ -186,7 +186,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   await loading;
   assert.deepEqual(
     calls.filter((call) => call.section === "conversations").map((call) => call.action),
-    ["list", "settings", "active"],
+    ["active", "list"],
   );
 }
 
