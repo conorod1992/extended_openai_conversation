@@ -105,7 +105,6 @@ from .management_function_quarantine import (
 )
 from .management_function_repair import (
     agent_config_revision as _agent_config_revision,
-    agent_config_revision_from_snapshot as _agent_config_revision_from_snapshot,
     require_agent_config_revision as _require_agent_config_revision,
 )
 from .management_history_queries import (
@@ -720,7 +719,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         config_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
-        revision = _agent_config_revision_from_snapshot(config, subentry.title)
+        revision = _agent_config_revision(subentry.data, subentry.title)
         revision_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
@@ -812,7 +811,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         snapshot = agent_config_snapshot(normalized)
         return {
             "title": saved_title,
-            "revision": _agent_config_revision_from_snapshot(snapshot, saved_title),
+            "revision": _agent_config_revision(normalized, saved_title),
             "config": snapshot,
             "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
             "local_handling": local_handling_snapshot(
