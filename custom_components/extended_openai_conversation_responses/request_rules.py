@@ -137,9 +137,7 @@ class _MatchingSnapshot:
     deterministic: tuple[
         tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...
     ] = ()
-    fuzzy: tuple[
-        tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...
-    ] = ()
+    fuzzy: tuple[tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...] = ()
 
 
 def _match_compiled_sentence(
