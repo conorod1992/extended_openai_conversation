@@ -110,6 +110,26 @@ async def test_manual_frontend_latency_diagnostics(
     await collect("agents", "overview", "agents")
     await collect("overview_summary", "overview", "summary")
     await collect("configuration_get", "configuration", "get")
+    await collect(
+        "configuration_live_local_handling",
+        "configuration",
+        "live_metadata",
+        metadata=["local_handling"],
+    )
+    await collect(
+        "configuration_live_exposed_attributes",
+        "configuration",
+        "live_metadata",
+        metadata=["exposed_attribute_catalog"],
+    )
+    await collect("guest_mode_get", "guest_mode", "get")
+    await collect("request_rules_list", "request_rules", "list")
+    await collect("knowledge_list", "knowledge", "list")
+    await collect("quiet_hours_get", "quiet_hours", "get")
+    await collect("usage_summary", "usage", "summary")
+    await collect("usage_daily", "usage", "daily")
+    await collect("usage_runs", "usage", "runs", limit=30)
+    await collect("usage_retention", "usage", "retention")
     scopes = await collect("scopes_catalog", "scopes", "catalog")
     current_scope = next(
         (
@@ -120,6 +140,20 @@ async def test_manual_frontend_latency_diagnostics(
         None,
     )
     if current_scope:
+        await collect(
+            "memories_list",
+            "memories",
+            "list",
+            scope_id=current_scope,
+            limit=100,
+        )
+        await collect(
+            "temporary_memories_list",
+            "memories",
+            "temporary_list",
+            scope_id=current_scope,
+            limit=100,
+        )
         await collect(
             "conversations_list",
             "conversations",
