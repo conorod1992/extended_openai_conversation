@@ -1,44 +1,6 @@
 import {lookupModelData} from "./model-catalog.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 
-const count = (root, state) => root?.querySelectorAll?.(`.setup-health-check-${state}`)?.length || 0;
-
-export function clarifySetupHealthSummary(panel) {
-  const root = panel?.shadowRoot;
-  const summary = root?.querySelector?.(".setup-health-summary");
-  if (!summary) return false;
-
-  const errors = count(root, "error");
-  const warnings = count(root, "warning");
-  const unknown = count(root, "unknown");
-  const issues = errors + warnings;
-  const title = summary.querySelector("strong");
-  const detail = summary.querySelector("span");
-
-  if (title) {
-    title.textContent = errors
-      ? "Needs attention"
-      : warnings
-        ? "Review recommended"
-        : unknown
-          ? "Status incomplete"
-          : "Ready";
-  }
-
-  if (detail) {
-    if (issues && unknown) {
-      detail.textContent = `${issues} ${issues === 1 ? "issue" : "issues"} to review · ${unknown} ${unknown === 1 ? "check" : "checks"} unavailable`;
-    } else if (issues) {
-      detail.textContent = `${issues} ${issues === 1 ? "issue" : "issues"} to review`;
-    } else if (unknown) {
-      detail.textContent = `${unknown} ${unknown === 1 ? "check" : "checks"} unavailable`;
-    } else {
-      detail.textContent = "Core setup looks ready";
-    }
-  }
-  return true;
-}
-
 function modelDataCardState(panel) {
   const data = panel?._modelCatalogData;
   const error = panel?._eocOverviewModelDataError;
@@ -148,7 +110,6 @@ function ensureOverviewModelData(panel) {
 export function enhanceOverviewHealthClarity(panel) {
   if (panel._page !== "overview" || !panel.shadowRoot) return;
   if (!enhancementChanged(panel, "overview-health", [panel._agentId, panel._data?.is_admin, JSON.stringify(panel._modelCatalogData), panel._eocOverviewModelDataError])) return;
-  clarifySetupHealthSummary(panel);
   renderOverviewModelDataCard(panel);
   ensureOverviewModelData(panel);
 }

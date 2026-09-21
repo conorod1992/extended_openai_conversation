@@ -18,7 +18,20 @@ const panelSource = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url),
   "utf8",
 );
+const [editorBaseSource, rendererSource] = await Promise.all([
+  readFile(
+    new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js", import.meta.url),
+    "utf8",
+  ),
+  readFile(
+    new URL("../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js", import.meta.url),
+    "utf8",
+  ),
+]);
 assert.match(panelSource, /from "\.\/management-draft-navigation\.js"/);
+assert.match(editorBaseSource, /<summary aria-haspopup="menu">Assistant actions<\/summary>/);
+assert.doesNotMatch(editorBaseSource, />Agent actions<\/summary>/);
+assert.doesNotMatch(rendererSource, /summary\.textContent = "Assistant actions"/);
 assert.ok(
   panelSource.indexOf("applyManagementToolbarLayout(this)")
     < panelSource.indexOf("enhanceConfigurationClarity(this)"),
