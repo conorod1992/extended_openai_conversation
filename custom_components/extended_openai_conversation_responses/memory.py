@@ -581,21 +581,22 @@ class PersistentMemory:
         ]
         if not corpus:
             return []
-        document_terms = {
-            memory.memory_id: _record_token_list(memory) for memory in corpus
-        }
-        document_token_sets = {
-            memory_id: set(terms) for memory_id, terms in document_terms.items()
-        }
-        document_frequency = {
-            token: sum(token in terms for terms in document_token_sets.values())
-            for token in query_tokens
-        }
-        average_length = max(1.0, sum(map(len, document_terms.values())) / len(corpus))
+        document_data: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {}
+        document_frequency = {token: 0 for token in query_tokens}
+        total_length = 0
+        for memory in corpus:
+            terms = _cached_memory_record_terms(memory)
+            token_set = _cached_memory_record_token_set(memory)
+            document_data[memory.memory_id] = (terms, token_set)
+            total_length += len(terms)
+            for token in query_tokens:
+                if token in token_set:
+                    document_frequency[token] += 1
+        average_length = max(1.0, total_length / len(corpus))
         normalized_query = _normalize(query)
         ranked: list[tuple[float, float, str, MemoryRecord]] = []
         for memory in corpus:
-            terms = document_terms[memory.memory_id]
+            terms, token_set = document_data[memory.memory_id]
             lexical = _bm25_score(
                 query_terms,
                 terms,
@@ -610,9 +611,7 @@ class PersistentMemory:
             elif len(query_terms) > 1 and " ".join(query_terms) in " ".join(terms):
                 lexical += 0.18
             if lexical <= 0:
-                lexical = _fuzzy_relevance(
-                    query_tokens, document_token_sets[memory.memory_id]
-                )
+                lexical = _fuzzy_relevance(query_tokens, token_set)
             semantic = (
                 _cosine_similarity(query_embedding, self._cached_embedding(memory))
                 if hybrid
@@ -1018,13 +1017,13 @@ class PersistentMemory:
 
     def _find_duplicate(self, user_id: str, content: str) -> MemoryRecord | None:
         normalized = _normalize(content)
-        content_tokens = _tokens(content)
+        content_tokens = _cached_memory_tokens(content)
         for memory in self._memories.values():
             if memory.user_id != user_id:
                 continue
             if _normalize(memory.content) == normalized:
                 return memory
-            existing_tokens = _tokens(memory.content)
+            existing_tokens = _cached_memory_tokens(memory.content)
             union = content_tokens | existing_tokens
             if union and len(content_tokens & existing_tokens) / len(union) >= 0.85:
                 return memory
@@ -1033,20 +1032,20 @@ class PersistentMemory:
     def _find_related_candidate(
         self, user_id: str, content: str, subject: str | None, key: str | None
     ) -> MemoryRecord | None:
-        incoming = _tokens(content)
+        incoming = _cached_memory_tokens(content)
         key_root = key.rsplit(".", 1)[0] if key and "." in key else None
         best: tuple[float, str, MemoryRecord] | None = None
         for memory in self._memories.values():
             if memory.user_id != user_id:
                 continue
-            existing = _tokens(memory.content)
+            existing = _cached_memory_tokens(memory.content)
             union = incoming | existing
             similarity = len(incoming & existing) / len(union) if union else 0.0
             if (
                 subject
                 and memory.subject
                 and _normalize(subject) == _normalize(memory.subject)
-            ) or (subject and _tokens(subject) & existing):
+            ) or (subject and _cached_memory_tokens(subject) & existing):
                 similarity += 0.3
             if key_root and memory.key and memory.key.startswith(f"{key_root}."):
                 similarity += 0.35
@@ -1593,11 +1592,6 @@ def _stem(token: str) -> str:
     return token
 
 
-def _record_token_list(memory: MemoryRecord) -> list[str]:
-    """Return a fresh list for each caller of the immutable record cache."""
-    return list(_cached_memory_record_terms(memory))
-
-
 @lru_cache(maxsize=20_000)
 def _cached_memory_record_terms(memory: MemoryRecord) -> tuple[str, ...]:
     return tuple(
@@ -1611,15 +1605,24 @@ def _cached_memory_record_terms(memory: MemoryRecord) -> tuple[str, ...]:
     )
 
 
+@lru_cache(maxsize=20_000)
+def _cached_memory_record_token_set(memory: MemoryRecord) -> frozenset[str]:
+    """Return the immutable token membership set for one memory revision."""
+    return frozenset(_cached_memory_record_terms(memory))
+
+
 def _bm25_score(
     query_terms: list[str],
-    document_terms: list[str],
+    document_terms: Sequence[str],
     document_frequency: Mapping[str, int],
     document_count: int,
     average_length: float,
 ) -> float:
     """Calculate the existing BM25 score without rebuilding term frequencies."""
-    frequencies = _cached_memory_term_frequencies(tuple(document_terms))
+    cached_terms = (
+        document_terms if isinstance(document_terms, tuple) else tuple(document_terms)
+    )
+    frequencies = _cached_memory_term_frequencies(cached_terms)
     k1, b = 1.2, 0.75
     score = 0.0
     max_score = 0.0
@@ -1635,9 +1638,9 @@ def _bm25_score(
 
 
 def _metadata_bonus(query_tokens: set[str], memory: MemoryRecord) -> float:
-    category = _tokens(memory.category)
-    subject = _tokens(memory.subject or "")
-    key = _tokens((memory.key or "").replace(".", " "))
+    category = _cached_memory_tokens(memory.category)
+    subject = _cached_memory_tokens(memory.subject or "")
+    key = _cached_memory_tokens((memory.key or "").replace(".", " "))
     return (
         0.10 * len(query_tokens & category)
         + 0.16 * len(query_tokens & subject)
@@ -1657,7 +1660,9 @@ def _edit_distance_one(left: str, right: str) -> bool:
     return shorter[index:] == longer[index + 1 :]
 
 
-def _fuzzy_relevance(query_tokens: set[str], document_tokens: set[str]) -> float:
+def _fuzzy_relevance(
+    query_tokens: set[str], document_tokens: set[str] | frozenset[str]
+) -> float:
     matches = 0
     for query in query_tokens:
         if any(
