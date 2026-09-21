@@ -613,8 +613,8 @@ class RequestRules:
     async def async_match(self, hass: HomeAssistant, text: str) -> RuleMatch | None:
         """Run matching off-loop only when the compiled snapshot has work."""
         snapshot = self._matching_snapshot
-        validate_match_input(text)
         if not snapshot.deterministic:
+            validate_match_input(text)
             return None
         executor = getattr(hass, "async_add_executor_job", None)
         if callable(executor):
