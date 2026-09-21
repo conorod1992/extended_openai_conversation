@@ -198,10 +198,12 @@ async def test_usage_run_page_consumes_only_offset_page_and_sentinel() -> None:
 def test_usage_daily_and_breakdown_dimensions_are_explicitly_bounded() -> None:
     providers = {f"provider-{index}": index + 1 for index in range(105)}
     days = {
-        f"2026-01-0{index}": _day(
-            f"2026-01-0{index}", providers=providers if index == 1 else {}
-        )
-        for index in range(1, 5)
+        "2025-12-31": _day("2025-12-31"),
+        "2026-01-04": _day("2026-01-04"),
+        "2026-01-02": _day("2026-01-02"),
+        "2026-01-01": _day("2026-01-01", providers=providers),
+        "2026-01-03": _day("2026-01-03"),
+        "2026-01-05": _day("2026-01-05"),
     }
     usage = _Usage(daily=days, details=providers)
 

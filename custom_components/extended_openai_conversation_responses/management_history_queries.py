@@ -103,8 +103,8 @@ def usage_daily_page(
     """Return one bounded page of daily aggregate history."""
     safe_limit = max(1, min(int(limit), MANAGEMENT_DAILY_PAGE_MAX))
     safe_offset = max(0, int(offset))
-    matching_dates = (
-        date for date in sorted(manager.daily) if start_date <= date <= end_date
+    matching_dates = iter(
+        sorted(date for date in manager.daily if start_date <= date <= end_date)
     )
     page, has_more = page_from_iterable(
         matching_dates, offset=safe_offset, limit=safe_limit
