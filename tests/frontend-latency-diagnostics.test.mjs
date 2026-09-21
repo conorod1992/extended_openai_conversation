@@ -71,3 +71,8 @@ assert.match(browserHarness, /baselineMode = label === "baseline"/);
 assert.match(browserHarness, /supported: false/);
 assert.match(browserHarness, /if \(!baselineMode\)/);
 assert.match(comparison, /Backend operations or browser routes unavailable on the historical baseline are shown as `n\/a`/);
+
+assert.match(browserHarness, /async function closeContext/);
+assert.match(browserHarness, /baselineMode \? 2500 : 30000/);
+const latencyPlaywrightConfig = await readFile("ci/frontend_latency/playwright.config.mjs", "utf8");
+assert.match(latencyPlaywrightConfig, /timeout: 240_000/);

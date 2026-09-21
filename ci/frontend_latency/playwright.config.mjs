@@ -6,7 +6,7 @@ export default defineConfig({
   outputDir: "../../latency-results/playwright",
   fullyParallel: false,
   workers: 1,
-  timeout: 90_000,
+  timeout: 240_000,
   expect: {timeout: 30_000},
   reporter: "line",
   use: {
