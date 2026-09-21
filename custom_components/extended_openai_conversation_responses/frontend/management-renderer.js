@@ -135,8 +135,6 @@ function syncManagementActions(panel) {
   const contextRow = root.querySelector(".eoc-agent-context-row");
   const actionsMenu = root.querySelector("main .agent-actions-menu") || root.querySelector(".eoc-agent-actions .agent-actions-menu");
   if (!contextRow || !actionsMenu) return false;
-  const summary = actionsMenu.querySelector("summary");
-  if (summary && summary.textContent !== "Assistant actions") summary.textContent = "Assistant actions";
   let actionGroup = contextRow.querySelector(".eoc-agent-actions");
   if (!actionGroup) {
     actionGroup = document.createElement("div");
