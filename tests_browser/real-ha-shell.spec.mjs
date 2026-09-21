@@ -1,4 +1,5 @@
 import {expect, test} from "@playwright/test";
+import {managementRouteState, waitForManagementRouteReady} from "../ci/frontend_latency/routes.mjs";
 
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
@@ -51,6 +52,25 @@ async function openFunctionsFromOverview(page) {
   await expect(panel.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
   return panel;
 }
+
+test("latency readiness helper sees panel inside genuine HA shadow DOM", async ({context, page}) => {
+  await authenticate(context);
+  await page.goto(`${baseUrl}/extended-openai/overview`, {waitUntil: "domcontentloaded"});
+  await expect(page.locator("home-assistant")).toHaveCount(1);
+  await expect(page.locator("extended-openai-management-panel")).toHaveCount(1);
+
+  const route = {name: "overview", path: "overview"};
+  await waitForManagementRouteReady(page, route, 30_000);
+  const state = await managementRouteState(page);
+  expect(state).toMatchObject({
+    page: "overview",
+    subsection: null,
+    busy: false,
+    error: null,
+    loading: false,
+  });
+  expect(String(state?.renderedRoute || "")).toContain("|overview");
+});
 
 test("shipped management panel loads and persists one configuration change inside the genuine HA frontend", async ({context, page}) => {
   const integrationPageErrors = [];
