@@ -106,6 +106,7 @@ from .management_function_quarantine import (
 from .management_function_repair import (
     agent_config_revision as _agent_config_revision,
     agent_config_revision_from_snapshot as _agent_config_revision_from_snapshot,
+    cached_agent_config_snapshot as _cached_agent_config_snapshot_for_read,
     require_agent_config_revision as _require_agent_config_revision,
 )
 from .management_history_queries import (
@@ -168,23 +169,6 @@ def _configuration_defaults() -> dict[str, Any]:
 
 def _configuration_options() -> dict[str, list[dict[str, Any]]]:
     return deepcopy(_cached_configuration_options())
-
-
-@lru_cache(maxsize=128)
-def _cached_agent_config_snapshot(raw_json: str) -> dict[str, Any]:
-    """Normalize one persisted agent revision once for repeated Management reads."""
-    return agent_config_snapshot(json.loads(raw_json))
-
-
-def _configuration_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:
-    """Return an isolated normalized snapshot for persisted configuration."""
-    raw_json = json.dumps(
-        dict(data),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
-    return deepcopy(_cached_agent_config_snapshot(raw_json))
 
 
 def _elapsed_ms(start: float) -> float:
@@ -789,7 +773,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
     if action == "get":
         started = perf_counter()
         phase = perf_counter()
-        config = _configuration_snapshot(subentry.data)
+        config = _cached_agent_config_snapshot_for_read(subentry.data)
         config_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
