@@ -569,9 +569,7 @@ def _resolve_exclusion_policy(
 ) -> GuestCapabilityPolicy:
     """Resolve v2 against HA's normal assistant exposure, then subtract denies."""
     exposed = (
-        exposed_entities
-        if exposed_entities is not None
-        else get_exposed_entities(hass)
+        exposed_entities if exposed_entities is not None else get_exposed_entities(hass)
     )
     baseline = {
         item["entity_id"]
