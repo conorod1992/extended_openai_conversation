@@ -15,26 +15,47 @@ def pct(delta: float, baseline: float) -> str:
     return f"{(delta / baseline) * 100:+.1f}%"
 
 
-def browser_medians(payload: dict[str, Any]) -> dict[str, dict[str, float]]:
-    by_route: dict[str, dict[str, list[float]]] = {}
+def browser_medians(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    by_route: dict[str, dict[str, Any]] = {}
     for sample in payload["browser"]["samples"]:
         route = sample["route"]
         bucket = by_route.setdefault(
             route,
-            {"ready": [], "lcp": [], "assets": []},
+            {
+                "ready": [],
+                "lcp": [],
+                "assets": [],
+                "supported": True,
+                "unavailable_reason": None,
+            },
         )
+        if sample.get("supported") is False:
+            bucket["supported"] = False
+            bucket["unavailable_reason"] = sample.get("unavailable_reason")
+            continue
         bucket["ready"].append(float(sample["wall_ready_ms"]))
         if float(sample.get("lcp_ms", 0)) > 0:
             bucket["lcp"].append(float(sample["lcp_ms"]))
         bucket["assets"].append(float(sample.get("integration_assets_response_end_ms", 0)))
-    return {
-        route: {
+
+    result: dict[str, dict[str, Any]] = {}
+    for route, values in by_route.items():
+        if not values["ready"]:
+            result[route] = {
+                "supported": False,
+                "ready_ms": None,
+                "lcp_ms": None,
+                "assets_ms": None,
+                "unavailable_reason": values["unavailable_reason"],
+            }
+            continue
+        result[route] = {
+            "supported": True,
             "ready_ms": median(values["ready"]),
             "lcp_ms": median(values["lcp"]) if values["lcp"] else 0.0,
             "assets_ms": median(values["assets"]),
         }
-        for route, values in by_route.items()
-    }
+    return result
 
 
 def row(label: str, baseline: float, current: float) -> str:
@@ -100,16 +121,32 @@ def main() -> None:
         "| Route | baseline ms | current ms | delta ms | delta % |",
         "| --- | ---: | ---: | ---: | ---: |",
     ]
-    for route in before_routes:
-        if route not in after_routes:
+    route_names = list(before_routes)
+    route_names.extend(route for route in after_routes if route not in before_routes)
+    for route in route_names:
+        before_entry = before_routes.get(route, {})
+        after_entry = after_routes.get(route, {})
+        before = before_entry.get("ready_ms")
+        after = after_entry.get("ready_ms")
+        if before is not None and after is not None:
+            before_value = float(before)
+            after_value = float(after)
+            lines.append(row(route, before_value, after_value))
+            comparison["browser"][route] = {
+                "baseline": before_entry,
+                "current": after_entry,
+                "ready_delta_ms": after_value - before_value,
+            }
             continue
-        before = before_routes[route]["ready_ms"]
-        after = after_routes[route]["ready_ms"]
-        lines.append(row(route, before, after))
+
+        before_text = "n/a" if before is None else f"{float(before):.1f}"
+        after_text = "n/a" if after is None else f"{float(after):.1f}"
+        lines.append(f"| {route} | {before_text} | {after_text} | n/a | n/a |")
         comparison["browser"][route] = {
-            "baseline": before_routes[route],
-            "current": after_routes[route],
-            "ready_delta_ms": after - before,
+            "baseline": before_entry or None,
+            "current": after_entry or None,
+            "baseline_supported": before_entry.get("supported", before is not None),
+            "current_supported": after_entry.get("supported", after is not None),
         }
 
     lines += [
