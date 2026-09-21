@@ -32,6 +32,31 @@ test("Home Assistant route paints its intro while configuration assets are still
   await expectHarnessClean(page, errors);
 });
 
+test("Assistant becomes usable while supplemental configuration guidance is pending", async ({page}) => {
+  const errors = trackPageErrors(page);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let requested = false;
+  await page.route("**/management-configuration-feature.js", async route => {
+    requested = true;
+    await gate;
+    await route.continue();
+  });
+
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect.poll(() => requested).toBe(true);
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+  await expect(panel.locator("main .loading")).toHaveCount(0);
+
+  release();
+  await expect.poll(() => page.evaluate(() =>
+    performance.getEntriesByType("resource")
+      .some(entry => entry.name.endsWith("/management-configuration-feature.js"))
+  )).toBe(true);
+  await expectHarnessClean(page, errors);
+});
+
 test("cold Overview exposes stable shell, agent, asset, summary, and paint milestones", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("overview"));

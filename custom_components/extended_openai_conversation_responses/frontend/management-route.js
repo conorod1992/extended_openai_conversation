@@ -56,11 +56,24 @@ export function getRouteFeature(view) { return featureModules.get(view); }
 function routeFeatureKeys(view) {
   const keys = [view];
   if (routeAssetKind(view) === "agent-config") keys.push("agent-config");
-  if (routeAssetKind(view) === "agent-config" || view === "data-memory/memory-settings") keys.push("configuration");
+  // Configuration guidance is additive for ordinary config routes; only Memory
+  // Settings owns required UI in this feature and must block route readiness.
+  if (view === "data-memory/memory-settings") keys.push("configuration");
   if (["data-memory/memories", "data-memory/conversations", "capabilities/guest-mode"].includes(view)) keys.push("memory-browser");
   if (["capabilities/home-assistant", "capabilities/web-skills", "data-memory/knowledge"].includes(view)) keys.push("capabilities");
   if (["data-memory/memories", "data-memory/knowledge", "usage-maintenance/diagnostics"].includes(view)) keys.push("status");
   return keys;
+}
+
+function warmSupplementalRouteFeatures(panel, view, token) {
+  if (routeAssetKind(view) !== "agent-config") return;
+  const pending = featureAssetPromise("configuration");
+  pending?.then((module) => {
+    if (!isCurrentLazyLoad(panel, view, token)) return;
+    // Guidance decorates already-rendered configuration controls and does not own
+    // their data or markup, so it can safely arrive after first usable paint.
+    module?.enhanceConfigurationGuidance?.(panel);
+  }).catch(() => {});
 }
 
 export function routeFeaturesReady(view) {
@@ -252,6 +265,7 @@ export function loadRoute(panel, silent = false) {
   panel._eocViewAssetToken = token;
   const feature = routeFeaturePromise(view);
   const asset = coreAssetPromise(view);
+  warmSupplementalRouteFeatures(panel, view, token);
   if (view === "overview") startOverviewBroadcastSnapshot(panel);
   if (!feature && !asset) return loadRouteData(panel, silent, view, token);
   let loadData = () => loadRouteData(panel, silent, view, token);
