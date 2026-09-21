@@ -155,7 +155,8 @@ def main() -> None:
         "",
         "- Absolute GitHub-runner timings are not expected to match an Odroid/LAN install.",
         "- The same runner executes the baseline and current develop sequentially, making deltas useful for repository-caused regressions and improvements.",
-        "- Backend operations or browser routes unavailable on the historical baseline are shown as `n/a`; current develop must still support every measured operation and route.",\n        "- Raw JSON includes LCP, EOAI performance marks/measures, and integration resource timing for deeper diagnosis.",
+        "- Backend operations or browser routes unavailable on the historical baseline are shown as `n/a`; current develop must still support every measured operation and route.",
+        "- Raw JSON includes LCP, EOAI performance marks/measures, and integration resource timing for deeper diagnosis.",
         "",
     ]
 
