@@ -114,13 +114,13 @@ async def test_manual_frontend_latency_diagnostics(
         "configuration_live_local_handling",
         "configuration",
         "live_metadata",
-        metadata=["local_handling"],
+        metadata_keys=["local_handling"],
     )
     await collect(
         "configuration_live_exposed_attributes",
         "configuration",
         "live_metadata",
-        metadata=["exposed_attribute_catalog"],
+        metadata_keys=["exposed_attribute_catalog"],
     )
     await collect("guest_mode_get", "guest_mode", "get")
     await collect("request_rules_list", "request_rules", "list")
