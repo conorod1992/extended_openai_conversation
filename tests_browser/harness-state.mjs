@@ -104,7 +104,7 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
       return result;
     }
     if (key === "configuration/live_metadata") {
-      const requested = new Set(message.metadata || []);
+      const requested = new Set(message.metadata_keys || []);
       return {
         ...(requested.has("local_handling") ? {local_handling: clone(state.configuration.local_handling)} : {}),
         ...(requested.has("exposed_attribute_catalog") ? {
