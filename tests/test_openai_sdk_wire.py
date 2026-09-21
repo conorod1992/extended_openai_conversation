@@ -294,12 +294,26 @@ def _client(wire: _Wire) -> AsyncOpenAI:
 
 
 async def _close_client(client: AsyncOpenAI) -> None:
-    """Close the SDK client and let scheduled stream finalizers finish."""
+    """Close the SDK client and finish scheduled async-generator finalizers."""
     await client.close()
-    # The SDK's cyclic SSE iterators may otherwise be collected by the HA test
-    # fixture *after* this coroutine returns, scheduling late async finalizers.
-    gc.collect()
-    await asyncio.sleep(0)
+    # OpenAI's nested SSE async generators can form cycles. Their async-generator
+    # finalizers are scheduled only after GC discovers those cycles, and two
+    # unconditional loop turns have proven racy under xdist. Force collection,
+    # then await the concrete athrow tasks before HA checks for lingering tasks.
+    for _ in range(3):
+        gc.collect()
+        await asyncio.sleep(0)
+        current = asyncio.current_task()
+        finalizers = [
+            task
+            for task in asyncio.all_tasks()
+            if task is not current
+            and not task.done()
+            and type(task.get_coro()).__name__ == "async_generator_athrow"
+        ]
+        if not finalizers:
+            return
+        await asyncio.gather(*finalizers, return_exceptions=True)
     await asyncio.sleep(0)
 
 
