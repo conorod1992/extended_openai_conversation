@@ -1,7 +1,7 @@
 import {mkdir, writeFile} from "node:fs/promises";
 import {dirname} from "node:path";
 import {expect, test} from "@playwright/test";
-import {LATENCY_ROUTES, waitForManagementRouteReady} from "./routes.mjs";
+import {LATENCY_ROUTES, expectedRouteState, managementRouteState, waitForManagementRouteReady} from "./routes.mjs";
 
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
@@ -51,18 +51,27 @@ async function measureRoute(browser, authData, route, iteration) {
     await expect(page.locator("extended-openai-management-panel")).toHaveCount(1);
     await waitForManagementRouteReady(page, route, baselineMode ? 2500 : 30000);
   } catch (error) {
-    if (!baselineMode) {
+    const state = await managementRouteState(page).catch(() => null);
+    const expected = expectedRouteState(route);
+    const routeMismatch = state
+      && (state.page !== expected.page || state.subsection !== expected.subsection);
+    if (baselineMode && routeMismatch) {
       await closeContext(context);
-      throw error;
+      return {
+        route: route.name,
+        iteration,
+        supported: false,
+        unavailable_reason:
+          `Historical route resolved to ${state.page || "unknown"}/${state.subsection || ""}`,
+        failures,
+      };
     }
     await closeContext(context);
-    return {
-      route: route.name,
-      iteration,
-      supported: false,
-      unavailable_reason: error?.message || String(error),
-      failures,
-    };
+    const detail = state ? ` panel=${JSON.stringify(state)}` : "";
+    throw new Error(
+      `Latency route ${route.path} failed readiness: ${error?.message || String(error)}${detail}`,
+      {cause: error},
+    );
   }
   const wallReadyMs = Date.now() - wallStarted;
   await page.waitForTimeout(100);
