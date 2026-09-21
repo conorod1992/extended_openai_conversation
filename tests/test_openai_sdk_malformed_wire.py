@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import gc
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -28,6 +26,7 @@ from tests.test_openai_sdk_wire import (
     _chat_chunk,
     _chat_log,
     _client,
+    _close_client,
     _entity,
     _response_object,
     _responses_tool_stream,
@@ -71,16 +70,6 @@ def _assert_closed_tool_exchange(
     assert [(item.tool_call_id, item.tool_name) for item in outputs] == [
         (call_id, tool_name)
     ]
-
-
-async def _drain_sdk_asyncgen_finalizers() -> None:
-    """Finish transient async-generator cleanup scheduled by OpenAI's SSE iterator."""
-    gc.collect()
-    # OpenAI 2.45.0 breaks out of a nested async generator on [DONE]. Python
-    # schedules that generator's athrow finalizer on the next loop turn; a second
-    # turn lets the finalizer itself complete before HA checks for lingering tasks.
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
 
 
 def _responses_malformed_tool_arguments() -> bytes:
@@ -240,8 +229,7 @@ async def test_real_sdk_partial_stream_without_terminal_event_fails_closed(
         with pytest.raises(HomeAssistantError, match=message):
             await entity._async_handle_chat_log(chat_log, [_tool()], [])
     finally:
-        await client.close()
-        await _drain_sdk_asyncgen_finalizers()
+        await _close_client(client)
 
     entity._execute_function_tool.assert_not_awaited()
     assert len(wire.requests) == 1
@@ -271,7 +259,7 @@ async def test_real_sdk_malformed_tool_arguments_never_execute_or_orphan_call(
         with pytest.raises(ParseArgumentsFailed):
             await entity._async_handle_chat_log(chat_log, [_tool()], [])
     finally:
-        await client.close()
+        await _close_client(client)
 
     entity._execute_function_tool.assert_not_awaited()
     assert len(wire.requests) == 1
@@ -289,7 +277,7 @@ async def test_real_sdk_responses_incomplete_max_tokens_maps_to_token_limit(hass
         with pytest.raises(TokenLengthExceededError):
             await entity._async_handle_chat_log(chat_log, [], [])
     finally:
-        await client.close()
+        await _close_client(client)
 
     assert len(wire.requests) == 1
     _assert_no_tool_protocol_state(chat_log)
@@ -309,7 +297,7 @@ async def test_real_sdk_responses_incomplete_other_reason_fails_explicitly(hass)
         ):
             await entity._async_handle_chat_log(chat_log, [], [])
     finally:
-        await client.close()
+        await _close_client(client)
 
     assert len(wire.requests) == 1
     _assert_no_tool_protocol_state(chat_log)
@@ -326,7 +314,7 @@ async def test_real_sdk_responses_failed_event_preserves_structured_failure(hass
         with pytest.raises(ProviderStreamError) as raised:
             await entity._async_handle_chat_log(chat_log, [], [])
     finally:
-        await client.close()
+        await _close_client(client)
 
     error = raised.value
     assert str(error) == "OpenAI response failed: provider generation failed"
@@ -358,7 +346,7 @@ async def test_real_sdk_responses_error_event_preserves_code(hass) -> None:
         with pytest.raises(ProviderStreamError) as raised:
             await entity._async_handle_chat_log(chat_log, [], [])
     finally:
-        await client.close()
+        await _close_client(client)
 
     error = raised.value
     assert str(error) == "OpenAI response error: provider stream aborted"
@@ -387,7 +375,7 @@ async def test_real_sdk_chat_length_finish_maps_to_token_limit(hass) -> None:
         with pytest.raises(TokenLengthExceededError):
             await entity._async_handle_chat_log(chat_log, [], [])
     finally:
-        await client.close()
+        await _close_client(client)
 
     assert len(wire.requests) == 1
     _assert_no_tool_protocol_state(chat_log)
@@ -470,8 +458,7 @@ async def test_real_sdk_failure_after_tool_keeps_one_closed_exchange_without_ret
         with pytest.raises(HomeAssistantError, match=expected_message):
             await entity._async_handle_chat_log(chat_log, [_tool()], [])
     finally:
-        await client.close()
-        await _drain_sdk_asyncgen_finalizers()
+        await _close_client(client)
 
     assert executed == [call_id]
     assert len(wire.requests) == 2
