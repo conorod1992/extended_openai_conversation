@@ -17,10 +17,10 @@ from custom_components.extended_openai_conversation_responses.memory import (
     PersistentMemory,
     _bm25_score as cached_memory_bm25_score,
     _cached_memory_record_terms,
+    _cached_memory_record_token_set,
     _cached_memory_term_frequencies,
     _cached_memory_tokens,
     _normalize as cached_memory_normalize,
-    _record_token_list as cached_memory_record_token_list,
     _tokens as cached_memory_tokens,
 )
 
@@ -102,22 +102,36 @@ def _ids(records: list[MemoryRecord]) -> list[str]:
     return [record.memory_id for record in records]
 
 
-def test_record_terms_are_cached_without_sharing_mutable_lists() -> None:
-    """One immutable record revision is tokenized once while callers get fresh lists."""
+def test_record_terms_reuse_cached_immutable_tuple() -> None:
+    """One immutable record revision reuses its cached token tuple directly."""
     _cached_memory_record_terms.cache_clear()
     record = _RECORDS[0]
 
-    first = cached_memory_record_token_list(record)
-    second = cached_memory_record_token_list(record)
+    first = _cached_memory_record_terms(record)
+    second = _cached_memory_record_terms(record)
 
     assert "celsiu" in first
-    assert second == first
-    assert second is not first
-    first.append("mutated")
-    assert "mutated" not in cached_memory_record_token_list(record)
+    assert second is first
     info = _cached_memory_record_terms.cache_info()
     assert info.misses == 1
-    assert info.hits == 2
+    assert info.hits == 1
+
+
+def test_record_token_set_reuses_cached_immutable_membership() -> None:
+    """Search membership tests reuse one frozenset per immutable record revision."""
+    _cached_memory_record_terms.cache_clear()
+    _cached_memory_record_token_set.cache_clear()
+    record = _RECORDS[0]
+
+    first = _cached_memory_record_token_set(record)
+    second = _cached_memory_record_token_set(record)
+
+    assert "temperature" in first
+    assert second is first
+    assert isinstance(first, frozenset)
+    info = _cached_memory_record_token_set.cache_info()
+    assert info.misses == 1
+    assert info.hits == 1
 
 
 def test_replaced_record_naturally_gets_new_cached_terms() -> None:
@@ -130,8 +144,8 @@ def test_replaced_record_naturally_gets_new_cached_terms() -> None:
         updated_at="2026-08-02T10:00:00+00:00",
     )
 
-    original_terms = cached_memory_record_token_list(original)
-    updated_terms = cached_memory_record_token_list(updated)
+    original_terms = _cached_memory_record_terms(original)
+    updated_terms = _cached_memory_record_terms(updated)
 
     assert "celsiu" in original_terms
     assert "fahrenheit" in updated_terms
@@ -160,7 +174,7 @@ def test_bm25_frequency_cache_preserves_exact_score() -> None:
     """BM25 math is unchanged while repeated document frequencies are reused."""
     _cached_memory_term_frequencies.cache_clear()
     query_terms = ["temperature", "unit"]
-    document_terms = ["temperature", "temperature", "unit", "celsiu"]
+    document_terms = ("temperature", "temperature", "unit", "celsiu")
     document_frequency = {"temperature": 2, "unit": 1}
 
     # Independent reference calculation for this fixed document.
@@ -204,6 +218,7 @@ async def test_search_results_are_unchanged_after_cache_warmup(
     original_manager = await _manager()
     cached_manager = await _manager()
     memory_module._cached_memory_record_terms.cache_clear()
+    memory_module._cached_memory_record_token_set.cache_clear()
     memory_module._cached_memory_tokens.cache_clear()
     memory_module._cached_memory_term_frequencies.cache_clear()
     expected = await original_manager.async_search(
