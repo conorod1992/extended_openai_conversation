@@ -1,4 +1,3 @@
-import {friendlySettingLabel, settingEffectBadges} from "./management-setting-metadata.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 import {storeRuntimeGuidance} from "./management-data-state.js";
 
@@ -174,8 +173,8 @@ function ensureStyles(panel) {
     .eoc-guidance-note.eoc-guidance-unavailable{border-left:3px solid var(--disabled-text-color,var(--secondary-text-color))}
     .eoc-guidance-note .eoc-guidance-actions{margin-top:4px}
     .eoc-guidance-note .eoc-guidance-route{min-height:30px;padding:4px 9px}
-    .eoc-injected-model-setting{opacity:.82}
-    .eoc-injected-model-setting:focus{outline:2px solid var(--primary-color);outline-offset:3px}
+    .eoc-unavailable-model-setting{opacity:.82}
+    .eoc-unavailable-model-setting:focus{outline:2px solid var(--primary-color);outline-offset:3px}
   `;
   root.append(style);
 }
@@ -277,87 +276,18 @@ function decorateProviderGuidance(panel) {
   placeGuidance(panel, webDetail, "beforeend", consequence, "web-search-detail");
 }
 
-function createDisabledModelField(panel, spec, value) {
-  const field = document.createElement("div");
-  field.className = "setting eoc-injected-model-setting";
-  field.dataset.field = spec.key;
-  field.dataset.setting = "";
-  field.dataset.eocInjectedModel = "";
-  field.id = `config-${spec.key}`;
-  field.tabIndex = -1;
-
-  const row = document.createElement("span");
-  row.className = "setting-label-row";
-  const label = document.createElement("span");
-  label.textContent = friendlySettingLabel(spec.key) || spec.label;
-  row.append(label);
-  for (const badgeText of settingEffectBadges(spec.key, value)) {
-    const badge = document.createElement("span");
-    badge.className = "eoc-effect-badge";
-    badge.textContent = badgeText;
-    row.append(badge);
-  }
-  field.append(row);
-
-  if (spec.type === "select") {
-    const select = document.createElement("select");
-    select.disabled = true;
-    const choices = panel._result?.options?.[spec.key] || panel._configData?.options?.[spec.key] || [];
-    if (choices.length) {
-      for (const item of choices) {
-        const option = document.createElement("option");
-        option.value = String(typeof item === "string" ? item : item.value);
-        option.textContent = typeof item === "string" ? item : item.label;
-        option.selected = String(value ?? "") === option.value;
-        select.append(option);
-      }
-    } else {
-      const option = document.createElement("option");
-      option.textContent = String(value ?? "Not set");
-      select.append(option);
-    }
-    field.append(select);
-  } else {
-    const input = document.createElement("input");
-    input.type = "number";
-    input.value = String(value ?? "");
-    input.disabled = true;
-    field.append(input);
-  }
-
-  const description = document.createElement("small");
-  description.textContent = spec.description;
-  field.append(description);
-  return field;
-}
-
-function injectAndDecorateModelParameters(panel) {
+function decorateModelParameters(panel) {
   const root = panel.shadowRoot;
-  const grid = root.querySelector("#config-model .form-grid");
-  if (!grid) return;
-  const config = activeConfig(panel);
   const capabilities = activeCapabilities(panel);
-  const anchor = grid.querySelector('[data-field="shorten_tool_call_id"]');
-
-  const fields = [];
   for (const spec of MODEL_PARAMETERS) {
-    let field = grid.querySelector(`[data-field="${spec.key}"]`);
-    const unsupported = capabilities[spec.capability] === false;
-    if (!unsupported && field?.dataset.eocInjectedModel !== undefined) {
-      field.remove();
-      field = null;
-    }
-    if (unsupported && !field) {
-      field = createDisabledModelField(panel, spec, config[spec.key]);
-    }
-    if (field) fields.push(field);
-    const guidance = modelParameterGuidance(spec.key, capabilities);
-    placeGuidance(panel, field, "beforeend", guidance, `model-${spec.key}`);
-  }
-  let next = anchor || null;
-  for (const field of fields.reverse()) {
-    if (field.parentElement !== grid || field.nextElementSibling !== next) grid.insertBefore(field, next);
-    next = field;
+    const field = root.querySelector(`#config-model [data-field="${spec.key}"]`);
+    placeGuidance(
+      panel,
+      field,
+      "beforeend",
+      modelParameterGuidance(spec.key, capabilities),
+      `model-${spec.key}`,
+    );
   }
 }
 
@@ -406,7 +336,7 @@ export function enhanceConfigurationGuidance(panel) {
   if (enhancementChanged(panel, "guidance-styles")) ensureStyles(panel);
   const config = activeConfig(panel);
   const capabilities = activeCapabilities(panel);
-  enhanceGroup(panel, "model", [MODEL_PARAMETERS.map((spec) => config[spec.key]), capabilities, panel._result?.options || panel._configData?.options], injectAndDecorateModelParameters);
+  enhanceGroup(panel, "model", [MODEL_PARAMETERS.map((spec) => config[spec.key]), capabilities, panel._result?.options || panel._configData?.options], decorateModelParameters);
   enhanceGroup(panel, "dependencies", [config.conversation_continuity, config.web_search, config.archive_enabled, config.speech_processing_enabled, config.local_intents_enabled, panel._result?.local_handling || panel._configData?.local_handling], decorateDependencies);
   enhanceGroup(panel, "memory", [config.memory_retrieval_mode], decorateMemory);
   enhanceGroup(panel, "provider", [config.api_mode, config.web_search, config.web_search_context, activeRuntimeGuidance(panel)], decorateProviderGuidance);
