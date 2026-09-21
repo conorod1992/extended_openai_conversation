@@ -185,7 +185,7 @@ test("configuration live metadata is fetched only by routes that use it", async 
   const calls = () => page.evaluate(() =>
     browserHarness.calls
       .filter((call) => call.section === "configuration" && call.action === "live_metadata")
-      .map((call) => call.metadata)
+      .map((call) => call.metadata_keys)
   );
 
   expect(await calls()).toEqual([]);

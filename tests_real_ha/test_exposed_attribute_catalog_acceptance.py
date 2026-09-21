@@ -73,7 +73,7 @@ async def test_configuration_catalog_uses_real_assist_exposure(
         entry=entry,
         section="configuration",
         action="live_metadata",
-        metadata=["exposed_attribute_catalog"],
+        metadata_keys=["exposed_attribute_catalog"],
     )
     catalog = result["exposed_attribute_catalog"]
     by_entity_id = {item["entity_id"]: item for item in catalog["entities"]}

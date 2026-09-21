@@ -338,6 +338,28 @@ async def test_configuration_round_trip_through_management_websocket(
 
 
 @pytest.mark.asyncio
+async def test_configuration_live_metadata_uses_non_reserved_websocket_field(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+) -> None:
+    """Live configuration metadata must cross the genuine HA WS schema boundary."""
+    entry = _entry("Live Metadata Acceptance")
+    await _setup_entry(hass, entry)
+    client = await _admin_client(hass, hass_ws_client)
+
+    result = await _management_call(
+        client,
+        entry=entry,
+        section="configuration",
+        action="live_metadata",
+        metadata_keys=["local_handling", "exposed_attribute_catalog"],
+    )
+
+    assert "local_handling" in result
+    assert "exposed_attribute_catalog" in result
+
+
+@pytest.mark.asyncio
 async def test_stale_configuration_revision_cannot_overwrite_newer_save(
     hass: HomeAssistant,
     hass_ws_client: Any,
