@@ -17,6 +17,7 @@ from custom_components.extended_openai_conversation_responses.context_usage_hard
     _serialized_characters,
     estimate_prepared_request,
     estimate_provider_input_tokens,
+    measure_provider_input,
     usage_for_accounting,
 )
 from custom_components.extended_openai_conversation_responses.usage import RequestUsage
@@ -116,6 +117,20 @@ def test_estimate_prepared_request_projects_multipart_user_content(monkeypatch) 
     assert seen["measured"] is not input_value
     assert seen["measured"][1] == {"role": "user", "content": "Describe this"}
     assert usage.input_tokens == 222
+
+
+def test_shared_provider_measurement_matches_estimator() -> None:
+    input_value = [{"role": "user", "content": "Hello café"}]
+    tools = [{"type": "function", "name": "lookup"}]
+
+    input_characters, tool_characters, conservative_tokens = measure_provider_input(
+        input_value,
+        tools,
+    )
+
+    assert input_characters == _serialized_characters(input_value)[0]
+    assert tool_characters == _serialized_characters(tools)[0]
+    assert conservative_tokens == estimate_provider_input_tokens(input_value, tools)
 
 
 def test_estimate_counts_input_and_tools_conservatively() -> None:

@@ -544,11 +544,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             continuation_decision: bool | None = None
 
             if structure is not None:
+                structured_schema = _format_structured_output(
+                    structure, chat_log.llm_api
+                )
                 output_format = {
                     "type": "json_schema",
                     "name": slugify(structure_name),
                     "strict": True,
-                    "schema": _format_structured_output(structure, chat_log.llm_api),
+                    "schema": structured_schema,
                 }
                 if api_mode == API_MODE_RESPONSES:
                     api_kwargs["text"] = {"format": output_format}
@@ -556,11 +559,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     api_kwargs["response_format"] = {
                         "type": "json_schema",
                         "json_schema": {
-                            "name": slugify(structure_name),
-                            "strict": True,
-                            "schema": _format_structured_output(
-                                structure, chat_log.llm_api
-                            ),
+                            "name": output_format["name"],
+                            "strict": output_format["strict"],
+                            "schema": structured_schema,
                         },
                     }
 

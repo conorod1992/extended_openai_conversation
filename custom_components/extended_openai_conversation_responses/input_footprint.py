@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -23,23 +22,13 @@ def _serialized_footprint(
     tool_measurement: tuple[int, int] | None = None,
 ) -> tuple[int, int, int]:
     """Return exact serialized input/tool characters and the truncation estimate."""
-    from . import context_usage_hardening
+    from .context_usage_hardening import measure_provider_input
 
-    input_characters, input_non_ascii = context_usage_hardening._serialized_characters(
-        input_value
+    return measure_provider_input(
+        input_value,
+        tools,
+        tool_measurement=tool_measurement,
     )
-    tool_characters = 0
-    tool_non_ascii = 0
-    if tools:
-        if tool_measurement is None:
-            tool_measurement = context_usage_hardening._serialized_characters(tools)
-        tool_characters, tool_non_ascii = tool_measurement
-
-    total_characters = input_characters + tool_characters
-    non_ascii = input_non_ascii + tool_non_ascii
-    ascii_characters = max(0, total_characters - non_ascii)
-    conservative_tokens = max(1, math.ceil(ascii_characters / 3) + (non_ascii * 2))
-    return input_characters, tool_characters, conservative_tokens
 
 
 def input_footprint_metrics(
