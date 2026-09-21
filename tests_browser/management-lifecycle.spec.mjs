@@ -192,22 +192,22 @@ test("configuration live metadata is fetched only by routes that use it", async 
 
   await panel.evaluate(host => host._navigate("capabilities", "home-assistant"));
   await expect(panel.locator('[data-config="local_intents_enabled"]')).toBeVisible();
-  expect(await calls()).toEqual([["local_handling"]]);
+  await expect.poll(calls).toEqual([["local_handling"]]);
 
   await panel.evaluate(host => host._navigate("assistant", "model-responses"));
   await expect(panel.locator('[data-config="chat_model"]')).toBeVisible();
-  expect(await calls()).toEqual([["local_handling"]]);
+  await expect.poll(calls).toEqual([["local_handling"]]);
 
   await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
   await expect(panel.locator("#prompt-editor")).toBeVisible();
-  expect(await calls()).toEqual([
+  await expect.poll(calls).toEqual([
     ["local_handling"],
     ["exposed_attribute_catalog"],
   ]);
 
   await panel.evaluate(host => host._navigate("capabilities", "home-assistant"));
   await expect(panel.locator('[data-config="local_intents_enabled"]')).toBeVisible();
-  expect(await calls()).toEqual([
+  await expect.poll(calls).toEqual([
     ["local_handling"],
     ["exposed_attribute_catalog"],
   ]);
