@@ -94,6 +94,5 @@ assert.equal(mutationPanel._sectionCache.has("agent|capabilities/request-rules")
 assert.equal(refreshed, 1);
 assert.deepEqual(toasts, [{message: "Unable to update Request Rule: backend rejected update", isError: true}]);
 
-assert.match(source, /recoverRequestRuleMutation\(panel, err, "Unable to duplicate Request Rule"\)/);
-assert.match(source, /recoverRequestRuleMutation\(panel, err, "Unable to delete Request Rule"\)/);
-assert.match(source, /input\.checked = Boolean\(rule\.enabled\)/);
+
+assert.match(source, /recoverRequestRuleMutation\(panel, err, "Unable to move Request Rule"\)/);

@@ -10,6 +10,7 @@ const editor = await import(frontend("agent-config-editor-base.js"));
 const editorSource = await readFile(frontend("agent-config-editor-base.js"), "utf8");
 const panelSource = await readFile(frontend("management-panel.js"), "utf8");
 const rulesSource = await readFile(frontend("request-rules-ui-impl.js"), "utf8");
+const actionsSource = await readFile(frontend("management-actions.js"), "utf8");
 
 assert.deepEqual(
   editor.skillNamesFromText("weather, indoor\ncalendar\n\n  local notes  "),
@@ -46,13 +47,18 @@ assert.match(
   /let editorRevision = result\.revision/,
   "Request Rule edits must use the revision from the listed state",
 );
-for (const action of ["duplicate", "delete", "update"]) {
+for (const action of ["duplicate", "delete"]) {
   assert.match(
-    rulesSource,
+    actionsSource,
     new RegExp(`panel\\._call\\("request_rules", "${action}", [^\\n]*revision`),
     `${action} mutation must carry a Request Rule revision`,
   );
 }
+assert.match(
+  actionsSource,
+  /panel\._call\("request_rules", "update", [\s\S]{0,260}revision/,
+  "enable/disable mutation must carry a Request Rule revision",
+);
 assert.match(
   rulesSource,
   /panel\._editingRuleId \? "update" : "create"[\s\S]{0,220}rule,revision/,
