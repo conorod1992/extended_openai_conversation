@@ -672,6 +672,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const scopeCatalogKey = this._prepareScopeCatalogVisit(view);
     const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules"].includes(view);
     if (configOnly && this._configData && this._draftAgentId === this._agentId) {
+      await this._loadConfigurationLiveMetadata();
+      if (loadToken !== this._loadToken) return;
       this._contentData = null;
       this._result = this._configData;
       this._error = null;
