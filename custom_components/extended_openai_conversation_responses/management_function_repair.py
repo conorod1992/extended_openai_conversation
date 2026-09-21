@@ -152,7 +152,7 @@ def management_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
     """Return cheap cached metadata, including cached tolerant failure state."""
     try:
         metadata = configured_function_tool_metadata_from_data(options)
-    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError):
+    except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
         valid, invalid, issue, total_count = _cached_function_tool_state(
             *_function_tools_cache_key(options)
         )
@@ -165,8 +165,7 @@ def management_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
             "validation_error": issue,
             "invalid_names": [
                 str(
-                    item.get("name")
-                    or f"Function Tool {int(item.get('index', 0)) + 1}"
+                    item.get("name") or f"Function Tool {int(item.get('index', 0)) + 1}"
                 )
                 for item in invalid
             ],
@@ -188,6 +187,7 @@ def function_tools_issue(
         *_function_tools_cache_key(options)
     )
     return deepcopy(valid), issue
+
 
 def effective_function_configuration(
     options: dict[str, Any],
