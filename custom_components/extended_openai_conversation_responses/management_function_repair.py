@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from functools import lru_cache
 from hashlib import sha256
 from typing import Any
 
@@ -44,10 +45,31 @@ def editable_function_tools(options: dict[str, Any]) -> Any:
     return [] if parsed is None else parsed
 
 
-def isolated_function_tools(
+def _function_tools_cache_key(options: dict[str, Any]) -> tuple[str, str]:
+    """Return a deterministic key for one persisted Function Tool revision."""
+    raw = options.get(CONF_FUNCTION_TOOLS)
+    if raw is None:
+        return ("none", "")
+    if isinstance(raw, str):
+        return ("string", raw)
+    try:
+        return ("json", canonical_json(raw))
+    except (TypeError, ValueError):
+        return ("yaml", yaml.safe_dump(raw, sort_keys=True, allow_unicode=True))
+
+
+def _options_from_function_tools_cache_key(kind: str, payload: str) -> dict[str, Any]:
+    if kind == "none":
+        return {}
+    if kind == "string":
+        return {CONF_FUNCTION_TOOLS: payload}
+    return {CONF_FUNCTION_TOOLS: yaml.safe_load(payload)}
+
+
+def _isolate_function_tools_uncached(
     options: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
-    """Return valid tools plus individually invalid persisted tools when isolatable."""
+    """Compute tolerant Function Tool state for one persisted revision."""
     editable = editable_function_tools(options)
     if not isinstance(editable, list):
         return [], [], "Saved Function Tools must be a YAML/JSON array"
@@ -89,8 +111,30 @@ def isolated_function_tools(
     return valid, [], None
 
 
-def management_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
-    """Return Management metadata without copying hydrated runtime Function Tools."""
+@lru_cache(maxsize=128)
+def _cached_isolated_function_tools(
+    kind: str, payload: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
+    return _isolate_function_tools_uncached(
+        _options_from_function_tools_cache_key(kind, payload)
+    )
+
+
+def isolated_function_tools(
+    options: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
+    """Return cached tolerant Function Tool state for one persisted revision."""
+    valid, invalid, issue = _cached_isolated_function_tools(
+        *_function_tools_cache_key(options)
+    )
+    return deepcopy(valid), deepcopy(invalid), issue
+
+
+@lru_cache(maxsize=128)
+def _cached_management_function_tool_health(
+    kind: str, payload: str
+) -> dict[str, Any]:
+    options = _options_from_function_tools_cache_key(kind, payload)
     try:
         metadata = configured_function_tool_metadata_from_data(options)
     except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
@@ -106,7 +150,8 @@ def management_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
             "validation_error": issue,
             "invalid_names": [
                 str(
-                    item.get("name") or f"Function Tool {int(item.get('index', 0)) + 1}"
+                    item.get("name")
+                    or f"Function Tool {int(item.get('index', 0)) + 1}"
                 )
                 for item in invalid
             ],
@@ -119,6 +164,13 @@ def management_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
         "validation_error": None,
         "invalid_names": [],
     }
+
+
+def management_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
+    """Return cached Management metadata for one persisted Function Tool revision."""
+    return deepcopy(
+        _cached_management_function_tool_health(*_function_tools_cache_key(options))
+    )
 
 
 def function_tools_issue(
@@ -199,13 +251,11 @@ def agent_config_revision_from_snapshot(config: dict[str, Any], title: str) -> s
 
 
 def agent_config_revision(data: Any, title: str) -> str:
-    """Hash normalized valid state or unchanged raw state while tools need repair."""
-    try:
-        config = agent_config_snapshot(dict(data))
-    except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
-        config = dict(data)
-        if function_tools_issue(config)[1] is None:
-            raise
+    """Hash valid normalized state without revalidating known-broken Function Tools."""
+    raw = dict(data)
+    if function_tools_issue(raw)[1] is not None:
+        return agent_config_revision_from_snapshot(raw, title)
+    config = agent_config_snapshot(raw)
     return agent_config_revision_from_snapshot(config, title)
 
 
