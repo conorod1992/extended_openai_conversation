@@ -37,18 +37,18 @@ def browser_medians(payload: dict[str, Any]) -> dict[str, dict[str, float]]:
     }
 
 
-def row(label: str, baseline: float, candidate: float) -> str:
-    delta = candidate - baseline
+def row(label: str, baseline: float, current: float) -> str:
+    delta = current - baseline
     return (
-        f"| {label} | {baseline:.1f} | {candidate:.1f} | "
+        f"| {label} | {baseline:.1f} | {current:.1f} | "
         f"{delta:+.1f} | {pct(delta, baseline)} |"
     )
 
 
 def main() -> None:
-    baseline_path, candidate_path, output_dir = map(Path, sys.argv[1:4])
+    baseline_path, current_path, output_dir = map(Path, sys.argv[1:4])
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    current = json.loads(current_path.read_text(encoding="utf-8"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
     lines = [
@@ -70,8 +70,8 @@ def main() -> None:
         after = float(current["backend"][name]["median_ms"])
         lines.append(row(name, before, after))
         comparison["backend"][name] = {
-            "develop_ms": before,
-            "candidate_ms": after,
+            "baseline_ms": before,
+            "current_ms": after,
             "delta_ms": after - before,
         }
 
@@ -91,8 +91,8 @@ def main() -> None:
         after = after_routes[route]["ready_ms"]
         lines.append(row(route, before, after))
         comparison["browser"][route] = {
-            "develop": before_routes[route],
-            "candidate": after_routes[route],
+            "baseline": before_routes[route],
+            "current": after_routes[route],
             "ready_delta_ms": after - before,
         }
 
@@ -101,7 +101,7 @@ def main() -> None:
         "## Notes",
         "",
         "- Absolute GitHub-runner timings are not expected to match an Odroid/LAN install.",
-        "- The same runner executes develop and candidate sequentially, making deltas useful for repository-caused regressions and improvements.",
+        "- The same runner executes the baseline and current develop sequentially, making deltas useful for repository-caused regressions and improvements.",
         "- Raw JSON includes LCP, EOAI performance marks/measures, and integration resource timing for deeper diagnosis.",
         "",
     ]
