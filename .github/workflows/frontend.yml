@@ -90,9 +90,6 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Verify tracked production frontend bundle
-        run: git diff --exit-code -- custom_components/extended_openai_conversation_responses/frontend/dist/
-
       - name: Upload production frontend bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -100,6 +97,9 @@ jobs:
           path: custom_components/extended_openai_conversation_responses/frontend/dist/
           if-no-files-found: error
           retention-days: 7
+
+      - name: Verify tracked production frontend bundle
+        run: git diff --exit-code -- custom_components/extended_openai_conversation_responses/frontend/dist/
 
   browser-smoke:
     name: Browser smoke (Chromium / ${{ matrix.shard }} of 2)
