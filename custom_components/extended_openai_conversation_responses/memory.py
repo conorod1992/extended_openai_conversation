@@ -1619,7 +1619,9 @@ def _bm25_score(
     average_length: float,
 ) -> float:
     """Calculate the existing BM25 score without rebuilding term frequencies."""
-    cached_terms = document_terms if isinstance(document_terms, tuple) else tuple(document_terms)
+    cached_terms = (
+        document_terms if isinstance(document_terms, tuple) else tuple(document_terms)
+    )
     frequencies = _cached_memory_term_frequencies(cached_terms)
     k1, b = 1.2, 0.75
     score = 0.0
